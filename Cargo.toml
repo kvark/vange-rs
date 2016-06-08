@@ -5,3 +5,5 @@ authors = ["dmalyshau"]
 
 [dependencies]
 byteorder = "0.5"
+env_logger = "0.3"
+log = "0.3"
