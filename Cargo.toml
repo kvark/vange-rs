@@ -1,0 +1,7 @@
+[package]
+name = "vange"
+version = "0.1.0"
+authors = ["dmalyshau"]
+
+[dependencies]
+byteorder = "0.5"
