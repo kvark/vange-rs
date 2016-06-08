@@ -2,12 +2,15 @@ extern crate byteorder;
 extern crate env_logger;
 #[macro_use]
 extern crate log;
+extern crate progressive;
 
 mod splay;
 
 
-use byteorder::{BigEndian as BE, ReadBytesExt};
+use byteorder::{LittleEndian as E, ReadBytesExt};
 use splay::Splay;
+
+type Altitude = u8;
 
 struct Power(i32);
 impl Power {
@@ -31,13 +34,12 @@ struct LevelConfig {
 struct Level {
 	size: (i32, i32),
 	flood_map: Vec<u32>,
-	data: Vec<u8>,
-	splay: Splay,
+	data: Vec<Altitude>,
 }
 
 fn load(config: &LevelConfig) -> Level {
 	use std::fs::File;
-	use std::io::{Read, Seek, SeekFrom};
+	use std::io::{Seek, SeekFrom};
 
 	let size = (config.size.0.as_value(), config.size.1.as_value());
 
@@ -52,25 +54,35 @@ fn load(config: &LevelConfig) -> Level {
 		assert_eq!(vpr.metadata().unwrap().len(), expected_file_size as u64);
 		vpr.seek(SeekFrom::Start(flood_offset)).unwrap();
 		(0..flood_size).map(|_|
-			vpr.read_u32::<BE>().unwrap()
+			vpr.read_u32::<E>().unwrap()
 		).collect()
 	};
 	
 	info!("Loading vmc...");
-	let (data, splay) = {
-		let mut vpc = File::open(&config.path_vmc).unwrap();
+	let data = {
+		use std::io::BufReader;
+		use pbr::ProgressBar;
+
+		let mut vpc = BufReader::new(File::open(&config.path_vmc).unwrap());
 		info!("\tLoading compression tables...");
 		let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
 		let mut sz_table = Vec::<i16>::with_capacity(size.1 as usize);
 		for _ in 0 .. size.1 {
-			st_table.push(vpc.read_i32::<BE>().unwrap());
-			sz_table.push(vpc.read_i16::<BE>().unwrap());
+			st_table.push(vpc.read_i32::<E>().unwrap());
+			sz_table.push(vpc.read_i16::<E>().unwrap());
 		}
-		let data_size = vpc.metadata().unwrap().len() - vpc.seek(SeekFrom::Current(0)).unwrap();
+		info!("\tDecompressing level data...");
 		let splay = Splay::new(&mut vpc);
-		let mut data = Vec::with_capacity(data_size as usize);
-		vpc.read_to_end(&mut data).unwrap();
-		(data, splay)
+		let mut data = Vec::with_capacity((size.0 * size.1 * 2) as usize);
+		for y in progressive::progress(0 .. size.1) {
+			vpc.seek(SeekFrom::Start(st_table[y as usize] as u64)).unwrap();
+			let target_size = ((y+1) * 2 * size.0) as usize;
+			while data.len() < target_size {
+				splay.expand(&mut vpc, &mut data);
+			}
+			assert_eq!(data.len(), target_size);
+		}
+		data
 	};
 
 	info!("Done.");
@@ -78,9 +90,9 @@ fn load(config: &LevelConfig) -> Level {
 		size: size,
 		flood_map: flood,
 		data: data,
-		splay: splay,
 	}
 }
+
 
 fn main() {
 	env_logger::init().unwrap();
