@@ -1,5 +1,5 @@
 [package]
-name = "vange"
+name = "road"
 version = "0.1.0"
 authors = ["dmalyshau"]
 
@@ -8,3 +8,5 @@ byteorder = "0.5"
 env_logger = "0.3"
 log = "0.3"
 progressive = "0.1"
+gfx = "0.11"
+gfx_window_glutin = "0.11"
