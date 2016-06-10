@@ -6,6 +6,7 @@ dependencies = [
  "env_logger 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "gfx 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "gfx_window_glutin 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "glutin 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "progressive 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
