@@ -1,8 +1,6 @@
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use splay::Splay;
 
-type Altitude = u8;
-
 pub struct Power(pub i32);
 impl Power {
     fn as_value(&self) -> i32 {
@@ -23,9 +21,10 @@ pub struct Config {
 }
 
 pub struct Level {
-    size: (i32, i32),
-    flood_map: Vec<u32>,
-    data: Vec<Altitude>,
+    pub size: (i32, i32),
+    pub flood_map: Vec<u32>,
+    pub height: Vec<u8>,
+    pub meta: Vec<u8>,
 }
 
 pub fn load(config: &Config) -> Level {
@@ -50,7 +49,7 @@ pub fn load(config: &Config) -> Level {
     };
     
     info!("Loading vmc...");
-    let data = {
+    let (height, meta) = {
         use std::io::BufReader;
         use progressive::progress;
 
@@ -64,22 +63,29 @@ pub fn load(config: &Config) -> Level {
         }
         info!("\tDecompressing level data...");
         let splay = Splay::new(&mut vpc);
-        let mut data = Vec::with_capacity((size.0 * size.1 * 2) as usize);
+        let total = (size.0 * size.1) as usize;
+        let mut height = Vec::with_capacity(total);
+        let mut meta = Vec::with_capacity(total);
         for y in progress(0 .. size.1) {
             vpc.seek(SeekFrom::Start(st_table[y as usize] as u64)).unwrap();
-            let target_size = ((y+1) * 2 * size.0) as usize;
-            while data.len() < target_size {
-                splay.expand(&mut vpc, &mut data);
+            let target_size = ((y+1) * size.0) as usize;
+            while height.len() < target_size && meta.len() < target_size {
+                splay.expand1(&mut vpc, &mut height);
+                splay.expand2(&mut vpc, &mut meta);
             }
-            assert_eq!(data.len(), target_size);
+            assert_eq!(height.len(), target_size);
+            assert_eq!(meta.len(), target_size);
         }
-        data
+        (height, meta)
     };
+
+    println!("{}", height[0]);
 
     info!("Done.");
     Level {
         size: size,
         flood_map: flood,
-        data: data,
+        height: height,
+        meta: meta,
     }
 }

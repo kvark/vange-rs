@@ -24,9 +24,6 @@ fn main() {
     let (window, mut device, mut factory, main_color, _main_depth) =
         gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(builder);
 
-    let mut encoder: gfx::Encoder<_, _> = factory.create_command_buffer().into();
-    let render = render::init(&mut factory, main_color);
-
     let name = "fostral";
     let base = "/opt/GOG Games/Vangers/game/thechain";
     let config = level::Config {
@@ -37,7 +34,10 @@ fn main() {
         geo: Power(5),
         section: Power(7),
     };
-    let _lev = level::load(&config);
+    let lev = level::load(&config);
+
+    let mut encoder: gfx::Encoder<_, _> = factory.create_command_buffer().into();
+    let render = render::init(&mut factory, main_color, lev.size, &lev.height, &lev.meta);
 
     'main: loop {
         use gfx::Device;
