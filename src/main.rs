@@ -9,11 +9,11 @@ extern crate log;
 extern crate progressive;
 
 mod level;
+mod render;
 mod splay;
 
+
 use level::Power;
-pub type ColorFormat = gfx::format::Srgba8;
-pub type DepthFormat = gfx::format::DepthStencil;
 
 fn main() {
     env_logger::init().unwrap();
@@ -22,9 +22,10 @@ fn main() {
         .with_dimensions(800, 540)
         .with_vsync();
     let (window, mut device, mut factory, main_color, _main_depth) =
-        gfx_window_glutin::init::<ColorFormat, DepthFormat>(builder);
+        gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(builder);
+
     let mut encoder: gfx::Encoder<_, _> = factory.create_command_buffer().into();
-    
+    let render = render::init(&mut factory, main_color);
 
     let name = "fostral";
     let base = "/opt/GOG Games/Vangers/game/thechain";
@@ -49,8 +50,7 @@ fn main() {
             }
         }
         // draw a frame
-        encoder.clear(&main_color, [0.1,0.2,0.3,1.0]);
-        //encoder.draw(&slice, &pso, &data);
+        render.draw(&mut encoder);
         encoder.flush(&mut device);
         window.swap_buffers().unwrap();
         device.cleanup();
