@@ -16,8 +16,8 @@ pub type ColorFormat = gfx::format::Srgba8;
 pub type DepthFormat = gfx::format::DepthStencil;
 
 fn main() {
-	env_logger::init().unwrap();
-	let builder = glutin::WindowBuilder::new()
+    env_logger::init().unwrap();
+    let builder = glutin::WindowBuilder::new()
         .with_title("Rusty Vangers".to_string())
         .with_dimensions(800, 540)
         .with_vsync();
@@ -26,20 +26,20 @@ fn main() {
     let mut encoder: gfx::Encoder<_, _> = factory.create_command_buffer().into();
     
 
-	let name = "fostral";
-	let base = "/opt/GOG Games/Vangers/game/thechain";
-	let config = level::Config {
-		name: name.to_owned(),
-		path_vpr: format!("{}/{}/output.vpr", base, name),
-		path_vmc: format!("{}/{}/output.vmc", base, name),
-		size: (Power(11), Power(14)),
-		geo: Power(5),
-		section: Power(7),
-	};
+    let name = "fostral";
+    let base = "/opt/GOG Games/Vangers/game/thechain";
+    let config = level::Config {
+        name: name.to_owned(),
+        path_vpr: format!("{}/{}/output.vpr", base, name),
+        path_vmc: format!("{}/{}/output.vmc", base, name),
+        size: (Power(11), Power(14)),
+        geo: Power(5),
+        section: Power(7),
+    };
     let _lev = level::load(&config);
 
     'main: loop {
-    	use gfx::Device;
+        use gfx::Device;
         // loop over events
         for event in window.poll_events() {
             match event {
