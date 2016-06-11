@@ -1,4 +1,5 @@
 use gfx;
+use Camera;
 
 const TEX_HEIGHT: i32 = 4096;
 
@@ -10,8 +11,15 @@ gfx_defines!{
         pos: [i8; 4] = "a_Pos",
     }
 
+    constant Locals {
+        cam_pos: [f32; 4] = "u_CamPose",
+        m_vp: [[f32; 4]; 4] = "u_ViewProj",
+        m_inv_vp: [[f32; 4]; 4] = "u_InvViewProj",
+    }
+
     pipeline terrain {
         vbuf: gfx::VertexBuffer<Vertex> = (),
+        locals: gfx::ConstantBuffer<Locals> = "c_Locals",
         height: gfx::TextureSampler<f32> = "t_Height",
         meta: gfx::TextureSampler<u32> = "t_Meta",
         out: gfx::RenderTarget<ColorFormat> = "Target0",
@@ -70,9 +78,10 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
 
     let data = terrain::Data {
         vbuf: vbuf,
-        out: main_color,
+        locals: factory.create_constant_buffer(1),
         height: (height, sm_height),
         meta: (meta, sm_meta),
+        out: main_color,
     };
     Render {
         terrain: gfx::Bundle::new(slice, pso, data),
@@ -80,7 +89,16 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
 }
 
 impl<R: gfx::Resources> Render<R> {
-    pub fn draw<C: gfx::CommandBuffer<R>>(&self, encoder: &mut gfx::Encoder<R, C>) {
+    pub fn draw<C: gfx::CommandBuffer<R>>(&self, encoder: &mut gfx::Encoder<R, C>, cam: &Camera) {
+        use cgmath::SquareMatrix;
+        let mx_vp = cam.get_view_proj();
+        let cpos: [f32; 3] = cam.loc.into();
+        let locals = Locals {
+            cam_pos: [cpos[0], cpos[1], cpos[2], 1.0],
+            m_vp: mx_vp.into(),
+            m_inv_vp: mx_vp.invert().unwrap().into(),
+        };
+        encoder.update_constant_buffer(&self.terrain.data.locals, &locals);
         encoder.clear(&self.terrain.data.out, [0.1,0.2,0.3,1.0]);
         self.terrain.encode(encoder);
     }

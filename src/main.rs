@@ -1,4 +1,5 @@
 extern crate byteorder;
+extern crate cgmath;
 extern crate env_logger;
 #[macro_use]
 extern crate gfx;
@@ -15,8 +16,28 @@ mod render;
 mod splay;
 
 
+pub struct Camera {
+    loc: cgmath::Vector3<f32>,
+    rot: cgmath::Quaternion<f32>,
+    proj: cgmath::PerspectiveFov<f32>,
+}
+
+impl Camera {
+    pub fn get_view_proj(&self) -> cgmath::Matrix4<f32> {
+        use cgmath::{Decomposed, Matrix4, Transform};
+        let view = Decomposed {
+            scale: 1.0,
+            rot: self.rot,
+            disp: self.loc,
+        };
+        let view_mx: Matrix4<f32> = view.inverse_transform().unwrap().into();
+        let proj_mx: Matrix4<f32> = self.proj.into();
+        proj_mx * view_mx
+    }
+}
+
 #[derive(RustcDecodable)]
-struct Window {
+struct WindowSettings {
     title: String,
     size: [u32; 2],
 }
@@ -25,7 +46,7 @@ struct Window {
 struct Settings {
     game_path: String,
     level: String,
-    window: Window,
+    window: WindowSettings,
 }
 
 use level::Power;
@@ -43,12 +64,24 @@ fn main() {
         toml::decode_str(&string).unwrap()
     };
 
+    info!("Creating the window with GL context");
     let builder = glutin::WindowBuilder::new()
         .with_title(settings.window.title)
         .with_dimensions(settings.window.size[0], settings.window.size[1])
         .with_vsync();
     let (window, mut device, mut factory, main_color, _main_depth) =
         gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(builder);
+
+    let mut cam = Camera {
+        loc: cgmath::vec3(0.0, 0.0, 10.0),
+        rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
+        proj: cgmath::PerspectiveFov {
+            fovy: cgmath::deg(45.0).into(),
+            aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
+            near: 1.0,
+            far: 100000.0,
+        },
+    };
 
     let config = level::Config {
         path_vpr: format!("{}/thechain/{}/output.vpr", settings.game_path, settings.level),
@@ -67,14 +100,25 @@ fn main() {
         use gfx::Device;
         // loop over events
         for event in window.poll_events() {
+            use cgmath::Rotation3;
+            use glutin::{Event, VirtualKeyCode as Key};
+            let delta = cgmath::rad(0.04);
             match event {
-                glutin::Event::KeyboardInput(_, _, Some(glutin::VirtualKeyCode::Escape)) |
-                glutin::Event::Closed => break 'main,
+                Event::KeyboardInput(_, _, Some(Key::Escape)) |
+                Event::Closed => break 'main,
+                Event::KeyboardInput(_, _, Some(Key::R)) =>
+                    cam.rot = cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::vec3(1.0, 0.0, 0.0), delta),
+                Event::KeyboardInput(_, _, Some(Key::F)) =>
+                    cam.rot = cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::vec3(1.0, 0.0, 0.0), -delta),
+                Event::KeyboardInput(_, _, Some(Key::Q)) =>
+                    cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::vec3(0.0, 0.0, 1.0), delta) * cam.rot,
+                Event::KeyboardInput(_, _, Some(Key::E)) =>
+                    cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::vec3(0.0, 0.0, 1.0), -delta) * cam.rot,
                 _ => {},
             }
         }
         // draw a frame
-        render.draw(&mut encoder);
+        render.draw(&mut encoder, &cam);
         encoder.flush(&mut device);
         window.swap_buffers().unwrap();
         device.cleanup();

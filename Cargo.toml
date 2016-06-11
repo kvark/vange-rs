@@ -5,6 +5,7 @@ authors = ["dmalyshau"]
 
 [dependencies]
 byteorder = "0.5"
+cgmath = "0.10"
 env_logger = "0.3"
 gfx = "0.11"
 gfx_window_glutin = "0.11"
