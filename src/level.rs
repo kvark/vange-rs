@@ -79,8 +79,6 @@ pub fn load(config: &Config) -> Level {
         (height, meta)
     };
 
-    println!("{}", height[0]);
-
     info!("Done.");
     Level {
         size: size,

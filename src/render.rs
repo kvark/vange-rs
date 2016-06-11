@@ -1,5 +1,6 @@
 use gfx;
 
+const TEX_HEIGHT: i32 = 4096;
 
 pub type ColorFormat = gfx::format::Srgba8;
 pub type DepthFormat = gfx::format::DepthStencil;
@@ -57,9 +58,11 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
     let indices: &[u16] = &[0,1,2, 0,2,3, 0,3,4, 0,4,1];
     let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
 
-    let kind = tex::Kind::D2(size.0 as tex::Size, size.1 as tex::Size, tex::AaMode::Single);
-    let (_, height) = factory.create_texture_const::<(format::R8, format::Unorm)>(kind, &[height_data]).unwrap();
-    let (_, meta) = factory.create_texture_const::<(format::R8, format::Uint)>(kind, &[meta_data]).unwrap();
+    let kind = tex::Kind::D2Array(size.0 as tex::Size, TEX_HEIGHT as tex::Size, (size.1/TEX_HEIGHT) as tex::Size, tex::AaMode::Single);
+    let height_chunks: Vec<_> = height_data.chunks((size.0 * TEX_HEIGHT) as usize).collect();
+    let meta_chunks: Vec<_> = meta_data.chunks((size.0 * TEX_HEIGHT) as usize).collect();
+    let (_, height) = factory.create_texture_const::<(format::R8, format::Unorm)>(kind, &height_chunks).unwrap();
+    let (_, meta) = factory.create_texture_const::<(format::R8, format::Uint)>(kind, &meta_chunks).unwrap();
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Anisotropic(4), tex::WrapMode::Tile));
     let sm_meta = factory.create_sampler(tex::SamplerInfo::new(
