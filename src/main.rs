@@ -7,29 +7,53 @@ extern crate glutin;
 #[macro_use]
 extern crate log;
 extern crate progressive;
+extern crate rustc_serialize;
+extern crate toml;
 
 mod level;
 mod render;
 mod splay;
 
 
+#[derive(RustcDecodable)]
+struct Window {
+    title: String,
+    size: [u32; 2],
+}
+
+#[derive(RustcDecodable)]
+struct Settings {
+    game_path: String,
+    level: String,
+    window: Window,
+}
+
 use level::Power;
 
 fn main() {
     env_logger::init().unwrap();
+    info!("Loading the settings");
+
+    let settings: Settings = {
+        use std::io::{BufReader, Read};
+        use std::fs::File;
+        let mut string = String::new();
+        BufReader::new(File::open("config/settings.toml").unwrap())
+            .read_to_string(&mut string).unwrap();
+        toml::decode_str(&string).unwrap()
+    };
+
     let builder = glutin::WindowBuilder::new()
-        .with_title("Rusty Vangers".to_string())
-        .with_dimensions(800, 540)
+        .with_title(settings.window.title)
+        .with_dimensions(settings.window.size[0], settings.window.size[1])
         .with_vsync();
     let (window, mut device, mut factory, main_color, _main_depth) =
         gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(builder);
 
-    let name = "fostral";
-    let base = "/opt/GOG Games/Vangers/game/thechain";
     let config = level::Config {
-        name: name.to_owned(),
-        path_vpr: format!("{}/{}/output.vpr", base, name),
-        path_vmc: format!("{}/{}/output.vmc", base, name),
+        path_vpr: format!("{}/thechain/{}/output.vpr", settings.game_path, settings.level),
+        path_vmc: format!("{}/thechain/{}/output.vmc", settings.game_path, settings.level),
+        name: settings.level,
         size: (Power(11), Power(14)),
         geo: Power(5),
         section: Power(7),

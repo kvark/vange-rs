@@ -1,0 +1,6 @@
+game_path = "/opt/GOG Games/Vangers/game"
+level = "fostral"
+
+[window]
+title = "Rusty Road"
+size = [800, 540]
