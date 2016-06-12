@@ -32,7 +32,7 @@ impl Splay {
         splay
     }
 
-    fn decompress<I: Read>(tree: &[i32], tree_char: &[u8], input: &mut I, output: &mut Vec<u8>) {
+    fn decompress<I: Read, F: Fn(u8, u8)->u8>(tree: &[i32], tree_char: &[u8], input: &mut I, output: &mut Vec<u8>, fun: F) {
         let final_size = output.len() + OUT_SIZE;
         let mut last_char = 0u8;
         let mut c_index = 1usize;
@@ -41,7 +41,7 @@ impl Splay {
             for bit in (0..8).rev() {
                 c_index = (c_index << 1) + ((cur >> bit) as usize & 1);
                 if tree[c_index] <= 0 {
-                    last_char = last_char.wrapping_add(tree_char[c_index]);
+                    last_char = fun(last_char, tree_char[c_index]);
                     output.push(last_char);
                     if output.len() == final_size {
                         break 'main
@@ -55,9 +55,9 @@ impl Splay {
     }
 
     pub fn expand1<I: Read>(&self, input: &mut I, output: &mut Vec<u8>) {
-        Splay::decompress(&self.tree1, &self.tree1u, input, output);
+        Splay::decompress(&self.tree1, &self.tree1u, input, output, |b, c| b+c);
     }
     pub fn expand2<I: Read>(&self, input: &mut I, output: &mut Vec<u8>) {
-        Splay::decompress(&self.tree2, &self.tree2u, input, output);
+        Splay::decompress(&self.tree2, &self.tree2u, input, output, |b, c| b^c);
     }
 }

@@ -73,7 +73,7 @@ fn main() {
         gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(builder);
 
     let mut cam = Camera {
-        loc: cgmath::vec3(0.0, 0.0, 10.0),
+        loc: cgmath::vec3(0.0, 0.0, 200.0),
         rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
         proj: cgmath::PerspectiveFov {
             fovy: cgmath::deg(45.0).into(),
@@ -102,18 +102,23 @@ fn main() {
         for event in window.poll_events() {
             use cgmath::Rotation3;
             use glutin::{Event, VirtualKeyCode as Key};
-            let delta = cgmath::rad(0.04);
+            let delta = cgmath::rad(0.05);
+            let step = 10.0;
             match event {
                 Event::KeyboardInput(_, _, Some(Key::Escape)) |
                 Event::Closed => break 'main,
                 Event::KeyboardInput(_, _, Some(Key::L)) => render.reload(&mut factory),
+                Event::KeyboardInput(_, _, Some(Key::W)) =>
+                    cam.loc = cam.loc + cgmath::vec3(0.0, step, 0.0),
+                Event::KeyboardInput(_, _, Some(Key::S)) =>
+                    cam.loc = cam.loc - cgmath::vec3(0.0, step, 0.0),
                 Event::KeyboardInput(_, _, Some(Key::R)) =>
                     cam.rot = cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::vec3(1.0, 0.0, 0.0), delta),
                 Event::KeyboardInput(_, _, Some(Key::F)) =>
                     cam.rot = cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::vec3(1.0, 0.0, 0.0), -delta),
-                Event::KeyboardInput(_, _, Some(Key::Q)) =>
+                Event::KeyboardInput(_, _, Some(Key::A)) =>
                     cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::vec3(0.0, 0.0, 1.0), delta) * cam.rot,
-                Event::KeyboardInput(_, _, Some(Key::E)) =>
+                Event::KeyboardInput(_, _, Some(Key::D)) =>
                     cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::vec3(0.0, 0.0, 1.0), -delta) * cam.rot,
                 _ => {},
             }

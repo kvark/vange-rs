@@ -9,8 +9,9 @@ uniform c_Locals {
 uniform sampler2DArray t_Height;
 uniform usampler2DArray t_Meta;
 
+const uint c_DoubleLevelMask = 1U<<6;
 const vec4 c_ScreenSize = vec4(800.0, 540.0, 0.0, 0.0);
-const vec4 c_Scale = vec4(1.0/100.0, 1.0/200.0, 0.1, 4.0);
+const vec4 c_TextureScale = vec4(2048.0, 4096.0, 1.0, 4.0);
 
 out vec4 Target0;
 
@@ -20,7 +21,16 @@ vec2 cast_ray(float level, vec3 base, vec3 dir) {
 }
 
 float get_latitude(vec2 pos) {
-	return texture(t_Height, vec3(pos*c_Scale.xy, 0.0)).x;
+	vec2 ndc = pos / c_TextureScale.xy;
+	float slice = trunc(mod(ndc.y, c_TextureScale.w));
+	if (mod(pos.x, 2.0) >= 1.0) {
+		vec2 ndc_prev = ndc - vec2(1.0/c_TextureScale.x, 0.0);
+		uint meta_prev = texture(t_Meta, vec3(ndc_prev, slice)).x;
+		if ((meta_prev & c_DoubleLevelMask) != 0U) {
+			ndc = ndc_prev;
+		}
+	}
+	return texture(t_Height, vec3(ndc, slice)).x;
 }
 
 void main() {

@@ -78,7 +78,8 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
     let (_, height) = factory.create_texture_const::<(format::R8, format::Unorm)>(kind, &height_chunks).unwrap();
     let (_, meta) = factory.create_texture_const::<(format::R8, format::Uint)>(kind, &meta_chunks).unwrap();
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
-        tex::FilterMethod::Anisotropic(4), tex::WrapMode::Tile));
+        tex::FilterMethod::Scale, tex::WrapMode::Tile));
+        //tex::FilterMethod::Anisotropic(4), tex::WrapMode::Tile));
     let sm_meta = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale, tex::WrapMode::Tile));
 
