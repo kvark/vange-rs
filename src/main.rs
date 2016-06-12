@@ -94,7 +94,7 @@ fn main() {
     let lev = level::load(&config);
 
     let mut encoder: gfx::Encoder<_, _> = factory.create_command_buffer().into();
-    let render = render::init(&mut factory, main_color, lev.size, &lev.height, &lev.meta);
+    let mut render = render::init(&mut factory, main_color, lev.size, &lev.height, &lev.meta);
 
     'main: loop {
         use gfx::Device;
@@ -106,6 +106,7 @@ fn main() {
             match event {
                 Event::KeyboardInput(_, _, Some(Key::Escape)) |
                 Event::Closed => break 'main,
+                Event::KeyboardInput(_, _, Some(Key::L)) => render.reload(&mut factory),
                 Event::KeyboardInput(_, _, Some(Key::R)) =>
                     cam.rot = cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::vec3(1.0, 0.0, 0.0), delta),
                 Event::KeyboardInput(_, _, Some(Key::F)) =>

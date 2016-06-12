@@ -39,6 +39,20 @@ fn read(name: &str) -> Vec<u8> {
     buf
 }
 
+fn load_pso<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F)
+    -> gfx::PipelineState<R, terrain::Meta> {
+    use gfx::traits::FactoryExt;
+    let program = factory.link_program(
+        &read("data/shader/terrain.vert"),
+        &read("data/shader/terrain.frag"),
+        ).unwrap();
+    factory.create_pipeline_from_program(
+        &program, gfx::Primitive::TriangleList,
+        gfx::state::Rasterizer::new_fill(),
+        terrain::new()
+    ).unwrap()
+}
+
 pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             main_color: gfx::handle::RenderTargetView<R, ColorFormat>,
             size: (i32, i32), height_data: &[u8], meta_data: &[u8])
@@ -47,15 +61,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
     use gfx::traits::FactoryExt;
     use gfx::{format, tex};
 
-    let program = factory.link_program(
-        &read("data/shader/terrain.vert"),
-        &read("data/shader/terrain.frag"),
-        ).unwrap();
-    let pso = factory.create_pipeline_from_program(
-        &program, gfx::Primitive::TriangleList,
-        gfx::state::Rasterizer::new_fill(),
-        terrain::new()
-    ).unwrap();
+    let pso = load_pso(factory);
     let vertices = [
         Vertex{ pos: [0,0,0,1] },
         Vertex{ pos: [-1,0,0,0] },
@@ -101,5 +107,9 @@ impl<R: gfx::Resources> Render<R> {
         encoder.update_constant_buffer(&self.terrain.data.locals, &locals);
         encoder.clear(&self.terrain.data.out, [0.1,0.2,0.3,1.0]);
         self.terrain.encode(encoder);
+    }
+    pub fn reload<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
+        info!("Reloading shaders");
+        self.terrain.pso = load_pso(factory);
     }
 }
