@@ -2,4 +2,4 @@
 The idea of this project is to replicate the old look and behavior, but with native hardware acceleration for the graphics.
 
 Latest progress:
-![alt text](etc/shots/Road3-height.png "WIP screenshot")
+![alt text](etc/shots/Road4-pom.png "WIP screenshot")

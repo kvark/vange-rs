@@ -11,13 +11,14 @@ uniform usampler2DArray t_Meta;
 
 const uint c_DoubleLevelMask = 1U<<6;
 const vec4 c_ScreenSize = vec4(800.0, 540.0, 0.0, 0.0);
-const vec4 c_TextureScale = vec4(2048.0, 4096.0, 1.0, 4.0);
+const vec4 c_TextureScale = vec4(2048.0, 4096.0, 50.0, 4.0);
+const uint c_NumBinarySteps = 8U, c_NumForwardSteps = 0U;
 
 out vec4 Target0;
 
-vec2 cast_ray(float level, vec3 base, vec3 dir) {
+vec3 cast_ray_to_plane(float level, vec3 base, vec3 dir) {
 	float t = (level - base.z) / dir.z;
-	return base.xy + t * dir.xy;
+	return t * dir + base;
 }
 
 float get_latitude(vec2 pos) {
@@ -30,7 +31,41 @@ float get_latitude(vec2 pos) {
 			ndc = ndc_prev;
 		}
 	}
-	return texture(t_Height, vec3(ndc, slice)).x;
+	return texture(t_Height, vec3(ndc, slice)).x * c_TextureScale.z;
+}
+
+vec4 cast_ray_with_latitude(float level, vec3 base, vec3 dir) {
+	vec3 pos = cast_ray_to_plane(level, base, dir);
+	float height = get_latitude(pos.xy);
+	return vec4(pos, height);
+}
+
+vec3 cast_ray_to_map(vec3 base, vec3 dir) {
+	vec4 a = cast_ray_with_latitude(c_TextureScale.z, base, dir);
+	vec4 b = cast_ray_with_latitude(0.0, base, dir);
+	vec4 step = (1.0 / float(c_NumForwardSteps + 1U)) * (b - a);
+	for (uint i=0U; i<c_NumForwardSteps; ++i) {
+		vec4 c = a + step;
+		c.w = get_latitude(c.xy);
+		if (c.z < c.w) {
+			b = c;
+			break;
+		}else {
+			a = c;
+		}
+	}
+	for (uint i=0U; i<c_NumBinarySteps; ++i) {
+		vec4 c = 0.5 * (a + b);
+		c.w = get_latitude(c.xy);
+		if (c.z < c.w) {
+			b = c;
+		}else {
+			a = c;
+		}
+	}
+	//float t = a.z > a.w + 0.1 ? (b.w - a.w - b.z + a.z) / (a.z - a.w) : 0.5;
+	float t = 0.5;
+	return mix(a.xyz, b.xyz, t);
 }
 
 void main() {
@@ -38,7 +73,7 @@ void main() {
 	vec4 sp_world = u_InvViewProj * sp_ndc;
 	vec3 view = normalize(sp_world.xyz / sp_world.w - u_CamPos.xyz);
 
-	vec2 gpos = cast_ray(0.0, u_CamPos.xyz, view);
-	float lat = get_latitude(gpos);
-	Target0 = vec4(lat, lat, lat, 1.0);
+	//vec3 pos = cast_ray_with_latitude(0.0, u_CamPos.xyz, view).xyw;
+	vec3 pos = cast_ray_to_map(u_CamPos.xyz, view);
+	Target0 = vec4(pos.zzz / c_TextureScale.z, 1.0);
 }
