@@ -8,6 +8,7 @@ uniform c_Locals {
 
 uniform sampler2DArray t_Height;
 uniform usampler2DArray t_Meta;
+uniform sampler1D t_Palette;
 
 const uint c_DoubleLevelMask = 1U<<6;
 const vec4 c_ScreenSize = vec4(800.0, 540.0, 0.0, 0.0);
@@ -75,5 +76,5 @@ void main() {
 
 	//vec3 pos = cast_ray_with_latitude(0.0, u_CamPos.xyz, view).xyw;
 	vec3 pos = cast_ray_to_map(u_CamPos.xyz, view);
-	Target0 = vec4(pos.zzz / c_TextureScale.z, 1.0);
+	Target0 = texture(t_Palette, pos.z / c_TextureScale.z);
 }

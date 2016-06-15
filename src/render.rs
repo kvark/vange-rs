@@ -22,6 +22,7 @@ gfx_defines!{
         locals: gfx::ConstantBuffer<Locals> = "c_Locals",
         height: gfx::TextureSampler<f32> = "t_Height",
         meta: gfx::TextureSampler<u32> = "t_Meta",
+        palette: gfx::TextureSampler<[f32; 4]> = "t_Palette",
         out: gfx::RenderTarget<ColorFormat> = "Target0",
     }
 }
@@ -55,7 +56,7 @@ fn load_pso<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F)
 
 pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             main_color: gfx::handle::RenderTargetView<R, ColorFormat>,
-            size: (i32, i32), height_data: &[u8], meta_data: &[u8])
+            size: (i32, i32), height_data: &[u8], meta_data: &[u8], pal_data: &[[u8; 4]])
             -> Render<R>
 {
     use gfx::traits::FactoryExt;
@@ -77,17 +78,21 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
     let meta_chunks: Vec<_> = meta_data.chunks((size.0 * TEX_HEIGHT) as usize).collect();
     let (_, height) = factory.create_texture_const::<(format::R8, format::Unorm)>(kind, &height_chunks).unwrap();
     let (_, meta) = factory.create_texture_const::<(format::R8, format::Uint)>(kind, &meta_chunks).unwrap();
+    let (_, pal) = factory.create_texture_const::<format::Rgba8>(tex::Kind::D1(0x100), &[pal_data]).unwrap();
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale, tex::WrapMode::Tile));
         //tex::FilterMethod::Anisotropic(4), tex::WrapMode::Tile));
     let sm_meta = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale, tex::WrapMode::Tile));
+    let sm_pal = factory.create_sampler(tex::SamplerInfo::new(
+        tex::FilterMethod::Bilinear, tex::WrapMode::Clamp));
 
     let data = terrain::Data {
         vbuf: vbuf,
         locals: factory.create_constant_buffer(1),
         height: (height, sm_height),
         meta: (meta, sm_meta),
+        palette: (pal, sm_pal),
         out: main_color,
     };
     Render {

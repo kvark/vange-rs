@@ -86,6 +86,7 @@ fn main() {
     let config = level::Config {
         path_vpr: format!("{}/thechain/{}/output.vpr", settings.game_path, settings.level),
         path_vmc: format!("{}/thechain/{}/output.vmc", settings.game_path, settings.level),
+        path_palette: format!("{}/thechain/{}/harmony.pal", settings.game_path, settings.level),
         name: settings.level,
         size: (Power(11), Power(14)),
         geo: Power(5),
@@ -94,7 +95,7 @@ fn main() {
     let lev = level::load(&config);
 
     let mut encoder: gfx::Encoder<_, _> = factory.create_command_buffer().into();
-    let mut render = render::init(&mut factory, main_color, lev.size, &lev.height, &lev.meta);
+    let mut render = render::init(&mut factory, main_color, lev.size, &lev.height, &lev.meta, &lev.palette);
 
     'main: loop {
         use gfx::Device;

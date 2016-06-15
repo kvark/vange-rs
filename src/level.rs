@@ -13,6 +13,7 @@ impl Power {
 
 pub struct Config {
     pub name: String,
+    pub path_palette: String,
     pub path_vpr: String,
     pub path_vmc: String,
     pub size: (Power, Power),
@@ -25,23 +26,25 @@ pub struct Level {
     pub flood_map: Vec<u32>,
     pub height: Vec<u8>,
     pub meta: Vec<u8>,
+    pub palette: [[u8; 4]; 0x100],
 }
 
 pub fn load(config: &Config) -> Level {
     use std::fs::File;
-    use std::io::{Seek, SeekFrom};
+    use std::io::{BufReader, Read, Seek, SeekFrom};
 
     let size = (config.size.0.as_value(), config.size.1.as_value());
 
     info!("Loading vpr...");
     let flood = {
-        let mut vpr = File::open(&config.path_vpr).unwrap();
+        let vpr_file = File::open(&config.path_vpr).unwrap();
         let flood_size = size.1 >> config.section.as_power();
         let geo_pow = config.geo.as_power();
         let net_size = size.0 * size.1 >> (2 * geo_pow);
         let flood_offset = (2*4 + (1 + 4 + 4)*4 + 2*net_size + 2*geo_pow*4 + 2*flood_size*geo_pow*4) as u64;
         let expected_file_size = flood_offset + (flood_size*4) as u64;
-        assert_eq!(vpr.metadata().unwrap().len(), expected_file_size as u64);
+        assert_eq!(vpr_file.metadata().unwrap().len(), expected_file_size as u64);
+        let mut vpr = BufReader::new(vpr_file);
         vpr.seek(SeekFrom::Start(flood_offset)).unwrap();
         (0..flood_size).map(|_|
             vpr.read_u32::<E>().unwrap()
@@ -50,7 +53,6 @@ pub fn load(config: &Config) -> Level {
     
     info!("Loading vmc...");
     let (height, meta) = {
-        use std::io::BufReader;
         use progressive::progress;
 
         let mut vpc = BufReader::new(File::open(&config.path_vmc).unwrap());
@@ -79,11 +81,22 @@ pub fn load(config: &Config) -> Level {
         (height, meta)
     };
 
+    info!("Loading palette...");
+    let pal = {
+        let mut pal_file = BufReader::new(File::open(&config.path_palette).unwrap());
+        let mut pal = [[0; 4]; 0x100];
+        for p in pal.iter_mut() {
+            pal_file.read(&mut p[..3]).unwrap();
+        }
+        pal
+    };
+
     info!("Done.");
     Level {
         size: size,
         flood_map: flood,
         height: height,
         meta: meta,
+        palette: pal,
     }
 }
