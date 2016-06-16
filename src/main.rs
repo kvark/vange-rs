@@ -12,6 +12,7 @@ extern crate rustc_serialize;
 extern crate ini;
 extern crate toml;
 
+mod config;
 mod level;
 mod render;
 mod splay;
@@ -37,41 +38,24 @@ impl Camera {
     }
 }
 
-#[derive(RustcDecodable)]
-struct WindowSettings {
-    title: String,
-    size: [u32; 2],
-}
-
-#[derive(RustcDecodable)]
-struct Settings {
-    game_path: String,
-    level: String,
-    window: WindowSettings,
-}
-
-use level::Power;
 
 fn main() {
     env_logger::init().unwrap();
-    info!("Loading the settings");
 
-    let settings: Settings = {
-        use std::io::{BufReader, Read};
-        use std::fs::File;
-        let mut string = String::new();
-        BufReader::new(File::open("config/settings.toml").unwrap())
-            .read_to_string(&mut string).unwrap();
-        toml::decode_str(&string).unwrap()
-    };
+    info!("Loading the settings");
+    let settings = config::Settings::load("config/settings.toml");
+    info!("Loading world parameters");
+    let config = settings.get_level();
 
     info!("Creating the window with GL context");
     let builder = glutin::WindowBuilder::new()
-        .with_title(settings.window.title)
+        .with_title(settings.window.title.clone())
         .with_dimensions(settings.window.size[0], settings.window.size[1])
         .with_vsync();
     let (window, mut device, mut factory, main_color, _main_depth) =
         gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(builder);
+
+    let lev = level::load(&config);
 
     let mut cam = Camera {
         loc: cgmath::vec3(0.0, 0.0, 200.0),
@@ -83,31 +67,6 @@ fn main() {
             far: 100000.0,
         },
     };
-
-    let config = {
-        info!("Loading world parameters");
-        let ini_path = format!("{}/thechain/{}/world.ini", settings.game_path, settings.level);
-        let ini = ini::Ini::load_from_file(&ini_path).unwrap();
-        let global = &ini["Global Parameters"];
-        let storage = &ini["Storage"];
-        let biname = &storage["File Name"];
-        level::Config {
-            path_vpr: format!("{}/thechain/{}/{}.vpr", settings.game_path, settings.level, biname),
-            path_vmc: format!("{}/thechain/{}/{}.vmc", settings.game_path, settings.level, biname),
-            path_palette: format!("{}/thechain/{}/{}", settings.game_path, settings.level, storage["Palette File"]),
-            is_compressed: storage["Compressed Format Using"] != "0",
-            name: settings.level,
-            size: (
-                Power(global["Map Power X"].parse().unwrap()),
-                Power(global["Map Power Y"].parse().unwrap())
-            ),
-            geo: Power(global["GeoNet Power"].parse().unwrap()),
-            section: Power(global["Section Size Power"].parse().unwrap()),
-            min_square: Power(global["Minimal Square Power"].parse().unwrap()),
-        }
-    };
-    let lev = level::load(&config);
-
     let mut encoder: gfx::Encoder<_, _> = factory.create_command_buffer().into();
     let mut render = render::init(&mut factory, main_color, lev.size, &lev.height, &lev.meta, &lev.palette);
 

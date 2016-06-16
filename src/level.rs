@@ -1,6 +1,8 @@
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use splay::Splay;
 
+pub const NUM_TERRAINS: usize = 8;
+
 pub struct Power(pub i32);
 impl Power {
     fn as_value(&self) -> i32 {
@@ -11,7 +13,14 @@ impl Power {
     }
 }
 
-pub struct Config {
+#[derive(Clone, Copy)]
+pub struct TerrainConfig {
+    pub shadow_offset: u8,
+    pub height_shift: u8,
+    pub color_range: (u8, u8),
+}
+
+pub struct LevelConfig {
     pub name: String,
     pub path_palette: String,
     pub path_vpr: String,
@@ -21,6 +30,7 @@ pub struct Config {
     pub geo: Power,
     pub section: Power,
     pub min_square: Power,
+    pub terrains: [TerrainConfig; NUM_TERRAINS],
 }
 
 pub struct Level {
@@ -31,10 +41,11 @@ pub struct Level {
     pub palette: [[u8; 4]; 0x100],
 }
 
-pub fn load(config: &Config) -> Level {
+pub fn load(config: &LevelConfig) -> Level {
     use std::fs::File;
     use std::io::{BufReader, Read, Seek, SeekFrom};
 
+    assert!(config.is_compressed);
     let size = (config.size.0.as_value(), config.size.1.as_value());
 
     info!("Loading vpr...");
