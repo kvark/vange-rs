@@ -16,9 +16,11 @@ pub struct Config {
     pub path_palette: String,
     pub path_vpr: String,
     pub path_vmc: String,
+    pub is_compressed: bool,
     pub size: (Power, Power),
     pub geo: Power,
     pub section: Power,
+    pub min_square: Power,
 }
 
 pub struct Level {

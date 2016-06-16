@@ -9,6 +9,7 @@ extern crate glutin;
 extern crate log;
 extern crate progressive;
 extern crate rustc_serialize;
+extern crate ini;
 extern crate toml;
 
 mod level;
@@ -83,14 +84,27 @@ fn main() {
         },
     };
 
-    let config = level::Config {
-        path_vpr: format!("{}/thechain/{}/output.vpr", settings.game_path, settings.level),
-        path_vmc: format!("{}/thechain/{}/output.vmc", settings.game_path, settings.level),
-        path_palette: format!("{}/thechain/{}/harmony.pal", settings.game_path, settings.level),
-        name: settings.level,
-        size: (Power(11), Power(14)),
-        geo: Power(5),
-        section: Power(7),
+    let config = {
+        info!("Loading world parameters");
+        let ini_path = format!("{}/thechain/{}/world.ini", settings.game_path, settings.level);
+        let ini = ini::Ini::load_from_file(&ini_path).unwrap();
+        let global = &ini["Global Parameters"];
+        let storage = &ini["Storage"];
+        let biname = &storage["File Name"];
+        level::Config {
+            path_vpr: format!("{}/thechain/{}/{}.vpr", settings.game_path, settings.level, biname),
+            path_vmc: format!("{}/thechain/{}/{}.vmc", settings.game_path, settings.level, biname),
+            path_palette: format!("{}/thechain/{}/{}", settings.game_path, settings.level, storage["Palette File"]),
+            is_compressed: storage["Compressed Format Using"] != "0",
+            name: settings.level,
+            size: (
+                Power(global["Map Power X"].parse().unwrap()),
+                Power(global["Map Power Y"].parse().unwrap())
+            ),
+            geo: Power(global["GeoNet Power"].parse().unwrap()),
+            section: Power(global["Section Size Power"].parse().unwrap()),
+            min_square: Power(global["Minimal Square Power"].parse().unwrap()),
+        }
     };
     let lev = level::load(&config);
 
