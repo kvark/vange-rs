@@ -1,4 +1,5 @@
 use gfx;
+use level::{Level, NUM_TERRAINS};
 use Camera;
 
 const TEX_HEIGHT: i32 = 4096;
@@ -56,8 +57,7 @@ fn load_pso<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F)
 
 pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             main_color: gfx::handle::RenderTargetView<R, ColorFormat>,
-            size: (i32, i32), height_data: &[u8], meta_data: &[u8], pal_data: &[[u8; 4]])
-            -> Render<R>
+            level: &Level) -> Render<R>
 {
     use gfx::traits::FactoryExt;
     use gfx::{format, tex};
@@ -73,12 +73,13 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
     let indices: &[u16] = &[0,1,2, 0,2,3, 0,3,4, 0,4,1];
     let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
 
-    let kind = tex::Kind::D2Array(size.0 as tex::Size, TEX_HEIGHT as tex::Size, (size.1/TEX_HEIGHT) as tex::Size, tex::AaMode::Single);
-    let height_chunks: Vec<_> = height_data.chunks((size.0 * TEX_HEIGHT) as usize).collect();
-    let meta_chunks: Vec<_> = meta_data.chunks((size.0 * TEX_HEIGHT) as usize).collect();
+    let kind = tex::Kind::D2Array(level.size.0 as tex::Size, TEX_HEIGHT as tex::Size,
+        (level.size.1/TEX_HEIGHT) as tex::Size, tex::AaMode::Single);
+    let height_chunks: Vec<_> = level.height.chunks((level.size.0 * TEX_HEIGHT) as usize).collect();
+    let meta_chunks: Vec<_> = level.meta.chunks((level.size.0 * TEX_HEIGHT) as usize).collect();
     let (_, height) = factory.create_texture_const::<(format::R8, format::Unorm)>(kind, &height_chunks).unwrap();
     let (_, meta) = factory.create_texture_const::<(format::R8, format::Uint)>(kind, &meta_chunks).unwrap();
-    let (_, pal) = factory.create_texture_const::<format::Rgba8>(tex::Kind::D1(0x100), &[pal_data]).unwrap();
+    let (_, pal) = factory.create_texture_const::<format::Rgba8>(tex::Kind::D1(0x100), &[&level.palette]).unwrap();
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale, tex::WrapMode::Tile));
         //tex::FilterMethod::Anisotropic(4), tex::WrapMode::Tile));

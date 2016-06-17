@@ -68,7 +68,7 @@ fn main() {
         },
     };
     let mut encoder: gfx::Encoder<_, _> = factory.create_command_buffer().into();
-    let mut render = render::init(&mut factory, main_color, lev.size, &lev.height, &lev.meta, &lev.palette);
+    let mut render = render::init(&mut factory, main_color, &lev);
 
     'main: loop {
         use gfx::Device;
