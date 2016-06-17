@@ -39,6 +39,7 @@ pub struct Level {
     pub height: Vec<u8>,
     pub meta: Vec<u8>,
     pub palette: [[u8; 4]; 0x100],
+    pub terrains: [TerrainConfig; NUM_TERRAINS],
 }
 
 pub fn load(config: &LevelConfig) -> Level {
@@ -111,5 +112,6 @@ pub fn load(config: &LevelConfig) -> Level {
         height: height,
         meta: meta,
         palette: pal,
+        terrains: config.terrains,
     }
 }
