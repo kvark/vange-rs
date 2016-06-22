@@ -14,6 +14,7 @@ extern crate toml;
 
 mod config;
 mod level;
+mod model;
 mod render;
 mod splay;
 
