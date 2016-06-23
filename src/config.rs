@@ -25,6 +25,10 @@ impl Settings {
         toml::decode_str(&string).unwrap()
     }
 
+    pub fn get_screen_aspect(&self) -> f32 {
+        self.window.size[0] as f32 / self.window.size[1] as f32
+    }
+
     pub fn get_level(&self) -> level::LevelConfig {
         use ini::Ini;
         let ini_path = format!("{}/thechain/{}/world.ini", self.game_path, self.level);
@@ -65,6 +69,5 @@ impl Settings {
             min_square: level::Power(global["Minimal Square Power"].parse().unwrap()),
             terrains: terrains,
         }
-
     }
 }

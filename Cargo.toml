@@ -7,6 +7,7 @@ authors = ["dmalyshau"]
 byteorder = "0.5"
 cgmath = "0.10"
 env_logger = "0.3"
+getopts = "0.2"
 gfx = "0.11"
 gfx_window_glutin = "0.11"
 glutin = "0.5"
