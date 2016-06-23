@@ -21,21 +21,39 @@ pub type ColorFormat = gfx::format::Rgba8;
 pub type DepthFormat = gfx::format::DepthStencil;
 
 gfx_defines!{
-    vertex Vertex {
+    vertex TerrainVertex {
         pos: [i8; 4] = "a_Pos",
     }
 
-    constant Locals {
-        cam_pos: [f32; 4] = "u_CamPose",
+    constant TerrainLocals {
+        cam_pos: [f32; 4] = "u_CamPos",
         m_vp: [[f32; 4]; 4] = "u_ViewProj",
         m_inv_vp: [[f32; 4]; 4] = "u_InvViewProj",
     }
 
     pipeline terrain {
-        vbuf: gfx::VertexBuffer<Vertex> = (),
-        locals: gfx::ConstantBuffer<Locals> = "c_Locals",
+        vbuf: gfx::VertexBuffer<TerrainVertex> = (),
+        locals: gfx::ConstantBuffer<TerrainLocals> = "c_Locals",
         height: gfx::TextureSampler<f32> = "t_Height",
         meta: gfx::TextureSampler<u32> = "t_Meta",
+        palette: gfx::TextureSampler<[f32; 4]> = "t_Palette",
+        table: gfx::TextureSampler<f32> = "t_Table",
+        out: gfx::RenderTarget<ColorFormat> = "Target0",
+    }
+
+    vertex ObjectVertex {
+        pos: [f32; 4] = "a_Pos",
+        color: [u32; 2] = "a_Color",
+        normal: [gfx::format::I8Norm; 4] = "a_Normal",
+    }
+
+    constant ObjectLocals {
+        m_mvp: [[f32; 4]; 4] = "u_ModelViewProj",
+    }
+
+    pipeline object {
+        vbuf: gfx::VertexBuffer<ObjectVertex> = (),
+        locals: gfx::ConstantBuffer<ObjectLocals> = "c_Locals",
         palette: gfx::TextureSampler<[f32; 4]> = "t_Palette",
         table: gfx::TextureSampler<f32> = "t_Table",
         out: gfx::RenderTarget<ColorFormat> = "Target0",
@@ -78,11 +96,11 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
 
     let pso = load_pso(factory);
     let vertices = [
-        Vertex{ pos: [0,0,0,1] },
-        Vertex{ pos: [-1,0,0,0] },
-        Vertex{ pos: [0,-1,0,0] },
-        Vertex{ pos: [1,0,0,0] },
-        Vertex{ pos: [0,1,0,0] },
+        TerrainVertex{ pos: [0,0,0,1] },
+        TerrainVertex{ pos: [-1,0,0,0] },
+        TerrainVertex{ pos: [0,-1,0,0] },
+        TerrainVertex{ pos: [1,0,0,0] },
+        TerrainVertex{ pos: [0,1,0,0] },
     ];
     let indices: &[u16] = &[0,1,2, 0,2,3, 0,3,4, 0,4,1];
     let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
@@ -155,7 +173,7 @@ impl<R: gfx::Resources> Render<R> {
         use cgmath::SquareMatrix;
         let mx_vp = cam.get_view_proj();
         let cpos: [f32; 3] = cam.loc.into();
-        let locals = Locals {
+        let locals = TerrainLocals {
             cam_pos: [cpos[0], cpos[1], cpos[2], 1.0],
             m_vp: mx_vp.into(),
             m_inv_vp: mx_vp.invert().unwrap().into(),

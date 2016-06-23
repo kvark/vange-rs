@@ -2,15 +2,10 @@ use std::io::{Read};
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use gfx;
 use gfx::format::I8Norm;
+use render::ObjectVertex as Vertex;
 
 
 const SCALE: f32 = 1.0 / 256.0;
-
-gfx_vertex_struct!( Vertex {
-    pos: [f32; 4] = "a_Pos",
-    color: [u32; 2] = "a_Color",
-    normal: [I8Norm; 4] = "a_Normal",
-});
 
 pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F)
                 -> (gfx::handle::Buffer<R, Vertex>, gfx::Slice<R>) where
