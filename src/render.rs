@@ -1,4 +1,5 @@
 use gfx;
+use gfx::traits::FactoryExt;
 use level::{Level, NUM_TERRAINS};
 use Camera;
 
@@ -55,13 +56,13 @@ gfx_defines!{
         vbuf: gfx::VertexBuffer<ObjectVertex> = (),
         locals: gfx::ConstantBuffer<ObjectLocals> = "c_Locals",
         palette: gfx::TextureSampler<[f32; 4]> = "t_Palette",
-        table: gfx::TextureSampler<f32> = "t_Table",
         out: gfx::RenderTarget<ColorFormat> = "Target0",
     }
 }
 
 pub struct Render<R: gfx::Resources> {
     terrain: gfx::Bundle<R, terrain::Data<R>>,
+    object_pso: gfx::PipelineState<R, object::Meta>,
 }
 
 fn read(name: &str) -> Vec<u8> {
@@ -73,37 +74,11 @@ fn read(name: &str) -> Vec<u8> {
     buf
 }
 
-fn load_pso<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F)
-    -> gfx::PipelineState<R, terrain::Meta> {
-    use gfx::traits::FactoryExt;
-    let program = factory.link_program(
-        &read("data/shader/terrain.vert"),
-        &read("data/shader/terrain.frag"),
-        ).unwrap();
-    factory.create_pipeline_from_program(
-        &program, gfx::Primitive::TriangleList,
-        gfx::state::Rasterizer::new_fill(),
-        terrain::new()
-    ).unwrap()
-}
-
 pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             main_color: gfx::handle::RenderTargetView<R, ColorFormat>,
             level: &Level) -> Render<R>
 {
-    use gfx::traits::FactoryExt;
     use gfx::{format, tex};
-
-    let pso = load_pso(factory);
-    let vertices = [
-        TerrainVertex{ pos: [0,0,0,1] },
-        TerrainVertex{ pos: [-1,0,0,0] },
-        TerrainVertex{ pos: [0,-1,0,0] },
-        TerrainVertex{ pos: [1,0,0,0] },
-        TerrainVertex{ pos: [0,1,0,0] },
-    ];
-    let indices: &[u16] = &[0,1,2, 0,2,3, 0,3,4, 0,4,1];
-    let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
 
     let mut light_clr_material = [[0; 0x200]; NUM_MATERIALS];
     {
@@ -154,17 +129,30 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
     let sm_table = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Bilinear, tex::WrapMode::Clamp));
 
-    let data = terrain::Data {
-        vbuf: vbuf,
-        locals: factory.create_constant_buffer(1),
-        height: (height, sm_height),
-        meta: (meta, sm_meta),
-        palette: (pal, sm_pal),
-        table: (table, sm_table),
-        out: main_color,
-    };
     Render {
-        terrain: gfx::Bundle::new(slice, pso, data),
+        terrain: {
+            let pso = Render::create_terrain_pso(factory);
+            let vertices = [
+                TerrainVertex{ pos: [0,0,0,1] },
+                TerrainVertex{ pos: [-1,0,0,0] },
+                TerrainVertex{ pos: [0,-1,0,0] },
+                TerrainVertex{ pos: [1,0,0,0] },
+                TerrainVertex{ pos: [0,1,0,0] },
+            ];
+            let indices: &[u16] = &[0,1,2, 0,2,3, 0,3,4, 0,4,1];
+            let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
+            let data = terrain::Data {
+                vbuf: vbuf,
+                locals: factory.create_constant_buffer(1),
+                height: (height, sm_height),
+                meta: (meta, sm_meta),
+                palette: (pal, sm_pal),
+                table: (table, sm_table),
+                out: main_color,
+            };
+            gfx::Bundle::new(slice, pso, data)
+        },
+        object_pso: Render::create_object_pso(factory),
     }
 }
 
@@ -182,8 +170,33 @@ impl<R: gfx::Resources> Render<R> {
         encoder.clear(&self.terrain.data.out, [0.1,0.2,0.3,1.0]);
         self.terrain.encode(encoder);
     }
+
+    fn create_terrain_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, terrain::Meta> {
+        let program = factory.link_program(
+            &read("data/shader/terrain.vert"),
+            &read("data/shader/terrain.frag"),
+            ).unwrap();
+        factory.create_pipeline_from_program(
+            &program, gfx::Primitive::TriangleList,
+            gfx::state::Rasterizer::new_fill(),
+            terrain::new()
+        ).unwrap()
+    }
+    fn create_object_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, object::Meta> {
+        let program = factory.link_program(
+            &read("data/shader/object.vert"),
+            &read("data/shader/object.frag"),
+            ).unwrap();
+        factory.create_pipeline_from_program(
+            &program, gfx::Primitive::TriangleList,
+            gfx::state::Rasterizer::new_fill().with_cull_back(),
+            object::new()
+        ).unwrap()
+    }
+
     pub fn reload<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
         info!("Reloading shaders");
-        self.terrain.pso = load_pso(factory);
+        self.terrain.pso = Render::create_terrain_pso(factory);
+        self.object_pso  = Render::create_object_pso(factory);
     }
 }
