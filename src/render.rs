@@ -1,7 +1,8 @@
 use gfx;
 use gfx::traits::FactoryExt;
+use app::Camera;
 use level::{Level, NUM_TERRAINS};
-use Camera;
+
 
 struct MaterialParams {
     dx: f32,
