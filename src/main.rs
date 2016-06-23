@@ -150,6 +150,23 @@ impl<R: gfx::Resources> ObjectViewApp<R> {
     }
 }
 
+impl<R: gfx::Resources> App<R> for ObjectViewApp<R> {
+    fn on_event<F: gfx::Factory<R>>(&mut self, event: Event, factory: &mut F) -> bool {
+        use glutin::VirtualKeyCode as Key;
+        match event {
+            Event::KeyboardInput(_, _, Some(Key::Escape)) |
+            Event::Closed => return false,
+            _ => {}, //TODO
+        }
+        true
+    }
+    fn on_frame<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
+        enc.clear(&self.bundle.data.out, [0.1, 0.2, 0.3, 1.0]);
+        self.bundle.encode(enc);
+    }
+
+}
+
 
 fn main() {
     use std::env;
@@ -181,8 +198,10 @@ fn main() {
         return;
     }
 
-    //let app = match matches.opt_str("v") {}
-    let mut app = Box::new(GameApp::new(&settings, main_color, &mut factory));
+    let mut app = match matches.opt_str("v") {
+        //Some(path) => Box::new(ObjectViewApp::new(&path, &settings, main_color, &mut factory)),
+        _ => Box::new(GameApp::new(&settings, main_color, &mut factory)),
+    };
 
     let mut encoder: gfx::Encoder<_, _> = factory.create_command_buffer().into();
     'main: loop {
