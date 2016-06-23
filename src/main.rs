@@ -109,6 +109,48 @@ impl<R: gfx::Resources> App<R> for GameApp<R> {
 }
 
 
+struct ObjectViewApp<R: gfx::Resources> {
+    bundle: gfx::Bundle<R, render::object::Data<R>>,
+    cam: Camera,
+}
+
+impl<R: gfx::Resources> ObjectViewApp<R> {
+    fn new<F: gfx::Factory<R>>(path: &str, settings: &config::Settings,
+           output: gfx::handle::RenderTargetView<R, render::ColorFormat>,
+           factory: &mut F) -> ObjectViewApp<R>
+    {
+        use std::io::BufReader;
+        use std::fs::File;
+        use gfx::traits::FactoryExt;
+
+        let pal_data = level::load_palette(&settings.get_object_palette_path());
+
+        let mut file = BufReader::new(File::open(path).unwrap());
+        let (vbuf, slice) = model::load_c3d(&mut file, factory);
+        let pso = render::Render::create_object_pso(factory);
+        let data = render::object::Data {
+            vbuf: vbuf,
+            locals: factory.create_constant_buffer(1),
+            palette: render::Render::create_palette(&pal_data, factory),
+            out: output,
+        };
+        ObjectViewApp {
+            bundle: gfx::Bundle::new(slice, pso, data),
+            cam: Camera {
+                loc: cgmath::vec3(0.0, -100.0, 50.0),
+                rot: cgmath::Quaternion::new(0.0, 1.0, 0.0, 0.0),
+                proj: cgmath::PerspectiveFov {
+                    fovy: cgmath::deg(45.0).into(),
+                    aspect: settings.get_screen_aspect(),
+                    near: 1.0,
+                    far: 300.0,
+                },
+            },
+        }
+    }
+}
+
+
 fn main() {
     use std::env;
     env_logger::init().unwrap();

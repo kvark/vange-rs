@@ -29,6 +29,10 @@ impl Settings {
         self.window.size[0] as f32 / self.window.size[1] as f32
     }
 
+    pub fn get_object_palette_path(&self) -> String {
+        format!("{}/resource/pal/object.pal", self.game_path)
+    }
+
     pub fn get_level(&self) -> level::LevelConfig {
         use ini::Ini;
         let ini_path = format!("{}/thechain/{}/world.ini", self.game_path, self.level);

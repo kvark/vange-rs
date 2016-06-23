@@ -42,9 +42,22 @@ pub struct Level {
     pub terrains: [TerrainConfig; NUM_TERRAINS],
 }
 
+pub fn load_palette(path: &str) -> [[u8; 4]; 0x100] {
+    use std::fs::File;
+    use std::io::{BufReader, Read};
+
+    info!("Loading palette {}...", path);
+    let mut file = BufReader::new(File::open(path).unwrap());
+    let mut data = [[0; 4]; 0x100];
+    for p in data.iter_mut() {
+        file.read(&mut p[..3]).unwrap();
+    }
+    data
+}
+
 pub fn load(config: &LevelConfig) -> Level {
     use std::fs::File;
-    use std::io::{BufReader, Read, Seek, SeekFrom};
+    use std::io::{BufReader, Seek, SeekFrom};
 
     assert!(config.is_compressed);
     let size = (config.size.0.as_value(), config.size.1.as_value());
@@ -95,23 +108,12 @@ pub fn load(config: &LevelConfig) -> Level {
         (height, meta)
     };
 
-    info!("Loading palette...");
-    let pal = {
-        let mut pal_file = BufReader::new(File::open(&config.path_palette).unwrap());
-        let mut pal = [[0; 4]; 0x100];
-        for p in pal.iter_mut() {
-            pal_file.read(&mut p[..3]).unwrap();
-        }
-        pal
-    };
-
-    info!("Done.");
     Level {
         size: size,
         flood_map: flood,
         height: height,
         meta: meta,
-        palette: pal,
+        palette: load_palette(&config.path_palette),
         terrains: config.terrains,
     }
 }

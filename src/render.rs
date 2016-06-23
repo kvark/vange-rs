@@ -117,15 +117,12 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
     let table_chunks: Vec<_> = color_table.iter().map(|t| &t[..]).collect();
     let (_, height) = factory.create_texture_const::<(format::R8, format::Unorm)>(kind, &height_chunks).unwrap();
     let (_, meta)   = factory.create_texture_const::<(format::R8, format::Uint)>(kind, &meta_chunks).unwrap();
-    let (_, pal)    = factory.create_texture_const::<format::Rgba8>(tex::Kind::D1(0x100), &[&level.palette]).unwrap();
     let (_, table)  = factory.create_texture_const::<(format::R8, format::Unorm)>(table_kind, &table_chunks).unwrap();
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale, tex::WrapMode::Tile));
         //tex::FilterMethod::Anisotropic(4), tex::WrapMode::Tile));
     let sm_meta = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale, tex::WrapMode::Tile));
-    let sm_pal = factory.create_sampler(tex::SamplerInfo::new(
-        tex::FilterMethod::Bilinear, tex::WrapMode::Clamp));
     let sm_table = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Bilinear, tex::WrapMode::Clamp));
 
@@ -146,7 +143,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
                 locals: factory.create_constant_buffer(1),
                 height: (height, sm_height),
                 meta: (meta, sm_meta),
-                palette: (pal, sm_pal),
+                palette: Render::create_palette(&level.palette, factory),
                 table: (table, sm_table),
                 out: main_color,
             };
@@ -171,6 +168,16 @@ impl<R: gfx::Resources> Render<R> {
         self.terrain.encode(encoder);
     }
 
+    pub fn create_palette<F: gfx::Factory<R>>(data: &[[u8; 4]], factory: &mut F)
+                          -> (gfx::handle::ShaderResourceView<R, [f32; 4]>, gfx::handle::Sampler<R>)
+    {
+        use gfx::tex;
+        let (_, view) = factory.create_texture_const::<gfx::format::Rgba8>(tex::Kind::D1(0x100), &[data]).unwrap();
+        let sampler = factory.create_sampler(tex::SamplerInfo::new(
+            tex::FilterMethod::Bilinear, tex::WrapMode::Clamp));
+        (view, sampler)
+    }
+
     fn create_terrain_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, terrain::Meta> {
         let program = factory.link_program(
             &read("data/shader/terrain.vert"),
@@ -182,7 +189,8 @@ impl<R: gfx::Resources> Render<R> {
             terrain::new()
         ).unwrap()
     }
-    fn create_object_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, object::Meta> {
+
+    pub fn create_object_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, object::Meta> {
         let program = factory.link_program(
             &read("data/shader/object.vert"),
             &read("data/shader/object.frag"),
