@@ -121,11 +121,11 @@ impl<R: gfx::Resources> ModelView<R> {
                factory: &mut F) -> ModelView<R>
     {
         use std::io::BufReader;
-        use std::fs::File;
         use gfx::traits::FactoryExt;
 
         let pal_data = level::load_palette(&settings.get_object_palette_path());
-        let mut file = BufReader::new(File::open(path).unwrap());
+        info!("Loading model {}", path);
+        let mut file = BufReader::new(settings.open(path));
         let model = model::load_m3d(&mut file, factory);
         let data = render::object::Data {
             vbuf: model.body.buffer.clone(),

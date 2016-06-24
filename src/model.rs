@@ -43,23 +43,23 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     let _total_verts  = source.read_u32::<E>().unwrap();
 
     let coord_max  = [
-        source.read_u32::<E>().unwrap() as f32 * SCALE,
-        source.read_u32::<E>().unwrap() as f32 * SCALE,
-        source.read_u32::<E>().unwrap() as f32 * SCALE,
+        source.read_i32::<E>().unwrap() as f32 * SCALE,
+        source.read_i32::<E>().unwrap() as f32 * SCALE,
+        source.read_i32::<E>().unwrap() as f32 * SCALE,
     ];
     let coord_min  = [
-        source.read_u32::<E>().unwrap() as f32 * SCALE,
-        source.read_u32::<E>().unwrap() as f32 * SCALE,
-        source.read_u32::<E>().unwrap() as f32 * SCALE,
+        source.read_i32::<E>().unwrap() as f32 * SCALE,
+        source.read_i32::<E>().unwrap() as f32 * SCALE,
+        source.read_i32::<E>().unwrap() as f32 * SCALE,
     ];
     let _parent_off = [
-        source.read_u32::<E>().unwrap(),
-        source.read_u32::<E>().unwrap(),
-        source.read_u32::<E>().unwrap(),
+        source.read_i32::<E>().unwrap(),
+        source.read_i32::<E>().unwrap(),
+        source.read_i32::<E>().unwrap(),
     ];
     let _max_radius = source.read_u32::<E>().unwrap();
     let _parent_rot = [source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap()];
-    let _extras    = [source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap()];
+    source.by_ref().bytes().nth(8 * (1 + 3 + 9)-1).unwrap().unwrap();
 
     info!("\tReading {} positions...", num_positions);
     let mut positions = Vec::with_capacity(num_positions as usize);
@@ -84,14 +84,15 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
 
     info!("\tReading {} polygons...", num_polygons);
     let mut vertices = Vec::with_capacity(num_polygons as usize * 3);
-    for _ in 0 .. num_polygons {
+    for i in 0 .. num_polygons {
         let num_corners = source.read_u32::<E>().unwrap();
         assert_eq!(num_corners, 3);
         let _sort_info = source.read_u32::<E>().unwrap();
         let color = [source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap()];
-        let mut dummy = [0, 8];
-        source.read(&mut dummy[..8]).unwrap(); //skip flat normal
+        let mut dummy = [0; 4];
+        source.read(&mut dummy[..4]).unwrap(); //skip flat normal
         source.read(&mut dummy[..3]).unwrap(); //skip middle point
+        //if i == 631 { source.read_u8().unwrap(); } //wtf?
         for _ in 0..3 {
             let pid = source.read_u32::<E>().unwrap();
             let nid = source.read_u32::<E>().unwrap();

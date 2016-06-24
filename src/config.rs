@@ -1,3 +1,4 @@
+use std::fs::File;
 use level;
 
 #[derive(RustcDecodable)]
@@ -20,14 +21,18 @@ pub struct Settings {
 
 impl Settings {
     pub fn load(path: &str) -> Settings {
-        use std::io::{BufReader, Read};
-        use std::fs::File;
+        use std::io::Read;
         use toml;
 
         let mut string = String::new();
-        BufReader::new(File::open(path).unwrap())
+        File::open(path).unwrap()
             .read_to_string(&mut string).unwrap();
         toml::decode_str(&string).unwrap()
+    }
+
+    pub fn open(&self, path: &str) -> File {
+        let full = format!("{}/{}", self.data_path, path);
+        File::open(full).unwrap()
     }
 
     pub fn get_screen_aspect(&self) -> f32 {
@@ -35,7 +40,7 @@ impl Settings {
     }
 
     pub fn get_object_palette_path(&self) -> String {
-        format!("{}/resource/pal/object.pal", self.data_path)
+        format!("{}/resource/pal/objects.pal", self.data_path)
     }
 
     pub fn get_level(&self) -> level::LevelConfig {
