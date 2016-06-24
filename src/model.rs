@@ -12,6 +12,24 @@ pub struct Mesh<R: gfx::Resources> {
     pub buffer: gfx::handle::Buffer<R, ObjectVertex>,
 }
 
+pub struct Wheel<R: gfx::Resources> {
+    pub mesh: Option<Mesh<R>>,
+    pub steering: u32,
+    pub width: f32,
+    pub radius: f32,
+}
+
+pub struct Debrie<R: gfx::Resources> {
+    pub mesh: Mesh<R>,
+}
+
+pub struct Model<R: gfx::Resources> {
+    pub body: Mesh<R>,
+    pub color: [u32; 2],
+    pub wheels: Vec<Wheel<R>>,
+    pub debris: Vec<Debrie<R>>,
+}
+
 pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     I: ReadBytesExt,
     R: gfx::Resources,
@@ -35,9 +53,9 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
         source.read_u32::<E>().unwrap() as f32 * SCALE,
     ];
     let _parent_off = [
-        source.read_u32::<E>().unwrap() as f32 * SCALE,
-        source.read_u32::<E>().unwrap() as f32 * SCALE,
-        source.read_u32::<E>().unwrap() as f32 * SCALE,
+        source.read_u32::<E>().unwrap(),
+        source.read_u32::<E>().unwrap(),
+        source.read_u32::<E>().unwrap(),
     ];
     let _max_radius = source.read_u32::<E>().unwrap();
     let _parent_rot = [source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap()];
@@ -102,4 +120,58 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
         slice: slice,
         buffer: vbuf,
     }
+}
+
+fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
+    I: ReadBytesExt,
+    R: gfx::Resources,
+    F: gfx::traits::FactoryExt<R>,
+{
+    info!("\tReading the body...");
+    let mut model = Model {
+        body: load_c3d(source, factory),
+        color: [0, 0],
+        wheels: Vec::new(),
+        debris: Vec::new(),
+    };
+    let _bounds = [
+        source.read_u32::<E>().unwrap(),
+        source.read_u32::<E>().unwrap(),
+        source.read_u32::<E>().unwrap(),
+    ];
+    let _max_radius = source.read_u32::<E>().unwrap();
+    let num_wheels = source.read_u32::<E>().unwrap();
+    let num_debris = source.read_u32::<E>().unwrap();
+    model.color = [source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap()];
+    model.wheels.reserve_exact(num_wheels as usize);
+    model.debris.reserve_exact(num_debris as usize);
+
+    info!("\tReading wheels...");
+    for _ in 0 .. num_wheels {
+        let steering = source.read_u32::<E>().unwrap();
+        source.by_ref().bytes().nth(3*8).unwrap().unwrap();
+        let width = source.read_u32::<E>().unwrap() as f32 * SCALE;
+        let radius = source.read_u32::<E>().unwrap() as f32 * SCALE;
+        let _bound_index = source.read_u32::<E>().unwrap();
+        model.wheels.push(Wheel {
+            mesh: if steering != 0 {
+                Some(load_c3d(source, factory))
+            } else {None},
+            steering: steering,
+            width: width,
+            radius: radius,
+        })
+    }
+
+    info!("\tReading debris...");
+    for _ in 0 .. num_debris {
+        let mesh = load_c3d(source, factory);
+        let _phys_bound = load_c3d(source, factory);
+        model.debris.push(Debrie {
+            mesh: mesh,
+        })
+    }
+
+    //let _phys_bound = load_c3d(source, factory);
+    model
 }
