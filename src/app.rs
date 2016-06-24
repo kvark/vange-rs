@@ -1,7 +1,7 @@
 use cgmath;
 use glutin::Event;
 use gfx;
-use {level, render};
+use {level, model, render};
 use config::Settings;
 
 
@@ -108,34 +108,36 @@ impl<R: gfx::Resources> App<R> for Game<R> {
 }
 
 
-pub struct ObjectView<R: gfx::Resources> {
-    bundle: gfx::Bundle<R, render::object::Data<R>>,
+pub struct ModelView<R: gfx::Resources> {
+    model: model::Model<R>,
+    pso: gfx::PipelineState<R, render::object::Meta>,
+    data: render::object::Data<R>,
     cam: Camera,
 }
 
-impl<R: gfx::Resources> ObjectView<R> {
+impl<R: gfx::Resources> ModelView<R> {
     pub fn new<F: gfx::Factory<R>>(path: &str, settings: &Settings,
                output: gfx::handle::RenderTargetView<R, render::ColorFormat>,
-               factory: &mut F) -> ObjectView<R>
+               factory: &mut F) -> ModelView<R>
     {
         use std::io::BufReader;
         use std::fs::File;
         use gfx::traits::FactoryExt;
-        use model;
 
         let pal_data = level::load_palette(&settings.get_object_palette_path());
-
         let mut file = BufReader::new(File::open(path).unwrap());
-        let mesh = model::load_c3d(&mut file, factory);
-        let pso = render::Render::create_object_pso(factory);
+        let model = model::load_m3d(&mut file, factory);
         let data = render::object::Data {
-            vbuf: mesh.buffer,
+            vbuf: model.body.buffer.clone(),
             locals: factory.create_constant_buffer(1),
             palette: render::Render::create_palette(&pal_data, factory),
             out: output,
         };
-        ObjectView {
-            bundle: gfx::Bundle::new(mesh.slice, pso, data),
+
+        ModelView {
+            model: model,
+            pso: render::Render::create_object_pso(factory),
+            data: data,
             cam: Camera {
                 loc: cgmath::vec3(0.0, -100.0, 50.0),
                 rot: cgmath::Quaternion::new(0.0, 1.0, 0.0, 0.0),
@@ -150,14 +152,14 @@ impl<R: gfx::Resources> ObjectView<R> {
     }
 }
 
-impl<R: gfx::Resources> App<R> for ObjectView<R> {
+impl<R: gfx::Resources> App<R> for ModelView<R> {
     fn on_event<F: gfx::Factory<R>>(&mut self, event: Event, factory: &mut F) -> bool {
         use glutin::VirtualKeyCode as Key;
         match event {
             Event::KeyboardInput(_, _, Some(Key::Escape)) |
             Event::Closed => return false,
             Event::KeyboardInput(_, _, Some(Key::L)) =>
-                self.bundle.pso = render::Render::create_object_pso(factory),
+                self.pso = render::Render::create_object_pso(factory),
             _ => {}, //TODO
         }
         true
@@ -166,8 +168,8 @@ impl<R: gfx::Resources> App<R> for ObjectView<R> {
         let locals = render::ObjectLocals {
             m_mvp: self.cam.get_view_proj().into(),
         };
-        enc.update_constant_buffer(&self.bundle.data.locals, &locals);
-        enc.clear(&self.bundle.data.out, [0.1, 0.2, 0.3, 1.0]);
-        self.bundle.encode(enc);
+        enc.update_constant_buffer(&self.data.locals, &locals);
+        enc.clear(&self.data.out, [0.1, 0.2, 0.3, 1.0]);
+        enc.draw(&self.model.body.slice, &self.pso, &self.data);
     }
 }

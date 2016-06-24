@@ -122,7 +122,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     }
 }
 
-fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
+pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
     I: ReadBytesExt,
     R: gfx::Resources,
     F: gfx::traits::FactoryExt<R>,

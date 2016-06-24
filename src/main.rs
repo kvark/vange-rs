@@ -23,7 +23,7 @@ mod splay;
 
 enum RoadApp<R: gfx::Resources> {
     Game(app::Game<R>),
-    View(app::ObjectView<R>),
+    View(app::ModelView<R>),
 }
 
 
@@ -58,7 +58,7 @@ fn main() {
     }
 
     let mut app = match matches.opt_str("v") {
-        Some(path) => RoadApp::View(app::ObjectView::new(&path, &settings, main_color, &mut factory)),
+        Some(path) => RoadApp::View(app::ModelView::new(&path, &settings, main_color, &mut factory)),
         _ => RoadApp::Game(app::Game::new(&settings, main_color, &mut factory)),
     };
 
