@@ -1,6 +1,11 @@
 use level;
 
 #[derive(RustcDecodable)]
+pub struct GameSettings {
+    pub level: String,
+}
+
+#[derive(RustcDecodable)]
 pub struct WindowSettings {
     pub title: String,
     pub size: [u32; 2],
@@ -8,8 +13,8 @@ pub struct WindowSettings {
 
 #[derive(RustcDecodable)]
 pub struct Settings {
-    pub game_path: String,
-    pub level: String,
+    pub data_path: String,
+    pub game: GameSettings,
     pub window: WindowSettings,
 }
 
@@ -30,12 +35,12 @@ impl Settings {
     }
 
     pub fn get_object_palette_path(&self) -> String {
-        format!("{}/resource/pal/object.pal", self.game_path)
+        format!("{}/resource/pal/object.pal", self.data_path)
     }
 
     pub fn get_level(&self) -> level::LevelConfig {
         use ini::Ini;
-        let ini_path = format!("{}/thechain/{}/world.ini", self.game_path, self.level);
+        let ini_path = format!("{}/thechain/{}/world.ini", self.data_path, self.game.level);
         let ini = Ini::load_from_file(&ini_path).unwrap();
         let global = &ini["Global Parameters"];
         let storage = &ini["Storage"];
@@ -59,11 +64,11 @@ impl Settings {
         }
         let biname = &storage["File Name"];
         level::LevelConfig {
-            path_vpr: format!("{}/thechain/{}/{}.vpr", self.game_path, self.level, biname),
-            path_vmc: format!("{}/thechain/{}/{}.vmc", self.game_path, self.level, biname),
-            path_palette: format!("{}/thechain/{}/{}", self.game_path, self.level, storage["Palette File"]),
+            path_vpr: format!("{}/thechain/{}/{}.vpr", self.data_path, self.game.level, biname),
+            path_vmc: format!("{}/thechain/{}/{}.vmc", self.data_path, self.game.level, biname),
+            path_palette: format!("{}/thechain/{}/{}", self.data_path, self.game.level, storage["Palette File"]),
             is_compressed: storage["Compressed Format Using"] != "0",
-            name: self.level.clone(),
+            name: self.game.level.clone(),
             size: (
                 level::Power(global["Map Power X"].parse().unwrap()),
                 level::Power(global["Map Power Y"].parse().unwrap())
