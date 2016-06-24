@@ -14,7 +14,7 @@ pub struct Mesh<R: gfx::Resources> {
 
 pub struct Wheel<R: gfx::Resources> {
     pub mesh: Option<Mesh<R>>,
-    pub steering: u32,
+    pub steer: u32,
     pub width: f32,
     pub radius: f32,
 }
@@ -59,7 +59,9 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     ];
     let _max_radius = source.read_u32::<E>().unwrap();
     let _parent_rot = [source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap()];
-    source.by_ref().bytes().nth(8 * (1 + 3 + 9)-1).unwrap().unwrap();
+	for _ in 0 .. (1+3+9) {
+		source.read_f64::<E>().unwrap();
+	}
 
     info!("\tReading {} positions...", num_positions);
     let mut positions = Vec::with_capacity(num_positions as usize);
@@ -68,7 +70,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
             source.read_u32::<E>().unwrap(); //unknown
         }
         let mut pos = [0u8; 3];
-        source.read(&mut pos).unwrap();
+        source.read_exact(&mut pos).unwrap();
         let _sort_info = source.read_u32::<E>().unwrap();
         positions.push(pos);
     }
@@ -77,29 +79,36 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     let mut normals = Vec::with_capacity(num_normals as usize);
     for _ in 0 .. num_normals {
         let mut norm = [0u8; 4];
-        source.read(&mut norm).unwrap();
+        source.read_exact(&mut norm).unwrap();
         let _sort_info = source.read_u32::<E>().unwrap();
         normals.push(norm);
     }
 
     info!("\tReading {} polygons...", num_polygons);
     let mut vertices = Vec::with_capacity(num_polygons as usize * 3);
-    for i in 0 .. num_polygons {
+    for _ in 0 .. num_polygons {
         let num_corners = source.read_u32::<E>().unwrap();
-        assert_eq!(num_corners, 3);
+        //assert_eq!(num_corners, 3);
+		assert!(3 <= num_corners && num_corners <= 4);
         let _sort_info = source.read_u32::<E>().unwrap();
         let color = [source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap()];
         let mut dummy = [0; 4];
-        source.read(&mut dummy[..4]).unwrap(); //skip flat normal
-        source.read(&mut dummy[..3]).unwrap(); //skip middle point
-        //if i == 631 { source.read_u8().unwrap(); } //wtf?
-        for _ in 0..3 {
+        source.read_exact(&mut dummy[..4]).unwrap(); //skip flat normal
+        source.read_exact(&mut dummy[..3]).unwrap(); //skip middle point
+        for _ in 0..num_corners {
             let pid = source.read_u32::<E>().unwrap();
             let nid = source.read_u32::<E>().unwrap();
             let v = (positions[pid as usize], normals[nid as usize], color);
             vertices.push(v);
         }
     }
+
+	// sorted variable polygons
+	for _ in 0 .. 3 {
+		for _ in 0 .. num_polygons {
+			let _poly_ind = source.read_u32::<E>().unwrap();
+		}
+	}
 
     info!("\tCompacting...");
     vertices.sort();
@@ -147,24 +156,27 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
     model.wheels.reserve_exact(num_wheels as usize);
     model.debris.reserve_exact(num_debris as usize);
 
-    info!("\tReading wheels...");
+    info!("\tReading {} wheels...", num_wheels);
     for _ in 0 .. num_wheels {
-        let steering = source.read_u32::<E>().unwrap();
-        source.by_ref().bytes().nth(3*8).unwrap().unwrap();
+        let steer = source.read_u32::<E>().unwrap();
+		for _ in 0..3 {
+			source.read_f64::<E>().unwrap();
+		}
         let width = source.read_u32::<E>().unwrap() as f32 * SCALE;
         let radius = source.read_u32::<E>().unwrap() as f32 * SCALE;
         let _bound_index = source.read_u32::<E>().unwrap();
+		info!("\tSteer {}, width {}, radius {}", steer, width, radius);
         model.wheels.push(Wheel {
-            mesh: if steering != 0 {
+            mesh: if steer != 0 {
                 Some(load_c3d(source, factory))
             } else {None},
-            steering: steering,
+            steer: steer,
             width: width,
             radius: radius,
         })
     }
 
-    info!("\tReading debris...");
+    info!("\tReading {} debris...", num_debris);
     for _ in 0 .. num_debris {
         let mesh = load_c3d(source, factory);
         let _phys_bound = load_c3d(source, factory);
