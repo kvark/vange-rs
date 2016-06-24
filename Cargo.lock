@@ -6,9 +6,9 @@ dependencies = [
  "cgmath 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "getopts 0.2.14 (registry+https://github.com/rust-lang/crates.io-index)",
- "gfx 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "gfx_window_glutin 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "glutin 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gfx 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gfx_window_glutin 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "glutin 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "progressive 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rust-ini 0.9.5 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -26,7 +26,7 @@ dependencies = [
 
 [[package]]
 name = "android_glue"
-version = "0.1.3"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -170,30 +170,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "gfx"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "draw_state 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "gfx_core 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gfx_core 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "gfx_core"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "bitflags 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "draw_state 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "gfx_device_gl"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "gfx_core 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gfx_core 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "gfx_gl 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -208,12 +208,12 @@ dependencies = [
 
 [[package]]
 name = "gfx_window_glutin"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "gfx_core 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "gfx_device_gl 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "glutin 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gfx_core 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gfx_device_gl 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "glutin 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -236,10 +236,10 @@ dependencies = [
 
 [[package]]
 name = "glutin"
-version = "0.5.2"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "android_glue 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "android_glue 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "cgl 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "cocoa 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "core-foundation 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",

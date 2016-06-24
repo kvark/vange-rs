@@ -4,9 +4,7 @@ The idea of this project is to replicate the old look and behavior, but with nat
 ### Instructions
 ```bash
 git clone https://github.com/kvark/vange-rs
-git clone https://github.com/gfx-rs/gfx
 cd vange-rs
-mkdir .cargo && echo "paths = [\"../gfx\"]" > .cargo/config
 nano config/settings.toml # set the game path
 cargo run --release
 ```
