@@ -2,13 +2,17 @@ use std::io::{Read};
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use gfx;
 use gfx::format::I8Norm;
-use render::ObjectVertex as Vertex;
+use render::ObjectVertex;
 
 
 const SCALE: f32 = 1.0 / 256.0;
 
-pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F)
-                -> (gfx::handle::Buffer<R, Vertex>, gfx::Slice<R>) where
+pub struct Mesh<R: gfx::Resources> {
+    pub slice: gfx::Slice<R>,
+    pub buffer: gfx::handle::Buffer<R, ObjectVertex>,
+}
+
+pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     I: ReadBytesExt,
     R: gfx::Resources,
     F: gfx::traits::FactoryExt<R>,
@@ -48,12 +52,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F)
         let mut pos = [0u8; 3];
         source.read(&mut pos).unwrap();
         let _sort_info = source.read_u32::<E>().unwrap();
-        positions.push([
-            coord_min[0] + (pos[0] as f32 / 255.0) * (coord_max[0] - coord_min[0]),
-            coord_min[1] + (pos[1] as f32 / 255.0) * (coord_max[1] - coord_min[1]),
-            coord_min[2] + (pos[2] as f32 / 255.0) * (coord_max[2] - coord_min[2]),
-            1.0,
-        ]);
+        positions.push(pos);
     }
 
     info!("\tReading {} normals...", num_normals);
@@ -62,9 +61,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F)
         let mut norm = [0u8; 4];
         source.read(&mut norm).unwrap();
         let _sort_info = source.read_u32::<E>().unwrap();
-        normals.push([
-            I8Norm(norm[0] as i8), I8Norm(norm[1] as i8), I8Norm(norm[2] as i8), I8Norm(0),
-        ]);
+        normals.push(norm);
     }
 
     info!("\tReading {} polygons...", num_polygons);
@@ -80,17 +77,29 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F)
         for _ in 0..3 {
             let pid = source.read_u32::<E>().unwrap();
             let nid = source.read_u32::<E>().unwrap();
-            vertices.push(Vertex {
-                pos: positions[pid as usize],
-                color: color,
-                normal: normals[nid as usize],
-            });
+            let v = (positions[pid as usize], normals[nid as usize], color);
+            vertices.push(v);
         }
     }
 
-    //vertices.sort();
-    //vertices.dedup();
-    info!("\tDerived {} unique vertices...", vertices.len());
+    info!("\tCompacting...");
+    vertices.sort();
+    vertices.dedup();
 
-    factory.create_vertex_buffer_with_slice(&vertices, ())
+    let gpu_verts: Vec<_> = vertices.into_iter().map(|(p, n, c)| ObjectVertex {
+        pos: [
+            coord_min[0] + p[0] as f32 * (coord_max[0] - coord_min[0]) / 255.0,
+            coord_min[1] + p[1] as f32 * (coord_max[1] - coord_min[1]) / 255.0,
+            coord_min[2] + p[2] as f32 * (coord_max[2] - coord_min[2]) / 255.0,
+            1.0],
+        color: c,
+        normal: [I8Norm(n[0] as i8), I8Norm(n[1] as i8), I8Norm(n[2] as i8), I8Norm(n[3] as i8)],
+    }).collect();
+    info!("\tGot {} GPU vertices...", gpu_verts.len());
+    let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&gpu_verts, ());
+
+    Mesh {
+        slice: slice,
+        buffer: vbuf,
+    }
 }

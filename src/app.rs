@@ -126,16 +126,16 @@ impl<R: gfx::Resources> ObjectView<R> {
         let pal_data = level::load_palette(&settings.get_object_palette_path());
 
         let mut file = BufReader::new(File::open(path).unwrap());
-        let (vbuf, slice) = model::load_c3d(&mut file, factory);
+        let mesh = model::load_c3d(&mut file, factory);
         let pso = render::Render::create_object_pso(factory);
         let data = render::object::Data {
-            vbuf: vbuf,
+            vbuf: mesh.buffer,
             locals: factory.create_constant_buffer(1),
             palette: render::Render::create_palette(&pal_data, factory),
             out: output,
         };
         ObjectView {
-            bundle: gfx::Bundle::new(slice, pso, data),
+            bundle: gfx::Bundle::new(mesh.slice, pso, data),
             cam: Camera {
                 loc: cgmath::vec3(0.0, -100.0, 50.0),
                 rot: cgmath::Quaternion::new(0.0, 1.0, 0.0, 0.0),
