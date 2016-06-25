@@ -140,7 +140,7 @@ impl<R: gfx::Resources> ModelView<R> {
             data: data,
             cam: Camera {
                 loc: cgmath::vec3(0.0, -100.0, 50.0),
-                rot: cgmath::Quaternion::new(0.0, 1.0, 0.0, 0.0),
+                rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Angle::turn_div_6()),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::deg(45.0).into(),
                     aspect: settings.get_screen_aspect(),

@@ -7,6 +7,7 @@ uniform c_Locals {
 
 in vec4 a_Pos;
 in vec4 a_Normal;
+in uint a_ColorIndex;
 out vec3 v_Normal;
 
 void main() {

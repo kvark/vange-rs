@@ -5,7 +5,9 @@ use gfx::format::I8Norm;
 use render::ObjectVertex;
 
 
-const SCALE: f32 = 1.0 / 256.0;
+const SCALE: f32 = 1.0 / 4.0;
+const NUM_COLOR_IDS: u32 = 24;
+const COLOR_ID_BODY: u32 = 1;
 
 pub struct Mesh<R: gfx::Resources> {
     pub slice: gfx::Slice<R>,
@@ -52,6 +54,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
         source.read_i32::<E>().unwrap() as f32 * SCALE,
         source.read_i32::<E>().unwrap() as f32 * SCALE,
     ];
+    info!("\tBound {:?} to {:?}", coord_min, coord_max);
     let _parent_off = [
         source.read_i32::<E>().unwrap(),
         source.read_i32::<E>().unwrap(),
@@ -86,7 +89,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
 
     info!("\tReading {} polygons...", num_polygons);
     let mut vertices = Vec::with_capacity(num_polygons as usize * 3);
-    for _ in 0 .. num_polygons {
+    for i in 0 .. num_polygons {
         let num_corners = source.read_u32::<E>().unwrap();
         //assert_eq!(num_corners, 3);
 		assert!(3 <= num_corners && num_corners <= 4);
@@ -95,10 +98,10 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
         let mut dummy = [0; 4];
         source.read_exact(&mut dummy[..4]).unwrap(); //skip flat normal
         source.read_exact(&mut dummy[..3]).unwrap(); //skip middle point
-        for _ in 0..num_corners {
+        for k in 0..num_corners {
             let pid = source.read_u32::<E>().unwrap();
             let nid = source.read_u32::<E>().unwrap();
-            let v = (positions[pid as usize], normals[nid as usize], color);
+            let v = (i*3+k, (positions[pid as usize], normals[nid as usize], color));
             vertices.push(v);
         }
     }
@@ -111,20 +114,36 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
 	}
 
     info!("\tCompacting...");
-    vertices.sort();
-    vertices.dedup();
+    vertices.sort_by_key(|v| v.1);
+    //vertices.dedup();
+    let mut indices = vec![0; vertices.len()];
+    let mut gpu_verts = Vec::new();
+    let mut last = vertices[0].1;
+    last.2[0] ^= 1; //change something
+    let mut v_id = 0;
+    for v in vertices.into_iter() {
+        if v.1 != last {
+            last = v.1;
+            v_id = gpu_verts.len() as u16;
+            let (p, n, c) = v.1;
+            gpu_verts.push(ObjectVertex {
+                pos: [
+                    coord_min[0] + p[0] as f32 * (coord_max[0] - coord_min[0]) / 255.0,
+                    coord_min[1] + p[1] as f32 * (coord_max[1] - coord_min[1]) / 255.0,
+                    coord_min[2] + p[2] as f32 * (coord_max[2] - coord_min[2]) / 255.0,
+                    1.0],
+                color: if c[0] < NUM_COLOR_IDS { c[0] } else { COLOR_ID_BODY },
+                normal: [
+                    I8Norm(n[0] as i8), I8Norm(n[1] as i8),
+                    I8Norm(n[2] as i8), I8Norm(n[3] as i8),
+                    ],
+            });
+        }
+        indices[v.0 as usize] = v_id;
+    }
 
-    let gpu_verts: Vec<_> = vertices.into_iter().map(|(p, n, c)| ObjectVertex {
-        pos: [
-            coord_min[0] + p[0] as f32 * (coord_max[0] - coord_min[0]) / 255.0,
-            coord_min[1] + p[1] as f32 * (coord_max[1] - coord_min[1]) / 255.0,
-            coord_min[2] + p[2] as f32 * (coord_max[2] - coord_min[2]) / 255.0,
-            1.0],
-        color: c,
-        normal: [I8Norm(n[0] as i8), I8Norm(n[1] as i8), I8Norm(n[2] as i8), I8Norm(n[3] as i8)],
-    }).collect();
     info!("\tGot {} GPU vertices...", gpu_verts.len());
-    let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&gpu_verts, ());
+    let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&gpu_verts, &indices[..]);
 
     Mesh {
         slice: slice,

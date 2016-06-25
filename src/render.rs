@@ -45,7 +45,7 @@ gfx_defines!{
 
     vertex ObjectVertex {
         pos: [f32; 4] = "a_Pos",
-        color: [u32; 2] = "a_Color",
+        color: u32 = "a_ColorIndex",
         normal: [gfx::format::I8Norm; 4] = "a_Normal",
     }
 
