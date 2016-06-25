@@ -2,12 +2,10 @@ use std::io::{Read};
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use gfx;
 use gfx::format::I8Norm;
-use render::ObjectVertex;
+use render::{ObjectVertex, NUM_COLOR_IDS, COLOR_ID_BODY};
 
 
 const SCALE: f32 = 1.0 / 4.0;
-const NUM_COLOR_IDS: u32 = 24;
-const COLOR_ID_BODY: u32 = 1;
 
 pub struct Mesh<R: gfx::Resources> {
     pub slice: gfx::Slice<R>,

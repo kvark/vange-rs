@@ -18,6 +18,37 @@ const MATERIALS: [MaterialParams; NUM_MATERIALS] = [
 ];
 const SHADOW_DEPTH: usize = 0x180; // each 0x100 is 1 voxel/step
 const TEX_HEIGHT: i32 = 4096;
+pub const NUM_COLOR_IDS: u32 = 25;
+pub const COLOR_ID_BODY: u32 = 1;
+
+const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
+    [0, 0],     // reserved
+    [128, 3],   // body
+    [176, 4],   // window
+    [224, 7],   // wheel
+    [184, 4],   // defence
+    [224, 3],   // weapon
+    [224, 7],   // tube
+    [128, 3],   // body red
+    [144, 3],   // body blue
+    [160, 3],   // body yellow
+    [228, 4],   // body gray
+    [112, 4],   // yellow (charged)
+    [0, 2],     // material 0
+    [32, 2],    // material 1
+    [64, 4],    // material 2
+    [72, 3],    // material 3
+    [88, 3],    // material 4
+    [104, 4],   // material 5
+    [112, 4],   // material 6
+    [120, 4],   // material 7
+    [184, 4],   // black
+    [240, 3],   // body green
+    [136, 4],   // skyfarmer kenoboo
+    [128, 4],   // skyfarmer pipetka
+    [224, 4],   // rotten item
+];
+
 
 pub type ColorFormat = gfx::format::Rgba8;
 pub type DepthFormat = gfx::format::DepthStencil;
@@ -56,6 +87,7 @@ gfx_defines!{
     pipeline object {
         vbuf: gfx::VertexBuffer<ObjectVertex> = (),
         locals: gfx::ConstantBuffer<ObjectLocals> = "c_Locals",
+        ctable: gfx::TextureSampler<[u32; 2]> = "t_ColorTable",
         palette: gfx::TextureSampler<[f32; 4]> = "t_Palette",
         out: gfx::RenderTarget<ColorFormat> = "Target0",
     }
@@ -177,6 +209,15 @@ impl<R: gfx::Resources> Render<R> {
         let sampler = factory.create_sampler(tex::SamplerInfo::new(
             tex::FilterMethod::Bilinear, tex::WrapMode::Clamp));
         (view, sampler)
+    }
+
+    pub fn create_color_table<F: gfx::Factory<R>>(factory: &mut F)
+                              -> (gfx::handle::ShaderResourceView<R, [u32; 2]>, gfx::handle::Sampler<R>)
+    {
+        use gfx::tex;
+        type Format = (gfx::format::R8_G8, gfx::format::Uint);
+        let (_, view) = factory.create_texture_const::<Format>(tex::Kind::D1(NUM_COLOR_IDS as tex::Size), &[&COLOR_TABLE]).unwrap();
+        (view, factory.create_sampler_linear())
     }
 
     fn create_terrain_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, terrain::Meta> {

@@ -5,12 +5,17 @@ uniform c_Locals {
 	mat4 u_NormalMatrix;
 };
 
+uniform usampler1D t_ColorTable;
+uniform sampler1D t_Palette;
+
 in vec4 a_Pos;
 in vec4 a_Normal;
 in uint a_ColorIndex;
-out vec3 v_Normal;
+
+out vec4 v_Color;
 
 void main() {
     gl_Position = u_ModelViewProj * a_Pos;
-    v_Normal = (u_NormalMatrix * a_Normal).xyz;
+    uvec2 color_params = texelFetch(t_ColorTable, 0, int(a_ColorIndex)).xy;
+    v_Color = texelFetch(t_Palette, 0, int(color_params[0]));
 }

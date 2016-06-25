@@ -124,12 +124,14 @@ impl<R: gfx::Resources> ModelView<R> {
         use gfx::traits::FactoryExt;
 
         let pal_data = level::load_palette(&settings.get_object_palette_path());
+
         info!("Loading model {}", path);
         let mut file = BufReader::new(settings.open(path));
         let model = model::load_m3d(&mut file, factory);
         let data = render::object::Data {
             vbuf: model.body.buffer.clone(),
             locals: factory.create_constant_buffer(1),
+            ctable: render::Render::create_color_table(factory),
             palette: render::Render::create_palette(&pal_data, factory),
             out: output,
         };
