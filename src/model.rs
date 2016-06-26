@@ -70,8 +70,11 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
         for _ in 0..3 {
             source.read_u32::<E>().unwrap(); //unknown
         }
-        let mut pos = [0u8; 3];
-        source.read_exact(&mut pos).unwrap();
+        let pos = [
+            source.read_i8().unwrap(),
+            source.read_i8().unwrap(),
+            source.read_i8().unwrap(),
+        ];
         let _sort_info = source.read_u32::<E>().unwrap();
         positions.push(pos);
     }
@@ -111,11 +114,11 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
 		}
 	}
 
-    let convert = |(p, n, c): ([u8; 3], [u8; 4], [u32; 2])| ObjectVertex {
+    let convert = |(p, n, c): ([i8; 3], [u8; 4], [u32; 2])| ObjectVertex {
         pos: [
-            coord_min[0] + p[0] as f32 * (coord_max[0] - coord_min[0]) / 255.0,
-            coord_min[1] + p[1] as f32 * (coord_max[1] - coord_min[1]) / 255.0,
-            coord_min[2] + p[2] as f32 * (coord_max[2] - coord_min[2]) / 255.0,
+            coord_min[0] + (p[0] as f32 + 128.0) * (coord_max[0] - coord_min[0]) / 255.0,
+            coord_min[1] + (p[1] as f32 + 128.0) * (coord_max[1] - coord_min[1]) / 255.0,
+            coord_min[2] + (p[2] as f32 + 128.0) * (coord_max[2] - coord_min[2]) / 255.0,
             1.0],
         color: if c[0] < NUM_COLOR_IDS { c[0] } else { COLOR_ID_BODY },
         normal: [
