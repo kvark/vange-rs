@@ -53,7 +53,8 @@ pub struct Game<R: gfx::Resources> {
 
 impl<R: gfx::Resources> Game<R> {
     pub fn new<F: gfx::Factory<R>>(settings: &Settings,
-           output: gfx::handle::RenderTargetView<R, render::ColorFormat>,
+           out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
+           out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
            factory: &mut F) -> Game<R>
     {
         info!("Loading world parameters");
@@ -61,7 +62,7 @@ impl<R: gfx::Resources> Game<R> {
         let lev = level::load(&config);
 
         Game {
-            render: render::init(factory, output, &lev),
+            render: render::init(factory, out_color, out_depth, &lev),
             cam: Camera {
                 loc: cgmath::vec3(0.0, 0.0, 200.0),
                 rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
@@ -118,7 +119,8 @@ pub struct ModelView<R: gfx::Resources> {
 
 impl<R: gfx::Resources> ModelView<R> {
     pub fn new<F: gfx::Factory<R>>(path: &str, settings: &Settings,
-               output: gfx::handle::RenderTargetView<R, render::ColorFormat>,
+               out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
+               out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
                factory: &mut F) -> ModelView<R>
     {
         use std::io::BufReader;
@@ -134,7 +136,8 @@ impl<R: gfx::Resources> ModelView<R> {
             locals: factory.create_constant_buffer(1),
             ctable: render::Render::create_color_table(factory),
             palette: render::Render::create_palette(&pal_data, factory),
-            out: output,
+            out_color: out_color,
+            out_depth: out_depth,
         };
 
         ModelView {
@@ -142,18 +145,18 @@ impl<R: gfx::Resources> ModelView<R> {
             transform: cgmath::Decomposed {
                 scale: 1.0,
                 disp: cgmath::Vector3::unit_z(),
-                rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_y(), cgmath::Angle::turn_div_4()),
+                rot: cgmath::One::one(),
             },
             pso: render::Render::create_object_pso(factory),
             data: data,
             cam: Camera {
-                loc: cgmath::vec3(0.0, -100.0, 50.0),
+                loc: cgmath::vec3(0.0, -40.0, 20.0),
                 rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Angle::turn_div_6()),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::deg(45.0).into(),
                     aspect: settings.get_screen_aspect(),
                     near: 1.0,
-                    far: 300.0,
+                    far: 100.0,
                 },
             },
         }
@@ -191,7 +194,8 @@ impl<R: gfx::Resources> App<R> for ModelView<R> {
             m_mvp: (self.cam.get_view_proj() * model_trans).into(),
         };
         enc.update_constant_buffer(&self.data.locals, &locals);
-        enc.clear(&self.data.out, [0.1, 0.2, 0.3, 1.0]);
+        enc.clear(&self.data.out_color, [0.1, 0.2, 0.3, 1.0]);
+        enc.clear_depth(&self.data.out_depth, 1.0);
         enc.draw(&self.model.body.slice, &self.pso, &self.data);
     }
 }

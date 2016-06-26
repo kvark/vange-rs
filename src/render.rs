@@ -89,7 +89,8 @@ gfx_defines!{
         locals: gfx::ConstantBuffer<ObjectLocals> = "c_Locals",
         ctable: gfx::TextureSampler<[u32; 2]> = "t_ColorTable",
         palette: gfx::TextureSampler<[f32; 4]> = "t_Palette",
-        out: gfx::RenderTarget<ColorFormat> = "Target0",
+        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
+        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
     }
 }
 
@@ -109,6 +110,7 @@ fn read(name: &str) -> Vec<u8> {
 
 pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             main_color: gfx::handle::RenderTargetView<R, ColorFormat>,
+            _main_depth: gfx::handle::DepthStencilView<R, DepthFormat>,
             level: &Level) -> Render<R>
 {
     use gfx::{format, tex};

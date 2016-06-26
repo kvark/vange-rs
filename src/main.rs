@@ -39,7 +39,7 @@ fn main() {
         .with_title(settings.window.title.clone())
         .with_dimensions(settings.window.size[0], settings.window.size[1])
         .with_vsync();
-    let (window, mut device, mut factory, main_color, _main_depth) =
+    let (window, mut device, mut factory, main_color, main_depth) =
         gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(builder);
 
     info!("Parsing command line");
@@ -58,8 +58,8 @@ fn main() {
     }
 
     let mut app = match matches.opt_str("v") {
-        Some(path) => RoadApp::View(app::ModelView::new(&path, &settings, main_color, &mut factory)),
-        _ => RoadApp::Game(app::Game::new(&settings, main_color, &mut factory)),
+        Some(path) => RoadApp::View(app::ModelView::new(&path, &settings, main_color, main_depth, &mut factory)),
+        _ => RoadApp::Game(app::Game::new(&settings, main_color, main_depth, &mut factory)),
     };
 
     let mut encoder: gfx::Encoder<_, _> = factory.create_command_buffer().into();
