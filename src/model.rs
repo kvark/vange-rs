@@ -111,38 +111,46 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
 		}
 	}
 
-    info!("\tCompacting...");
-    vertices.sort_by_key(|v| v.1);
-    //vertices.dedup();
-    let mut indices = vec![0; vertices.len()];
+    let convert = |(p, n, c): ([u8; 3], [u8; 4], [u32; 2])| ObjectVertex {
+        pos: [
+            coord_min[0] + p[0] as f32 * (coord_max[0] - coord_min[0]) / 255.0,
+            coord_min[1] + p[1] as f32 * (coord_max[1] - coord_min[1]) / 255.0,
+            coord_min[2] + p[2] as f32 * (coord_max[2] - coord_min[2]) / 255.0,
+            1.0],
+        color: if c[0] < NUM_COLOR_IDS { c[0] } else { COLOR_ID_BODY },
+        normal: [
+            I8Norm(n[0] as i8), I8Norm(n[1] as i8),
+            I8Norm(n[2] as i8), I8Norm(n[3] as i8),
+            ],
+    };
+    let do_compact = false;
+
     let mut gpu_verts = Vec::new();
-    let mut last = vertices[0].1;
-    last.2[0] ^= 1; //change something
-    let mut v_id = 0;
-    for v in vertices.into_iter() {
-        if v.1 != last {
-            last = v.1;
-            v_id = gpu_verts.len() as u16;
-            let (p, n, c) = v.1;
-            gpu_verts.push(ObjectVertex {
-                pos: [
-                    coord_min[0] + p[0] as f32 * (coord_max[0] - coord_min[0]) / 255.0,
-                    coord_min[1] + p[1] as f32 * (coord_max[1] - coord_min[1]) / 255.0,
-                    coord_min[2] + p[2] as f32 * (coord_max[2] - coord_min[2]) / 255.0,
-                    1.0],
-                color: if c[0] < NUM_COLOR_IDS { c[0] } else { COLOR_ID_BODY },
-                normal: [
-                    I8Norm(n[0] as i8), I8Norm(n[1] as i8),
-                    I8Norm(n[2] as i8), I8Norm(n[3] as i8),
-                    ],
-            });
+    let (vbuf, slice) = if do_compact {
+        info!("\tCompacting...");
+        vertices.sort_by_key(|v| v.1);
+        //vertices.dedup();
+        let mut indices = vec![0; vertices.len()];
+        let mut last = vertices[0].1;
+        last.2[0] ^= 1; //change something
+        let mut v_id = 0;
+        for v in vertices.into_iter() {
+            if v.1 != last {
+                last = v.1;
+                v_id = gpu_verts.len() as u16;
+                gpu_verts.push(convert(v.1));
+            }
+            indices[v.0 as usize] = v_id;
         }
-        indices[v.0 as usize] = v_id;
-    }
+        factory.create_vertex_buffer_with_slice(&gpu_verts, &indices[..])
+    }else {
+        for v in vertices.into_iter() {
+            gpu_verts.push(convert(v.1));
+        }
+        factory.create_vertex_buffer_with_slice(&gpu_verts, ())
+    };
 
     info!("\tGot {} GPU vertices...", gpu_verts.len());
-    let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&gpu_verts, &indices[..]);
-
     Mesh {
         slice: slice,
         buffer: vbuf,

@@ -216,8 +216,11 @@ impl<R: gfx::Resources> Render<R> {
     {
         use gfx::tex;
         type Format = (gfx::format::R8_G8, gfx::format::Uint);
-        let (_, view) = factory.create_texture_const::<Format>(tex::Kind::D1(NUM_COLOR_IDS as tex::Size), &[&COLOR_TABLE]).unwrap();
-        (view, factory.create_sampler_linear())
+        let kind = tex::Kind::D1(NUM_COLOR_IDS as tex::Size);
+        let (_, view) = factory.create_texture_const::<Format>(kind, &[&COLOR_TABLE]).unwrap();
+        let sampler = factory.create_sampler(tex::SamplerInfo::new(
+            tex::FilterMethod::Scale, tex::WrapMode::Clamp));
+        (view, sampler)
     }
 
     fn create_terrain_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, terrain::Meta> {

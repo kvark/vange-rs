@@ -16,6 +16,6 @@ out vec4 v_Color;
 
 void main() {
     gl_Position = u_ModelViewProj * a_Pos;
-    uvec2 color_params = texelFetch(t_ColorTable, 0, int(a_ColorIndex)).xy;
-    v_Color = texelFetch(t_Palette, 0, int(color_params[0]));
+    uvec2 color_params = texelFetch(t_ColorTable, int(a_ColorIndex), 0).xy;
+    v_Color = texelFetch(t_Palette, int(color_params[0]), 0);
 }

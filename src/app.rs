@@ -110,6 +110,7 @@ impl<R: gfx::Resources> App<R> for Game<R> {
 
 pub struct ModelView<R: gfx::Resources> {
     model: model::Model<R>,
+    transform: cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>,
     pso: gfx::PipelineState<R, render::object::Meta>,
     data: render::object::Data<R>,
     cam: Camera,
@@ -138,6 +139,11 @@ impl<R: gfx::Resources> ModelView<R> {
 
         ModelView {
             model: model,
+            transform: cgmath::Decomposed {
+                scale: 1.0,
+                disp: cgmath::Vector3::unit_z(),
+                rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_y(), cgmath::Angle::turn_div_4()),
+            },
             pso: render::Render::create_object_pso(factory),
             data: data,
             cam: Camera {
@@ -152,14 +158,27 @@ impl<R: gfx::Resources> ModelView<R> {
             },
         }
     }
+
+    fn rotate(&mut self, angle: cgmath::Rad<f32>) {
+        use cgmath::Transform;
+        let other = cgmath::Decomposed {
+            scale: 1.0,
+            rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_z(), angle),
+            disp: cgmath::Zero::zero(),
+        };
+        self.transform = other.concat(&self.transform);
+    }
 }
 
 impl<R: gfx::Resources> App<R> for ModelView<R> {
     fn on_event<F: gfx::Factory<R>>(&mut self, event: Event, factory: &mut F) -> bool {
         use glutin::VirtualKeyCode as Key;
+        let delta = cgmath::rad(0.05);
         match event {
             Event::KeyboardInput(_, _, Some(Key::Escape)) |
             Event::Closed => return false,
+            Event::KeyboardInput(_, _, Some(Key::A)) => self.rotate(-delta),
+            Event::KeyboardInput(_, _, Some(Key::D)) => self.rotate(delta),
             Event::KeyboardInput(_, _, Some(Key::L)) =>
                 self.pso = render::Render::create_object_pso(factory),
             _ => {}, //TODO
@@ -167,8 +186,9 @@ impl<R: gfx::Resources> App<R> for ModelView<R> {
         true
     }
     fn on_frame<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
+        let model_trans: cgmath::Matrix4<f32> = self.transform.into();
         let locals = render::ObjectLocals {
-            m_mvp: self.cam.get_view_proj().into(),
+            m_mvp: (self.cam.get_view_proj() * model_trans).into(),
         };
         enc.update_constant_buffer(&self.data.locals, &locals);
         enc.clear(&self.data.out, [0.1, 0.2, 0.3, 1.0]);
