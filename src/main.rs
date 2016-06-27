@@ -11,6 +11,7 @@ extern crate log;
 extern crate progressive;
 extern crate rustc_serialize;
 extern crate ini;
+extern crate time;
 extern crate toml;
 
 mod app;
@@ -63,12 +64,14 @@ fn main() {
     };
 
     let mut encoder: gfx::Encoder<_, _> = factory.create_command_buffer().into();
+    let mut last_time = time::precise_time_s() as f32;
     loop {
         use gfx::Device;
         use app::App;
+        let delta = time::precise_time_s() as f32 - last_time;
         let ok = match app {
-            RoadApp::Game(ref mut a) => a.do_iter(window.poll_events(), &mut factory, &mut encoder),
-            RoadApp::View(ref mut a) => a.do_iter(window.poll_events(), &mut factory, &mut encoder),
+            RoadApp::Game(ref mut a) => a.do_iter(window.poll_events(), delta, &mut factory, &mut encoder),
+            RoadApp::View(ref mut a) => a.do_iter(window.poll_events(), delta, &mut factory, &mut encoder),
         };
         if !ok {
             break
@@ -76,5 +79,6 @@ fn main() {
         encoder.flush(&mut device);
         window.swap_buffers().unwrap();
         device.cleanup();
+        last_time += delta;
     }
 }

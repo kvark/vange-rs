@@ -27,16 +27,16 @@ impl Camera {
 
 
 pub trait App<R: gfx::Resources> {
-    fn on_event<F: gfx::Factory<R>>(&mut self, Event, &mut F) -> bool;
+    fn on_event<F: gfx::Factory<R>>(&mut self, Event, delta: f32, &mut F) -> bool;
     fn on_frame<C: gfx::CommandBuffer<R>>(&mut self, &mut gfx::Encoder<R, C>);
-    fn do_iter<I, F, C>(&mut self, events: I, factory: &mut F, encoder: &mut gfx::Encoder<R, C>)
+    fn do_iter<I, F, C>(&mut self, events: I, delta: f32, factory: &mut F, encoder: &mut gfx::Encoder<R, C>)
                -> bool where
         I: Iterator<Item=Event>,
         F: gfx::Factory<R>,
         C: gfx::CommandBuffer<R>,
     {
         for event in events {
-            if !self.on_event(event, factory) {
+            if !self.on_event(event, delta, factory) {
                 return false;
             }
         }
@@ -78,11 +78,11 @@ impl<R: gfx::Resources> Game<R> {
 }
 
 impl<R: gfx::Resources> App<R> for Game<R> {
-    fn on_event<F: gfx::Factory<R>>(&mut self, event: Event, factory: &mut F) -> bool {
+    fn on_event<F: gfx::Factory<R>>(&mut self, event: Event, delta: f32, factory: &mut F) -> bool {
         use cgmath::Rotation3;
         use glutin::VirtualKeyCode as Key;
-        let delta = cgmath::rad(0.05);
-        let step = 10.0;
+        let angle = cgmath::rad(delta * 2.0);
+        let step = delta * 400.0;
         match event {
             Event::KeyboardInput(_, _, Some(Key::Escape)) |
             Event::Closed => return false,
@@ -92,13 +92,13 @@ impl<R: gfx::Resources> App<R> for Game<R> {
             Event::KeyboardInput(_, _, Some(Key::S)) =>
                 self.cam.loc = self.cam.loc - cgmath::vec3(0.0, step, 0.0),
             Event::KeyboardInput(_, _, Some(Key::R)) =>
-                self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::vec3(1.0, 0.0, 0.0), delta),
+                self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
             Event::KeyboardInput(_, _, Some(Key::F)) =>
-                self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::vec3(1.0, 0.0, 0.0), -delta),
+                self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), -angle),
             Event::KeyboardInput(_, _, Some(Key::A)) =>
-                self.cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::vec3(0.0, 0.0, 1.0), delta) * self.cam.rot,
+                self.cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), angle) * self.cam.rot,
             Event::KeyboardInput(_, _, Some(Key::D)) =>
-                self.cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::vec3(0.0, 0.0, 1.0), -delta) * self.cam.rot,
+                self.cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), -angle) * self.cam.rot,
             _ => {},
         }
         true
@@ -174,14 +174,14 @@ impl<R: gfx::Resources> ModelView<R> {
 }
 
 impl<R: gfx::Resources> App<R> for ModelView<R> {
-    fn on_event<F: gfx::Factory<R>>(&mut self, event: Event, factory: &mut F) -> bool {
+    fn on_event<F: gfx::Factory<R>>(&mut self, event: Event, delta: f32, factory: &mut F) -> bool {
         use glutin::VirtualKeyCode as Key;
-        let delta = cgmath::rad(0.05);
+        let angle = cgmath::rad(delta * 2.0);
         match event {
             Event::KeyboardInput(_, _, Some(Key::Escape)) |
             Event::Closed => return false,
-            Event::KeyboardInput(_, _, Some(Key::A)) => self.rotate(-delta),
-            Event::KeyboardInput(_, _, Some(Key::D)) => self.rotate(delta),
+            Event::KeyboardInput(_, _, Some(Key::A)) => self.rotate(-angle),
+            Event::KeyboardInput(_, _, Some(Key::D)) => self.rotate(angle),
             Event::KeyboardInput(_, _, Some(Key::L)) =>
                 self.pso = render::Render::create_object_pso(factory),
             _ => {}, //TODO
