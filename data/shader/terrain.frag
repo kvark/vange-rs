@@ -26,16 +26,13 @@ vec3 cast_ray_to_plane(float level, vec3 base, vec3 dir) {
 }
 
 float get_latitude(vec2 pos) {
-	vec2 ndc = pos / c_TextureScale.xy;
-	float slice = trunc(mod(ndc.y, c_TextureScale.w));
-	if (mod(pos.x, 2.0) >= 1.0) {
-		vec2 ndc_prev = ndc - vec2(1.0/c_TextureScale.x, 0.0);
-		uint meta_prev = texture(t_Meta, vec3(ndc_prev, slice)).x;
-		if ((meta_prev & c_DoubleLevelMask) != 0U) {
-			ndc = ndc_prev;
-		}
+	vec3 tc = vec3(pos / c_TextureScale.xy, 0.0);
+	tc.z = trunc(mod(tc.y, c_TextureScale.w));
+	uint meta = texture(t_Meta, tc).x;
+	if (mod(pos.x, 2.0) >= 1.0 && (meta & c_DoubleLevelMask) != 0U) {
+		tc.x -= 1.0 / c_TextureScale.x;
 	}
-	return texture(t_Height, vec3(ndc, slice)).x * c_TextureScale.z;
+	return texture(t_Height, tc).x * c_TextureScale.z;
 }
 
 vec4 cast_ray_with_latitude(float level, vec3 base, vec3 dir) {
@@ -84,6 +81,10 @@ void main() {
 		vec3 tc = vec3(pos.xy / c_TextureScale.xy, 0.0);
 		tc.z = trunc(mod(tc.y, c_TextureScale.w));
 		uint meta = texture(t_Meta, tc).x;
+		if (mod(pos.x, 2.0) >= 1.0 && (meta & c_DoubleLevelMask) != 0U) {
+			tc.x -= 1.0 / c_TextureScale.x;
+			meta = texture(t_Meta, tc).x;
+		}
 		float terrain = float((meta >> c_TerrainShift) & (c_NumTerrains - 1U)) + 0.5;
 		vec3 off = vec3(1.0 / c_TextureScale.x, 0.0, 0.0);
 		float diff = texture(t_Height, tc + off).x - texture(t_Height, tc - off).x;
