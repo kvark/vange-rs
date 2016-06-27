@@ -75,6 +75,13 @@ impl<R: gfx::Resources> Game<R> {
             },
         }
     }
+
+    fn move_cam(&mut self, step: f32) {
+        use cgmath::{InnerSpace, Rotation};
+        let mut back = self.cam.rot.rotate_vector(cgmath::Vector3::unit_z());
+        back.z = 0.0;
+        self.cam.loc -= back.normalize() * step;
+    }
 }
 
 impl<R: gfx::Resources> App<R> for Game<R> {
@@ -87,10 +94,8 @@ impl<R: gfx::Resources> App<R> for Game<R> {
             Event::KeyboardInput(_, _, Some(Key::Escape)) |
             Event::Closed => return false,
             Event::KeyboardInput(_, _, Some(Key::L)) => self.render.reload(factory),
-            Event::KeyboardInput(_, _, Some(Key::W)) =>
-                self.cam.loc = self.cam.loc + cgmath::vec3(0.0, step, 0.0),
-            Event::KeyboardInput(_, _, Some(Key::S)) =>
-                self.cam.loc = self.cam.loc - cgmath::vec3(0.0, step, 0.0),
+            Event::KeyboardInput(_, _, Some(Key::W)) => self.move_cam(step),
+            Event::KeyboardInput(_, _, Some(Key::S)) => self.move_cam(-step),
             Event::KeyboardInput(_, _, Some(Key::R)) =>
                 self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
             Event::KeyboardInput(_, _, Some(Key::F)) =>
