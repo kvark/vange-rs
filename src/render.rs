@@ -60,6 +60,8 @@ gfx_defines!{
 
     constant TerrainLocals {
         cam_pos: [f32; 4] = "u_CamPos",
+        scr_size: [f32; 4] = "u_ScreenSize",
+        tex_scale: [f32; 4] = "u_TextureScale",
         m_vp: [[f32; 4]; 4] = "u_ViewProj",
         m_inv_vp: [[f32; 4]; 4] = "u_InvViewProj",
     }
@@ -97,6 +99,7 @@ gfx_defines!{
 
 pub struct Render<R: gfx::Resources> {
     terrain: gfx::Bundle<R, terrain::Data<R>>,
+    terrain_scale: [f32; 4],
     object_pso: gfx::PipelineState<R, object::Meta>,
     object_data: object::Data<R>,
 }
@@ -147,8 +150,9 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
         }
     }
 
+    let num_layers = level.size.1/TEX_HEIGHT;
     let kind = tex::Kind::D2Array(level.size.0 as tex::Size, TEX_HEIGHT as tex::Size,
-        (level.size.1/TEX_HEIGHT) as tex::Size, tex::AaMode::Single);
+        num_layers as tex::Size, tex::AaMode::Single);
     let table_kind = tex::Kind::D2Array(0x200, 2, level::NUM_TERRAINS as tex::Size, tex::AaMode::Single);
     let height_chunks: Vec<_> = level.height.chunks((level.size.0 * TEX_HEIGHT) as usize).collect();
     let meta_chunks: Vec<_> = level.meta.chunks((level.size.0 * TEX_HEIGHT) as usize).collect();
@@ -187,6 +191,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             };
             gfx::Bundle::new(slice, pso, data)
         },
+        terrain_scale: [level.size.0 as f32, TEX_HEIGHT as f32, 48.0, num_layers as f32],
         object_pso: Render::create_object_pso(factory),
         object_data: object::Data {
             vbuf: factory.create_vertex_buffer(&[]), //dummy
@@ -211,8 +216,11 @@ impl<R: gfx::Resources> Render<R> {
             use cgmath::SquareMatrix;
             let mx_vp = cam.get_view_proj();
             let cpos: [f32; 3] = cam.loc.into();
+            let (wid, het, _, _) = self.terrain.data.out_color.get_dimensions();
             let locals = TerrainLocals {
                 cam_pos: [cpos[0], cpos[1], cpos[2], 1.0],
+                scr_size: [wid as f32, het as f32, 0.0, 0.0],
+                tex_scale: self.terrain_scale,
                 m_vp: mx_vp.into(),
                 m_inv_vp: mx_vp.invert().unwrap().into(),
             };
