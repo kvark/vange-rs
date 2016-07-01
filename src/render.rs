@@ -1,6 +1,6 @@
 use gfx;
 use gfx::traits::FactoryExt;
-use app::Camera;
+use app::{Agent, Camera};
 use level::{Level, NUM_TERRAINS};
 
 
@@ -71,7 +71,8 @@ gfx_defines!{
         meta: gfx::TextureSampler<u32> = "t_Meta",
         palette: gfx::TextureSampler<[f32; 4]> = "t_Palette",
         table: gfx::TextureSampler<f32> = "t_Table",
-        out: gfx::RenderTarget<ColorFormat> = "Target0",
+        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
+        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
     }
 
     vertex ObjectVertex {
@@ -97,6 +98,7 @@ gfx_defines!{
 pub struct Render<R: gfx::Resources> {
     terrain: gfx::Bundle<R, terrain::Data<R>>,
     object_pso: gfx::PipelineState<R, object::Meta>,
+    object_data: object::Data<R>,
 }
 
 fn read(name: &str) -> Vec<u8> {
@@ -110,7 +112,7 @@ fn read(name: &str) -> Vec<u8> {
 
 pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             main_color: gfx::handle::RenderTargetView<R, ColorFormat>,
-            _main_depth: gfx::handle::DepthStencilView<R, DepthFormat>,
+            main_depth: gfx::handle::DepthStencilView<R, DepthFormat>,
             level: &Level) -> Render<R>
 {
     use gfx::{format, tex};
@@ -155,11 +157,11 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
     let (_, table)  = factory.create_texture_const::<(format::R8, format::Unorm)>(table_kind, &table_chunks).unwrap();
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale, tex::WrapMode::Tile));
-        //tex::FilterMethod::Anisotropic(4), tex::WrapMode::Tile));
     let sm_meta = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale, tex::WrapMode::Tile));
     let sm_table = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Bilinear, tex::WrapMode::Clamp));
+    let palette = Render::create_palette(&level.palette, factory);
 
     Render {
         terrain: {
@@ -178,29 +180,56 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
                 locals: factory.create_constant_buffer(1),
                 height: (height, sm_height),
                 meta: (meta, sm_meta),
-                palette: Render::create_palette(&level.palette, factory),
+                palette: palette.clone(),
                 table: (table, sm_table),
-                out: main_color,
+                out_color: main_color.clone(),
+                out_depth: main_depth.clone(),
             };
             gfx::Bundle::new(slice, pso, data)
         },
         object_pso: Render::create_object_pso(factory),
+        object_data: object::Data {
+            vbuf: factory.create_vertex_buffer(&[]), //dummy
+            locals: factory.create_constant_buffer(1),
+            palette: palette,
+            ctable: Render::create_color_table(factory),
+            out_color: main_color,
+            out_depth: main_depth,
+        },
     }
 }
 
 impl<R: gfx::Resources> Render<R> {
-    pub fn draw<C: gfx::CommandBuffer<R>>(&self, encoder: &mut gfx::Encoder<R, C>, cam: &Camera) {
-        use cgmath::SquareMatrix;
-        let mx_vp = cam.get_view_proj();
-        let cpos: [f32; 3] = cam.loc.into();
-        let locals = TerrainLocals {
-            cam_pos: [cpos[0], cpos[1], cpos[2], 1.0],
-            m_vp: mx_vp.into(),
-            m_inv_vp: mx_vp.invert().unwrap().into(),
-        };
-        encoder.update_constant_buffer(&self.terrain.data.locals, &locals);
-        encoder.clear(&self.terrain.data.out, [0.1,0.2,0.3,1.0]);
+    pub fn draw<C>(&mut self, encoder: &mut gfx::Encoder<R, C>, agents: &[Agent<R>], cam: &Camera) where
+        C: gfx::CommandBuffer<R>,
+    {
+        // clear buffers
+        encoder.clear(&self.terrain.data.out_color, [0.1,0.2,0.3,1.0]);
+        encoder.clear_depth(&self.terrain.data.out_depth, 1.0);
+        // draw terrain
+        {
+            use cgmath::SquareMatrix;
+            let mx_vp = cam.get_view_proj();
+            let cpos: [f32; 3] = cam.loc.into();
+            let locals = TerrainLocals {
+                cam_pos: [cpos[0], cpos[1], cpos[2], 1.0],
+                m_vp: mx_vp.into(),
+                m_inv_vp: mx_vp.invert().unwrap().into(),
+            };
+            encoder.update_constant_buffer(&self.terrain.data.locals, &locals);
+        }
         self.terrain.encode(encoder);
+        // draw vehicle models
+        for ag in agents.iter() {
+            use cgmath::Matrix4;
+            let transform: Matrix4<f32> = ag.transform.into();
+            let locals = ObjectLocals {
+                m_mvp: (cam.get_view_proj() * transform).into(),
+            };
+            self.object_data.vbuf = ag.model.body.buffer.clone();
+            encoder.update_constant_buffer(&self.object_data.locals, &locals);
+            encoder.draw(&ag.model.body.slice, &self.object_pso, &self.object_data);
+        }
     }
 
     pub fn create_palette<F: gfx::Factory<R>>(data: &[[u8; 4]], factory: &mut F)

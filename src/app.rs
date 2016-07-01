@@ -45,9 +45,20 @@ pub trait App<R: gfx::Resources> {
     }
 }
 
+enum Control {
+    Player,
+    Artificial,
+}
+
+pub struct Agent<R: gfx::Resources> {
+    control: Control,
+    pub transform: cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>,
+    pub model: model::Model<R>,
+}
 
 pub struct Game<R: gfx::Resources> {
     render: render::Render<R>,
+    agents: Vec<Agent<R>>,
     cam: Camera,
 }
 
@@ -63,6 +74,7 @@ impl<R: gfx::Resources> Game<R> {
 
         Game {
             render: render::init(factory, out_color, out_depth, &lev),
+            agents: Vec::new(),
             cam: Camera {
                 loc: cgmath::vec3(0.0, 0.0, 200.0),
                 rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
@@ -109,7 +121,7 @@ impl<R: gfx::Resources> App<R> for Game<R> {
         true
     }
     fn on_frame<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
-        self.render.draw(enc, &self.cam);
+        self.render.draw(enc, &self.agents, &self.cam);
     }
 }
 
