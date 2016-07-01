@@ -20,25 +20,54 @@ const uint c_NumBinarySteps = 8U, c_NumForwardSteps = 0U;
 
 out vec4 Target0;
 
+
+struct Surface {
+	float low_alt, high_alt, delta;
+	uint low_type, high_type;
+	vec3 tex_coord;
+};
+
+uint get_terrain_type(uint meta) {
+	return (meta >> c_TerrainShift) & (c_NumTerrains - 1U);
+}
+
+Surface get_surface(vec2 pos) {
+	vec3 tc = vec3(pos / u_TextureScale.xy, 0.0);
+	tc.z = trunc(mod(tc.y, u_TextureScale.w));
+	Surface suf;
+	suf.tex_coord = tc;
+	suf.high_alt = suf.delta = 0.0;
+	uint meta = texture(t_Meta, tc).x;
+	suf.low_type = get_terrain_type(meta);
+	suf.high_type = 0U;
+	if ((meta & c_DoubleLevelMask) != 0U) {
+		if (mod(pos.x, 2.0) >= 1.0) {
+			tc.x -= 1.0 / u_TextureScale.x;
+			suf.high_type = suf.low_type;
+			uint meta_low = texture(t_Meta, tc).x;
+			suf.low_type = get_terrain_type(meta_low);
+		}else {
+			uint meta_high = textureOffset(t_Meta, tc, ivec2(1, 0)).x;
+			suf.high_type = get_terrain_type(meta_high);
+		}
+		suf.low_alt = texture(t_Height, tc).x * u_TextureScale.z;
+		suf.high_alt = textureOffset(t_Height, tc, ivec2(1, 0)).x * u_TextureScale.z;
+	}else {
+		suf.low_alt = texture(t_Height, tc).x * u_TextureScale.z;
+	}
+	return suf;
+}
+
+
 vec3 cast_ray_to_plane(float level, vec3 base, vec3 dir) {
 	float t = (level - base.z) / dir.z;
 	return t * dir + base;
 }
 
-float get_latitude(vec2 pos) {
-	vec3 tc = vec3(pos / u_TextureScale.xy, 0.0);
-	tc.z = trunc(mod(tc.y, u_TextureScale.w));
-	uint meta = texture(t_Meta, tc).x;
-	if (mod(pos.x, 2.0) >= 1.0 && (meta & c_DoubleLevelMask) != 0U) {
-		tc.x -= 1.0 / u_TextureScale.x;
-	}
-	return texture(t_Height, tc).x * u_TextureScale.z;
-}
-
 vec4 cast_ray_with_latitude(float level, vec3 base, vec3 dir) {
 	vec3 pos = cast_ray_to_plane(level, base, dir);
-	float height = get_latitude(pos.xy);
-	return vec4(pos, height);
+	Surface suf = get_surface(pos.xy);
+	return vec4(pos, suf.low_alt);
 }
 
 vec3 cast_ray_to_map(vec3 base, vec3 dir) {
@@ -47,7 +76,8 @@ vec3 cast_ray_to_map(vec3 base, vec3 dir) {
 	vec4 step = (1.0 / float(c_NumForwardSteps + 1U)) * (b - a);
 	for (uint i=0U; i<c_NumForwardSteps; ++i) {
 		vec4 c = a + step;
-		c.w = get_latitude(c.xy);
+		Surface suf = get_surface(c.xy);
+		c.w = suf.low_alt;
 		if (c.z < c.w) {
 			b = c;
 			break;
@@ -57,7 +87,8 @@ vec3 cast_ray_to_map(vec3 base, vec3 dir) {
 	}
 	for (uint i=0U; i<c_NumBinarySteps; ++i) {
 		vec4 c = 0.5 * (a + b);
-		c.w = get_latitude(c.xy);
+		Surface suf = get_surface(c.xy);
+		c.w = suf.low_alt;
 		if (c.z < c.w) {
 			b = c;
 		}else {
@@ -78,16 +109,9 @@ void main() {
 	//Target0 = texture(t_Palette, pos.z / u_TextureScale.z);
 	vec3 pos = cast_ray_to_map(u_CamPos.xyz, view);
 	{
-		vec3 tc = vec3(pos.xy / u_TextureScale.xy, 0.0);
-		tc.z = trunc(mod(tc.y, u_TextureScale.w));
-		uint meta = texture(t_Meta, tc).x;
-		if (mod(pos.x, 2.0) >= 1.0 && (meta & c_DoubleLevelMask) != 0U) {
-			tc.x -= 1.0 / u_TextureScale.x;
-			meta = texture(t_Meta, tc).x;
-		}
-		float terrain = float((meta >> c_TerrainShift) & (c_NumTerrains - 1U)) + 0.5;
-		vec3 off = vec3(1.0 / u_TextureScale.x, 0.0, 0.0);
-		float diff = texture(t_Height, tc + off).x - texture(t_Height, tc - off).x;
+		Surface suf = get_surface(pos.xy);
+		float terrain = float(suf.low_type) + 0.5;
+		float diff = textureOffset(t_Height, suf.tex_coord, ivec2(1, 0)).x - textureOffset(t_Height, suf.tex_coord, ivec2(-1, 0)).x;
 		float light_clr = texture(t_Table, vec3(0.5 * diff + 0.5, 0.25, terrain)).x;
 		float tmp = light_clr - c_HorFactor * (1.0 - pos.z / u_TextureScale.z);
 		float color_id = texture(t_Table, vec3(0.5 * tmp + 0.5, 0.75, terrain)).x;
