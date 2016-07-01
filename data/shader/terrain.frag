@@ -93,4 +93,6 @@ void main() {
 		float color_id = texture(t_Table, vec3(0.5 * tmp + 0.5, 0.75, terrain)).x;
 		Target0 = texture(t_Palette, color_id);
 	}
+	vec4 target_ndc = u_ViewProj * vec4(pos, 1.0);
+	gl_FragDepth = target_ndc.z / target_ndc.w * 0.5 + 0.5;
 }

@@ -8,7 +8,7 @@ use config::Settings;
 pub struct Camera {
     pub loc: cgmath::Vector3<f32>,
     pub rot: cgmath::Quaternion<f32>,
-    pub proj: cgmath::PerspectiveFov<f32>,
+    proj: cgmath::PerspectiveFov<f32>,
 }
 
 impl Camera {
@@ -83,7 +83,7 @@ impl<R: gfx::Resources> Game<R> {
             control: Control::Player,
             transform: cgmath::Decomposed {
                 scale: 1.0,
-                disp: cgmath::vec3(0.0, 0.0, 10.0),
+                disp: cgmath::vec3(0.0, 0.0, 40.0),
                 rot: cgmath::One::one(),
             },
             model: model::load_m3d(&mut model_file, factory),
