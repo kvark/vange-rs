@@ -4,6 +4,7 @@ use level;
 #[derive(RustcDecodable)]
 pub struct GameSettings {
     pub level: String,
+    pub vehicle: String,
 }
 
 #[derive(RustcDecodable)]
@@ -41,6 +42,10 @@ impl Settings {
 
     pub fn get_object_palette_path(&self) -> String {
         format!("{}/resource/pal/objects.pal", self.data_path)
+    }
+
+    pub fn get_vehicle_model_path(&self, name: &str) -> String {
+        format!("{}/resource/m3d/mechous/{}.m3d", self.data_path, name)
     }
 
     pub fn get_level(&self) -> level::LevelConfig {

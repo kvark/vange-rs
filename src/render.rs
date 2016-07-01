@@ -1,7 +1,7 @@
 use gfx;
 use gfx::traits::FactoryExt;
 use app::{Agent, Camera};
-use level::{Level, NUM_TERRAINS};
+use level;
 
 
 struct MaterialParams {
@@ -11,7 +11,7 @@ struct MaterialParams {
 }
 
 const NUM_MATERIALS: usize = 2;
-const TERRAIN_MATERIAL: [usize; NUM_TERRAINS] = [1, 0, 0, 0, 0, 0, 0, 0];
+const TERRAIN_MATERIAL: [usize; level::NUM_TERRAINS] = [1, 0, 0, 0, 0, 0, 0, 0];
 const MATERIALS: [MaterialParams; NUM_MATERIALS] = [
     MaterialParams { dx: 1.0, sd: 1.0, jj: 1.0},
     MaterialParams { dx: 5.0, sd: 1.25, jj: 0.5 },
@@ -113,7 +113,8 @@ fn read(name: &str) -> Vec<u8> {
 pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             main_color: gfx::handle::RenderTargetView<R, ColorFormat>,
             main_depth: gfx::handle::DepthStencilView<R, DepthFormat>,
-            level: &Level) -> Render<R>
+            level: &level::Level, object_palette: &[[u8; 4]])
+            -> Render<R>
 {
     use gfx::{format, tex};
 
@@ -131,7 +132,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             }
         }
     }
-    let mut color_table = [[0; 0x400]; NUM_TERRAINS];
+    let mut color_table = [[0; 0x400]; level::NUM_TERRAINS];
     for (ct, (terr, &mid)) in color_table.iter_mut().zip(level.terrains.iter().zip(TERRAIN_MATERIAL.iter())) {
         for (c, lcm) in ct[0x000..0x200].iter_mut().zip(light_clr_material[mid].iter()) {
             *c = *lcm;
@@ -148,7 +149,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
 
     let kind = tex::Kind::D2Array(level.size.0 as tex::Size, TEX_HEIGHT as tex::Size,
         (level.size.1/TEX_HEIGHT) as tex::Size, tex::AaMode::Single);
-    let table_kind = tex::Kind::D2Array(0x200, 2, NUM_TERRAINS as tex::Size, tex::AaMode::Single);
+    let table_kind = tex::Kind::D2Array(0x200, 2, level::NUM_TERRAINS as tex::Size, tex::AaMode::Single);
     let height_chunks: Vec<_> = level.height.chunks((level.size.0 * TEX_HEIGHT) as usize).collect();
     let meta_chunks: Vec<_> = level.meta.chunks((level.size.0 * TEX_HEIGHT) as usize).collect();
     let table_chunks: Vec<_> = color_table.iter().map(|t| &t[..]).collect();
@@ -161,7 +162,6 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
         tex::FilterMethod::Scale, tex::WrapMode::Tile));
     let sm_table = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Bilinear, tex::WrapMode::Clamp));
-    let palette = Render::create_palette(&level.palette, factory);
 
     Render {
         terrain: {
@@ -180,7 +180,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
                 locals: factory.create_constant_buffer(1),
                 height: (height, sm_height),
                 meta: (meta, sm_meta),
-                palette: palette.clone(),
+                palette: Render::create_palette(&level.palette, factory),
                 table: (table, sm_table),
                 out_color: main_color.clone(),
                 out_depth: main_depth.clone(),
@@ -191,7 +191,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
         object_data: object::Data {
             vbuf: factory.create_vertex_buffer(&[]), //dummy
             locals: factory.create_constant_buffer(1),
-            palette: palette,
+            palette: Render::create_palette(&object_palette, factory),
             ctable: Render::create_color_table(factory),
             out_color: main_color,
             out_depth: main_depth,

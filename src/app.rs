@@ -47,7 +47,7 @@ pub trait App<R: gfx::Resources> {
 
 enum Control {
     Player,
-    Artificial,
+    //Artificial,
 }
 
 pub struct Agent<R: gfx::Resources> {
@@ -68,13 +68,30 @@ impl<R: gfx::Resources> Game<R> {
            out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
            factory: &mut F) -> Game<R>
     {
+        use std::io::BufReader;
+        use std::fs::File;
+
         info!("Loading world parameters");
         let config = settings.get_level();
         let lev = level::load(&config);
+        let pal_data = level::load_palette(&settings.get_object_palette_path());
+
+        let mut model_file = BufReader::new(File::open(
+            settings.get_vehicle_model_path(&settings.game.vehicle)
+        ).unwrap());
+        let agent = Agent {
+            control: Control::Player,
+            transform: cgmath::Decomposed {
+                scale: 1.0,
+                disp: cgmath::vec3(0.0, 0.0, 10.0),
+                rot: cgmath::One::one(),
+            },
+            model: model::load_m3d(&mut model_file, factory),
+        };
 
         Game {
-            render: render::init(factory, out_color, out_depth, &lev),
-            agents: Vec::new(),
+            render: render::init(factory, out_color, out_depth, &lev, &pal_data),
+            agents: vec![agent],
             cam: Camera {
                 loc: cgmath::vec3(0.0, 0.0, 200.0),
                 rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
