@@ -68,13 +68,21 @@ fn main() {
     loop {
         use gfx::Device;
         use app::App;
+        let events = window.poll_events();
         let delta = time::precise_time_s() as f32 - last_time;
-        let ok = match app {
-            RoadApp::Game(ref mut a) => a.do_iter(window.poll_events(), delta, &mut factory, &mut encoder),
-            RoadApp::View(ref mut a) => a.do_iter(window.poll_events(), delta, &mut factory, &mut encoder),
-        };
-        if !ok {
-            break
+        match app {
+            RoadApp::Game(ref mut a) => {
+                if !a.update(events, delta, &mut factory) {
+                    break
+                }
+                a.draw(&mut encoder);
+            },
+            RoadApp::View(ref mut a) => {
+                if !a.update(events, delta, &mut factory) {
+                    break
+                }
+                a.draw(&mut encoder);
+            },
         }
         encoder.flush(&mut device);
         window.swap_buffers().unwrap();
