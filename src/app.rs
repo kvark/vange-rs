@@ -1,10 +1,11 @@
 use cgmath;
-use cgmath::EuclideanSpace;
 use glutin::Event;
 use gfx;
 use {level, model, render};
 use config::Settings;
 
+
+pub type Transform = cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>;
 
 pub struct Camera {
     pub loc: cgmath::Vector3<f32>,
@@ -13,7 +14,7 @@ pub struct Camera {
 }
 
 pub struct Follow {
-    offset: cgmath::Vector3<f32>,
+    transform: Transform,
     move_speed: f32,
     rot_speed: cgmath::Rad<f32>,
 }
@@ -31,9 +32,12 @@ impl Camera {
         proj_mx * view_mx
     }
 
-    fn follow(&mut self, target: &cgmath::Point3<f32>, follow: &Follow) {
+    fn follow(&mut self, target: &Transform, follow: &Follow) {
+        use cgmath::Transform;
+        let result = target.concat(&follow.transform);
         //TODO
-        self.loc = (target + follow.offset).to_vec();
+        self.loc = result.disp;
+        self.rot = result.rot;
     }
 }
 
@@ -79,7 +83,7 @@ impl Dynamo {
 
 pub struct Agent<R: gfx::Resources> {
     control: Control,
-    pub transform: cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>,
+    pub transform: Transform,
     pub model: model::Model<R>,
     dynamo: Dynamo,
 }
@@ -146,8 +150,8 @@ impl<R: gfx::Resources> Game<R> {
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::deg(45.0).into(),
                     aspect: settings.get_screen_aspect(),
-                    near: 1.0,
-                    far: 100000.0,
+                    near: 10.0,
+                    far: 10000.0,
                 },
             },
             dyn_target: Dynamo {
@@ -175,13 +179,15 @@ impl<R: gfx::Resources> App<R> for Game<R> {
         //let step = delta * 400.0;
         for event in events {
             match event {
-                Event::KeyboardInput(_, _, Some(Key::Escape)) |
+                Event::KeyboardInput(Pressed, _, Some(Key::Escape)) |
                 Event::Closed => return false,
-                Event::KeyboardInput(_, _, Some(Key::L)) => self.render.reload(factory),
+                Event::KeyboardInput(Pressed, _, Some(Key::L)) => self.render.reload(factory),
+                /*
                 Event::KeyboardInput(_, _, Some(Key::R)) =>
                     self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
                 Event::KeyboardInput(_, _, Some(Key::F)) =>
                     self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), -angle),
+                */
                 Event::KeyboardInput(Pressed, _, Some(Key::W)) => self.dyn_target.thrust = 100.0,
                 Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.dyn_target.thrust = -40.0,
                 Event::KeyboardInput(Released, _, Some(Key::W)) | Event::KeyboardInput(Released, _, Some(Key::S)) =>
@@ -204,9 +210,12 @@ impl<R: gfx::Resources> App<R> for Game<R> {
 
         if let Some(p) = self.agents.iter_mut().find(|a| a.control == Control::Player) {
             p.dynamo.step(&self.dyn_target, delta);
-            let target = cgmath::Point3::from_vec(p.transform.disp);
-            self.cam.follow(&target, &Follow {
-                offset: cgmath::vec3(0.0, -100.0, 50.0),
+            self.cam.follow(&p.transform, &Follow {
+                transform: cgmath::Decomposed {
+                    disp: cgmath::vec3(0.0, -100.0, 50.0),
+                    rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Angle::turn_div_6()),
+                    scale: 1.0,
+                },
                 move_speed: 5.0,
                 rot_speed: cgmath::Rad::new(0.1),
             });
@@ -227,7 +236,7 @@ impl<R: gfx::Resources> App<R> for Game<R> {
 
 pub struct ModelView<R: gfx::Resources> {
     model: model::Model<R>,
-    transform: cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>,
+    transform: Transform,
     pso: gfx::PipelineState<R, render::object::Meta>,
     data: render::object::Data<R>,
     cam: Camera,
