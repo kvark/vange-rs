@@ -10,5 +10,5 @@ cargo run --release
 ```
 
 ### Latest progress
-![alt text](etc/shots/Road5-color.png "WIP screenshot of the world")
+![alt text](etc/shots/Road7-vehicle.png "WIP screenshot of the world")
 ![alt text](etc/shots/Road6-model.png "WIP screenshot of the model")
