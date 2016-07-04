@@ -191,7 +191,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             };
             gfx::Bundle::new(slice, pso, data)
         },
-        terrain_scale: [level.size.0 as f32, TEX_HEIGHT as f32, 48.0, num_layers as f32],
+        terrain_scale: [level.size.0 as f32, TEX_HEIGHT as f32, level::HEIGHT_SCALE as f32, num_layers as f32],
         object_pso: Render::create_object_pso(factory),
         object_data: object::Data {
             vbuf: factory.create_vertex_buffer(&[]), //dummy

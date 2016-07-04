@@ -89,13 +89,18 @@ pub struct Agent<R: gfx::Resources> {
 }
 
 impl<R: gfx::Resources> Agent<R> {
-    fn step(&mut self, delta: f32) {
+    fn step(&mut self, delta: f32, level: &level::Level) {
         use cgmath::{Rotation, Rotation3};
         // move forward
         let wheel_rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), -self.dynamo.steer);
         let forward_local = wheel_rot.rotate_vector(cgmath::Vector3::unit_y());
         let forward_world = self.transform.rot.rotate_vector(forward_local);
         self.transform.disp += forward_world * self.dynamo.thrust * delta;
+        let coord = ((self.transform.disp.x + 0.5) as i32, (self.transform.disp.y + 0.5) as i32);
+        let texel = level.get(coord);
+        let height_scale = (level::HEIGHT_SCALE as f32) / 256.0;
+        let vehicle_base = 5.0;
+        self.transform.disp.z = (texel.low as f32 + 0.5) * height_scale + vehicle_base;
         // rotate
         let rot_speed = 0.1;
         let rot_angle = cgmath::Rad::new(rot_speed * self.dynamo.thrust * self.dynamo.steer.s * delta);
@@ -105,6 +110,7 @@ impl<R: gfx::Resources> Agent<R> {
 
 pub struct Game<R: gfx::Resources> {
     render: render::Render<R>,
+    level: level::Level,
     agents: Vec<Agent<R>>,
     cam: Camera,
     dyn_target: Dynamo,
@@ -143,6 +149,7 @@ impl<R: gfx::Resources> Game<R> {
 
         Game {
             render: render::init(factory, out_color, out_depth, &lev, &pal_data),
+            level: lev,
             agents: vec![agent],
             cam: Camera {
                 loc: cgmath::vec3(0.0, 0.0, 200.0),
@@ -171,11 +178,10 @@ impl<R: gfx::Resources> Game<R> {
 
 impl<R: gfx::Resources> App<R> for Game<R> {
     fn update<I: Iterator<Item=Event>, F: gfx::Factory<R>>(&mut self, events: I, delta: f32, factory: &mut F) -> bool {
-        use cgmath::Rotation3;
         use glutin::VirtualKeyCode as Key;
         use glutin::ElementState::*;
 
-        let angle = cgmath::rad(delta * 2.0);
+        //let angle = cgmath::rad(delta * 2.0);
         //let step = delta * 400.0;
         for event in events {
             match event {
@@ -222,7 +228,7 @@ impl<R: gfx::Resources> App<R> for Game<R> {
         }
 
         for a in self.agents.iter_mut() {
-            a.step(delta);
+            a.step(delta, &self.level);
         }
 
         true

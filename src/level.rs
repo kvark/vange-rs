@@ -33,6 +33,14 @@ pub struct LevelConfig {
     pub terrains: [TerrainConfig; NUM_TERRAINS],
 }
 
+pub type Altitude = u8;
+pub type Delta = u8;
+const DOUBLE_LEVEL: u8 = 1<<6;
+const DELTA_BITS: u8 = 2;
+const DELTA_MASK: u8 = (1 << DELTA_BITS) -1;
+const DELTA_SHIFT: u8 = 3;
+pub const HEIGHT_SCALE: u32 = 48;
+
 pub struct Level {
     pub size: (i32, i32),
     pub flood_map: Vec<u32>,
@@ -40,6 +48,32 @@ pub struct Level {
     pub meta: Vec<u8>,
     pub palette: [[u8; 4]; 0x100],
     pub terrains: [TerrainConfig; NUM_TERRAINS],
+}
+
+pub struct Texel {
+    pub low: Altitude,
+    pub high: Option<(Delta, Altitude)>,
+}
+
+impl Level {
+    pub fn get(&self, mut coord: (i32, i32)) -> Texel {
+        while coord.0 < 0 { coord.0 += self.size.0; }
+        while coord.1 < 0 { coord.1 += self.size.1; }
+        let i = ((coord.1 % self.size.1) * self.size.0 + (coord.0 % self.size.0)) as usize;
+        if self.meta[i] & DOUBLE_LEVEL != 0 {
+            let delta = ((self.meta[i & !1] & DELTA_MASK) << DELTA_BITS +
+                (self.meta[i | 1] & DELTA_MASK)) << DELTA_SHIFT;
+            Texel {
+                low: self.height[i & !1],
+                high: Some((delta, self.height[i | 1])),
+            }
+        }else {
+            Texel {
+                low: self.height[i],
+                high: None,
+            }
+        }
+    }
 }
 
 pub fn load_palette(path: &str) -> [[u8; 4]; 0x100] {
