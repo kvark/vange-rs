@@ -96,6 +96,7 @@ impl<R: gfx::Resources> Agent<R> {
         let forward_local = wheel_rot.rotate_vector(cgmath::Vector3::unit_y());
         let forward_world = self.transform.rot.rotate_vector(forward_local);
         self.transform.disp += forward_world * self.dynamo.thrust * delta;
+        // height adjust
         let coord = ((self.transform.disp.x + 0.5) as i32, (self.transform.disp.y + 0.5) as i32);
         let texel = level.get(coord);
         let height_scale = (level::HEIGHT_SCALE as f32) / 256.0;
