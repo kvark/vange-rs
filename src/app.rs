@@ -2,7 +2,7 @@ use cgmath;
 use glutin::Event;
 use gfx;
 use {level, model, render};
-use config::Settings;
+use config::{cars, Settings};
 
 
 pub type Transform = cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>;
@@ -109,7 +109,12 @@ impl<R: gfx::Resources> Agent<R> {
     }
 }
 
+struct DataBase {
+    cars: cars::Registry,
+}
+
 pub struct Game<R: gfx::Resources> {
+    db: DataBase,
     render: render::Render<R>,
     level: level::Level,
     agents: Vec<Agent<R>>,
@@ -127,8 +132,11 @@ impl<R: gfx::Resources> Game<R> {
         use std::fs::File;
 
         info!("Loading world parameters");
-        let config = settings.get_level();
-        let lev = level::load(&config);
+        let db = DataBase {
+            cars: cars::Registry::load(settings.open("car.prm")),
+        };
+        let lev_config = settings.get_level();
+        let level = level::load(&lev_config);
         let pal_data = level::load_palette(&settings.get_object_palette_path());
 
         let mut model_file = BufReader::new(File::open(
@@ -149,8 +157,9 @@ impl<R: gfx::Resources> Game<R> {
         };
 
         Game {
-            render: render::init(factory, out_color, out_depth, &lev, &pal_data),
-            level: lev,
+            db: db,
+            render: render::init(factory, out_color, out_depth, &level, &pal_data),
+            level: level,
             agents: vec![agent],
             cam: Camera {
                 loc: cgmath::vec3(0.0, 0.0, 200.0),
