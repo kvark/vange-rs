@@ -2,13 +2,13 @@ use std::fs::File;
 use level;
 
 #[derive(RustcDecodable)]
-pub struct GameSettings {
+pub struct Game {
     pub level: String,
     pub vehicle: String,
 }
 
 #[derive(RustcDecodable)]
-pub struct WindowSettings {
+pub struct Window {
     pub title: String,
     pub size: [u32; 2],
 }
@@ -16,8 +16,8 @@ pub struct WindowSettings {
 #[derive(RustcDecodable)]
 pub struct Settings {
     pub data_path: String,
-    pub game: GameSettings,
-    pub window: WindowSettings,
+    pub game: Game,
+    pub window: Window,
 }
 
 impl Settings {
