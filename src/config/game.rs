@@ -12,6 +12,8 @@ pub struct Registry<R: gfx::Resources> {
 
 impl<R: gfx::Resources> Registry<R> {
     pub fn load<F: gfx::Factory<R>>(settings: &Settings, factory: &mut F) -> Registry<R> {
+        use progressive::progress;
+
         let mut reg = Registry {
             models: HashMap::new(),
         };
@@ -21,11 +23,12 @@ impl<R: gfx::Resources> Registry<R> {
             fi.advance();
         }
         let count: u32 = fi.cur().split_whitespace()
-            .nth(2).unwrap()
+            .nth(1).unwrap()
             .parse().unwrap();
         fi.advance(); // MaxSize
 
-        for i in 0 .. count {
+        info!("Loading game models...");
+        for i in progress(0 .. count) {
             let num = fi.next_key_value("ModelNum");
             assert_eq!(i, num);
             let name: String = fi.next_key_value("Name");

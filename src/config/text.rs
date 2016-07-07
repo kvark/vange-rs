@@ -23,8 +23,9 @@ impl<I: Read> Reader<I> {
     pub fn advance(&mut self) {
         loop {
             self.line.clear();
-            self.input.read_line(&mut self.line).unwrap();
-            if self.line.starts_with("/*") {
+            if self.input.read_line(&mut self.line).is_err() {
+                // skip
+            } else if self.line.starts_with("/*") {
                 while !self.cur().ends_with("*/") {
                     self.advance();
                 }
