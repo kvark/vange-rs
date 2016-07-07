@@ -34,11 +34,22 @@ impl<I: Read> Reader<I> {
         }
     }
 
-    pub fn next<T>(&mut self) -> T where
+    pub fn next_value<T>(&mut self) -> T where
         T: FromStr,
         T::Err: Debug,
     {
         self.advance();
         self.cur().parse().unwrap()
+    }
+
+    pub fn next_entry<T>(&mut self) -> (&str, Vec<T>) where
+        T: FromStr,
+        T::Err: Debug,
+    {
+        self.advance();
+        let mut tokens = self.line.split_whitespace();
+        let name = tokens.next().unwrap();
+        let data = tokens.map(|t| t.parse().unwrap()).collect();
+        (name, data)
     }
 }
