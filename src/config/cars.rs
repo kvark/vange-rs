@@ -1,6 +1,6 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
+use super::text::Reader;
 
 
 pub type Price = u32;
@@ -64,39 +64,6 @@ pub struct Registry {
     pub constructor: Vec<Car>,
 }
 
-struct Reader<I> {
-    input: BufReader<I>,
-    line: String,
-}
-
-impl<I: Read> Reader<I> {
-    fn new(input: I) -> Reader<I> {
-        Reader {
-            input: BufReader::new(input),
-            line: String::new(),
-        }
-    }
-
-    fn cur(&self) -> &str {
-        self.line.trim_right()
-    }
-
-    fn next(&mut self) -> &str {
-        self.line.clear();
-        self.input.read_line(&mut self.line).unwrap();
-        self.cur()
-    }
-
-    fn skip_comments(&mut self) {
-        if self.line.starts_with("/*") {
-            while !self.cur().ends_with("*/") {
-                self.next();
-            }
-        }
-        while self.next().is_empty() {}
-    }
-}
-
 impl Registry {
     pub fn load(file: File) -> Registry {
         let mut reg = Registry {
@@ -108,28 +75,18 @@ impl Registry {
 
         assert_eq!(fi.next(), "uniVang-ParametersFile_Ver_1");
 
-        while fi.next().is_empty() {}
-        fi.skip_comments();
-        fi.skip_comments();
-
-        let num_main: u8 = fi.cur().parse().unwrap();
+        let num_main: u8 = fi.next().parse().unwrap();
         let num_ruffa: u8 = fi.next().parse().unwrap();
         let num_const: u8 = fi.next().parse().unwrap();
         info!("Reading {} main vehicles, {} ruffas, and {} constructors",
             num_main, num_ruffa, num_const);
 
-        while fi.next().is_empty() {}
-        fi.skip_comments();
-        fi.skip_comments();
-
         for _ in 0 .. num_main {
-            reg.main.push(fi.cur().parse().unwrap());
-            fi.next();
+            reg.main.push(fi.next().parse().unwrap());
         }
         for _ in 0 .. num_ruffa {
             reg.ruffa.push(fi.next().parse().unwrap());
         }
-        fi.next();
         for _ in 0 .. num_const {
             reg.constructor.push(fi.next().parse().unwrap());
         }
