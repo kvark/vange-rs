@@ -2,7 +2,7 @@ use cgmath;
 use glutin::Event;
 use gfx;
 use {level, model, render};
-use config::{cars, Settings};
+use config::{car, Settings};
 
 
 #[derive(Eq, PartialEq)]
@@ -68,7 +68,7 @@ impl<R: gfx::Resources> Agent<R> {
 }
 
 struct DataBase {
-    cars: cars::Registry,
+    cars: car::Registry,
 }
 
 pub struct Game<R: gfx::Resources> {
@@ -91,7 +91,7 @@ impl<R: gfx::Resources> Game<R> {
 
         info!("Loading world parameters");
         let db = DataBase {
-            cars: cars::Registry::load(settings.open("car.prm")),
+            cars: car::Registry::load(settings.open("car.prm")),
         };
         let lev_config = settings.get_level();
         let level = level::load(&lev_config);

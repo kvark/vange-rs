@@ -1,4 +1,4 @@
-pub mod cars;
+pub mod car;
 pub mod settings;
 mod text;
 
