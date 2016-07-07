@@ -10,6 +10,7 @@ const SCALE: f32 = 1.0 / 4.0;
 pub struct Mesh<R: gfx::Resources> {
     pub slice: gfx::Slice<R>,
     pub buffer: gfx::handle::Buffer<R, ObjectVertex>,
+    pub offset: [f32; 3],
 }
 
 pub struct Polygon {
@@ -39,6 +40,14 @@ pub struct Model<R: gfx::Resources> {
     pub debris: Vec<Debrie<R>>,
 }
 
+fn read_vec<I: ReadBytesExt>(source: &mut I) -> [f32; 3] {
+    [
+        source.read_i32::<E>().unwrap() as f32 * SCALE,
+        source.read_i32::<E>().unwrap() as f32 * SCALE,
+        source.read_i32::<E>().unwrap() as f32 * SCALE,
+    ]
+}
+
 pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     I: ReadBytesExt,
     R: gfx::Resources,
@@ -51,18 +60,10 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     let num_polygons  = source.read_u32::<E>().unwrap();
     let _total_verts  = source.read_u32::<E>().unwrap();
 
-    let coord_max  = [
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-    ];
-    let coord_min  = [
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-    ];
+    let coord_max = read_vec(source);
+    let coord_min = read_vec(source);
     info!("\tBound {:?} to {:?}", coord_min, coord_max);
-    let _parent_off = [
+    let parent_off = [
         source.read_i32::<E>().unwrap(),
         source.read_i32::<E>().unwrap(),
         source.read_i32::<E>().unwrap(),
@@ -76,9 +77,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     info!("\tReading {} positions...", num_positions);
     let mut positions = Vec::with_capacity(num_positions as usize);
     for _ in 0 .. num_positions {
-        for _ in 0..3 {
-            source.read_u32::<E>().unwrap(); //unknown
-        }
+        read_vec(source); //unknown
         let pos = [
             source.read_i8().unwrap(),
             source.read_i8().unwrap(),
@@ -165,6 +164,11 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     Mesh {
         slice: slice,
         buffer: vbuf,
+        offset: [
+            coord_min[0] + (parent_off[0] as f32 + 128.0) * (coord_max[0] - coord_min[0]) / 255.0,
+            coord_min[1] + (parent_off[1] as f32 + 128.0) * (coord_max[1] - coord_min[1]) / 255.0,
+            coord_min[2] + (parent_off[2] as f32 + 128.0) * (coord_max[2] - coord_min[2]) / 255.0,
+        ],
     }
 }
 
@@ -180,16 +184,8 @@ pub fn load_c3d_shape<I>(source: &mut I) -> Shape where
     let num_polygons  = source.read_u32::<E>().unwrap();
     let _total_verts  = source.read_u32::<E>().unwrap();
 
-    let coord_max  = [
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-    ];
-    let coord_min  = [
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-    ];
+    let coord_max = read_vec(source);
+    let coord_min = read_vec(source);
     info!("\tBound {:?} to {:?}", coord_min, coord_max);
 
     source.seek(Current(

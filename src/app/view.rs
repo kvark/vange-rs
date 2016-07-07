@@ -88,13 +88,11 @@ impl<R: gfx::Resources> super::App<R> for ModelView<R> {
     }
 
     fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
-        let model_trans: cgmath::Matrix4<f32> = self.transform.into();
-        let locals = render::ObjectLocals {
-            m_mvp: (self.cam.get_view_proj() * model_trans).into(),
-        };
-        enc.update_constant_buffer(&self.data.locals, &locals);
         enc.clear(&self.data.out_color, [0.1, 0.2, 0.3, 1.0]);
         enc.clear_depth(&self.data.out_depth, 1.0);
-        enc.draw(&self.model.body.slice, &self.pso, &self.data);
+
+        let local: cgmath::Matrix4<f32> = self.transform.into();
+        let mvp = self.cam.get_view_proj() * local;
+        render::Render::draw_model(enc, &self.model, mvp, &self.pso, &mut self.data);
     }
 }

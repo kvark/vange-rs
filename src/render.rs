@@ -1,7 +1,8 @@
+use cgmath::Matrix4;
 use gfx;
 use gfx::traits::FactoryExt;
 use app::{Agent, Camera};
-use level;
+use {level, model};
 
 
 struct MaterialParams {
@@ -205,16 +206,41 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
 }
 
 impl<R: gfx::Resources> Render<R> {
+    pub fn draw_mesh<C>(encoder: &mut gfx::Encoder<R, C>, mesh: &model::Mesh<R>, transform: Matrix4<f32>,
+                     pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>) where
+        C: gfx::CommandBuffer<R>,
+    {
+        let offset = Matrix4::from_translation(mesh.offset.into());
+        let locals = ObjectLocals {
+            m_mvp: (transform * offset).into(),
+        };
+        data.vbuf = mesh.buffer.clone();
+        encoder.update_constant_buffer(&data.locals, &locals);
+        encoder.draw(&mesh.slice, pso, data);
+    }
+
+    pub fn draw_model<C>(encoder: &mut gfx::Encoder<R, C>, model: &model::Model<R>, transform: Matrix4<f32>,
+                      pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>) where
+        C: gfx::CommandBuffer<R>,
+    {
+        Render::draw_mesh(encoder, &model.body, transform, pso, data);
+        for w in model.wheels.iter() {
+            if let Some(ref mesh) = w.mesh {
+                Render::draw_mesh(encoder, mesh, transform, pso, data);
+            }
+        }
+    }
+
     pub fn draw<C>(&mut self, encoder: &mut gfx::Encoder<R, C>, agents: &[Agent<R>], cam: &Camera) where
         C: gfx::CommandBuffer<R>,
     {
+        let mx_vp = cam.get_view_proj();
         // clear buffers
         encoder.clear(&self.terrain.data.out_color, [0.1,0.2,0.3,1.0]);
         encoder.clear_depth(&self.terrain.data.out_depth, 1.0);
         // draw terrain
         {
             use cgmath::SquareMatrix;
-            let mx_vp = cam.get_view_proj();
             let cpos: [f32; 3] = cam.loc.into();
             let (wid, het, _, _) = self.terrain.data.out_color.get_dimensions();
             let locals = TerrainLocals {
@@ -229,14 +255,8 @@ impl<R: gfx::Resources> Render<R> {
         self.terrain.encode(encoder);
         // draw vehicle models
         for ag in agents.iter() {
-            use cgmath::Matrix4;
-            let transform: Matrix4<f32> = ag.transform.into();
-            let locals = ObjectLocals {
-                m_mvp: (cam.get_view_proj() * transform).into(),
-            };
-            self.object_data.vbuf = ag.model.body.buffer.clone();
-            encoder.update_constant_buffer(&self.object_data.locals, &locals);
-            encoder.draw(&ag.model.body.slice, &self.object_pso, &self.object_data);
+            let local: Matrix4<f32> = ag.transform.into();
+            Render::draw_model(encoder, &ag.model, mx_vp * local, &self.object_pso, &mut self.object_data);
         }
     }
 
