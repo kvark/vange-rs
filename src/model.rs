@@ -62,12 +62,8 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
 
     let coord_max = read_vec(source);
     let coord_min = read_vec(source);
-    info!("\tBound {:?} to {:?}", coord_min, coord_max);
-    let parent_off = [
-        source.read_i32::<E>().unwrap(),
-        source.read_i32::<E>().unwrap(),
-        source.read_i32::<E>().unwrap(),
-    ];
+    let parent_off = read_vec(source);
+    info!("\tBound {:?} to {:?} with offset {:?}", coord_min, coord_max, parent_off);
     let _max_radius = source.read_u32::<E>().unwrap();
     let _parent_rot = [source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap()];
     for _ in 0 .. (1+3+9) {
@@ -164,11 +160,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     Mesh {
         slice: slice,
         buffer: vbuf,
-        offset: [
-            coord_min[0] + (parent_off[0] as f32 + 128.0) * (coord_max[0] - coord_min[0]) / 255.0,
-            coord_min[1] + (parent_off[1] as f32 + 128.0) * (coord_max[1] - coord_min[1]) / 255.0,
-            coord_min[2] + (parent_off[2] as f32 + 128.0) * (coord_max[2] - coord_min[2]) / 255.0,
-        ],
+        offset: parent_off,
     }
 }
 

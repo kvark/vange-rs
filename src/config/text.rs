@@ -42,6 +42,17 @@ impl<I: Read> Reader<I> {
         self.cur().parse().unwrap()
     }
 
+    pub fn next_key_value<T>(&mut self, key: &str) -> T where
+        T: FromStr,
+        T::Err: Debug,
+    {
+        self.advance();
+        let mut tokens = self.line.split_whitespace();
+        let name = tokens.next().unwrap();
+        assert_eq!(name, key);
+        tokens.next().unwrap().parse().unwrap()
+    }
+
     pub fn next_entry<T>(&mut self) -> (&str, Vec<T>) where
         T: FromStr,
         T::Err: Debug,
