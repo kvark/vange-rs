@@ -1,5 +1,6 @@
-//use std::collections::HashMap;
+use std::fmt::Debug;
 use std::io::{BufRead, BufReader, Read};
+use std::str::FromStr;
 
 
 pub struct Reader<I> {
@@ -33,8 +34,11 @@ impl<I: Read> Reader<I> {
         }
     }
 
-    pub fn next(&mut self) -> &str {
+    pub fn next<T>(&mut self) -> T where
+        T: FromStr,
+        T::Err: Debug,
+    {
         self.advance();
-        self.cur()
+        self.cur().parse().unwrap()
     }
 }

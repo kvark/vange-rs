@@ -72,23 +72,23 @@ impl Registry {
             constructor: Vec::new(),
         };
         let mut fi = Reader::new(file);
+        fi.advance();
+        assert_eq!(fi.cur(), "uniVang-ParametersFile_Ver_1");
 
-        assert_eq!(fi.next(), "uniVang-ParametersFile_Ver_1");
-
-        let num_main: u8 = fi.next().parse().unwrap();
-        let num_ruffa: u8 = fi.next().parse().unwrap();
-        let num_const: u8 = fi.next().parse().unwrap();
+        let num_main: u8 = fi.next();
+        let num_ruffa: u8 = fi.next();
+        let num_const: u8 = fi.next();
         info!("Reading {} main vehicles, {} ruffas, and {} constructors",
             num_main, num_ruffa, num_const);
 
         for _ in 0 .. num_main {
-            reg.main.push(fi.next().parse().unwrap());
+            reg.main.push(fi.next());
         }
         for _ in 0 .. num_ruffa {
-            reg.ruffa.push(fi.next().parse().unwrap());
+            reg.ruffa.push(fi.next());
         }
         for _ in 0 .. num_const {
-            reg.constructor.push(fi.next().parse().unwrap());
+            reg.constructor.push(fi.next());
         }
 
         reg
