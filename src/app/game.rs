@@ -68,12 +68,12 @@ impl<R: gfx::Resources> Agent<R> {
 }
 
 struct DataBase<R: gfx::Resources> {
-    cars: config::car::Registry,
+    _cars: config::car::Registry,
     game: config::game::Registry<R>,
 }
 
 pub struct Game<R: gfx::Resources> {
-    db: DataBase<R>,
+    _db: DataBase<R>,
     render: render::Render<R>,
     level: level::Level,
     agents: Vec<Agent<R>>,
@@ -89,7 +89,7 @@ impl<R: gfx::Resources> Game<R> {
     {
         info!("Loading world parameters");
         let db = DataBase {
-            cars: config::car::Registry::load(settings.open("car.prm")),
+            _cars: config::car::Registry::load(settings.open("car.prm")),
             game: config::game::Registry::load(settings, factory),
         };
         let lev_config = settings.get_level();
@@ -111,7 +111,7 @@ impl<R: gfx::Resources> Game<R> {
         };
 
         Game {
-            db: db,
+            _db: db,
             render: render::init(factory, out_color, out_depth, &level, &pal_data),
             level: level,
             agents: vec![agent],

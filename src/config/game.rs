@@ -35,6 +35,7 @@ impl<R: gfx::Resources> Registry<R> {
             let _size: u8 = fi.next_key_value("Size");
             let key: String = fi.next_key_value("NameID");
             if name.ends_with(".m3d") {
+                debug!("Loading model for {}", key);
                 let mut br = BufReader::new(settings.open(&name));
                 let m = model::load_m3d(&mut br, factory);
                 reg.models.insert(key, m);

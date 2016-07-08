@@ -207,27 +207,40 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
 
 impl<R: gfx::Resources> Render<R> {
     pub fn draw_mesh<C>(encoder: &mut gfx::Encoder<R, C>, mesh: &model::Mesh<R>, transform: Matrix4<f32>,
-                     pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>) where
+                     pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>)
+    where
         C: gfx::CommandBuffer<R>,
     {
-        let scale = Matrix4::from_scale(1.0 / 4.0);
-        let offset = Matrix4::from_translation(mesh.offset.into());
         let locals = ObjectLocals {
-            m_mvp: (transform * scale * offset).into(),
+            m_mvp: transform.into(),
         };
         data.vbuf = mesh.buffer.clone();
         encoder.update_constant_buffer(&data.locals, &locals);
         encoder.draw(&mesh.slice, pso, data);
     }
 
-    pub fn draw_model<C>(encoder: &mut gfx::Encoder<R, C>, model: &model::Model<R>, transform: Matrix4<f32>,
+    pub fn draw_model<C>(encoder: &mut gfx::Encoder<R, C>, model: &model::Model<R>, mut transform: Matrix4<f32>,
                       pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>) where
         C: gfx::CommandBuffer<R>,
     {
+        let scale = Matrix4::from_scale(1.0 / 4.0);
+        transform = transform * scale;
         Render::draw_mesh(encoder, &model.body, transform, pso, data);
         for w in model.wheels.iter() {
             if let Some(ref mesh) = w.mesh {
-                Render::draw_mesh(encoder, mesh, transform, pso, data);
+                let offset = Matrix4::from_translation(mesh.offset.into());
+                Render::draw_mesh(encoder, mesh, transform * offset, pso, data);
+            }
+        }
+        for s in model.slots.iter() {
+            if let Some(ref mesh) = s.mesh {
+                use cgmath::{Deg, Vector3};
+                let v_off: Vector3<_> = mesh.offset.into();
+                let position = Matrix4::from_translation(s.pos.into());
+                let rotation = Matrix4::from_angle_y(Deg::new(s.angle as f32).into());
+                let offset = Matrix4::from_translation(-v_off);
+                let mx = transform * position * scale * offset * rotation; //HACK: scale
+                Render::draw_mesh(encoder, mesh, mx, pso, data);
             }
         }
     }

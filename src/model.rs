@@ -277,6 +277,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
             let pos = read_vec(source);
             let angle = source.read_i32::<E>().unwrap();
             if slot_mask & (1<<i) != 0 {
+                debug!("\tSlot {} at pos {:?} and angle of {}", i, pos, angle);
                 model.slots.push(Slot {
                     mesh: None,
                     pos: [pos[0] as f32, pos[1] as f32, pos[2] as f32],

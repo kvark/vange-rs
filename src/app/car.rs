@@ -23,7 +23,10 @@ impl<R: gfx::Resources> CarView<R> {
 
         info!("Loading car registry");
         let careg = config::game::Registry::load(settings, factory);
-        let model = careg.models[&settings.car.id].clone();
+        let mut model = careg.models[&settings.car.id].clone();
+        for (ms, sid) in model.slots.iter_mut().zip(settings.car.slots.iter()) {
+            ms.mesh = Some(careg.models[sid].body.clone());
+        }
 
         let pal_data = level::load_palette(&settings.get_object_palette_path());
         let data = render::object::Data {
