@@ -8,7 +8,7 @@ uniform c_Locals {
 uniform usampler1D t_ColorTable;
 uniform sampler1D t_Palette;
 
-in vec4 a_Pos;
+in ivec4 a_Pos;
 in vec4 a_Normal;
 in uint a_ColorIndex;
 

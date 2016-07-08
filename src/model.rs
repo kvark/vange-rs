@@ -5,8 +5,6 @@ use gfx::format::I8Norm;
 use render::{ObjectVertex, NUM_COLOR_IDS, COLOR_ID_BODY};
 
 
-const SCALE: f32 = 1.0 / 4.0;
-
 pub struct Mesh<R: gfx::Resources> {
     pub slice: gfx::Slice<R>,
     pub buffer: gfx::handle::Buffer<R, ObjectVertex>,
@@ -23,8 +21,8 @@ pub type Shape = Vec<Polygon>;
 pub struct Wheel<R: gfx::Resources> {
     pub mesh: Option<Mesh<R>>,
     pub steer: u32,
-    pub width: f32,
-    pub radius: f32,
+    pub width: u32,
+    pub radius: u32,
 }
 
 pub struct Debrie<R: gfx::Resources> {
@@ -40,11 +38,11 @@ pub struct Model<R: gfx::Resources> {
     pub debris: Vec<Debrie<R>>,
 }
 
-fn read_vec<I: ReadBytesExt>(source: &mut I) -> [f32; 3] {
+fn read_vec<I: ReadBytesExt>(source: &mut I) -> [i32; 3] {
     [
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
-        source.read_i32::<E>().unwrap() as f32 * SCALE,
+        source.read_i32::<E>().unwrap(),
+        source.read_i32::<E>().unwrap(),
+        source.read_i32::<E>().unwrap(),
     ]
 }
 
@@ -65,7 +63,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     let parent_off = read_vec(source);
     info!("\tBound {:?} to {:?} with offset {:?}", coord_min, coord_max, parent_off);
     let _max_radius = source.read_u32::<E>().unwrap();
-    let _parent_rot = [source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap()];
+    let _parent_rot = read_vec(source);
     for _ in 0 .. (1+3+9) {
         source.read_f64::<E>().unwrap();
     }
@@ -78,7 +76,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
             source.read_i8().unwrap(),
             source.read_i8().unwrap(),
             source.read_i8().unwrap(),
-        ];
+            1];
         let _sort_info = source.read_u32::<E>().unwrap();
         positions.push(pos);
     }
@@ -117,12 +115,8 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
         }
     }
 
-    let convert = |(p, n, c): ([i8; 3], [u8; 4], [u32; 2])| ObjectVertex {
-        pos: [
-            coord_min[0] + (p[0] as f32 + 128.0) * (coord_max[0] - coord_min[0]) / 255.0,
-            coord_min[1] + (p[1] as f32 + 128.0) * (coord_max[1] - coord_min[1]) / 255.0,
-            coord_min[2] + (p[2] as f32 + 128.0) * (coord_max[2] - coord_min[2]) / 255.0,
-            1.0],
+    let convert = |(p, n, c): ([i8; 4], [u8; 4], [u32; 2])| ObjectVertex {
+        pos: p,
         color: if c[0] < NUM_COLOR_IDS { c[0] } else { COLOR_ID_BODY },
         normal: [
             I8Norm(n[0] as i8), I8Norm(n[1] as i8),
@@ -160,7 +154,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     Mesh {
         slice: slice,
         buffer: vbuf,
-        offset: parent_off,
+        offset: [parent_off[0] as f32, parent_off[1] as f32, parent_off[2] as f32],
     }
 }
 
@@ -198,11 +192,7 @@ pub fn load_c3d_shape<I>(source: &mut I) -> Shape where
         }
         source.seek(Current((num_corners as i64) * (4 + 4))).unwrap(); // vertices
         Polygon {
-            middle: [
-                coord_min[0] + (d[4] as f32 + 128.0) * (coord_max[0] - coord_min[0]) / 255.0,
-                coord_min[1] + (d[5] as f32 + 128.0) * (coord_max[1] - coord_min[1]) / 255.0,
-                coord_min[2] + (d[6] as f32 + 128.0) * (coord_max[2] - coord_min[2]) / 255.0,
-            ],
+            middle: [d[4] as f32, d[5] as f32, d[6] as f32],
             normal: [d[0] as f32 / 128.0, d[1] as f32 / 128.0, d[2] as f32 / 128.0],
         }
     }).collect();
@@ -225,11 +215,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
         wheels: Vec::new(),
         debris: Vec::new(),
     };
-    let _bounds = [
-        source.read_u32::<E>().unwrap(),
-        source.read_u32::<E>().unwrap(),
-        source.read_u32::<E>().unwrap(),
-    ];
+    let _bounds = read_vec(source);
     let _max_radius = source.read_u32::<E>().unwrap();
     let num_wheels = source.read_u32::<E>().unwrap();
     let num_debris = source.read_u32::<E>().unwrap();
@@ -243,8 +229,8 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
         for _ in 0..3 {
             source.read_f64::<E>().unwrap();
         }
-        let width = source.read_u32::<E>().unwrap() as f32 * SCALE;
-        let radius = source.read_u32::<E>().unwrap() as f32 * SCALE;
+        let width = source.read_u32::<E>().unwrap();
+        let radius = source.read_u32::<E>().unwrap();
         let _bound_index = source.read_u32::<E>().unwrap();
         info!("\tSteer {}, width {}, radius {}", steer, width, radius);
         model.wheels.push(Wheel {

@@ -6,4 +6,4 @@ vehicle = "m1"
 
 [window]
 title = "Rusty Road"
-size = [800, 540]
+size = [1280, 800]

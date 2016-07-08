@@ -19,8 +19,8 @@ pub struct Camera {
 
 pub struct Follow {
     transform: Transform,
-    move_speed: f32,
-    rot_speed: cgmath::Rad<f32>,
+    _move_speed: f32,
+    _rot_speed: cgmath::Rad<f32>,
 }
 
 impl Camera {

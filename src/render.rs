@@ -79,7 +79,7 @@ gfx_defines!{
     }
 
     vertex ObjectVertex {
-        pos: [f32; 4] = "a_Pos",
+        pos: [i8; 4] = "a_Pos",
         color: u32 = "a_ColorIndex",
         normal: [gfx::format::I8Norm; 4] = "a_Normal",
     }
@@ -210,9 +210,10 @@ impl<R: gfx::Resources> Render<R> {
                      pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>) where
         C: gfx::CommandBuffer<R>,
     {
+        let scale = Matrix4::from_scale(1.0 / 4.0);
         let offset = Matrix4::from_translation(mesh.offset.into());
         let locals = ObjectLocals {
-            m_mvp: (transform * offset).into(),
+            m_mvp: (transform * scale * offset).into(),
         };
         data.vbuf = mesh.buffer.clone();
         encoder.update_constant_buffer(&data.locals, &locals);
@@ -301,7 +302,7 @@ impl<R: gfx::Resources> Render<R> {
             ).unwrap();
         factory.create_pipeline_from_program(
             &program, gfx::Primitive::TriangleList,
-            gfx::state::Rasterizer::new_fill().with_cull_back(),
+            gfx::state::Rasterizer::new_fill(),
             object::new()
         ).unwrap()
     }
