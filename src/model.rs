@@ -5,6 +5,8 @@ use gfx::format::I8Norm;
 use render::{ObjectVertex, NUM_COLOR_IDS, COLOR_ID_BODY};
 
 
+const MAX_SLOTS: usize = 3;
+
 pub struct Mesh<R: gfx::Resources> {
     pub slice: gfx::Slice<R>,
     pub buffer: gfx::handle::Buffer<R, ObjectVertex>,
@@ -30,12 +32,19 @@ pub struct Debrie<R: gfx::Resources> {
     pub shape: Shape,
 }
 
+pub struct Slot<R: gfx::Resources> {
+    pub mesh: Option<Mesh<R>>,
+    pub pos: [f32; 3],
+    pub angle: i32,
+}
+
 pub struct Model<R: gfx::Resources> {
     pub body: Mesh<R>,
     pub shape: Shape,
     pub color: [u32; 2],
     pub wheels: Vec<Wheel<R>>,
     pub debris: Vec<Debrie<R>>,
+    pub slots: [Option<Slot<R>>; MAX_SLOTS],
 }
 
 fn read_vec<I: ReadBytesExt>(source: &mut I) -> [i32; 3] {
@@ -214,6 +223,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
         color: [0, 0],
         wheels: Vec::new(),
         debris: Vec::new(),
+        slots: [None, None, None],
     };
     let _bounds = read_vec(source);
     let _max_radius = source.read_u32::<E>().unwrap();
@@ -253,5 +263,20 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
 
     debug!("\tReading the physical shape...");
     model.shape = load_c3d_shape(source);
+
+    let slot_mask = source.read_u32::<E>().unwrap();
+    debug!("\tReading {} slot mask...", slot_mask);
+    if slot_mask != 0 {
+        for slot in model.slots.iter_mut() {
+            let pos = read_vec(source);
+            let angle = source.read_i32::<E>().unwrap();
+            *slot = Some(Slot {
+                mesh: None,
+                pos: [pos[0] as f32, pos[1] as f32, pos[2] as f32],
+                angle: angle,
+            });
+        }
+    }
+
     model
 }
