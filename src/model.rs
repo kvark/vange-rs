@@ -61,14 +61,14 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     let coord_max = read_vec(source);
     let coord_min = read_vec(source);
     let parent_off = read_vec(source);
-    info!("\tBound {:?} to {:?} with offset {:?}", coord_min, coord_max, parent_off);
+    debug!("\tBound {:?} to {:?} with offset {:?}", coord_min, coord_max, parent_off);
     let _max_radius = source.read_u32::<E>().unwrap();
     let _parent_rot = read_vec(source);
     for _ in 0 .. (1+3+9) {
         source.read_f64::<E>().unwrap();
     }
 
-    info!("\tReading {} positions...", num_positions);
+    debug!("\tReading {} positions...", num_positions);
     let mut positions = Vec::with_capacity(num_positions as usize);
     for _ in 0 .. num_positions {
         read_vec(source); //unknown
@@ -81,7 +81,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
         positions.push(pos);
     }
 
-    info!("\tReading {} normals...", num_normals);
+    debug!("\tReading {} normals...", num_normals);
     let mut normals = Vec::with_capacity(num_normals as usize);
     for _ in 0 .. num_normals {
         let mut norm = [0u8; 4];
@@ -90,7 +90,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
         normals.push(norm);
     }
 
-    info!("\tReading {} polygons...", num_polygons);
+    debug!("\tReading {} polygons...", num_polygons);
     let mut vertices = Vec::with_capacity(num_polygons as usize * 3);
     for i in 0 .. num_polygons {
         let num_corners = source.read_u32::<E>().unwrap();
@@ -127,7 +127,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
 
     let mut gpu_verts = Vec::new();
     let (vbuf, slice) = if do_compact {
-        info!("\tCompacting...");
+        debug!("\tCompacting...");
         vertices.sort_by_key(|v| v.1);
         //vertices.dedup();
         let mut indices = vec![0; vertices.len()];
@@ -150,7 +150,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
         factory.create_vertex_buffer_with_slice(&gpu_verts, ())
     };
 
-    info!("\tGot {} GPU vertices...", gpu_verts.len());
+    debug!("\tGot {} GPU vertices...", gpu_verts.len());
     Mesh {
         slice: slice,
         buffer: vbuf,
@@ -172,7 +172,7 @@ pub fn load_c3d_shape<I>(source: &mut I) -> Shape where
 
     let coord_max = read_vec(source);
     let coord_min = read_vec(source);
-    info!("\tBound {:?} to {:?}", coord_min, coord_max);
+    debug!("\tBound {:?} to {:?}", coord_min, coord_max);
 
     source.seek(Current(
         (3+1+3) * 4 + // parent offset, max radius, and parent rotation
@@ -181,7 +181,7 @@ pub fn load_c3d_shape<I>(source: &mut I) -> Shape where
         (num_normals as i64) * (4*1 + 4) + // normals
         0)).unwrap();
 
-    info!("\tReading {} polygons...", num_polygons);
+    debug!("\tReading {} polygons...", num_polygons);
     let polygons = (0 .. num_polygons).map(|_| {
         let num_corners = source.read_u32::<E>().unwrap();
         assert!(3 <= num_corners && num_corners <= 4);
@@ -207,7 +207,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
     R: gfx::Resources,
     F: gfx::traits::FactoryExt<R>,
 {
-    info!("\tReading the body...");
+    debug!("\tReading the body...");
     let mut model = Model {
         body: load_c3d(source, factory),
         shape: Vec::new(),
@@ -223,7 +223,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
     model.wheels.reserve_exact(num_wheels as usize);
     model.debris.reserve_exact(num_debris as usize);
 
-    info!("\tReading {} wheels...", num_wheels);
+    debug!("\tReading {} wheels...", num_wheels);
     for _ in 0 .. num_wheels {
         let steer = source.read_u32::<E>().unwrap();
         for _ in 0..3 {
@@ -232,7 +232,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
         let width = source.read_u32::<E>().unwrap();
         let radius = source.read_u32::<E>().unwrap();
         let _bound_index = source.read_u32::<E>().unwrap();
-        info!("\tSteer {}, width {}, radius {}", steer, width, radius);
+        debug!("\tSteer {}, width {}, radius {}", steer, width, radius);
         model.wheels.push(Wheel {
             mesh: if steer != 0 {
                 Some(load_c3d(source, factory))
@@ -243,7 +243,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
         })
     }
 
-    info!("\tReading {} debris...", num_debris);
+    debug!("\tReading {} debris...", num_debris);
     for _ in 0 .. num_debris {
         model.debris.push(Debrie {
             mesh: load_c3d(source, factory),
@@ -251,7 +251,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
         })
     }
 
-    info!("\tReading the physical shape...");
+    debug!("\tReading the physical shape...");
     model.shape = load_c3d_shape(source);
     model
 }
