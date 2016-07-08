@@ -23,8 +23,9 @@ mod splay;
 
 
 enum RoadApp<R: gfx::Resources> {
+    Car(app::CarView<R>),
     Game(app::Game<R>),
-    View(app::ModelView<R>),
+    View(app::ResourceView<R>),
 }
 
 
@@ -50,7 +51,8 @@ fn main() {
     options
         .parsing_style(getopts::ParsingStyle::StopAtFirstFree)
         .optflag("h", "help", "print this help menu")
-        .optopt("v", "view", "view a particular game resource", "");
+        .optopt("v", "view", "view a particular game resource", "")
+        .optflag("m", "model", "view a only the car model");
     let matches = options.parse(&args[1..]).unwrap();
     if matches.opt_present("h") || !matches.free.is_empty() {
         let brief = format!("Usage: {} [options]", program);
@@ -58,9 +60,13 @@ fn main() {
         return;
     }
 
-    let mut app = match matches.opt_str("v") {
-        Some(path) => RoadApp::View(app::ModelView::new(&path, &settings, main_color, main_depth, &mut factory)),
-        _ => RoadApp::Game(app::Game::new(&settings, main_color, main_depth, &mut factory)),
+    let mut app = if matches.opt_present("m") {
+        RoadApp::Car(app::CarView::new(&settings, main_color, main_depth, &mut factory))
+    } else {
+        match matches.opt_str("v") {
+            Some(path) => RoadApp::View(app::ResourceView::new(&path, &settings, main_color, main_depth, &mut factory)),
+            _ => RoadApp::Game(app::Game::new(&settings, main_color, main_depth, &mut factory)),
+        }
     };
 
     let mut encoder: gfx::Encoder<_, _> = factory.create_command_buffer().into();
@@ -71,6 +77,12 @@ fn main() {
         let events = window.poll_events();
         let delta = time::precise_time_s() as f32 - last_time;
         match app {
+            RoadApp::Car(ref mut a) => {
+                if !a.update(events, delta, &mut factory) {
+                    break
+                }
+                a.draw(&mut encoder);
+            },
             RoadApp::Game(ref mut a) => {
                 if !a.update(events, delta, &mut factory) {
                     break

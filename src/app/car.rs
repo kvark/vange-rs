@@ -2,10 +2,10 @@ use cgmath;
 use glutin::Event;
 use gfx;
 use {level, model, render};
-use config::Settings;
+use config::{self, Settings};
 
 
-pub struct ResourceView<R: gfx::Resources> {
+pub struct CarView<R: gfx::Resources> {
     model: model::Model<R>,
     transform: super::Transform,
     pso: gfx::PipelineState<R, render::object::Meta>,
@@ -13,20 +13,26 @@ pub struct ResourceView<R: gfx::Resources> {
     cam: super::Camera,
 }
 
-impl<R: gfx::Resources> ResourceView<R> {
-    pub fn new<F: gfx::Factory<R>>(path: &str, settings: &Settings,
+impl<R: gfx::Resources> CarView<R> {
+    pub fn new<F: gfx::Factory<R>>(settings: &Settings,
                out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
                out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
-               factory: &mut F) -> ResourceView<R>
+               factory: &mut F) -> CarView<R>
     {
         use std::io::BufReader;
+        use std::fs::File;
         use gfx::traits::FactoryExt;
+
+        info!("Loading world parameters");
+        let careg = config::game::Registry::load(settings, factory);
 
         let pal_data = level::load_palette(&settings.get_object_palette_path());
 
-        info!("Loading model {}", path);
-        let mut file = BufReader::new(settings.open(path));
-        let model = model::load_m3d(&mut file, factory);
+        info!("Loading car {}", settings.game.vehicle);
+        let mut model_file = BufReader::new(File::open(
+            settings.get_vehicle_model_path(&settings.game.vehicle)
+        ).unwrap());
+        let model = model::load_m3d(&mut model_file, factory);
         let data = render::object::Data {
             vbuf: model.body.buffer.clone(),
             locals: factory.create_constant_buffer(1),
@@ -36,7 +42,7 @@ impl<R: gfx::Resources> ResourceView<R> {
             out_depth: out_depth,
         };
 
-        ResourceView {
+        CarView {
             model: model,
             transform: cgmath::Decomposed {
                 scale: 1.0,
@@ -69,7 +75,7 @@ impl<R: gfx::Resources> ResourceView<R> {
     }
 }
 
-impl<R: gfx::Resources> super::App<R> for ResourceView<R> {
+impl<R: gfx::Resources> super::App<R> for CarView<R> {
     fn update<I: Iterator<Item=Event>, F: gfx::Factory<R>>(&mut self,
               events: I, delta: f32, factory: &mut F) -> bool {
         use glutin::VirtualKeyCode as Key;

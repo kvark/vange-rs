@@ -147,7 +147,8 @@ impl<R: gfx::Resources> Game<R> {
 }
 
 impl<R: gfx::Resources> super::App<R> for Game<R> {
-    fn update<I: Iterator<Item=Event>, F: gfx::Factory<R>>(&mut self, events: I, delta: f32, factory: &mut F) -> bool {
+    fn update<I: Iterator<Item=Event>, F: gfx::Factory<R>>(&mut self,
+              events: I, delta: f32, factory: &mut F) -> bool {
         use glutin::VirtualKeyCode as Key;
         use glutin::ElementState::*;
 

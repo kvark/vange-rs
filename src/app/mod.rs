@@ -2,11 +2,13 @@ use cgmath;
 use glutin::Event;
 use gfx;
 
+mod car;
 mod game;
 mod view;
 
 pub use self::game::{Agent, Game};
-pub use self::view::ModelView;
+pub use self::car::CarView;
+pub use self::view::ResourceView;
 
 
 pub type Transform = cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>;
