@@ -5,14 +5,16 @@ use gfx::format::I8Norm;
 use render::{ObjectVertex, NUM_COLOR_IDS, COLOR_ID_BODY};
 
 
-const MAX_SLOTS: usize = 3;
+const MAX_SLOTS: u32 = 3;
 
+#[derive(Clone)]
 pub struct Mesh<R: gfx::Resources> {
     pub slice: gfx::Slice<R>,
     pub buffer: gfx::handle::Buffer<R, ObjectVertex>,
     pub offset: [f32; 3],
 }
 
+#[derive(Clone)]
 pub struct Polygon {
     pub middle: [f32; 3],
     pub normal: [f32; 3],
@@ -20,6 +22,7 @@ pub struct Polygon {
 
 pub type Shape = Vec<Polygon>;
 
+#[derive(Clone)]
 pub struct Wheel<R: gfx::Resources> {
     pub mesh: Option<Mesh<R>>,
     pub steer: u32,
@@ -27,24 +30,27 @@ pub struct Wheel<R: gfx::Resources> {
     pub radius: u32,
 }
 
+#[derive(Clone)]
 pub struct Debrie<R: gfx::Resources> {
     pub mesh: Mesh<R>,
     pub shape: Shape,
 }
 
+#[derive(Clone)]
 pub struct Slot<R: gfx::Resources> {
     pub mesh: Option<Mesh<R>>,
     pub pos: [f32; 3],
     pub angle: i32,
 }
 
+#[derive(Clone)]
 pub struct Model<R: gfx::Resources> {
     pub body: Mesh<R>,
     pub shape: Shape,
     pub color: [u32; 2],
     pub wheels: Vec<Wheel<R>>,
     pub debris: Vec<Debrie<R>>,
-    pub slots: [Option<Slot<R>>; MAX_SLOTS],
+    pub slots: Vec<Slot<R>>,
 }
 
 fn read_vec<I: ReadBytesExt>(source: &mut I) -> [i32; 3] {
@@ -223,7 +229,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
         color: [0, 0],
         wheels: Vec::new(),
         debris: Vec::new(),
-        slots: [None, None, None],
+        slots: Vec::new(),
     };
     let _bounds = read_vec(source);
     let _max_radius = source.read_u32::<E>().unwrap();
@@ -267,14 +273,16 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
     let slot_mask = source.read_u32::<E>().unwrap();
     debug!("\tReading {} slot mask...", slot_mask);
     if slot_mask != 0 {
-        for slot in model.slots.iter_mut() {
+        for i in 0 .. MAX_SLOTS {
             let pos = read_vec(source);
             let angle = source.read_i32::<E>().unwrap();
-            *slot = Some(Slot {
-                mesh: None,
-                pos: [pos[0] as f32, pos[1] as f32, pos[2] as f32],
-                angle: angle,
-            });
+            if slot_mask & (1<<i) != 0 {
+                model.slots.push(Slot {
+                    mesh: None,
+                    pos: [pos[0] as f32, pos[1] as f32, pos[2] as f32],
+                    angle: angle,
+                });
+            }
         }
     }
 

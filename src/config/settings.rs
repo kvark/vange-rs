@@ -1,10 +1,16 @@
 use std::fs::File;
 use level;
 
+
+#[derive(RustcDecodable)]
+pub struct Car {
+    pub id: String,
+    pub slots: Vec<String>,
+}
+
 #[derive(RustcDecodable)]
 pub struct Game {
     pub level: String,
-    pub vehicle: String,
 }
 
 #[derive(RustcDecodable)]
@@ -16,6 +22,7 @@ pub struct Window {
 #[derive(RustcDecodable)]
 pub struct Settings {
     pub data_path: String,
+    pub car: Car,
     pub game: Game,
     pub window: Window,
 }
@@ -44,7 +51,7 @@ impl Settings {
         format!("{}/resource/pal/objects.pal", self.data_path)
     }
 
-    pub fn get_vehicle_model_path(&self, name: &str) -> String {
+    pub fn _get_vehicle_model_path(&self, name: &str) -> String {
         format!("{}/resource/m3d/mechous/{}.m3d", self.data_path, name)
     }
 

@@ -19,20 +19,13 @@ impl<R: gfx::Resources> CarView<R> {
                out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
                factory: &mut F) -> CarView<R>
     {
-        use std::io::BufReader;
-        use std::fs::File;
         use gfx::traits::FactoryExt;
 
-        info!("Loading world parameters");
+        info!("Loading car registry");
         let careg = config::game::Registry::load(settings, factory);
+        let model = careg.models[&settings.car.id].clone();
 
         let pal_data = level::load_palette(&settings.get_object_palette_path());
-
-        info!("Loading car {}", settings.game.vehicle);
-        let mut model_file = BufReader::new(File::open(
-            settings.get_vehicle_model_path(&settings.game.vehicle)
-        ).unwrap());
-        let model = model::load_m3d(&mut model_file, factory);
         let data = render::object::Data {
             vbuf: model.body.buffer.clone(),
             locals: factory.create_constant_buffer(1),

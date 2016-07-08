@@ -87,9 +87,6 @@ impl<R: gfx::Resources> Game<R> {
            out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
            factory: &mut F) -> Game<R>
     {
-        use std::io::BufReader;
-        use std::fs::File;
-
         info!("Loading world parameters");
         let db = DataBase {
             cars: config::car::Registry::load(settings.open("car.prm")),
@@ -99,9 +96,6 @@ impl<R: gfx::Resources> Game<R> {
         let level = level::load(&lev_config);
         let pal_data = level::load_palette(&settings.get_object_palette_path());
 
-        let mut model_file = BufReader::new(File::open(
-            settings.get_vehicle_model_path(&settings.game.vehicle)
-        ).unwrap());
         let agent = Agent {
             control: Control::Player,
             transform: cgmath::Decomposed {
@@ -109,7 +103,7 @@ impl<R: gfx::Resources> Game<R> {
                 disp: cgmath::vec3(0.0, 0.0, 40.0),
                 rot: cgmath::One::one(),
             },
-            model: model::load_m3d(&mut model_file, factory),
+            model: db.game.models[&settings.car.id].clone(),
             dynamo: Dynamo {
                 thrust: 0.0,
                 steer: cgmath::Zero::zero(),

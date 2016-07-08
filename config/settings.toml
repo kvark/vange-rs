@@ -2,7 +2,10 @@ data_path = "/opt/GOG Games/Vangers/game"
 
 [game]
 level = "fostral"
-vehicle = "m1"
+
+[car]
+id = "IronShadow"
+slots = ["HeavyMissile"]
 
 [window]
 title = "Rusty Road"
