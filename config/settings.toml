@@ -5,7 +5,7 @@ level = "fostral"
 
 [car]
 id = "IronShadow"
-slots = ["LightLaser", "LightMissile", "LightFireBall"]
+slots = ["HeavyLaser", "LightMissile", "LightFireBall"]
 
 [window]
 title = "Rusty Road"

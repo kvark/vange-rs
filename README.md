@@ -11,4 +11,4 @@ cargo run --release
 
 ### Latest progress
 ![alt text](etc/shots/Road7-vehicle.png "WIP screenshot of the world")
-![alt text](etc/shots/Road8-wheels.png "WIP screenshot of the model")
+![alt text](etc/shots/Road9-weapons.png "WIP screenshot of the model")
