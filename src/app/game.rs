@@ -200,6 +200,6 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
     }
 
     fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
-        self.render.draw(enc, &self.agents, &self.cam);
+        self.render.draw_world(enc, &self.agents, &self.cam);
     }
 }

@@ -93,6 +93,6 @@ impl<R: gfx::Resources> super::App<R> for ResourceView<R> {
         enc.clear_depth(&self.data.out_depth, 1.0);
 
         render::Render::draw_model(enc, &self.model,
-            self.transform, self.cam.get_view_proj(), &self.pso, &mut self.data);
+            self.transform, &self.cam, &self.pso, &mut self.data);
     }
 }

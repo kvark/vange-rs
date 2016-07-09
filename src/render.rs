@@ -87,6 +87,7 @@ gfx_defines!{
     constant ObjectLocals {
         m_mvp: [[f32; 4]; 4] = "u_ModelViewProj",
         m_normal: [[f32; 4]; 4] = "u_NormalMatrix",
+        v_cam: [f32; 4] = "u_CameraWorldPos",
     }
 
     pipeline object {
@@ -208,16 +209,20 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
 
 impl<R: gfx::Resources> Render<R> {
     pub fn draw_mesh<C>(encoder: &mut gfx::Encoder<R, C>, mesh: &model::Mesh<R>,
-                     model2world: AppTransform, world2proj: Matrix4<f32>,
+                     model2world: AppTransform, cam: &Camera,
                      pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>)
     where
         C: gfx::CommandBuffer<R>,
     {
         let mx_world: Matrix4<f32> = model2world.into();
-        let mx_normal: Matrix4<f32> = model2world.rot.into();
+        let mut normal2world = model2world;
+        normal2world.scale = 1.0;
+        let mx_normal: Matrix4<f32> = normal2world.into();
+        let cp: [f32; 3] = cam.loc.into();
         let locals = ObjectLocals {
-            m_mvp: (world2proj * mx_world).into(),
+            m_mvp: (cam.get_view_proj() * mx_world).into(),
             m_normal: mx_normal.into(),
+            v_cam: [cp[0], cp[1], cp[2], 1.0],
         };
         data.vbuf = mesh.buffer.clone();
         encoder.update_constant_buffer(&data.locals, &locals);
@@ -225,7 +230,7 @@ impl<R: gfx::Resources> Render<R> {
     }
 
     pub fn draw_model<C>(encoder: &mut gfx::Encoder<R, C>, model: &model::Model<R>,
-                      mut model2world: AppTransform, world2proj: Matrix4<f32>,
+                      mut model2world: AppTransform, cam: &Camera,
                       pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>) where
         C: gfx::CommandBuffer<R>,
     {
@@ -233,7 +238,7 @@ impl<R: gfx::Resources> Render<R> {
 
         // body
         model2world.scale *= 0.25;
-        Render::draw_mesh(encoder, &model.body, model2world, world2proj, pso, data);
+        Render::draw_mesh(encoder, &model.body, model2world, cam, pso, data);
         // wheels
         for w in model.wheels.iter() {
             if let Some(ref mesh) = w.mesh {
@@ -242,7 +247,7 @@ impl<R: gfx::Resources> Render<R> {
                     rot: Quaternion::one(),
                     scale: 1.0,
                 });
-                Render::draw_mesh(encoder, mesh, transform, world2proj, pso, data);
+                Render::draw_mesh(encoder, mesh, transform, cam, pso, data);
             }
         }
         // slots
@@ -260,21 +265,22 @@ impl<R: gfx::Resources> Render<R> {
                     scale: 0.25, //hack?
                 };
                 let transform = model2world.concat(&d2).concat(&d1);
-                Render::draw_mesh(encoder, mesh, transform, world2proj, pso, data);
+                Render::draw_mesh(encoder, mesh, transform, cam, pso, data);
             }
         }
     }
 
-    pub fn draw<C>(&mut self, encoder: &mut gfx::Encoder<R, C>, agents: &[Agent<R>], cam: &Camera) where
+    pub fn draw_world<C>(&mut self, encoder: &mut gfx::Encoder<R, C>,
+                      agents: &[Agent<R>], cam: &Camera) where
         C: gfx::CommandBuffer<R>,
     {
-        let mx_vp = cam.get_view_proj();
         // clear buffers
         encoder.clear(&self.terrain.data.out_color, [0.1,0.2,0.3,1.0]);
         encoder.clear_depth(&self.terrain.data.out_depth, 1.0);
         // draw terrain
         {
             use cgmath::SquareMatrix;
+            let mx_vp = cam.get_view_proj();
             let cpos: [f32; 3] = cam.loc.into();
             let (wid, het, _, _) = self.terrain.data.out_color.get_dimensions();
             let locals = TerrainLocals {
@@ -289,7 +295,7 @@ impl<R: gfx::Resources> Render<R> {
         self.terrain.encode(encoder);
         // draw vehicle models
         for ag in agents.iter() {
-            Render::draw_model(encoder, &ag.model, ag.transform, mx_vp, &self.object_pso, &mut self.object_data);
+            Render::draw_model(encoder, &ag.model, ag.transform, cam, &self.object_pso, &mut self.object_data);
         }
     }
 
@@ -332,11 +338,10 @@ impl<R: gfx::Resources> Render<R> {
             &read("data/shader/object.vert"),
             &read("data/shader/object.frag"),
             ).unwrap();
+        let mut raster = gfx::state::Rasterizer::new_fill().with_cull_back();
+        raster.front_face = gfx::state::FrontFace::Clockwise;
         factory.create_pipeline_from_program(
-            &program, gfx::Primitive::TriangleList,
-            gfx::state::Rasterizer::new_fill(),
-            object::new()
-        ).unwrap()
+            &program, gfx::Primitive::TriangleList, raster, object::new()).unwrap()
     }
 
     pub fn reload<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
