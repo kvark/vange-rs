@@ -94,8 +94,7 @@ impl<R: gfx::Resources> super::App<R> for CarView<R> {
         enc.clear(&self.data.out_color, [0.1, 0.2, 0.3, 1.0]);
         enc.clear_depth(&self.data.out_depth, 1.0);
 
-        let local: cgmath::Matrix4<f32> = self.transform.into();
-        let mvp = self.cam.get_view_proj() * local;
-        render::Render::draw_model(enc, &self.model, mvp, &self.pso, &mut self.data);
+        render::Render::draw_model(enc, &self.model,
+            self.transform, self.cam.get_view_proj(), &self.pso, &mut self.data);
     }
 }

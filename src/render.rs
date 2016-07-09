@@ -1,7 +1,7 @@
-use cgmath::Matrix4;
+use cgmath::{Decomposed, Matrix4};
 use gfx;
 use gfx::traits::FactoryExt;
-use app::{Agent, Camera};
+use app::{Agent, Camera, Transform as AppTransform};
 use {level, model};
 
 
@@ -86,6 +86,7 @@ gfx_defines!{
 
     constant ObjectLocals {
         m_mvp: [[f32; 4]; 4] = "u_ModelViewProj",
+        m_normal: [[f32; 4]; 4] = "u_NormalMatrix",
     }
 
     pipeline object {
@@ -206,41 +207,60 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
 }
 
 impl<R: gfx::Resources> Render<R> {
-    pub fn draw_mesh<C>(encoder: &mut gfx::Encoder<R, C>, mesh: &model::Mesh<R>, transform: Matrix4<f32>,
+    pub fn draw_mesh<C>(encoder: &mut gfx::Encoder<R, C>, mesh: &model::Mesh<R>,
+                     model2world: AppTransform, world2proj: Matrix4<f32>,
                      pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>)
     where
         C: gfx::CommandBuffer<R>,
     {
+        let mx_world: Matrix4<f32> = model2world.into();
+        let mx_normal: Matrix4<f32> = model2world.rot.into();
         let locals = ObjectLocals {
-            m_mvp: transform.into(),
+            m_mvp: (world2proj * mx_world).into(),
+            m_normal: mx_normal.into(),
         };
         data.vbuf = mesh.buffer.clone();
         encoder.update_constant_buffer(&data.locals, &locals);
         encoder.draw(&mesh.slice, pso, data);
     }
 
-    pub fn draw_model<C>(encoder: &mut gfx::Encoder<R, C>, model: &model::Model<R>, mut transform: Matrix4<f32>,
+    pub fn draw_model<C>(encoder: &mut gfx::Encoder<R, C>, model: &model::Model<R>,
+                      mut model2world: AppTransform, world2proj: Matrix4<f32>,
                       pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>) where
         C: gfx::CommandBuffer<R>,
     {
-        let scale = Matrix4::from_scale(1.0 / 4.0);
-        transform = transform * scale;
-        Render::draw_mesh(encoder, &model.body, transform, pso, data);
+        use cgmath::{Deg, Quaternion, One, Rotation3, Transform, Vector3};
+
+        // body
+        model2world.scale *= 0.25;
+        Render::draw_mesh(encoder, &model.body, model2world, world2proj, pso, data);
+        // wheels
         for w in model.wheels.iter() {
             if let Some(ref mesh) = w.mesh {
-                let offset = Matrix4::from_translation(mesh.offset.into());
-                Render::draw_mesh(encoder, mesh, transform * offset, pso, data);
+                let transform = model2world.concat(&Decomposed {
+                    disp: mesh.offset.into(),
+                    rot: Quaternion::one(),
+                    scale: 1.0,
+                });
+                Render::draw_mesh(encoder, mesh, transform, world2proj, pso, data);
             }
         }
+        // slots
         for s in model.slots.iter() {
             if let Some(ref mesh) = s.mesh {
-                use cgmath::{Deg, Vector3};
                 let v_off: Vector3<_> = mesh.offset.into();
-                let position = Matrix4::from_translation(s.pos.into());
-                let rotation = Matrix4::from_angle_y(Deg::new(s.angle as f32).into());
-                let offset = Matrix4::from_translation(-v_off);
-                let mx = transform * position * scale * offset * rotation; //HACK: scale
-                Render::draw_mesh(encoder, mesh, mx, pso, data);
+                let d1 = Decomposed {
+                    disp: -v_off,
+                    rot: Quaternion::from_angle_y(Deg::new(s.angle as f32).into()),
+                    scale: 1.0,
+                };
+                let d2 = Decomposed {
+                    disp: s.pos.into(),
+                    rot: Quaternion::one(),
+                    scale: 0.25, //hack?
+                };
+                let transform = model2world.concat(&d2).concat(&d1);
+                Render::draw_mesh(encoder, mesh, transform, world2proj, pso, data);
             }
         }
     }
@@ -269,8 +289,7 @@ impl<R: gfx::Resources> Render<R> {
         self.terrain.encode(encoder);
         // draw vehicle models
         for ag in agents.iter() {
-            let local: Matrix4<f32> = ag.transform.into();
-            Render::draw_model(encoder, &ag.model, mx_vp * local, &self.object_pso, &mut self.object_data);
+            Render::draw_model(encoder, &ag.model, ag.transform, mx_vp, &self.object_pso, &mut self.object_data);
         }
     }
 
