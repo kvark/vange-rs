@@ -2,7 +2,7 @@
 
 const vec3 c_LightDir = normalize(vec3(1.0, 0.0, 2.0));
 const vec4 c_LightColor = vec4(1.0, 1.0, 1.0, 1.0);
-const float c_Emissive = 0.1, c_Ambient = 0.1, c_Diffuse = 1.0, c_Specular = 0.0, c_SpecularPower = 10.0;
+const float c_Emissive = 0.1, c_Ambient = 0.1, c_Diffuse = 1.0, c_Specular = 0.2, c_SpecularPower = 10.0;
 
 in vec3 v_Normal, v_HalfNormal;
 in vec4 v_Color;

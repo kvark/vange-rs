@@ -20,7 +20,8 @@ void main() {
     gl_Position = u_ModelViewProj * a_Pos;
     uvec2 color_params = texelFetch(t_ColorTable, int(a_ColorIndex), 0).xy;
     v_Color = texelFetch(t_Palette, int(color_params[0]), 0);
-    v_Normal = (u_NormalMatrix * vec4(a_Normal.xyz, 1.0)).xyz;
+    vec3 n = normalize(a_Normal.xyz);
+    v_Normal = (u_NormalMatrix * vec4(n, 0.0)).xyz;
     vec3 camDir = u_CameraWorldPos.xyz - (u_NormalMatrix * a_Pos).xyz;
-    v_HalfNormal = normalize(v_Normal + camDir);
+    v_HalfNormal = normalize(v_Normal + normalize(camDir));
 }

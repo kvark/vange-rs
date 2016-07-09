@@ -133,12 +133,9 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     let convert = |(p, n, c): ([i8; 4], [u8; 4], [u32; 2])| ObjectVertex {
         pos: p,
         color: if c[0] < NUM_COLOR_IDS { c[0] } else { COLOR_ID_BODY },
-        normal: [
-            I8Norm(n[0] as i8), I8Norm(n[1] as i8),
-            I8Norm(n[2] as i8), I8Norm(n[3] as i8),
-            ],
+        normal: [I8Norm(n[0] as i8), I8Norm(n[1] as i8), I8Norm(n[2] as i8), I8Norm(n[3] as i8)],
     };
-    let do_compact = false;
+    let do_compact = true;
 
     let mut gpu_verts = Vec::new();
     let (vbuf, slice) = if do_compact {

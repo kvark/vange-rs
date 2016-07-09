@@ -237,7 +237,8 @@ impl<R: gfx::Resources> Render<R> {
         use cgmath::{Deg, Quaternion, One, Rotation3, Transform, Vector3};
 
         // body
-        model2world.scale *= 0.25;
+        let scale = 0.25;
+        model2world.scale *= scale;
         Render::draw_mesh(encoder, &model.body, model2world, cam, pso, data);
         // wheels
         for w in model.wheels.iter() {
@@ -255,14 +256,14 @@ impl<R: gfx::Resources> Render<R> {
             if let Some(ref mesh) = s.mesh {
                 let v_off: Vector3<_> = mesh.offset.into();
                 let d1 = Decomposed {
-                    disp: -v_off,
+                    disp: -scale * v_off,
                     rot: Quaternion::from_angle_y(Deg::new(s.angle as f32).into()),
                     scale: 1.0,
                 };
                 let d2 = Decomposed {
                     disp: s.pos.into(),
                     rot: Quaternion::one(),
-                    scale: 0.25, //hack?
+                    scale: scale, //hack?
                 };
                 let transform = model2world.concat(&d2).concat(&d1);
                 Render::draw_mesh(encoder, mesh, transform, cam, pso, data);
