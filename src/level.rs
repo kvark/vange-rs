@@ -127,17 +127,13 @@ pub fn load(config: &LevelConfig) -> Level {
         info!("\tDecompressing level data...");
         let splay = Splay::new(&mut vpc);
         let total = (size.0 * size.1) as usize;
-        let mut height = Vec::with_capacity(total);
-        let mut meta = Vec::with_capacity(total);
+        let mut height = vec![0u8; total];
+        let mut meta = vec![0u8; total];
         for y in progress(0 .. size.1) {
             vpc.seek(SeekFrom::Start(st_table[y as usize] as u64)).unwrap();
-            let target_size = ((y+1) * size.0) as usize;
-            while height.len() < target_size && meta.len() < target_size {
-                splay.expand1(&mut vpc, &mut height);
-                splay.expand2(&mut vpc, &mut meta);
-            }
-            assert_eq!(height.len(), target_size);
-            assert_eq!(meta.len(), target_size);
+            let range = ((y * size.0) as usize) .. (((y+1) * size.0) as usize);
+            splay.expand1(&mut vpc, &mut height[range.clone()]);
+            splay.expand2(&mut vpc, &mut meta[range]);
         }
         (height, meta)
     };
