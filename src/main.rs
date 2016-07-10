@@ -19,7 +19,6 @@ mod config;
 mod level;
 mod model;
 mod render;
-mod splay;
 
 
 enum RoadApp<R: gfx::Resources> {
