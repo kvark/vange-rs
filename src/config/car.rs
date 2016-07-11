@@ -12,13 +12,14 @@ pub type Price = u32;
 pub type Time = u16;
 pub type Shield = u16;
 
+#[derive(Clone, Debug)]
 pub enum Kind {
     Main,
     Ruffa,
     Constructor,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct CarStats {
     pub class: u8,
     pub price_buy: Price,
@@ -75,6 +76,9 @@ pub enum _Side {
     Lower,
 }
 
+pub const NUM_SIDES: usize = 5;
+
+#[derive(Clone, Debug)]
 pub struct CarPhysics {
     pub name: String,
     // base
@@ -96,8 +100,8 @@ pub struct CarPhysics {
     // grader
     pub terra_mover_sx: [f32; 3],
     // defence & ram
-    pub defence: [u16; 5],
-    pub ram_power: [u16; 5],
+    pub defence: [u16; NUM_SIDES],
+    pub ram_power: [u16; NUM_SIDES],
 }
 
 impl CarPhysics {
@@ -141,6 +145,7 @@ impl CarPhysics {
     }
 }
 
+#[derive(Clone)]
 pub struct CarInfo<R: gfx::Resources> {
     pub kind: Kind,
     pub stats: CarStats,

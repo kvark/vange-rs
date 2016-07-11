@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use cgmath;
 use glutin::Event;
 use gfx;
-use {level, model, render};
-use config::{self, Settings};
+use {config, level, render};
 
 
 #[derive(Eq, PartialEq)]
@@ -43,7 +42,7 @@ impl Dynamo {
 pub struct Agent<R: gfx::Resources> {
     control: Control,
     pub transform: super::Transform,
-    pub model: model::Model<R>,
+    pub car: config::car::CarInfo<R>,
     dynamo: Dynamo,
 }
 
@@ -83,7 +82,7 @@ pub struct Game<R: gfx::Resources> {
 }
 
 impl<R: gfx::Resources> Game<R> {
-    pub fn new<F: gfx::Factory<R>>(settings: &Settings,
+    pub fn new<F: gfx::Factory<R>>(settings: &config::Settings,
            out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
            out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
            factory: &mut F) -> Game<R>
@@ -107,7 +106,7 @@ impl<R: gfx::Resources> Game<R> {
                 disp: cgmath::vec3(0.0, 0.0, 40.0),
                 rot: cgmath::One::one(),
             },
-            model: db.cars[&settings.car.id].model.clone(),
+            car: db.cars[&settings.car.id].clone(),
             dynamo: Dynamo {
                 thrust: 0.0,
                 steer: cgmath::Zero::zero(),

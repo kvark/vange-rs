@@ -296,7 +296,7 @@ impl<R: gfx::Resources> Render<R> {
         self.terrain.encode(encoder);
         // draw vehicle models
         for ag in agents.iter() {
-            Render::draw_model(encoder, &ag.model, ag.transform, cam, &self.object_pso, &mut self.object_data);
+            Render::draw_model(encoder, &ag.car.model, ag.transform, cam, &self.object_pso, &mut self.object_data);
         }
     }
 
