@@ -186,14 +186,13 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
 
         if let Some(p) = self.agents.iter_mut().find(|a| a.control == Control::Player) {
             p.dynamo.step(&self.dyn_target, delta);
-            self.cam.follow(&p.transform, &super::Follow {
+            self.cam.follow(&p.transform, delta, &super::Follow {
                 transform: cgmath::Decomposed {
                     disp: cgmath::vec3(0.0, -200.0, 100.0),
                     rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad::new(1.1)),
                     scale: 1.0,
                 },
-                _move_speed: 5.0,
-                _rot_speed: cgmath::Rad::new(0.1),
+                speed: 4.0,
             });
         }
 

@@ -21,8 +21,7 @@ pub struct Camera {
 
 pub struct Follow {
     transform: Transform,
-    _move_speed: f32,
-    _rot_speed: cgmath::Rad<f32>,
+    speed: f32,
 }
 
 impl Camera {
@@ -38,12 +37,13 @@ impl Camera {
         proj_mx * view_mx
     }
 
-    fn follow(&mut self, target: &Transform, follow: &Follow) {
+    fn follow(&mut self, target: &Transform, dt: f32, follow: &Follow) {
         use cgmath::Transform;
         let result = target.concat(&follow.transform);
+        let k = (dt * -follow.speed).exp();
         //TODO
-        self.loc = result.disp;
-        self.rot = result.rot;
+        self.loc = result.disp * (1.0 - k) + self.loc * k;
+        self.rot = result.rot.slerp(self.rot, k);
     }
 }
 
