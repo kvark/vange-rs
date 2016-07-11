@@ -79,7 +79,7 @@ pub struct Common {
     pub car: Car,
     pub global: Global,
     pub heli: Helicopter,
-    //pub drag: Drag,
+    pub drag: Drag,
 }
 
 fn get_pair(reader: &mut Reader<File>, name: &str) -> (f32, f32) {
@@ -162,6 +162,23 @@ pub fn load(file: File) -> Common {
                 fi.next_key_value("helicopter_circle_radius_y:"),
             ],
             circle_dphi: fi.next_key_value("helicopter_circle_dphi:"),
+        },
+        drag: Drag {
+            speed_vw: get_pair(&mut fi, "drag_speed"),
+            wheel_speed: fi.next_key_value("V_drag_wheel_speed:"),
+            z: fi.next_key_value("V_drag_z:"),
+            free_vw: get_pair(&mut fi, "drag_free"),
+            wheel_vw: get_pair(&mut fi, "drag_wheel"),
+            spring_vw: get_pair(&mut fi, "drag_spring"),
+            coll_vw: get_pair(&mut fi, "drag_coll"),
+            helicopter_vw: get_pair(&mut fi, "drag_helicopter"),
+            float_vw: get_pair(&mut fi, "drag_float"),
+            friction_vw: get_pair(&mut fi, "drag_friction"),
+            abs_stop_vw: get_pair(&mut fi, "abs_stop"),
+            stuff: fi.next_key_value("V_drag_stuff:"),
+            swamp: fi.next_key_value("V_drag_swamp:"),
+            mole: fi.next_key_value("V_drag_mole:"),
+            abs_min_vw: get_pair(&mut fi, "abs_min"),
         },
     }
 }
