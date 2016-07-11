@@ -43,6 +43,11 @@ impl Settings {
         File::open(full).unwrap()
     }
 
+    pub fn check_path(&self, path: &str) -> bool {
+        let full = format!("{}/{}", self.data_path, path);
+        File::open(full).is_ok()
+    }
+
     pub fn get_screen_aspect(&self) -> f32 {
         self.window.size[0] as f32 / self.window.size[1] as f32
     }

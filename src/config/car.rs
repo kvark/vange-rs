@@ -178,7 +178,12 @@ pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
                 else { Kind::Constructor },
             stats: CarStats::new(&data),
             physics: {
-                let prm_path = path.replace(".m3d", ".prm");
+                let mut prm_path = path.replace(".m3d", ".prm");
+                if !settings.check_path(&prm_path) {
+                    let pos = path.rfind('/').unwrap();
+                    prm_path.truncate(pos+1);
+                    prm_path.push_str("default.prm");
+                }
                 CarPhysics::load(settings.open(&prm_path))
             },
             model: model::load_m3d(&mut file, factory),
