@@ -23,8 +23,8 @@ pub struct Car {
     pub rudder_step: u16,
     pub rudder_max: u16,
     pub rudder_k_decr: f32,
-    pub traction_inc: u16,
-    pub traction_dec: u16,
+    pub traction_incr: u16,
+    pub traction_decr: u16,
 }
 
 pub struct Global {
@@ -75,11 +75,20 @@ pub struct Drag {
 
 pub struct Common {
     pub nature: Nature,
-    //pub impulse: Impulse,
-    //pub car: Car,
-    //pub global: Global,
-    //pub heli: Helicopter,
+    pub impulse: Impulse,
+    pub car: Car,
+    pub global: Global,
+    pub heli: Helicopter,
     //pub drag: Drag,
+}
+
+fn get_pair(reader: &mut Reader<File>, name: &str) -> (f32, f32) {
+    let sv = format!("V_{}:", name);
+    let sw = format!("W_{}:", name);
+    (
+        reader.next_key_value(&sv),
+        reader.next_key_value(&sw),
+    )
 }
 
 pub fn load(file: File) -> Common {
@@ -96,12 +105,63 @@ pub fn load(file: File) -> Common {
             },
             movement_detection_threshold: {
                 fi.advance(); //num_calls_analysis
-                let mdt = fi.next_key_value("movement_detection_threshold:");
+                let mdt = fi.next_key_value("movement_detection_threshould:");
                 fi.advance(); //num_skip_updates
                 fi.advance(); //wheel_analyze
                 fi.advance(); //analysis_off
                 mdt
             },
+        },
+        impulse: Impulse {
+            elastic_restriction: fi.next_key_value("elastic_restriction:"),
+            elastic_time_scale_factor: fi.next_key_value("elastic_time_scale_factor:"),
+            rolling_scale: fi.next_key_value("rolling_scale:"),
+            normal_threshold: fi.next_key_value("normal_threshould:"),
+            k_wheel: fi.next_key_value("k_wheel:"),
+            factors: [
+                fi.next_key_value("horizontal_impulse_factor:"),
+                fi.next_key_value("vertical_impulse_factor:"),
+            ],
+            k_friction: fi.next_key_value("k_friction_impulse:"),
+        },
+        car: Car {
+            rudder_step: fi.next_key_value("rudder_step:"),
+            rudder_max: fi.next_key_value("rudder_max:"),
+            rudder_k_decr: fi.next_key_value("rudder_k_decr:"),
+            traction_incr: fi.next_key_value("traction_increment:"),
+            traction_decr: fi.next_key_value("traction_decrement:"),
+        },
+        global: Global {
+            speed_factor: fi.next_key_value("global_speed_factor:"),
+            mobility_factor: fi.next_key_value("global_mobility_factor:"),
+            water_speed_factor: fi.next_key_value("global_water_speed_factor:"),
+            air_speed_factor: fi.next_key_value("global_air_speed_factor:"),
+            underground_speed_factor: fi.next_key_value("global_underground_speed_factor:"),
+            k_traction_turbo: fi.next_key_value("k_traction_turbo:"),
+            f_brake_max: fi.next_key_value("f_brake_max:"),
+        },
+        heli: Helicopter {
+            max_height: fi.next_key_value("max_helicopter_height:"),
+            height_incr: fi.next_key_value("helicopter_height_incr:"),
+            height_decr: fi.next_key_value("helicopter_height_decr:"),
+            k_thrust: fi.next_key_value("k_helicopter_thrust:"),
+            k_rotate: fi.next_key_value("k_helicopter_rotate:"),
+            k_strife: fi.next_key_value("k_helicopter_strife:"),
+            max_time: fi.next_key_value("max_helicopter_time:"),
+            convert: [
+                fi.next_key_value("heli_x_convert:"),
+                fi.next_key_value("heli_y_convert:"),
+            ],
+            rudder_decr: fi.next_key_value("heli_rudder_decr:"),
+            traction_decr: fi.next_key_value("heli_traction_decr:"),
+            z_offset: fi.next_key_value("heli_z_offset:"),
+            ampl: fi.next_key_value("helicopter_ampl:"),
+            dphi: fi.next_key_value("helicopter_dphi:"),
+            circle_radius: [
+                fi.next_key_value("helicopter_circle_radius_x:"),
+                fi.next_key_value("helicopter_circle_radius_y:"),
+            ],
+            circle_dphi: fi.next_key_value("helicopter_circle_dphi:"),
         },
     }
 }
