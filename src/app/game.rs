@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use cgmath;
 use glutin::Event;
 use gfx;
@@ -68,8 +69,8 @@ impl<R: gfx::Resources> Agent<R> {
 }
 
 struct DataBase<R: gfx::Resources> {
-    _cars: config::car::Registry,
-    game: config::game::Registry<R>,
+    cars: HashMap<String, config::car::CarInfo<R>>,
+    _game: config::game::Registry,
 }
 
 pub struct Game<R: gfx::Resources> {
@@ -88,9 +89,12 @@ impl<R: gfx::Resources> Game<R> {
            factory: &mut F) -> Game<R>
     {
         info!("Loading world parameters");
-        let db = DataBase {
-            _cars: config::car::Registry::load(settings.open("car.prm")),
-            game: config::game::Registry::load(settings, factory),
+        let db = {
+            let game = config::game::Registry::load(settings);
+            DataBase {
+                cars: config::car::load_registry(settings, &game, factory),
+                _game: game,
+            }
         };
         let lev_config = settings.get_level();
         let level = level::load(&lev_config);
@@ -103,7 +107,7 @@ impl<R: gfx::Resources> Game<R> {
                 disp: cgmath::vec3(0.0, 0.0, 40.0),
                 rot: cgmath::One::one(),
             },
-            model: db.game.models[&settings.car.id].clone(),
+            model: db.cars[&settings.car.id].model.clone(),
             dynamo: Dynamo {
                 thrust: 0.0,
                 steer: cgmath::Zero::zero(),

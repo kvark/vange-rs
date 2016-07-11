@@ -22,10 +22,12 @@ impl<R: gfx::Resources> CarView<R> {
         use gfx::traits::FactoryExt;
 
         info!("Loading car registry");
-        let careg = config::game::Registry::load(settings, factory);
-        let mut model = careg.models[&settings.car.id].clone();
+        let game_reg = config::game::Registry::load(settings);
+        let car_reg = config::car::load_registry(settings, &game_reg, factory);
+        let mut model = car_reg[&settings.car.id].model.clone();
         for (ms, sid) in model.slots.iter_mut().zip(settings.car.slots.iter()) {
-            ms.mesh = Some(careg.models[sid].body.clone());
+            let mut file = settings.open(&game_reg.model_paths[sid]);
+            ms.mesh = Some(model::load_c3d(&mut file, factory));
         }
 
         let pal_data = level::load_palette(&settings.get_object_palette_path());

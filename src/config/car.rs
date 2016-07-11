@@ -1,6 +1,10 @@
 use std::collections::HashMap;
+use std::io::BufReader;
 use std::fs::File;
-use super::text::Reader;
+use gfx;
+use config::Settings;
+use config::text::Reader;
+use model;
 
 
 pub type BoxSize = u8;
@@ -8,8 +12,14 @@ pub type Price = u32;
 pub type Time = u16;
 pub type Shield = u16;
 
+pub enum Kind {
+    Main,
+    Ruffa,
+    Constructor,
+}
+
 #[derive(Clone, Copy, Debug)]
-pub struct Car {
+pub struct CarStats {
     pub class: u8,
     pub price_buy: Price,
     pub price_sell: Price,
@@ -28,10 +38,9 @@ pub struct Car {
     pub max_teleport: u8,
 }
 
-impl Car {
-    fn new(d: &[u32]) -> Car {
-        assert_eq!(d.len(), 19);
-        Car {
+impl CarStats {
+    fn new(d: &[u32]) -> CarStats {
+        CarStats {
             class: d[0] as u8,
             price_buy: d[1] as Price,
             price_sell: d[2] as Price,
@@ -57,43 +66,119 @@ impl Car {
     }
 }
 
-#[derive(Debug)]
-pub struct Registry {
-    pub main: HashMap<String, Car>,
-    pub ruffa: HashMap<String, Car>,
-    pub constructor: HashMap<String, Car>,
+#[repr(u8)]
+pub enum _Side {
+    Front,
+    Back,
+    Side,
+    Upper,
+    Lower,
 }
 
-impl Registry {
-    pub fn load(file: File) -> Registry {
-        let mut reg = Registry {
-            main: HashMap::new(),
-            ruffa: HashMap::new(),
-            constructor: HashMap::new(),
-        };
+pub struct CarPhysics {
+    pub name: String,
+    // base
+    pub scale_size: f32,
+    pub scale_bound: f32,
+    pub scale_box: f32,
+    pub z_offset_of_mass_center: f32,
+    // car
+    pub speed_factor: f32,
+    pub mobility_factor: f32,
+    // devices
+    pub water_speed_factor: f32,
+    pub air_speed_factor: f32,
+    pub underground_speed_factor: f32,
+    // ship
+    pub k_archimedian: f32,
+    pub k_water_traction: f32,
+    pub k_water_rudder: f32,
+    // grader
+    pub terra_mover_sx: [f32; 3],
+    // defence & ram
+    pub defence: [u16; 5],
+    pub ram_power: [u16; 5],
+}
+
+impl CarPhysics {
+    fn load(file: File) -> CarPhysics {
         let mut fi = Reader::new(file);
         fi.advance();
-        assert_eq!(fi.cur(), "uniVang-ParametersFile_Ver_1");
-
-        let num_main: u8 = fi.next_value();
-        let num_ruffa: u8 = fi.next_value();
-        let num_const: u8 = fi.next_value();
-        info!("Reading {} main vehicles, {} ruffas, and {} constructors",
-            num_main, num_ruffa, num_const);
-
-        for _ in 0 .. num_main {
-            let (name, data) = fi.next_entry();
-            reg.main.insert(name.to_owned(), Car::new(&data));
+        CarPhysics {
+            name: fi.cur().split_whitespace().nth(1).unwrap().to_owned(),
+            scale_size: fi.next_key_value("scale_size:"),
+            scale_bound: fi.next_key_value("scale_bound:"),
+            scale_box: fi.next_key_value("scale_box:"),
+            z_offset_of_mass_center: fi.next_key_value("z_offset_of_mass_center:"),
+            speed_factor: fi.next_key_value("speed_factor:"),
+            mobility_factor: fi.next_key_value("mobility_factor:"),
+            water_speed_factor: fi.next_key_value("water_speed_factor:"),
+            air_speed_factor: fi.next_key_value("air_speed_factor:"),
+            underground_speed_factor: fi.next_key_value("underground_speed_factor:"),
+            k_archimedian: fi.next_key_value("k_archimedean:"),
+            k_water_traction: fi.next_key_value("k_water_traction:"),
+            k_water_rudder: fi.next_key_value("k_water_rudder:"),
+            terra_mover_sx: [
+                fi.next_key_value("TerraMoverSx:"),
+                fi.next_key_value("TerraMoverSy:"),
+                fi.next_key_value("TerraMoverSz:"),
+            ],
+            defence: [
+                fi.next_key_value("FrontDefense:"),
+                fi.next_key_value("BackDefense:"),
+                fi.next_key_value("SideDefense:"),
+                fi.next_key_value("UpperDefense:"),
+                fi.next_key_value("LowerDefense:"),
+            ],
+            ram_power: [
+                fi.next_key_value("FrontRamPower:"),
+                fi.next_key_value("BackRamPower:"),
+                fi.next_key_value("SideRamPower:"),
+                fi.next_key_value("UpperRamPower:"),
+                fi.next_key_value("LowerRamPower:"),
+            ],
         }
-        for _ in 0 .. num_ruffa {
-            let (name, data) = fi.next_entry();
-            reg.ruffa.insert(name.to_owned(), Car::new(&data));
-        }
-        for _ in 0 .. num_const {
-            let (name, data) = fi.next_entry();
-            reg.constructor.insert(name.to_owned(), Car::new(&data));
-        }
-
-        reg
     }
+}
+
+pub struct CarInfo<R: gfx::Resources> {
+    pub kind: Kind,
+    pub stats: CarStats,
+    pub physics: CarPhysics,
+    pub model: model::Model<R>,
+}
+
+pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
+                     settings: &Settings, reg: &super::game::Registry, factory: &mut F)
+                     -> HashMap<String, CarInfo<R>>
+{
+    let mut map = HashMap::new();
+    let mut fi = Reader::new(settings.open("car.prm"));
+    fi.advance();
+    assert_eq!(fi.cur(), "uniVang-ParametersFile_Ver_1");
+
+    let num_main: u8 = fi.next_value();
+    let num_ruffa: u8 = fi.next_value();
+    let num_const: u8 = fi.next_value();
+    info!("Reading {} main vehicles, {} ruffas, and {} constructors",
+        num_main, num_ruffa, num_const);
+
+    for i in 0 .. num_main+num_ruffa+num_const {
+        let (name, data) = fi.next_entry();
+        let path = &reg.model_paths[name];
+        let mut file = BufReader::new(settings.open(path));
+        map.insert(name.to_owned(), CarInfo {
+            kind: if i < num_main { Kind::Main }
+                else if i < num_main+num_ruffa { Kind::Ruffa }
+                else { Kind::Constructor },
+            stats: CarStats::new(&data),
+            physics: {
+                let prm_path = path.replace(".m3d", ".prm");
+                CarPhysics::load(settings.open(&prm_path))
+            },
+            model: model::load_m3d(&mut file, factory),
+        });
+    }
+
+    map
 }
