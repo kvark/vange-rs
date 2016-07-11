@@ -69,6 +69,7 @@ impl<R: gfx::Resources> Agent<R> {
 
 struct DataBase<R: gfx::Resources> {
     cars: HashMap<String, config::car::CarInfo<R>>,
+    _common: config::common::Common,
     _game: config::game::Registry,
 }
 
@@ -92,6 +93,7 @@ impl<R: gfx::Resources> Game<R> {
             let game = config::game::Registry::load(settings);
             DataBase {
                 cars: config::car::load_registry(settings, &game, factory),
+                _common: config::common::load(settings.open("common.prm")),
                 _game: game,
             }
         };

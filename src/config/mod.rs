@@ -1,4 +1,5 @@
 pub mod car;
+pub mod common;
 pub mod game;
 pub mod settings;
 mod text;
