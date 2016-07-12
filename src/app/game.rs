@@ -14,6 +14,11 @@ enum Spirit {
 use config::common::{Traction};
 const MAX_TRACTION: Traction = 4.0;
 
+struct AccelerationVectors {
+    f: cgmath::Vector3<f32>, // linear
+    k: cgmath::Vector3<f32>, // angular
+}
+
 struct Dynamo {
     traction: Traction,
     steer: cgmath::Rad<f32>,
@@ -47,29 +52,48 @@ pub struct Agent<R: gfx::Resources> {
 
 impl<R: gfx::Resources> Agent<R> {
     fn step(&mut self, dt: f32, level: &level::Level, common: &config::common::Common) {
+        use cgmath::{InnerSpace, Transform};
+
         if self.control.motor != 0 {
             self.dynamo.change_traction(self.control.motor as f32 * dt * common.car.traction_incr);
         }
         if self.control.hand_break && self.dynamo.traction != 0.0 {
             self.dynamo.traction *= (config::common::ORIGINAL_FPS as f32 * -dt).exp2();
         }
-        let _f_global = cgmath::vec3(0.0, 0.0, -common.nature.gravity);
-        let _k_global = cgmath::vec3(0.0, 0.0, 0.0);
+        let acc_global = AccelerationVectors {
+            f: cgmath::vec3(0.0, 0.0, -common.nature.gravity),
+            k: cgmath::vec3(0.0, 0.0, 0.0),
+        };
+        let mut acc_cur = {
+            let global2local = self.transform.inverse_transform().unwrap();
+            AccelerationVectors {
+                f: global2local.transform_vector(acc_global.f),
+                k: global2local.transform_vector(acc_global.k),
+            }
+        };
+        let (mut v_vel, mut w_vel) = (self.dynamo.linear_velocity, self.dynamo.angular_velocity);
+
         for _ in 0 .. common.nature.num_calls_analysis {
-            use cgmath::{InnerSpace};
             let f_traction_per_wheel =
                 self.car.physics.mobility_factor * common.global.mobility_factor *
                 if self.control.hand_break { common.global.k_traction_turbo } else { 1.0 } *
                 self.dynamo.traction / (self.car.model.wheels.len() as f32);
-            let v_drag = common.drag.free.v * common.drag.speed.v.powf(self.dynamo.linear_velocity.magnitude());
-            let w_drag = common.drag.free.w * common.drag.speed.w.powf(self.dynamo.angular_velocity.magnitude2());
-            if self.dynamo.linear_velocity.magnitude() * v_drag > common.drag.abs_stop.v ||
-               self.dynamo.angular_velocity.magnitude() *w_drag > common.drag.abs_stop.w {
+            let v_drag = common.drag.free.v * common.drag.speed.v.powf(v_vel.magnitude());
+            let w_drag = common.drag.free.w * common.drag.speed.w.powf(w_vel.magnitude2());
+            for _wheel in self.car.model.wheels.iter() {
+                acc_cur.f.y += f_traction_per_wheel;
+            }
+            v_vel += acc_cur.f * dt;
+            //w_vel += acc_cur.k * dt; //TODO: Jacobian
+            if v_vel.magnitude() * v_drag > common.drag.abs_stop.v || w_vel.magnitude() *w_drag > common.drag.abs_stop.w {
                 self.transform.disp += self.dynamo.linear_velocity * dt;
             }
-            self.dynamo.linear_velocity *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
-            self.dynamo.angular_velocity *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
+            v_vel *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
+            w_vel *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
         }
+
+        self.dynamo.linear_velocity = v_vel;
+        self.dynamo.angular_velocity = w_vel;
         // height adjust
         let coord = ((self.transform.disp.x + 0.5) as i32, (self.transform.disp.y + 0.5) as i32);
         let texel = level.get(coord);
