@@ -4,6 +4,11 @@ use byteorder::{LittleEndian as E, ReadBytesExt};
 use self::splay::Splay;
 
 pub const NUM_TERRAINS: usize = 8;
+#[repr(u8)]
+pub enum TerrainType {
+    Water,
+    Main,
+}
 
 pub struct Power(pub i32);
 impl Power {
@@ -53,8 +58,16 @@ pub struct Level {
 }
 
 pub struct Texel {
-    pub low: Altitude,
-    pub high: Option<(Delta, Altitude)>,
+    pub low: (Altitude, TerrainType),
+    pub high: Option<(Delta, Altitude, TerrainType)>,
+}
+
+fn get_terrain(meta: u8) -> TerrainType {
+    let tt = (meta >> DELTA_SHIFT) & (NUM_TERRAINS as u8 - 1);
+    match tt {
+        0 => TerrainType::Water,
+        _ => TerrainType::Main,
+    }
 }
 
 impl Level {
@@ -62,16 +75,19 @@ impl Level {
         while coord.0 < 0 { coord.0 += self.size.0; }
         while coord.1 < 0 { coord.1 += self.size.1; }
         let i = ((coord.1 % self.size.1) * self.size.0 + (coord.0 % self.size.0)) as usize;
-        if self.meta[i] & DOUBLE_LEVEL != 0 {
-            let delta = ((self.meta[i & !1] & DELTA_MASK) << DELTA_BITS +
-                (self.meta[i | 1] & DELTA_MASK)) << DELTA_SHIFT;
+        let meta = self.meta[i];
+        if meta & DOUBLE_LEVEL != 0 {
+            let meta0 = self.meta[i & !1];
+            let meta1 = self.meta[i | 1];
+            let delta = ((meta0 & DELTA_MASK) << DELTA_BITS +
+                (meta1 & DELTA_MASK)) << DELTA_SHIFT;
             Texel {
-                low: self.height[i & !1],
-                high: Some((delta, self.height[i | 1])),
+                low: (self.height[i & !1], get_terrain(meta0)),
+                high: Some((delta, self.height[i | 1], get_terrain(meta1))),
             }
         }else {
             Texel {
-                low: self.height[i],
+                low: (self.height[i], get_terrain(meta)),
                 high: None,
             }
         }

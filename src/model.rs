@@ -26,6 +26,7 @@ pub type Shape = Vec<Polygon>;
 pub struct Wheel<R: gfx::Resources> {
     pub mesh: Option<Mesh<R>>,
     pub steer: u32,
+    pub pos: [f32; 3],
     pub width: u32,
     pub radius: u32,
 }
@@ -239,9 +240,11 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
     debug!("\tReading {} wheels...", num_wheels);
     for _ in 0 .. num_wheels {
         let steer = source.read_u32::<E>().unwrap();
-        for _ in 0..3 {
-            source.read_f64::<E>().unwrap();
-        }
+        let pos = [
+            source.read_f64::<E>().unwrap() as f32,
+            source.read_f64::<E>().unwrap() as f32,
+            source.read_f64::<E>().unwrap() as f32,
+        ];
         let width = source.read_u32::<E>().unwrap();
         let radius = source.read_u32::<E>().unwrap();
         let _bound_index = source.read_u32::<E>().unwrap();
@@ -251,6 +254,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
                 Some(load_c3d(source, factory))
             } else {None},
             steer: steer,
+            pos: pos,
             width: width,
             radius: radius,
         })

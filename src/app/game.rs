@@ -38,7 +38,7 @@ impl Dynamo {
 
 struct Control {
     motor: i8,
-    hand_break: bool,
+    brake: bool,
     turbo: bool,
 }
 
@@ -57,7 +57,7 @@ impl<R: gfx::Resources> Agent<R> {
         if self.control.motor != 0 {
             self.dynamo.change_traction(self.control.motor as f32 * dt * common.car.traction_incr);
         }
-        if self.control.hand_break && self.dynamo.traction != 0.0 {
+        if self.control.brake && self.dynamo.traction != 0.0 {
             self.dynamo.traction *= (config::common::ORIGINAL_FPS as f32 * -dt).exp2();
         }
         let acc_global = AccelerationVectors {
@@ -71,17 +71,46 @@ impl<R: gfx::Resources> Agent<R> {
                 k: global2local.transform_vector(acc_global.k),
             }
         };
+        let flood_level = level.flood_map[0] as f32;
         let (mut v_vel, mut w_vel) = (self.dynamo.linear_velocity, self.dynamo.angular_velocity);
 
         for _ in 0 .. common.nature.num_calls_analysis {
+            let (mut wheel_touch, mut spring_touch, mut float_count) = (0, 0, 0);
+            let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
+            for poly in self.car.model.shape.iter() {
+                let pos = self.transform.transform_point(poly.middle.into());
+                let height_scale = (level::HEIGHT_SCALE as f32) / 256.0;
+                let texel = level.get((pos.x as i32, pos.y as i32));
+                match texel.low.1 {
+                    level::TerrainType::Water => {
+                        let dz = flood_level - pos.z;
+                        if dz > 0.0 {
+                            water_immersion += dz;
+                        }
+                    },
+                    level::TerrainType::Main => {
+                        let normal = self.transform.transform_vector(poly.normal.into());
+                        if normal.z < 0.0 {
+                            let dz = texel.low.0 as f32 * height_scale - pos.z;
+                            if dz > 0.0 {
+                                terrain_immersion += dz;
+                            }
+                        }
+                    },
+                }
+            }
             let f_traction_per_wheel =
                 self.car.physics.mobility_factor * common.global.mobility_factor *
-                if self.control.hand_break { common.global.k_traction_turbo } else { 1.0 } *
+                if self.control.turbo { common.global.k_traction_turbo } else { 1.0 } *
                 self.dynamo.traction / (self.car.model.wheels.len() as f32);
             let v_drag = common.drag.free.v * common.drag.speed.v.powf(v_vel.magnitude());
             let w_drag = common.drag.free.w * common.drag.speed.w.powf(w_vel.magnitude2());
-            for _wheel in self.car.model.wheels.iter() {
+            for wheel in self.car.model.wheels.iter() {
+                let vw = v_vel + w_vel.cross(wheel.pos.into());
                 acc_cur.f.y += f_traction_per_wheel;
+                if self.control.brake {
+                    acc_cur.f -= vw * common.global.f_brake_max;
+                }
             }
             v_vel += acc_cur.f * dt;
             //w_vel += acc_cur.k * dt; //TODO: Jacobian
@@ -94,12 +123,6 @@ impl<R: gfx::Resources> Agent<R> {
 
         self.dynamo.linear_velocity = v_vel;
         self.dynamo.angular_velocity = w_vel;
-        // height adjust
-        let coord = ((self.transform.disp.x + 0.5) as i32, (self.transform.disp.y + 0.5) as i32);
-        let texel = level.get(coord);
-        let height_scale = (level::HEIGHT_SCALE as f32) / 256.0;
-        let vehicle_base = 5.0;
-        self.transform.disp.z = (texel.low as f32 + 0.5) * height_scale + vehicle_base;
         // slow down
         let sign = self.dynamo.traction.signum();
         self.dynamo.change_traction(-sign * dt * common.car.traction_decr);
@@ -155,7 +178,7 @@ impl<R: gfx::Resources> Game<R> {
             },
             control: Control {
                 motor: 0,
-                hand_break: false,
+                brake: false,
                 turbo: false,
             },
         };
