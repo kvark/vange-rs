@@ -2,6 +2,10 @@ use std::fs::File;
 use config::text::Reader;
 
 
+pub type Traction = f32;
+
+const TRACTION_SCALE: Traction = 1.0 / 64.0;
+
 pub struct Nature {
     pub gravity: f32,
     pub density: f32,
@@ -23,8 +27,8 @@ pub struct Car {
     pub rudder_step: u16,
     pub rudder_max: u16,
     pub rudder_k_decr: f32,
-    pub traction_incr: u16,
-    pub traction_decr: u16,
+    pub traction_incr: Traction,
+    pub traction_decr: Traction,
 }
 
 pub struct Global {
@@ -128,8 +132,8 @@ pub fn load(file: File) -> Common {
             rudder_step: fi.next_key_value("rudder_step:"),
             rudder_max: fi.next_key_value("rudder_max:"),
             rudder_k_decr: fi.next_key_value("rudder_k_decr:"),
-            traction_incr: fi.next_key_value("traction_increment:"),
-            traction_decr: fi.next_key_value("traction_decrement:"),
+            traction_incr: fi.next_key_value::<u16>("traction_increment:") as f32 * TRACTION_SCALE,
+            traction_decr: fi.next_key_value::<u16>("traction_decrement:") as f32 * TRACTION_SCALE,
         },
         global: Global {
             speed_factor: fi.next_key_value("global_speed_factor:"),

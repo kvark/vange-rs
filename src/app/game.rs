@@ -11,13 +11,24 @@ enum Control {
     //Artificial,
 }
 
+use config::common::Traction;
+const MAX_TRACTION: Traction = 4.0;
+
 struct Dynamo {
-    thrust: f32,
+    traction: Traction,
     steer: cgmath::Rad<f32>,
 }
 
 impl Dynamo {
-    fn step(&mut self, target: &Dynamo, delta: f32) {
+    fn change_traction(&mut self, delta: Traction) {
+        let old = self.traction;
+        self.traction = (self.traction + delta).min(MAX_TRACTION).max(-MAX_TRACTION);
+        if old * self.traction < 0.0 {
+            self.traction = 0.0; // full stop
+        }
+    }
+
+    /*fn step(&mut self, delta: f32) {
         // thrust
         let (accel_fw, accel_back, deaccel) = (80.0, 40.0, 120.0);
         let time_stop = self.thrust.max(0.0) / deaccel;
@@ -36,7 +47,7 @@ impl Dynamo {
             (self.steer.s - steer_accel * delta).max(target.steer.s)
         };
         self.steer = cgmath::Rad::new(angle);
-    }
+    }*/
 }
 
 pub struct Agent<R: gfx::Resources> {
@@ -47,13 +58,13 @@ pub struct Agent<R: gfx::Resources> {
 }
 
 impl<R: gfx::Resources> Agent<R> {
-    fn step(&mut self, delta: f32, level: &level::Level) {
+    fn step(&mut self, delta: f32, level: &level::Level, common: &config::common::Common) {
         use cgmath::{Rotation, Rotation3};
         // move forward
         let wheel_rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), -self.dynamo.steer);
         let forward_local = wheel_rot.rotate_vector(cgmath::Vector3::unit_y());
         let forward_world = self.transform.rot.rotate_vector(forward_local);
-        self.transform.disp += forward_world * self.dynamo.thrust * delta;
+        self.transform.disp += forward_world * self.dynamo.traction * delta;
         // height adjust
         let coord = ((self.transform.disp.x + 0.5) as i32, (self.transform.disp.y + 0.5) as i32);
         let texel = level.get(coord);
@@ -62,24 +73,31 @@ impl<R: gfx::Resources> Agent<R> {
         self.transform.disp.z = (texel.low as f32 + 0.5) * height_scale + vehicle_base;
         // rotate
         let rot_speed = 0.1;
-        let rot_angle = cgmath::Rad::new(rot_speed * self.dynamo.thrust * self.dynamo.steer.s * delta);
+        let rot_angle = cgmath::Rad::new(rot_speed * self.dynamo.traction * self.dynamo.steer.s * delta);
         self.transform.rot = self.transform.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), -rot_angle);
+        // slow down
+        let sign = self.dynamo.traction.signum();
+        self.dynamo.change_traction(-sign * delta * common.car.traction_decr);
     }
 }
 
 struct DataBase<R: gfx::Resources> {
     cars: HashMap<String, config::car::CarInfo<R>>,
-    _common: config::common::Common,
+    common: config::common::Common,
     _game: config::game::Registry,
 }
 
+struct Keys {
+    motor: i8,
+}
+
 pub struct Game<R: gfx::Resources> {
-    _db: DataBase<R>,
+    db: DataBase<R>,
     render: render::Render<R>,
     level: level::Level,
     agents: Vec<Agent<R>>,
     cam: super::Camera,
-    dyn_target: Dynamo,
+    keys: Keys,
 }
 
 impl<R: gfx::Resources> Game<R> {
@@ -93,7 +111,7 @@ impl<R: gfx::Resources> Game<R> {
             let game = config::game::Registry::load(settings);
             DataBase {
                 cars: config::car::load_registry(settings, &game, factory),
-                _common: config::common::load(settings.open("common.prm")),
+                common: config::common::load(settings.open("common.prm")),
                 _game: game,
             }
         };
@@ -110,13 +128,13 @@ impl<R: gfx::Resources> Game<R> {
             },
             car: db.cars[&settings.car.id].clone(),
             dynamo: Dynamo {
-                thrust: 0.0,
+                traction: 0.0,
                 steer: cgmath::Zero::zero(),
             },
         };
 
         Game {
-            _db: db,
+            db: db,
             render: render::init(factory, out_color, out_depth, &level, &pal_data),
             level: level,
             agents: vec![agent],
@@ -130,9 +148,8 @@ impl<R: gfx::Resources> Game<R> {
                     far: 10000.0,
                 },
             },
-            dyn_target: Dynamo {
-                thrust: 0.0,
-                steer: cgmath::Zero::zero(),
+            keys: Keys {
+                motor: 0,
             },
         }
     }
@@ -164,14 +181,16 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
                 Event::KeyboardInput(_, _, Some(Key::F)) =>
                     self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), -angle),
                 */
-                Event::KeyboardInput(Pressed, _, Some(Key::W)) => self.dyn_target.thrust = 100.0,
-                Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.dyn_target.thrust = -40.0,
+                Event::KeyboardInput(Pressed, _, Some(Key::W)) => self.keys.motor = 1,
+                Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.keys.motor = -1,
                 Event::KeyboardInput(Released, _, Some(Key::W)) | Event::KeyboardInput(Released, _, Some(Key::S)) =>
-                    self.dyn_target.thrust = 0.0,
+                    self.keys.motor = 0,
+                /*
                 Event::KeyboardInput(Pressed, _, Some(Key::A)) => self.dyn_target.steer = cgmath::Rad::new(-0.2),
                 Event::KeyboardInput(Pressed, _, Some(Key::D)) => self.dyn_target.steer = cgmath::Rad::new(0.2),
                 Event::KeyboardInput(Released, _, Some(Key::A)) | Event::KeyboardInput(Released, _, Some(Key::D)) =>
                     self.dyn_target.steer = cgmath::Rad::new(0.0),
+                */
                 /*
                 Event::KeyboardInput(_, _, Some(Key::W)) => self.move_cam(step),
                 Event::KeyboardInput(_, _, Some(Key::S)) => self.move_cam(-step),
@@ -185,7 +204,9 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
         }
 
         if let Some(p) = self.agents.iter_mut().find(|a| a.control == Control::Player) {
-            p.dynamo.step(&self.dyn_target, delta);
+            if self.keys.motor != 0 {
+                p.dynamo.change_traction(self.keys.motor as f32 * delta * self.db.common.car.traction_incr);
+            }
             self.cam.follow(&p.transform, delta, &super::Follow {
                 transform: cgmath::Decomposed {
                     disp: cgmath::vec3(0.0, -200.0, 100.0),
@@ -197,7 +218,7 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
         }
 
         for a in self.agents.iter_mut() {
-            a.step(delta, &self.level);
+            a.step(delta, &self.level, &self.db.common);
         }
 
         true
