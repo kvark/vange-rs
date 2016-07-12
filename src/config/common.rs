@@ -2,14 +2,21 @@ use std::fs::File;
 use config::text::Reader;
 
 
-pub type Traction = f32;
+pub const ORIGINAL_FPS: u8 = 14; //TODO: read from PRM
+pub const SPEED_CORRECTION_FACTOR: f32 = 1.0; // same here
 
-const TRACTION_SCALE: Traction = 1.0 / 64.0;
+pub type Traction = f32;
+pub struct VelocityPair {
+    pub v: f32, //linear
+    pub w: f32, //angular
+}
 
 pub struct Nature {
     pub gravity: f32,
     pub density: f32,
+    pub time_delta0: f32,
     pub scale_general: f32,
+    pub num_calls_analysis: u8,
     pub movement_detection_threshold: u8,
 }
 
@@ -60,21 +67,21 @@ pub struct Helicopter {
 }
 
 pub struct Drag {
-    pub speed_vw: (f32, f32),
+    pub speed: VelocityPair,
     pub wheel_speed: f32,
     pub z: f32,
-    pub free_vw: (f32, f32),
-    pub wheel_vw: (f32, f32),
-    pub spring_vw: (f32, f32),
-    pub coll_vw: (f32, f32),
-    pub helicopter_vw: (f32, f32),
-    pub float_vw: (f32, f32),
-    pub friction_vw: (f32, f32),
-    pub abs_stop_vw: (f32, f32),
+    pub free: VelocityPair,
+    pub wheel: VelocityPair,
+    pub spring: VelocityPair,
+    pub coll: VelocityPair,
+    pub helicopter: VelocityPair,
+    pub float: VelocityPair,
+    pub friction: VelocityPair,
+    pub abs_stop: VelocityPair,
     pub stuff: f32,
     pub swamp: f32,
     pub mole: f32,
-    pub abs_min_vw: (f32, f32),
+    pub abs_min: VelocityPair,
 }
 
 pub struct Common {
@@ -86,29 +93,28 @@ pub struct Common {
     pub drag: Drag,
 }
 
-fn get_pair(reader: &mut Reader<File>, name: &str) -> (f32, f32) {
+fn get_pair(reader: &mut Reader<File>, name: &str) -> VelocityPair {
     let sv = format!("V_{}:", name);
     let sw = format!("W_{}:", name);
-    (
-        reader.next_key_value(&sv),
-        reader.next_key_value(&sw),
-    )
+    VelocityPair {
+        v: reader.next_key_value(&sv),
+        w: reader.next_key_value(&sw),
+    }
 }
 
 pub fn load(file: File) -> Common {
     let mut fi = Reader::new(file);
     fi.advance();
     assert_eq!(fi.cur(), "COMMON:\t\t2");
+    let traction_scale = 14.0 / 64.0;
     Common {
         nature: Nature {
             gravity: fi.next_key_value("g:"),
             density: fi.next_key_value("density:"),
-            scale_general: {
-                fi.advance(); //skip dt0
-                fi.next_key_value("scale_general:")
-            },
+            time_delta0: fi.next_key_value("dt0:"),
+            scale_general: fi.next_key_value("scale_general:"),
+            num_calls_analysis: fi.next_key_value("num_calls_analysis:"),
             movement_detection_threshold: {
-                fi.advance(); //num_calls_analysis
                 let mdt = fi.next_key_value("movement_detection_threshould:");
                 fi.advance(); //num_skip_updates
                 fi.advance(); //wheel_analyze
@@ -132,8 +138,8 @@ pub fn load(file: File) -> Common {
             rudder_step: fi.next_key_value("rudder_step:"),
             rudder_max: fi.next_key_value("rudder_max:"),
             rudder_k_decr: fi.next_key_value("rudder_k_decr:"),
-            traction_incr: fi.next_key_value::<u16>("traction_increment:") as f32 * TRACTION_SCALE,
-            traction_decr: fi.next_key_value::<u16>("traction_decrement:") as f32 * TRACTION_SCALE,
+            traction_incr: fi.next_key_value::<u16>("traction_increment:") as f32 * traction_scale,
+            traction_decr: fi.next_key_value::<u16>("traction_decrement:") as f32 * traction_scale,
         },
         global: Global {
             speed_factor: fi.next_key_value("global_speed_factor:"),
@@ -168,21 +174,21 @@ pub fn load(file: File) -> Common {
             circle_dphi: fi.next_key_value("helicopter_circle_dphi:"),
         },
         drag: Drag {
-            speed_vw: get_pair(&mut fi, "drag_speed"),
+            speed: get_pair(&mut fi, "drag_speed"),
             wheel_speed: fi.next_key_value("V_drag_wheel_speed:"),
             z: fi.next_key_value("V_drag_z:"),
-            free_vw: get_pair(&mut fi, "drag_free"),
-            wheel_vw: get_pair(&mut fi, "drag_wheel"),
-            spring_vw: get_pair(&mut fi, "drag_spring"),
-            coll_vw: get_pair(&mut fi, "drag_coll"),
-            helicopter_vw: get_pair(&mut fi, "drag_helicopter"),
-            float_vw: get_pair(&mut fi, "drag_float"),
-            friction_vw: get_pair(&mut fi, "drag_friction"),
-            abs_stop_vw: get_pair(&mut fi, "abs_stop"),
+            free: get_pair(&mut fi, "drag_free"),
+            wheel: get_pair(&mut fi, "drag_wheel"),
+            spring: get_pair(&mut fi, "drag_spring"),
+            coll: get_pair(&mut fi, "drag_coll"),
+            helicopter: get_pair(&mut fi, "drag_helicopter"),
+            float: get_pair(&mut fi, "drag_float"),
+            friction: get_pair(&mut fi, "drag_friction"),
+            abs_stop: get_pair(&mut fi, "abs_stop"),
             stuff: fi.next_key_value("V_drag_stuff:"),
             swamp: fi.next_key_value("V_drag_swamp:"),
             mole: fi.next_key_value("V_drag_mole:"),
-            abs_min_vw: get_pair(&mut fi, "abs_min"),
+            abs_min: get_pair(&mut fi, "abs_min"),
         },
     }
 }

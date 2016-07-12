@@ -6,78 +6,79 @@ use {config, level, render};
 
 
 #[derive(Eq, PartialEq)]
-enum Control {
+enum Spirit {
     Player,
-    //Artificial,
+    //Computer,
 }
 
-use config::common::Traction;
+use config::common::{Traction};
 const MAX_TRACTION: Traction = 4.0;
 
 struct Dynamo {
     traction: Traction,
     steer: cgmath::Rad<f32>,
+    linear_velocity: cgmath::Vector3<f32>,
+    angular_velocity: cgmath::Vector3<f32>,
 }
 
 impl Dynamo {
     fn change_traction(&mut self, delta: Traction) {
         let old = self.traction;
-        self.traction = (self.traction + delta).min(MAX_TRACTION).max(-MAX_TRACTION);
+        self.traction = (old + delta).min(MAX_TRACTION).max(-MAX_TRACTION);
         if old * self.traction < 0.0 {
             self.traction = 0.0; // full stop
         }
     }
+}
 
-    /*fn step(&mut self, delta: f32) {
-        // thrust
-        let (accel_fw, accel_back, deaccel) = (80.0, 40.0, 120.0);
-        let time_stop = self.thrust.max(0.0) / deaccel;
-        if target.thrust > self.thrust {
-            self.thrust = (self.thrust + accel_fw * delta).min(target.thrust);
-        }else if target.thrust >= 0.0 || time_stop >= delta {
-            self.thrust = (self.thrust - deaccel * delta).max(target.thrust);
-        }else {
-            self.thrust = (self.thrust - deaccel * time_stop - accel_back * (delta - time_stop)).max(target.thrust);
-        }
-        // steer
-        let steer_accel = 0.2;
-        let angle = if target.steer > self.steer {
-            (self.steer.s + steer_accel * delta).min(target.steer.s)
-        }else {
-            (self.steer.s - steer_accel * delta).max(target.steer.s)
-        };
-        self.steer = cgmath::Rad::new(angle);
-    }*/
+struct Control {
+    motor: i8,
+    hand_break: bool,
+    turbo: bool,
 }
 
 pub struct Agent<R: gfx::Resources> {
-    control: Control,
+    spirit: Spirit,
     pub transform: super::Transform,
     pub car: config::car::CarInfo<R>,
     dynamo: Dynamo,
+    control: Control,
 }
 
 impl<R: gfx::Resources> Agent<R> {
-    fn step(&mut self, delta: f32, level: &level::Level, common: &config::common::Common) {
-        use cgmath::{Rotation, Rotation3};
-        // move forward
-        let wheel_rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), -self.dynamo.steer);
-        let forward_local = wheel_rot.rotate_vector(cgmath::Vector3::unit_y());
-        let forward_world = self.transform.rot.rotate_vector(forward_local);
-        self.transform.disp += forward_world * self.dynamo.traction * delta;
+    fn step(&mut self, dt: f32, level: &level::Level, common: &config::common::Common) {
+        if self.control.motor != 0 {
+            self.dynamo.change_traction(self.control.motor as f32 * dt * common.car.traction_incr);
+        }
+        if self.control.hand_break && self.dynamo.traction != 0.0 {
+            self.dynamo.traction *= (config::common::ORIGINAL_FPS as f32 * -dt).exp2();
+        }
+        let _f_global = cgmath::vec3(0.0, 0.0, -common.nature.gravity);
+        let _k_global = cgmath::vec3(0.0, 0.0, 0.0);
+        for _ in 0 .. common.nature.num_calls_analysis {
+            use cgmath::{InnerSpace};
+            let f_traction_per_wheel =
+                self.car.physics.mobility_factor * common.global.mobility_factor *
+                if self.control.hand_break { common.global.k_traction_turbo } else { 1.0 } *
+                self.dynamo.traction / (self.car.model.wheels.len() as f32);
+            let v_drag = common.drag.free.v * common.drag.speed.v.powf(self.dynamo.linear_velocity.magnitude());
+            let w_drag = common.drag.free.w * common.drag.speed.w.powf(self.dynamo.angular_velocity.magnitude2());
+            if self.dynamo.linear_velocity.magnitude() * v_drag > common.drag.abs_stop.v ||
+               self.dynamo.angular_velocity.magnitude() *w_drag > common.drag.abs_stop.w {
+                self.transform.disp += self.dynamo.linear_velocity * dt;
+            }
+            self.dynamo.linear_velocity *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
+            self.dynamo.angular_velocity *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
+        }
         // height adjust
         let coord = ((self.transform.disp.x + 0.5) as i32, (self.transform.disp.y + 0.5) as i32);
         let texel = level.get(coord);
         let height_scale = (level::HEIGHT_SCALE as f32) / 256.0;
         let vehicle_base = 5.0;
         self.transform.disp.z = (texel.low as f32 + 0.5) * height_scale + vehicle_base;
-        // rotate
-        let rot_speed = 0.1;
-        let rot_angle = cgmath::Rad::new(rot_speed * self.dynamo.traction * self.dynamo.steer.s * delta);
-        self.transform.rot = self.transform.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), -rot_angle);
         // slow down
         let sign = self.dynamo.traction.signum();
-        self.dynamo.change_traction(-sign * delta * common.car.traction_decr);
+        self.dynamo.change_traction(-sign * dt * common.car.traction_decr);
     }
 }
 
@@ -87,17 +88,12 @@ struct DataBase<R: gfx::Resources> {
     _game: config::game::Registry,
 }
 
-struct Keys {
-    motor: i8,
-}
-
 pub struct Game<R: gfx::Resources> {
     db: DataBase<R>,
     render: render::Render<R>,
     level: level::Level,
     agents: Vec<Agent<R>>,
     cam: super::Camera,
-    keys: Keys,
 }
 
 impl<R: gfx::Resources> Game<R> {
@@ -120,7 +116,7 @@ impl<R: gfx::Resources> Game<R> {
         let pal_data = level::load_palette(&settings.get_object_palette_path());
 
         let agent = Agent {
-            control: Control::Player,
+            spirit: Spirit::Player,
             transform: cgmath::Decomposed {
                 scale: 1.0,
                 disp: cgmath::vec3(0.0, 0.0, 40.0),
@@ -130,6 +126,13 @@ impl<R: gfx::Resources> Game<R> {
             dynamo: Dynamo {
                 traction: 0.0,
                 steer: cgmath::Zero::zero(),
+                linear_velocity: cgmath::vec3(0.0, 0.0, 0.0),
+                angular_velocity: cgmath::vec3(0.0, 0.0, 0.0),
+            },
+            control: Control {
+                motor: 0,
+                hand_break: false,
+                turbo: false,
             },
         };
 
@@ -148,9 +151,6 @@ impl<R: gfx::Resources> Game<R> {
                     far: 10000.0,
                 },
             },
-            keys: Keys {
-                motor: 0,
-            },
         }
     }
 
@@ -168,8 +168,10 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
         use glutin::VirtualKeyCode as Key;
         use glutin::ElementState::*;
 
-        //let angle = cgmath::rad(delta * 2.0);
-        //let step = delta * 400.0;
+        let pid = match self.agents.iter().position(|a| a.spirit == Spirit::Player) {
+            Some(pos) => pos,
+            None => return false,
+        };
         for event in events {
             match event {
                 Event::KeyboardInput(Pressed, _, Some(Key::Escape)) |
@@ -181,10 +183,10 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
                 Event::KeyboardInput(_, _, Some(Key::F)) =>
                     self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), -angle),
                 */
-                Event::KeyboardInput(Pressed, _, Some(Key::W)) => self.keys.motor = 1,
-                Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.keys.motor = -1,
+                Event::KeyboardInput(Pressed, _, Some(Key::W)) => self.agents[pid].control.motor = 1,
+                Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.agents[pid].control.motor = -1,
                 Event::KeyboardInput(Released, _, Some(Key::W)) | Event::KeyboardInput(Released, _, Some(Key::S)) =>
-                    self.keys.motor = 0,
+                    self.agents[pid].control.motor = 0,
                 /*
                 Event::KeyboardInput(Pressed, _, Some(Key::A)) => self.dyn_target.steer = cgmath::Rad::new(-0.2),
                 Event::KeyboardInput(Pressed, _, Some(Key::D)) => self.dyn_target.steer = cgmath::Rad::new(0.2),
@@ -203,22 +205,17 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
             }
         }
 
-        if let Some(p) = self.agents.iter_mut().find(|a| a.control == Control::Player) {
-            if self.keys.motor != 0 {
-                p.dynamo.change_traction(self.keys.motor as f32 * delta * self.db.common.car.traction_incr);
-            }
-            self.cam.follow(&p.transform, delta, &super::Follow {
-                transform: cgmath::Decomposed {
-                    disp: cgmath::vec3(0.0, -200.0, 100.0),
-                    rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad::new(1.1)),
-                    scale: 1.0,
-                },
-                speed: 4.0,
-            });
-        }
+        self.cam.follow(&self.agents[pid].transform, delta, &super::Follow {
+            transform: cgmath::Decomposed {
+                disp: cgmath::vec3(0.0, -200.0, 100.0),
+                rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad::new(1.1)),
+                scale: 1.0,
+            },
+            speed: 4.0,
+        });
 
         for a in self.agents.iter_mut() {
-            a.step(delta, &self.level, &self.db.common);
+            a.step(delta * config::common::SPEED_CORRECTION_FACTOR, &self.level, &self.db.common);
         }
 
         true
