@@ -51,13 +51,13 @@ pub struct Agent<R: gfx::Resources> {
 }
 
 struct CollisionPoint {
-    pos: [f32; 3],
+    pos: cgmath::Vector3<f32>,
     depth: f32,
 }
 
 struct CollisionData {
-    soft: CollisionPoint,
-    hard: CollisionPoint,
+    soft: Option<CollisionPoint>,
+    hard: Option<CollisionPoint>,
 }
 
 struct Accumulator {
@@ -79,18 +79,15 @@ impl Accumulator {
         self.depth += depth;
         self.count += 1.0;
     }
-    fn finish(self) -> CollisionPoint {
-        if self.count > 0.0 {
-            CollisionPoint {
-                pos: (self.pos / self.count).into(),
+    fn finish(self, min: f32, transform: &super::Transform) -> Option<CollisionPoint> {
+        use cgmath::{EuclideanSpace, Transform};
+        if self.count > min {
+            let pos = cgmath::Point3::from_vec(self.pos / self.count);
+            Some(CollisionPoint {
+                pos: transform.transform_point(pos).to_vec(),
                 depth: self.depth / self.count,
-            }
-        } else {
-            CollisionPoint {
-                pos: [0.0; 3],
-                depth: 0.0,
-            }
-        }
+            })
+        } else { None }
     }
 }
 
@@ -120,15 +117,21 @@ fn collide_low(poly: &model::Polygon, samples: &[[f32; 3]], transform: &super::T
             soft.add(pos, dz);
         }
     }
+    let tinv = transform.inverse_transform().unwrap();
     CollisionData {
-        soft: soft.finish(),
-        hard: hard.finish(),
+        soft: soft.finish(0.0, &tinv),
+        hard: hard.finish(4.0, &tinv),
     }
+}
+
+fn calc_collision_matrix(_point: cgmath::Vector3<f32>) -> cgmath::Matrix3<f32> {
+    use cgmath::SquareMatrix;
+    cgmath::Matrix3::identity()
 }
 
 impl<R: gfx::Resources> Agent<R> {
     fn step(&mut self, dt: f32, level: &level::Level, common: &config::common::Common) {
-        use cgmath::{InnerSpace, Transform};
+        use cgmath::{EuclideanSpace, InnerSpace, Transform};
 
         if self.control.motor != 0 {
             self.dynamo.change_traction(self.control.motor as f32 * dt * common.car.traction_incr);
@@ -153,22 +156,64 @@ impl<R: gfx::Resources> Agent<R> {
         for _ in 0 .. common.nature.num_calls_analysis {
             let (mut wheel_touch, mut spring_touch, mut float_count) = (0, 0, 0);
             let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
+            let stand_on_wheels = true; //TODO
+            let modulation = 1.0;
             for poly in self.car.model.shape.polygons.iter() {
-                let pos = self.transform.transform_point(poly.middle.into());
-                let texel = level.get((pos.x as i32, pos.y as i32));
+                let middle = self.transform.transform_point(poly.middle.into());
+                let vr = v_vel + w_vel.cross(middle.to_vec());
+                let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
+                let texel = level.get((middle.x as i32, middle.y as i32));
                 match texel.low.1 {
                     level::TerrainType::Water => {
-                        let dz = flood_level - pos.z;
+                        let dz = flood_level - middle.z;
                         if dz > 0.0 {
+                            float_count += 1;
                             water_immersion += dz;
                         }
                     },
                     level::TerrainType::Main => {
                         let normal = self.transform.transform_vector(poly.normal.into());
                         if normal.z < 0.0 {
-                            let dz = get_height(texel.low.0) - pos.z;
-                            if dz > 0.0 {
-                                terrain_immersion += dz;
+                            let cdata = collide_low(poly, &self.car.model.shape.samples,
+                                &self.transform, level, &common.terrain);
+                            terrain_immersion += match cdata.soft {
+                                Some(ref cp) => cp.depth,
+                                None => 0.0,
+                            };
+                            terrain_immersion += match cdata.hard {
+                                Some(ref cp) => cp.depth,
+                                None => 0.0,
+                            };
+                            match cdata {
+                                CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
+                                    let mut pos = cp.pos;
+                                    pos.z = 0.0; // ignore vertical
+                                    let normal = pos.normalize();
+                                    let u0 = v_vel + w_vel.cross(pos);
+                                    let dot = u0.dot(normal);
+                                    if dot > 0.0 {
+                                        let pulse = (calc_collision_matrix(pos) * normal) *
+                                            (-common.impulse.factors[0] * modulation * dot);
+                                        v_vel += pulse;
+                                        //w_vel += J_inv * cp.pos.cross(pulse);
+                                    }
+                                },
+                                CollisionData{ soft: Some(ref cp), ..} => {
+                                    let mut u0 = v_vel + w_vel.cross(cp.pos);
+                                    if u0.z < 0.0 {
+                                        if stand_on_wheels { // ignore XY
+                                            u0.x = 0.0;
+                                            u0.y = 0.0;
+                                        } else {
+                                            //TODO
+                                        }
+                                        let pulse = (calc_collision_matrix(cp.pos) * u0) *
+                                            (-common.impulse.factors[1] * modulation);
+                                        v_vel += pulse;
+                                        //w_vel += J_inv * cp.pos.cross(pulse);
+                                    }
+                                }
+                                _ => (),
                             }
                         }
                     },

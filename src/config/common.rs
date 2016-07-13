@@ -197,8 +197,8 @@ pub fn load(file: File) -> Common {
             abs_min: get_pair(&mut fi, "abs_min"),
         },
         terrain: Terrain {
-            dz_max: fi.next_key_value("dZ_max"),
-            min_wall_delta: fi.next_key_value("MIN_WALL_DELTA"),
+            dz_max: fi.next_key_value("dZ_max:"),
+            min_wall_delta: fi.next_key_value("MIN_WALL_DELTA:"),
         },
     }
 }
