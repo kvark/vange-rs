@@ -94,7 +94,7 @@ pub struct CarPhysics {
     pub air_speed_factor: f32,
     pub underground_speed_factor: f32,
     // ship
-    pub k_archimedian: f32,
+    pub k_archimedean: f32,
     pub k_water_traction: f32,
     pub k_water_rudder: f32,
     // grader
@@ -119,7 +119,7 @@ impl CarPhysics {
             water_speed_factor: fi.next_key_value("water_speed_factor:"),
             air_speed_factor: fi.next_key_value("air_speed_factor:"),
             underground_speed_factor: fi.next_key_value("underground_speed_factor:"),
-            k_archimedian: fi.next_key_value("k_archimedean:"),
+            k_archimedean: fi.next_key_value("k_archimedean:"),
             k_water_traction: fi.next_key_value("k_water_traction:"),
             k_water_rudder: fi.next_key_value("k_water_rudder:"),
             terra_mover_sx: [

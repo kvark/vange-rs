@@ -84,6 +84,11 @@ pub struct Drag {
     pub abs_min: VelocityPair,
 }
 
+pub struct Terrain {
+    pub dz_max: f32,
+    pub min_wall_delta: f32,
+}
+
 pub struct Common {
     pub nature: Nature,
     pub impulse: Impulse,
@@ -91,6 +96,7 @@ pub struct Common {
     pub global: Global,
     pub heli: Helicopter,
     pub drag: Drag,
+    pub terrain: Terrain,
 }
 
 fn get_pair(reader: &mut Reader<File>, name: &str) -> VelocityPair {
@@ -189,6 +195,10 @@ pub fn load(file: File) -> Common {
             swamp: fi.next_key_value("V_drag_swamp:"),
             mole: fi.next_key_value("V_drag_mole:"),
             abs_min: get_pair(&mut fi, "abs_min"),
+        },
+        terrain: Terrain {
+            dz_max: fi.next_key_value("dZ_max"),
+            min_wall_delta: fi.next_key_value("MIN_WALL_DELTA"),
         },
     }
 }

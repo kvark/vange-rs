@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use cgmath;
 use glutin::Event;
 use gfx;
-use {config, level, render};
+use {config, level, model, render};
 
 
 #[derive(Eq, PartialEq)]
@@ -50,6 +50,82 @@ pub struct Agent<R: gfx::Resources> {
     control: Control,
 }
 
+struct CollisionPoint {
+    pos: [f32; 3],
+    depth: f32,
+}
+
+struct CollisionData {
+    soft: CollisionPoint,
+    hard: CollisionPoint,
+}
+
+struct Accumulator {
+    pos: cgmath::Vector3<f32>,
+    depth: f32,
+    count: f32,
+}
+
+impl Accumulator {
+    fn new() -> Accumulator {
+        Accumulator {
+            pos: cgmath::vec3(0.0, 0.0, 0.0),
+            depth: 0.0,
+            count: 0.0,
+        }
+    }
+    fn add(&mut self, pos: cgmath::Vector3<f32>, depth: f32) {
+        self.pos += pos;
+        self.depth += depth;
+        self.count += 1.0;
+    }
+    fn finish(self) -> CollisionPoint {
+        if self.count > 0.0 {
+            CollisionPoint {
+                pos: (self.pos / self.count).into(),
+                depth: self.depth / self.count,
+            }
+        } else {
+            CollisionPoint {
+                pos: [0.0; 3],
+                depth: 0.0,
+            }
+        }
+    }
+}
+
+fn get_height(altitude: u8) -> f32 {
+    altitude as f32 * (level::HEIGHT_SCALE as f32) / 256.0
+}
+
+fn collide_low(poly: &model::Polygon, samples: &[[f32; 3]], transform: &super::Transform,
+               level: &level::Level, terraconf: &config::common::Terrain) -> CollisionData
+{
+    use cgmath::{EuclideanSpace, Transform};
+    let (mut soft, mut hard) = (Accumulator::new(), Accumulator::new());
+    for &s in samples[poly.sample_range.0 as usize .. poly.sample_range.1 as usize].iter() {
+        let pos = transform.transform_point(s.into()).to_vec();
+        let texel = level.get((pos.x as i32, pos.y as i32));
+        let lo_alt = texel.low.0;
+        let altitude = match texel.high {
+            Some((delta, hi_alt, _))
+                if pos.z - get_height(lo_alt + delta) > get_height(hi_alt) - pos.z
+                => hi_alt,
+            _ => lo_alt,
+        };
+        let dz = get_height(altitude) - pos.z;
+        if dz > terraconf.min_wall_delta {
+            hard.add(pos, dz);
+        } else if dz > 0.0 {
+            soft.add(pos, dz);
+        }
+    }
+    CollisionData {
+        soft: soft.finish(),
+        hard: hard.finish(),
+    }
+}
+
 impl<R: gfx::Resources> Agent<R> {
     fn step(&mut self, dt: f32, level: &level::Level, common: &config::common::Common) {
         use cgmath::{InnerSpace, Transform};
@@ -77,9 +153,8 @@ impl<R: gfx::Resources> Agent<R> {
         for _ in 0 .. common.nature.num_calls_analysis {
             let (mut wheel_touch, mut spring_touch, mut float_count) = (0, 0, 0);
             let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
-            for poly in self.car.model.shape.iter() {
+            for poly in self.car.model.shape.polygons.iter() {
                 let pos = self.transform.transform_point(poly.middle.into());
-                let height_scale = (level::HEIGHT_SCALE as f32) / 256.0;
                 let texel = level.get((pos.x as i32, pos.y as i32));
                 match texel.low.1 {
                     level::TerrainType::Water => {
@@ -91,7 +166,7 @@ impl<R: gfx::Resources> Agent<R> {
                     level::TerrainType::Main => {
                         let normal = self.transform.transform_vector(poly.normal.into());
                         if normal.z < 0.0 {
-                            let dz = texel.low.0 as f32 * height_scale - pos.z;
+                            let dz = get_height(texel.low.0) - pos.z;
                             if dz > 0.0 {
                                 terrain_immersion += dz;
                             }

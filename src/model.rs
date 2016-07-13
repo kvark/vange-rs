@@ -18,9 +18,14 @@ pub struct Mesh<R: gfx::Resources> {
 pub struct Polygon {
     pub middle: [f32; 3],
     pub normal: [f32; 3],
+    pub sample_range: (u16, u16),
 }
 
-pub type Shape = Vec<Polygon>;
+#[derive(Clone)]
+pub struct Shape {
+    pub polygons: Vec<Polygon>,
+    pub samples: Vec<[f32; 3]>,
+}
 
 #[derive(Clone)]
 pub struct Wheel<R: gfx::Resources> {
@@ -183,6 +188,10 @@ pub fn load_c3d_shape<I>(source: &mut I) -> Shape where
     let num_polygons  = source.read_u32::<E>().unwrap();
     let _total_verts  = source.read_u32::<E>().unwrap();
 
+    let mut shape = Shape {
+        polygons: Vec::with_capacity(num_polygons as usize),
+        samples: Vec::new(),
+    };
     let coord_max = read_vec(source);
     let coord_min = read_vec(source);
     debug!("\tBound {:?} to {:?}", coord_min, coord_max);
@@ -195,7 +204,7 @@ pub fn load_c3d_shape<I>(source: &mut I) -> Shape where
         0)).unwrap();
 
     debug!("\tReading {} polygons...", num_polygons);
-    let polygons = (0 .. num_polygons).map(|_| {
+    for _ in 0 .. num_polygons {
         let num_corners = source.read_u32::<E>().unwrap();
         assert!(3 <= num_corners && num_corners <= 4);
         source.seek(Current(4 + 4 + 4)).unwrap(); // sort info and color
@@ -204,15 +213,19 @@ pub fn load_c3d_shape<I>(source: &mut I) -> Shape where
             *b = source.read_i8().unwrap();
         }
         source.seek(Current((num_corners as i64) * (4 + 4))).unwrap(); // vertices
-        Polygon {
-            middle: [d[4] as f32, d[5] as f32, d[6] as f32],
+        //TODO: more samples!
+        let mid = [d[4] as f32, d[5] as f32, d[6] as f32];
+        shape.polygons.push(Polygon {
+            middle: mid,
             normal: [d[0] as f32 / 128.0, d[1] as f32 / 128.0, d[2] as f32 / 128.0],
-        }
-    }).collect();
+            sample_range: (shape.samples.len() as u16, shape.samples.len() as u16 + 1),
+        });
+        shape.samples.push(mid);
+    }
 
     source.seek(Current(3 * (num_polygons as i64) * 4)).unwrap(); // sorted var polys
 
-    polygons
+    shape
 }
 
 pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
@@ -223,7 +236,10 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
     debug!("\tReading the body...");
     let mut model = Model {
         body: load_c3d(source, factory),
-        shape: Vec::new(),
+        shape: Shape {
+            polygons: Vec::new(),
+            samples: Vec::new(),
+        },
         color: [0, 0],
         wheels: Vec::new(),
         debris: Vec::new(),
