@@ -50,11 +50,13 @@ pub struct Agent<R: gfx::Resources> {
     control: Control,
 }
 
+#[derive(Debug)]
 struct CollisionPoint {
     pos: cgmath::Vector3<f32>,
     depth: f32,
 }
 
+#[derive(Debug)]
 struct CollisionData {
     soft: Option<CollisionPoint>,
     hard: Option<CollisionPoint>,
@@ -95,13 +97,13 @@ fn get_height(altitude: u8) -> f32 {
     altitude as f32 * (level::HEIGHT_SCALE as f32) / 256.0
 }
 
-fn collide_low(poly: &model::Polygon, samples: &[[f32; 3]], transform: &super::Transform,
+fn collide_low(poly: &model::Polygon, samples: &[[f32; 3]], scale: f32, transform: &super::Transform,
                level: &level::Level, terraconf: &config::common::Terrain) -> CollisionData
 {
     use cgmath::{EuclideanSpace, Transform};
     let (mut soft, mut hard) = (Accumulator::new(), Accumulator::new());
     for &s in samples[poly.sample_range.0 as usize .. poly.sample_range.1 as usize].iter() {
-        let pos = transform.transform_point(s.into()).to_vec();
+        let pos = transform.transform_point(cgmath::Point3::from(s) * scale).to_vec();
         let texel = level.get((pos.x as i32, pos.y as i32));
         let lo_alt = texel.low.0;
         let altitude = match texel.high {
@@ -157,16 +159,15 @@ impl<R: gfx::Resources> Agent<R> {
             f: cgmath::vec3(0.0, 0.0, -common.nature.gravity),
             k: cgmath::vec3(0.0, 0.0, 0.0),
         };
-        let mut acc_cur = {
-            let global2local = self.transform.inverse_transform().unwrap();
-            AccelerationVectors {
-                f: global2local.transform_vector(acc_global.f),
-                k: global2local.transform_vector(acc_global.k),
-            }
+        let global2local = self.transform.inverse_transform().unwrap();
+        let mut acc_cur = AccelerationVectors {
+            f: global2local.transform_vector(acc_global.f),
+            k: global2local.transform_vector(acc_global.k),
         };
         let wheels_touch = true;
         let flood_level = level.flood_map[0] as f32;
-        let (mut v_vel, mut w_vel) = (self.dynamo.linear_velocity, self.dynamo.angular_velocity);
+        let mut v_vel = global2local.transform_vector(self.dynamo.linear_velocity);
+        let mut w_vel = global2local.transform_vector(self.dynamo.angular_velocity);
         let j_inv = {
             let phys = &self.car.model.body.physics;
             (cgmath::Matrix3::from(phys.jacobi) *
@@ -207,7 +208,7 @@ impl<R: gfx::Resources> Agent<R> {
                         let normal = self.transform.transform_vector(poly.normal.into());
                         if normal.z < 0.0 {
                             let cdata = collide_low(poly, &self.car.model.shape.samples,
-                                &self.transform, level, &common.terrain);
+                                self.car.physics.scale_bound, &self.transform, level, &common.terrain);
                             terrain_immersion += match cdata.soft {
                                 Some(ref cp) => cp.depth,
                                 None => 0.0,
@@ -237,8 +238,7 @@ impl<R: gfx::Resources> Agent<R> {
                                         if stand_on_wheels { // ignore XY
                                             uw.x = 0.0;
                                             uw.y = 0.0;
-                                            u0 = self.transform.inverse_transform().unwrap()
-                                                     .transform_vector(uw);
+                                            u0 = global2local.transform_vector(uw);
                                         } else {
                                             //TODO
                                         }
@@ -269,7 +269,7 @@ impl<R: gfx::Resources> Agent<R> {
             v_vel += acc_cur.f * dt;
             w_vel += (j_inv * acc_cur.k) * dt;
             if v_vel.magnitude() * v_drag > common.drag.abs_stop.v || w_vel.magnitude() *w_drag > common.drag.abs_stop.w {
-                self.transform.disp += self.dynamo.linear_velocity * dt;
+                self.transform.disp += v_vel * dt;
                 let ws = w_vel.magnitude();
                 let rot_inverse = cgmath::Quaternion::from_axis_angle(w_vel / ws.max(0.01),
                     cgmath::Deg::new(ws * -dt).into());
@@ -280,8 +280,8 @@ impl<R: gfx::Resources> Agent<R> {
             w_vel *= w_drag.powi(config::common::SPEED_CORRECTION_FACTOR);
         }
 
-        self.dynamo.linear_velocity = v_vel;
-        self.dynamo.angular_velocity = w_vel;
+        self.dynamo.linear_velocity  = self.transform.transform_vector(v_vel);
+        self.dynamo.angular_velocity = self.transform.transform_vector(w_vel);
         // slow down
         let sign = self.dynamo.traction.signum();
         self.dynamo.change_traction(-sign * dt * common.car.traction_decr);
