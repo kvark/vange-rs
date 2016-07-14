@@ -8,10 +8,18 @@ use render::{ObjectVertex, NUM_COLOR_IDS, COLOR_ID_BODY};
 const MAX_SLOTS: u32 = 3;
 
 #[derive(Clone)]
+pub struct Physics {
+    pub mass: f32,
+    pub rcm: [f32; 3],
+    pub jacobi: [[f32; 3]; 3],
+}
+
+#[derive(Clone)]
 pub struct Mesh<R: gfx::Resources> {
     pub slice: gfx::Slice<R>,
     pub buffer: gfx::handle::Buffer<R, ObjectVertex>,
     pub offset: [f32; 3],
+    pub physics: Physics,
 }
 
 #[derive(Clone)]
@@ -86,9 +94,21 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     debug!("\tBound {:?} to {:?} with offset {:?}", coord_min, coord_max, parent_off);
     let _max_radius = source.read_u32::<E>().unwrap();
     let _parent_rot = read_vec(source);
-    for _ in 0 .. (1+3+9) {
-        source.read_f64::<E>().unwrap();
-    }
+    let physics = {
+        let mut q = [0.0f32; 1+3+9];
+        for qel in q.iter_mut() {
+            *qel = source.read_f64::<E>().unwrap() as f32;
+        }
+        Physics {
+            mass: q[0],
+            rcm: [q[1], q[2], q[3]],
+            jacobi: [
+                [q[4], q[5], q[6]],
+                [q[7], q[8], q[9]],
+                [q[10], q[11], q[12]],
+            ],
+        }
+    };
 
     debug!("\tReading {} positions...", num_positions);
     let mut positions = Vec::with_capacity(num_positions as usize);
@@ -174,6 +194,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
         slice: slice,
         buffer: vbuf,
         offset: [parent_off[0] as f32, parent_off[1] as f32, parent_off[2] as f32],
+        physics: physics,
     }
 }
 
