@@ -9,7 +9,7 @@ const MAX_SLOTS: u32 = 3;
 
 #[derive(Clone)]
 pub struct Physics {
-    pub mass: f32,
+    pub volume: f32,
     pub rcm: [f32; 3],
     pub jacobi: [[f32; 3]; 3],
 }
@@ -100,7 +100,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
             *qel = source.read_f64::<E>().unwrap() as f32;
         }
         Physics {
-            mass: q[0],
+            volume: q[0],
             rcm: [q[1], q[2], q[3]],
             jacobi: [
                 [q[4], q[5], q[6]],

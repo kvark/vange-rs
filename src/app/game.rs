@@ -21,7 +21,7 @@ struct AccelerationVectors {
 
 struct Dynamo {
     traction: Traction,
-    steer: cgmath::Rad<f32>,
+    _steer: cgmath::Rad<f32>,
     linear_velocity: cgmath::Vector3<f32>,
     angular_velocity: cgmath::Vector3<f32>,
 }
@@ -131,7 +131,7 @@ fn calc_collision_matrix(_point: cgmath::Vector3<f32>) -> cgmath::Matrix3<f32> {
 
 impl<R: gfx::Resources> Agent<R> {
     fn step(&mut self, dt: f32, level: &level::Level, common: &config::common::Common) {
-        use cgmath::{EuclideanSpace, InnerSpace, Transform};
+        use cgmath::{EuclideanSpace, InnerSpace, Rotation, Rotation3, SquareMatrix, Transform};
 
         if self.control.motor != 0 {
             self.dynamo.change_traction(self.control.motor as f32 * dt * common.car.traction_incr);
@@ -152,9 +152,15 @@ impl<R: gfx::Resources> Agent<R> {
         };
         let flood_level = level.flood_map[0] as f32;
         let (mut v_vel, mut w_vel) = (self.dynamo.linear_velocity, self.dynamo.angular_velocity);
+        let j_inv = {
+            let phys = &self.car.model.body.physics;
+            (cgmath::Matrix3::from(phys.jacobi) *
+                (self.transform.scale * self.transform.scale / phys.volume))
+                .invert().unwrap()
+        };
 
         for _ in 0 .. common.nature.num_calls_analysis {
-            let (mut wheel_touch, mut spring_touch, mut float_count) = (0, 0, 0);
+            let mut float_count = 0;
             let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
             let stand_on_wheels = true; //TODO
             let modulation = 1.0;
@@ -195,7 +201,7 @@ impl<R: gfx::Resources> Agent<R> {
                                         let pulse = (calc_collision_matrix(pos) * normal) *
                                             (-common.impulse.factors[0] * modulation * dot);
                                         v_vel += pulse;
-                                        //w_vel += J_inv * cp.pos.cross(pulse);
+                                        w_vel += j_inv * cp.pos.cross(pulse);
                                     }
                                 },
                                 CollisionData{ soft: Some(ref cp), ..} => {
@@ -210,7 +216,7 @@ impl<R: gfx::Resources> Agent<R> {
                                         let pulse = (calc_collision_matrix(cp.pos) * u0) *
                                             (-common.impulse.factors[1] * modulation);
                                         v_vel += pulse;
-                                        //w_vel += J_inv * cp.pos.cross(pulse);
+                                        w_vel += j_inv * cp.pos.cross(pulse);
                                     }
                                 }
                                 _ => (),
@@ -219,6 +225,7 @@ impl<R: gfx::Resources> Agent<R> {
                     },
                 }
             }
+            let _ = (float_count, water_immersion, terrain_immersion); //TODO
             let f_traction_per_wheel =
                 self.car.physics.mobility_factor * common.global.mobility_factor *
                 if self.control.turbo { common.global.k_traction_turbo } else { 1.0 } *
@@ -233,9 +240,14 @@ impl<R: gfx::Resources> Agent<R> {
                 }
             }
             v_vel += acc_cur.f * dt;
-            //w_vel += acc_cur.k * dt; //TODO: Jacobian
+            w_vel += (j_inv * acc_cur.k) * dt;
             if v_vel.magnitude() * v_drag > common.drag.abs_stop.v || w_vel.magnitude() *w_drag > common.drag.abs_stop.w {
                 self.transform.disp += self.dynamo.linear_velocity * dt;
+                let ws = w_vel.magnitude();
+                let rot_inverse = cgmath::Quaternion::from_axis_angle(w_vel / ws.max(0.01),
+                    cgmath::Deg::new(ws * -dt).into());
+                v_vel = rot_inverse.rotate_vector(v_vel);
+                w_vel = rot_inverse.rotate_vector(v_vel);
             }
             v_vel *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
             w_vel *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
@@ -281,18 +293,19 @@ impl<R: gfx::Resources> Game<R> {
         let lev_config = settings.get_level();
         let level = level::load(&lev_config);
         let pal_data = level::load_palette(&settings.get_object_palette_path());
+        let car = db.cars[&settings.car.id].clone();
 
         let agent = Agent {
             spirit: Spirit::Player,
             transform: cgmath::Decomposed {
-                scale: 1.0,
+                scale: car.scale,
                 disp: cgmath::vec3(0.0, 0.0, 40.0),
                 rot: cgmath::One::one(),
             },
-            car: db.cars[&settings.car.id].clone(),
+            car: car,
             dynamo: Dynamo {
                 traction: 0.0,
-                steer: cgmath::Zero::zero(),
+                _steer: cgmath::Zero::zero(),
                 linear_velocity: cgmath::vec3(0.0, 0.0, 0.0),
                 angular_velocity: cgmath::vec3(0.0, 0.0, 0.0),
             },
