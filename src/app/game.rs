@@ -124,9 +124,23 @@ fn collide_low(poly: &model::Polygon, samples: &[[f32; 3]], transform: &super::T
     }
 }
 
-fn calc_collision_matrix(_point: cgmath::Vector3<f32>) -> cgmath::Matrix3<f32> {
-    use cgmath::SquareMatrix;
-    cgmath::Matrix3::identity()
+fn calc_collision_matrix_inv(r: cgmath::Vector3<f32>, ji: &cgmath::Matrix3<f32>) -> cgmath::Matrix3<f32> {
+    use cgmath::{Matrix3, SquareMatrix};
+    let t3  = -r.z * ji[1][1] + r.y * ji[2][1];
+    let t7  = -r.z * ji[1][2] + r.y * ji[2][2];
+    let t12 = -r.z * ji[1][0] + r.y * ji[2][0];
+    let t21 =  r.z * ji[0][1] - r.x * ji[2][1];
+    let t25 =  r.z * ji[0][2] - r.x * ji[2][2];
+    let t30 =  r.z * ji[0][0] - r.x * ji[2][0];
+    let t39 = -r.y * ji[0][1] + r.x * ji[1][1];
+    let t43 = -r.y * ji[0][2] + r.x * ji[1][2];
+    let t48 = -r.y * ji[0][0] + r.x * ji[1][0];
+    let cm = Matrix3::new(
+        1.0 - t3*r.z + t7*r.y, t12*r.z - t7*r.x, -t12*r.y + t3*r.x,
+        -t21*r.z + t25*r.y, 1.0 + t30*r.z - t25*r.x, -t30*r.y + t21*r.x,
+        -t39*r.z + t43*r.y, t48*r.z - t43*r.x, 1.0 - t48*r.y + t39*r.x
+        );
+    cm.invert().unwrap()
 }
 
 impl<R: gfx::Resources> Agent<R> {
@@ -150,6 +164,7 @@ impl<R: gfx::Resources> Agent<R> {
                 k: global2local.transform_vector(acc_global.k),
             }
         };
+        let wheels_touch = true;
         let flood_level = level.flood_map[0] as f32;
         let (mut v_vel, mut w_vel) = (self.dynamo.linear_velocity, self.dynamo.angular_velocity);
         let j_inv = {
@@ -164,8 +179,19 @@ impl<R: gfx::Resources> Agent<R> {
             let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
             let stand_on_wheels = true; //TODO
             let modulation = 1.0;
+
+            // apply drag
+            let v_drag = common.drag.free.v * common.drag.speed.v.powf(v_vel.magnitude());
+            let w_drag = common.drag.free.w * common.drag.speed.w.powf(w_vel.magnitude2());
+            if wheels_touch { //TODO: why `ln()`?
+                let speed = common.drag.wheel_speed.ln() * self.car.physics.mobility_factor *
+                    common.global.speed_factor / self.car.physics.speed_factor;
+                v_vel.y *= (1.0 + speed).powi(config::common::SPEED_CORRECTION_FACTOR);
+            }
+
             for poly in self.car.model.shape.polygons.iter() {
-                let middle = self.transform.transform_point(poly.middle.into());
+                let middle = self.transform.transform_point(
+                    cgmath::Point3::from(poly.middle) * self.car.physics.scale_bound);
                 let vr = v_vel + w_vel.cross(middle.to_vec());
                 let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
                 let texel = level.get((middle.x as i32, middle.y as i32));
@@ -198,22 +224,25 @@ impl<R: gfx::Resources> Agent<R> {
                                     let u0 = v_vel + w_vel.cross(pos);
                                     let dot = u0.dot(normal);
                                     if dot > 0.0 {
-                                        let pulse = (calc_collision_matrix(pos) * normal) *
+                                        let pulse = (calc_collision_matrix_inv(pos, &j_inv) * normal) *
                                             (-common.impulse.factors[0] * modulation * dot);
                                         v_vel += pulse;
-                                        w_vel += j_inv * cp.pos.cross(pulse);
+                                        w_vel += j_inv * pos.cross(pulse);
                                     }
                                 },
                                 CollisionData{ soft: Some(ref cp), ..} => {
                                     let mut u0 = v_vel + w_vel.cross(cp.pos);
-                                    if u0.z < 0.0 {
+                                    let mut uw = self.transform.transform_vector(u0);
+                                    if uw.z < 0.0 {
                                         if stand_on_wheels { // ignore XY
-                                            u0.x = 0.0;
-                                            u0.y = 0.0;
+                                            uw.x = 0.0;
+                                            uw.y = 0.0;
+                                            u0 = self.transform.inverse_transform().unwrap()
+                                                     .transform_vector(uw);
                                         } else {
                                             //TODO
                                         }
-                                        let pulse = (calc_collision_matrix(cp.pos) * u0) *
+                                        let pulse = (calc_collision_matrix_inv(cp.pos, &j_inv) * u0) *
                                             (-common.impulse.factors[1] * modulation);
                                         v_vel += pulse;
                                         w_vel += j_inv * cp.pos.cross(pulse);
@@ -230,8 +259,6 @@ impl<R: gfx::Resources> Agent<R> {
                 self.car.physics.mobility_factor * common.global.mobility_factor *
                 if self.control.turbo { common.global.k_traction_turbo } else { 1.0 } *
                 self.dynamo.traction / (self.car.model.wheels.len() as f32);
-            let v_drag = common.drag.free.v * common.drag.speed.v.powf(v_vel.magnitude());
-            let w_drag = common.drag.free.w * common.drag.speed.w.powf(w_vel.magnitude2());
             for wheel in self.car.model.wheels.iter() {
                 let vw = v_vel + w_vel.cross(wheel.pos.into());
                 acc_cur.f.y += f_traction_per_wheel;
@@ -249,8 +276,8 @@ impl<R: gfx::Resources> Agent<R> {
                 v_vel = rot_inverse.rotate_vector(v_vel);
                 w_vel = rot_inverse.rotate_vector(v_vel);
             }
-            v_vel *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
-            w_vel *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
+            v_vel *= v_drag.powi(config::common::SPEED_CORRECTION_FACTOR);
+            w_vel *= w_drag.powi(config::common::SPEED_CORRECTION_FACTOR);
         }
 
         self.dynamo.linear_velocity = v_vel;
@@ -395,7 +422,7 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
         });
 
         for a in self.agents.iter_mut() {
-            a.step(delta * config::common::SPEED_CORRECTION_FACTOR, &self.level, &self.db.common);
+            a.step(delta * config::common::SPEED_CORRECTION_FACTOR as f32, &self.level, &self.db.common);
         }
 
         true
