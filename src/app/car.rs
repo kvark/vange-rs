@@ -24,10 +24,13 @@ impl<R: gfx::Resources> CarView<R> {
         info!("Loading car registry");
         let game_reg = config::game::Registry::load(settings);
         let car_reg = config::car::load_registry(settings, &game_reg, factory);
-        let mut model = car_reg[&settings.car.id].model.clone();
+        let cinfo = &car_reg[&settings.car.id];
+        let mut model = cinfo.model.clone();
         for (ms, sid) in model.slots.iter_mut().zip(settings.car.slots.iter()) {
-            let mut file = settings.open(&game_reg.model_paths[sid]);
+            let info = &game_reg.model_infos[sid];
+            let mut file = settings.open(&info.path);
             ms.mesh = Some(model::load_c3d(&mut file, factory));
+            ms.scale = info.scale;
         }
 
         let pal_data = level::load_palette(&settings.get_object_palette_path());
@@ -43,7 +46,7 @@ impl<R: gfx::Resources> CarView<R> {
         CarView {
             model: model,
             transform: cgmath::Decomposed {
-                scale: 1.0,
+                scale: cinfo.scale,
                 disp: cgmath::Vector3::unit_z(),
                 rot: cgmath::One::one(),
             },

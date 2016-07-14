@@ -45,6 +45,7 @@ pub struct Debrie<R: gfx::Resources> {
 #[derive(Clone)]
 pub struct Slot<R: gfx::Resources> {
     pub mesh: Option<Mesh<R>>,
+    pub scale: f32,
     pub pos: [f32; 3],
     pub angle: i32,
 }
@@ -297,6 +298,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
                 debug!("\tSlot {} at pos {:?} and angle of {}", i, pos, angle);
                 model.slots.push(Slot {
                     mesh: None,
+                    scale: 1.0,
                     pos: [pos[0] as f32, pos[1] as f32, pos[2] as f32],
                     angle: angle,
                 });

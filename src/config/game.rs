@@ -3,14 +3,19 @@ use config::Settings;
 use config::text::Reader;
 
 
+pub struct ModelInfo {
+    pub path: String,
+    pub scale: f32,
+}
+
 pub struct Registry {
-    pub model_paths: HashMap<String, String>,
+    pub model_infos: HashMap<String, ModelInfo>,
 }
 
 impl Registry {
     pub fn load(settings: &Settings) -> Registry {
         let mut reg = Registry {
-            model_paths: HashMap::new(),
+            model_infos: HashMap::new(),
         };
         let mut fi = Reader::new(settings.open("game.lst"));
 
@@ -26,9 +31,12 @@ impl Registry {
             let num = fi.next_key_value("ModelNum");
             assert_eq!(i, num);
             let name: String = fi.next_key_value("Name");
-            let _size: u8 = fi.next_key_value("Size");
+            let size: u8 = fi.next_key_value("Size");
             let key: String = fi.next_key_value("NameID");
-            reg.model_paths.insert(key, name);
+            reg.model_infos.insert(key, ModelInfo {
+                path: name,
+                scale: size as f32 / 255.0
+            });
         }
 
         reg

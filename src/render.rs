@@ -230,15 +230,13 @@ impl<R: gfx::Resources> Render<R> {
     }
 
     pub fn draw_model<C>(encoder: &mut gfx::Encoder<R, C>, model: &model::Model<R>,
-                      mut model2world: AppTransform, cam: &Camera,
+                      model2world: AppTransform, cam: &Camera,
                       pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>) where
         C: gfx::CommandBuffer<R>,
     {
         use cgmath::{Deg, Quaternion, One, Rotation3, Transform, Vector3};
 
         // body
-        let scale = 0.25;
-        model2world.scale *= scale;
         Render::draw_mesh(encoder, &model.body, model2world, cam, pso, data);
         // wheels
         for w in model.wheels.iter() {
@@ -254,18 +252,13 @@ impl<R: gfx::Resources> Render<R> {
         // slots
         for s in model.slots.iter() {
             if let Some(ref mesh) = s.mesh {
-                let v_off: Vector3<_> = mesh.offset.into();
-                let d1 = Decomposed {
-                    disp: -scale * v_off,
+                let mut local = Decomposed {
+                    disp: Vector3::from(s.pos),
                     rot: Quaternion::from_angle_y(Deg::new(s.angle as f32).into()),
-                    scale: 1.0,
+                    scale: s.scale / model2world.scale,
                 };
-                let d2 = Decomposed {
-                    disp: s.pos.into(),
-                    rot: Quaternion::one(),
-                    scale: scale, //hack?
-                };
-                let transform = model2world.concat(&d2).concat(&d1);
+                local.disp -= local.transform_vector(Vector3::from(mesh.offset));
+                let transform = model2world.concat(&local);
                 Render::draw_mesh(encoder, mesh, transform, cam, pso, data);
             }
         }

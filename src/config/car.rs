@@ -151,6 +151,7 @@ pub struct CarInfo<R: gfx::Resources> {
     pub stats: CarStats,
     pub physics: CarPhysics,
     pub model: model::Model<R>,
+    pub scale: f32,
 }
 
 pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
@@ -170,23 +171,25 @@ pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
 
     for i in 0 .. num_main+num_ruffa+num_const {
         let (name, data) = fi.next_entry();
-        let path = &reg.model_paths[name];
-        let mut file = BufReader::new(settings.open(path));
+        let mi = &reg.model_infos[name];
+        let mut prm_path = mi.path.replace(".m3d", ".prm");
+        let is_default = !settings.check_path(&prm_path);
+        if is_default {
+            let pos = mi.path.rfind('/').unwrap();
+            prm_path.truncate(pos+1);
+            prm_path.push_str("default.prm");
+        }
+        let physics = CarPhysics::load(settings.open(&prm_path));
+        let scale = if is_default { mi.scale } else { physics.scale_size };
+        let mut file = BufReader::new(settings.open(&mi.path));
         map.insert(name.to_owned(), CarInfo {
             kind: if i < num_main { Kind::Main }
                 else if i < num_main+num_ruffa { Kind::Ruffa }
                 else { Kind::Constructor },
             stats: CarStats::new(&data),
-            physics: {
-                let mut prm_path = path.replace(".m3d", ".prm");
-                if !settings.check_path(&prm_path) {
-                    let pos = path.rfind('/').unwrap();
-                    prm_path.truncate(pos+1);
-                    prm_path.push_str("default.prm");
-                }
-                CarPhysics::load(settings.open(&prm_path))
-            },
+            physics: physics,
             model: model::load_m3d(&mut file, factory),
+            scale: scale,
         });
     }
 
