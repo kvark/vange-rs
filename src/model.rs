@@ -19,6 +19,7 @@ pub struct Mesh<R: gfx::Resources> {
     pub slice: gfx::Slice<R>,
     pub buffer: gfx::handle::Buffer<R, ObjectVertex>,
     pub offset: [f32; 3],
+    pub bbox: ([f32; 3], [f32; 3], f32),
     pub physics: Physics,
 }
 
@@ -68,11 +69,11 @@ pub struct Model<R: gfx::Resources> {
     pub slots: Vec<Slot<R>>,
 }
 
-fn read_vec<I: ReadBytesExt>(source: &mut I) -> [i32; 3] {
+fn read_vec<I: ReadBytesExt>(source: &mut I) -> [f32; 3] {
     [
-        source.read_i32::<E>().unwrap(),
-        source.read_i32::<E>().unwrap(),
-        source.read_i32::<E>().unwrap(),
+        source.read_i32::<E>().unwrap() as f32,
+        source.read_i32::<E>().unwrap() as f32,
+        source.read_i32::<E>().unwrap() as f32,
     ]
 }
 
@@ -92,7 +93,7 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     let coord_min = read_vec(source);
     let parent_off = read_vec(source);
     debug!("\tBound {:?} to {:?} with offset {:?}", coord_min, coord_max, parent_off);
-    let _max_radius = source.read_u32::<E>().unwrap();
+    let max_radius = source.read_u32::<E>().unwrap() as f32;
     let _parent_rot = read_vec(source);
     let physics = {
         let mut q = [0.0f32; 1+3+9];
@@ -193,7 +194,8 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     Mesh {
         slice: slice,
         buffer: vbuf,
-        offset: [parent_off[0] as f32, parent_off[1] as f32, parent_off[2] as f32],
+        offset: parent_off,
+        bbox: (coord_min, coord_max, max_radius),
         physics: physics,
     }
 }

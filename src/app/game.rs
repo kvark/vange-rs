@@ -14,6 +14,7 @@ enum Spirit {
 use config::common::{Traction};
 const MAX_TRACTION: Traction = 4.0;
 
+#[derive(Debug)]
 struct AccelerationVectors {
     f: cgmath::Vector3<f32>, // linear
     k: cgmath::Vector3<f32>, // angular
@@ -81,12 +82,10 @@ impl Accumulator {
         self.depth += depth;
         self.count += 1.0;
     }
-    fn finish(self, min: f32, transform: &super::Transform) -> Option<CollisionPoint> {
-        use cgmath::{EuclideanSpace, Transform};
+    fn finish(self, min: f32) -> Option<CollisionPoint> {
         if self.count > min {
-            let pos = cgmath::Point3::from_vec(self.pos / self.count);
             Some(CollisionPoint {
-                pos: transform.transform_point(pos).to_vec(),
+                pos: self.pos / self.count,
                 depth: self.depth / self.count,
             })
         } else { None }
@@ -119,10 +118,9 @@ fn collide_low(poly: &model::Polygon, samples: &[[f32; 3]], scale: f32, transfor
             soft.add(pos, dz);
         }
     }
-    let tinv = transform.inverse_transform().unwrap();
     CollisionData {
-        soft: soft.finish(0.0, &tinv),
-        hard: hard.finish(4.0, &tinv),
+        soft: soft.finish(0.0),
+        hard: hard.finish(4.0),
     }
 }
 
@@ -138,9 +136,9 @@ fn calc_collision_matrix_inv(r: cgmath::Vector3<f32>, ji: &cgmath::Matrix3<f32>)
     let t43 = -r.y * ji[0][2] + r.x * ji[1][2];
     let t48 = -r.y * ji[0][0] + r.x * ji[1][0];
     let cm = Matrix3::new(
-        1.0 - t3*r.z + t7*r.y, t12*r.z - t7*r.x, -t12*r.y + t3*r.x,
-        -t21*r.z + t25*r.y, 1.0 + t30*r.z - t25*r.x, -t30*r.y + t21*r.x,
-        -t39*r.z + t43*r.y, t48*r.z - t43*r.x, 1.0 - t48*r.y + t39*r.x
+        1.0 - t3*r.z + t7*r.y, t12*r.z - t7*r.x, - t12*r.y + t3*r.x,
+        - t21*r.z + t25*r.y, 1.0 + t30*r.z - t25*r.x, - t30*r.y + t21*r.x,
+        - t39*r.z + t43*r.y, t48*r.z - t43*r.x, 1.0 - t48*r.y + t39*r.x
         );
     cm.invert().unwrap()
 }
@@ -164,10 +162,12 @@ impl<R: gfx::Resources> Agent<R> {
             f: global2local.transform_vector(acc_global.f),
             k: global2local.transform_vector(acc_global.k),
         };
+        //println!("cur acc {:?}", acc_cur);
         let wheels_touch = true;
         let flood_level = level.flood_map[0] as f32;
-        let mut v_vel = global2local.transform_vector(self.dynamo.linear_velocity);
-        let mut w_vel = global2local.transform_vector(self.dynamo.angular_velocity);
+        let z_axis = self.transform.transform_vector(cgmath::Vector3::unit_z());
+        let mut v_vel = self.dynamo.linear_velocity;
+        let mut w_vel = self.dynamo.angular_velocity;
         let j_inv = {
             let phys = &self.car.model.body.physics;
             (cgmath::Matrix3::from(phys.jacobi) *
@@ -180,6 +180,7 @@ impl<R: gfx::Resources> Agent<R> {
             let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
             let stand_on_wheels = true; //TODO
             let modulation = 1.0;
+            let mut hilow_diff = 0i32;
 
             // apply drag
             let v_drag = common.drag.free.v * common.drag.speed.v.powf(v_vel.magnitude());
@@ -191,22 +192,21 @@ impl<R: gfx::Resources> Agent<R> {
             }
 
             for poly in self.car.model.shape.polygons.iter() {
-                let middle = self.transform.transform_point(
-                    cgmath::Point3::from(poly.middle) * self.car.physics.scale_bound);
-                let vr = v_vel + w_vel.cross(middle.to_vec());
+                let middle_local = cgmath::Point3::from(poly.middle) * self.car.physics.scale_bound;
+                let middle_global = self.transform.transform_point(middle_local);
+                let vr = v_vel + w_vel.cross(middle_local.to_vec());
                 let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
-                let texel = level.get((middle.x as i32, middle.y as i32));
+                let texel = level.get((middle_global.x as i32, middle_global.y as i32));
                 match texel.low.1 {
                     level::TerrainType::Water => {
-                        let dz = flood_level - middle.z;
+                        let dz = flood_level - middle_global.z;
                         if dz > 0.0 {
                             float_count += 1;
                             water_immersion += dz;
                         }
                     },
                     level::TerrainType::Main => {
-                        let normal = self.transform.transform_vector(poly.normal.into());
-                        if normal.z < 0.0 {
+                        if z_axis.dot(poly.normal.into()) < 0.0 {
                             let cdata = collide_low(poly, &self.car.model.shape.samples,
                                 self.car.physics.scale_bound, &self.transform, level, &common.terrain);
                             terrain_immersion += match cdata.soft {
@@ -219,9 +219,13 @@ impl<R: gfx::Resources> Agent<R> {
                             };
                             match cdata {
                                 CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
-                                    let mut pos = cp.pos;
-                                    pos.z = 0.0; // ignore vertical
-                                    let normal = pos.normalize();
+                                    let pos = global2local.transform_point(cgmath::Point3::new(
+                                        cp.pos.x, cp.pos.y, 0.0)).to_vec(); // ignore vertical
+                                    let normal = {
+                                        let bm = self.car.model.body.bbox.1;
+                                        let n = cgmath::vec3(pos.x / bm[0], pos.y / bm[1], pos.z / bm[2]);
+                                        n.normalize()
+                                    };
                                     let u0 = v_vel + w_vel.cross(pos);
                                     let dot = u0.dot(normal);
                                     if dot > 0.0 {
@@ -230,23 +234,26 @@ impl<R: gfx::Resources> Agent<R> {
                                         v_vel += pulse;
                                         w_vel += j_inv * pos.cross(pulse);
                                     }
+                                    hilow_diff += 1;
                                 },
                                 CollisionData{ soft: Some(ref cp), ..} => {
-                                    let mut u0 = v_vel + w_vel.cross(cp.pos);
-                                    let mut uw = self.transform.transform_vector(u0);
-                                    if uw.z < 0.0 {
+                                    let pos = global2local.transform_point(cgmath::Point3::new(
+                                        cp.pos.x, cp.pos.y, middle_global.z)).to_vec();
+                                    let mut u0 = v_vel + w_vel.cross(pos);
+                                    if u0.dot(z_axis) < 0.0 {
                                         if stand_on_wheels { // ignore XY
-                                            uw.x = 0.0;
-                                            uw.y = 0.0;
-                                            u0 = global2local.transform_vector(uw);
+                                            u0.x = 0.0;
+                                            u0.y = 0.0;
                                         } else {
                                             //TODO
                                         }
-                                        let pulse = (calc_collision_matrix_inv(cp.pos, &j_inv) * u0) *
-                                            (-common.impulse.factors[1] * modulation);
+                                        let cmi = calc_collision_matrix_inv(middle_local.to_vec(), &j_inv);
+                                        let pulse = (cmi * u0) * (-common.impulse.factors[1] * modulation);
+                                        //println!("soft pulse {:?}, pos {:?} and u {:?}", pulse, pos, u0);
                                         v_vel += pulse;
-                                        w_vel += j_inv * cp.pos.cross(pulse);
+                                        w_vel += j_inv * middle_local.to_vec().cross(pulse);
                                     }
+                                    hilow_diff += 1;
                                 }
                                 _ => (),
                             }
@@ -260,7 +267,9 @@ impl<R: gfx::Resources> Agent<R> {
                 if self.control.turbo { common.global.k_traction_turbo } else { 1.0 } *
                 self.dynamo.traction / (self.car.model.wheels.len() as f32);
             for wheel in self.car.model.wheels.iter() {
-                let vw = v_vel + w_vel.cross(wheel.pos.into());
+                let mut pos = cgmath::Vector3::from(wheel.pos) * self.transform.scale;
+                pos.x = pos.x.signum() * self.car.model.body.bbox.1[0]; // why?
+                let vw = v_vel + w_vel.cross(pos);
                 acc_cur.f.y += f_traction_per_wheel;
                 if self.control.brake {
                     acc_cur.f -= vw * common.global.f_brake_max;
@@ -269,22 +278,26 @@ impl<R: gfx::Resources> Agent<R> {
             v_vel += acc_cur.f * dt;
             w_vel += (j_inv * acc_cur.k) * dt;
             if v_vel.magnitude() * v_drag > common.drag.abs_stop.v || w_vel.magnitude() *w_drag > common.drag.abs_stop.w {
-                self.transform.disp += v_vel * dt;
+                let vs = v_vel + (hilow_diff.signum() as f32) *
+                    (z_axis * (self.car.model.body.bbox.2 * common.impulse.rolling_scale))
+                    .cross(w_vel);
                 let ws = w_vel.magnitude();
-                let rot_inverse = cgmath::Quaternion::from_axis_angle(w_vel / ws.max(0.01),
-                    cgmath::Deg::new(ws * -dt).into());
-                v_vel = rot_inverse.rotate_vector(v_vel);
-                w_vel = rot_inverse.rotate_vector(v_vel);
+                let rot = cgmath::Quaternion::from_axis_angle(w_vel / ws.max(0.01),
+                    cgmath::Deg::new(ws * dt).into());
+                self.transform.disp += self.transform.transform_vector(vs) * dt;
+                self.transform.rot = self.transform.rot * rot;
+                v_vel = rot.rotate_vector(v_vel);
+                w_vel = rot.rotate_vector(v_vel);
             }
             v_vel *= v_drag.powi(config::common::SPEED_CORRECTION_FACTOR);
             w_vel *= w_drag.powi(config::common::SPEED_CORRECTION_FACTOR);
         }
 
-        self.dynamo.linear_velocity  = self.transform.transform_vector(v_vel);
-        self.dynamo.angular_velocity = self.transform.transform_vector(w_vel);
+        self.dynamo.linear_velocity  = v_vel;
+        self.dynamo.angular_velocity = w_vel;
         // slow down
-        let sign = self.dynamo.traction.signum();
-        self.dynamo.change_traction(-sign * dt * common.car.traction_decr);
+        let traction_step = -self.dynamo.traction.signum() * dt;
+        self.dynamo.change_traction(traction_step * common.car.traction_decr);
     }
 }
 
