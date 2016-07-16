@@ -157,15 +157,15 @@ impl<R: gfx::Resources> Agent<R> {
             f: cgmath::vec3(0.0, 0.0, -common.nature.gravity),
             k: cgmath::vec3(0.0, 0.0, 0.0),
         };
-        let global2local = self.transform.inverse_transform().unwrap();
+        let rot_inv = self.transform.rot.invert();
         let mut acc_cur = AccelerationVectors {
-            f: global2local.transform_vector(acc_global.f),
-            k: global2local.transform_vector(acc_global.k),
+            f: rot_inv.rotate_vector(acc_global.f),
+            k: rot_inv.rotate_vector(acc_global.k),
         };
         //println!("cur acc {:?}", acc_cur);
         let wheels_touch = true;
         let flood_level = level.flood_map[0] as f32;
-        let z_axis = self.transform.transform_vector(cgmath::Vector3::unit_z());
+        let z_axis = self.transform.rot.rotate_vector(cgmath::Vector3::unit_z());
         let mut v_vel = self.dynamo.linear_velocity;
         let mut w_vel = self.dynamo.angular_velocity;
         let j_inv = {
@@ -219,8 +219,8 @@ impl<R: gfx::Resources> Agent<R> {
                             };
                             match cdata {
                                 CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
-                                    let pos = global2local.transform_point(cgmath::Point3::new(
-                                        cp.pos.x, cp.pos.y, 0.0)).to_vec(); // ignore vertical
+                                    let pos = rot_inv.rotate_vector(cgmath::vec3(
+                                        cp.pos.x, cp.pos.y, 0.0)); // ignore vertical
                                     let normal = {
                                         let bm = self.car.model.body.bbox.1;
                                         let n = cgmath::vec3(pos.x / bm[0], pos.y / bm[1], pos.z / bm[2]);
@@ -237,8 +237,8 @@ impl<R: gfx::Resources> Agent<R> {
                                     hilow_diff += 1;
                                 },
                                 CollisionData{ soft: Some(ref cp), ..} => {
-                                    let pos = global2local.transform_point(cgmath::Point3::new(
-                                        cp.pos.x, cp.pos.y, middle_global.z)).to_vec();
+                                    let pos = rot_inv.rotate_vector(cgmath::vec3(
+                                        cp.pos.x, cp.pos.y, middle_global.z));
                                     let mut u0 = v_vel + w_vel.cross(pos);
                                     if u0.dot(z_axis) < 0.0 {
                                         if stand_on_wheels { // ignore XY
@@ -278,13 +278,13 @@ impl<R: gfx::Resources> Agent<R> {
             v_vel += acc_cur.f * dt;
             w_vel += (j_inv * acc_cur.k) * dt;
             if v_vel.magnitude() * v_drag > common.drag.abs_stop.v || w_vel.magnitude() *w_drag > common.drag.abs_stop.w {
-                let vs = v_vel + (hilow_diff.signum() as f32) *
+                let vs = v_vel - (hilow_diff.signum() as f32) *
                     (z_axis * (self.car.model.body.bbox.2 * common.impulse.rolling_scale))
                     .cross(w_vel);
                 let ws = w_vel.magnitude();
                 let rot = cgmath::Quaternion::from_axis_angle(w_vel / ws.max(0.01),
                     cgmath::Deg::new(ws * dt).into());
-                self.transform.disp += self.transform.transform_vector(vs) * dt;
+                self.transform.disp += self.transform.rot.rotate_vector(vs) * dt;
                 self.transform.rot = self.transform.rot * rot;
                 v_vel = rot.rotate_vector(v_vel);
                 w_vel = rot.rotate_vector(v_vel);
