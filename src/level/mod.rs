@@ -4,7 +4,9 @@ use byteorder::{LittleEndian as E, ReadBytesExt};
 use self::splay::Splay;
 
 pub const NUM_TERRAINS: usize = 8;
+
 #[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TerrainType {
     Water,
     Main,

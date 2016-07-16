@@ -178,7 +178,8 @@ impl<R: gfx::Resources> Agent<R> {
         for _ in 0 .. common.nature.num_calls_analysis {
             let mut float_count = 0;
             let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
-            let stand_on_wheels = true; //TODO
+            let stand_on_wheels = z_axis.z > 0.0 && self.transform.rot.rotate_vector(
+                cgmath::Vector3::unit_x()).z < 0.7;
             let modulation = 1.0;
             let mut hilow_diff = 0i32;
 
@@ -192,87 +193,90 @@ impl<R: gfx::Resources> Agent<R> {
             }
 
             for poly in self.car.model.shape.polygons.iter() {
-                let middle_local = cgmath::Point3::from(poly.middle) * self.car.physics.scale_bound;
+                let middle_local = cgmath::Point3::from(poly.middle) *
+                    (self.transform.scale * self.car.physics.scale_bound);
                 let middle_global = self.transform.transform_point(middle_local);
                 let vr = v_vel + w_vel.cross(middle_local.to_vec());
                 let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
                 let texel = level.get((middle_global.x as i32, middle_global.y as i32));
-                match texel.low.1 {
-                    level::TerrainType::Water => {
-                        let dz = flood_level - middle_global.z;
-                        if dz > 0.0 {
-                            float_count += 1;
-                            water_immersion += dz;
-                        }
-                    },
-                    level::TerrainType::Main => {
-                        if z_axis.dot(poly.normal.into()) < 0.0 {
-                            let cdata = collide_low(poly, &self.car.model.shape.samples,
-                                self.car.physics.scale_bound, &self.transform, level, &common.terrain);
-                            terrain_immersion += match cdata.soft {
-                                Some(ref cp) => cp.depth,
-                                None => 0.0,
+                if texel.low.1 == level::TerrainType::Water {
+                    let dz = flood_level - middle_global.z;
+                    if dz > 0.0 {
+                        float_count += 1;
+                        water_immersion += dz;
+                    }
+                }
+                let poly_norm = cgmath::Vector3::from(poly.normal);
+                if z_axis.dot(poly_norm) < 0.0 {
+                    let cdata = collide_low(poly, &self.car.model.shape.samples,
+                        self.car.physics.scale_bound, &self.transform, level, &common.terrain);
+                    terrain_immersion += match cdata.soft {
+                        Some(ref cp) => cp.depth,
+                        None => 0.0,
+                    };
+                    terrain_immersion += match cdata.hard {
+                        Some(ref cp) => cp.depth,
+                        None => 0.0,
+                    };
+                    match cdata {
+                        CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
+                            let pos = rot_inv.rotate_vector(cgmath::vec3(
+                                cp.pos.x, cp.pos.y, 0.0)); // ignore vertical
+                            let normal = {
+                                let bm = self.car.model.body.bbox.1;
+                                let n = cgmath::vec3(pos.x / bm[0], pos.y / bm[1], pos.z / bm[2]);
+                                n.normalize()
                             };
-                            terrain_immersion += match cdata.hard {
-                                Some(ref cp) => cp.depth,
-                                None => 0.0,
-                            };
-                            match cdata {
-                                CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
-                                    let pos = rot_inv.rotate_vector(cgmath::vec3(
-                                        cp.pos.x, cp.pos.y, 0.0)); // ignore vertical
-                                    let normal = {
-                                        let bm = self.car.model.body.bbox.1;
-                                        let n = cgmath::vec3(pos.x / bm[0], pos.y / bm[1], pos.z / bm[2]);
-                                        n.normalize()
-                                    };
-                                    let u0 = v_vel + w_vel.cross(pos);
-                                    let dot = u0.dot(normal);
-                                    if dot > 0.0 {
-                                        let pulse = (calc_collision_matrix_inv(pos, &j_inv) * normal) *
-                                            (-common.impulse.factors[0] * modulation * dot);
-                                        v_vel += pulse;
-                                        w_vel += j_inv * pos.cross(pulse);
-                                    }
-                                    hilow_diff += 1;
-                                },
-                                CollisionData{ soft: Some(ref cp), ..} => {
-                                    let pos = rot_inv.rotate_vector(cgmath::vec3(
-                                        cp.pos.x, cp.pos.y, middle_global.z));
-                                    let mut u0 = v_vel + w_vel.cross(pos);
-                                    if u0.dot(z_axis) < 0.0 {
-                                        if stand_on_wheels { // ignore XY
-                                            u0.x = 0.0;
-                                            u0.y = 0.0;
-                                        } else {
-                                            //TODO
-                                        }
-                                        let cmi = calc_collision_matrix_inv(middle_local.to_vec(), &j_inv);
-                                        let pulse = (cmi * u0) * (-common.impulse.factors[1] * modulation);
-                                        //println!("soft pulse {:?}, pos {:?} and u {:?}", pulse, pos, u0);
-                                        v_vel += pulse;
-                                        w_vel += j_inv * middle_local.to_vec().cross(pulse);
-                                    }
-                                    hilow_diff += 1;
-                                }
-                                _ => (),
+                            let u0 = v_vel + w_vel.cross(pos);
+                            let dot = u0.dot(normal);
+                            if dot > 0.0 {
+                                let pulse = (calc_collision_matrix_inv(pos, &j_inv) * normal) *
+                                    (-common.impulse.factors[0] * modulation * dot);
+                                println!("Collision speed {:?} pulse {:?}", v_vel, pulse);
+                                v_vel += pulse;
+                                w_vel += j_inv * pos.cross(pulse);
                             }
+                            hilow_diff += 1;
+                        },
+                        CollisionData{ soft: Some(ref cp), ..} => {
+                            let r1 = rot_inv.rotate_vector(cgmath::vec3(
+                                cp.pos.x, cp.pos.y, middle_global.z));
+                            let mut u0 = v_vel + w_vel.cross(r1);
+                            if u0.dot(z_axis) < 0.0 {
+                                if stand_on_wheels { // ignore XY
+                                    u0.x = 0.0;
+                                    u0.y = 0.0;
+                                } else {
+                                    let kn = u0.dot(poly_norm) * (1.0 - common.impulse.k_friction);
+                                    u0 = u0 * common.impulse.k_friction + poly_norm * kn;
+                                }
+                                let r = middle_local.to_vec();
+                                let cmi = calc_collision_matrix_inv(r, &j_inv);
+                                let pulse = (cmi * u0) * (-common.impulse.factors[1] * modulation);
+                                println!("Collision momentum {:?}\n\tmatrix {:?}\n\tsample {:?}\n\tspeed {:?}\n\tpulse {:?}", u0, cmi, r, v_vel, pulse);
+                                v_vel += pulse;
+                                w_vel += j_inv * r.cross(pulse);
+                            }
+                            hilow_diff += 1;
                         }
-                    },
+                        _ => (),
+                    }
                 }
             }
             let _ = (float_count, water_immersion, terrain_immersion); //TODO
-            let f_traction_per_wheel =
-                self.car.physics.mobility_factor * common.global.mobility_factor *
-                if self.control.turbo { common.global.k_traction_turbo } else { 1.0 } *
-                self.dynamo.traction / (self.car.model.wheels.len() as f32);
-            for wheel in self.car.model.wheels.iter() {
-                let mut pos = cgmath::Vector3::from(wheel.pos) * self.transform.scale;
-                pos.x = pos.x.signum() * self.car.model.body.bbox.1[0]; // why?
-                let vw = v_vel + w_vel.cross(pos);
-                acc_cur.f.y += f_traction_per_wheel;
-                if self.control.brake {
-                    acc_cur.f -= vw * common.global.f_brake_max;
+            if stand_on_wheels {
+                let f_traction_per_wheel =
+                    self.car.physics.mobility_factor * common.global.mobility_factor *
+                    if self.control.turbo { common.global.k_traction_turbo } else { 1.0 } *
+                    self.dynamo.traction / (self.car.model.wheels.len() as f32);
+                for wheel in self.car.model.wheels.iter() {
+                    let mut pos = cgmath::Vector3::from(wheel.pos) * self.transform.scale;
+                    pos.x = pos.x.signum() * self.car.model.body.bbox.1[0]; // why?
+                    let vw = v_vel + w_vel.cross(pos);
+                    acc_cur.f.y += f_traction_per_wheel;
+                    if self.control.brake {
+                        acc_cur.f -= vw * common.global.f_brake_max;
+                    }
                 }
             }
             v_vel += acc_cur.f * dt;

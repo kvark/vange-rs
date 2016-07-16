@@ -1,4 +1,4 @@
-use std::io::{Read, Seek};
+use std::io::{Seek};
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use gfx;
 use gfx::format::I8Norm;
