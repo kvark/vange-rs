@@ -145,8 +145,7 @@ fn calc_collision_matrix_inv(r: cgmath::Vector3<f32>, ji: &cgmath::Matrix3<f32>)
 
 impl<R: gfx::Resources> Agent<R> {
     fn step(&mut self, dt: f32, level: &level::Level, common: &config::common::Common) {
-        use cgmath::{EuclideanSpace, InnerSpace, Rotation, Rotation3, SquareMatrix, Transform};
-
+        use cgmath::{InnerSpace, Rotation, Rotation3, SquareMatrix, Transform};
         if self.control.motor != 0 {
             self.dynamo.change_traction(self.control.motor as f32 * dt * common.car.traction_incr);
         }
@@ -191,12 +190,14 @@ impl<R: gfx::Resources> Agent<R> {
                     common.global.speed_factor / self.car.physics.speed_factor;
                 v_vel.y *= (1.0 + speed).powi(config::common::SPEED_CORRECTION_FACTOR);
             }
+            let (v_old, w_old) = (v_vel, w_vel);
 
             for poly in self.car.model.shape.polygons.iter() {
-                let middle_local = cgmath::Point3::from(poly.middle) *
+                let r = cgmath::Vector3::from(poly.middle) *
                     (self.transform.scale * self.car.physics.scale_bound);
-                let middle_global = self.transform.transform_point(middle_local);
-                let vr = v_vel + w_vel.cross(middle_local.to_vec());
+                let middle_global = self.transform.transform_point(
+                    cgmath::Point3::from(poly.middle) * self.car.physics.scale_bound);
+                let vr = v_old + w_old.cross(r);
                 let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
                 let texel = level.get((middle_global.x as i32, middle_global.y as i32));
                 if texel.low.1 == level::TerrainType::Water {
@@ -206,7 +207,7 @@ impl<R: gfx::Resources> Agent<R> {
                         water_immersion += dz;
                     }
                 }
-                let poly_norm = cgmath::Vector3::from(poly.normal);
+                let poly_norm = cgmath::Vector3::from(poly.normal).normalize();
                 if z_axis.dot(poly_norm) < 0.0 {
                     let cdata = collide_low(poly, &self.car.model.shape.samples,
                         self.car.physics.scale_bound, &self.transform, level, &common.terrain);
@@ -220,28 +221,28 @@ impl<R: gfx::Resources> Agent<R> {
                     };
                     match cdata {
                         CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
-                            let pos = rot_inv.rotate_vector(cgmath::vec3(
+                            let r1 = rot_inv.rotate_vector(cgmath::vec3(
                                 cp.pos.x, cp.pos.y, 0.0)); // ignore vertical
                             let normal = {
                                 let bm = self.car.model.body.bbox.1;
-                                let n = cgmath::vec3(pos.x / bm[0], pos.y / bm[1], pos.z / bm[2]);
+                                let n = cgmath::vec3(r1.x / bm[0], r1.y / bm[1], r1.z / bm[2]);
                                 n.normalize()
                             };
-                            let u0 = v_vel + w_vel.cross(pos);
+                            let u0 = v_old + w_old.cross(r1);
                             let dot = u0.dot(normal);
                             if dot > 0.0 {
-                                let pulse = (calc_collision_matrix_inv(pos, &j_inv) * normal) *
+                                let pulse = (calc_collision_matrix_inv(r1, &j_inv) * normal) *
                                     (-common.impulse.factors[0] * modulation * dot);
                                 println!("Collision speed {:?} pulse {:?}", v_vel, pulse);
                                 v_vel += pulse;
-                                w_vel += j_inv * pos.cross(pulse);
+                                w_vel += j_inv * r1.cross(pulse);
                             }
                             hilow_diff += 1;
                         },
                         CollisionData{ soft: Some(ref cp), ..} => {
                             let r1 = rot_inv.rotate_vector(cgmath::vec3(
-                                cp.pos.x, cp.pos.y, middle_global.z));
-                            let mut u0 = v_vel + w_vel.cross(r1);
+                                cp.pos.x, cp.pos.y, self.transform.rot.rotate_vector(r).z));
+                            let mut u0 = v_old + w_old.cross(r1);
                             if u0.dot(z_axis) < 0.0 {
                                 if stand_on_wheels { // ignore XY
                                     u0.x = 0.0;
@@ -250,7 +251,6 @@ impl<R: gfx::Resources> Agent<R> {
                                     let kn = u0.dot(poly_norm) * (1.0 - common.impulse.k_friction);
                                     u0 = u0 * common.impulse.k_friction + poly_norm * kn;
                                 }
-                                let r = middle_local.to_vec();
                                 let cmi = calc_collision_matrix_inv(r, &j_inv);
                                 let pulse = (cmi * u0) * (-common.impulse.factors[1] * modulation);
                                 println!("Collision momentum {:?}\n\tmatrix {:?}\n\tsample {:?}\n\tspeed {:?}\n\tpulse {:?}", u0, cmi, r, v_vel, pulse);
@@ -263,6 +263,7 @@ impl<R: gfx::Resources> Agent<R> {
                     }
                 }
             }
+
             let _ = (float_count, water_immersion, terrain_immersion); //TODO
             if stand_on_wheels {
                 let f_traction_per_wheel =
@@ -289,7 +290,7 @@ impl<R: gfx::Resources> Agent<R> {
                 let rot = cgmath::Quaternion::from_axis_angle(w_vel / ws.max(0.01),
                     cgmath::Deg::new(ws * dt).into());
                 self.transform.disp += self.transform.rot.rotate_vector(vs) * dt;
-                self.transform.rot = self.transform.rot * rot;
+                //self.transform.rot = self.transform.rot * rot;
                 v_vel = rot.rotate_vector(v_vel);
                 w_vel = rot.rotate_vector(v_vel);
             }

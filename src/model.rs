@@ -23,14 +23,14 @@ pub struct Mesh<R: gfx::Resources> {
     pub physics: Physics,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Polygon {
     pub middle: [f32; 3],
     pub normal: [f32; 3],
     pub sample_range: (u16, u16),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Shape {
     pub polygons: Vec<Polygon>,
     pub samples: Vec<[f32; 3]>,
