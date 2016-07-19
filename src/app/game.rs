@@ -83,7 +83,7 @@ impl Accumulator {
         self.depth += depth;
         self.count += 1.0;
     }
-    fn finish(self, min: f32) -> Option<CollisionPoint> {
+    fn finish(&self, min: f32) -> Option<CollisionPoint> {
         if self.count > min {
             Some(CollisionPoint {
                 pos: self.pos / self.count,
@@ -119,8 +119,8 @@ fn collide_low(poly: &model::Polygon, samples: &[[f32; 3]], scale: f32, transfor
         }
     }
     CollisionData {
-        soft: soft.finish(0.0),
-        hard: hard.finish(4.0),
+        soft: (if soft.count > 0.0 { &soft } else { &hard }).finish(0.0),
+        hard: hard.finish(1.0), //originally: 4.0
     }
 }
 
@@ -160,7 +160,6 @@ impl<R: gfx::Resources> Agent<R> {
             k: rot_inv.rotate_vector(acc_global.k),
         };
         //println!("cur acc {:?}", acc_cur);
-        let wheels_touch = true;
         let flood_level = level.flood_map[0] as f32;
         let z_axis = self.transform.rot.rotate_vector(cgmath::Vector3::unit_z());
         let mut v_vel = self.dynamo.linear_velocity;
@@ -182,8 +181,8 @@ impl<R: gfx::Resources> Agent<R> {
 
             // apply drag
             let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(v_vel.magnitude());
-            let mut w_drag = common.drag.free.w * common.drag.speed.w.powf(w_vel.magnitude2());
-            if wheels_touch { //TODO: why `ln()`?
+            let mut w_drag = common.drag.free.w * common.drag.speed.w.powf(w_vel.magnitude2()); //why mag2?
+            if stand_on_wheels { //TODO: why `ln()`? //TODO: wheels_touch
                 let speed = common.drag.wheel_speed.ln() * self.car.physics.mobility_factor *
                     common.global.speed_factor / self.car.physics.speed_factor;
                 v_vel.y *= (1.0 + speed).powi(config::common::SPEED_CORRECTION_FACTOR);
@@ -217,10 +216,11 @@ impl<R: gfx::Resources> Agent<R> {
                         Some(ref cp) => cp.depth.abs(),
                         None => 0.0,
                     };
+                    let origin = self.transform.disp;
                     match cdata {
                         CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
                             let r1 = rot_inv.rotate_vector(cgmath::vec3(
-                                cp.pos.x - rglob.x, cp.pos.y - rglob.y, 0.0)); // ignore vertical
+                                cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0)); // ignore vertical
                             let normal = {
                                 let bm = self.car.model.body.bbox.1;
                                 let n = cgmath::vec3(r1.x / bm[0], r1.y / bm[1], r1.z / bm[2]);
@@ -239,7 +239,7 @@ impl<R: gfx::Resources> Agent<R> {
                         },
                         CollisionData{ soft: Some(ref cp), ..} => {
                             let r1 = rot_inv.rotate_vector(cgmath::vec3(
-                                cp.pos.x - rglob.x, cp.pos.y - rglob.y,
+                                cp.pos.x - origin.x, cp.pos.y - origin.y,
                                 self.transform.rot.rotate_vector(r).z));
                             let mut u0 = v_old + w_old.cross(r1);
                             if u0.dot(z_axis) < 0.0 {
