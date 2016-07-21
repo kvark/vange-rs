@@ -10,7 +10,9 @@ pub struct CarView<R: gfx::Resources> {
     transform: super::Transform,
     pso: gfx::PipelineState<R, render::object::Meta>,
     pso_debug: gfx::PipelineState<R, render::debug::Meta>,
+    physics: config::car::CarPhysics,
     data: render::object::Data<R>,
+    data_debug: render::debug::Data<R>,
     cam: super::Camera,
 }
 
@@ -40,6 +42,15 @@ impl<R: gfx::Resources> CarView<R> {
             locals: factory.create_constant_buffer(1),
             ctable: render::Render::create_color_table(factory),
             palette: render::Render::create_palette(&pal_data, factory),
+            out_color: out_color.clone(),
+            out_depth: out_depth.clone(),
+        };
+        let data_debug = render::debug::Data {
+            vbuf: match model.shape.debug_mesh {
+                Some((ref vb, _)) => vb.clone(),
+                None => unimplemented!(),
+            },
+            locals: factory.create_constant_buffer(1),
             out_color: out_color,
             out_depth: out_depth,
         };
@@ -53,7 +64,9 @@ impl<R: gfx::Resources> CarView<R> {
             },
             pso: render::Render::create_object_pso(factory),
             pso_debug: render::Render::create_debug_pso(factory),
+            physics: cinfo.physics.clone(),
             data: data,
+            data_debug: data_debug,
             cam: super::Camera {
                 loc: cgmath::vec3(0.0, -64.0, 32.0),
                 rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Angle::turn_div_6()),
@@ -102,6 +115,7 @@ impl<R: gfx::Resources> super::App<R> for CarView<R> {
         enc.clear_depth(&self.data.out_depth, 1.0);
 
         render::Render::draw_model(enc, &self.model,
-            self.transform, &self.cam, &self.pso, &mut self.data);
+            self.transform, &self.cam, &self.pso, &mut self.data,
+            Some((&self.pso_debug, &mut self.data_debug, self.physics.scale_bound)));
     }
 }

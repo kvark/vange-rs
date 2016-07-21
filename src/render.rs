@@ -105,7 +105,7 @@ gfx_defines!{
 
     constant DebugLocals {
         m_mvp: [[f32; 4]; 4] = "u_ModelViewProj",
-        m_color: [f32; 4] = "u_Color",
+        v_color: [f32; 4] = "u_Color",
     }
 
     pipeline debug {
@@ -230,10 +230,10 @@ impl<R: gfx::Resources> Render<R> {
     where
         C: gfx::CommandBuffer<R>,
     {
-        let mx_world: Matrix4<f32> = model2world.into();
+        let mx_world = Matrix4::from(model2world);
         let mut normal2world = model2world;
         normal2world.scale = 1.0;
-        let mx_normal: Matrix4<f32> = normal2world.into();
+        let mx_normal = Matrix4::from(normal2world);
         let cp: [f32; 3] = cam.loc.into();
         let locals = ObjectLocals {
             m_mvp: (cam.get_view_proj() * mx_world).into(),
@@ -247,13 +247,28 @@ impl<R: gfx::Resources> Render<R> {
 
     pub fn draw_model<C>(encoder: &mut gfx::Encoder<R, C>, model: &model::Model<R>,
                       model2world: AppTransform, cam: &Camera,
-                      pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>) where
+                      pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>,
+                      debug: Option<(&gfx::PipelineState<R, debug::Meta>, &mut debug::Data<R>, f32)>) where
         C: gfx::CommandBuffer<R>,
     {
         use cgmath::{Deg, Quaternion, One, Rotation3, Transform, Vector3};
 
         // body
         Render::draw_mesh(encoder, &model.body, model2world, cam, pso, data);
+        if let Some((dpso, dd, dscale)) = debug {
+            if let Some((ref vb, ref slice)) = model.shape.debug_mesh {
+                let mx_vp = cam.get_view_proj();
+                let mut transform = model2world;
+                transform.scale *= dscale;
+                let locals = DebugLocals {
+                    m_mvp: (mx_vp * Matrix4::from(transform)).into(),
+                    v_color: [0.0, 1.0, 0.0, 1.0],
+                };
+                dd.vbuf = vb.clone();
+                encoder.update_constant_buffer(&dd.locals, &locals);
+                encoder.draw(slice, dpso, dd);
+            }
+        }
         // wheels
         for w in model.wheels.iter() {
             if let Some(ref mesh) = w.mesh {
@@ -305,7 +320,8 @@ impl<R: gfx::Resources> Render<R> {
         self.terrain.encode(encoder);
         // draw vehicle models
         for ag in agents.iter() {
-            Render::draw_model(encoder, &ag.car.model, ag.transform, cam, &self.object_pso, &mut self.object_data);
+            Render::draw_model(encoder, &ag.car.model, ag.transform, cam,
+                &self.object_pso, &mut self.object_data, None);
         }
     }
 

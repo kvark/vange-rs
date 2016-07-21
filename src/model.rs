@@ -352,7 +352,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
     }
 
     debug!("\tReading the physical shape...");
-    model.shape = load_c3d_shape(source, None::<&mut F>);
+    model.shape = load_c3d_shape(source, Some(factory));
 
     let slot_mask = source.read_u32::<E>().unwrap();
     debug!("\tReading {} slot mask...", slot_mask);
