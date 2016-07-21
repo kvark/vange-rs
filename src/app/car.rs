@@ -9,6 +9,7 @@ pub struct CarView<R: gfx::Resources> {
     model: model::Model<R>,
     transform: super::Transform,
     pso: gfx::PipelineState<R, render::object::Meta>,
+    pso_debug: gfx::PipelineState<R, render::debug::Meta>,
     data: render::object::Data<R>,
     cam: super::Camera,
 }
@@ -51,6 +52,7 @@ impl<R: gfx::Resources> CarView<R> {
                 rot: cgmath::One::one(),
             },
             pso: render::Render::create_object_pso(factory),
+            pso_debug: render::Render::create_debug_pso(factory),
             data: data,
             cam: super::Camera {
                 loc: cgmath::vec3(0.0, -64.0, 32.0),

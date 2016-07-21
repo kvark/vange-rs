@@ -2,7 +2,7 @@ use std::io::{Seek};
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use gfx;
 use gfx::format::I8Norm;
-use render::{ObjectVertex, NUM_COLOR_IDS, COLOR_ID_BODY};
+use render::{ObjectVertex, DebugVertex, NUM_COLOR_IDS, COLOR_ID_BODY};
 
 
 const MAX_SLOTS: u32 = 3;
@@ -31,9 +31,10 @@ pub struct Polygon {
 }
 
 #[derive(Clone, Debug)]
-pub struct Shape {
+pub struct Shape<R: gfx::Resources> {
     pub polygons: Vec<Polygon>,
     pub samples: Vec<[f32; 3]>,
+    pub debug_mesh: Option<(gfx::handle::Buffer<R, DebugVertex>, gfx::Slice<R>)>,
 }
 
 #[derive(Clone)]
@@ -48,7 +49,7 @@ pub struct Wheel<R: gfx::Resources> {
 #[derive(Clone)]
 pub struct Debrie<R: gfx::Resources> {
     pub mesh: Mesh<R>,
-    pub shape: Shape,
+    pub shape: Shape<R>,
 }
 
 #[derive(Clone)]
@@ -62,7 +63,7 @@ pub struct Slot<R: gfx::Resources> {
 #[derive(Clone)]
 pub struct Model<R: gfx::Resources> {
     pub body: Mesh<R>,
-    pub shape: Shape,
+    pub shape: Shape<R>,
     pub color: [u32; 2],
     pub wheels: Vec<Wheel<R>>,
     pub debris: Vec<Debrie<R>>,
@@ -200,8 +201,10 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     }
 }
 
-pub fn load_c3d_shape<I>(source: &mut I) -> Shape where
+pub fn load_c3d_shape<I, R, F>(source: &mut I, factory: Option<&mut F>) -> Shape<R> where
     I: ReadBytesExt + Seek,
+    R: gfx::Resources,
+    F: gfx::traits::FactoryExt<R>,
 {
     use std::io::SeekFrom::Current;
 
@@ -215,6 +218,7 @@ pub fn load_c3d_shape<I>(source: &mut I) -> Shape where
     let mut shape = Shape {
         polygons: Vec::with_capacity(num_polygons as usize),
         samples: Vec::new(),
+        debug_mesh: None,
     };
     let coord_max = read_vec(source);
     let coord_min = read_vec(source);
@@ -222,10 +226,33 @@ pub fn load_c3d_shape<I>(source: &mut I) -> Shape where
 
     source.seek(Current(
         (3+1+3) * 4 + // parent offset, max radius, and parent rotation
-        (1+3+9) * 8 + // ?
-        (num_positions as i64) * (3*4 + 3*1 + 4) + // positions
-        (num_normals as i64) * (4*1 + 4) + // normals
+        (1+3+9) * 8 + // physics
         0)).unwrap();
+
+    let mut debug = if factory.is_some() {
+        let positions: Vec<_> = (0 .. num_positions).map(|_| {
+            read_vec(source); //unknown
+            let pos = [
+                source.read_i8().unwrap(),
+                source.read_i8().unwrap(),
+                source.read_i8().unwrap(),
+                1];
+            let _sort_info = source.read_u32::<E>().unwrap();
+            DebugVertex {
+                pos: pos,
+            }
+        }).collect();
+        Some((positions, Vec::with_capacity(num_polygons as usize * 4)))
+    } else {
+        source.seek(Current(
+            (num_positions as i64) * (3*4 + 3*1 + 4)
+            )).unwrap();
+        None
+    };
+
+    source.seek(Current(
+        (num_normals as i64) * (4*1 + 4) // normals
+        )).unwrap();
 
     debug!("\tReading {} polygons...", num_polygons);
     for _ in 0 .. num_polygons {
@@ -236,7 +263,18 @@ pub fn load_c3d_shape<I>(source: &mut I) -> Shape where
         for b in d.iter_mut() {
             *b = source.read_i8().unwrap();
         }
-        source.seek(Current((num_corners as i64) * (4 + 4))).unwrap(); // vertices
+        let mut pids = [0u32; 4];
+        for i in 0 .. num_corners {
+            pids[i as usize] = source.read_u32::<E>().unwrap();
+            let _ = source.read_u32::<E>().unwrap(); //nid
+        }
+        if let Some((_, ref mut indices)) = debug {
+            for i in 0 .. num_corners {
+                indices.push(pids[i as usize]);
+                let j = (i + 1) % num_corners;
+                indices.push(pids[j as usize]);
+            }
+        }
         //TODO: more samples!
         let mid = [d[4] as f32, d[5] as f32, d[6] as f32];
         shape.polygons.push(Polygon {
@@ -245,6 +283,10 @@ pub fn load_c3d_shape<I>(source: &mut I) -> Shape where
             sample_range: (shape.samples.len() as u16, shape.samples.len() as u16 + 1),
         });
         shape.samples.push(mid);
+    }
+
+    if let (Some((pos, inds)), Some(f)) = (debug, factory) {
+        shape.debug_mesh = Some(f.create_vertex_buffer_with_slice(&pos, &inds[..]));
     }
 
     source.seek(Current(3 * (num_polygons as i64) * 4)).unwrap(); // sorted var polys
@@ -263,6 +305,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
         shape: Shape {
             polygons: Vec::new(),
             samples: Vec::new(),
+            debug_mesh: None,
         },
         color: [0, 0],
         wheels: Vec::new(),
@@ -304,12 +347,12 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
     for _ in 0 .. num_debris {
         model.debris.push(Debrie {
             mesh: load_c3d(source, factory),
-            shape: load_c3d_shape(source),
+            shape: load_c3d_shape(source, None::<&mut F>),
         })
     }
 
     debug!("\tReading the physical shape...");
-    model.shape = load_c3d_shape(source);
+    model.shape = load_c3d_shape(source, None::<&mut F>);
 
     let slot_mask = source.read_u32::<E>().unwrap();
     debug!("\tReading {} slot mask...", slot_mask);
