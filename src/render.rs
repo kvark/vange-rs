@@ -98,6 +98,22 @@ gfx_defines!{
         out_color: gfx::RenderTarget<ColorFormat> = "Target0",
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
     }
+
+    vertex DebugVertex {
+        pos: [i8; 4] = "a_Pos",
+    }
+
+    constant DebugLocals {
+        m_mvp: [[f32; 4]; 4] = "u_ModelViewProj",
+        m_color: [f32; 4] = "u_Color",
+    }
+
+    pipeline debug {
+        vbuf: gfx::VertexBuffer<DebugVertex> = (),
+        locals: gfx::ConstantBuffer<DebugLocals> = "c_Locals",
+        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
+        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_TEST,
+    }
 }
 
 pub struct Render<R: gfx::Resources> {
@@ -336,6 +352,16 @@ impl<R: gfx::Resources> Render<R> {
         raster.front_face = gfx::state::FrontFace::Clockwise;
         factory.create_pipeline_from_program(
             &program, gfx::Primitive::TriangleList, raster, object::new()).unwrap()
+    }
+
+    pub fn create_debug_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, debug::Meta> {
+        let program = factory.link_program(
+            &read("data/shader/debug.vert"),
+            &read("data/shader/debug.frag"),
+            ).unwrap();
+        let raster = gfx::state::Rasterizer::new_fill();
+        factory.create_pipeline_from_program(
+            &program, gfx::Primitive::LineList, raster, debug::new()).unwrap()
     }
 
     pub fn reload<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
