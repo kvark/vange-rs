@@ -9,7 +9,7 @@ pub struct CarView<R: gfx::Resources> {
     model: model::Model<R>,
     transform: super::Transform,
     pso: gfx::PipelineState<R, render::object::Meta>,
-    pso_debug: gfx::PipelineState<R, render::debug::Meta>,
+    psos_debug: [gfx::PipelineState<R, render::debug::Meta>; 2],
     physics: config::car::CarPhysics,
     data: render::object::Data<R>,
     data_debug: render::debug::Data<R>,
@@ -46,8 +46,8 @@ impl<R: gfx::Resources> CarView<R> {
             out_depth: out_depth.clone(),
         };
         let data_debug = render::debug::Data {
-            vbuf: match model.shape.debug_mesh {
-                Some((ref vb, _)) => vb.clone(),
+            vbuf: match model.shape.debug {
+                Some(model::DebugShape {ref bound_vb, ..}) => bound_vb.clone(),
                 None => unimplemented!(),
             },
             locals: factory.create_constant_buffer(1),
@@ -63,7 +63,7 @@ impl<R: gfx::Resources> CarView<R> {
                 rot: cgmath::One::one(),
             },
             pso: render::Render::create_object_pso(factory),
-            pso_debug: render::Render::create_debug_pso(factory),
+            psos_debug: render::Render::create_debug_psos(factory),
             physics: cinfo.physics.clone(),
             data: data,
             data_debug: data_debug,
@@ -116,6 +116,6 @@ impl<R: gfx::Resources> super::App<R> for CarView<R> {
 
         render::Render::draw_model(enc, &self.model,
             self.transform, &self.cam, &self.pso, &mut self.data,
-            Some((&self.pso_debug, &mut self.data_debug, self.physics.scale_bound)));
+            Some((&self.psos_debug, &mut self.data_debug, self.physics.scale_bound)));
     }
 }

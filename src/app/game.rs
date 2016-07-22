@@ -97,12 +97,13 @@ fn get_height(altitude: u8) -> f32 {
     altitude as f32 * (level::HEIGHT_SCALE as f32) / 256.0
 }
 
-fn collide_low(poly: &model::Polygon, samples: &[[f32; 3]], scale: f32, transform: &super::Transform,
+fn collide_low(poly: &model::Polygon, samples: &[[i8; 3]], scale: f32, transform: &super::Transform,
                level: &level::Level, terraconf: &config::common::Terrain) -> CollisionData
 {
     let (mut soft, mut hard) = (Accumulator::new(), Accumulator::new());
     for &s in samples[poly.sample_range.0 as usize .. poly.sample_range.1 as usize].iter() {
-        let pos = transform.transform_point(cgmath::Point3::from(s) * scale).to_vec();
+        let sp = cgmath::Point3::from([s[0] as f32, s[1] as f32, s[2] as f32]);
+        let pos = transform.transform_point(sp * scale).to_vec();
         let texel = level.get((pos.x as i32, pos.y as i32));
         let lo_alt = texel.low.0;
         let altitude = match texel.high {

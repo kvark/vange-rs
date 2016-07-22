@@ -248,25 +248,30 @@ impl<R: gfx::Resources> Render<R> {
     pub fn draw_model<C>(encoder: &mut gfx::Encoder<R, C>, model: &model::Model<R>,
                       model2world: AppTransform, cam: &Camera,
                       pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>,
-                      debug: Option<(&gfx::PipelineState<R, debug::Meta>, &mut debug::Data<R>, f32)>) where
+                      debug: Option<(&[gfx::PipelineState<R, debug::Meta>; 2], &mut debug::Data<R>, f32)>) where
         C: gfx::CommandBuffer<R>,
     {
         use cgmath::{Deg, Quaternion, One, Rotation3, Transform, Vector3};
 
         // body
         Render::draw_mesh(encoder, &model.body, model2world, cam, pso, data);
-        if let Some((dpso, dd, dscale)) = debug {
-            if let Some((ref vb, ref slice)) = model.shape.debug_mesh {
+        if let Some((dpsos, dd, dscale)) = debug {
+            if let Some(ref dshape) = model.shape.debug {
                 let mx_vp = cam.get_view_proj();
                 let mut transform = model2world;
                 transform.scale *= dscale;
-                let locals = DebugLocals {
+                let mut locals = DebugLocals {
                     m_mvp: (mx_vp * Matrix4::from(transform)).into(),
                     v_color: [0.0, 1.0, 0.0, 1.0],
                 };
-                dd.vbuf = vb.clone();
+                dd.vbuf = dshape.bound_vb.clone();
                 encoder.update_constant_buffer(&dd.locals, &locals);
-                encoder.draw(slice, dpso, dd);
+                encoder.draw(&dshape.bound_slice, &dpsos[0], dd);
+                dd.vbuf = dshape.sample_vb.clone();
+                locals.v_color = [1.0, 0.0, 0.0, 1.0];
+                encoder.update_constant_buffer(&dd.locals, &locals);
+                let slice = gfx::Slice::new_match_vertex_buffer(&dshape.sample_vb);
+                encoder.draw(&slice, &dpsos[1], dd);
             }
         }
         // wheels
@@ -370,14 +375,19 @@ impl<R: gfx::Resources> Render<R> {
             &program, gfx::Primitive::TriangleList, raster, object::new()).unwrap()
     }
 
-    pub fn create_debug_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, debug::Meta> {
+    pub fn create_debug_psos<F: gfx::Factory<R>>(factory: &mut F) -> [gfx::PipelineState<R, debug::Meta>; 2] {
         let program = factory.link_program(
             &read("data/shader/debug.vert"),
             &read("data/shader/debug.frag"),
             ).unwrap();
         let raster = gfx::state::Rasterizer::new_fill();
-        factory.create_pipeline_from_program(
-            &program, gfx::Primitive::LineList, raster, debug::new()).unwrap()
+        [   factory.create_pipeline_from_program(
+                &program, gfx::Primitive::LineList, raster, debug::new()
+                ).unwrap(),
+            factory.create_pipeline_from_program(
+                &program, gfx::Primitive::PointList, raster, debug::new()
+                ).unwrap(),
+        ]
     }
 
     pub fn reload<F: gfx::Factory<R>>(&mut self, factory: &mut F) {

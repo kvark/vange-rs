@@ -31,10 +31,17 @@ pub struct Polygon {
 }
 
 #[derive(Clone, Debug)]
+pub struct DebugShape<R: gfx::Resources> {
+    pub bound_vb: gfx::handle::Buffer<R, DebugVertex>,
+    pub bound_slice: gfx::Slice<R>,
+    pub sample_vb: gfx::handle::Buffer<R, DebugVertex>,
+}
+
+#[derive(Clone, Debug)]
 pub struct Shape<R: gfx::Resources> {
     pub polygons: Vec<Polygon>,
-    pub samples: Vec<[f32; 3]>,
-    pub debug_mesh: Option<(gfx::handle::Buffer<R, DebugVertex>, gfx::Slice<R>)>,
+    pub samples: Vec<[i8; 3]>,
+    pub debug: Option<DebugShape<R>>,
 }
 
 #[derive(Clone)]
@@ -69,6 +76,29 @@ pub struct Model<R: gfx::Resources> {
     pub debris: Vec<Debrie<R>>,
     pub slots: Vec<Slot<R>>,
 }
+
+type RawVertex = [i8; 3];
+
+struct Tessellator {
+    samples: Vec<RawVertex>,
+}
+
+impl Tessellator {
+    fn new() -> Tessellator {
+        Tessellator { samples: Vec::new() }
+    }
+    fn tessellate(&mut self, corners: &[DebugVertex], middle: RawVertex) -> &[RawVertex] {
+        self.samples.clear();
+        self.samples.push(middle);
+        self.samples.extend(corners.iter().map(|dv| [
+            (dv.pos[0]/2 + middle[0]/2),
+            (dv.pos[1]/2 + middle[1]/2),
+            (dv.pos[2]/2 + middle[2]/2),
+            ]));
+        &self.samples
+    }
+}
+
 
 fn read_vec<I: ReadBytesExt>(source: &mut I) -> [f32; 3] {
     [
@@ -218,7 +248,7 @@ pub fn load_c3d_shape<I, R, F>(source: &mut I, factory: Option<&mut F>) -> Shape
     let mut shape = Shape {
         polygons: Vec::with_capacity(num_polygons as usize),
         samples: Vec::new(),
-        debug_mesh: None,
+        debug: None,
     };
     let coord_max = read_vec(source);
     let coord_min = read_vec(source);
@@ -229,32 +259,29 @@ pub fn load_c3d_shape<I, R, F>(source: &mut I, factory: Option<&mut F>) -> Shape
         (1+3+9) * 8 + // physics
         0)).unwrap();
 
-    let mut debug = if factory.is_some() {
-        let positions: Vec<_> = (0 .. num_positions).map(|_| {
-            read_vec(source); //unknown
-            let pos = [
-                source.read_i8().unwrap(),
-                source.read_i8().unwrap(),
-                source.read_i8().unwrap(),
-                1];
-            let _sort_info = source.read_u32::<E>().unwrap();
-            DebugVertex {
-                pos: pos,
-            }
-        }).collect();
-        Some((positions, Vec::with_capacity(num_polygons as usize * 4)))
-    } else {
-        source.seek(Current(
-            (num_positions as i64) * (3*4 + 3*1 + 4)
-            )).unwrap();
-        None
-    };
+    let positions: Vec<_> = (0 .. num_positions).map(|_| {
+        read_vec(source); //unknown
+        let pos = [
+            source.read_i8().unwrap(),
+            source.read_i8().unwrap(),
+            source.read_i8().unwrap(),
+            1];
+        let _sort_info = source.read_u32::<E>().unwrap();
+        DebugVertex {
+            pos: pos,
+        }
+    }).collect();
 
     source.seek(Current(
         (num_normals as i64) * (4*1 + 4) // normals
         )).unwrap();
 
+    let mut indices = if factory.is_some() {
+        Some(Vec::with_capacity(num_polygons as usize * 4*2))
+    } else { None };
+
     debug!("\tReading {} polygons...", num_polygons);
+    let mut tess = Tessellator::new();
     for _ in 0 .. num_polygons {
         let num_corners = source.read_u32::<E>().unwrap();
         assert!(3 <= num_corners && num_corners <= 4);
@@ -268,25 +295,38 @@ pub fn load_c3d_shape<I, R, F>(source: &mut I, factory: Option<&mut F>) -> Shape
             pids[i as usize] = source.read_u32::<E>().unwrap();
             let _ = source.read_u32::<E>().unwrap(); //nid
         }
-        if let Some((_, ref mut indices)) = debug {
+        if let Some(ref mut ind) = indices {
             for i in 0 .. num_corners {
-                indices.push(pids[i as usize]);
+                ind.push(pids[i as usize]);
                 let j = (i + 1) % num_corners;
-                indices.push(pids[j as usize]);
+                ind.push(pids[j as usize]);
             }
         }
-        //TODO: more samples!
+        let corners = [
+            positions[pids[0] as usize], positions[pids[1] as usize],
+            positions[pids[2] as usize], positions[pids[3] as usize],
+        ];
         let mid = [d[4] as f32, d[5] as f32, d[6] as f32];
+        let samples = tess.tessellate(&corners, [d[4], d[5], d[6]]);
         shape.polygons.push(Polygon {
             middle: mid,
             normal: [d[0] as f32 / 128.0, d[1] as f32 / 128.0, d[2] as f32 / 128.0],
-            sample_range: (shape.samples.len() as u16, shape.samples.len() as u16 + 1),
+            sample_range: (shape.samples.len() as u16,
+                (shape.samples.len() + samples.len()) as u16),
         });
-        shape.samples.push(mid);
+        shape.samples.extend_from_slice(samples);
     }
 
-    if let (Some((pos, inds)), Some(f)) = (debug, factory) {
-        shape.debug_mesh = Some(f.create_vertex_buffer_with_slice(&pos, &inds[..]));
+    if let (Some(ind), Some(f)) = (indices, factory) {
+        let (vbo, slice) = f.create_vertex_buffer_with_slice(&positions, &ind[..]);
+        let debug_samples: Vec<_> = shape.samples.iter().map(|s| DebugVertex {
+            pos: [s[0], s[1], s[2], 1],
+        }).collect();
+        shape.debug = Some(DebugShape {
+            bound_vb: vbo,
+            bound_slice: slice,
+            sample_vb: f.create_vertex_buffer(&debug_samples),
+        });
     }
 
     source.seek(Current(3 * (num_polygons as i64) * 4)).unwrap(); // sorted var polys
@@ -305,7 +345,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
         shape: Shape {
             polygons: Vec::new(),
             samples: Vec::new(),
-            debug_mesh: None,
+            debug: None,
         },
         color: [0, 0],
         wheels: Vec::new(),
