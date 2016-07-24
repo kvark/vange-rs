@@ -11,7 +11,7 @@ const MAX_SLOTS: u32 = 3;
 pub struct Physics {
     pub volume: f32,
     pub rcm: [f32; 3],
-    pub jacobi: [[f32; 3]; 3],
+    pub jacobi: [[f32; 3]; 3], // column-major
 }
 
 #[derive(Clone)]
@@ -135,9 +135,9 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
             volume: q[0],
             rcm: [q[1], q[2], q[3]],
             jacobi: [
-                [q[4], q[5], q[6]],
-                [q[7], q[8], q[9]],
-                [q[10], q[11], q[12]],
+                [q[4], q[7], q[10]],
+                [q[5], q[8], q[11]],
+                [q[6], q[9], q[12]],
             ],
         }
     };

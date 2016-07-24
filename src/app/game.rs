@@ -186,7 +186,7 @@ impl<R: gfx::Resources> Agent<R> {
             if stand_on_wheels { //TODO: why `ln()`? //TODO: wheels_touch
                 let speed = common.drag.wheel_speed.ln() * self.car.physics.mobility_factor *
                     common.global.speed_factor / self.car.physics.speed_factor;
-                v_vel.y *= (1.0 + speed).powi(config::common::SPEED_CORRECTION_FACTOR);
+                v_vel.y *= (1.0 + speed).powf(config::common::SPEED_CORRECTION_FACTOR);
             }
             let (v_old, w_old) = (v_vel, w_vel);
 
@@ -302,8 +302,8 @@ impl<R: gfx::Resources> Agent<R> {
                 v_vel = rot.rotate_vector(v_vel);
                 w_vel = rot.rotate_vector(v_vel);
             }
-            v_vel *= v_drag.powi(config::common::SPEED_CORRECTION_FACTOR);
-            w_vel *= w_drag.powi(config::common::SPEED_CORRECTION_FACTOR);
+            v_vel *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
+            w_vel *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
         }
 
         self.dynamo.linear_velocity  = v_vel;
@@ -447,7 +447,7 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
         });
 
         for a in self.agents.iter_mut() {
-            a.step(delta * config::common::SPEED_CORRECTION_FACTOR as f32, &self.level, &self.db.common);
+            a.step(delta * config::common::SPEED_CORRECTION_FACTOR, &self.level, &self.db.common);
         }
 
         true

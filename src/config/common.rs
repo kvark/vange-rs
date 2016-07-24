@@ -3,7 +3,7 @@ use config::text::Reader;
 
 
 pub const ORIGINAL_FPS: u8 = 14; //TODO: read from PRM
-pub const SPEED_CORRECTION_FACTOR: i32 = 1; // same here
+pub const SPEED_CORRECTION_FACTOR: f32 = 1.0; // same here
 
 pub type Traction = f32;
 pub struct VelocityPair {
