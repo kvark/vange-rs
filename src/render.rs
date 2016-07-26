@@ -111,7 +111,7 @@ gfx_defines!{
     pipeline debug {
         vbuf: gfx::VertexBuffer<DebugVertex> = (),
         locals: gfx::ConstantBuffer<DebugLocals> = "c_Locals",
-        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
+        out_color: gfx::BlendTarget<ColorFormat> = ("Target0", gfx::state::MASK_ALL, gfx::preset::blend::ALPHA),
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_TEST,
     }
 }
@@ -262,13 +262,13 @@ impl<R: gfx::Resources> Render<R> {
                 transform.scale *= dscale;
                 let mut locals = DebugLocals {
                     m_mvp: (mx_vp * Matrix4::from(transform)).into(),
-                    v_color: [0.0, 1.0, 0.0, 1.0],
+                    v_color: [0.0, 1.0, 0.0, 0.1],
                 };
                 dd.vbuf = dshape.bound_vb.clone();
                 encoder.update_constant_buffer(&dd.locals, &locals);
                 encoder.draw(&dshape.bound_slice, &dpsos[0], dd);
                 dd.vbuf = dshape.sample_vb.clone();
-                locals.v_color = [1.0, 0.0, 0.0, 1.0];
+                locals.v_color = [1.0, 0.0, 0.0, 0.5];
                 encoder.update_constant_buffer(&dd.locals, &locals);
                 let slice = gfx::Slice::new_match_vertex_buffer(&dshape.sample_vb);
                 encoder.draw(&slice, &dpsos[1], dd);
@@ -382,10 +382,10 @@ impl<R: gfx::Resources> Render<R> {
             ).unwrap();
         let raster = gfx::state::Rasterizer::new_fill();
         [   factory.create_pipeline_from_program(
-                &program, gfx::Primitive::LineList, raster, debug::new()
+                &program, gfx::Primitive::TriangleList, raster, debug::new()
                 ).unwrap(),
             factory.create_pipeline_from_program(
-                &program, gfx::Primitive::PointList, raster, debug::new()
+                &program, gfx::Primitive::LineList, raster, debug::new()
                 ).unwrap(),
         ]
     }

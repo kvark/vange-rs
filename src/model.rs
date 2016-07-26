@@ -276,8 +276,11 @@ pub fn load_c3d_shape<I, R, F>(source: &mut I, factory: Option<&mut F>) -> Shape
         (num_normals as i64) * (4*1 + 4) // normals
         )).unwrap();
 
-    let mut indices = if factory.is_some() {
-        Some(Vec::with_capacity(num_polygons as usize * 4*2))
+    let mut debug = if factory.is_some() {
+        Some((
+            Vec::with_capacity(num_polygons as usize * 6),
+            Vec::new(),
+         ))
     } else { None };
 
     debug!("\tReading {} polygons...", num_polygons);
@@ -295,37 +298,50 @@ pub fn load_c3d_shape<I, R, F>(source: &mut I, factory: Option<&mut F>) -> Shape
             pids[i as usize] = source.read_u32::<E>().unwrap();
             let _ = source.read_u32::<E>().unwrap(); //nid
         }
-        if let Some(ref mut ind) = indices {
-            for i in 0 .. num_corners {
-                ind.push(pids[i as usize]);
-                let j = (i + 1) % num_corners;
-                ind.push(pids[j as usize]);
-            }
-        }
         let corners = [
             positions[pids[0] as usize], positions[pids[1] as usize],
             positions[pids[2] as usize], positions[pids[3] as usize],
         ];
         let mid = [d[4] as f32, d[5] as f32, d[6] as f32];
+        let normal = [d[0] as f32 / 128.0, d[1] as f32 / 128.0, d[2] as f32 / 128.0];
         let samples = tess.tessellate(&corners, [d[4], d[5], d[6]]);
+        if let Some((ref mut ind, ref mut samp)) = debug {
+            for p in pids[0..3].iter() {
+                ind.push(*p);
+            }
+            if num_corners > 3  {
+                ind.push(pids[2]);
+                ind.push(pids[3]);
+                ind.push(pids[0]);
+            }
+            for s in samples.iter() {
+                samp.push(DebugVertex {
+                    pos: [s[0], s[1], s[2], 1],
+                });
+                let nlen = 16.0;
+                samp.push(DebugVertex {pos: [
+                    s[0].saturating_add((normal[0] * nlen) as i8),
+                    s[1].saturating_add((normal[1] * nlen) as i8),
+                    s[2].saturating_add((normal[2] * nlen) as i8),
+                    1,
+                ]});
+            }
+        }
         shape.polygons.push(Polygon {
             middle: mid,
-            normal: [d[0] as f32 / 128.0, d[1] as f32 / 128.0, d[2] as f32 / 128.0],
+            normal: normal,
             sample_range: (shape.samples.len() as u16,
                 (shape.samples.len() + samples.len()) as u16),
         });
         shape.samples.extend_from_slice(samples);
     }
 
-    if let (Some(ind), Some(f)) = (indices, factory) {
+    if let (Some((ind, samp)), Some(f)) = (debug, factory) {
         let (vbo, slice) = f.create_vertex_buffer_with_slice(&positions, &ind[..]);
-        let debug_samples: Vec<_> = shape.samples.iter().map(|s| DebugVertex {
-            pos: [s[0], s[1], s[2], 1],
-        }).collect();
         shape.debug = Some(DebugShape {
             bound_vb: vbo,
             bound_slice: slice,
-            sample_vb: f.create_vertex_buffer(&debug_samples),
+            sample_vb: f.create_vertex_buffer(&samp),
         });
     }
 
