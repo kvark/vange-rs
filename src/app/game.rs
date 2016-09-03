@@ -108,7 +108,7 @@ fn collide_low(poly: &model::Polygon, samples: &[[i8; 3]], scale: f32, transform
         let lo_alt = texel.low.0;
         let altitude = match texel.high {
             Some((delta, hi_alt, _))
-                if pos.z - get_height(lo_alt + delta) > get_height(hi_alt) - pos.z
+                if pos.z - get_height(lo_alt.saturating_add(delta)) > get_height(hi_alt) - pos.z
                 => hi_alt,
             _ => lo_alt,
         };
@@ -447,7 +447,8 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
         });
 
         for a in self.agents.iter_mut() {
-            a.step(delta * config::common::SPEED_CORRECTION_FACTOR, &self.level, &self.db.common);
+            let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
+            a.step(dt, &self.level, &self.db.common);
         }
 
         true
