@@ -1,4 +1,4 @@
-data_path = "/opt/GOG Games/Vangers/game"
+data_path = "/mnt/data/gog/Vangers/game"
 
 [game]
 level = "fostral"

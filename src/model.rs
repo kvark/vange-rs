@@ -99,7 +99,6 @@ impl Tessellator {
     }
 }
 
-
 fn read_vec<I: ReadBytesExt>(source: &mut I) -> [f32; 3] {
     [
         source.read_i32::<E>().unwrap() as f32,
@@ -108,126 +107,151 @@ fn read_vec<I: ReadBytesExt>(source: &mut I) -> [f32; 3] {
     ]
 }
 
+pub struct RawMesh {
+    vertices: Vec<ObjectVertex>,
+    indices: Vec<u16>,
+    coord_min: [f32; 3],
+    coord_max: [f32; 3],
+    parent_off: [f32; 3],
+    _parent_rot: [f32; 3],
+    max_radius: f32,
+    physics: Physics,
+}
+
+impl RawMesh {
+    pub fn load<I: ReadBytesExt>(source: &mut I, compact: bool) -> RawMesh {
+        let version = source.read_u32::<E>().unwrap();
+        assert_eq!(version, 8);
+        let num_positions = source.read_u32::<E>().unwrap();
+        let num_normals   = source.read_u32::<E>().unwrap();
+        let num_polygons  = source.read_u32::<E>().unwrap();
+        let _total_verts  = source.read_u32::<E>().unwrap();
+
+        let mut result = RawMesh {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            coord_min: read_vec(source),
+            coord_max: read_vec(source),
+            parent_off: read_vec(source),
+            max_radius: source.read_u32::<E>().unwrap() as f32,
+            _parent_rot: read_vec(source),
+            physics: {
+                let mut q = [0.0f32; 1+3+9];
+                for qel in q.iter_mut() {
+                    *qel = source.read_f64::<E>().unwrap() as f32;
+                }
+                Physics {
+                    volume: q[0],
+                    rcm: [q[1], q[2], q[3]],
+                    jacobi: [
+                        [q[4], q[7], q[10]],
+                        [q[5], q[8], q[11]],
+                        [q[6], q[9], q[12]],
+                    ],
+                }
+            },
+        };
+        debug!("\tBound {:?} to {:?} with offset {:?}",
+               result.coord_min, result.coord_max, result.parent_off);
+
+        debug!("\tReading {} positions...", num_positions);
+        let mut positions = Vec::with_capacity(num_positions as usize);
+        for _ in 0 .. num_positions {
+            read_vec(source); //unknown
+            let pos = [
+                source.read_i8().unwrap(),
+                source.read_i8().unwrap(),
+                source.read_i8().unwrap(),
+                1];
+            let _sort_info = source.read_u32::<E>().unwrap();
+            positions.push(pos);
+        }
+
+        debug!("\tReading {} normals...", num_normals);
+        let mut normals = Vec::with_capacity(num_normals as usize);
+        for _ in 0 .. num_normals {
+            let mut norm = [0u8; 4];
+            source.read_exact(&mut norm).unwrap();
+            let _sort_info = source.read_u32::<E>().unwrap();
+            normals.push(norm);
+        }
+
+        debug!("\tReading {} polygons...", num_polygons);
+        let mut vertices = Vec::with_capacity(num_polygons as usize * 3);
+        for i in 0 .. num_polygons {
+            let num_corners = source.read_u32::<E>().unwrap();
+            assert_eq!(num_corners, 3);
+            let _sort_info = source.read_u32::<E>().unwrap();
+            let color = [source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap()];
+            let mut dummy = [0; 4];
+            source.read_exact(&mut dummy[..4]).unwrap(); //skip flat normal
+            source.read_exact(&mut dummy[..3]).unwrap(); //skip middle point
+            for k in 0..num_corners {
+                let pid = source.read_u32::<E>().unwrap();
+                let nid = source.read_u32::<E>().unwrap();
+                let v = (i*3+k, (positions[pid as usize], normals[nid as usize], color));
+                vertices.push(v);
+            }
+        }
+
+        // sorted variable polygons
+        for _ in 0 .. 3 {
+            for _ in 0 .. num_polygons {
+                let _poly_ind = source.read_u32::<E>().unwrap();
+            }
+        }
+
+        let convert = |(p, n, c): ([i8; 4], [u8; 4], [u32; 2])| ObjectVertex {
+            pos: p,
+            color: if c[0] < NUM_COLOR_IDS { c[0] } else { COLOR_ID_BODY },
+            normal: [I8Norm(n[0] as i8), I8Norm(n[1] as i8), I8Norm(n[2] as i8), I8Norm(n[3] as i8)],
+        };
+
+        if compact {
+            debug!("\tCompacting...");
+            vertices.sort_by_key(|v| v.1);
+            //vertices.dedup();
+            result.indices.extend((0..vertices.len()).map(|_| 0));
+            let mut last = vertices[0].1;
+            last.2[0] ^= 1; //change something
+            let mut v_id = 0;
+            for v in vertices.into_iter() {
+                if v.1 != last {
+                    last = v.1;
+                    v_id = result.vertices.len() as u16;
+                    result.vertices.push(convert(v.1));
+                }
+                result.indices[v.0 as usize] = v_id;
+            }
+        } else {
+            result.vertices.extend(vertices.into_iter().map(|v| convert(v.1)))
+        };
+
+        result
+    }
+}
+
+
 pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     I: ReadBytesExt,
     R: gfx::Resources,
     F: gfx::traits::FactoryExt<R>,
 {
-    let version = source.read_u32::<E>().unwrap();
-    assert_eq!(version, 8);
-    let num_positions = source.read_u32::<E>().unwrap();
-    let num_normals   = source.read_u32::<E>().unwrap();
-    let num_polygons  = source.read_u32::<E>().unwrap();
-    let _total_verts  = source.read_u32::<E>().unwrap();
+    let raw = RawMesh::load(source, true);
 
-    let coord_max = read_vec(source);
-    let coord_min = read_vec(source);
-    let parent_off = read_vec(source);
-    debug!("\tBound {:?} to {:?} with offset {:?}", coord_min, coord_max, parent_off);
-    let max_radius = source.read_u32::<E>().unwrap() as f32;
-    let _parent_rot = read_vec(source);
-    let physics = {
-        let mut q = [0.0f32; 1+3+9];
-        for qel in q.iter_mut() {
-            *qel = source.read_f64::<E>().unwrap() as f32;
-        }
-        Physics {
-            volume: q[0],
-            rcm: [q[1], q[2], q[3]],
-            jacobi: [
-                [q[4], q[7], q[10]],
-                [q[5], q[8], q[11]],
-                [q[6], q[9], q[12]],
-            ],
-        }
+    let (vbuf, slice) = if raw.indices.is_empty() {
+        factory.create_vertex_buffer_with_slice(&raw.vertices, ())    
+    } else {
+        factory.create_vertex_buffer_with_slice(&raw.vertices, &raw.indices[..])
     };
-
-    debug!("\tReading {} positions...", num_positions);
-    let mut positions = Vec::with_capacity(num_positions as usize);
-    for _ in 0 .. num_positions {
-        read_vec(source); //unknown
-        let pos = [
-            source.read_i8().unwrap(),
-            source.read_i8().unwrap(),
-            source.read_i8().unwrap(),
-            1];
-        let _sort_info = source.read_u32::<E>().unwrap();
-        positions.push(pos);
-    }
-
-    debug!("\tReading {} normals...", num_normals);
-    let mut normals = Vec::with_capacity(num_normals as usize);
-    for _ in 0 .. num_normals {
-        let mut norm = [0u8; 4];
-        source.read_exact(&mut norm).unwrap();
-        let _sort_info = source.read_u32::<E>().unwrap();
-        normals.push(norm);
-    }
-
-    debug!("\tReading {} polygons...", num_polygons);
-    let mut vertices = Vec::with_capacity(num_polygons as usize * 3);
-    for i in 0 .. num_polygons {
-        let num_corners = source.read_u32::<E>().unwrap();
-        assert_eq!(num_corners, 3);
-        let _sort_info = source.read_u32::<E>().unwrap();
-        let color = [source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap()];
-        let mut dummy = [0; 4];
-        source.read_exact(&mut dummy[..4]).unwrap(); //skip flat normal
-        source.read_exact(&mut dummy[..3]).unwrap(); //skip middle point
-        for k in 0..num_corners {
-            let pid = source.read_u32::<E>().unwrap();
-            let nid = source.read_u32::<E>().unwrap();
-            let v = (i*3+k, (positions[pid as usize], normals[nid as usize], color));
-            vertices.push(v);
-        }
-    }
-
-    // sorted variable polygons
-    for _ in 0 .. 3 {
-        for _ in 0 .. num_polygons {
-            let _poly_ind = source.read_u32::<E>().unwrap();
-        }
-    }
-
-    let convert = |(p, n, c): ([i8; 4], [u8; 4], [u32; 2])| ObjectVertex {
-        pos: p,
-        color: if c[0] < NUM_COLOR_IDS { c[0] } else { COLOR_ID_BODY },
-        normal: [I8Norm(n[0] as i8), I8Norm(n[1] as i8), I8Norm(n[2] as i8), I8Norm(n[3] as i8)],
-    };
-    let do_compact = true;
-
-    let mut gpu_verts = Vec::new();
-    let (vbuf, slice) = if do_compact {
-        debug!("\tCompacting...");
-        vertices.sort_by_key(|v| v.1);
-        //vertices.dedup();
-        let mut indices = vec![0; vertices.len()];
-        let mut last = vertices[0].1;
-        last.2[0] ^= 1; //change something
-        let mut v_id = 0;
-        for v in vertices.into_iter() {
-            if v.1 != last {
-                last = v.1;
-                v_id = gpu_verts.len() as u16;
-                gpu_verts.push(convert(v.1));
-            }
-            indices[v.0 as usize] = v_id;
-        }
-        factory.create_vertex_buffer_with_slice(&gpu_verts, &indices[..])
-    }else {
-        for v in vertices.into_iter() {
-            gpu_verts.push(convert(v.1));
-        }
-        factory.create_vertex_buffer_with_slice(&gpu_verts, ())
-    };
-
-    debug!("\tGot {} GPU vertices...", gpu_verts.len());
+    
+    debug!("\tGot {} GPU vertices...", raw.vertices.len());
     Mesh {
         slice: slice,
         buffer: vbuf,
-        offset: parent_off,
-        bbox: (coord_min, coord_max, max_radius),
-        physics: physics,
+        offset: raw.parent_off,
+        bbox: (raw.coord_min, raw.coord_max, raw.max_radius),
+        physics: raw.physics,
     }
 }
 
