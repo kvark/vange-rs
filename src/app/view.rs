@@ -46,13 +46,13 @@ impl<R: gfx::Resources> ResourceView<R> {
             pso: render::Render::create_object_pso(factory),
             data: data,
             cam: super::Camera {
-                loc: cgmath::vec3(0.0, -60.0, 30.0),
+                loc: cgmath::vec3(0.0, -120.0, 60.0),
                 rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Angle::turn_div_6()),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::deg(45.0).into(),
                     aspect: settings.get_screen_aspect(),
-                    near: 1.0,
-                    far: 100.0,
+                    near: 5.0,
+                    far: 200.0,
                 },
             },
         }

@@ -51,11 +51,17 @@ fn main() {
         .parsing_style(getopts::ParsingStyle::StopAtFirstFree)
         .optflag("h", "help", "print this help menu")
         .optopt("v", "view", "view a particular game resource", "")
+        .optopt("c", "convert", "convert a model into Wavefront OBJ", "")
         .optflag("m", "model", "view a only the car model");
     let matches = options.parse(&args[1..]).unwrap();
     if matches.opt_present("h") || !matches.free.is_empty() {
         let brief = format!("Usage: {} [options]", program);
         println!("{}", options.usage(&brief));
+        return;
+    }
+
+    if let Some(path) = matches.opt_str("c") {
+        model::convert_m3d(settings.open(&path), "/tmp/vangers".to_owned());
         return;
     }
 

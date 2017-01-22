@@ -1,4 +1,5 @@
-use std::io::{Seek};
+use std::io::{self, Seek, Write};
+use std::fs::File;
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use gfx;
 use gfx::format::I8Norm;
@@ -229,6 +230,28 @@ impl RawMesh {
 
         result
     }
+
+    pub fn save_obj<W: Write>(&self, mut dest: W) -> io::Result<()> {
+        for v in self.vertices.iter() {
+            try!(writeln!(dest, "v {} {} {}", v.pos[0], v.pos[1], v.pos[2]));
+        }
+        try!(writeln!(dest, ""));
+        for v in self.vertices.iter() {
+            try!(writeln!(dest, "vn {} {} {}", v.normal[0].0 as f32 / 124.0,
+                v.normal[1].0 as f32 / 124.0, v.normal[2].0 as f32 / 124.0));
+        }
+        try!(writeln!(dest, ""));
+        if self.indices.is_empty() {
+            for i in 0 .. self.vertices.len()/3 {
+                try!(writeln!(dest, "f {} {} {}", i*3+1, i*3+2, i*3+3));
+            }
+        } else {
+            for c in self.indices.chunks(3) {
+                try!(writeln!(dest, "f {} {} {}", c[0]+1, c[1]+1, c[2]+1));
+            }
+        }
+        Ok(())
+    }
 }
 
 
@@ -453,4 +476,9 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
     }
 
     model
+}
+
+pub fn convert_m3d(mut input: File, out_path: String) {
+    let body = RawMesh::load(&mut input, false);
+    body.save_obj(File::create(out_path + "/body.obj").unwrap()).unwrap();
 }
