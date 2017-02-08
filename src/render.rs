@@ -138,7 +138,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             level: &level::Level, object_palette: &[[u8; 4]])
             -> Render<R>
 {
-    use gfx::{format, tex};
+    use gfx::{format, texture as tex};
 
     let mut light_clr_material = [[0; 0x200]; NUM_MATERIALS];
     {
@@ -176,9 +176,9 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
     let height_chunks: Vec<_> = level.height.chunks((level.size.0 * TEX_HEIGHT) as usize).collect();
     let meta_chunks: Vec<_> = level.meta.chunks((level.size.0 * TEX_HEIGHT) as usize).collect();
     let table_chunks: Vec<_> = color_table.iter().map(|t| &t[..]).collect();
-    let (_, height) = factory.create_texture_const::<(format::R8, format::Unorm)>(kind, &height_chunks).unwrap();
-    let (_, meta)   = factory.create_texture_const::<(format::R8, format::Uint)>(kind, &meta_chunks).unwrap();
-    let (_, table)  = factory.create_texture_const::<(format::R8, format::Unorm)>(table_kind, &table_chunks).unwrap();
+    let (_, height) = factory.create_texture_immutable::<(format::R8, format::Unorm)>(kind, &height_chunks).unwrap();
+    let (_, meta)   = factory.create_texture_immutable::<(format::R8, format::Uint)>(kind, &meta_chunks).unwrap();
+    let (_, table)  = factory.create_texture_immutable::<(format::R8, format::Unorm)>(table_kind, &table_chunks).unwrap();
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale, tex::WrapMode::Tile));
     let sm_meta = factory.create_sampler(tex::SamplerInfo::new(
@@ -251,7 +251,7 @@ impl<R: gfx::Resources> Render<R> {
                       debug: Option<(&[gfx::PipelineState<R, debug::Meta>; 2], &mut debug::Data<R>, f32)>) where
         C: gfx::CommandBuffer<R>,
     {
-        use cgmath::{Deg, Quaternion, One, Rotation3, Transform, Vector3};
+        use cgmath::{Deg, Quaternion, One, Rad, Rotation3, Transform, Vector3};
 
         // body
         Render::draw_mesh(encoder, &model.body, model2world, cam, pso, data);
@@ -290,7 +290,7 @@ impl<R: gfx::Resources> Render<R> {
             if let Some(ref mesh) = s.mesh {
                 let mut local = Decomposed {
                     disp: Vector3::from(s.pos),
-                    rot: Quaternion::from_angle_y(Deg::new(s.angle as f32).into()),
+                    rot: Quaternion::from_angle_y(Rad::from(Deg(s.angle as f32))),
                     scale: s.scale / model2world.scale,
                 };
                 local.disp -= local.transform_vector(Vector3::from(mesh.offset));
@@ -333,8 +333,8 @@ impl<R: gfx::Resources> Render<R> {
     pub fn create_palette<F: gfx::Factory<R>>(data: &[[u8; 4]], factory: &mut F)
                           -> (gfx::handle::ShaderResourceView<R, [f32; 4]>, gfx::handle::Sampler<R>)
     {
-        use gfx::tex;
-        let (_, view) = factory.create_texture_const::<gfx::format::Rgba8>(tex::Kind::D1(0x100), &[data]).unwrap();
+        use gfx::texture as tex;
+        let (_, view) = factory.create_texture_immutable::<gfx::format::Rgba8>(tex::Kind::D1(0x100), &[data]).unwrap();
         let sampler = factory.create_sampler(tex::SamplerInfo::new(
             tex::FilterMethod::Bilinear, tex::WrapMode::Clamp));
         (view, sampler)
@@ -343,10 +343,10 @@ impl<R: gfx::Resources> Render<R> {
     pub fn create_color_table<F: gfx::Factory<R>>(factory: &mut F)
                               -> (gfx::handle::ShaderResourceView<R, [u32; 2]>, gfx::handle::Sampler<R>)
     {
-        use gfx::tex;
+        use gfx::texture as tex;
         type Format = (gfx::format::R8_G8, gfx::format::Uint);
         let kind = tex::Kind::D1(NUM_COLOR_IDS as tex::Size);
-        let (_, view) = factory.create_texture_const::<Format>(kind, &[&COLOR_TABLE]).unwrap();
+        let (_, view) = factory.create_texture_immutable::<Format>(kind, &[&COLOR_TABLE]).unwrap();
         let sampler = factory.create_sampler(tex::SamplerInfo::new(
             tex::FilterMethod::Scale, tex::WrapMode::Clamp));
         (view, sampler)

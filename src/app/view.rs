@@ -47,9 +47,10 @@ impl<R: gfx::Resources> ResourceView<R> {
             data: data,
             cam: super::Camera {
                 loc: cgmath::vec3(0.0, -120.0, 60.0),
-                rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Angle::turn_div_6()),
+                rot: cgmath::Rotation3::from_axis_angle::<cgmath::Rad<_>>(
+                    cgmath::Vector3::unit_x(), cgmath::Angle::turn_div_6()),
                 proj: cgmath::PerspectiveFov {
-                    fovy: cgmath::deg(45.0).into(),
+                    fovy: cgmath::Deg(45.0).into(),
                     aspect: settings.get_screen_aspect(),
                     near: 5.0,
                     far: 200.0,
@@ -73,7 +74,7 @@ impl<R: gfx::Resources> super::App<R> for ResourceView<R> {
     fn update<I: Iterator<Item=Event>, F: gfx::Factory<R>>(&mut self,
               events: I, delta: f32, factory: &mut F) -> bool {
         use glutin::VirtualKeyCode as Key;
-        let angle = cgmath::rad(delta * 2.0);
+        let angle = cgmath::Rad(delta * 2.0);
         for event in events {
             match event {
                 Event::KeyboardInput(_, _, Some(Key::Escape)) |

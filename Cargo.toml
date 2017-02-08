@@ -1,19 +1,19 @@
 [package]
 name = "road"
 version = "0.1.0"
-authors = ["dmalyshau"]
+authors = ["kvark"]
 
 [dependencies]
-byteorder = "0.5"
-cgmath = "0.10"
+byteorder = "1.0"
+cgmath = "0.12"
 env_logger = "0.3"
 getopts = "0.2"
-gfx = "0.12"
-gfx_window_glutin = "0.12"
-glutin = "0.6"
+gfx = "0.14"
+gfx_window_glutin = "0.14"
+glutin = "0.7"
 log = "0.3"
 progressive = "0.1"
-rust-ini = "0.9"
+rust-ini = "0.10"
 rustc-serialize = "0.3"
 time = "0.1"
 toml = "0.1"

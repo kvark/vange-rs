@@ -296,7 +296,7 @@ impl<R: gfx::Resources> Agent<R> {
                     (z_axis * (self.car.model.body.bbox.2 * common.impulse.rolling_scale))
                     .cross(w_vel);
                 let rot = cgmath::Quaternion::from_axis_angle(w_vel / w_mag.max(0.01),
-                    cgmath::Deg::new(w_mag * dt).into());
+                    cgmath::Rad::from(cgmath::Deg(w_mag * dt)));
                 self.transform.disp += self.transform.rot.rotate_vector(vs) * dt;
                 self.transform.rot = self.transform.rot * rot.invert();
                 v_vel = rot.rotate_vector(v_vel);
@@ -378,7 +378,7 @@ impl<R: gfx::Resources> Game<R> {
                 loc: cgmath::vec3(0.0, 0.0, 200.0),
                 rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
                 proj: cgmath::PerspectiveFov {
-                    fovy: cgmath::deg(45.0).into(),
+                    fovy: cgmath::Deg(45.0).into(),
                     aspect: settings.get_screen_aspect(),
                     near: 10.0,
                     far: 10000.0,
@@ -440,7 +440,7 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
         self.cam.follow(&self.agents[pid].transform, delta, &super::Follow {
             transform: cgmath::Decomposed {
                 disp: cgmath::vec3(0.0, -200.0, 100.0),
-                rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad::new(1.1)),
+                rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad(1.1)),
                 scale: 1.0,
             },
             speed: 4.0,
