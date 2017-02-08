@@ -181,7 +181,7 @@ impl RawMesh {
         let mut vertices = Vec::with_capacity(num_polygons as usize * 3);
         for i in 0 .. num_polygons {
             let num_corners = source.read_u32::<E>().unwrap();
-            assert_eq!(num_corners, 3);
+            assert!(num_corners == 3 || num_corners == 4);
             let _sort_info = source.read_u32::<E>().unwrap();
             let color = [source.read_u32::<E>().unwrap(), source.read_u32::<E>().unwrap()];
             let mut dummy = [0; 4];
@@ -247,6 +247,7 @@ impl RawMesh {
             }
         } else {
             for c in self.indices.chunks(3) {
+                // notice the winding order change
                 try!(writeln!(dest, "f {} {} {}", c[0]+1, c[1]+1, c[2]+1));
             }
         }
@@ -479,6 +480,38 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
 }
 
 pub fn convert_m3d(mut input: File, out_path: String) {
+    debug!("\tReading the body...");
     let body = RawMesh::load(&mut input, false);
-    body.save_obj(File::create(out_path + "/body.obj").unwrap()).unwrap();
+    body.save_obj(File::create(format!("{}/body.obj", out_path)).unwrap()).unwrap();
+    let _bounds = read_vec(&mut input);
+    let _max_radius = input.read_u32::<E>().unwrap();
+    let num_wheels = input.read_u32::<E>().unwrap();
+    let num_debris = input.read_u32::<E>().unwrap();
+    let _color = [input.read_u32::<E>().unwrap(), input.read_u32::<E>().unwrap()];
+
+    debug!("\tReading {} wheels...", num_wheels);
+    for i in 0 .. num_wheels {
+        let steer = input.read_u32::<E>().unwrap();
+        let _pos = [
+            input.read_f64::<E>().unwrap() as f32,
+            input.read_f64::<E>().unwrap() as f32,
+            input.read_f64::<E>().unwrap() as f32,
+        ];
+        let _width = input.read_u32::<E>().unwrap();
+        let _radius = input.read_u32::<E>().unwrap();
+        let _bound_index = input.read_u32::<E>().unwrap();
+        if steer != 0 {
+            let path = format!("{}/wheel{}.obj", out_path, i);
+            let wheel = RawMesh::load(&mut input, false);
+            wheel.save_obj(File::create(path).unwrap()).unwrap();
+        }
+    }
+
+    debug!("\tReading {} debris...", num_debris);
+    for i in 0 .. num_debris {
+        let path = format!("{}/debrie{}.obj", out_path, i);
+        let debrie = RawMesh::load(&mut input, false);
+        debrie.save_obj(File::create(path).unwrap()).unwrap();
+        let _shape = RawMesh::load(&mut input, false);
+    }
 }
