@@ -479,7 +479,7 @@ pub fn load_m3d<I, R, F>(source: &mut I, factory: &mut F) -> Model<R> where
     model
 }
 
-pub fn convert_m3d(mut input: File, out_path: String) {
+pub fn convert_m3d(mut input: File, out_path: &str) {
     debug!("\tReading the body...");
     let body = RawMesh::load(&mut input, false);
     body.save_obj(File::create(format!("{}/body.obj", out_path)).unwrap()).unwrap();

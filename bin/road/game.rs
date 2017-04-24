@@ -3,53 +3,15 @@ use cgmath;
 use cgmath::prelude::*;
 use glutin::Event;
 use gfx;
-use {config, level, model, render};
+use vangers::{config, level, model, render, space};
 
 
-#[derive(Eq, PartialEq)]
-enum Spirit {
-    Player,
-    //Computer,
-}
-
-use config::common::{Traction};
-const MAX_TRACTION: Traction = 4.0;
+const MAX_TRACTION: config::common::Traction = 4.0;
 
 #[derive(Debug)]
 struct AccelerationVectors {
     f: cgmath::Vector3<f32>, // linear
     k: cgmath::Vector3<f32>, // angular
-}
-
-struct Dynamo {
-    traction: Traction,
-    _steer: cgmath::Rad<f32>,
-    linear_velocity: cgmath::Vector3<f32>,
-    angular_velocity: cgmath::Vector3<f32>,
-}
-
-impl Dynamo {
-    fn change_traction(&mut self, delta: Traction) {
-        let old = self.traction;
-        self.traction = (old + delta).min(MAX_TRACTION).max(-MAX_TRACTION);
-        if old * self.traction < 0.0 {
-            self.traction = 0.0; // full stop
-        }
-    }
-}
-
-struct Control {
-    motor: i8,
-    brake: bool,
-    turbo: bool,
-}
-
-pub struct Agent<R: gfx::Resources> {
-    spirit: Spirit,
-    pub transform: super::Transform,
-    pub car: config::car::CarInfo<R>,
-    dynamo: Dynamo,
-    control: Control,
 }
 
 #[derive(Debug)]
@@ -93,11 +55,49 @@ impl Accumulator {
     }
 }
 
+#[derive(Eq, PartialEq)]
+enum Spirit {
+    Player,
+    //Computer,
+}
+
+struct Dynamo {
+    traction: config::common::Traction,
+    _steer: cgmath::Rad<f32>,
+    linear_velocity: cgmath::Vector3<f32>,
+    angular_velocity: cgmath::Vector3<f32>,
+}
+
+impl Dynamo {
+    fn change_traction(&mut self, delta: config::common::Traction) {
+        let old = self.traction;
+        self.traction = (old + delta).min(MAX_TRACTION).max(-MAX_TRACTION);
+        if old * self.traction < 0.0 {
+            self.traction = 0.0; // full stop
+        }
+    }
+}
+
+struct Control {
+    motor: i8,
+    brake: bool,
+    turbo: bool,
+}
+
+pub struct Agent<R: gfx::Resources> {
+    spirit: Spirit,
+    pub transform: space::Transform,
+    pub car: config::car::CarInfo<R>,
+    dynamo: Dynamo,
+    control: Control,
+}
+
+
 fn get_height(altitude: u8) -> f32 {
     altitude as f32 * (level::HEIGHT_SCALE as f32) / 256.0
 }
 
-fn collide_low(poly: &model::Polygon, samples: &[[i8; 3]], scale: f32, transform: &super::Transform,
+fn collide_low(poly: &model::Polygon, samples: &[[i8; 3]], scale: f32, transform: &space::Transform,
                level: &level::Level, terraconf: &config::common::Terrain) -> CollisionData
 {
     let (mut soft, mut hard) = (Accumulator::new(), Accumulator::new());
@@ -325,7 +325,7 @@ pub struct Game<R: gfx::Resources> {
     render: render::Render<R>,
     level: level::Level,
     agents: Vec<Agent<R>>,
-    cam: super::Camera,
+    cam: space::Camera,
 }
 
 impl<R: gfx::Resources> Game<R> {
@@ -374,7 +374,7 @@ impl<R: gfx::Resources> Game<R> {
             render: render::init(factory, out_color, out_depth, &level, &pal_data),
             level: level,
             agents: vec![agent],
-            cam: super::Camera {
+            cam: space::Camera {
                 loc: cgmath::vec3(0.0, 0.0, 200.0),
                 rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
                 proj: cgmath::PerspectiveFov {
@@ -394,9 +394,12 @@ impl<R: gfx::Resources> Game<R> {
     }
 }
 
-impl<R: gfx::Resources> super::App<R> for Game<R> {
-    fn update<I: Iterator<Item=Event>, F: gfx::Factory<R>>(&mut self,
-              events: I, delta: f32, factory: &mut F) -> bool {
+impl<R: gfx::Resources> Game<R> {
+    pub fn update<I, F>(&mut self, events: I, delta: f32, factory: &mut F)
+                        -> bool where
+        I: Iterator<Item = Event>,
+        F: gfx::Factory<R>,
+    {
         use glutin::VirtualKeyCode as Key;
         use glutin::ElementState::*;
 
@@ -437,7 +440,7 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
             }
         }
 
-        self.cam.follow(&self.agents[pid].transform, delta, &super::Follow {
+        self.cam.follow(&self.agents[pid].transform, delta, &space::Follow {
             transform: cgmath::Decomposed {
                 disp: cgmath::vec3(0.0, -200.0, 100.0),
                 rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad(1.1)),
@@ -454,7 +457,8 @@ impl<R: gfx::Resources> super::App<R> for Game<R> {
         true
     }
 
-    fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
-        self.render.draw_world(enc, &self.agents, &self.cam);
+    pub fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
+        let items = self.agents.iter().map(|a| (&a.car.model, &a.transform));
+        self.render.draw_world(enc, items, &self.cam);
     }
 }

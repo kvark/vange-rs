@@ -1,23 +1,22 @@
 use cgmath;
 use glutin::Event;
 use gfx;
-use {level, model, render};
-use config::{self, Settings};
+use vangers::{config, level, model, render, space};
 
 
 pub struct CarView<R: gfx::Resources> {
     model: model::Model<R>,
-    transform: super::Transform,
+    transform: space::Transform,
     pso: gfx::PipelineState<R, render::object::Meta>,
     psos_debug: [gfx::PipelineState<R, render::debug::Meta>; 2],
     physics: config::car::CarPhysics,
     data: render::object::Data<R>,
     data_debug: render::debug::Data<R>,
-    cam: super::Camera,
+    cam: space::Camera,
 }
 
 impl<R: gfx::Resources> CarView<R> {
-    pub fn new<F: gfx::Factory<R>>(settings: &Settings,
+    pub fn new<F: gfx::Factory<R>>(settings: &config::Settings,
                out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
                out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
                factory: &mut F) -> CarView<R>
@@ -67,7 +66,7 @@ impl<R: gfx::Resources> CarView<R> {
             physics: cinfo.physics.clone(),
             data: data,
             data_debug: data_debug,
-            cam: super::Camera {
+            cam: space::Camera {
                 loc: cgmath::vec3(0.0, -64.0, 32.0),
                 rot: cgmath::Rotation3::from_axis_angle::<cgmath::Rad<_>>(
                     cgmath::Vector3::unit_x(), cgmath::Angle::turn_div_6()),
@@ -92,9 +91,12 @@ impl<R: gfx::Resources> CarView<R> {
     }
 }
 
-impl<R: gfx::Resources> super::App<R> for CarView<R> {
-    fn update<I: Iterator<Item=Event>, F: gfx::Factory<R>>(&mut self,
-              events: I, delta: f32, factory: &mut F) -> bool {
+impl<R: gfx::Resources> CarView<R> {
+    pub fn update<I, F>(&mut self, events: I, delta: f32, factory: &mut F)
+                        -> bool where
+        I: Iterator<Item = Event>,
+        F: gfx::Factory<R>,
+    {
         use glutin::VirtualKeyCode as Key;
         let angle = cgmath::Rad(delta * 2.0);
         for event in events {
@@ -111,7 +113,7 @@ impl<R: gfx::Resources> super::App<R> for CarView<R> {
         true
     }
 
-    fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
+    pub fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
         enc.clear(&self.data.out_color, [0.1, 0.2, 0.3, 1.0]);
         enc.clear_depth(&self.data.out_depth, 1.0);
 

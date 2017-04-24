@@ -1,20 +1,40 @@
 [package]
-name = "road"
+name = "vangers"
 version = "0.1.0"
 authors = ["kvark"]
 
+[lib]
+
+[[bin]]
+name = "road"
+path = "bin/road/main.rs"
+
+[[bin]]
+name = "car"
+path = "bin/car/main.rs"
+
+[[bin]]
+name = "model"
+path = "bin/model/main.rs"
+
+[[bin]]
+name = "convert"
+path = "bin/convert.rs"
+
 [dependencies]
+# library
 byteorder = "1.0"
 cgmath = "0.13"
-env_logger = "0.4"
-getopts = "0.2"
 gfx = "0.15"
-gfx_window_glutin = "0.15"
-glutin = "0.7"
 log = "0.3"
 progressive = "0.1"
 rust-ini = "0.10"
 serde = "1.0"
 serde_derive = "1.0"
-time = "0.1"
 toml = "0.4"
+# binaries
+env_logger = "0.4"
+getopts = "0.2"
+gfx_window_glutin = "0.15"
+glutin = "0.7"
+time = "0.1"

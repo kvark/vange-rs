@@ -1,20 +1,19 @@
 use cgmath;
 use glutin::Event;
 use gfx;
-use {level, model, render};
-use config::Settings;
+use vangers::{config, level, model, render, space};
 
 
 pub struct ResourceView<R: gfx::Resources> {
     model: model::Model<R>,
-    transform: super::Transform,
+    transform: space::Transform,
     pso: gfx::PipelineState<R, render::object::Meta>,
     data: render::object::Data<R>,
-    cam: super::Camera,
+    cam: space::Camera,
 }
 
 impl<R: gfx::Resources> ResourceView<R> {
-    pub fn new<F: gfx::Factory<R>>(path: &str, settings: &Settings,
+    pub fn new<F: gfx::Factory<R>>(path: &str, settings: &config::settings::Settings,
                out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
                out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
                factory: &mut F) -> ResourceView<R>
@@ -45,7 +44,7 @@ impl<R: gfx::Resources> ResourceView<R> {
             },
             pso: render::Render::create_object_pso(factory),
             data: data,
-            cam: super::Camera {
+            cam: space::Camera {
                 loc: cgmath::vec3(0.0, -120.0, 60.0),
                 rot: cgmath::Rotation3::from_axis_angle::<cgmath::Rad<_>>(
                     cgmath::Vector3::unit_x(), cgmath::Angle::turn_div_6()),
@@ -70,9 +69,12 @@ impl<R: gfx::Resources> ResourceView<R> {
     }
 }
 
-impl<R: gfx::Resources> super::App<R> for ResourceView<R> {
-    fn update<I: Iterator<Item=Event>, F: gfx::Factory<R>>(&mut self,
-              events: I, delta: f32, factory: &mut F) -> bool {
+impl<R: gfx::Resources> ResourceView<R> {
+    pub fn update<I, F>(&mut self, events: I, delta: f32, factory: &mut F)
+                        -> bool where
+        I: Iterator<Item = Event>,
+        F: gfx::Factory<R>,
+    {
         use glutin::VirtualKeyCode as Key;
         let angle = cgmath::Rad(delta * 2.0);
         for event in events {
@@ -89,7 +91,7 @@ impl<R: gfx::Resources> super::App<R> for ResourceView<R> {
         true
     }
 
-    fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
+    pub fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
         enc.clear(&self.data.out_color, [0.1, 0.2, 0.3, 1.0]);
         enc.clear_depth(&self.data.out_depth, 1.0);
 

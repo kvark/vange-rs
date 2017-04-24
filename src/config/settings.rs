@@ -35,7 +35,14 @@ impl Settings {
         let mut string = String::new();
         File::open(path).unwrap()
             .read_to_string(&mut string).unwrap();
-        toml::from_str(&string).unwrap()
+        let set: Settings = toml::from_str(&string).unwrap();
+
+        if !set.check_path("options.dat") {
+            panic!("Can't find the resources of the original Vangers game at {}, {}",
+               set.data_path, "please check your `config/settings.xml`");
+        }
+
+        set
     }
 
     pub fn open(&self, path: &str) -> File {

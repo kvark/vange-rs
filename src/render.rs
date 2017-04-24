@@ -1,7 +1,7 @@
 use cgmath::{Decomposed, Matrix4};
 use gfx;
 use gfx::traits::FactoryExt;
-use app::{Agent, Camera, Transform as AppTransform};
+use space::{Camera, Transform};
 use {level, model};
 
 
@@ -225,7 +225,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
 
 impl<R: gfx::Resources> Render<R> {
     pub fn draw_mesh<C>(encoder: &mut gfx::Encoder<R, C>, mesh: &model::Mesh<R>,
-                     model2world: AppTransform, cam: &Camera,
+                     model2world: Transform, cam: &Camera,
                      pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>)
     where
         C: gfx::CommandBuffer<R>,
@@ -246,7 +246,7 @@ impl<R: gfx::Resources> Render<R> {
     }
 
     pub fn draw_model<C>(encoder: &mut gfx::Encoder<R, C>, model: &model::Model<R>,
-                      model2world: AppTransform, cam: &Camera,
+                      model2world: Transform, cam: &Camera,
                       pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>,
                       debug: Option<(&[gfx::PipelineState<R, debug::Meta>; 2], &mut debug::Data<R>, f32)>) where
         C: gfx::CommandBuffer<R>,
@@ -300,9 +300,10 @@ impl<R: gfx::Resources> Render<R> {
         }
     }
 
-    pub fn draw_world<C>(&mut self, encoder: &mut gfx::Encoder<R, C>,
-                      agents: &[Agent<R>], cam: &Camera) where
+    pub fn draw_world<'a, C, I>(&mut self, encoder: &mut gfx::Encoder<R, C>,
+                                iter: I, cam: &Camera) where
         C: gfx::CommandBuffer<R>,
+        I: Iterator<Item = (&'a model::Model<R>, &'a Transform)>,
     {
         // clear buffers
         encoder.clear(&self.terrain.data.out_color, [0.1,0.2,0.3,1.0]);
@@ -324,8 +325,8 @@ impl<R: gfx::Resources> Render<R> {
         }
         self.terrain.encode(encoder);
         // draw vehicle models
-        for ag in agents.iter() {
-            Render::draw_model(encoder, &ag.car.model, ag.transform, cam,
+        for (model, transform) in iter {
+            Render::draw_model(encoder, model, *transform, cam,
                 &self.object_pso, &mut self.object_data, None);
         }
     }
