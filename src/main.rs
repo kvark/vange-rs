@@ -9,7 +9,9 @@ extern crate glutin;
 #[macro_use]
 extern crate log;
 extern crate progressive;
-extern crate rustc_serialize;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 extern crate ini;
 extern crate time;
 extern crate toml;
@@ -34,6 +36,10 @@ fn main() {
 
     info!("Loading the settings");
     let settings = config::Settings::load("config/settings.toml");
+    if !settings.check_path("options.dat") {
+        panic!("Can't find the resources of the original Vangers game at {}, {}",
+               settings.data_path, "please check your `config/settings.xml`");
+    }
 
     info!("Creating the window with GL context");
     let builder = glutin::WindowBuilder::new()

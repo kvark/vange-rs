@@ -2,24 +2,24 @@ use std::fs::File;
 use level;
 
 
-#[derive(RustcDecodable)]
+#[derive(Deserialize)]
 pub struct Car {
     pub id: String,
     pub slots: Vec<String>,
 }
 
-#[derive(RustcDecodable)]
+#[derive(Deserialize)]
 pub struct Game {
     pub level: String,
 }
 
-#[derive(RustcDecodable)]
+#[derive(Deserialize)]
 pub struct Window {
     pub title: String,
     pub size: [u32; 2],
 }
 
-#[derive(RustcDecodable)]
+#[derive(Deserialize)]
 pub struct Settings {
     pub data_path: String,
     pub car: Car,
@@ -35,7 +35,7 @@ impl Settings {
         let mut string = String::new();
         File::open(path).unwrap()
             .read_to_string(&mut string).unwrap();
-        toml::decode_str(&string).unwrap()
+        toml::from_str(&string).unwrap()
     }
 
     pub fn open(&self, path: &str) -> File {

@@ -232,7 +232,7 @@ impl<R: gfx::Resources> Agent<R> {
                             if dot > 0.0 {
                                 let pulse = (calc_collision_matrix_inv(r1, &j_inv) * normal) *
                                     (-common.impulse.factors[0] * modulation * dot);
-                                println!("Collision speed {:?} pulse {:?}", v_vel, pulse);
+                                //println!("Collision speed {:?} pulse {:?}", v_vel, pulse);
                                 v_vel += pulse;
                                 w_vel += j_inv * r1.cross(pulse);
                             }
@@ -253,7 +253,7 @@ impl<R: gfx::Resources> Agent<R> {
                                 }
                                 let cmi = calc_collision_matrix_inv(r, &j_inv);
                                 let pulse = (cmi * u0) * (-common.impulse.factors[1] * modulation);
-                                println!("Collision momentum {:?}\n\tmatrix {:?}\n\tsample {:?}\n\tspeed {:?}\n\tpulse {:?}", u0, cmi, r, v_vel, pulse);
+                                //println!("Collision momentum {:?}\n\tmatrix {:?}\n\tsample {:?}\n\tspeed {:?}\n\tpulse {:?}", u0, cmi, r, v_vel, pulse);
                                 v_vel += pulse;
                                 w_vel += j_inv * r.cross(pulse);
                             }
