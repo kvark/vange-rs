@@ -89,6 +89,29 @@ pub struct Terrain {
     pub min_wall_delta: f32,
 }
 
+pub struct Mole {
+    pub k_elastic_mole: f32,
+    pub k_mole: f32,
+    pub k_mole_rudder: f32,
+    pub mole_emerging_fz: f32,
+    pub mole_submerging_fz: f32,
+}
+
+pub struct Contact {
+    pub k_elastic_wheel: f32,
+    pub k_elastic_spring: f32,
+    pub k_elastic_xy: f32,
+    pub k_elastic_db_coll: f32,
+    pub k_destroy_level: f32,
+    pub strong_ground_collision_threshold: f32,
+    pub strong_double_collision_threshold: f32,
+    pub k_friction_wheel_x: f32,
+    pub k_friction_wheel_x_back: f32,
+    pub k_friction_wheel_y: f32,
+    pub k_friction_wheel_z: f32,
+    pub k_friction_spring: f32,
+}
+
 pub struct Common {
     pub nature: Nature,
     pub impulse: Impulse,
@@ -97,6 +120,8 @@ pub struct Common {
     pub heli: Helicopter,
     pub drag: Drag,
     pub terrain: Terrain,
+    pub mole: Mole,
+    pub contact: Contact,
 }
 
 fn get_pair(reader: &mut Reader<File>, name: &str) -> VelocityPair {
@@ -199,6 +224,27 @@ pub fn load(file: File) -> Common {
         terrain: Terrain {
             dz_max: fi.next_key_value("dZ_max:"),
             min_wall_delta: fi.next_key_value("MIN_WALL_DELTA:"),
+        },
+        mole: Mole {
+            k_elastic_mole: fi.next_key_value("k_elastic_mole:"),
+            k_mole: fi.next_key_value("K_mole:"),
+            k_mole_rudder: fi.next_key_value("k_mole_rudder:"),
+            mole_emerging_fz: fi.next_key_value("mole_emerging_fz:"),
+            mole_submerging_fz: fi.next_key_value("mole_submerging_fz:"),
+        },
+        contact: Contact {
+            k_elastic_wheel: fi.next_key_value("k_elastic_wheel:"),
+            k_elastic_spring: fi.next_key_value("k_elastic_spring:"),
+            k_elastic_xy: fi.next_key_value("k_elastic_xy:"),
+            k_elastic_db_coll: fi.next_key_value("k_elastic_db_coll:"),
+            k_destroy_level: fi.next_key_value("k_destroy_level:"),
+            strong_ground_collision_threshold: fi.next_key_value("strong_ground_collision_threshould:"),
+            strong_double_collision_threshold: fi.next_key_value("strong_double_collision_threshould:"),
+            k_friction_wheel_x: fi.next_key_value("k_friction_wheel_x:"),
+            k_friction_wheel_x_back: fi.next_key_value("k_friction_wheel_x_back:"),
+            k_friction_wheel_y: fi.next_key_value("k_friction_wheel_y:"),
+            k_friction_wheel_z: fi.next_key_value("k_friction_wheel_z:"),
+            k_friction_spring: fi.next_key_value("k_friction_spring:"),
         },
     }
 }
