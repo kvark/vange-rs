@@ -18,7 +18,7 @@ const MATERIALS: [MaterialParams; NUM_MATERIALS] = [
     MaterialParams { dx: 5.0, sd: 1.25, jj: 0.5 },
 ];
 const SHADOW_DEPTH: usize = 0x180; // each 0x100 is 1 voxel/step
-const TEX_HEIGHT: i32 = 4096;
+const TEX_HEIGHT: i32 = 2048;
 pub const NUM_COLOR_IDS: u32 = 25;
 pub const COLOR_ID_BODY: u32 = 1;
 
@@ -169,7 +169,8 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
         }
     }
 
-    let num_layers = level.size.1/TEX_HEIGHT;
+    assert_eq!(level.size.1 % TEX_HEIGHT, 0);
+    let num_layers = level.size.1 / TEX_HEIGHT;
     let kind = tex::Kind::D2Array(level.size.0 as tex::Size, TEX_HEIGHT as tex::Size,
         num_layers as tex::Size, tex::AaMode::Single);
     let table_kind = tex::Kind::D2Array(0x200, 2, level::NUM_TERRAINS as tex::Size, tex::AaMode::Single);
