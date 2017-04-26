@@ -4,8 +4,10 @@ data_path = "/mnt/data/gog/Vangers/game"
 level = "weexow"
 
 [car]
-id = "IronShadow"
-slots = ["HeavyLaser", "LightMissile", "LightFireBall"]
+id = "OxidizeMonk"
+slots = []
+#id = "IronShadow"
+#slots = ["HeavyLaser", "LightMissile", "LightFireBall"]
 
 [window]
 title = "Rusty Road"
