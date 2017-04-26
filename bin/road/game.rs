@@ -171,7 +171,8 @@ impl<R: gfx::Resources> Agent<R> {
         let rot_inv = self.transform.rot.invert();
         debug!("\tdt {}, num {}", dt, common.nature.num_calls_analysis);
         let flood_level = level.flood_map[0] as f32;
-        let z_axis = self.transform.rot.rotate_vector(cgmath::Vector3::unit_z());
+        // Z axis in the local coordinate space
+        let z_axis = rot_inv.rotate_vector(cgmath::Vector3::unit_z());
         let mut v_vel = self.dynamo.linear_velocity;
         let mut w_vel = self.dynamo.angular_velocity;
         let j_inv = {
@@ -184,8 +185,8 @@ impl<R: gfx::Resources> Agent<R> {
         for _ in 0 .. common.nature.num_calls_analysis {
             let mut float_count = 0;
             let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
-            let stand_on_wheels = z_axis.z > 0.0 && self.transform.rot.rotate_vector(
-                cgmath::Vector3::unit_x()).z < 0.7;
+            let stand_on_wheels = z_axis.z > 0.0;
+            //TODO: && self.transform.rot.rotate_vector(cgmath::Vector3::unit_x()).z < 0.7;
             let modulation = 1.0;
             let mut hilow_diff = 0i32;
             let mut acc_cur = AccelerationVectors {
@@ -201,7 +202,6 @@ impl<R: gfx::Resources> Agent<R> {
                     common.global.speed_factor / self.car.physics.speed_factor;
                 v_vel.y *= (1.0 + speed).powf(config::common::SPEED_CORRECTION_FACTOR);
             }
-            let (v_old, w_old) = (v_vel, w_vel);
             let mut acc_springs = AccelerationVectors {
                 f: cgmath::Vector3::zero(),
                 k: cgmath::Vector3::zero(),
@@ -210,9 +210,9 @@ impl<R: gfx::Resources> Agent<R> {
             for (bound_poly_id, poly) in self.car.model.shape.polygons.iter().enumerate() {
                 let r = cgmath::Vector3::from(poly.middle) *
                     (self.transform.scale * self.car.physics.scale_bound);
-                let rglob = self.transform.transform_point(
-                    cgmath::Point3::from(poly.middle) * self.car.physics.scale_bound);
-                let vr = v_old + w_old.cross(r);
+                let rg0 = self.transform.rot.rotate_vector(r);
+                let rglob = rg0 + self.transform.disp;
+                let vr = v_vel + w_vel.cross(r);
                 let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
                 let texel = level.get((rglob.x as i32, rglob.y as i32));
                 if texel.low.1 == level::TerrainType::Water {
@@ -246,7 +246,7 @@ impl<R: gfx::Resources> Agent<R> {
                                 let n = cgmath::vec3(r1.x / bm[0], r1.y / bm[1], r1.z / bm[2]);
                                 n.normalize()
                             };
-                            let u0 = v_old + w_old.cross(r1);
+                            let u0 = v_vel + w_vel.cross(r1);
                             let dot = u0.dot(normal);
                             if dot > 0.0 {
                                 let pulse = (calc_collision_matrix_inv(r1, &j_inv) * normal) *
@@ -258,11 +258,10 @@ impl<R: gfx::Resources> Agent<R> {
                             hilow_diff += 1;
                         },
                         CollisionData{ soft: Some(ref cp), ..} => {
-                            let r1 = rot_inv.rotate_vector(cgmath::vec3(
-                                cp.pos.x - origin.x, cp.pos.y - origin.y,
-                                self.transform.rot.rotate_vector(r).z));
-                            let mut u0 = v_old + w_old.cross(r1);
-                            debug!("\t\tContact {:?} origin={:?}, u0 = {:?}", cp, origin, u0);
+                            let r1 = rot_inv.rotate_vector(cgmath::vec3(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z));
+                            //TODO: let r1 = rot_inv.rotate_vector(cp.pos - origin);
+                            let mut u0 = v_vel + w_vel.cross(r1);
+                            debug!("\t\tContact {:?}\n\t\t\torigin={:?}\n\t\t\tu0 = {:?}", cp, origin, u0);
                             if u0.dot(z_axis) < 0.0 {
                                 if stand_on_wheels { // ignore XY
                                     u0.x = 0.0;
@@ -273,7 +272,7 @@ impl<R: gfx::Resources> Agent<R> {
                                 }
                                 let cmi = calc_collision_matrix_inv(r, &j_inv);
                                 let pulse = (cmi * u0) * (-common.impulse.factors[1] * modulation);
-                                debug!("\t\tCollision momentum {:?}\n\tmatrix {:?}\n\tsample {:?}\n\tspeed {:?}\n\tpulse {:?}",
+                                debug!("\t\tCollision momentum {:?}\n\t\t\tmatrix {:?}\n\t\t\tsample {:?}\n\t\t\tspeed {:?}\n\t\t\tpulse {:?}",
                                     u0, cmi, r, v_vel, pulse);
                                 v_vel += pulse;
                                 w_vel += j_inv * r.cross(pulse);
@@ -287,8 +286,8 @@ impl<R: gfx::Resources> Agent<R> {
                         let df = df0.min(common.impulse.elastic_restriction);
                         debug!("\tbound[{}] dF.z = {}", bound_poly_id, df);
                         acc_springs.f.z += df;
-					    acc_springs.k.x -= rglob.y * df;
-					    acc_springs.k.y += rglob.x * df;
+					    acc_springs.k.x -= rg0.y * df;
+					    acc_springs.k.y += rg0.x * df;
                     }
                 }
             }
@@ -325,6 +324,10 @@ impl<R: gfx::Resources> Agent<R> {
             v_vel += acc_cur.f * dt;
             w_vel += (j_inv * acc_cur.k) * dt;
             debug!("\tresulting v={:?} w={:?}", v_vel, w_vel);
+            if spring_touch {
+                v_drag *= common.drag.spring.v;
+                w_drag *= common.drag.spring.w;
+            }
             let (v_mag, w_mag) = (v_vel.magnitude(), w_vel.magnitude());
             if stand_on_wheels && v_mag < common.drag.abs_min.v && w_mag < common.drag.abs_min.w {
                 v_drag *= common.drag.coll.v.powf(common.drag.abs_min.v / v_mag.max(0.001));
