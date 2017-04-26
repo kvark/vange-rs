@@ -106,13 +106,24 @@ fn collide_low(poly: &model::Polygon, samples: &[[i8; 3]], scale: f32, transform
         let pos = transform.transform_point(sp * scale).to_vec();
         let texel = level.get((pos.x as i32, pos.y as i32));
         let lo_alt = texel.low.0;
-        let altitude = match texel.high {
-            Some((delta, hi_alt, _))
-                if pos.z - get_height(lo_alt.saturating_add(delta)) > get_height(hi_alt) - pos.z
-                => hi_alt,
-            _ => lo_alt,
+        let height = match texel.high {
+            Some((delta, hi_alt, _)) => {
+                let middle = get_height(lo_alt.saturating_add(delta));
+                if pos.z > middle {
+                    let high = get_height(hi_alt);
+                    if pos.z - middle > high - pos.z {
+                        high
+                    } else {
+                        continue
+                    }
+                } else {
+                    get_height(lo_alt)
+                }
+            },
+            None => get_height(lo_alt),
         };
-        let dz = get_height(altitude) - pos.z;
+        let dz = height - pos.z;
+        debug!("\t\t\tSample h={:?} at {:?}, dz={}", height, pos, dz);
         if dz > terraconf.min_wall_delta {
             debug!("\t\t\tHard touch of {} at {:?}", dz, pos);
             hard.add(pos, dz);
@@ -158,10 +169,6 @@ impl<R: gfx::Resources> Agent<R> {
             k: cgmath::vec3(0.0, 0.0, 0.0),
         };
         let rot_inv = self.transform.rot.invert();
-        let mut acc_cur = AccelerationVectors {
-            f: rot_inv.rotate_vector(acc_global.f),
-            k: rot_inv.rotate_vector(acc_global.k),
-        };
         debug!("\tdt {}, num {}", dt, common.nature.num_calls_analysis);
         let flood_level = level.flood_map[0] as f32;
         let z_axis = self.transform.rot.rotate_vector(cgmath::Vector3::unit_z());
@@ -181,6 +188,10 @@ impl<R: gfx::Resources> Agent<R> {
                 cgmath::Vector3::unit_x()).z < 0.7;
             let modulation = 1.0;
             let mut hilow_diff = 0i32;
+            let mut acc_cur = AccelerationVectors {
+                f: rot_inv.rotate_vector(acc_global.f),
+                k: rot_inv.rotate_vector(acc_global.k),
+            };
 
             // apply drag
             let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(v_vel.magnitude());
@@ -211,10 +222,12 @@ impl<R: gfx::Resources> Agent<R> {
                         water_immersion += dz;
                     }
                 }
+                debug!("\tnormal[{}] = {:?}", bound_poly_id, poly.normal);
                 let poly_norm = cgmath::Vector3::from(poly.normal).normalize();
                 if z_axis.dot(poly_norm) < 0.0 {
                     let cdata = collide_low(poly, &self.car.model.shape.samples,
                         self.car.physics.scale_bound, &self.transform, level, &common.terrain);
+                    debug!("\tcollide_low[{}] = {:?}", bound_poly_id, cdata);
                     terrain_immersion += match cdata.soft {
                         Some(ref cp) => cp.depth.abs(),
                         None => 0.0,
@@ -272,6 +285,7 @@ impl<R: gfx::Resources> Agent<R> {
                     if let Some(ref cp) = cdata.soft {
                         let df0 = common.contact.k_elastic_spring * cp.depth * modulation;
                         let df = df0.min(common.impulse.elastic_restriction);
+                        debug!("\tbound[{}] dF.z = {}", bound_poly_id, df);
                         acc_springs.f.z += df;
 					    acc_springs.k.x -= rglob.y * df;
 					    acc_springs.k.y += rglob.x * df;
@@ -282,6 +296,7 @@ impl<R: gfx::Resources> Agent<R> {
             let wheels_touch = stand_on_wheels; //TODO
             let spring_touch = false;
             if wheels_touch || spring_touch {
+                debug!("\tsprings total {:?}", acc_springs.f);
                 acc_cur.f += rot_inv.rotate_vector(acc_springs.f);
                 acc_cur.k += rot_inv.rotate_vector(acc_springs.k);
             }
