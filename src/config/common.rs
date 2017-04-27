@@ -3,7 +3,7 @@ use config::text::Reader;
 
 
 pub const ORIGINAL_FPS: u8 = 14; //TODO: read from PRM
-pub const SPEED_CORRECTION_FACTOR: f32 = 0.5; // same here
+pub const SPEED_CORRECTION_FACTOR: f32 = 1.0; // it is in the config, but the original game uses a hard-coded 1.0
 
 pub type Traction = f32;
 pub struct VelocityPair {

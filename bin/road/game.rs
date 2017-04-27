@@ -156,6 +156,23 @@ fn calc_collision_matrix_inv(r: cgmath::Vector3<f32>, ji: &cgmath::Matrix3<f32>)
     cm.invert().unwrap()
 }
 
+fn quat_around_euler(vec: cgmath::Vector3<f32>, magnitude: f32, angle: f32) -> cgmath::Quaternion<f32> {
+    /*use std::f32;
+    let psi = vec.y.atan2(vec.x);
+    let tetta = if vec.z.abs() > magnitude - f32::EPSILON {
+        if vec.z >= 0.0 {
+            0.0
+        } else {
+            f32::consts::PI
+        }
+    } else {
+        (vec.z / magnitude).acos()
+    };
+    let euler = cgmath::Euler::new(cgmath::Rad(psi), cgmath::Rad(tetta), cgmath::Rad(angle));
+    euler.into()*/
+    cgmath::Quaternion::from_axis_angle(vec, cgmath::Rad(angle))
+}
+
 impl<R: gfx::Resources> Agent<R> {
     fn step(&mut self, dt: f32, level: &level::Level, common: &config::common::Common) {
         if self.control.motor != 0 {
@@ -182,13 +199,15 @@ impl<R: gfx::Resources> Agent<R> {
                 .invert().unwrap()
         };
 
-        for _ in 0 .. common.nature.num_calls_analysis {
+        let mut wheels_touch = 0u32;
+        let mut spring_touch;
+
+        /*for _ in 0 .. common.nature.num_calls_analysis*/ {
             let mut float_count = 0;
             let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
             let stand_on_wheels = z_axis.z > 0.0;
             //TODO: && self.transform.rot.rotate_vector(cgmath::Vector3::unit_x()).z < 0.7;
             let modulation = 1.0;
-            let mut hilow_diff = 0i32;
             let mut acc_cur = AccelerationVectors {
                 f: rot_inv.rotate_vector(acc_global.f),
                 k: rot_inv.rotate_vector(acc_global.k),
@@ -197,11 +216,14 @@ impl<R: gfx::Resources> Agent<R> {
             // apply drag
             let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(v_vel.magnitude());
             let mut w_drag = common.drag.free.w * common.drag.speed.w.powf(w_vel.magnitude2()); //why mag2?
-            if stand_on_wheels { //TODO: why `ln()`? //TODO: wheels_touch
+            if wheels_touch > 0 { //TODO: why `ln()`?
                 let speed = common.drag.wheel_speed.ln() * self.car.physics.mobility_factor *
                     common.global.speed_factor / self.car.physics.speed_factor;
                 v_vel.y *= (1.0 + speed).powf(config::common::SPEED_CORRECTION_FACTOR);
             }
+            wheels_touch = 0;
+            spring_touch = 0;
+            let mut down_minus_up = 0i32;
             let mut acc_springs = AccelerationVectors {
                 f: cgmath::Vector3::zero(),
                 k: cgmath::Vector3::zero(),
@@ -255,7 +277,6 @@ impl<R: gfx::Resources> Agent<R> {
                                 v_vel += pulse;
                                 w_vel += j_inv * r1.cross(pulse);
                             }
-                            hilow_diff += 1;
                         },
                         CollisionData{ soft: Some(ref cp), ..} => {
                             let r1 = rot_inv.rotate_vector(cgmath::vec3(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z));
@@ -277,7 +298,6 @@ impl<R: gfx::Resources> Agent<R> {
                                 v_vel += pulse;
                                 w_vel += j_inv * r.cross(pulse);
                             }
-                            hilow_diff += 1;
                         }
                         _ => (),
                     }*/
@@ -288,20 +308,27 @@ impl<R: gfx::Resources> Agent<R> {
                         acc_springs.f.z += df;
 					    acc_springs.k.x -= rg0.y * df;
 					    acc_springs.k.y += rg0.x * df;
+                        if stand_on_wheels {
+                            wheels_touch += 1;
+                        } else {
+                            spring_touch += 1;
+                        }
+                        down_minus_up += 1;
                     }
+                } else {
+                    //TODO: upper average
+                    // down_minus_up -= 1;
                 }
             }
 
-            let wheels_touch = stand_on_wheels; //TODO
-            let spring_touch = false;
-            if wheels_touch || spring_touch {
+            if wheels_touch + spring_touch != 0 {
                 debug!("\tsprings total {:?}", acc_springs.f);
                 acc_cur.f += rot_inv.rotate_vector(acc_springs.f);
                 acc_cur.k += rot_inv.rotate_vector(acc_springs.k);
             }
 
             let _ = (float_count, water_immersion, terrain_immersion); //TODO
-            if stand_on_wheels {
+            if wheels_touch != 0 && stand_on_wheels {
                 let f_traction_per_wheel =
                     self.car.physics.mobility_factor * common.global.mobility_factor *
                     if self.control.turbo { common.global.k_traction_turbo } else { 1.0 } *
@@ -316,15 +343,19 @@ impl<R: gfx::Resources> Agent<R> {
                     }
                 }
             }
-            if stand_on_wheels {
+            if spring_touch + wheels_touch != 0 {
                 acc_cur.k -= common.nature.gravity * z_axis.cross(cgmath::Vector3::new(0.0, 0.0, 
                     self.car.physics.z_offset_of_mass_center * self.transform.scale));
+                let vz = z_axis.dot(v_vel);
+                if vz < -10.0 {
+                    v_drag *= common.drag.z.powf(-vz);
+                }
             }
             debug!("\tcur acc {:?}, j_inv {:?}", acc_cur, j_inv);
             v_vel += acc_cur.f * dt;
             w_vel += (j_inv * acc_cur.k) * dt;
             debug!("\tresulting v={:?} w={:?}", v_vel, w_vel);
-            if spring_touch {
+            if spring_touch != 0 {
                 v_drag *= common.drag.spring.v;
                 w_drag *= common.drag.spring.w;
             }
@@ -334,15 +365,15 @@ impl<R: gfx::Resources> Agent<R> {
                 w_drag *= common.drag.coll.w.powf(common.drag.abs_min.w / w_mag.max(0.001));
             }
             if v_mag * v_drag > common.drag.abs_stop.v || w_mag * w_drag > common.drag.abs_stop.w {
-                let vs = v_vel - (hilow_diff.signum() as f32) *
+                let vs = v_vel - (down_minus_up.signum() as f32) *
                     (z_axis * (self.car.model.body.bbox.2 * common.impulse.rolling_scale))
                     .cross(w_vel);
-                let rot = cgmath::Quaternion::from_axis_angle(w_vel / w_mag.max(0.01),
-                    cgmath::Rad::from(cgmath::Deg(w_mag * dt)));
+                debug!("\tvs {:?}, disp {:?}", vs, self.transform.rot.rotate_vector(vs) * dt);
+                let rot_inv = quat_around_euler(w_vel, w_mag, -dt * w_mag).normalize();
                 self.transform.disp += self.transform.rot.rotate_vector(vs) * dt;
-                self.transform.rot = self.transform.rot * rot.invert();
-                v_vel = rot.rotate_vector(v_vel);
-                w_vel = rot.rotate_vector(v_vel);
+                self.transform.rot = rot_inv * self.transform.rot;
+                v_vel = rot_inv.rotate_vector(v_vel);
+                w_vel = rot_inv.rotate_vector(w_vel);
             }
             v_vel *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
             w_vel *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
@@ -484,7 +515,7 @@ impl<R: gfx::Resources> Game<R> {
 
         self.cam.follow(&self.agents[pid].transform, delta, &space::Follow {
             transform: cgmath::Decomposed {
-                disp: cgmath::vec3(0.0, -200.0, 100.0),
+                disp: cgmath::vec3(0.0, -400.0, 200.0),
                 rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad(1.1)),
                 scale: 1.0,
             },
@@ -492,7 +523,8 @@ impl<R: gfx::Resources> Game<R> {
         });
 
         for a in self.agents.iter_mut() {
-            let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
+            //let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
+            let dt = delta * 6.0;//TODO
             a.step(dt, &self.level, &self.db.common);
         }
 
