@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::f32::EPSILON;
 use cgmath;
 use cgmath::prelude::*;
 use glutin::Event;
@@ -156,23 +157,6 @@ fn calc_collision_matrix_inv(r: cgmath::Vector3<f32>, ji: &cgmath::Matrix3<f32>)
     cm.invert().unwrap()
 }
 
-fn quat_around_euler(vec: cgmath::Vector3<f32>, magnitude: f32, angle: f32) -> cgmath::Quaternion<f32> {
-    /*use std::f32;
-    let psi = vec.y.atan2(vec.x);
-    let tetta = if vec.z.abs() > magnitude - f32::EPSILON {
-        if vec.z >= 0.0 {
-            0.0
-        } else {
-            f32::consts::PI
-        }
-    } else {
-        (vec.z / magnitude).acos()
-    };
-    let euler = cgmath::Euler::new(cgmath::Rad(psi), cgmath::Rad(tetta), cgmath::Rad(angle));
-    euler.into()*/
-    cgmath::Quaternion::from_axis_angle(vec, cgmath::Rad(angle))
-}
-
 impl<R: gfx::Resources> Agent<R> {
     fn step(&mut self, dt: f32, level: &level::Level, common: &config::common::Common) {
         if self.control.motor != 0 {
@@ -186,7 +170,7 @@ impl<R: gfx::Resources> Agent<R> {
             k: cgmath::vec3(0.0, 0.0, 0.0),
         };
         let rot_inv = self.transform.rot.invert();
-        debug!("\tdt {}, num {}", dt, common.nature.num_calls_analysis);
+        debug!("dt {}, num {}", dt, common.nature.num_calls_analysis);
         let flood_level = level.flood_map[0] as f32;
         // Z axis in the local coordinate space
         let z_axis = rot_inv.rotate_vector(cgmath::Vector3::unit_z());
@@ -344,14 +328,15 @@ impl<R: gfx::Resources> Agent<R> {
                 }
             }
             if spring_touch + wheels_touch != 0 {
-                acc_cur.k -= common.nature.gravity * z_axis.cross(cgmath::Vector3::new(0.0, 0.0, 
-                    self.car.physics.z_offset_of_mass_center * self.transform.scale));
+                let tmp = cgmath::Vector3::new(0.0, 0.0,
+                    self.car.physics.z_offset_of_mass_center * self.transform.scale);
+                acc_cur.k -= common.nature.gravity * z_axis.cross(tmp);
                 let vz = z_axis.dot(v_vel);
                 if vz < -10.0 {
                     v_drag *= common.drag.z.powf(-vz);
                 }
             }
-            debug!("\tcur acc {:?}, j_inv {:?}", acc_cur, j_inv);
+            debug!("\tcur acc {:?}", acc_cur);
             v_vel += acc_cur.f * dt;
             w_vel += (j_inv * acc_cur.k) * dt;
             debug!("\tresulting v={:?} w={:?}", v_vel, w_vel);
@@ -361,19 +346,20 @@ impl<R: gfx::Resources> Agent<R> {
             }
             let (v_mag, w_mag) = (v_vel.magnitude(), w_vel.magnitude());
             if stand_on_wheels && v_mag < common.drag.abs_min.v && w_mag < common.drag.abs_min.w {
-                v_drag *= common.drag.coll.v.powf(common.drag.abs_min.v / v_mag.max(0.001));
-                w_drag *= common.drag.coll.w.powf(common.drag.abs_min.w / w_mag.max(0.001));
+                v_drag *= common.drag.coll.v.powf(common.drag.abs_min.v / (v_mag + EPSILON));
+                w_drag *= common.drag.coll.w.powf(common.drag.abs_min.w / (w_mag + EPSILON));
             }
             if v_mag * v_drag > common.drag.abs_stop.v || w_mag * w_drag > common.drag.abs_stop.w {
                 let vs = v_vel - (down_minus_up.signum() as f32) *
                     (z_axis * (self.car.model.body.bbox.2 * common.impulse.rolling_scale))
                     .cross(w_vel);
                 debug!("\tvs {:?}, disp {:?}", vs, self.transform.rot.rotate_vector(vs) * dt);
-                let rot_inv = quat_around_euler(w_vel, w_mag, -dt * w_mag).normalize();
+                let angle = cgmath::Rad(-dt * w_mag);
+                let vel_rot_inv = cgmath::Quaternion::from_axis_angle(w_vel / (w_mag + EPSILON), angle);
                 self.transform.disp += self.transform.rot.rotate_vector(vs) * dt;
-                self.transform.rot = rot_inv * self.transform.rot;
-                v_vel = rot_inv.rotate_vector(v_vel);
-                w_vel = rot_inv.rotate_vector(w_vel);
+                self.transform.rot = self.transform.rot * vel_rot_inv.invert();
+                v_vel = vel_rot_inv * v_vel;
+                w_vel = vel_rot_inv * w_vel;
             }
             v_vel *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
             w_vel *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
