@@ -10,6 +10,7 @@ extern crate serde;
 extern crate serde_derive;
 extern crate ini;
 extern crate toml;
+extern crate splay;
 
 //TODO: cleanup externs
 

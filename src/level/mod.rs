@@ -1,7 +1,5 @@
-mod splay;
-
+use splay::Splay;
 use byteorder::{LittleEndian as E, ReadBytesExt};
-use self::splay::Splay;
 
 pub const NUM_TERRAINS: usize = 8;
 

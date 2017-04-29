@@ -1,3 +1,5 @@
+extern crate byteorder;
+
 use std::io::Read;
 use byteorder::{LittleEndian as E, ReadBytesExt};
 

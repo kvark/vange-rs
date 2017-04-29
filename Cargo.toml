@@ -3,6 +3,11 @@ name = "vangers"
 version = "0.1.0"
 authors = ["kvark"]
 
+[workspace]
+members = [
+    "lib/splay",
+]
+
 [lib]
 
 [[bin]]
@@ -22,6 +27,8 @@ name = "convert"
 path = "bin/convert.rs"
 
 [dependencies]
+# internals
+splay = {path = "lib/splay"}
 # library
 byteorder = "1.0"
 cgmath = "0.13"
