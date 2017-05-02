@@ -80,7 +80,7 @@ impl<R: gfx::Resources> CarView<R> {
         }
     }
 
-    fn rotate(&mut self, angle: cgmath::Rad<f32>) {
+    fn rotate_z(&mut self, angle: cgmath::Rad<f32>) {
         use cgmath::Transform;
         let other = cgmath::Decomposed {
             scale: 1.0,
@@ -88,6 +88,16 @@ impl<R: gfx::Resources> CarView<R> {
             disp: cgmath::Zero::zero(),
         };
         self.transform = other.concat(&self.transform);
+    }
+
+    fn rotate_x(&mut self, angle: cgmath::Rad<f32>) {
+        use cgmath::Transform;
+        let other = cgmath::Decomposed {
+            scale: 1.0,
+            rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), angle),
+            disp: cgmath::Zero::zero(),
+        };
+        self.transform = self.transform.concat(&other);
     }
 }
 
@@ -97,15 +107,18 @@ impl<R: gfx::Resources> CarView<R> {
         I: Iterator<Item = Event>,
         F: gfx::Factory<R>,
     {
-        use glutin::VirtualKeyCode as Key;
+        use glutin::{VirtualKeyCode as Key};
+        use glutin::ElementState::Pressed;
         let angle = cgmath::Rad(delta * 2.0);
         for event in events {
             match event {
-                Event::KeyboardInput(_, _, Some(Key::Escape)) |
+                Event::KeyboardInput(Pressed, _, Some(Key::Escape)) |
                 Event::Closed => return false,
-                Event::KeyboardInput(_, _, Some(Key::A)) => self.rotate(-angle),
-                Event::KeyboardInput(_, _, Some(Key::D)) => self.rotate(angle),
-                Event::KeyboardInput(_, _, Some(Key::L)) =>
+                Event::KeyboardInput(Pressed, _, Some(Key::A)) => self.rotate_z(-angle),
+                Event::KeyboardInput(Pressed, _, Some(Key::D)) => self.rotate_z(angle),
+                Event::KeyboardInput(Pressed, _, Some(Key::W)) => self.rotate_x(-angle),
+                Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.rotate_x(angle),
+                Event::KeyboardInput(Pressed, _, Some(Key::L)) =>
                     self.pso = render::Render::create_object_pso(factory),
                 _ => {}, //TODO
             }
