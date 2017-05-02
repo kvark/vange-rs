@@ -18,7 +18,7 @@ const MATERIALS: [MaterialParams; NUM_MATERIALS] = [
     MaterialParams { dx: 5.0, sd: 1.25, jj: 0.5 },
 ];
 const SHADOW_DEPTH: usize = 0x180; // each 0x100 is 1 voxel/step
-const TEX_HEIGHT: i32 = 2048;
+const MAX_TEX_HEIGHT: i32 = 4096;
 pub const NUM_COLOR_IDS: u32 = 25;
 pub const COLOR_ID_BODY: u32 = 1;
 
@@ -169,13 +169,18 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
         }
     }
 
-    assert_eq!(level.size.1 % TEX_HEIGHT, 0);
-    let num_layers = level.size.1 / TEX_HEIGHT;
-    let kind = tex::Kind::D2Array(level.size.0 as tex::Size, TEX_HEIGHT as tex::Size,
+    let real_height = if level.size.1 >= MAX_TEX_HEIGHT {
+        assert_eq!(level.size.1 % MAX_TEX_HEIGHT, 0);
+        MAX_TEX_HEIGHT
+    } else {
+        level.size.1
+    };
+    let num_layers = level.size.1 / real_height;
+    let kind = tex::Kind::D2Array(level.size.0 as tex::Size, real_height as tex::Size,
         num_layers as tex::Size, tex::AaMode::Single);
     let table_kind = tex::Kind::D2Array(0x200, 2, level::NUM_TERRAINS as tex::Size, tex::AaMode::Single);
-    let height_chunks: Vec<_> = level.height.chunks((level.size.0 * TEX_HEIGHT) as usize).collect();
-    let meta_chunks: Vec<_> = level.meta.chunks((level.size.0 * TEX_HEIGHT) as usize).collect();
+    let height_chunks: Vec<_> = level.height.chunks((level.size.0 * real_height) as usize).collect();
+    let meta_chunks: Vec<_> = level.meta.chunks((level.size.0 * real_height) as usize).collect();
     let table_chunks: Vec<_> = color_table.iter().map(|t| &t[..]).collect();
     let (_, height) = factory.create_texture_immutable::<(format::R8, format::Unorm)>(kind, &height_chunks).unwrap();
     let (_, meta)   = factory.create_texture_immutable::<(format::R8, format::Uint)>(kind, &meta_chunks).unwrap();
@@ -211,7 +216,10 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             };
             gfx::Bundle::new(slice, pso, data)
         },
-        terrain_scale: [level.size.0 as f32, TEX_HEIGHT as f32, level::HEIGHT_SCALE as f32, num_layers as f32],
+        terrain_scale: [level.size.0 as f32,
+                        real_height as f32,
+                        level::HEIGHT_SCALE as f32,
+                        num_layers as f32],
         object_pso: Render::create_object_pso(factory),
         object_data: object::Data {
             vbuf: factory.create_vertex_buffer(&[]), //dummy

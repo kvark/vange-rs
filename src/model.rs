@@ -92,9 +92,9 @@ impl Tessellator {
         self.samples.clear();
         self.samples.push(middle);
         self.samples.extend(corners.iter().map(|dv| [
-            (dv.pos[0]/2 + middle[0]/2),
-            (dv.pos[1]/2 + middle[1]/2),
-            (dv.pos[2]/2 + middle[2]/2),
+            (dv.pos[0]/3*2 + middle[0]/3),
+            (dv.pos[1]/3*2 + middle[1]/3),
+            (dv.pos[2]/3*2 + middle[2]/3),
             ]));
         &self.samples
     }

@@ -1,4 +1,5 @@
 use std::fs::File;
+use ini::Ini;
 use level;
 
 
@@ -67,8 +68,10 @@ impl Settings {
         format!("{}/resource/m3d/mechous/{}.m3d", self.data_path, name)
     }
 
-    pub fn get_level(&self) -> level::LevelConfig {
-        use ini::Ini;
+    pub fn get_level(&self) -> Option<level::LevelConfig> {
+        if self.game.level.is_empty() {
+            return None
+        }
         let ini_path = format!("{}/thechain/{}/world.ini", self.data_path, self.game.level);
         let ini = Ini::load_from_file(&ini_path).unwrap();
         let global = &ini["Global Parameters"];
@@ -92,7 +95,7 @@ impl Settings {
             t.color_range.1 = val.parse().unwrap();
         }
         let biname = &storage["File Name"];
-        level::LevelConfig {
+        Some(level::LevelConfig {
             path_vpr: format!("{}/thechain/{}/{}.vpr", self.data_path, self.game.level, biname),
             path_vmc: format!("{}/thechain/{}/{}.vmc", self.data_path, self.game.level, biname),
             path_palette: format!("{}/thechain/{}/{}", self.data_path, self.game.level, storage["Palette File"]),
@@ -106,6 +109,6 @@ impl Settings {
             section: level::Power(global["Section Size Power"].parse().unwrap()),
             min_square: level::Power(global["Minimal Square Power"].parse().unwrap()),
             terrains: terrains,
-        }
+        })
     }
 }

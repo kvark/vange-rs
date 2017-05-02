@@ -218,6 +218,8 @@ impl<R: gfx::Resources> Agent<R> {
                     (self.transform.scale * self.car.physics.scale_bound);
                 let rg0 = self.transform.rot * r;
                 let rglob = rg0 + self.transform.disp;
+                debug!("poly[{}]: scale={}, mid={:?} r={:?}", bound_poly_id,
+                    self.transform.scale * self.car.physics.scale_bound, poly.middle, r);
                 let vr = v_vel + w_vel.cross(r);
                 let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
                 let texel = level.get((rglob.x as i32, rglob.y as i32));
@@ -288,7 +290,7 @@ impl<R: gfx::Resources> Agent<R> {
                     if let Some(ref cp) = cdata.soft {
                         let df0 = common.contact.k_elastic_spring * cp.depth * modulation;
                         let df = df0.min(common.impulse.elastic_restriction);
-                        debug!("\tbound[{}] dF.z = {}", bound_poly_id, df);
+                        debug!("\tbound[{}] dF.z = {}, rg0={:?}", bound_poly_id, df, rg0);
                         acc_springs.f.z += df;
 					    acc_springs.k.x -= rg0.y * df;
 					    acc_springs.k.y += rg0.x * df;
@@ -339,6 +341,7 @@ impl<R: gfx::Resources> Agent<R> {
             debug!("\tcur acc {:?}", acc_cur);
             v_vel += acc_cur.f * dt;
             w_vel += (j_inv * acc_cur.k) * dt;
+            //debug!("J_inv {:?}, handedness {}", j_inv.transpose(), j_inv.x.cross(j_inv.y).dot(j_inv.z));
             debug!("\tresulting v={:?} w={:?}", v_vel, w_vel);
             if spring_touch != 0 {
                 v_drag *= common.drag.spring.v;
@@ -353,7 +356,7 @@ impl<R: gfx::Resources> Agent<R> {
                 let vs = v_vel - (down_minus_up.signum() as f32) *
                     (z_axis * (self.car.model.body.bbox.2 * common.impulse.rolling_scale))
                     .cross(w_vel);
-                debug!("\tvs {:?}, disp {:?}", vs, (self.transform.rot * vs) * dt);
+                debug!("\tvs {:?}", vs);
                 let angle = cgmath::Rad(-dt * w_mag);
                 let vel_rot_inv = cgmath::Quaternion::from_axis_angle(w_vel / (w_mag + EPSILON), angle);
                 self.transform.disp += (self.transform.rot * vs) * dt;
@@ -365,6 +368,37 @@ impl<R: gfx::Resources> Agent<R> {
             v_vel *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
             w_vel *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
         }
+
+        /* dt 0.095507, num 5
+        resulting v=(0.212911,8.957590,9.813052) w=(-0.865242,0.182465,0.072018)
+        A_rot_inv=(0.999825, 0.006150, -0.017690, -0.007590, 0.996564, -0.082478, 0.017122, 0.082598, 0.996436)
+        A_l2g=(0.714473, -0.661982, -0.226515, -0.658047, -0.745775, 0.103892, 0.237704, -0.074829, 0.968451)
+        A_l2g_new=(0.714283, -0.646447, -0.268153, -0.664356, -0.746787, 0.030655, 0.220070, -0.156253, 0.962889)
+        W new = (-0.865242, 0.182465, 0.072018)
+        */
+        if false {
+            let w = cgmath::vec3(-0.865242,0.182465,0.072018);
+            let wmag = w.magnitude();
+            let a_l2g = cgmath::Matrix3::new(0.714473, -0.661982, -0.226515,
+                0.237704, -0.074829, 0.968451,
+                -0.658047, -0.745775, 0.103892)
+                .transpose();
+            let q_l2g = cgmath::Quaternion::from(a_l2g);
+            let angle = cgmath::Rad(-0.095507 * wmag);
+            let q_rot_inv = cgmath::Quaternion::from_axis_angle(w / (wmag + EPSILON), angle);
+            let wnew = q_rot_inv * w;
+            let q_l2g_new = q_l2g * q_rot_inv.invert();
+            println!("\twnew: {:?}\n\ta_rot_inv: {:?}\n\tq_l2g: {:?}\n\tq_l2g_new: {:?}", wnew,
+                cgmath::Matrix3::from(q_rot_inv).transpose(),
+                cgmath::Matrix3::from(q_l2g).transpose(),
+                cgmath::Matrix3::from(q_l2g_new).transpose());
+        }
+        /*
+        wnew: Vector3 [-0.865242, 0.182465, 0.072018]
+        a_rot_inv: Matrix3 [[0.9998246, 0.006150384, -0.017689865], [-0.007589605, 0.996564, -0.08247791], [0.01712181, 0.0825977, 0.9964359]]
+        q_l2g: Matrix3 [[0.7144726, -0.66198176, -0.22651473], [0.23770414, -0.07482864, 0.96845084], [-0.6580467, -0.74577504, 0.10389289]]
+        q_l2g_new: Matrix3 [[0.7142829, -0.6464473, -0.26815253], [0.22007042, -0.15625153, 0.9628885], [-0.664356, -0.7467872, 0.030656204]]
+        */
 
         self.dynamo.linear_velocity  = v_vel;
         self.dynamo.angular_velocity = w_vel;
@@ -403,8 +437,10 @@ impl<R: gfx::Resources> Game<R> {
                 _game: game,
             }
         };
-        let lev_config = settings.get_level();
-        let level = level::load(&lev_config);
+        let level = match settings.get_level() {
+            Some(lev_config) => level::load(&lev_config),
+            None => level::Level::new_test(),
+        };
         let pal_data = level::load_palette(&settings.get_object_palette_path());
         let car = db.cars[&settings.car.id].clone();
 

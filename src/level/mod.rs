@@ -62,16 +62,30 @@ pub struct Texel {
     pub high: Option<(Delta, Altitude, TerrainType)>,
 }
 
-fn get_terrain(meta: u8) -> TerrainType {
-    let tt = (meta >> DELTA_SHIFT) & (NUM_TERRAINS as u8 - 1);
-    match tt {
-        0 => TerrainType::Water,
-        _ => TerrainType::Main,
-    }
-}
-
 impl Level {
+    pub fn new_test() -> Level {
+        let tc = TerrainConfig {
+            shadow_offset: 0,
+            height_shift: 0,
+            color_range: (0, 1),
+        };
+        Level {
+            size: (2, 1),
+            flood_map: vec![0], //TODO
+            height: vec![0, 0],
+            meta: vec![0, 0],
+            palette: [[0xFF; 4]; 0x100],
+            terrains: [tc; NUM_TERRAINS],
+        }
+    }
+
     pub fn get(&self, mut coord: (i32, i32)) -> Texel {
+        fn get_terrain(meta: u8) -> TerrainType {
+            match (meta >> DELTA_SHIFT) & (NUM_TERRAINS as u8 - 1) {
+                0 => TerrainType::Water,
+                _ => TerrainType::Main,
+            }
+        }
         while coord.0 < 0 { coord.0 += self.size.0; }
         while coord.1 < 0 { coord.1 += self.size.1; }
         let i = ((coord.1 % self.size.1) * self.size.0 + (coord.0 % self.size.0)) as usize;
