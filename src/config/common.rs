@@ -6,6 +6,7 @@ pub const ORIGINAL_FPS: u8 = 14; //TODO: read from PRM
 pub const SPEED_CORRECTION_FACTOR: f32 = 1.0; // it is in the config, but the original game uses a hard-coded 1.0
 
 pub type Traction = f32;
+#[derive(Debug)]
 pub struct VelocityPair {
     pub v: f32, //linear
     pub w: f32, //angular

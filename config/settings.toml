@@ -1,7 +1,7 @@
 data_path = "/mnt/data/gog/Vangers/game"
 
 [game]
-level = ""
+level = "fostral"
 
 [car]
 id = "OxidizeMonk"

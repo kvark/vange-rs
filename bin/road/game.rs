@@ -139,7 +139,7 @@ fn collide_low(poly: &model::Polygon, samples: &[[i8; 3]], scale: f32, transform
     }
 }
 
-fn calc_collision_matrix_inv(r: cgmath::Vector3<f32>, ji: &cgmath::Matrix3<f32>) -> cgmath::Matrix3<f32> {
+fn _calc_collision_matrix_inv(r: cgmath::Vector3<f32>, ji: &cgmath::Matrix3<f32>) -> cgmath::Matrix3<f32> {
     let t3  = -r.z * ji[1][1] + r.y * ji[2][1];
     let t7  = -r.z * ji[1][2] + r.y * ji[2][2];
     let t12 = -r.z * ji[1][0] + r.y * ji[2][0];
@@ -218,10 +218,10 @@ impl<R: gfx::Resources> Agent<R> {
                     (self.transform.scale * self.car.physics.scale_bound);
                 let rg0 = self.transform.rot * r;
                 let rglob = rg0 + self.transform.disp;
-                debug!("poly[{}]: scale={}, mid={:?} r={:?}", bound_poly_id,
+                debug!("\t\tpoly[{}]: scale={}, mid={:?} r={:?}", bound_poly_id,
                     self.transform.scale * self.car.physics.scale_bound, poly.middle, r);
-                let vr = v_vel + w_vel.cross(r);
-                let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
+                //let vr = v_vel + w_vel.cross(r);
+                //let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
                 let texel = level.get((rglob.x as i32, rglob.y as i32));
                 if texel.low.1 == level::TerrainType::Water {
                     let dz = flood_level - rglob.z;
@@ -230,12 +230,12 @@ impl<R: gfx::Resources> Agent<R> {
                         water_immersion += dz;
                     }
                 }
-                debug!("\tnormal[{}] = {:?}", bound_poly_id, poly.normal);
+                debug!("\t\tnormal[{}] = {:?}", bound_poly_id, poly.normal);
                 let poly_norm = cgmath::Vector3::from(poly.normal).normalize();
                 if z_axis.dot(poly_norm) < 0.0 {
                     let cdata = collide_low(poly, &self.car.model.shape.samples,
                         self.car.physics.scale_bound, &self.transform, level, &common.terrain);
-                    debug!("\tcollide_low[{}] = {:?}", bound_poly_id, cdata);
+                    debug!("\t\tcollide_low = {:?}", cdata);
                     terrain_immersion += match cdata.soft {
                         Some(ref cp) => cp.depth.abs(),
                         None => 0.0,
@@ -244,8 +244,8 @@ impl<R: gfx::Resources> Agent<R> {
                         Some(ref cp) => cp.depth.abs(),
                         None => 0.0,
                     };
-                    let origin = self.transform.disp;
-                    /*match cdata {
+                    /*let origin = self.transform.disp;
+                    match cdata {
                         CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
                             let r1 = rot_inv * cgmath::vec3(
                                 cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0); // ignore vertical
@@ -290,10 +290,13 @@ impl<R: gfx::Resources> Agent<R> {
                     if let Some(ref cp) = cdata.soft {
                         let df0 = common.contact.k_elastic_spring * cp.depth * modulation;
                         let df = df0.min(common.impulse.elastic_restriction);
-                        debug!("\tbound[{}] dF.z = {}, rg0={:?}", bound_poly_id, df, rg0);
+                        debug!("\t\tbound[{}] dF.z = {}, rg0={:?}", bound_poly_id, df, rg0);
                         acc_springs.f.z += df;
-					    acc_springs.k.x -= rg0.y * df;
-					    acc_springs.k.y += rg0.x * df;
+					    acc_springs.k.x += rg0.y * df;
+					    acc_springs.k.y -= rg0.x * df;
+                        // let impulse = vec3(0, 0, df);
+                        // acc_springs.f += impulse;
+                        // acc_springs.k += rg0.cross(impulse);
                         if stand_on_wheels {
                             wheels_touch += 1;
                         } else {
@@ -356,15 +359,15 @@ impl<R: gfx::Resources> Agent<R> {
                 let vs = v_vel - (down_minus_up.signum() as f32) *
                     (z_axis * (self.car.model.body.bbox.2 * common.impulse.rolling_scale))
                     .cross(w_vel);
-                debug!("\tvs {:?}", vs);
                 let angle = cgmath::Rad(-dt * w_mag);
                 let vel_rot_inv = cgmath::Quaternion::from_axis_angle(w_vel / (w_mag + EPSILON), angle);
                 self.transform.disp += (self.transform.rot * vs) * dt;
                 self.transform.rot = self.transform.rot * vel_rot_inv.invert();
                 v_vel = vel_rot_inv * v_vel;
                 w_vel = vel_rot_inv * w_vel;
-                debug!("\ttransform {:?}", self.transform);
+                debug!("\tvs={:?} transform={:?}", vs, self.transform);
             }
+            debug!("\tdrag v={} w={}", v_drag, w_drag);
             v_vel *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
             w_vel *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
         }
@@ -443,12 +446,13 @@ impl<R: gfx::Resources> Game<R> {
         };
         let pal_data = level::load_palette(&settings.get_object_palette_path());
         let car = db.cars[&settings.car.id].clone();
+        let player_height = get_height(level.get((0, 0)).get_top()) + 5.; //center offset
 
         let agent = Agent {
             spirit: Spirit::Player,
             transform: cgmath::Decomposed {
                 scale: car.scale,
-                disp: cgmath::vec3(0.0, 0.0, 40.0),
+                disp: cgmath::vec3(0.0, 0.0, player_height),
                 rot: cgmath::One::one(),
             },
             car: car,
@@ -491,7 +495,7 @@ impl<R: gfx::Resources> Game<R> {
 }
 
 impl<R: gfx::Resources> Game<R> {
-    pub fn update<I, F>(&mut self, events: I, delta: f32, factory: &mut F)
+    pub fn update<I, F>(&mut self, events: I, _delta: f32, factory: &mut F)
                         -> bool where
         I: Iterator<Item = Event>,
         F: gfx::Factory<R>,
@@ -518,6 +522,7 @@ impl<R: gfx::Resources> Game<R> {
                 Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.agents[pid].control.motor = -1,
                 Event::KeyboardInput(Released, _, Some(Key::W)) | Event::KeyboardInput(Released, _, Some(Key::S)) =>
                     self.agents[pid].control.motor = 0,
+                Event::KeyboardInput(Pressed, _, Some(Key::R)) => self.agents[pid].transform.rot = cgmath::One::one(),
                 /*
                 Event::KeyboardInput(Pressed, _, Some(Key::A)) => self.dyn_target.steer = cgmath::Rad::new(-0.2),
                 Event::KeyboardInput(Pressed, _, Some(Key::D)) => self.dyn_target.steer = cgmath::Rad::new(0.2),
@@ -536,18 +541,23 @@ impl<R: gfx::Resources> Game<R> {
             }
         }
 
-        self.cam.follow(&self.agents[pid].transform, delta, &space::Follow {
+        /*self.cam.follow(&self.agents[pid].transform, delta, &space::Follow {
             transform: cgmath::Decomposed {
                 disp: cgmath::vec3(0.0, -400.0, 200.0),
                 rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad(1.1)),
                 scale: 1.0,
             },
             speed: 4.0,
+        });*/
+        self.cam.look_by(&self.agents[pid].transform, &space::Direction {
+            view: cgmath::vec3(0.0, 1.0, -3.0),
+            height: 200.0,
         });
 
         for a in self.agents.iter_mut() {
             //let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
-            let dt = delta * 6.0;//TODO
+            //let dt = delta * 6.0;//TODO
+            let dt = 0.093912; //TODO
             a.step(dt, &self.level, &self.db.common);
         }
 

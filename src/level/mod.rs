@@ -62,6 +62,15 @@ pub struct Texel {
     pub high: Option<(Delta, Altitude, TerrainType)>,
 }
 
+impl Texel {
+    pub fn get_top(&self) -> Altitude {
+        match self.high {
+            Some((_, alt, _)) => alt,
+            None => self.low.0,
+        }
+    }
+}
+
 impl Level {
     pub fn new_test() -> Level {
         let tc = TerrainConfig {
@@ -71,7 +80,7 @@ impl Level {
         };
         Level {
             size: (2, 1),
-            flood_map: vec![0], //TODO
+            flood_map: vec![0],
             height: vec![0, 0],
             meta: vec![0, 0],
             palette: [[0xFF; 4]; 0x100],
