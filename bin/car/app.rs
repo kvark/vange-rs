@@ -11,7 +11,6 @@ pub struct CarView<R: gfx::Resources> {
     debug_context: render::DebugContext<R>,
     physics: config::car::CarPhysics,
     data: render::object::Data<R>,
-    data_debug: render::debug::Data<R>,
     cam: space::Camera,
     rotation: (cgmath::Rad<f32>, cgmath::Rad<f32>),
 }
@@ -45,15 +44,6 @@ impl<R: gfx::Resources> CarView<R> {
             out_color: out_color.clone(),
             out_depth: out_depth.clone(),
         };
-        let data_debug = render::debug::Data {
-            vbuf: match model.shape.debug {
-                Some(model::DebugShape {ref bound_vb, ..}) => bound_vb.clone(),
-                None => unimplemented!(),
-            },
-            locals: factory.create_constant_buffer(1),
-            out_color: out_color,
-            out_depth: out_depth,
-        };
 
         CarView {
             model: model,
@@ -63,10 +53,9 @@ impl<R: gfx::Resources> CarView<R> {
                 rot: cgmath::One::one(),
             },
             pso: render::Render::create_object_pso(factory),
-            debug_context: render::Render::create_debug_contxt(factory),
+            debug_context: render::DebugContext::new(factory, out_color, out_depth),
             physics: cinfo.physics.clone(),
             data: data,
-            data_debug: data_debug,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, -64.0, 32.0),
                 rot: cgmath::Rotation3::from_axis_angle::<cgmath::Rad<_>>(
@@ -146,6 +135,6 @@ impl<R: gfx::Resources> CarView<R> {
 
         render::Render::draw_model(enc, &self.model,
             self.transform, &self.cam, &self.pso, &mut self.data,
-            Some((&self.debug_context, &mut self.data_debug, self.physics.scale_bound)));
+            Some((&mut self.debug_context, self.physics.scale_bound)));
     }
 }

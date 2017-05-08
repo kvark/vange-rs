@@ -578,7 +578,9 @@ impl<R: gfx::Resources> Game<R> {
     }
 
     pub fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
-        let items = self.agents.iter().map(|a| (&a.car.model, &a.transform));
+        let items = self.agents.iter().map(|a|
+            (&a.car.model, &a.transform, a.car.physics.scale_bound)
+        );
         self.render.draw_world(enc, items, &self.cam);
     }
 }

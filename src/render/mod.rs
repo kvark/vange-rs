@@ -4,6 +4,10 @@ use gfx::traits::FactoryExt;
 use space::{Camera, Transform};
 use {level, model};
 
+mod debug;
+
+pub use self::debug::{DebugContext, DebugVertex};
+
 
 struct MaterialParams {
     dx: f32,
@@ -49,37 +53,6 @@ const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
     [128, 4],   // skyfarmer pipetka
     [224, 4],   // rotten item
 ];
-
-const BLEND_FRONT: gfx::state::Blend = gfx::state::Blend {
-    color: gfx::state::BlendChannel {
-        equation: gfx::state::Equation::Add,
-        source: gfx::state::Factor::One,
-        destination: gfx::state::Factor::Zero,
-    },
-    alpha: gfx::state::BlendChannel {
-        equation: gfx::state::Equation::Add,
-        source: gfx::state::Factor::One,
-        destination: gfx::state::Factor::Zero,
-    },
-};
-
-const BLEND_BEHIND: gfx::state::Blend = gfx::state::Blend {
-    color: gfx::state::BlendChannel {
-        equation: gfx::state::Equation::Add,
-        source: gfx::state::Factor::ZeroPlus(gfx::state::BlendValue::DestColor),
-        destination: gfx::state::Factor::OneMinus(gfx::state::BlendValue::DestColor),
-    },
-    alpha: gfx::state::BlendChannel {
-        equation: gfx::state::Equation::Add,
-        source: gfx::state::Factor::ZeroPlus(gfx::state::BlendValue::DestAlpha),
-        destination: gfx::state::Factor::OneMinus(gfx::state::BlendValue::DestAlpha),
-    },
-};
-
-const DEPTH_BEHIND: gfx::state::Depth = gfx::state::Depth {
-    fun: gfx::state::Comparison::Greater,
-    write: false,
-};
 
 
 pub type ColorFormat = gfx::format::Rgba8;
@@ -129,22 +102,6 @@ gfx_defines!{
         out_color: gfx::RenderTarget<ColorFormat> = "Target0",
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
     }
-
-    vertex DebugVertex {
-        pos: [i8; 4] = "a_Pos",
-    }
-
-    constant DebugLocals {
-        m_mvp: [[f32; 4]; 4] = "u_ModelViewProj",
-        v_color: [f32; 4] = "u_Color",
-    }
-
-    pipeline debug {
-        vbuf: gfx::VertexBuffer<DebugVertex> = (),
-        locals: gfx::ConstantBuffer<DebugLocals> = "c_Locals",
-        out_color: gfx::BlendTarget<ColorFormat> = ("Target0", gfx::state::MASK_ALL, gfx::preset::blend::ALPHA),
-        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_TEST,
-    }
 }
 
 pub struct Render<R: gfx::Resources> {
@@ -152,15 +109,11 @@ pub struct Render<R: gfx::Resources> {
     terrain_scale: [f32; 4],
     object_pso: gfx::PipelineState<R, object::Meta>,
     object_data: object::Data<R>,
+    debug: Option<debug::DebugContext<R>>,
 }
 
-pub struct DebugContext<R: gfx::Resources> {
-    pso_line_front: gfx::PipelineState<R, debug::Meta>,
-    pso_line_behind: gfx::PipelineState<R, debug::Meta>,
-    pso_triangle: gfx::PipelineState<R, debug::Meta>,
-}
-
-fn read(name: &str) -> Vec<u8> {
+#[doc(hidden)]
+pub fn read_file(name: &str) -> Vec<u8> {
     use std::io::{BufReader, Read};
     use std::fs::File;
     let mut buf = Vec::new();
@@ -266,6 +219,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             out_color: main_color,
             out_depth: main_depth,
         },
+        debug: None,//DebugContext::new(factory),
     }
 }
 
@@ -293,8 +247,9 @@ impl<R: gfx::Resources> Render<R> {
 
     pub fn draw_model<C>(encoder: &mut gfx::Encoder<R, C>, model: &model::Model<R>,
                       model2world: Transform, cam: &Camera,
-                      pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>,
-                      debug: Option<(&DebugContext<R>, &mut debug::Data<R>, f32)>) where
+                      pso: &gfx::PipelineState<R, object::Meta>,
+                      data: &mut object::Data<R>,
+                      debug_context: Option<(&mut DebugContext<R>, f32)>) where
         C: gfx::CommandBuffer<R>,
     {
         use cgmath::{Deg, Quaternion, One, Rad, Rotation3, Transform, Vector3};
@@ -302,25 +257,12 @@ impl<R: gfx::Resources> Render<R> {
         // body
         Render::draw_mesh(encoder, &model.body, model2world, cam, pso, data);
         // debug render
-        if let Some((dcon, dd, dscale)) = debug {
-            if let Some(ref dshape) = model.shape.debug {
-                let mx_vp = cam.get_view_proj();
-                let mut transform = model2world;
-                transform.scale *= dscale;
-                let mut locals = DebugLocals {
-                    m_mvp: (mx_vp * Matrix4::from(transform)).into(),
-                    v_color: [0.0, 1.0, 0.0, 0.1],
-                };
-                dd.vbuf = dshape.bound_vb.clone();
-                encoder.update_constant_buffer(&dd.locals, &locals);
-                encoder.draw(&dshape.bound_slice, &dcon.pso_triangle, dd);
-                dd.vbuf = dshape.sample_vb.clone();
-                locals.v_color = [1.0, 0.0, 0.0, 0.5];
-                encoder.update_constant_buffer(&dd.locals, &locals);
-                let slice = gfx::Slice::new_match_vertex_buffer(&dshape.sample_vb);
-                encoder.draw(&slice, &dcon.pso_line_front, dd);
-                encoder.draw(&slice, &dcon.pso_line_behind, dd);
-            }
+        if let (Some((debug, scale)), Some(shape)) = (debug_context, model.shape.debug.as_ref()) {
+            let mx_vp = cam.get_view_proj();
+            let mut mx_shape = model2world;
+            mx_shape.scale *= scale;
+            let transform = mx_vp * Matrix4::from(mx_shape);
+            debug.draw(shape, transform, encoder);
         }
         // wheels
         for w in model.wheels.iter() {
@@ -351,7 +293,7 @@ impl<R: gfx::Resources> Render<R> {
     pub fn draw_world<'a, C, I>(&mut self, encoder: &mut gfx::Encoder<R, C>,
                                 iter: I, cam: &Camera) where
         C: gfx::CommandBuffer<R>,
-        I: Iterator<Item = (&'a model::Model<R>, &'a Transform)>,
+        I: Iterator<Item = (&'a model::Model<R>, &'a Transform, f32)>,
     {
         // clear buffers
         encoder.clear(&self.terrain.data.out_color, [0.1,0.2,0.3,1.0]);
@@ -373,9 +315,10 @@ impl<R: gfx::Resources> Render<R> {
         }
         self.terrain.encode(encoder);
         // draw vehicle models
-        for (model, transform) in iter {
+        for (model, transform, shape_scale) in iter {
             Render::draw_model(encoder, model, *transform, cam,
-                &self.object_pso, &mut self.object_data, None);
+                &self.object_pso, &mut self.object_data,
+                self.debug.as_mut().map(|d| (d, shape_scale)));
         }
     }
 
@@ -403,8 +346,8 @@ impl<R: gfx::Resources> Render<R> {
 
     fn create_terrain_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, terrain::Meta> {
         let program = factory.link_program(
-            &read("data/shader/terrain.vert"),
-            &read("data/shader/terrain.frag"),
+            &read_file("data/shader/terrain.vert"),
+            &read_file("data/shader/terrain.frag"),
             ).unwrap();
         factory.create_pipeline_from_program(
             &program, gfx::Primitive::TriangleList,
@@ -415,38 +358,13 @@ impl<R: gfx::Resources> Render<R> {
 
     pub fn create_object_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, object::Meta> {
         let program = factory.link_program(
-            &read("data/shader/object.vert"),
-            &read("data/shader/object.frag"),
+            &read_file("data/shader/object.vert"),
+            &read_file("data/shader/object.frag"),
             ).unwrap();
         let mut raster = gfx::state::Rasterizer::new_fill().with_cull_back();
         raster.front_face = gfx::state::FrontFace::Clockwise;
         factory.create_pipeline_from_program(
             &program, gfx::Primitive::TriangleList, raster, object::new()).unwrap()
-    }
-
-    pub fn create_debug_contxt<F: gfx::Factory<R>>(factory: &mut F) -> DebugContext<R> {
-        let program = factory.link_program(
-            &read("data/shader/debug.vert"),
-            &read("data/shader/debug.frag"),
-            ).unwrap();
-        let raster = gfx::state::Rasterizer::new_fill();
-        DebugContext {
-            pso_line_front: factory.create_pipeline_from_program(
-                &program, gfx::Primitive::LineList, raster, debug::Init {
-                    out_color: ("Target0", gfx::state::MASK_ALL, BLEND_FRONT),
-                    out_depth: gfx::preset::depth::LESS_EQUAL_WRITE,
-                    .. debug::new()
-                }).unwrap(),
-            pso_line_behind: factory.create_pipeline_from_program(
-                &program, gfx::Primitive::LineList, raster, debug::Init {
-                    out_color: ("Target0", gfx::state::MASK_ALL, BLEND_BEHIND),
-                    out_depth: DEPTH_BEHIND,
-                    .. debug::new()
-                }).unwrap(),
-            pso_triangle: factory.create_pipeline_from_program(
-                &program, gfx::Primitive::TriangleList, raster, debug::new()
-                ).unwrap(),
-        }
     }
 
     pub fn reload<F: gfx::Factory<R>>(&mut self, factory: &mut F) {

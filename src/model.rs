@@ -264,11 +264,11 @@ pub fn load_c3d<I, R, F>(source: &mut I, factory: &mut F) -> Mesh<R> where
     let raw = RawMesh::load(source, true);
 
     let (vbuf, slice) = if raw.indices.is_empty() {
-        factory.create_vertex_buffer_with_slice(&raw.vertices, ())    
+        factory.create_vertex_buffer_with_slice(&raw.vertices, ())
     } else {
         factory.create_vertex_buffer_with_slice(&raw.vertices, &raw.indices[..])
     };
-    
+
     debug!("\tGot {} GPU vertices...", raw.vertices.len());
     Mesh {
         slice: slice,
