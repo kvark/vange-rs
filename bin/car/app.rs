@@ -8,11 +8,12 @@ pub struct CarView<R: gfx::Resources> {
     model: model::Model<R>,
     transform: space::Transform,
     pso: gfx::PipelineState<R, render::object::Meta>,
-    psos_debug: [gfx::PipelineState<R, render::debug::Meta>; 2],
+    debug_context: render::DebugContext<R>,
     physics: config::car::CarPhysics,
     data: render::object::Data<R>,
     data_debug: render::debug::Data<R>,
     cam: space::Camera,
+    rotation: (cgmath::Rad<f32>, cgmath::Rad<f32>),
 }
 
 impl<R: gfx::Resources> CarView<R> {
@@ -62,7 +63,7 @@ impl<R: gfx::Resources> CarView<R> {
                 rot: cgmath::One::one(),
             },
             pso: render::Render::create_object_pso(factory),
-            psos_debug: render::Render::create_debug_psos(factory),
+            debug_context: render::Render::create_debug_contxt(factory),
             physics: cinfo.physics.clone(),
             data: data,
             data_debug: data_debug,
@@ -77,6 +78,7 @@ impl<R: gfx::Resources> CarView<R> {
                     far: 100.0,
                 },
             },
+            rotation: (cgmath::Rad(0.), cgmath::Rad(0.)),
         }
     }
 
@@ -108,20 +110,32 @@ impl<R: gfx::Resources> CarView<R> {
         F: gfx::Factory<R>,
     {
         use glutin::{VirtualKeyCode as Key};
-        use glutin::ElementState::Pressed;
-        let angle = cgmath::Rad(delta * 2.0);
+        use glutin::ElementState::*;
+        let angle = cgmath::Rad(2.0);
         for event in events {
             match event {
                 Event::KeyboardInput(Pressed, _, Some(Key::Escape)) |
                 Event::Closed => return false,
-                Event::KeyboardInput(Pressed, _, Some(Key::A)) => self.rotate_z(-angle),
-                Event::KeyboardInput(Pressed, _, Some(Key::D)) => self.rotate_z(angle),
-                Event::KeyboardInput(Pressed, _, Some(Key::W)) => self.rotate_x(-angle),
-                Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.rotate_x(angle),
+                Event::KeyboardInput(Pressed, _, Some(Key::A)) => self.rotation.0 = -angle,
+                Event::KeyboardInput(Pressed, _, Some(Key::D)) => self.rotation.0 = angle,
+                Event::KeyboardInput(Released, _, Some(Key::A)) |
+                Event::KeyboardInput(Released, _, Some(Key::D)) => self.rotation.0 = cgmath::Rad(0.),
+                Event::KeyboardInput(Pressed, _, Some(Key::W)) => self.rotation.1 = -angle,
+                Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.rotation.1 = angle,
+                Event::KeyboardInput(Released, _, Some(Key::W)) |
+                Event::KeyboardInput(Released, _, Some(Key::S)) => self.rotation.1 = cgmath::Rad(0.),
                 Event::KeyboardInput(Pressed, _, Some(Key::L)) =>
                     self.pso = render::Render::create_object_pso(factory),
                 _ => {}, //TODO
             }
+        }
+        if self.rotation.0 != cgmath::Rad(0.) {
+            let rot = self.rotation.0 * delta;
+            self.rotate_z(rot);
+        }
+        if self.rotation.1 != cgmath::Rad(0.) {
+            let rot = self.rotation.1 * delta;
+            self.rotate_x(rot);
         }
         true
     }
@@ -132,6 +146,6 @@ impl<R: gfx::Resources> CarView<R> {
 
         render::Render::draw_model(enc, &self.model,
             self.transform, &self.cam, &self.pso, &mut self.data,
-            Some((&self.psos_debug, &mut self.data_debug, self.physics.scale_bound)));
+            Some((&self.debug_context, &mut self.data_debug, self.physics.scale_bound)));
     }
 }

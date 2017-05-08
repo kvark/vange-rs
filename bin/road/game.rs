@@ -124,12 +124,12 @@ fn collide_low(poly: &model::Polygon, samples: &[[i8; 3]], scale: f32, transform
             None => get_height(lo_alt),
         };
         let dz = height - pos.z;
-        debug!("\t\t\tSample h={:?} at {:?}, dz={}", height, pos, dz);
+        //debug!("\t\t\tSample h={:?} at {:?}, dz={}", height, pos, dz);
         if dz > terraconf.min_wall_delta {
-            debug!("\t\t\tHard touch of {} at {:?}", dz, pos);
+            //debug!("\t\t\tHard touch of {} at {:?}", dz, pos);
             hard.add(pos, dz);
         } else if dz > 0.0 {
-            debug!("\t\t\tSoft touch of {} at {:?}", dz, pos);
+            //debug!("\t\t\tSoft touch of {} at {:?}", dz, pos);
             soft.add(pos, dz);
         }
     }
@@ -189,8 +189,8 @@ impl<R: gfx::Resources> Agent<R> {
         /*for _ in 0 .. common.nature.num_calls_analysis*/ {
             let mut float_count = 0;
             let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
-            let stand_on_wheels = z_axis.z > 0.0;
-            //TODO: && (self.transform.rot * cgmath::Vector3::unit_x()).z < 0.7;
+            let stand_on_wheels = z_axis.z > 0.0 &&
+                (self.transform.rot * cgmath::Vector3::unit_x()).z.abs() < 0.7;
             let modulation = 1.0;
             let mut acc_cur = AccelerationVectors {
                 f: rot_inv * acc_global.f,
@@ -213,13 +213,17 @@ impl<R: gfx::Resources> Agent<R> {
                 k: cgmath::Vector3::zero(),
             };
 
+            let mut sum_count = 0usize;
+            let mut sum_rg0 = cgmath::Vector3::zero();
+            let mut sum_df = 0.;
+
             for (bound_poly_id, poly) in self.car.model.shape.polygons.iter().enumerate() {
                 let r = cgmath::Vector3::from(poly.middle) *
                     (self.transform.scale * self.car.physics.scale_bound);
                 let rg0 = self.transform.rot * r;
                 let rglob = rg0 + self.transform.disp;
-                debug!("\t\tpoly[{}]: scale={}, mid={:?} r={:?}", bound_poly_id,
-                    self.transform.scale * self.car.physics.scale_bound, poly.middle, r);
+                debug!("\t\tpoly[{}]: normal={:?} scale={} mid={:?} r={:?}", bound_poly_id,
+                    poly.normal, self.transform.scale * self.car.physics.scale_bound, poly.middle, r);
                 //let vr = v_vel + w_vel.cross(r);
                 //let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
                 let texel = level.get((rglob.x as i32, rglob.y as i32));
@@ -230,7 +234,6 @@ impl<R: gfx::Resources> Agent<R> {
                         water_immersion += dz;
                     }
                 }
-                debug!("\t\tnormal[{}] = {:?}", bound_poly_id, poly.normal);
                 let poly_norm = cgmath::Vector3::from(poly.normal).normalize();
                 if z_axis.dot(poly_norm) < 0.0 {
                     let cdata = collide_low(poly, &self.car.model.shape.samples,
@@ -294,20 +297,29 @@ impl<R: gfx::Resources> Agent<R> {
                         acc_springs.f.z += df;
 					    acc_springs.k.x += rg0.y * df;
 					    acc_springs.k.y -= rg0.x * df;
-                        // let impulse = vec3(0, 0, df);
-                        // acc_springs.f += impulse;
-                        // acc_springs.k += rg0.cross(impulse);
+                        //let impulse = cgmath::vec3(0., 0., df);
+                        //acc_springs.f += impulse;
+                        //acc_springs.k += rg0.cross(impulse);
                         if stand_on_wheels {
                             wheels_touch += 1;
                         } else {
                             spring_touch += 1;
                         }
                         down_minus_up += 1;
+
+                        sum_count += 1;
+                        sum_rg0 += rg0;
+                        sum_df += df;
                     }
                 } else {
                     //TODO: upper average
                     // down_minus_up -= 1;
                 }
+            }
+
+            if sum_count != 0 {
+                let kf = 1.0 / sum_count as f32;
+                debug!("Avg df {} rg0 {:?}", sum_df * kf, sum_rg0 * kf);
             }
 
             if wheels_touch + spring_touch != 0 {
@@ -365,9 +377,10 @@ impl<R: gfx::Resources> Agent<R> {
                 self.transform.rot = self.transform.rot * vel_rot_inv.invert();
                 v_vel = vel_rot_inv * v_vel;
                 w_vel = vel_rot_inv * w_vel;
-                debug!("\tvs={:?} transform={:?}", vs, self.transform);
+                debug!("\tvs={:?} {:?}\n\t\tdisp {:?} scale {}", vs,
+                    self.transform.rot, self.transform.disp, self.transform.scale);
             }
-            debug!("\tdrag v={} w={}", v_drag, w_drag);
+            //debug!("\tdrag v={} w={}", v_drag, w_drag);
             v_vel *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
             w_vel *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
         }
