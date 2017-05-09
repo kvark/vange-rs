@@ -4,7 +4,7 @@ uniform c_Locals {
 	mat4 u_ModelViewProj;
 };
 
-in ivec4 a_Pos;
+in vec4 a_Pos;
 in vec4 a_Color;
 
 out vec4 v_Color;

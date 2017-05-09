@@ -92,9 +92,9 @@ impl Tessellator {
         self.samples.clear();
         self.samples.push(middle);
         self.samples.extend(corners.iter().map(|dv| [
-            (dv.pos[0]/3*2 + middle[0]/3),
-            (dv.pos[1]/3*2 + middle[1]/3),
-            (dv.pos[2]/3*2 + middle[2]/3),
+            ((dv.pos[0] as i8)/3*2 + middle[0]/3),
+            ((dv.pos[1] as i8)/3*2 + middle[1]/3),
+            ((dv.pos[2] as i8)/3*2 + middle[2]/3),
             ]));
         &self.samples
     }
@@ -310,10 +310,10 @@ pub fn load_c3d_shape<I, R, F>(source: &mut I, factory: Option<&mut F>) -> Shape
     let positions: Vec<_> = (0 .. num_positions).map(|_| {
         read_vec(source); //unknown
         let pos = [
-            source.read_i8().unwrap(),
-            source.read_i8().unwrap(),
-            source.read_i8().unwrap(),
-            1];
+            source.read_i8().unwrap() as f32,
+            source.read_i8().unwrap() as f32,
+            source.read_i8().unwrap() as f32,
+            1.0];
         let _sort_info = source.read_u32::<E>().unwrap();
         DebugPos {
             pos: pos,
@@ -364,14 +364,14 @@ pub fn load_c3d_shape<I, R, F>(source: &mut I, factory: Option<&mut F>) -> Shape
             }
             for s in samples.iter() {
                 samp.push(DebugPos {
-                    pos: [s[0], s[1], s[2], 1],
+                    pos: [s[0] as f32, s[1] as f32, s[2] as f32, 1.0],
                 });
                 let nlen = 16.0;
                 samp.push(DebugPos {pos: [
-                    s[0].saturating_add((normal[0] * nlen) as i8),
-                    s[1].saturating_add((normal[1] * nlen) as i8),
-                    s[2].saturating_add((normal[2] * nlen) as i8),
-                    1,
+                    s[0] as f32 + normal[0] * nlen,
+                    s[1] as f32 + normal[1] * nlen,
+                    s[2] as f32 + normal[2] * nlen,
+                    1.0,
                 ]});
             }
         }

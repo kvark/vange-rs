@@ -55,7 +55,7 @@ type Selector = (Visibility, ColorRate);
 
 gfx_defines! {
     vertex DebugPos {
-        pos: [i8; 4] = "a_Pos",
+        pos: [f32; 4] = "a_Pos",
     }
 
     vertex DebugColor {
@@ -95,10 +95,10 @@ impl LineBuffer {
 
     pub fn add(&mut self, from: [f32; 3], to: [f32; 3], c: u32) {
         self.vertices.push(DebugPos {
-            pos: [from[0] as i8, from[1] as i8, from[2] as i8, 1],
+            pos: [from[0], from[1], from[2], 1.0],
         });
         self.vertices.push(DebugPos {
-            pos: [to[0] as i8, to[1] as i8, to[2] as i8, 1],
+            pos: [to[0], to[1], to[2], 1.0],
         });
         let color = DebugColor {
             color: [((c>>24) & 0xFF) as f32 / 255.0,
