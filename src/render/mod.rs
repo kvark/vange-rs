@@ -6,7 +6,7 @@ use {level, model};
 
 mod debug;
 
-pub use self::debug::{DebugContext, DebugPos, LineBuffer};
+pub use self::debug::{DebugRender, DebugPos, LineBuffer};
 
 
 struct MaterialParams {
@@ -109,7 +109,7 @@ pub struct Render<R: gfx::Resources> {
     terrain_scale: [f32; 4],
     object_pso: gfx::PipelineState<R, object::Meta>,
     object_data: object::Data<R>,
-    debug: Option<debug::DebugContext<R>>,
+    pub debug: debug::DebugRender<R>,
 }
 
 #[doc(hidden)]
@@ -216,10 +216,10 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             locals: factory.create_constant_buffer(1),
             palette: Render::create_palette(&object_palette, factory),
             ctable: Render::create_color_table(factory),
-            out_color: main_color,
-            out_depth: main_depth,
+            out_color: main_color.clone(),
+            out_depth: main_depth.clone(),
         },
-        debug: None,//DebugContext::new(factory),
+        debug: DebugRender::new(factory, 512, main_color, main_depth),
     }
 }
 
@@ -249,7 +249,7 @@ impl<R: gfx::Resources> Render<R> {
                       model2world: Transform, cam: &Camera,
                       pso: &gfx::PipelineState<R, object::Meta>,
                       data: &mut object::Data<R>,
-                      debug_context: Option<(&mut DebugContext<R>, f32)>) where
+                      debug_context: Option<(&mut DebugRender<R>, f32)>) where
         C: gfx::CommandBuffer<R>,
     {
         use cgmath::{Deg, Quaternion, One, Rad, Rotation3, Transform, Vector3};
@@ -291,7 +291,7 @@ impl<R: gfx::Resources> Render<R> {
     }
 
     pub fn draw_world<'a, C, I>(&mut self, encoder: &mut gfx::Encoder<R, C>,
-                                iter: I, cam: &Camera) where
+                                iter: I, cam: &Camera, draw_debug: bool) where
         C: gfx::CommandBuffer<R>,
         I: Iterator<Item = (&'a model::Model<R>, &'a Transform, f32)>,
     {
@@ -318,7 +318,10 @@ impl<R: gfx::Resources> Render<R> {
         for (model, transform, shape_scale) in iter {
             Render::draw_model(encoder, model, *transform, cam,
                 &self.object_pso, &mut self.object_data,
-                self.debug.as_mut().map(|d| (d, shape_scale)));
+                if draw_debug {
+                    Some((&mut self.debug, shape_scale))
+                } else { None }
+            );
         }
     }
 

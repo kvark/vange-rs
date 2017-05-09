@@ -92,32 +92,54 @@ impl LineBuffer {
         self.vertices.clear();
         self.colors.clear();
     }
+
+    pub fn add(&mut self, from: [f32; 3], to: [f32; 3], c: u32) {
+        self.vertices.push(DebugPos {
+            pos: [from[0] as i8, from[1] as i8, from[2] as i8, 1],
+        });
+        self.vertices.push(DebugPos {
+            pos: [to[0] as i8, to[1] as i8, to[2] as i8, 1],
+        });
+        let color = DebugColor {
+            color: [((c>>24) & 0xFF) as f32 / 255.0,
+                    ((c>>16) & 0xFF) as f32 / 255.0,
+                    ((c>> 8) & 0xFF) as f32 / 255.0,
+                    (c & 0xFF) as f32 / 255.0],
+        };
+        self.colors.push(color);
+        self.colors.push(color);
+    }
 }
 
 
-pub struct DebugContext<R: gfx::Resources> {
-    buf_color: gfx::handle::Buffer<R, DebugColor>,
+pub struct DebugRender<R: gfx::Resources> {
+    max_vertices: usize,
+    buf_pos: gfx::handle::Buffer<R, DebugPos>,
+    buf_col: gfx::handle::Buffer<R, DebugColor>,
     data: debug::Data<R>,
     psos_line: HashMap<Selector, gfx::PipelineState<R, debug::Meta>>,
     pso_triangle: Option<gfx::PipelineState<R, debug::Meta>>,
 }
 
-impl<R: gfx::Resources> DebugContext<R> {
-    pub fn new<F: gfx::Factory<R>>(factory: &mut F,
+impl<R: gfx::Resources> DebugRender<R> {
+    pub fn new<F: gfx::Factory<R>>(factory: &mut F, max_vertices: usize,
                out_color: gfx::handle::RenderTargetView<R, ColorFormat>,
                out_depth: gfx::handle::DepthStencilView<R, DepthFormat>)
-               -> DebugContext<R>
+               -> Self
     {
         let data = debug::Data {
-            buf_pos: factory.create_vertex_buffer(&[]),
-            buf_col: factory.create_buffer(1, gfx::buffer::Role::Vertex,
+            buf_pos: factory.create_buffer(max_vertices, gfx::buffer::Role::Vertex,
+                gfx::memory::Usage::Dynamic, gfx::Bind::empty()).unwrap(),
+            buf_col: factory.create_buffer(max_vertices, gfx::buffer::Role::Vertex,
                 gfx::memory::Usage::Dynamic, gfx::Bind::empty()).unwrap(),
             locals: factory.create_constant_buffer(1),
             out_color: out_color,
             out_depth: out_depth,
         };
-        let mut result = DebugContext {
-            buf_color: data.buf_col.clone(),
+        let mut result = DebugRender {
+            max_vertices: max_vertices,
+            buf_pos: data.buf_pos.clone(),
+            buf_col: data.buf_col.clone(),
             data: data,
             psos_line: HashMap::new(),
             pso_triangle: None,
@@ -160,6 +182,25 @@ impl<R: gfx::Resources> DebugContext<R> {
         }
     }
 
+    fn draw_liner<C>(&mut self, buf: gfx::handle::Buffer<R, DebugPos>,
+                     num_verts: Option<usize>, encoder: &mut gfx::Encoder<R, C>) where
+        C: gfx::CommandBuffer<R>,
+    {
+        let (color_rate, slice) = match num_verts {
+            Some(num) => (ColorRate::Vertex, gfx::Slice {
+                end: num as gfx::VertexCount,
+                .. gfx::Slice::new_match_vertex_buffer(&buf)
+            }),
+            None => (ColorRate::Instance, gfx::Slice::new_match_vertex_buffer(&buf)),
+        };
+        self.data.buf_pos = buf;
+        for &vis in &[Visibility::Front, Visibility::Behind] {
+            if let Some(ref pso) = self.psos_line.get(&(vis, color_rate)) {
+                encoder.draw(&slice, pso, &self.data);
+            }
+        }
+    }
+
     pub fn draw_shape<C>(&mut self, shape: &model::DebugShape<R>,
                       transform: cgmath::Matrix4<f32>,
                       encoder: &mut gfx::Encoder<R, C>) where
@@ -171,21 +212,45 @@ impl<R: gfx::Resources> DebugContext<R> {
 
         if let Some(ref pso) = self.pso_triangle {
             self.data.buf_pos = shape.bound_vb.clone();
-            encoder.update_buffer(&self.buf_color, &[DebugColor {
+            encoder.update_buffer(&self.buf_col, &[DebugColor {
                 color: [0.0, 1.0, 0.0, 0.1],
             }], 0).unwrap();
             encoder.draw(&shape.bound_slice, pso, &self.data);
         }
 
-        self.data.buf_pos = shape.sample_vb.clone();
-        encoder.update_buffer(&self.buf_color, &[DebugColor {
+        encoder.update_buffer(&self.buf_col, &[DebugColor {
             color: [1.0, 0.0, 0.0, 0.5],
         }], 0).unwrap();
-        let slice = gfx::Slice::new_match_vertex_buffer(&shape.sample_vb);
-        for &vis in &[Visibility::Front, Visibility::Behind] {
-            if let Some(ref pso) = self.psos_line.get(&(vis, ColorRate::Instance)) {
-                encoder.draw(&slice, pso, &self.data);
+        self.draw_liner(shape.sample_vb.clone(), None, encoder);
+    }
+
+    pub fn draw_lines<C>(&mut self, linebuf: &LineBuffer,
+                      transform: cgmath::Matrix4<f32>,
+                      encoder: &mut gfx::Encoder<R, C>) where
+        C: gfx::CommandBuffer<R>,
+    {
+        let mut vertices = linebuf.vertices.as_slice();
+        let mut colors = linebuf.colors.as_slice();
+        if vertices.len() > self.max_vertices {
+            error!("Exceeded the maximum vertex capacity: {} > {}", vertices.len(), self.max_vertices);
+            vertices = &vertices[.. self.max_vertices];
+        }
+        if vertices.len() != colors.len() {
+            error!("Lengths of debug vertices {} != colors {}", vertices.len(), colors.len());
+            if vertices.len() > colors.len() {
+                vertices = &vertices[.. colors.len()];
+            } else {
+                colors = &colors[.. vertices.len()];
             }
         }
+
+        encoder.update_constant_buffer(&self.data.locals, &DebugLocals {
+            m_mvp: transform.into(),
+        });
+
+        encoder.update_buffer(&self.buf_pos, vertices, 0).unwrap();
+        encoder.update_buffer(&self.buf_col, colors, 0).unwrap();
+        let buf = self.buf_pos.clone();
+        self.draw_liner(buf, Some(vertices.len()), encoder);
     }
 }

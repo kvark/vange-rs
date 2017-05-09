@@ -8,7 +8,7 @@ pub struct CarView<R: gfx::Resources> {
     model: model::Model<R>,
     transform: space::Transform,
     pso: gfx::PipelineState<R, render::object::Meta>,
-    debug_context: render::DebugContext<R>,
+    debug_render: render::DebugRender<R>,
     physics: config::car::CarPhysics,
     data: render::object::Data<R>,
     cam: space::Camera,
@@ -53,7 +53,7 @@ impl<R: gfx::Resources> CarView<R> {
                 rot: cgmath::One::one(),
             },
             pso: render::Render::create_object_pso(factory),
-            debug_context: render::DebugContext::new(factory, out_color, out_depth),
+            debug_render: render::DebugRender::new(factory, 512, out_color, out_depth),
             physics: cinfo.physics.clone(),
             data: data,
             cam: space::Camera {
@@ -135,6 +135,6 @@ impl<R: gfx::Resources> CarView<R> {
 
         render::Render::draw_model(enc, &self.model,
             self.transform, &self.cam, &self.pso, &mut self.data,
-            Some((&mut self.debug_context, self.physics.scale_bound)));
+            Some((&mut self.debug_render, self.physics.scale_bound)));
     }
 }

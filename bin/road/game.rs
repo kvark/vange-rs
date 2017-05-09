@@ -158,7 +158,9 @@ fn _calc_collision_matrix_inv(r: cgmath::Vector3<f32>, ji: &cgmath::Matrix3<f32>
 }
 
 impl<R: gfx::Resources> Agent<R> {
-    fn step(&mut self, dt: f32, level: &level::Level, common: &config::common::Common) {
+    fn step(&mut self, dt: f32, level: &level::Level, common: &config::common::Common,
+            mut line_buffer: Option<&mut render::LineBuffer>)
+    {
         if self.control.motor != 0 {
             self.dynamo.change_traction(self.control.motor as f32 * dt * common.car.traction_incr);
         }
@@ -310,6 +312,12 @@ impl<R: gfx::Resources> Agent<R> {
                         sum_count += 1;
                         sum_rg0 += rg0;
                         sum_df += df;
+
+                        if let Some(ref mut lbuf) = line_buffer {
+                            lbuf.add(self.transform.disp.into(), rglob.into(), 0xFF00FF00);
+                            let up = rglob + cgmath::vec3(0.0, 0.0, df);
+                            lbuf.add(rglob.into(), up.into(), 0x00FF0000);
+                        }
                     }
                 } else {
                     //TODO: upper average
@@ -383,6 +391,18 @@ impl<R: gfx::Resources> Agent<R> {
             //debug!("\tdrag v={} w={}", v_drag, w_drag);
             v_vel *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
             w_vel *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
+
+            if let Some(ref mut lbuf) = line_buffer {
+                let xf = self.transform.disp + acc_cur.f;
+                let xk = self.transform.disp + acc_cur.k;
+                let p0 = self.transform.disp.into();
+                lbuf.add(p0, xf.into(), 0x0000FF00);
+                lbuf.add(p0, xk.into(), 0x00008000);
+                let xv = self.transform.disp + v_vel;
+                let xw = self.transform.disp + w_vel;
+                lbuf.add(p0, xv.into(), 0xFF000000);
+                lbuf.add(p0, xw.into(), 0x80000000);
+            }
         }
 
         /* dt 0.095507, num 5
@@ -433,6 +453,7 @@ struct DataBase<R: gfx::Resources> {
 pub struct Game<R: gfx::Resources> {
     db: DataBase<R>,
     render: render::Render<R>,
+    line_buffer: render::LineBuffer,
     level: level::Level,
     agents: Vec<Agent<R>>,
     cam: space::Camera,
@@ -485,6 +506,7 @@ impl<R: gfx::Resources> Game<R> {
         Game {
             db: db,
             render: render::init(factory, out_color, out_depth, &level, &pal_data),
+            line_buffer: render::LineBuffer::new(),
             level: level,
             agents: vec![agent],
             cam: space::Camera {
@@ -566,12 +588,13 @@ impl<R: gfx::Resources> Game<R> {
             view: cgmath::vec3(0.0, 1.0, -3.0),
             height: 200.0,
         });
+        self.line_buffer.clear();
 
         for a in self.agents.iter_mut() {
             //let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
             //let dt = delta * 6.0;//TODO
             let dt = 0.093912; //TODO
-            a.step(dt, &self.level, &self.db.common);
+            a.step(dt, &self.level, &self.db.common, Some(&mut self.line_buffer));
         }
 
         true
@@ -581,6 +604,7 @@ impl<R: gfx::Resources> Game<R> {
         let items = self.agents.iter().map(|a|
             (&a.car.model, &a.transform, a.car.physics.scale_bound)
         );
-        self.render.draw_world(enc, items, &self.cam);
+        self.render.draw_world(enc, items, &self.cam, false);
+        self.render.debug.draw_lines(&self.line_buffer, self.cam.get_view_proj().into(), enc);
     }
 }
