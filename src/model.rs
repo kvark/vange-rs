@@ -3,7 +3,7 @@ use std::fs::File;
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use gfx;
 use gfx::format::I8Norm;
-use render::{ObjectVertex, DebugVertex, NUM_COLOR_IDS, COLOR_ID_BODY};
+use render::{ObjectVertex, DebugPos, NUM_COLOR_IDS, COLOR_ID_BODY};
 
 
 const MAX_SLOTS: u32 = 3;
@@ -33,9 +33,9 @@ pub struct Polygon {
 
 #[derive(Clone, Debug)]
 pub struct DebugShape<R: gfx::Resources> {
-    pub bound_vb: gfx::handle::Buffer<R, DebugVertex>,
+    pub bound_vb: gfx::handle::Buffer<R, DebugPos>,
     pub bound_slice: gfx::Slice<R>,
-    pub sample_vb: gfx::handle::Buffer<R, DebugVertex>,
+    pub sample_vb: gfx::handle::Buffer<R, DebugPos>,
 }
 
 #[derive(Clone, Debug)]
@@ -88,7 +88,7 @@ impl Tessellator {
     fn new() -> Tessellator {
         Tessellator { samples: Vec::new() }
     }
-    fn tessellate(&mut self, corners: &[DebugVertex], middle: RawVertex) -> &[RawVertex] {
+    fn tessellate(&mut self, corners: &[DebugPos], middle: RawVertex) -> &[RawVertex] {
         self.samples.clear();
         self.samples.push(middle);
         self.samples.extend(corners.iter().map(|dv| [
@@ -315,7 +315,7 @@ pub fn load_c3d_shape<I, R, F>(source: &mut I, factory: Option<&mut F>) -> Shape
             source.read_i8().unwrap(),
             1];
         let _sort_info = source.read_u32::<E>().unwrap();
-        DebugVertex {
+        DebugPos {
             pos: pos,
         }
     }).collect();
@@ -363,11 +363,11 @@ pub fn load_c3d_shape<I, R, F>(source: &mut I, factory: Option<&mut F>) -> Shape
                 ind.push(pids[0]);
             }
             for s in samples.iter() {
-                samp.push(DebugVertex {
+                samp.push(DebugPos {
                     pos: [s[0], s[1], s[2], 1],
                 });
                 let nlen = 16.0;
-                samp.push(DebugVertex {pos: [
+                samp.push(DebugPos {pos: [
                     s[0].saturating_add((normal[0] * nlen) as i8),
                     s[1].saturating_add((normal[1] * nlen) as i8),
                     s[2].saturating_add((normal[2] * nlen) as i8),

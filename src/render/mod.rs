@@ -6,7 +6,7 @@ use {level, model};
 
 mod debug;
 
-pub use self::debug::{DebugContext, DebugVertex};
+pub use self::debug::{DebugContext, DebugPos, LineBuffer};
 
 
 struct MaterialParams {
@@ -262,7 +262,7 @@ impl<R: gfx::Resources> Render<R> {
             let mut mx_shape = model2world;
             mx_shape.scale *= scale;
             let transform = mx_vp * Matrix4::from(mx_shape);
-            debug.draw(shape, transform, encoder);
+            debug.draw_shape(shape, transform, encoder);
         }
         // wheels
         for w in model.wheels.iter() {
