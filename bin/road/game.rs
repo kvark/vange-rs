@@ -80,7 +80,7 @@ impl Dynamo {
 }
 
 struct Control {
-    motor: i8,
+    motor: f32,
     brake: bool,
     turbo: bool,
 }
@@ -161,8 +161,8 @@ impl<R: gfx::Resources> Agent<R> {
     fn step(&mut self, dt: f32, level: &level::Level, common: &config::common::Common,
             mut line_buffer: Option<&mut render::LineBuffer>)
     {
-        if self.control.motor != 0 {
-            self.dynamo.change_traction(self.control.motor as f32 * dt * common.car.traction_incr);
+        if self.control.motor != 0.0 {
+            self.dynamo.change_traction(self.control.motor * dt * common.car.traction_incr);
         }
         if self.control.brake && self.dynamo.traction != 0.0 {
             self.dynamo.traction *= (config::common::ORIGINAL_FPS as f32 * -dt).exp2();
@@ -457,6 +457,9 @@ pub struct Game<R: gfx::Resources> {
     level: level::Level,
     agents: Vec<Agent<R>>,
     cam: space::Camera,
+    spin_hor: f32,
+    spin_ver: f32,
+    is_paused: bool,
 }
 
 impl<R: gfx::Resources> Game<R> {
@@ -497,7 +500,7 @@ impl<R: gfx::Resources> Game<R> {
                 angular_velocity: cgmath::vec3(0.0, 0.0, 0.0),
             },
             control: Control {
-                motor: 0,
+                motor: 0.0,
                 brake: false,
                 turbo: false,
             },
@@ -519,6 +522,9 @@ impl<R: gfx::Resources> Game<R> {
                     far: 10000.0,
                 },
             },
+            spin_hor: 0.0,
+            spin_ver: 0.0,
+            is_paused: false,
         }
     }
 
@@ -530,7 +536,7 @@ impl<R: gfx::Resources> Game<R> {
 }
 
 impl<R: gfx::Resources> Game<R> {
-    pub fn update<I, F>(&mut self, events: I, _delta: f32, factory: &mut F)
+    pub fn update<I, F>(&mut self, events: I, delta: f32, factory: &mut F)
                         -> bool where
         I: Iterator<Item = Event>,
         F: gfx::Factory<R>,
@@ -547,23 +553,32 @@ impl<R: gfx::Resources> Game<R> {
                 Event::KeyboardInput(Pressed, _, Some(Key::Escape)) |
                 Event::Closed => return false,
                 Event::KeyboardInput(Pressed, _, Some(Key::L)) => self.render.reload(factory),
+                Event::KeyboardInput(Pressed, _, Some(Key::P)) => {
+                    let center = &self.agents[pid].transform;
+                    if self.is_paused {
+                        self.is_paused = false;
+                        self.cam.loc = center.disp + cgmath::vec3(0.0, 0.0, 200.0);
+                        self.cam.rot = cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0);
+                    } else {
+                        self.is_paused = true;
+                        self.cam.focus_on(center);
+                    }
+                },
                 /*
                 Event::KeyboardInput(_, _, Some(Key::R)) =>
                     self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
                 Event::KeyboardInput(_, _, Some(Key::F)) =>
                     self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), -angle),
                 */
-                Event::KeyboardInput(Pressed, _, Some(Key::W)) => self.agents[pid].control.motor = 1,
-                Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.agents[pid].control.motor = -1,
+                Event::KeyboardInput(Pressed, _, Some(Key::W)) => self.spin_ver = 1.0,
+                Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.spin_ver = -1.0,
                 Event::KeyboardInput(Released, _, Some(Key::W)) | Event::KeyboardInput(Released, _, Some(Key::S)) =>
-                    self.agents[pid].control.motor = 0,
+                    self.spin_ver = 0.0,
                 Event::KeyboardInput(Pressed, _, Some(Key::R)) => self.agents[pid].transform.rot = cgmath::One::one(),
-                /*
-                Event::KeyboardInput(Pressed, _, Some(Key::A)) => self.dyn_target.steer = cgmath::Rad::new(-0.2),
-                Event::KeyboardInput(Pressed, _, Some(Key::D)) => self.dyn_target.steer = cgmath::Rad::new(0.2),
+                Event::KeyboardInput(Pressed, _, Some(Key::A)) => self.spin_hor = -1.0,
+                Event::KeyboardInput(Pressed, _, Some(Key::D)) => self.spin_hor = 1.0,
                 Event::KeyboardInput(Released, _, Some(Key::A)) | Event::KeyboardInput(Released, _, Some(Key::D)) =>
-                    self.dyn_target.steer = cgmath::Rad::new(0.0),
-                */
+                    self.spin_hor = 0.0,
                 /*
                 Event::KeyboardInput(_, _, Some(Key::W)) => self.move_cam(step),
                 Event::KeyboardInput(_, _, Some(Key::S)) => self.move_cam(-step),
@@ -576,25 +591,26 @@ impl<R: gfx::Resources> Game<R> {
             }
         }
 
-        /*self.cam.follow(&self.agents[pid].transform, delta, &space::Follow {
-            transform: cgmath::Decomposed {
-                disp: cgmath::vec3(0.0, -400.0, 200.0),
-                rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad(1.1)),
-                scale: 1.0,
-            },
-            speed: 4.0,
-        });*/
-        self.cam.look_by(&self.agents[pid].transform, &space::Direction {
-            view: cgmath::vec3(0.0, 1.0, -3.0),
-            height: 200.0,
-        });
-        self.line_buffer.clear();
+        if self.is_paused {
+            self.cam.rotate_focus(&self.agents[pid].transform,
+                cgmath::Rad(2.0 * delta * self.spin_hor),
+                cgmath::Rad(delta * self.spin_ver));
+        } else {
+            //self.dyn_target.steer += cgmath::Rad(0.2 * delta * self.spin_hor);
+            self.agents[pid].control.motor = 1.0 * self.spin_ver;
 
-        for a in self.agents.iter_mut() {
-            //let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
-            //let dt = delta * 6.0;//TODO
-            let dt = 0.093912; //TODO
-            a.step(dt, &self.level, &self.db.common, Some(&mut self.line_buffer));
+            self.cam.look_by(&self.agents[pid].transform, &space::Direction {
+                view: cgmath::vec3(0.0, 1.0, -3.0),
+                height: 200.0,
+            });
+            self.line_buffer.clear();
+
+            for a in self.agents.iter_mut() {
+                //let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
+                //let dt = delta * 6.0;//TODO
+                let dt = 0.093912; //TODO
+                a.step(dt, &self.level, &self.db.common, Some(&mut self.line_buffer));
+            }
         }
 
         true
