@@ -52,12 +52,12 @@ fn main() {
         use gfx::Device;
         let events = window.poll_events();
         let delta = time::precise_time_s() as f32 - last_time;
-        
+
         if !app.update(events, delta, &mut factory) {
             break
         }
         app.draw(&mut encoder);
-        
+
         encoder.flush(&mut device);
         window.swap_buffers().unwrap();
         device.cleanup();

@@ -314,9 +314,9 @@ impl<R: gfx::Resources> Agent<R> {
                         sum_df += df;
 
                         if let Some(ref mut lbuf) = line_buffer {
-                            lbuf.add(self.transform.disp.into(), rglob.into(), 0xFF00FF00);
+                            lbuf.add(self.transform.disp.into(), rglob.into(), 0xFF000000);
                             let up = rglob + cgmath::vec3(0.0, 0.0, df);
-                            lbuf.add(rglob.into(), up.into(), 0x00FF0000);
+                            lbuf.add(rglob.into(), up.into(), 0xFFFF0000);
                         }
                     }
                 } else {
@@ -393,15 +393,15 @@ impl<R: gfx::Resources> Agent<R> {
             w_vel *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
 
             if let Some(ref mut lbuf) = line_buffer {
-                let xf = self.transform.disp + acc_cur.f;
-                let xk = self.transform.disp + acc_cur.k;
-                let p0 = self.transform.disp.into();
-                lbuf.add(p0, xf.into(), 0x0000FF00);
-                lbuf.add(p0, xk.into(), 0x00008000);
-                let xv = self.transform.disp + v_vel;
-                let xw = self.transform.disp + w_vel;
-                lbuf.add(p0, xv.into(), 0xFF000000);
-                lbuf.add(p0, xw.into(), 0x80000000);
+                let p0 = self.transform.disp + cgmath::vec3(0.0, 0.0, 10.0);
+                let xf = p0 + acc_cur.f;
+                let xk = p0 + acc_cur.k;
+                lbuf.add(p0.into(), xf.into(), 0x0000FF00);
+                lbuf.add(p0.into(), xk.into(), 0xFF00FF00);
+                let xv = p0 + v_vel;
+                let xw = p0 + w_vel;
+                lbuf.add(p0.into(), xv.into(), 0x00FF0000);
+                lbuf.add(p0.into(), xw.into(), 0x00FFFF00);
             }
         }
 
@@ -548,10 +548,12 @@ impl<R: gfx::Resources> Game<R> {
             Some(pos) => pos,
             None => return false,
         };
+        let mut tick = 0.0;
         for event in events {
             match event {
                 Event::KeyboardInput(Pressed, _, Some(Key::Escape)) |
                 Event::Closed => return false,
+                //Event::Resized(width, height) => self.render.resize(width, height),
                 Event::KeyboardInput(Pressed, _, Some(Key::L)) => self.render.reload(factory),
                 Event::KeyboardInput(Pressed, _, Some(Key::P)) => {
                     let center = &self.agents[pid].transform;
@@ -564,6 +566,8 @@ impl<R: gfx::Resources> Game<R> {
                         self.cam.focus_on(center);
                     }
                 },
+                Event::KeyboardInput(Pressed, _, Some(Key::Comma)) => tick = -1.0,
+                Event::KeyboardInput(Pressed, _, Some(Key::Period)) => tick = 1.0,
                 /*
                 Event::KeyboardInput(_, _, Some(Key::R)) =>
                     self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
@@ -591,8 +595,17 @@ impl<R: gfx::Resources> Game<R> {
             }
         }
 
+        //let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
+        //let dt = delta * 6.0;//TODO
+        let dt = 0.093912; //TODO
+
         if self.is_paused {
-            self.cam.rotate_focus(&self.agents[pid].transform,
+            let player = &mut self.agents[pid];
+            if tick != 0.0 {
+                self.line_buffer.clear();
+                player.step(tick * dt, &self.level, &self.db.common, Some(&mut self.line_buffer));
+            }
+            self.cam.rotate_focus(&player.transform,
                 cgmath::Rad(2.0 * delta * self.spin_hor),
                 cgmath::Rad(delta * self.spin_ver));
         } else {
@@ -606,9 +619,6 @@ impl<R: gfx::Resources> Game<R> {
             self.line_buffer.clear();
 
             for a in self.agents.iter_mut() {
-                //let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
-                //let dt = delta * 6.0;//TODO
-                let dt = 0.093912; //TODO
                 a.step(dt, &self.level, &self.db.common, Some(&mut self.line_buffer));
             }
         }

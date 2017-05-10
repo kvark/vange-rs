@@ -24,13 +24,13 @@ const BLEND_FRONT: gfx::state::Blend = gfx::state::Blend {
 const BLEND_BEHIND: gfx::state::Blend = gfx::state::Blend {
     color: gfx::state::BlendChannel {
         equation: gfx::state::Equation::Add,
-        source: gfx::state::Factor::ZeroPlus(gfx::state::BlendValue::DestColor),
-        destination: gfx::state::Factor::OneMinus(gfx::state::BlendValue::DestColor),
+        source: gfx::state::Factor::ZeroPlus(gfx::state::BlendValue::ConstAlpha),
+        destination: gfx::state::Factor::OneMinus(gfx::state::BlendValue::ConstAlpha),
     },
     alpha: gfx::state::BlendChannel {
         equation: gfx::state::Equation::Add,
-        source: gfx::state::Factor::ZeroPlus(gfx::state::BlendValue::DestAlpha),
-        destination: gfx::state::Factor::OneMinus(gfx::state::BlendValue::DestAlpha),
+        source: gfx::state::Factor::ZeroPlus(gfx::state::BlendValue::ConstAlpha),
+        destination: gfx::state::Factor::OneMinus(gfx::state::BlendValue::ConstAlpha),
     },
 };
 
@@ -72,6 +72,7 @@ gfx_defines! {
         locals: gfx::ConstantBuffer<DebugLocals> = "c_Locals",
         out_color: gfx::BlendTarget<ColorFormat> = ("Target0", gfx::state::MASK_ALL, gfx::preset::blend::ALPHA),
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_TEST,
+        blend_ref: gfx::BlendRef = (),
     }
 }
 
@@ -135,6 +136,7 @@ impl<R: gfx::Resources> DebugRender<R> {
             locals: factory.create_constant_buffer(1),
             out_color: out_color,
             out_depth: out_depth,
+            blend_ref: [0.0, 0.0, 0.0, 0.5],
         };
         let mut result = DebugRender {
             max_vertices: max_vertices,
