@@ -11,6 +11,13 @@ vi config/settings.toml # set the game path
 cargo run --release
 ```
 
+### Technonolgy
+
+The game uses [gfx-rs](https://github.com/gfx-rs/gfx) for graphics and [glutin](https://github.com/tomaka/glutin) for context creation.
+
+The level is drawn in a single full-screen draw call with a bit of ray tracing magic.
+
 ### Latest progress
+![alt text](etc/shots/Road11-pause.png "WIP physics debugging on pause")
 ![alt text](etc/shots/Road7-vehicle.png "WIP screenshot of the world")
 ![alt text](etc/shots/Road10-debug-shape.png "WIP screenshot of the model")
