@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::f32::EPSILON;
 use cgmath;
 use cgmath::prelude::*;
-use glutin::Event;
+use glutin::WindowEvent as Event;
 use gfx;
 use vangers::{config, level, model, render, space};
 
@@ -67,6 +67,17 @@ struct Dynamo {
     _steer: cgmath::Rad<f32>,
     linear_velocity: cgmath::Vector3<f32>,
     angular_velocity: cgmath::Vector3<f32>,
+}
+
+impl Default for Dynamo {
+    fn default() -> Dynamo {
+        Dynamo {
+            traction: 0.,
+            _steer: cgmath::Rad(0.),
+            linear_velocity: cgmath::Vector3::zero(),
+            angular_velocity: cgmath::Vector3::zero(),
+        }
+    }
 }
 
 impl Dynamo {
@@ -315,7 +326,7 @@ impl<R: gfx::Resources> Agent<R> {
 
                         if let Some(ref mut lbuf) = line_buffer {
                             lbuf.add(self.transform.disp.into(), rglob.into(), 0xFF000000);
-                            let up = rglob + cgmath::vec3(0.0, 0.0, df);
+                            let up = rglob + cgmath::vec3(0.0, 0.0, df0);
                             lbuf.add(rglob.into(), up.into(), 0xFFFF0000);
                         }
                     }
@@ -399,7 +410,7 @@ impl<R: gfx::Resources> Agent<R> {
                 lbuf.add(p0.into(), xf.into(), 0x0000FF00);
                 lbuf.add(p0.into(), xk.into(), 0xFF00FF00);
                 let xv = p0 + v_vel;
-                let xw = p0 + w_vel;
+                let xw = p0 + w_vel * 10.0; //TEMP
                 lbuf.add(p0.into(), xv.into(), 0x00FF0000);
                 lbuf.add(p0.into(), xw.into(), 0x00FFFF00);
             }
@@ -460,6 +471,7 @@ pub struct Game<R: gfx::Resources> {
     spin_hor: f32,
     spin_ver: f32,
     is_paused: bool,
+    tick: Option<f32>,
 }
 
 impl<R: gfx::Resources> Game<R> {
@@ -493,12 +505,7 @@ impl<R: gfx::Resources> Game<R> {
                 rot: cgmath::One::one(),
             },
             car: car,
-            dynamo: Dynamo {
-                traction: 0.0,
-                _steer: cgmath::Zero::zero(),
-                linear_velocity: cgmath::vec3(0.0, 0.0, 0.0),
-                angular_velocity: cgmath::vec3(0.0, 0.0, 0.0),
-            },
+            dynamo: Dynamo::default(),
             control: Control {
                 motor: 0.0,
                 brake: false,
@@ -525,6 +532,7 @@ impl<R: gfx::Resources> Game<R> {
             spin_hor: 0.0,
             spin_ver: 0.0,
             is_paused: false,
+            tick: None,
         }
     }
 
@@ -536,72 +544,79 @@ impl<R: gfx::Resources> Game<R> {
 }
 
 impl<R: gfx::Resources> Game<R> {
-    pub fn update<I, F>(&mut self, events: I, delta: f32, factory: &mut F)
-                        -> bool where
-        I: Iterator<Item = Event>,
-        F: gfx::Factory<R>,
+    pub fn react<F>(&mut self, event: Event, factory: &mut F)
+                 -> bool where F: gfx::Factory<R>
     {
         use glutin::VirtualKeyCode as Key;
         use glutin::ElementState::*;
 
-        let pid = match self.agents.iter().position(|a| a.spirit == Spirit::Player) {
-            Some(pos) => pos,
+        let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
+            Some(agent) => agent,
             None => return false,
         };
-        let mut tick = 0.0;
-        for event in events {
-            match event {
-                Event::KeyboardInput(Pressed, _, Some(Key::Escape)) |
-                Event::Closed => return false,
-                //Event::Resized(width, height) => self.render.resize(width, height),
-                Event::KeyboardInput(Pressed, _, Some(Key::L)) => self.render.reload(factory),
-                Event::KeyboardInput(Pressed, _, Some(Key::P)) => {
-                    let center = &self.agents[pid].transform;
-                    if self.is_paused {
-                        self.is_paused = false;
-                        self.cam.loc = center.disp + cgmath::vec3(0.0, 0.0, 200.0);
-                        self.cam.rot = cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0);
-                    } else {
-                        self.is_paused = true;
-                        self.cam.focus_on(center);
-                    }
-                },
-                Event::KeyboardInput(Pressed, _, Some(Key::Comma)) => tick = -1.0,
-                Event::KeyboardInput(Pressed, _, Some(Key::Period)) => tick = 1.0,
-                /*
-                Event::KeyboardInput(_, _, Some(Key::R)) =>
-                    self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
-                Event::KeyboardInput(_, _, Some(Key::F)) =>
-                    self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), -angle),
-                */
-                Event::KeyboardInput(Pressed, _, Some(Key::W)) => self.spin_ver = 1.0,
-                Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.spin_ver = -1.0,
-                Event::KeyboardInput(Released, _, Some(Key::W)) | Event::KeyboardInput(Released, _, Some(Key::S)) =>
-                    self.spin_ver = 0.0,
-                Event::KeyboardInput(Pressed, _, Some(Key::R)) => self.agents[pid].transform.rot = cgmath::One::one(),
-                Event::KeyboardInput(Pressed, _, Some(Key::A)) => self.spin_hor = -1.0,
-                Event::KeyboardInput(Pressed, _, Some(Key::D)) => self.spin_hor = 1.0,
-                Event::KeyboardInput(Released, _, Some(Key::A)) | Event::KeyboardInput(Released, _, Some(Key::D)) =>
-                    self.spin_hor = 0.0,
-                /*
-                Event::KeyboardInput(_, _, Some(Key::W)) => self.move_cam(step),
-                Event::KeyboardInput(_, _, Some(Key::S)) => self.move_cam(-step),
-                Event::KeyboardInput(_, _, Some(Key::A)) =>
-                    self.cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), angle) * self.cam.rot,
-                Event::KeyboardInput(_, _, Some(Key::D)) =>
-                    self.cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), -angle) * self.cam.rot,
-                */
-                _ => {},
-            }
+        match event {
+            Event::KeyboardInput(Pressed, _, Some(Key::Escape), _) |
+            Event::Closed => return false,
+            //Event::Resized(width, height) => self.render.resize(width, height),
+            Event::KeyboardInput(Pressed, _, Some(Key::L), _) => self.render.reload(factory),
+            Event::KeyboardInput(Pressed, _, Some(Key::P), _) => {
+                let center = &player.transform;
+                self.tick = None;
+                if self.is_paused {
+                    self.is_paused = false;
+                    self.cam.loc = center.disp + cgmath::vec3(0.0, 0.0, 200.0);
+                    self.cam.rot = cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0);
+                } else {
+                    self.is_paused = true;
+                    self.cam.focus_on(center);
+                }
+            },
+            Event::KeyboardInput(Pressed, _, Some(Key::Comma), _) => self.tick = Some(-1.0),
+            Event::KeyboardInput(Pressed, _, Some(Key::Period), _) => self.tick = Some(1.0),
+            /*
+            Event::KeyboardInput(_, _, Some(Key::R)) =>
+                self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
+            Event::KeyboardInput(_, _, Some(Key::F)) =>
+                self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), -angle),
+            */
+            Event::KeyboardInput(Pressed, _, Some(Key::W), _) => self.spin_ver = 1.0,
+            Event::KeyboardInput(Pressed, _, Some(Key::S), _) => self.spin_ver = -1.0,
+            Event::KeyboardInput(Released, _, Some(Key::W), _) |
+            Event::KeyboardInput(Released, _, Some(Key::S), _) =>
+                self.spin_ver = 0.0,
+            Event::KeyboardInput(Pressed, _, Some(Key::R), _) => {
+                player.transform.rot = cgmath::One::one();
+                player.dynamo.linear_velocity = cgmath::Vector3::zero();
+                player.dynamo.angular_velocity = cgmath::Vector3::zero();
+            },
+            Event::KeyboardInput(Pressed, _, Some(Key::A), _) => self.spin_hor = -1.0,
+            Event::KeyboardInput(Pressed, _, Some(Key::D), _) => self.spin_hor = 1.0,
+            Event::KeyboardInput(Released, _, Some(Key::A), _) |
+            Event::KeyboardInput(Released, _, Some(Key::D), _) =>
+                self.spin_hor = 0.0,
+            /*
+            Event::KeyboardInput(_, _, Some(Key::W)) => self.move_cam(step),
+            Event::KeyboardInput(_, _, Some(Key::S)) => self.move_cam(-step),
+            Event::KeyboardInput(_, _, Some(Key::A)) =>
+                self.cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), angle) * self.cam.rot,
+            Event::KeyboardInput(_, _, Some(Key::D)) =>
+                self.cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), -angle) * self.cam.rot,
+            */
+            _ => {},
         }
 
+        true
+    }
+
+    pub fn update(&mut self, delta: f32) {
         //let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
         //let dt = delta * 6.0;//TODO
         let dt = 0.093912; //TODO
+        let pid = self.agents.iter().position(|a| a.spirit == Spirit::Player).unwrap();
 
         if self.is_paused {
             let player = &mut self.agents[pid];
-            if tick != 0.0 {
+            if let Some(tick) = self.tick.take() {
                 self.line_buffer.clear();
                 player.step(tick * dt, &self.level, &self.db.common, Some(&mut self.line_buffer));
             }
@@ -622,8 +637,6 @@ impl<R: gfx::Resources> Game<R> {
                 a.step(dt, &self.level, &self.db.common, Some(&mut self.line_buffer));
             }
         }
-
-        true
     }
 
     pub fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {

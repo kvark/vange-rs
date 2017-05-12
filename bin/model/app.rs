@@ -1,5 +1,5 @@
 use cgmath;
-use glutin::Event;
+use glutin::WindowEvent as Event;
 use gfx;
 use vangers::{config, level, model, render, space};
 
@@ -70,23 +70,21 @@ impl<R: gfx::Resources> ResourceView<R> {
 }
 
 impl<R: gfx::Resources> ResourceView<R> {
-    pub fn update<I, F>(&mut self, events: I, delta: f32, factory: &mut F)
-                        -> bool where
-        I: Iterator<Item = Event>,
+    pub fn react<F>(&mut self, event: Event, delta: f32, factory: &mut F)
+                 -> bool where
         F: gfx::Factory<R>,
     {
         use glutin::VirtualKeyCode as Key;
+        use glutin::ElementState::Pressed;
         let angle = cgmath::Rad(delta * 2.0);
-        for event in events {
-            match event {
-                Event::KeyboardInput(_, _, Some(Key::Escape)) |
-                Event::Closed => return false,
-                Event::KeyboardInput(_, _, Some(Key::A)) => self.rotate(-angle),
-                Event::KeyboardInput(_, _, Some(Key::D)) => self.rotate(angle),
-                Event::KeyboardInput(_, _, Some(Key::L)) =>
-                    self.pso = render::Render::create_object_pso(factory),
-                _ => {}, //TODO
-            }
+        match event {
+            Event::KeyboardInput(Pressed, _, Some(Key::Escape), _) |
+            Event::Closed => return false,
+            Event::KeyboardInput(Pressed, _, Some(Key::A), _) => self.rotate(-angle),
+            Event::KeyboardInput(Pressed, _, Some(Key::D), _) => self.rotate(angle),
+            Event::KeyboardInput(Pressed, _, Some(Key::L), _) =>
+                self.pso = render::Render::create_object_pso(factory),
+            _ => {}, //TODO
         }
         true
     }

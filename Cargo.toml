@@ -32,7 +32,7 @@ splay = {path = "lib/splay"}
 # library
 byteorder = "1.0"
 cgmath = "0.13"
-gfx = "0.15"
+gfx = "0.16"
 log = "0.3"
 progressive = "0.1"
 rust-ini = "0.10"
@@ -42,6 +42,6 @@ toml = "0.4"
 # binaries
 env_logger = "0.4"
 getopts = "0.2"
-gfx_window_glutin = "0.15"
-glutin = "0.7"
+gfx_window_glutin = "0.16"
+glutin = "0.8"
 time = "0.1"

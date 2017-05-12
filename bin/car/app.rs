@@ -1,5 +1,5 @@
 use cgmath;
-use glutin::Event;
+use glutin::WindowEvent as Event;
 use gfx;
 use vangers::{config, level, model, render, space};
 
@@ -93,31 +93,31 @@ impl<R: gfx::Resources> CarView<R> {
 }
 
 impl<R: gfx::Resources> CarView<R> {
-    pub fn update<I, F>(&mut self, events: I, delta: f32, factory: &mut F)
-                        -> bool where
-        I: Iterator<Item = Event>,
+    pub fn react<F>(&mut self, event: Event, factory: &mut F) -> bool where
         F: gfx::Factory<R>,
     {
         use glutin::{VirtualKeyCode as Key};
         use glutin::ElementState::*;
         let angle = cgmath::Rad(2.0);
-        for event in events {
-            match event {
-                Event::KeyboardInput(Pressed, _, Some(Key::Escape)) |
-                Event::Closed => return false,
-                Event::KeyboardInput(Pressed, _, Some(Key::A)) => self.rotation.0 = -angle,
-                Event::KeyboardInput(Pressed, _, Some(Key::D)) => self.rotation.0 = angle,
-                Event::KeyboardInput(Released, _, Some(Key::A)) |
-                Event::KeyboardInput(Released, _, Some(Key::D)) => self.rotation.0 = cgmath::Rad(0.),
-                Event::KeyboardInput(Pressed, _, Some(Key::W)) => self.rotation.1 = -angle,
-                Event::KeyboardInput(Pressed, _, Some(Key::S)) => self.rotation.1 = angle,
-                Event::KeyboardInput(Released, _, Some(Key::W)) |
-                Event::KeyboardInput(Released, _, Some(Key::S)) => self.rotation.1 = cgmath::Rad(0.),
-                Event::KeyboardInput(Pressed, _, Some(Key::L)) =>
-                    self.pso = render::Render::create_object_pso(factory),
-                _ => {}, //TODO
-            }
+        match event {
+            Event::KeyboardInput(Pressed, _, Some(Key::Escape), _) |
+            Event::Closed => return false,
+            Event::KeyboardInput(Pressed, _, Some(Key::A), _) => self.rotation.0 = -angle,
+            Event::KeyboardInput(Pressed, _, Some(Key::D), _) => self.rotation.0 = angle,
+            Event::KeyboardInput(Released, _, Some(Key::A), _) |
+            Event::KeyboardInput(Released, _, Some(Key::D), _) => self.rotation.0 = cgmath::Rad(0.),
+            Event::KeyboardInput(Pressed, _, Some(Key::W), _) => self.rotation.1 = -angle,
+            Event::KeyboardInput(Pressed, _, Some(Key::S), _) => self.rotation.1 = angle,
+            Event::KeyboardInput(Released, _, Some(Key::W), _) |
+            Event::KeyboardInput(Released, _, Some(Key::S), _) => self.rotation.1 = cgmath::Rad(0.),
+            Event::KeyboardInput(Pressed, _, Some(Key::L), _) =>
+                self.pso = render::Render::create_object_pso(factory),
+            _ => {}, //TODO
         }
+        true
+    }
+
+    pub fn update(&mut self, delta: f32) {
         if self.rotation.0 != cgmath::Rad(0.) {
             let rot = self.rotation.0 * delta;
             self.rotate_z(rot);
@@ -126,8 +126,8 @@ impl<R: gfx::Resources> CarView<R> {
             let rot = self.rotation.1 * delta;
             self.rotate_x(rot);
         }
-        true
     }
+
 
     pub fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
         enc.clear(&self.data.out_color, [0.1, 0.2, 0.3, 1.0]);
