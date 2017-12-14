@@ -20,13 +20,14 @@ fn main() {
 
     let settings = config::Settings::load("config/settings.toml");
 
-    let builder = glutin::WindowBuilder::new()
+    let win_builder = glutin::WindowBuilder::new()
         .with_title(settings.window.title.clone())
-        .with_dimensions(settings.window.size[0], settings.window.size[1])
-        .with_vsync();
-    let event_loop = glutin::EventsLoop::new();
+        .with_dimensions(settings.window.size[0], settings.window.size[1]);
+    let context_build = glutin::ContextBuilder::new()
+        .with_vsync(true);
+    let mut event_loop = glutin::EventsLoop::new();
     let (window, mut device, mut factory, main_color, main_depth) =
-        gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(builder, &event_loop);
+        gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(win_builder, context_build, &event_loop);
 
     let args: Vec<_> = env::args().collect();
     let mut options = getopts::Options::new();
@@ -53,12 +54,15 @@ fn main() {
 
     while running {
         use gfx::Device;
+        use glutin::GlContext;
 
-        event_loop.poll_events(|glutin::Event::WindowEvent {event, ..}|
-            if !app.react(event, &mut factory) {
-                running = false;
+        event_loop.poll_events(|event| {
+            if let glutin::Event::WindowEvent {event, ..} = event {
+                if !app.react(event, &mut factory) {
+                    running = false;
+                }
             }
-        );
+        });
 
         let delta = time::precise_time_s() as f32 - last_time;
         app.update(delta);

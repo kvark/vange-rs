@@ -96,23 +96,26 @@ impl<R: gfx::Resources> CarView<R> {
     pub fn react<F>(&mut self, event: Event, factory: &mut F) -> bool where
         F: gfx::Factory<R>,
     {
-        use glutin::{VirtualKeyCode as Key};
+        use glutin::{VirtualKeyCode as Key, KeyboardInput};
         use glutin::ElementState::*;
         let angle = cgmath::Rad(2.0);
         match event {
-            Event::KeyboardInput(Pressed, _, Some(Key::Escape), _) |
             Event::Closed => return false,
-            Event::KeyboardInput(Pressed, _, Some(Key::A), _) => self.rotation.0 = -angle,
-            Event::KeyboardInput(Pressed, _, Some(Key::D), _) => self.rotation.0 = angle,
-            Event::KeyboardInput(Released, _, Some(Key::A), _) |
-            Event::KeyboardInput(Released, _, Some(Key::D), _) => self.rotation.0 = cgmath::Rad(0.),
-            Event::KeyboardInput(Pressed, _, Some(Key::W), _) => self.rotation.1 = -angle,
-            Event::KeyboardInput(Pressed, _, Some(Key::S), _) => self.rotation.1 = angle,
-            Event::KeyboardInput(Released, _, Some(Key::W), _) |
-            Event::KeyboardInput(Released, _, Some(Key::S), _) => self.rotation.1 = cgmath::Rad(0.),
-            Event::KeyboardInput(Pressed, _, Some(Key::L), _) =>
-                self.pso = render::Render::create_object_pso(factory),
-            _ => {}, //TODO
+            Event::KeyboardInput { input: KeyboardInput { state: Pressed, virtual_keycode: Some(key), ..}, ..} => match key {
+                Key::Escape => return false,
+                Key::A => self.rotation.0 = -angle,
+                Key::D => self.rotation.0 = angle,
+                Key::W => self.rotation.1 = -angle,
+                Key::S => self.rotation.1 = angle,
+                Key::L => self.pso = render::Render::create_object_pso(factory),
+                _ => (),
+            },
+            Event::KeyboardInput { input: KeyboardInput { state: Released, virtual_keycode: Some(key), ..}, ..} => match key {
+                Key::A | Key::D => self.rotation.0 = cgmath::Rad(0.),
+                Key::W | Key::S => self.rotation.1 = cgmath::Rad(0.),
+                _ => (),
+            },
+            _ => (),
         }
         true
     }

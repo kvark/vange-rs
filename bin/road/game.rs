@@ -547,7 +547,7 @@ impl<R: gfx::Resources> Game<R> {
     pub fn react<F>(&mut self, event: Event, factory: &mut F)
                  -> bool where F: gfx::Factory<R>
     {
-        use glutin::VirtualKeyCode as Key;
+        use glutin::{VirtualKeyCode as Key, KeyboardInput};
         use glutin::ElementState::*;
 
         let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
@@ -555,45 +555,47 @@ impl<R: gfx::Resources> Game<R> {
             None => return false,
         };
         match event {
-            Event::KeyboardInput(Pressed, _, Some(Key::Escape), _) |
             Event::Closed => return false,
             //Event::Resized(width, height) => self.render.resize(width, height),
-            Event::KeyboardInput(Pressed, _, Some(Key::L), _) => self.render.reload(factory),
-            Event::KeyboardInput(Pressed, _, Some(Key::P), _) => {
-                let center = &player.transform;
-                self.tick = None;
-                if self.is_paused {
-                    self.is_paused = false;
-                    self.cam.loc = center.disp + cgmath::vec3(0.0, 0.0, 200.0);
-                    self.cam.rot = cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0);
-                } else {
-                    self.is_paused = true;
-                    self.cam.focus_on(center);
-                }
+            Event::KeyboardInput { input: KeyboardInput { state: Pressed, virtual_keycode: Some(key), ..}, ..} => match key {
+                Key::Escape => return false,
+                Key::L => self.render.reload(factory),
+                Key::P => {
+                    let center = &player.transform;
+                    self.tick = None;
+                    if self.is_paused {
+                        self.is_paused = false;
+                        self.cam.loc = center.disp + cgmath::vec3(0.0, 0.0, 200.0);
+                        self.cam.rot = cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0);
+                    } else {
+                        self.is_paused = true;
+                        self.cam.focus_on(center);
+                    }
+                },
+                Key::Comma => self.tick = Some(-1.0),
+                Key::Period => self.tick = Some(1.0),
+                Key::W => self.spin_ver = 1.0,
+                Key::S => self.spin_ver = -1.0,
+                Key::R => {
+                    player.transform.rot = cgmath::One::one();
+                    player.dynamo.linear_velocity = cgmath::Vector3::zero();
+                    player.dynamo.angular_velocity = cgmath::Vector3::zero();
+                },
+                Key::A => self.spin_hor = -1.0,
+                Key::D => self.spin_hor = 1.0,
+                _ => (),
             },
-            Event::KeyboardInput(Pressed, _, Some(Key::Comma), _) => self.tick = Some(-1.0),
-            Event::KeyboardInput(Pressed, _, Some(Key::Period), _) => self.tick = Some(1.0),
+            Event::KeyboardInput { input: KeyboardInput { state: Released, virtual_keycode: Some(key), ..}, ..} => match key {
+                Key::W | Key::S => self.spin_ver = 0.0,
+                Key::A | Key::D => self.spin_hor = 0.0,
+                _ => (),
+            },
             /*
             Event::KeyboardInput(_, _, Some(Key::R)) =>
                 self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
             Event::KeyboardInput(_, _, Some(Key::F)) =>
                 self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), -angle),
             */
-            Event::KeyboardInput(Pressed, _, Some(Key::W), _) => self.spin_ver = 1.0,
-            Event::KeyboardInput(Pressed, _, Some(Key::S), _) => self.spin_ver = -1.0,
-            Event::KeyboardInput(Released, _, Some(Key::W), _) |
-            Event::KeyboardInput(Released, _, Some(Key::S), _) =>
-                self.spin_ver = 0.0,
-            Event::KeyboardInput(Pressed, _, Some(Key::R), _) => {
-                player.transform.rot = cgmath::One::one();
-                player.dynamo.linear_velocity = cgmath::Vector3::zero();
-                player.dynamo.angular_velocity = cgmath::Vector3::zero();
-            },
-            Event::KeyboardInput(Pressed, _, Some(Key::A), _) => self.spin_hor = -1.0,
-            Event::KeyboardInput(Pressed, _, Some(Key::D), _) => self.spin_hor = 1.0,
-            Event::KeyboardInput(Released, _, Some(Key::A), _) |
-            Event::KeyboardInput(Released, _, Some(Key::D), _) =>
-                self.spin_hor = 0.0,
             /*
             Event::KeyboardInput(_, _, Some(Key::W)) => self.move_cam(step),
             Event::KeyboardInput(_, _, Some(Key::S)) => self.move_cam(-step),
@@ -602,7 +604,7 @@ impl<R: gfx::Resources> Game<R> {
             Event::KeyboardInput(_, _, Some(Key::D)) =>
                 self.cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), -angle) * self.cam.rot,
             */
-            _ => {},
+            _ => (),
         }
 
         true

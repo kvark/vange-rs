@@ -74,17 +74,20 @@ impl<R: gfx::Resources> ResourceView<R> {
                  -> bool where
         F: gfx::Factory<R>,
     {
-        use glutin::VirtualKeyCode as Key;
+        use glutin::{VirtualKeyCode as Key, KeyboardInput};
         use glutin::ElementState::Pressed;
+
         let angle = cgmath::Rad(delta * 2.0);
         match event {
-            Event::KeyboardInput(Pressed, _, Some(Key::Escape), _) |
             Event::Closed => return false,
-            Event::KeyboardInput(Pressed, _, Some(Key::A), _) => self.rotate(-angle),
-            Event::KeyboardInput(Pressed, _, Some(Key::D), _) => self.rotate(angle),
-            Event::KeyboardInput(Pressed, _, Some(Key::L), _) =>
-                self.pso = render::Render::create_object_pso(factory),
-            _ => {}, //TODO
+            Event::KeyboardInput { input: KeyboardInput { state: Pressed, virtual_keycode: Some(key), ..}, ..} => match key {
+                Key::Escape => return false,
+                Key::A => self.rotate(-angle),
+                Key::D => self.rotate(angle),
+                Key::L => self.pso = render::Render::create_object_pso(factory),
+                _ => (),
+            },
+            _ => (),
         }
         true
     }
