@@ -1,5 +1,6 @@
 # Vange-rs
 [![Build Status](https://travis-ci.org/kvark/vange-rs.svg)](https://travis-ci.org/kvark/vange-rs)
+[![Gitter](https://badges.gitter.im/kvark/vange-rs.svg)](https://gitter.im/vange-rs/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 
 [Vangers](https://www.gog.com/game/vangers) is a legendary game featuring unique gameplay and technical innovation.
 The idea of this project is to replicate the old look and behavior, but with native hardware acceleration for the graphics.
@@ -16,7 +17,7 @@ cargo run --release
 
 ### Technonolgy
 
-The game uses [gfx-rs](https://github.com/gfx-rs/gfx) for graphics and [glutin](https://github.com/tomaka/glutin) for context creation.
+The game uses [gfx-rs pre-LL](https://github.com/gfx-rs/gfx/tree/pre-ll) for graphics and [glutin](https://github.com/tomaka/glutin) for context creation.
 
 The level is drawn in a single full-screen draw call with a bit of ray tracing magic.
 
