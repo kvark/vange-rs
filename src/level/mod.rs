@@ -1,5 +1,4 @@
 use byteorder::{LittleEndian as E, ReadBytesExt};
-use splay::Splay;
 
 pub const NUM_TERRAINS: usize = 8;
 
@@ -139,11 +138,15 @@ pub fn load_palette(path: &str) -> [[u8; 4]; 0x100] {
 pub fn load(config: &LevelConfig) -> Level {
     use std::fs::File;
     use std::io::{BufReader, Seek, SeekFrom};
+    use std::time::Instant;
+    use rayon::prelude::*;
+    use splay::Splay;
 
     assert!(config.is_compressed);
     let size = (config.size.0.as_value(), config.size.1.as_value());
 
     info!("Loading vpr...");
+    let start_vpr = Instant::now();
     let flood = {
         let vpr_file = File::open(&config.path_vpr).unwrap();
         let flood_size = size.1 >> config.section.as_power();
@@ -161,33 +164,43 @@ pub fn load(config: &LevelConfig) -> Level {
             .map(|_| vpr.read_u32::<E>().unwrap())
             .collect()
     };
+    info!("\ttook {} sec", (Instant::now() - start_vpr).as_secs());
 
     info!("Loading vmc...");
+    let start_vmc = Instant::now();
     let (height, meta) = {
-        use progressive::progress;
-
-        let mut vpc = BufReader::new(File::open(&config.path_vmc).unwrap());
+        let mut vpc_base = BufReader::new(File::open(&config.path_vmc).unwrap());
         info!("\tLoading compression tables...");
         let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
         let mut sz_table = Vec::<i16>::with_capacity(size.1 as usize);
         for _ in 0 .. size.1 {
-            st_table.push(vpc.read_i32::<E>().unwrap());
-            sz_table.push(vpc.read_i16::<E>().unwrap());
+            st_table.push(vpc_base.read_i32::<E>().unwrap());
+            sz_table.push(vpc_base.read_i16::<E>().unwrap());
         }
         info!("\tDecompressing level data...");
-        let splay = Splay::new(&mut vpc);
+        let splay = Splay::new(&mut vpc_base);
         let total = (size.0 * size.1) as usize;
         let mut height = vec![0u8; total];
         let mut meta = vec![0u8; total];
-        for y in progress(0 .. size.1) {
-            vpc.seek(SeekFrom::Start(st_table[y as usize] as u64))
-                .unwrap();
-            let range = ((y * size.0) as usize) .. (((y + 1) * size.0) as usize);
-            splay.expand1(&mut vpc, &mut height[range.clone()]);
-            splay.expand2(&mut vpc, &mut meta[range]);
-        }
+
+        height.chunks_mut(size.0 as _)
+            .zip(meta.chunks_mut(size.0 as _))
+            .zip(st_table.iter())
+            .collect::<Vec<_>>()
+            .par_chunks_mut(64)
+            .for_each(|source_group| {
+                //Note: a separate file per group is required
+                let mut vpc = BufReader::new(File::open(&config.path_vmc).unwrap());
+                for &mut ((ref mut h_row, ref mut m_row), offset) in source_group {
+                    vpc.seek(SeekFrom::Start(*offset as u64)).unwrap();
+                    splay.expand1(&mut vpc, h_row);
+                    splay.expand2(&mut vpc, m_row);
+                }
+            });
+
         (height, meta)
     };
+    info!("\ttook {} sec", (Instant::now() - start_vmc).as_secs());
 
     Level {
         size: size,

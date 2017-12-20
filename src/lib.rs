@@ -5,7 +5,7 @@ extern crate gfx;
 extern crate ini;
 #[macro_use]
 extern crate log;
-extern crate progressive;
+extern crate rayon;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
