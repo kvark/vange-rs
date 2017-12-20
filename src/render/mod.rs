@@ -8,6 +8,11 @@ mod debug;
 
 pub use self::debug::{DebugPos, DebugRender, LineBuffer};
 
+pub struct MainTargets<R: gfx::Resources> {
+    pub color: gfx::handle::RenderTargetView<R, ColorFormat>,
+    pub depth: gfx::handle::DepthStencilView<R, DepthFormat>,
+}
+
 struct MaterialParams {
     dx: f32,
     sd: f32,
@@ -130,8 +135,7 @@ pub fn read_file(name: &str) -> Vec<u8> {
 
 pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     factory: &mut F,
-    main_color: gfx::handle::RenderTargetView<R, ColorFormat>,
-    main_depth: gfx::handle::DepthStencilView<R, DepthFormat>,
+    targets: MainTargets<R>,
     level: &level::Level,
     object_palette: &[[u8; 4]],
 ) -> Render<R> {
@@ -241,8 +245,8 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
                 meta: (meta, sm_meta),
                 palette: Render::create_palette(&level.palette, factory),
                 table: (table, sm_table),
-                out_color: main_color.clone(),
-                out_depth: main_depth.clone(),
+                out_color: targets.color.clone(),
+                out_depth: targets.depth.clone(),
             };
             gfx::Bundle::new(slice, pso, data)
         },
@@ -258,10 +262,10 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             locals: factory.create_constant_buffer(1),
             palette: Render::create_palette(&object_palette, factory),
             ctable: Render::create_color_table(factory),
-            out_color: main_color.clone(),
-            out_depth: main_depth.clone(),
+            out_color: targets.color.clone(),
+            out_depth: targets.depth.clone(),
         },
-        debug: DebugRender::new(factory, 512, main_color, main_depth),
+        debug: DebugRender::new(factory, 512, targets),
     }
 }
 

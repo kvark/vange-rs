@@ -21,8 +21,7 @@ pub struct LevelView<R: gfx::Resources> {
 impl<R: gfx::Resources> LevelView<R> {
     pub fn new<F: gfx::Factory<R>>(
         settings: &config::settings::Settings,
-        out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
-        out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
+        targets: render::MainTargets<R>,
         factory: &mut F,
     ) -> Self {
         let level = match settings.get_level() {
@@ -32,7 +31,7 @@ impl<R: gfx::Resources> LevelView<R> {
         let pal_data = level::read_palette(settings.open_palette());
 
         LevelView {
-            render: render::init(factory, out_color, out_depth, &level, &pal_data),
+            render: render::init(factory, targets, &level, &pal_data),
             //level: level,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, 0.0, 200.0),

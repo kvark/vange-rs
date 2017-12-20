@@ -1,6 +1,7 @@
 use cgmath;
 use gfx;
 use glutin::WindowEvent as Event;
+
 use vangers::{config, level, model, render, space};
 
 pub struct CarView<R: gfx::Resources> {
@@ -17,10 +18,9 @@ pub struct CarView<R: gfx::Resources> {
 impl<R: gfx::Resources> CarView<R> {
     pub fn new<F: gfx::Factory<R>>(
         settings: &config::Settings,
-        out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
-        out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
+        targets: render::MainTargets<R>,
         factory: &mut F,
-    ) -> CarView<R> {
+    ) -> Self {
         use gfx::traits::FactoryExt;
 
         info!("Loading car registry");
@@ -41,8 +41,8 @@ impl<R: gfx::Resources> CarView<R> {
             locals: factory.create_constant_buffer(1),
             ctable: render::Render::create_color_table(factory),
             palette: render::Render::create_palette(&pal_data, factory),
-            out_color: out_color.clone(),
-            out_depth: out_depth.clone(),
+            out_color: targets.color.clone(),
+            out_depth: targets.depth.clone(),
         };
 
         CarView {
@@ -53,7 +53,7 @@ impl<R: gfx::Resources> CarView<R> {
                 rot: cgmath::One::one(),
             },
             pso: render::Render::create_object_pso(factory),
-            debug_render: render::DebugRender::new(factory, 512, out_color, out_depth),
+            debug_render: render::DebugRender::new(factory, 512, targets),
             physics: cinfo.physics.clone(),
             data: data,
             cam: space::Camera {

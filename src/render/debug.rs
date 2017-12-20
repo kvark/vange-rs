@@ -5,7 +5,7 @@ use gfx;
 pub use gfx::pso::buffer::{InstanceRate, VertexBufferCommon};
 use gfx::traits::FactoryExt; // reduce the line width at use site
 
-use super::{read_file, ColorFormat, DepthFormat};
+use super::{read_file, ColorFormat, DepthFormat, MainTargets};
 use model;
 
 const BLEND_FRONT: gfx::state::Blend = gfx::state::Blend {
@@ -130,8 +130,7 @@ impl<R: gfx::Resources> DebugRender<R> {
     pub fn new<F: gfx::Factory<R>>(
         factory: &mut F,
         max_vertices: usize,
-        out_color: gfx::handle::RenderTargetView<R, ColorFormat>,
-        out_depth: gfx::handle::DepthStencilView<R, DepthFormat>,
+        targets: MainTargets<R>,
     ) -> Self {
         let data = debug::Data {
             buf_pos: factory
@@ -151,8 +150,8 @@ impl<R: gfx::Resources> DebugRender<R> {
                 )
                 .unwrap(),
             locals: factory.create_constant_buffer(1),
-            out_color: out_color,
-            out_depth: out_depth,
+            out_color: targets.color,
+            out_depth: targets.depth,
             blend_ref: [0.0, 0.0, 0.0, 0.5],
         };
         let mut result = DebugRender {

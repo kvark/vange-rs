@@ -15,8 +15,7 @@ impl<R: gfx::Resources> ResourceView<R> {
     pub fn new<F: gfx::Factory<R>>(
         path: &str,
         settings: &config::settings::Settings,
-        out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
-        out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
+        targets: render::MainTargets<R>,
         factory: &mut F,
     ) -> ResourceView<R> {
         use gfx::traits::FactoryExt;
@@ -32,8 +31,8 @@ impl<R: gfx::Resources> ResourceView<R> {
             locals: factory.create_constant_buffer(1),
             ctable: render::Render::create_color_table(factory),
             palette: render::Render::create_palette(&pal_data, factory),
-            out_color: out_color,
-            out_depth: out_depth,
+            out_color: targets.color,
+            out_depth: targets.depth,
         };
 
         ResourceView {

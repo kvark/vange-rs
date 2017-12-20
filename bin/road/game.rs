@@ -552,8 +552,7 @@ pub struct Game<R: gfx::Resources> {
 impl<R: gfx::Resources> Game<R> {
     pub fn new<F: gfx::Factory<R>>(
         settings: &config::Settings,
-        out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
-        out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
+        targets: render::MainTargets<R>,
         factory: &mut F,
     ) -> Game<R> {
         info!("Loading world parameters");
@@ -591,7 +590,7 @@ impl<R: gfx::Resources> Game<R> {
 
         Game {
             db: db,
-            render: render::init(factory, out_color, out_depth, &level, &pal_data),
+            render: render::init(factory, targets, &level, &pal_data),
             line_buffer: render::LineBuffer::new(),
             level: level,
             agents: vec![agent],
