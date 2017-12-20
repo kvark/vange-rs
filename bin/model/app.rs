@@ -67,9 +67,7 @@ impl<R: gfx::Resources> ResourceView<R> {
         };
         self.transform = other.concat(&self.transform);
     }
-}
 
-impl<R: gfx::Resources> ResourceView<R> {
     pub fn react<F>(&mut self, event: Event, delta: f32, factory: &mut F)
                  -> bool where
         F: gfx::Factory<R>,

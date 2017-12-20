@@ -541,9 +541,7 @@ impl<R: gfx::Resources> Game<R> {
         back.z = 0.0;
         self.cam.loc -= back.normalize() * step;
     }
-}
 
-impl<R: gfx::Resources> Game<R> {
     pub fn react<F>(&mut self, event: Event, factory: &mut F)
                  -> bool where F: gfx::Factory<R>
     {

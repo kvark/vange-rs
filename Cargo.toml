@@ -23,6 +23,10 @@ name = "model"
 path = "bin/model/main.rs"
 
 [[bin]]
+name = "level"
+path = "bin/level/main.rs"
+
+[[bin]]
 name = "convert"
 path = "bin/convert.rs"
 

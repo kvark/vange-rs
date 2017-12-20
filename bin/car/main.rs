@@ -24,6 +24,7 @@ fn main() {
         .with_title(settings.window.title.clone())
         .with_dimensions(settings.window.size[0], settings.window.size[1]);
     let context_build = glutin::ContextBuilder::new()
+        .with_gl_profile(glutin::GlProfile::Core)
         .with_vsync(true);
     let mut event_loop = glutin::EventsLoop::new();
     let (window, mut device, mut factory, main_color, main_depth) =

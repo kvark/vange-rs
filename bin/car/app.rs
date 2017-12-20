@@ -90,9 +90,7 @@ impl<R: gfx::Resources> CarView<R> {
         };
         self.transform = self.transform.concat(&other);
     }
-}
 
-impl<R: gfx::Resources> CarView<R> {
     pub fn react<F>(&mut self, event: Event, factory: &mut F) -> bool where
         F: gfx::Factory<R>,
     {
