@@ -1,4 +1,6 @@
 use byteorder::{LittleEndian as E, ReadBytesExt};
+use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::path::PathBuf;
 
 pub const NUM_TERRAINS: usize = 8;
 
@@ -28,9 +30,9 @@ pub struct TerrainConfig {
 
 pub struct LevelConfig {
     pub name: String,
-    pub path_palette: String,
-    pub path_vpr: String,
-    pub path_vmc: String,
+    pub path_palette: PathBuf,
+    pub path_vpr: PathBuf,
+    pub path_vmc: PathBuf,
     pub is_compressed: bool,
     pub size: (Power, Power),
     pub geo: Power,
@@ -122,12 +124,8 @@ impl Level {
     }
 }
 
-pub fn load_palette(path: &str) -> [[u8; 4]; 0x100] {
-    use std::fs::File;
-    use std::io::{BufReader, Read};
-
-    info!("Loading palette {}...", path);
-    let mut file = BufReader::new(File::open(path).unwrap());
+pub fn read_palette<I: Read>(input: I) -> [[u8; 4]; 0x100] {
+    let mut file = BufReader::new(input);
     let mut data = [[0; 4]; 0x100];
     for p in data.iter_mut() {
         file.read(&mut p[.. 3]).unwrap();
@@ -137,10 +135,14 @@ pub fn load_palette(path: &str) -> [[u8; 4]; 0x100] {
 
 pub fn load(config: &LevelConfig) -> Level {
     use std::fs::File;
-    use std::io::{BufReader, Seek, SeekFrom};
     use std::time::Instant;
     use rayon::prelude::*;
     use splay::Splay;
+
+    fn report_time(start: Instant) {
+        let d = Instant::now() - start;
+        info!("\ttook {} ms", d.as_secs() as u32 * 1000 + d.subsec_nanos() / 1_000_000);
+    }
 
     assert!(config.is_compressed);
     let size = (config.size.0.as_value(), config.size.1.as_value());
@@ -164,21 +166,21 @@ pub fn load(config: &LevelConfig) -> Level {
             .map(|_| vpr.read_u32::<E>().unwrap())
             .collect()
     };
-    info!("\ttook {} sec", (Instant::now() - start_vpr).as_secs());
+    report_time(start_vpr);
 
     info!("Loading vmc...");
     let start_vmc = Instant::now();
     let (height, meta) = {
-        let mut vpc_base = BufReader::new(File::open(&config.path_vmc).unwrap());
+        let mut vmc_base = BufReader::new(File::open(&config.path_vmc).unwrap());
         info!("\tLoading compression tables...");
         let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
         let mut sz_table = Vec::<i16>::with_capacity(size.1 as usize);
         for _ in 0 .. size.1 {
-            st_table.push(vpc_base.read_i32::<E>().unwrap());
-            sz_table.push(vpc_base.read_i16::<E>().unwrap());
+            st_table.push(vmc_base.read_i32::<E>().unwrap());
+            sz_table.push(vmc_base.read_i16::<E>().unwrap());
         }
         info!("\tDecompressing level data...");
-        let splay = Splay::new(&mut vpc_base);
+        let splay = Splay::new(&mut vmc_base);
         let total = (size.0 * size.1) as usize;
         let mut height = vec![0u8; total];
         let mut meta = vec![0u8; total];
@@ -190,24 +192,26 @@ pub fn load(config: &LevelConfig) -> Level {
             .par_chunks_mut(64)
             .for_each(|source_group| {
                 //Note: a separate file per group is required
-                let mut vpc = BufReader::new(File::open(&config.path_vmc).unwrap());
+                let mut vmc = BufReader::new(File::open(&config.path_vmc).unwrap());
                 for &mut ((ref mut h_row, ref mut m_row), offset) in source_group {
-                    vpc.seek(SeekFrom::Start(*offset as u64)).unwrap();
-                    splay.expand1(&mut vpc, h_row);
-                    splay.expand2(&mut vpc, m_row);
+                    vmc.seek(SeekFrom::Start(*offset as u64)).unwrap();
+                    splay.expand1(&mut vmc, h_row);
+                    splay.expand2(&mut vmc, m_row);
                 }
             });
 
         (height, meta)
     };
-    info!("\ttook {} sec", (Instant::now() - start_vmc).as_secs());
+    report_time(start_vmc);
+    let palette = File::open(&config.path_palette)
+        .expect("Unable to open the palette file");
 
     Level {
         size: size,
         flood_map: flood,
         height: height,
         meta: meta,
-        palette: load_palette(&config.path_palette),
+        palette: read_palette(palette),
         terrains: config.terrains,
     }
 }

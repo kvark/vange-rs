@@ -159,7 +159,7 @@ pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
     factory: &mut F,
 ) -> HashMap<String, CarInfo<R>> {
     let mut map = HashMap::new();
-    let mut fi = Reader::new(settings.open("car.prm"));
+    let mut fi = Reader::new(settings.open_relative("car.prm"));
     fi.advance();
     assert_eq!(fi.cur(), "uniVang-ParametersFile_Ver_1");
 
@@ -174,20 +174,21 @@ pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
     for i in 0 .. num_main + num_ruffa + num_const {
         let (name, data) = fi.next_entry();
         let mi = &reg.model_infos[name];
-        let mut prm_path = mi.path.replace(".m3d", ".prm");
-        let is_default = !settings.check_path(&prm_path);
+        let mut prm_path = settings.data_path
+            .join(&mi.path)
+            .with_extension("prm");
+        let is_default = !prm_path.exists();
         if is_default {
-            let pos = mi.path.rfind('/').unwrap();
-            prm_path.truncate(pos + 1);
-            prm_path.push_str("default.prm");
+            warn!("Vehicle {} doesn't have parameters, using defaults", name);
+            prm_path.set_file_name("default");
         }
-        let physics = CarPhysics::load(settings.open(&prm_path));
+        let physics = CarPhysics::load(File::open(prm_path).unwrap());
         let scale = if is_default {
             mi.scale
         } else {
             physics.scale_size
         };
-        let mut file = BufReader::new(settings.open(&mi.path));
+        let mut file = BufReader::new(settings.open_relative(&mi.path));
         map.insert(
             name.to_owned(),
             CarInfo {

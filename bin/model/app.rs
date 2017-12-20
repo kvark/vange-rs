@@ -21,10 +21,10 @@ impl<R: gfx::Resources> ResourceView<R> {
         use std::io::BufReader;
         use gfx::traits::FactoryExt;
 
-        let pal_data = level::load_palette(&settings.get_object_palette_path());
+        let pal_data = level::read_palette(settings.open_palette());
 
         info!("Loading model {}", path);
-        let mut file = BufReader::new(settings.open(path));
+        let mut file = BufReader::new(settings.open_relative(path));
         let model = model::load_m3d(&mut file, factory);
         let data = render::object::Data {
             vbuf: model.body.buffer.clone(),

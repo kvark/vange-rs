@@ -30,7 +30,7 @@ impl<R: gfx::Resources> LevelView<R> {
             Some(lev_config) => level::load(&lev_config),
             None => level::Level::new_test(),
         };
-        let pal_data = level::load_palette(&settings.get_object_palette_path());
+        let pal_data = level::read_palette(settings.open_palette());
 
         LevelView {
             render: render::init(factory, out_color, out_depth, &level, &pal_data),

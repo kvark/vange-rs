@@ -16,7 +16,7 @@ impl Registry {
         let mut reg = Registry {
             model_infos: HashMap::new(),
         };
-        let mut fi = Reader::new(settings.open("game.lst"));
+        let mut fi = Reader::new(settings.open_relative("game.lst"));
 
         while !fi.cur().starts_with("NumModel") {
             fi.advance();

@@ -30,12 +30,12 @@ impl<R: gfx::Resources> CarView<R> {
         let mut model = cinfo.model.clone();
         for (ms, sid) in model.slots.iter_mut().zip(settings.car.slots.iter()) {
             let info = &game_reg.model_infos[sid];
-            let mut file = settings.open(&info.path);
+            let mut file = settings.open_relative(&info.path);
             ms.mesh = Some(model::load_c3d(&mut file, factory));
             ms.scale = info.scale;
         }
 
-        let pal_data = level::load_palette(&settings.get_object_palette_path());
+        let pal_data = level::read_palette(settings.open_palette());
         let data = render::object::Data {
             vbuf: model.body.buffer.clone(),
             locals: factory.create_constant_buffer(1),

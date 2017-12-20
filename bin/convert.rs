@@ -24,6 +24,6 @@ fn main() {
         return;
     }
 
-    let file = settings.open(&matches.free[0]);
+    let file = settings.open_relative(&matches.free[0]);
     model::convert_m3d(file, &matches.free[1]);
 }

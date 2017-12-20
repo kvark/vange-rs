@@ -1,6 +1,7 @@
 use ini::Ini;
 use level;
 use std::fs::File;
+use std::path::PathBuf;
 
 #[derive(Deserialize)]
 pub struct Car {
@@ -21,27 +22,28 @@ pub struct Window {
 
 #[derive(Deserialize)]
 pub struct Settings {
-    pub data_path: String,
+    pub data_path: PathBuf,
     pub car: Car,
     pub game: Game,
     pub window: Window,
 }
 
 impl Settings {
-    pub fn load(path: &str) -> Settings {
+    pub fn load(path: &str) -> Self {
         use std::io::Read;
         use toml;
 
         let mut string = String::new();
         File::open(path)
-            .unwrap()
+            .expect("Unable to open the settings file")
             .read_to_string(&mut string)
             .unwrap();
-        let set: Settings = toml::from_str(&string).unwrap();
+        let set: Settings = toml::from_str(&string)
+            .expect("Unable to parse settings TOML");
 
         if !set.check_path("options.dat") {
             panic!(
-                "Can't find the resources of the original Vangers game at {}, {}",
+                "Can't find the resources of the original Vangers game at {:?}, {}",
                 set.data_path, "please check your `config/settings.xml`"
             );
         }
@@ -49,46 +51,62 @@ impl Settings {
         set
     }
 
-    pub fn open(
+    pub fn open_relative(
         &self,
         path: &str,
     ) -> File {
-        let full = format!("{}/{}", self.data_path, path);
-        File::open(full).unwrap()
+        File::open(self.data_path.join(path))
+            .expect(&format!("Unable to open game file: {}", path))
     }
 
     pub fn check_path(
         &self,
         path: &str,
     ) -> bool {
-        let full = format!("{}/{}", self.data_path, path);
-        File::open(full).is_ok()
+        self.data_path.join(path).exists()
     }
 
     pub fn get_screen_aspect(&self) -> f32 {
         self.window.size[0] as f32 / self.window.size[1] as f32
     }
 
-    pub fn get_object_palette_path(&self) -> String {
-        format!("{}/resource/pal/objects.pal", self.data_path)
+    pub fn open_palette(&self) -> File {
+        let path = self.data_path
+            .join("resource")
+            .join("pal")
+            .join("objects.pal");
+        File::open(path)
+            .expect("Unable to open palette")
     }
 
-    pub fn _get_vehicle_model_path(
+    pub fn _open_vehicle_model(
         &self,
         name: &str,
-    ) -> String {
-        format!("{}/resource/m3d/mechous/{}.m3d", self.data_path, name)
+    ) -> File {
+        let path = self.data_path
+            .join("resource")
+            .join("m3d")
+            .join("mechous")
+            .join(name)
+            .with_extension("m3d");
+        File::open(path)
+            .expect(&format!("Unable to open vehicle {}", name))
     }
 
     pub fn get_level(&self) -> Option<level::LevelConfig> {
         if self.game.level.is_empty() {
             return None;
         }
-        let ini_path = format!("{}/thechain/{}/world.ini", self.data_path, self.game.level);
-        let ini = Ini::load_from_file(&ini_path).unwrap();
+        let level_path = self.data_path
+            .join("thechain")
+            .join(&self.game.level);
+
+        let ini = Ini::load_from_file(level_path.join("world.ini"))
+            .expect("Unable to read the level's INI description");
         let global = &ini["Global Parameters"];
         let storage = &ini["Storage"];
         let render = &ini["Rendering Parameters"];
+
         let mut terrains = [level::TerrainConfig {
             shadow_offset: 0,
             height_shift: 0,
@@ -118,20 +136,12 @@ impl Settings {
         {
             t.color_range.1 = val.parse().unwrap();
         }
+
         let biname = &storage["File Name"];
         Some(level::LevelConfig {
-            path_vpr: format!(
-                "{}/thechain/{}/{}.vpr",
-                self.data_path, self.game.level, biname
-            ),
-            path_vmc: format!(
-                "{}/thechain/{}/{}.vmc",
-                self.data_path, self.game.level, biname
-            ),
-            path_palette: format!(
-                "{}/thechain/{}/{}",
-                self.data_path, self.game.level, storage["Palette File"]
-            ),
+            path_vpr: level_path.join(biname).with_extension("vpr"),
+            path_vmc: level_path.join(biname).with_extension("vmc"),
+            path_palette: level_path.join(&storage["Palette File"]),
             is_compressed: storage["Compressed Format Using"] != "0",
             name: self.game.level.clone(),
             size: (

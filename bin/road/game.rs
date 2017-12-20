@@ -485,7 +485,7 @@ impl<R: gfx::Resources> Game<R> {
             let game = config::game::Registry::load(settings);
             DataBase {
                 cars: config::car::load_registry(settings, &game, factory),
-                common: config::common::load(settings.open("common.prm")),
+                common: config::common::load(settings.open_relative("common.prm")),
                 _game: game,
             }
         };
@@ -493,7 +493,7 @@ impl<R: gfx::Resources> Game<R> {
             Some(lev_config) => level::load(&lev_config),
             None => level::Level::new_test(),
         };
-        let pal_data = level::load_palette(&settings.get_object_palette_path());
+        let pal_data = level::read_palette(settings.open_palette());
         let car = db.cars[&settings.car.id].clone();
         let player_height = get_height(level.get((0, 0)).get_top()) + 5.; //center offset
 
