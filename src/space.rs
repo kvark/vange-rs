@@ -55,7 +55,8 @@ impl Camera {
         let k = (target.disp.z - self.loc.z) / -dir.view.z;
         self.loc = target.disp + dir.view * k;
         //self.rot = cgmath::Quaternion::look_at(dir.view, cgmath::Vector3::unit_y()).invert();
-        self.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Deg(30.0));
+        self.rot =
+            cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Deg(30.0));
     }
 
     pub fn focus_on(
@@ -64,7 +65,10 @@ impl Camera {
     ) {
         use cgmath::{Angle, Rotation3};
         self.loc = target.disp + cgmath::vec3(0.0, -64.0, 40.0);
-        self.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad::turn_div_6());
+        self.rot = cgmath::Quaternion::from_axis_angle(
+            cgmath::Vector3::unit_x(),
+            cgmath::Rad::turn_div_6(),
+        );
     }
 
     pub fn rotate_focus(

@@ -1,8 +1,7 @@
 use cgmath;
-use glutin::WindowEvent as Event;
 use gfx;
+use glutin::WindowEvent as Event;
 use vangers::{config, level, model, render, space};
-
 
 pub struct CarView<R: gfx::Resources> {
     model: model::Model<R>,
@@ -16,11 +15,12 @@ pub struct CarView<R: gfx::Resources> {
 }
 
 impl<R: gfx::Resources> CarView<R> {
-    pub fn new<F: gfx::Factory<R>>(settings: &config::Settings,
-               out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
-               out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
-               factory: &mut F) -> CarView<R>
-    {
+    pub fn new<F: gfx::Factory<R>>(
+        settings: &config::Settings,
+        out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
+        out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
+        factory: &mut F,
+    ) -> CarView<R> {
         use gfx::traits::FactoryExt;
 
         info!("Loading car registry");
@@ -59,7 +59,9 @@ impl<R: gfx::Resources> CarView<R> {
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, -64.0, 32.0),
                 rot: cgmath::Rotation3::from_axis_angle::<cgmath::Rad<_>>(
-                    cgmath::Vector3::unit_x(), cgmath::Angle::turn_div_6()),
+                    cgmath::Vector3::unit_x(),
+                    cgmath::Angle::turn_div_6(),
+                ),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
                     aspect: settings.get_screen_aspect(),
@@ -71,7 +73,10 @@ impl<R: gfx::Resources> CarView<R> {
         }
     }
 
-    fn rotate_z(&mut self, angle: cgmath::Rad<f32>) {
+    fn rotate_z(
+        &mut self,
+        angle: cgmath::Rad<f32>,
+    ) {
         use cgmath::Transform;
         let other = cgmath::Decomposed {
             scale: 1.0,
@@ -81,7 +86,10 @@ impl<R: gfx::Resources> CarView<R> {
         self.transform = other.concat(&self.transform);
     }
 
-    fn rotate_x(&mut self, angle: cgmath::Rad<f32>) {
+    fn rotate_x(
+        &mut self,
+        angle: cgmath::Rad<f32>,
+    ) {
         use cgmath::Transform;
         let other = cgmath::Decomposed {
             scale: 1.0,
@@ -91,15 +99,28 @@ impl<R: gfx::Resources> CarView<R> {
         self.transform = self.transform.concat(&other);
     }
 
-    pub fn react<F>(&mut self, event: Event, factory: &mut F) -> bool where
+    pub fn react<F>(
+        &mut self,
+        event: Event,
+        factory: &mut F,
+    ) -> bool
+    where
         F: gfx::Factory<R>,
     {
-        use glutin::{VirtualKeyCode as Key, KeyboardInput};
+        use glutin::{KeyboardInput, VirtualKeyCode as Key};
         use glutin::ElementState::*;
         let angle = cgmath::Rad(2.0);
         match event {
             Event::Closed => return false,
-            Event::KeyboardInput { input: KeyboardInput { state: Pressed, virtual_keycode: Some(key), ..}, ..} => match key {
+            Event::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state: Pressed,
+                        virtual_keycode: Some(key),
+                        ..
+                    },
+                ..
+            } => match key {
                 Key::Escape => return false,
                 Key::A => self.rotation.0 = -angle,
                 Key::D => self.rotation.0 = angle,
@@ -108,7 +129,15 @@ impl<R: gfx::Resources> CarView<R> {
                 Key::L => self.pso = render::Render::create_object_pso(factory),
                 _ => (),
             },
-            Event::KeyboardInput { input: KeyboardInput { state: Released, virtual_keycode: Some(key), ..}, ..} => match key {
+            Event::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state: Released,
+                        virtual_keycode: Some(key),
+                        ..
+                    },
+                ..
+            } => match key {
                 Key::A | Key::D => self.rotation.0 = cgmath::Rad(0.),
                 Key::W | Key::S => self.rotation.1 = cgmath::Rad(0.),
                 _ => (),
@@ -118,7 +147,10 @@ impl<R: gfx::Resources> CarView<R> {
         true
     }
 
-    pub fn update(&mut self, delta: f32) {
+    pub fn update(
+        &mut self,
+        delta: f32,
+    ) {
         if self.rotation.0 != cgmath::Rad(0.) {
             let rot = self.rotation.0 * delta;
             self.rotate_z(rot);
@@ -129,13 +161,21 @@ impl<R: gfx::Resources> CarView<R> {
         }
     }
 
-
-    pub fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
+    pub fn draw<C: gfx::CommandBuffer<R>>(
+        &mut self,
+        enc: &mut gfx::Encoder<R, C>,
+    ) {
         enc.clear(&self.data.out_color, [0.1, 0.2, 0.3, 1.0]);
         enc.clear_depth(&self.data.out_depth, 1.0);
 
-        render::Render::draw_model(enc, &self.model,
-            self.transform, &self.cam, &self.pso, &mut self.data,
-            Some((&mut self.debug_render, self.physics.scale_bound)));
+        render::Render::draw_model(
+            enc,
+            &self.model,
+            self.transform,
+            &self.cam,
+            &self.pso,
+            &mut self.data,
+            Some((&mut self.debug_render, self.physics.scale_bound)),
+        );
     }
 }

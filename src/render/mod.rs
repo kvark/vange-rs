@@ -424,7 +424,9 @@ impl<R: gfx::Resources> Render<R> {
         (view, sampler)
     }
 
-    fn create_terrain_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, terrain::Meta> {
+    fn create_terrain_pso<F: gfx::Factory<R>>(
+        factory: &mut F,
+    ) -> gfx::PipelineState<R, terrain::Meta> {
         let program = factory
             .link_program(
                 &read_file("data/shader/terrain.vert"),
@@ -441,7 +443,9 @@ impl<R: gfx::Resources> Render<R> {
             .unwrap()
     }
 
-    pub fn create_object_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, object::Meta> {
+    pub fn create_object_pso<F: gfx::Factory<R>>(
+        factory: &mut F,
+    ) -> gfx::PipelineState<R, object::Meta> {
         let program = factory
             .link_program(
                 &read_file("data/shader/object.vert"),

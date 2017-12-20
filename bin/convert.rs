@@ -1,6 +1,6 @@
-extern crate vangers;
 extern crate env_logger;
 extern crate getopts;
+extern crate vangers;
 
 use vangers::{config, model};
 
@@ -16,10 +16,13 @@ fn main() {
         .parsing_style(getopts::ParsingStyle::StopAtFirstFree)
         .optflag("h", "help", "print this help menu");
 
-    let matches = options.parse(&args[1..]).unwrap();
+    let matches = options.parse(&args[1 ..]).unwrap();
     if matches.opt_present("h") || matches.free.len() != 2 {
         println!("Vangers model to Wavefront OBJ converter");
-        let brief = format!("Usage: {} [options] <path_to_model> <destination_path>", args[0]);
+        let brief = format!(
+            "Usage: {} [options] <path_to_model> <destination_path>",
+            args[0]
+        );
         println!("{}", options.usage(&brief));
         return;
     }

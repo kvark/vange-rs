@@ -1,9 +1,9 @@
-extern crate vangers;
 extern crate env_logger;
+extern crate vangers;
 //#[macro_use]
 //extern crate log;
-extern crate getopts;
 extern crate cgmath;
+extern crate getopts;
 extern crate gfx;
 extern crate gfx_window_glutin;
 extern crate glutin;
@@ -12,7 +12,6 @@ extern crate time;
 mod app;
 
 use vangers::{config, render};
-
 
 fn main() {
     env_logger::init().unwrap();
@@ -27,7 +26,11 @@ fn main() {
         .with_vsync(true);
     let mut event_loop = glutin::EventsLoop::new();
     let (window, mut device, mut factory, main_color, main_depth) =
-        gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(win_builder, context_build, &event_loop);
+        gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(
+            win_builder,
+            context_build,
+            &event_loop,
+        );
 
     let mut app = app::LevelView::new(&settings, main_color, main_depth, &mut factory);
 
@@ -40,7 +43,7 @@ fn main() {
         use glutin::GlContext;
 
         event_loop.poll_events(|event| {
-            if let glutin::Event::WindowEvent {event, ..} = event  {
+            if let glutin::Event::WindowEvent { event, .. } = event {
                 if !app.react(event, &mut factory) {
                     running = false;
                 }

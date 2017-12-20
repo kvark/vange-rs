@@ -86,9 +86,7 @@ impl Splay {
         input: &mut I,
         output: &mut [u8],
     ) {
-        Splay::decompress(&self.tree1, input, output, |b, c| {
-            b.wrapping_add(c)
-        });
+        Splay::decompress(&self.tree1, input, output, |b, c| b.wrapping_add(c));
     }
     pub fn expand2<I: Read>(
         &self,

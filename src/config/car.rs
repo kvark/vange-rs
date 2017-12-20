@@ -174,9 +174,7 @@ pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
     for i in 0 .. num_main + num_ruffa + num_const {
         let (name, data) = fi.next_entry();
         let mi = &reg.model_infos[name];
-        let mut prm_path = settings.data_path
-            .join(&mi.path)
-            .with_extension("prm");
+        let mut prm_path = settings.data_path.join(&mi.path).with_extension("prm");
         let is_default = !prm_path.exists();
         if is_default {
             warn!("Vehicle {} doesn't have parameters, using defaults", name);

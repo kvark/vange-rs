@@ -1,18 +1,17 @@
-extern crate vangers;
-extern crate env_logger;
-#[macro_use]
-extern crate log;
-extern crate getopts;
 extern crate cgmath;
+extern crate env_logger;
+extern crate getopts;
 extern crate gfx;
 extern crate gfx_window_glutin;
 extern crate glutin;
+#[macro_use]
+extern crate log;
 extern crate time;
+extern crate vangers;
 
 mod app;
 
 use vangers::{config, render};
-
 
 fn main() {
     use std::env;
@@ -28,7 +27,11 @@ fn main() {
         .with_vsync(true);
     let mut event_loop = glutin::EventsLoop::new();
     let (window, mut device, mut factory, main_color, main_depth) =
-        gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(win_builder, context_build, &event_loop);
+        gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(
+            win_builder,
+            context_build,
+            &event_loop,
+        );
 
     let args: Vec<_> = env::args().collect();
     let mut options = getopts::Options::new();
@@ -36,7 +39,7 @@ fn main() {
         .parsing_style(getopts::ParsingStyle::StopAtFirstFree)
         .optflag("h", "help", "print this help menu");
 
-    let matches = options.parse(&args[1..]).unwrap();
+    let matches = options.parse(&args[1 ..]).unwrap();
     if matches.opt_present("h") || matches.free.len() != 1 {
         println!("Vangers model viewer");
         let brief = format!("Usage: {} [options] <path_to_model>", args[0]);
@@ -58,7 +61,7 @@ fn main() {
         let delta = time::precise_time_s() as f32 - last_time;
 
         event_loop.poll_events(|event| {
-            if let glutin::Event::WindowEvent {event, ..} = event {
+            if let glutin::Event::WindowEvent { event, .. } = event {
                 if !app.react(event, delta, &mut factory) {
                     running = false;
                 }

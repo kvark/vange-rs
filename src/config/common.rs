@@ -241,8 +241,12 @@ pub fn load(file: File) -> Common {
             k_elastic_xy: fi.next_key_value("k_elastic_xy:"),
             k_elastic_db_coll: fi.next_key_value("k_elastic_db_coll:"),
             k_destroy_level: fi.next_key_value("k_destroy_level:"),
-            strong_ground_collision_threshold: fi.next_key_value("strong_ground_collision_threshould:"),
-            strong_double_collision_threshold: fi.next_key_value("strong_double_collision_threshould:"),
+            strong_ground_collision_threshold: fi.next_key_value(
+                "strong_ground_collision_threshould:",
+            ),
+            strong_double_collision_threshold: fi.next_key_value(
+                "strong_double_collision_threshould:",
+            ),
             k_friction_wheel_x: fi.next_key_value("k_friction_wheel_x:"),
             k_friction_wheel_x_back: fi.next_key_value("k_friction_wheel_x_back:"),
             k_friction_wheel_y: fi.next_key_value("k_friction_wheel_y:"),

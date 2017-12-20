@@ -38,8 +38,7 @@ impl Settings {
             .expect("Unable to open the settings file")
             .read_to_string(&mut string)
             .unwrap();
-        let set: Settings = toml::from_str(&string)
-            .expect("Unable to parse settings TOML");
+        let set: Settings = toml::from_str(&string).expect("Unable to parse settings TOML");
 
         if !set.check_path("options.dat") {
             panic!(
@@ -55,8 +54,7 @@ impl Settings {
         &self,
         path: &str,
     ) -> File {
-        File::open(self.data_path.join(path))
-            .expect(&format!("Unable to open game file: {}", path))
+        File::open(self.data_path.join(path)).expect(&format!("Unable to open game file: {}", path))
     }
 
     pub fn check_path(
@@ -75,8 +73,7 @@ impl Settings {
             .join("resource")
             .join("pal")
             .join("objects.pal");
-        File::open(path)
-            .expect("Unable to open palette")
+        File::open(path).expect("Unable to open palette")
     }
 
     pub fn _open_vehicle_model(
@@ -89,17 +86,14 @@ impl Settings {
             .join("mechous")
             .join(name)
             .with_extension("m3d");
-        File::open(path)
-            .expect(&format!("Unable to open vehicle {}", name))
+        File::open(path).expect(&format!("Unable to open vehicle {}", name))
     }
 
     pub fn get_level(&self) -> Option<level::LevelConfig> {
         if self.game.level.is_empty() {
             return None;
         }
-        let level_path = self.data_path
-            .join("thechain")
-            .join(&self.game.level);
+        let level_path = self.data_path.join("thechain").join(&self.game.level);
 
         let ini = Ini::load_from_file(level_path.join("world.ini"))
             .expect("Unable to read the level's INI description");

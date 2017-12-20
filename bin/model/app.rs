@@ -1,8 +1,7 @@
 use cgmath;
-use glutin::WindowEvent as Event;
 use gfx;
+use glutin::WindowEvent as Event;
 use vangers::{config, level, model, render, space};
-
 
 pub struct ResourceView<R: gfx::Resources> {
     model: model::Model<R>,
@@ -13,13 +12,15 @@ pub struct ResourceView<R: gfx::Resources> {
 }
 
 impl<R: gfx::Resources> ResourceView<R> {
-    pub fn new<F: gfx::Factory<R>>(path: &str, settings: &config::settings::Settings,
-               out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
-               out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
-               factory: &mut F) -> ResourceView<R>
-    {
-        use std::io::BufReader;
+    pub fn new<F: gfx::Factory<R>>(
+        path: &str,
+        settings: &config::settings::Settings,
+        out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
+        out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
+        factory: &mut F,
+    ) -> ResourceView<R> {
         use gfx::traits::FactoryExt;
+        use std::io::BufReader;
 
         let pal_data = level::read_palette(settings.open_palette());
 
@@ -47,7 +48,9 @@ impl<R: gfx::Resources> ResourceView<R> {
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, -120.0, 60.0),
                 rot: cgmath::Rotation3::from_axis_angle::<cgmath::Rad<_>>(
-                    cgmath::Vector3::unit_x(), cgmath::Angle::turn_div_6()),
+                    cgmath::Vector3::unit_x(),
+                    cgmath::Angle::turn_div_6(),
+                ),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
                     aspect: settings.get_screen_aspect(),
@@ -58,7 +61,10 @@ impl<R: gfx::Resources> ResourceView<R> {
         }
     }
 
-    fn rotate(&mut self, angle: cgmath::Rad<f32>) {
+    fn rotate(
+        &mut self,
+        angle: cgmath::Rad<f32>,
+    ) {
         use cgmath::Transform;
         let other = cgmath::Decomposed {
             scale: 1.0,
@@ -68,17 +74,30 @@ impl<R: gfx::Resources> ResourceView<R> {
         self.transform = other.concat(&self.transform);
     }
 
-    pub fn react<F>(&mut self, event: Event, delta: f32, factory: &mut F)
-                 -> bool where
+    pub fn react<F>(
+        &mut self,
+        event: Event,
+        delta: f32,
+        factory: &mut F,
+    ) -> bool
+    where
         F: gfx::Factory<R>,
     {
-        use glutin::{VirtualKeyCode as Key, KeyboardInput};
+        use glutin::{KeyboardInput, VirtualKeyCode as Key};
         use glutin::ElementState::Pressed;
 
         let angle = cgmath::Rad(delta * 2.0);
         match event {
             Event::Closed => return false,
-            Event::KeyboardInput { input: KeyboardInput { state: Pressed, virtual_keycode: Some(key), ..}, ..} => match key {
+            Event::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state: Pressed,
+                        virtual_keycode: Some(key),
+                        ..
+                    },
+                ..
+            } => match key {
                 Key::Escape => return false,
                 Key::A => self.rotate(-angle),
                 Key::D => self.rotate(angle),
@@ -90,11 +109,21 @@ impl<R: gfx::Resources> ResourceView<R> {
         true
     }
 
-    pub fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
+    pub fn draw<C: gfx::CommandBuffer<R>>(
+        &mut self,
+        enc: &mut gfx::Encoder<R, C>,
+    ) {
         enc.clear(&self.data.out_color, [0.1, 0.2, 0.3, 1.0]);
         enc.clear_depth(&self.data.out_depth, 1.0);
 
-        render::Render::draw_model(enc, &self.model,
-            self.transform, &self.cam, &self.pso, &mut self.data, None);
+        render::Render::draw_model(
+            enc,
+            &self.model,
+            self.transform,
+            &self.cam,
+            &self.pso,
+            &mut self.data,
+            None,
+        );
     }
 }

@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use cgmath;
 use gfx;
-use gfx::traits::FactoryExt;
+pub use gfx::pso::buffer::{InstanceRate, VertexBufferCommon};
+use gfx::traits::FactoryExt; // reduce the line width at use site
 
 use super::{read_file, ColorFormat, DepthFormat};
 use model;
@@ -65,7 +66,7 @@ gfx_defines! {
 
     pipeline debug {
         buf_pos: gfx::VertexBuffer<DebugPos> = (),
-        buf_col: gfx::pso::buffer::VertexBufferCommon<DebugColor, gfx::pso::buffer::InstanceRate> = 1,
+        buf_col: VertexBufferCommon<DebugColor, InstanceRate> = 1,
         locals: gfx::ConstantBuffer<DebugLocals> = "c_Locals",
         out_color: gfx::BlendTarget<ColorFormat> = ("Target0", gfx::state::MASK_ALL, gfx::preset::blend::ALPHA),
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_TEST,
@@ -180,7 +181,12 @@ impl<R: gfx::Resources> DebugRender<R> {
 
         self.pso_triangle = Some(
             factory
-                .create_pipeline_from_program(&program, gfx::Primitive::TriangleList, raster, debug::new())
+                .create_pipeline_from_program(
+                    &program,
+                    gfx::Primitive::TriangleList,
+                    raster,
+                    debug::new(),
+                )
                 .unwrap(),
         );
 

@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-use std::f32::EPSILON;
 use cgmath;
 use cgmath::prelude::*;
-use glutin::WindowEvent as Event;
 use gfx;
+use glutin::WindowEvent as Event;
+use std::collections::HashMap;
+use std::f32::EPSILON;
 use vangers::{config, level, model, render, space};
-
 
 const MAX_TRACTION: config::common::Traction = 4.0;
 
@@ -41,18 +40,27 @@ impl Accumulator {
             count: 0.0,
         }
     }
-    fn add(&mut self, pos: cgmath::Vector3<f32>, depth: f32) {
+    fn add(
+        &mut self,
+        pos: cgmath::Vector3<f32>,
+        depth: f32,
+    ) {
         self.pos += pos;
         self.depth += depth;
         self.count += 1.0;
     }
-    fn finish(&self, min: f32) -> Option<CollisionPoint> {
+    fn finish(
+        &self,
+        min: f32,
+    ) -> Option<CollisionPoint> {
         if self.count > min {
             Some(CollisionPoint {
                 pos: self.pos / self.count,
                 depth: self.depth / self.count,
             })
-        } else { None }
+        } else {
+            None
+        }
     }
 }
 
@@ -81,7 +89,10 @@ impl Default for Dynamo {
 }
 
 impl Dynamo {
-    fn change_traction(&mut self, delta: config::common::Traction) {
+    fn change_traction(
+        &mut self,
+        delta: config::common::Traction,
+    ) {
         let old = self.traction;
         self.traction = (old + delta).min(MAX_TRACTION).max(-MAX_TRACTION);
         if old * self.traction < 0.0 {
@@ -104,14 +115,18 @@ pub struct Agent<R: gfx::Resources> {
     control: Control,
 }
 
-
 fn get_height(altitude: u8) -> f32 {
     altitude as f32 * (level::HEIGHT_SCALE as f32) / 256.0
 }
 
-fn collide_low(poly: &model::Polygon, samples: &[[i8; 3]], scale: f32, transform: &space::Transform,
-               level: &level::Level, terraconf: &config::common::Terrain) -> CollisionData
-{
+fn collide_low(
+    poly: &model::Polygon,
+    samples: &[[i8; 3]],
+    scale: f32,
+    transform: &space::Transform,
+    level: &level::Level,
+    terraconf: &config::common::Terrain,
+) -> CollisionData {
     let (mut soft, mut hard) = (Accumulator::new(), Accumulator::new());
     for &s in samples[poly.sample_range.0 as usize .. poly.sample_range.1 as usize].iter() {
         let sp = cgmath::Point3::from([s[0] as f32, s[1] as f32, s[2] as f32]);
@@ -126,12 +141,12 @@ fn collide_low(poly: &model::Polygon, samples: &[[i8; 3]], scale: f32, transform
                     if pos.z - middle > high - pos.z {
                         high
                     } else {
-                        continue
+                        continue;
                     }
                 } else {
                     get_height(lo_alt)
                 }
-            },
+            }
             None => get_height(lo_alt),
         };
         let dz = height - pos.z;
@@ -150,30 +165,44 @@ fn collide_low(poly: &model::Polygon, samples: &[[i8; 3]], scale: f32, transform
     }
 }
 
-fn _calc_collision_matrix_inv(r: cgmath::Vector3<f32>, ji: &cgmath::Matrix3<f32>) -> cgmath::Matrix3<f32> {
-    let t3  = -r.z * ji[1][1] + r.y * ji[2][1];
-    let t7  = -r.z * ji[1][2] + r.y * ji[2][2];
+fn _calc_collision_matrix_inv(
+    r: cgmath::Vector3<f32>,
+    ji: &cgmath::Matrix3<f32>,
+) -> cgmath::Matrix3<f32> {
+    let t3 = -r.z * ji[1][1] + r.y * ji[2][1];
+    let t7 = -r.z * ji[1][2] + r.y * ji[2][2];
     let t12 = -r.z * ji[1][0] + r.y * ji[2][0];
-    let t21 =  r.z * ji[0][1] - r.x * ji[2][1];
-    let t25 =  r.z * ji[0][2] - r.x * ji[2][2];
-    let t30 =  r.z * ji[0][0] - r.x * ji[2][0];
+    let t21 = r.z * ji[0][1] - r.x * ji[2][1];
+    let t25 = r.z * ji[0][2] - r.x * ji[2][2];
+    let t30 = r.z * ji[0][0] - r.x * ji[2][0];
     let t39 = -r.y * ji[0][1] + r.x * ji[1][1];
     let t43 = -r.y * ji[0][2] + r.x * ji[1][2];
     let t48 = -r.y * ji[0][0] + r.x * ji[1][0];
     let cm = cgmath::Matrix3::new(
-        1.0 - t3*r.z + t7*r.y, t12*r.z - t7*r.x, - t12*r.y + t3*r.x,
-        - t21*r.z + t25*r.y, 1.0 + t30*r.z - t25*r.x, - t30*r.y + t21*r.x,
-        - t39*r.z + t43*r.y, t48*r.z - t43*r.x, 1.0 - t48*r.y + t39*r.x
-        );
+        1.0 - t3 * r.z + t7 * r.y,
+        t12 * r.z - t7 * r.x,
+        -t12 * r.y + t3 * r.x,
+        -t21 * r.z + t25 * r.y,
+        1.0 + t30 * r.z - t25 * r.x,
+        -t30 * r.y + t21 * r.x,
+        -t39 * r.z + t43 * r.y,
+        t48 * r.z - t43 * r.x,
+        1.0 - t48 * r.y + t39 * r.x,
+    );
     cm.invert().unwrap()
 }
 
 impl<R: gfx::Resources> Agent<R> {
-    fn step(&mut self, dt: f32, level: &level::Level, common: &config::common::Common,
-            mut line_buffer: Option<&mut render::LineBuffer>)
-    {
+    fn step(
+        &mut self,
+        dt: f32,
+        level: &level::Level,
+        common: &config::common::Common,
+        mut line_buffer: Option<&mut render::LineBuffer>,
+    ) {
         if self.control.motor != 0.0 {
-            self.dynamo.change_traction(self.control.motor * dt * common.car.traction_incr);
+            self.dynamo
+                .change_traction(self.control.motor * dt * common.car.traction_incr);
         }
         if self.control.brake && self.dynamo.traction != 0.0 {
             self.dynamo.traction *= (config::common::ORIGINAL_FPS as f32 * -dt).exp2();
@@ -191,19 +220,21 @@ impl<R: gfx::Resources> Agent<R> {
         let mut w_vel = self.dynamo.angular_velocity;
         let j_inv = {
             let phys = &self.car.model.body.physics;
-            (cgmath::Matrix3::from(phys.jacobi) *
-                (self.transform.scale * self.transform.scale / phys.volume))
-                .invert().unwrap()
+            (cgmath::Matrix3::from(phys.jacobi)
+                * (self.transform.scale * self.transform.scale / phys.volume))
+                .invert()
+                .unwrap()
         };
 
         let mut wheels_touch = 0u32;
         let mut spring_touch;
 
-        /*for _ in 0 .. common.nature.num_calls_analysis*/ {
+        /*for _ in 0 .. common.nature.num_calls_analysis*/
+        {
             let mut float_count = 0;
             let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
-            let stand_on_wheels = z_axis.z > 0.0 &&
-                (self.transform.rot * cgmath::Vector3::unit_x()).z.abs() < 0.7;
+            let stand_on_wheels =
+                z_axis.z > 0.0 && (self.transform.rot * cgmath::Vector3::unit_x()).z.abs() < 0.7;
             let modulation = 1.0;
             let mut acc_cur = AccelerationVectors {
                 f: rot_inv * acc_global.f,
@@ -213,9 +244,11 @@ impl<R: gfx::Resources> Agent<R> {
             // apply drag
             let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(v_vel.magnitude());
             let mut w_drag = common.drag.free.w * common.drag.speed.w.powf(w_vel.magnitude2()); //why mag2?
-            if wheels_touch > 0 { //TODO: why `ln()`?
-                let speed = common.drag.wheel_speed.ln() * self.car.physics.mobility_factor *
-                    common.global.speed_factor / self.car.physics.speed_factor;
+            if wheels_touch > 0 {
+                //TODO: why `ln()`?
+                let speed = common.drag.wheel_speed.ln() * self.car.physics.mobility_factor
+                    * common.global.speed_factor
+                    / self.car.physics.speed_factor;
                 v_vel.y *= (1.0 + speed).powf(config::common::SPEED_CORRECTION_FACTOR);
             }
             wheels_touch = 0;
@@ -231,12 +264,18 @@ impl<R: gfx::Resources> Agent<R> {
             let mut sum_df = 0.;
 
             for (bound_poly_id, poly) in self.car.model.shape.polygons.iter().enumerate() {
-                let r = cgmath::Vector3::from(poly.middle) *
-                    (self.transform.scale * self.car.physics.scale_bound);
+                let r = cgmath::Vector3::from(poly.middle)
+                    * (self.transform.scale * self.car.physics.scale_bound);
                 let rg0 = self.transform.rot * r;
                 let rglob = rg0 + self.transform.disp;
-                debug!("\t\tpoly[{}]: normal={:?} scale={} mid={:?} r={:?}", bound_poly_id,
-                    poly.normal, self.transform.scale * self.car.physics.scale_bound, poly.middle, r);
+                debug!(
+                    "\t\tpoly[{}]: normal={:?} scale={} mid={:?} r={:?}",
+                    bound_poly_id,
+                    poly.normal,
+                    self.transform.scale * self.car.physics.scale_bound,
+                    poly.middle,
+                    r
+                );
                 //let vr = v_vel + w_vel.cross(r);
                 //let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
                 let texel = level.get((rglob.x as i32, rglob.y as i32));
@@ -249,8 +288,14 @@ impl<R: gfx::Resources> Agent<R> {
                 }
                 let poly_norm = cgmath::Vector3::from(poly.normal).normalize();
                 if z_axis.dot(poly_norm) < 0.0 {
-                    let cdata = collide_low(poly, &self.car.model.shape.samples,
-                        self.car.physics.scale_bound, &self.transform, level, &common.terrain);
+                    let cdata = collide_low(
+                        poly,
+                        &self.car.model.shape.samples,
+                        self.car.physics.scale_bound,
+                        &self.transform,
+                        level,
+                        &common.terrain,
+                    );
                     debug!("\t\tcollide_low = {:?}", cdata);
                     terrain_immersion += match cdata.soft {
                         Some(ref cp) => cp.depth.abs(),
@@ -308,8 +353,8 @@ impl<R: gfx::Resources> Agent<R> {
                         let df = df0.min(common.impulse.elastic_restriction);
                         debug!("\t\tbound[{}] dF.z = {}, rg0={:?}", bound_poly_id, df, rg0);
                         acc_springs.f.z += df;
-					    acc_springs.k.x += rg0.y * df;
-					    acc_springs.k.y -= rg0.x * df;
+                        acc_springs.k.x += rg0.y * df;
+                        acc_springs.k.y -= rg0.x * df;
                         //let impulse = cgmath::vec3(0., 0., df);
                         //acc_springs.f += impulse;
                         //acc_springs.k += rg0.cross(impulse);
@@ -349,10 +394,14 @@ impl<R: gfx::Resources> Agent<R> {
 
             let _ = (float_count, water_immersion, terrain_immersion); //TODO
             if wheels_touch != 0 && stand_on_wheels {
-                let f_traction_per_wheel =
-                    self.car.physics.mobility_factor * common.global.mobility_factor *
-                    if self.control.turbo { common.global.k_traction_turbo } else { 1.0 } *
-                    self.dynamo.traction / (self.car.model.wheels.len() as f32);
+                let f_traction_per_wheel = self.car.physics.mobility_factor
+                    * common.global.mobility_factor
+                    * if self.control.turbo {
+                        common.global.k_traction_turbo
+                    } else {
+                        1.0
+                    } * self.dynamo.traction
+                    / (self.car.model.wheels.len() as f32);
                 for wheel in self.car.model.wheels.iter() {
                     let mut pos = cgmath::Vector3::from(wheel.pos) * self.transform.scale;
                     pos.x = pos.x.signum() * self.car.model.body.bbox.1[0]; // why?
@@ -364,8 +413,11 @@ impl<R: gfx::Resources> Agent<R> {
                 }
             }
             if spring_touch + wheels_touch != 0 {
-                let tmp = cgmath::Vector3::new(0.0, 0.0,
-                    self.car.physics.z_offset_of_mass_center * self.transform.scale);
+                let tmp = cgmath::Vector3::new(
+                    0.0,
+                    0.0,
+                    self.car.physics.z_offset_of_mass_center * self.transform.scale,
+                );
                 acc_cur.k -= common.nature.gravity * z_axis.cross(tmp);
                 let vz = z_axis.dot(v_vel);
                 if vz < -10.0 {
@@ -383,21 +435,33 @@ impl<R: gfx::Resources> Agent<R> {
             }
             let (v_mag, w_mag) = (v_vel.magnitude(), w_vel.magnitude());
             if stand_on_wheels && v_mag < common.drag.abs_min.v && w_mag < common.drag.abs_min.w {
-                v_drag *= common.drag.coll.v.powf(common.drag.abs_min.v / (v_mag + EPSILON));
-                w_drag *= common.drag.coll.w.powf(common.drag.abs_min.w / (w_mag + EPSILON));
+                v_drag *= common
+                    .drag
+                    .coll
+                    .v
+                    .powf(common.drag.abs_min.v / (v_mag + EPSILON));
+                w_drag *= common
+                    .drag
+                    .coll
+                    .w
+                    .powf(common.drag.abs_min.w / (w_mag + EPSILON));
             }
             if v_mag * v_drag > common.drag.abs_stop.v || w_mag * w_drag > common.drag.abs_stop.w {
-                let vs = v_vel - (down_minus_up.signum() as f32) *
-                    (z_axis * (self.car.model.body.bbox.2 * common.impulse.rolling_scale))
-                    .cross(w_vel);
+                let vs = v_vel
+                    - (down_minus_up.signum() as f32)
+                        * (z_axis * (self.car.model.body.bbox.2 * common.impulse.rolling_scale))
+                            .cross(w_vel);
                 let angle = cgmath::Rad(-dt * w_mag);
-                let vel_rot_inv = cgmath::Quaternion::from_axis_angle(w_vel / (w_mag + EPSILON), angle);
+                let vel_rot_inv =
+                    cgmath::Quaternion::from_axis_angle(w_vel / (w_mag + EPSILON), angle);
                 self.transform.disp += (self.transform.rot * vs) * dt;
                 self.transform.rot = self.transform.rot * vel_rot_inv.invert();
                 v_vel = vel_rot_inv * v_vel;
                 w_vel = vel_rot_inv * w_vel;
-                debug!("\tvs={:?} {:?}\n\t\tdisp {:?} scale {}", vs,
-                    self.transform.rot, self.transform.disp, self.transform.scale);
+                debug!(
+                    "\tvs={:?} {:?}\n\t\tdisp {:?} scale {}",
+                    vs, self.transform.rot, self.transform.disp, self.transform.scale
+                );
             }
             //debug!("\tdrag v={} w={}", v_drag, w_drag);
             v_vel *= v_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
@@ -424,21 +488,31 @@ impl<R: gfx::Resources> Agent<R> {
         W new = (-0.865242, 0.182465, 0.072018)
         */
         if false {
-            let w = cgmath::vec3(-0.865242,0.182465,0.072018);
+            let w = cgmath::vec3(-0.865242, 0.182465, 0.072018);
             let wmag = w.magnitude();
-            let a_l2g = cgmath::Matrix3::new(0.714473, -0.661982, -0.226515,
-                0.237704, -0.074829, 0.968451,
-                -0.658047, -0.745775, 0.103892)
-                .transpose();
+            let a_l2g = cgmath::Matrix3::new(
+                0.714473,
+                -0.661982,
+                -0.226515,
+                0.237704,
+                -0.074829,
+                0.968451,
+                -0.658047,
+                -0.745775,
+                0.103892,
+            ).transpose();
             let q_l2g = cgmath::Quaternion::from(a_l2g);
             let angle = cgmath::Rad(-0.095507 * wmag);
             let q_rot_inv = cgmath::Quaternion::from_axis_angle(w / (wmag + EPSILON), angle);
             let wnew = q_rot_inv * w;
             let q_l2g_new = q_l2g * q_rot_inv.invert();
-            println!("\twnew: {:?}\n\ta_rot_inv: {:?}\n\tq_l2g: {:?}\n\tq_l2g_new: {:?}", wnew,
+            println!(
+                "\twnew: {:?}\n\ta_rot_inv: {:?}\n\tq_l2g: {:?}\n\tq_l2g_new: {:?}",
+                wnew,
                 cgmath::Matrix3::from(q_rot_inv).transpose(),
                 cgmath::Matrix3::from(q_l2g).transpose(),
-                cgmath::Matrix3::from(q_l2g_new).transpose());
+                cgmath::Matrix3::from(q_l2g_new).transpose()
+            );
         }
         /*
         wnew: Vector3 [-0.865242, 0.182465, 0.072018]
@@ -447,11 +521,12 @@ impl<R: gfx::Resources> Agent<R> {
         q_l2g_new: Matrix3 [[0.7142829, -0.6464473, -0.26815253], [0.22007042, -0.15625153, 0.9628885], [-0.664356, -0.7467872, 0.030656204]]
         */
 
-        self.dynamo.linear_velocity  = v_vel;
+        self.dynamo.linear_velocity = v_vel;
         self.dynamo.angular_velocity = w_vel;
         // slow down
         let traction_step = -self.dynamo.traction.signum() * dt;
-        self.dynamo.change_traction(traction_step * common.car.traction_decr);
+        self.dynamo
+            .change_traction(traction_step * common.car.traction_decr);
     }
 }
 
@@ -475,11 +550,12 @@ pub struct Game<R: gfx::Resources> {
 }
 
 impl<R: gfx::Resources> Game<R> {
-    pub fn new<F: gfx::Factory<R>>(settings: &config::Settings,
-           out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
-           out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
-           factory: &mut F) -> Game<R>
-    {
+    pub fn new<F: gfx::Factory<R>>(
+        settings: &config::Settings,
+        out_color: gfx::handle::RenderTargetView<R, render::ColorFormat>,
+        out_depth: gfx::handle::DepthStencilView<R, render::DepthFormat>,
+        factory: &mut F,
+    ) -> Game<R> {
         info!("Loading world parameters");
         let db = {
             let game = config::game::Registry::load(settings);
@@ -536,16 +612,24 @@ impl<R: gfx::Resources> Game<R> {
         }
     }
 
-    fn _move_cam(&mut self, step: f32) {
+    fn _move_cam(
+        &mut self,
+        step: f32,
+    ) {
         let mut back = self.cam.rot * cgmath::Vector3::unit_z();
         back.z = 0.0;
         self.cam.loc -= back.normalize() * step;
     }
 
-    pub fn react<F>(&mut self, event: Event, factory: &mut F)
-                 -> bool where F: gfx::Factory<R>
+    pub fn react<F>(
+        &mut self,
+        event: Event,
+        factory: &mut F,
+    ) -> bool
+    where
+        F: gfx::Factory<R>,
     {
-        use glutin::{VirtualKeyCode as Key, KeyboardInput};
+        use glutin::{KeyboardInput, VirtualKeyCode as Key};
         use glutin::ElementState::*;
 
         let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
@@ -555,7 +639,15 @@ impl<R: gfx::Resources> Game<R> {
         match event {
             Event::Closed => return false,
             //Event::Resized(width, height) => self.render.resize(width, height),
-            Event::KeyboardInput { input: KeyboardInput { state: Pressed, virtual_keycode: Some(key), ..}, ..} => match key {
+            Event::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state: Pressed,
+                        virtual_keycode: Some(key),
+                        ..
+                    },
+                ..
+            } => match key {
                 Key::Escape => return false,
                 Key::L => self.render.reload(factory),
                 Key::P => {
@@ -569,7 +661,7 @@ impl<R: gfx::Resources> Game<R> {
                         self.is_paused = true;
                         self.cam.focus_on(center);
                     }
-                },
+                }
                 Key::Comma => self.tick = Some(-1.0),
                 Key::Period => self.tick = Some(1.0),
                 Key::W => self.spin_ver = 1.0,
@@ -578,12 +670,20 @@ impl<R: gfx::Resources> Game<R> {
                     player.transform.rot = cgmath::One::one();
                     player.dynamo.linear_velocity = cgmath::Vector3::zero();
                     player.dynamo.angular_velocity = cgmath::Vector3::zero();
-                },
+                }
                 Key::A => self.spin_hor = -1.0,
                 Key::D => self.spin_hor = 1.0,
                 _ => (),
             },
-            Event::KeyboardInput { input: KeyboardInput { state: Released, virtual_keycode: Some(key), ..}, ..} => match key {
+            Event::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state: Released,
+                        virtual_keycode: Some(key),
+                        ..
+                    },
+                ..
+            } => match key {
                 Key::W | Key::S => self.spin_ver = 0.0,
                 Key::A | Key::D => self.spin_hor = 0.0,
                 _ => (),
@@ -608,42 +708,68 @@ impl<R: gfx::Resources> Game<R> {
         true
     }
 
-    pub fn update(&mut self, delta: f32) {
+    pub fn update(
+        &mut self,
+        delta: f32,
+    ) {
         //let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
         //let dt = delta * 6.0;//TODO
         let dt = 0.093912; //TODO
-        let pid = self.agents.iter().position(|a| a.spirit == Spirit::Player).unwrap();
+        let pid = self.agents
+            .iter()
+            .position(|a| a.spirit == Spirit::Player)
+            .unwrap();
 
         if self.is_paused {
             let player = &mut self.agents[pid];
             if let Some(tick) = self.tick.take() {
                 self.line_buffer.clear();
-                player.step(tick * dt, &self.level, &self.db.common, Some(&mut self.line_buffer));
+                player.step(
+                    tick * dt,
+                    &self.level,
+                    &self.db.common,
+                    Some(&mut self.line_buffer),
+                );
             }
-            self.cam.rotate_focus(&player.transform,
+            self.cam.rotate_focus(
+                &player.transform,
                 cgmath::Rad(2.0 * delta * self.spin_hor),
-                cgmath::Rad(delta * self.spin_ver));
+                cgmath::Rad(delta * self.spin_ver),
+            );
         } else {
             //self.dyn_target.steer += cgmath::Rad(0.2 * delta * self.spin_hor);
             self.agents[pid].control.motor = 1.0 * self.spin_ver;
 
-            self.cam.look_by(&self.agents[pid].transform, &space::Direction {
-                view: cgmath::vec3(0.0, 1.0, -3.0),
-                height: 200.0,
-            });
+            self.cam.look_by(
+                &self.agents[pid].transform,
+                &space::Direction {
+                    view: cgmath::vec3(0.0, 1.0, -3.0),
+                    height: 200.0,
+                },
+            );
             self.line_buffer.clear();
 
             for a in self.agents.iter_mut() {
-                a.step(dt, &self.level, &self.db.common, Some(&mut self.line_buffer));
+                a.step(
+                    dt,
+                    &self.level,
+                    &self.db.common,
+                    Some(&mut self.line_buffer),
+                );
             }
         }
     }
 
-    pub fn draw<C: gfx::CommandBuffer<R>>(&mut self, enc: &mut gfx::Encoder<R, C>) {
-        let items = self.agents.iter().map(|a|
-            (&a.car.model, &a.transform, a.car.physics.scale_bound)
-        );
+    pub fn draw<C: gfx::CommandBuffer<R>>(
+        &mut self,
+        enc: &mut gfx::Encoder<R, C>,
+    ) {
+        let items = self.agents
+            .iter()
+            .map(|a| (&a.car.model, &a.transform, a.car.physics.scale_bound));
         self.render.draw_world(enc, items, &self.cam, false);
-        self.render.debug.draw_lines(&self.line_buffer, self.cam.get_view_proj().into(), enc);
+        self.render
+            .debug
+            .draw_lines(&self.line_buffer, self.cam.get_view_proj().into(), enc);
     }
 }

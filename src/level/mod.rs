@@ -134,14 +134,17 @@ pub fn read_palette<I: Read>(input: I) -> [[u8; 4]; 0x100] {
 }
 
 pub fn load(config: &LevelConfig) -> Level {
-    use std::fs::File;
-    use std::time::Instant;
     use rayon::prelude::*;
     use splay::Splay;
+    use std::fs::File;
+    use std::time::Instant;
 
     fn report_time(start: Instant) {
         let d = Instant::now() - start;
-        info!("\ttook {} ms", d.as_secs() as u32 * 1000 + d.subsec_nanos() / 1_000_000);
+        info!(
+            "\ttook {} ms",
+            d.as_secs() as u32 * 1000 + d.subsec_nanos() / 1_000_000
+        );
     }
 
     assert!(config.is_compressed);
@@ -154,7 +157,8 @@ pub fn load(config: &LevelConfig) -> Level {
         let flood_size = size.1 >> config.section.as_power();
         let geo_pow = config.geo.as_power();
         let net_size = size.0 * size.1 >> (2 * geo_pow);
-        let flood_offset = (2 * 4 + (1 + 4 + 4) * 4 + 2 * net_size + 2 * geo_pow * 4 + 2 * flood_size * geo_pow * 4) as u64;
+        let flood_offset = (2 * 4 + (1 + 4 + 4) * 4 + 2 * net_size + 2 * geo_pow * 4
+            + 2 * flood_size * geo_pow * 4) as u64;
         let expected_file_size = flood_offset + (flood_size * 4) as u64;
         assert_eq!(
             vpr_file.metadata().unwrap().len(),
@@ -185,7 +189,8 @@ pub fn load(config: &LevelConfig) -> Level {
         let mut height = vec![0u8; total];
         let mut meta = vec![0u8; total];
 
-        height.chunks_mut(size.0 as _)
+        height
+            .chunks_mut(size.0 as _)
             .zip(meta.chunks_mut(size.0 as _))
             .zip(st_table.iter())
             .collect::<Vec<_>>()
@@ -203,8 +208,7 @@ pub fn load(config: &LevelConfig) -> Level {
         (height, meta)
     };
     report_time(start_vmc);
-    let palette = File::open(&config.path_palette)
-        .expect("Unable to open the palette file");
+    let palette = File::open(&config.path_palette).expect("Unable to open the palette file");
 
     Level {
         size: size,
