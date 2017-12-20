@@ -2,7 +2,6 @@ use std::fmt::Debug;
 use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
 
-
 pub struct Reader<I> {
     input: BufReader<I>,
     line: String,
@@ -30,12 +29,13 @@ impl<I: Read> Reader<I> {
                     self.advance();
                 }
             } else if !self.cur().is_empty() && !self.line.starts_with("//") {
-                break
+                break;
             }
         }
     }
 
-    pub fn next_value<T>(&mut self) -> T where
+    pub fn next_value<T>(&mut self) -> T
+    where
         T: FromStr,
         T::Err: Debug,
     {
@@ -43,7 +43,11 @@ impl<I: Read> Reader<I> {
         self.cur().parse().unwrap()
     }
 
-    pub fn next_key_value<T>(&mut self, key: &str) -> T where
+    pub fn next_key_value<T>(
+        &mut self,
+        key: &str,
+    ) -> T
+    where
         T: FromStr,
         T::Err: Debug,
     {
@@ -54,7 +58,8 @@ impl<I: Read> Reader<I> {
         tokens.next().unwrap().parse().unwrap()
     }
 
-    pub fn next_entry<T>(&mut self) -> (&str, Vec<T>) where
+    pub fn next_entry<T>(&mut self) -> (&str, Vec<T>)
+    where
         T: FromStr,
         T::Err: Debug,
     {

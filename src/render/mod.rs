@@ -1,13 +1,12 @@
+use {level, model};
 use cgmath::{Decomposed, Matrix4};
 use gfx;
 use gfx::traits::FactoryExt;
 use space::{Camera, Transform};
-use {level, model};
 
 mod debug;
 
-pub use self::debug::{DebugRender, DebugPos, LineBuffer};
-
+pub use self::debug::{DebugPos, DebugRender, LineBuffer};
 
 struct MaterialParams {
     dx: f32,
@@ -18,8 +17,16 @@ struct MaterialParams {
 const NUM_MATERIALS: usize = 2;
 const TERRAIN_MATERIAL: [usize; level::NUM_TERRAINS] = [1, 0, 0, 0, 0, 0, 0, 0];
 const MATERIALS: [MaterialParams; NUM_MATERIALS] = [
-    MaterialParams { dx: 1.0, sd: 1.0, jj: 1.0},
-    MaterialParams { dx: 5.0, sd: 1.25, jj: 0.5 },
+    MaterialParams {
+        dx: 1.0,
+        sd: 1.0,
+        jj: 1.0,
+    },
+    MaterialParams {
+        dx: 5.0,
+        sd: 1.25,
+        jj: 0.5,
+    },
 ];
 const SHADOW_DEPTH: usize = 0x180; // each 0x100 is 1 voxel/step
 const MAX_TEX_HEIGHT: i32 = 4096;
@@ -27,33 +34,32 @@ pub const NUM_COLOR_IDS: u32 = 25;
 pub const COLOR_ID_BODY: u32 = 1;
 
 const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
-    [0, 0],     // reserved
-    [128, 3],   // body
-    [176, 4],   // window
-    [224, 7],   // wheel
-    [184, 4],   // defence
-    [224, 3],   // weapon
-    [224, 7],   // tube
-    [128, 3],   // body red
-    [144, 3],   // body blue
-    [160, 3],   // body yellow
-    [228, 4],   // body gray
-    [112, 4],   // yellow (charged)
-    [0, 2],     // material 0
-    [32, 2],    // material 1
-    [64, 4],    // material 2
-    [72, 3],    // material 3
-    [88, 3],    // material 4
-    [104, 4],   // material 5
-    [112, 4],   // material 6
-    [120, 4],   // material 7
-    [184, 4],   // black
-    [240, 3],   // body green
-    [136, 4],   // skyfarmer kenoboo
-    [128, 4],   // skyfarmer pipetka
-    [224, 4],   // rotten item
+    [0, 0],   // reserved
+    [128, 3], // body
+    [176, 4], // window
+    [224, 7], // wheel
+    [184, 4], // defence
+    [224, 3], // weapon
+    [224, 7], // tube
+    [128, 3], // body red
+    [144, 3], // body blue
+    [160, 3], // body yellow
+    [228, 4], // body gray
+    [112, 4], // yellow (charged)
+    [0, 2],   // material 0
+    [32, 2],  // material 1
+    [64, 4],  // material 2
+    [72, 3],  // material 3
+    [88, 3],  // material 4
+    [104, 4], // material 5
+    [112, 4], // material 6
+    [120, 4], // material 7
+    [184, 4], // black
+    [240, 3], // body green
+    [136, 4], // skyfarmer kenoboo
+    [128, 4], // skyfarmer pipetka
+    [224, 4], // rotten item
 ];
-
 
 pub type ColorFormat = gfx::format::Rgba8;
 pub type DepthFormat = gfx::format::DepthStencil;
@@ -114,20 +120,21 @@ pub struct Render<R: gfx::Resources> {
 
 #[doc(hidden)]
 pub fn read_file(name: &str) -> Vec<u8> {
-    use std::io::{BufReader, Read};
     use std::fs::File;
+    use std::io::{BufReader, Read};
     let mut buf = Vec::new();
     let mut file = BufReader::new(File::open(name).unwrap());
     file.read_to_end(&mut buf).unwrap();
     buf
 }
 
-pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
-            main_color: gfx::handle::RenderTargetView<R, ColorFormat>,
-            main_depth: gfx::handle::DepthStencilView<R, DepthFormat>,
-            level: &level::Level, object_palette: &[[u8; 4]])
-            -> Render<R>
-{
+pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
+    factory: &mut F,
+    main_color: gfx::handle::RenderTargetView<R, ColorFormat>,
+    main_depth: gfx::handle::DepthStencilView<R, DepthFormat>,
+    level: &level::Level,
+    object_palette: &[[u8; 4]],
+) -> Render<R> {
     use gfx::{format, texture as tex};
 
     let mut light_clr_material = [[0; 0x200]; NUM_MATERIALS];
@@ -137,7 +144,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
         for (lcm, mat) in light_clr_material.iter_mut().zip(MATERIALS.iter()) {
             let dx = mat.dx * dx_scale;
             let sd = mat.sd * sd_scale;
-            for i in 0..0x200 {
+            for i in 0 .. 0x200 {
                 let jj = mat.jj * (i as f32 - 255.5);
                 let v = (dx * sd - jj) / ((1.0 + sd * sd) * (dx * dx + jj * jj)).sqrt();
                 lcm[i] = (v.max(0.0).min(1.0) * 255.0 + 0.5) as u8;
@@ -145,17 +152,23 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
         }
     }
     let mut color_table = [[0; 0x400]; level::NUM_TERRAINS];
-    for (ct, (terr, &mid)) in color_table.iter_mut().zip(level.terrains.iter().zip(TERRAIN_MATERIAL.iter())) {
-        for (c, lcm) in ct[0x000..0x200].iter_mut().zip(light_clr_material[mid].iter()) {
+    for (ct, (terr, &mid)) in color_table
+        .iter_mut()
+        .zip(level.terrains.iter().zip(TERRAIN_MATERIAL.iter()))
+    {
+        for (c, lcm) in ct[0x000 .. 0x200]
+            .iter_mut()
+            .zip(light_clr_material[mid].iter())
+        {
             *c = *lcm;
         }
-        for c in ct[0x200..0x300].iter_mut() {
+        for c in ct[0x200 .. 0x300].iter_mut() {
             *c = terr.color_range.0;
         }
         let color_num = (terr.color_range.1 - terr.color_range.0) as usize;
-        for j in 0..0x100 {
+        for j in 0 .. 0x100 {
             //TODO: separate case for the first terrain type
-            ct[0x300+j] = terr.color_range.0 + ((j * color_num) / 0x100) as u8;
+            ct[0x300 + j] = terr.color_range.0 + ((j * color_num) / 0x100) as u8;
         }
     }
 
@@ -166,33 +179,60 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
         level.size.1
     };
     let num_layers = level.size.1 / real_height;
-    let kind = tex::Kind::D2Array(level.size.0 as tex::Size, real_height as tex::Size,
-        num_layers as tex::Size, tex::AaMode::Single);
-    let table_kind = tex::Kind::D2Array(0x200, 2, level::NUM_TERRAINS as tex::Size, tex::AaMode::Single);
-    let height_chunks: Vec<_> = level.height.chunks((level.size.0 * real_height) as usize).collect();
-    let meta_chunks: Vec<_> = level.meta.chunks((level.size.0 * real_height) as usize).collect();
+    let kind = tex::Kind::D2Array(
+        level.size.0 as tex::Size,
+        real_height as tex::Size,
+        num_layers as tex::Size,
+        tex::AaMode::Single,
+    );
+    let table_kind = tex::Kind::D2Array(
+        0x200,
+        2,
+        level::NUM_TERRAINS as tex::Size,
+        tex::AaMode::Single,
+    );
+    let height_chunks: Vec<_> = level
+        .height
+        .chunks((level.size.0 * real_height) as usize)
+        .collect();
+    let meta_chunks: Vec<_> = level
+        .meta
+        .chunks((level.size.0 * real_height) as usize)
+        .collect();
     let table_chunks: Vec<_> = color_table.iter().map(|t| &t[..]).collect();
-    let (_, height) = factory.create_texture_immutable::<(format::R8, format::Unorm)>(kind, &height_chunks).unwrap();
-    let (_, meta)   = factory.create_texture_immutable::<(format::R8, format::Uint)>(kind, &meta_chunks).unwrap();
-    let (_, table)  = factory.create_texture_immutable::<(format::R8, format::Unorm)>(table_kind, &table_chunks).unwrap();
+    let (_, height) = factory
+        .create_texture_immutable::<(format::R8, format::Unorm)>(kind, &height_chunks)
+        .unwrap();
+    let (_, meta) = factory
+        .create_texture_immutable::<(format::R8, format::Uint)>(kind, &meta_chunks)
+        .unwrap();
+    let (_, table) = factory
+        .create_texture_immutable::<(format::R8, format::Unorm)>(table_kind, &table_chunks)
+        .unwrap();
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
-        tex::FilterMethod::Scale, tex::WrapMode::Tile));
+        tex::FilterMethod::Scale,
+        tex::WrapMode::Tile,
+    ));
     let sm_meta = factory.create_sampler(tex::SamplerInfo::new(
-        tex::FilterMethod::Scale, tex::WrapMode::Tile));
+        tex::FilterMethod::Scale,
+        tex::WrapMode::Tile,
+    ));
     let sm_table = factory.create_sampler(tex::SamplerInfo::new(
-        tex::FilterMethod::Bilinear, tex::WrapMode::Clamp));
+        tex::FilterMethod::Bilinear,
+        tex::WrapMode::Clamp,
+    ));
 
     Render {
         terrain: {
             let pso = Render::create_terrain_pso(factory);
             let vertices = [
-                TerrainVertex{ pos: [0,0,0,1] },
-                TerrainVertex{ pos: [-1,0,0,0] },
-                TerrainVertex{ pos: [0,-1,0,0] },
-                TerrainVertex{ pos: [1,0,0,0] },
-                TerrainVertex{ pos: [0,1,0,0] },
+                TerrainVertex { pos: [0, 0, 0, 1] },
+                TerrainVertex { pos: [-1, 0, 0, 0] },
+                TerrainVertex { pos: [0, -1, 0, 0] },
+                TerrainVertex { pos: [1, 0, 0, 0] },
+                TerrainVertex { pos: [0, 1, 0, 0] },
             ];
-            let indices: &[u16] = &[0,1,2, 0,2,3, 0,3,4, 0,4,1];
+            let indices: &[u16] = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
             let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
             let data = terrain::Data {
                 vbuf: vbuf,
@@ -206,10 +246,12 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
             };
             gfx::Bundle::new(slice, pso, data)
         },
-        terrain_scale: [level.size.0 as f32,
-                        real_height as f32,
-                        level::HEIGHT_SCALE as f32,
-                        num_layers as f32],
+        terrain_scale: [
+            level.size.0 as f32,
+            real_height as f32,
+            level::HEIGHT_SCALE as f32,
+            num_layers as f32,
+        ],
         object_pso: Render::create_object_pso(factory),
         object_data: object::Data {
             vbuf: factory.create_vertex_buffer(&[]), //dummy
@@ -224,10 +266,14 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(factory: &mut F,
 }
 
 impl<R: gfx::Resources> Render<R> {
-    pub fn draw_mesh<C>(encoder: &mut gfx::Encoder<R, C>, mesh: &model::Mesh<R>,
-                     model2world: Transform, cam: &Camera,
-                     pso: &gfx::PipelineState<R, object::Meta>, data: &mut object::Data<R>)
-    where
+    pub fn draw_mesh<C>(
+        encoder: &mut gfx::Encoder<R, C>,
+        mesh: &model::Mesh<R>,
+        model2world: Transform,
+        cam: &Camera,
+        pso: &gfx::PipelineState<R, object::Meta>,
+        data: &mut object::Data<R>,
+    ) where
         C: gfx::CommandBuffer<R>,
     {
         let mx_world = Matrix4::from(model2world);
@@ -245,14 +291,18 @@ impl<R: gfx::Resources> Render<R> {
         encoder.draw(&mesh.slice, pso, data);
     }
 
-    pub fn draw_model<C>(encoder: &mut gfx::Encoder<R, C>, model: &model::Model<R>,
-                      model2world: Transform, cam: &Camera,
-                      pso: &gfx::PipelineState<R, object::Meta>,
-                      data: &mut object::Data<R>,
-                      debug_context: Option<(&mut DebugRender<R>, f32)>) where
+    pub fn draw_model<C>(
+        encoder: &mut gfx::Encoder<R, C>,
+        model: &model::Model<R>,
+        model2world: Transform,
+        cam: &Camera,
+        pso: &gfx::PipelineState<R, object::Meta>,
+        data: &mut object::Data<R>,
+        debug_context: Option<(&mut DebugRender<R>, f32)>,
+    ) where
         C: gfx::CommandBuffer<R>,
     {
-        use cgmath::{Deg, Quaternion, One, Rad, Rotation3, Transform, Vector3};
+        use cgmath::{Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
 
         // body
         Render::draw_mesh(encoder, &model.body, model2world, cam, pso, data);
@@ -290,13 +340,18 @@ impl<R: gfx::Resources> Render<R> {
         }
     }
 
-    pub fn draw_world<'a, C, I>(&mut self, encoder: &mut gfx::Encoder<R, C>,
-                                iter: I, cam: &Camera, draw_debug: bool) where
+    pub fn draw_world<'a, C, I>(
+        &mut self,
+        encoder: &mut gfx::Encoder<R, C>,
+        iter: I,
+        cam: &Camera,
+        draw_debug: bool,
+    ) where
         C: gfx::CommandBuffer<R>,
         I: Iterator<Item = (&'a model::Model<R>, &'a Transform, f32)>,
     {
         // clear buffers
-        encoder.clear(&self.terrain.data.out_color, [0.1,0.2,0.3,1.0]);
+        encoder.clear(&self.terrain.data.out_color, [0.1, 0.2, 0.3, 1.0]);
         encoder.clear_depth(&self.terrain.data.out_depth, 1.0);
         // draw terrain
         {
@@ -316,63 +371,101 @@ impl<R: gfx::Resources> Render<R> {
         self.terrain.encode(encoder);
         // draw vehicle models
         for (model, transform, shape_scale) in iter {
-            Render::draw_model(encoder, model, *transform, cam,
-                &self.object_pso, &mut self.object_data,
+            Render::draw_model(
+                encoder,
+                model,
+                *transform,
+                cam,
+                &self.object_pso,
+                &mut self.object_data,
                 if draw_debug {
                     Some((&mut self.debug, shape_scale))
-                } else { None }
+                } else {
+                    None
+                },
             );
         }
     }
 
-    pub fn create_palette<F: gfx::Factory<R>>(data: &[[u8; 4]], factory: &mut F)
-                          -> (gfx::handle::ShaderResourceView<R, [f32; 4]>, gfx::handle::Sampler<R>)
-    {
+    pub fn create_palette<F: gfx::Factory<R>>(
+        data: &[[u8; 4]],
+        factory: &mut F,
+    ) -> (
+        gfx::handle::ShaderResourceView<R, [f32; 4]>,
+        gfx::handle::Sampler<R>,
+    ) {
         use gfx::texture as tex;
-        let (_, view) = factory.create_texture_immutable::<gfx::format::Rgba8>(tex::Kind::D1(0x100), &[data]).unwrap();
+        let (_, view) = factory
+            .create_texture_immutable::<gfx::format::Rgba8>(tex::Kind::D1(0x100), &[data])
+            .unwrap();
         let sampler = factory.create_sampler(tex::SamplerInfo::new(
-            tex::FilterMethod::Bilinear, tex::WrapMode::Clamp));
+            tex::FilterMethod::Bilinear,
+            tex::WrapMode::Clamp,
+        ));
         (view, sampler)
     }
 
-    pub fn create_color_table<F: gfx::Factory<R>>(factory: &mut F)
-                              -> (gfx::handle::ShaderResourceView<R, [u32; 2]>, gfx::handle::Sampler<R>)
-    {
+    pub fn create_color_table<F: gfx::Factory<R>>(
+        factory: &mut F,
+    ) -> (
+        gfx::handle::ShaderResourceView<R, [u32; 2]>,
+        gfx::handle::Sampler<R>,
+    ) {
         use gfx::texture as tex;
         type Format = (gfx::format::R8_G8, gfx::format::Uint);
         let kind = tex::Kind::D1(NUM_COLOR_IDS as tex::Size);
-        let (_, view) = factory.create_texture_immutable::<Format>(kind, &[&COLOR_TABLE]).unwrap();
+        let (_, view) = factory
+            .create_texture_immutable::<Format>(kind, &[&COLOR_TABLE])
+            .unwrap();
         let sampler = factory.create_sampler(tex::SamplerInfo::new(
-            tex::FilterMethod::Scale, tex::WrapMode::Clamp));
+            tex::FilterMethod::Scale,
+            tex::WrapMode::Clamp,
+        ));
         (view, sampler)
     }
 
     fn create_terrain_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, terrain::Meta> {
-        let program = factory.link_program(
-            &read_file("data/shader/terrain.vert"),
-            &read_file("data/shader/terrain.frag"),
-            ).unwrap();
-        factory.create_pipeline_from_program(
-            &program, gfx::Primitive::TriangleList,
-            gfx::state::Rasterizer::new_fill(),
-            terrain::new()
-        ).unwrap()
+        let program = factory
+            .link_program(
+                &read_file("data/shader/terrain.vert"),
+                &read_file("data/shader/terrain.frag"),
+            )
+            .unwrap();
+        factory
+            .create_pipeline_from_program(
+                &program,
+                gfx::Primitive::TriangleList,
+                gfx::state::Rasterizer::new_fill(),
+                terrain::new(),
+            )
+            .unwrap()
     }
 
     pub fn create_object_pso<F: gfx::Factory<R>>(factory: &mut F) -> gfx::PipelineState<R, object::Meta> {
-        let program = factory.link_program(
-            &read_file("data/shader/object.vert"),
-            &read_file("data/shader/object.frag"),
-            ).unwrap();
+        let program = factory
+            .link_program(
+                &read_file("data/shader/object.vert"),
+                &read_file("data/shader/object.frag"),
+            )
+            .unwrap();
         let mut raster = gfx::state::Rasterizer::new_fill().with_cull_back();
         raster.front_face = gfx::state::FrontFace::Clockwise;
-        factory.create_pipeline_from_program(
-            &program, gfx::Primitive::TriangleList, raster, object::new()).unwrap()
+        factory
+            .create_pipeline_from_program(
+                &program,
+                gfx::Primitive::TriangleList,
+                raster,
+                object::new(),
+            )
+            .unwrap()
     }
 
-    pub fn reload<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
+    pub fn reload<F: gfx::Factory<R>>(
+        &mut self,
+        factory: &mut F,
+    ) {
         info!("Reloading shaders");
         self.terrain.pso = Render::create_terrain_pso(factory);
-        self.object_pso  = Render::create_object_pso(factory);
+        self.object_pso = Render::create_object_pso(factory);
     }
 }

@@ -2,15 +2,15 @@ extern crate byteorder;
 extern crate cgmath;
 #[macro_use]
 extern crate gfx;
+extern crate ini;
 #[macro_use]
 extern crate log;
 extern crate progressive;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
-extern crate ini;
-extern crate toml;
 extern crate splay;
+extern crate toml;
 
 //TODO: cleanup externs
 

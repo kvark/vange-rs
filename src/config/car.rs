@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-use std::io::BufReader;
-use std::fs::File;
-use gfx;
 use config::Settings;
 use config::text::Reader;
+use gfx;
 use model;
-
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
 
 pub type BoxSize = u8;
 pub type Price = u32;
@@ -155,9 +154,10 @@ pub struct CarInfo<R: gfx::Resources> {
 }
 
 pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
-                     settings: &Settings, reg: &super::game::Registry, factory: &mut F)
-                     -> HashMap<String, CarInfo<R>>
-{
+    settings: &Settings,
+    reg: &super::game::Registry,
+    factory: &mut F,
+) -> HashMap<String, CarInfo<R>> {
     let mut map = HashMap::new();
     let mut fi = Reader::new(settings.open("car.prm"));
     fi.advance();
@@ -166,31 +166,44 @@ pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
     let num_main: u8 = fi.next_value();
     let num_ruffa: u8 = fi.next_value();
     let num_const: u8 = fi.next_value();
-    info!("Reading {} main vehicles, {} ruffas, and {} constructors",
-        num_main, num_ruffa, num_const);
+    info!(
+        "Reading {} main vehicles, {} ruffas, and {} constructors",
+        num_main, num_ruffa, num_const
+    );
 
-    for i in 0 .. num_main+num_ruffa+num_const {
+    for i in 0 .. num_main + num_ruffa + num_const {
         let (name, data) = fi.next_entry();
         let mi = &reg.model_infos[name];
         let mut prm_path = mi.path.replace(".m3d", ".prm");
         let is_default = !settings.check_path(&prm_path);
         if is_default {
             let pos = mi.path.rfind('/').unwrap();
-            prm_path.truncate(pos+1);
+            prm_path.truncate(pos + 1);
             prm_path.push_str("default.prm");
         }
         let physics = CarPhysics::load(settings.open(&prm_path));
-        let scale = if is_default { mi.scale } else { physics.scale_size };
+        let scale = if is_default {
+            mi.scale
+        } else {
+            physics.scale_size
+        };
         let mut file = BufReader::new(settings.open(&mi.path));
-        map.insert(name.to_owned(), CarInfo {
-            kind: if i < num_main { Kind::Main }
-                else if i < num_main+num_ruffa { Kind::Ruffa }
-                else { Kind::Constructor },
-            stats: CarStats::new(&data),
-            physics: physics,
-            model: model::load_m3d(&mut file, factory),
-            scale: scale,
-        });
+        map.insert(
+            name.to_owned(),
+            CarInfo {
+                kind: if i < num_main {
+                    Kind::Main
+                } else if i < num_main + num_ruffa {
+                    Kind::Ruffa
+                } else {
+                    Kind::Constructor
+                },
+                stats: CarStats::new(&data),
+                physics: physics,
+                model: model::load_m3d(&mut file, factory),
+                scale: scale,
+            },
+        );
     }
 
     map

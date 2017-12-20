@@ -1,6 +1,5 @@
 use cgmath;
 
-
 pub type Transform = cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>;
 
 pub struct Camera {
@@ -32,7 +31,12 @@ impl Camera {
         proj_mx * view_mx
     }
 
-    pub fn follow(&mut self, target: &Transform, dt: f32, follow: &Follow) {
+    pub fn follow(
+        &mut self,
+        target: &Transform,
+        dt: f32,
+        follow: &Follow,
+    ) {
         use cgmath::Transform;
         let result = target.concat(&follow.transform);
         let k = (dt * -follow.speed).exp();
@@ -41,7 +45,11 @@ impl Camera {
         self.rot = result.rot.slerp(self.rot, k);
     }
 
-    pub fn look_by(&mut self, target: &Transform, dir: &Direction) {
+    pub fn look_by(
+        &mut self,
+        target: &Transform,
+        dir: &Direction,
+    ) {
         use cgmath::Rotation3;
         debug_assert!(dir.view.z < 0.0);
         let k = (target.disp.z - self.loc.z) / -dir.view.z;
@@ -50,14 +58,21 @@ impl Camera {
         self.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Deg(30.0));
     }
 
-    pub fn focus_on(&mut self, target: &Transform) {
+    pub fn focus_on(
+        &mut self,
+        target: &Transform,
+    ) {
         use cgmath::{Angle, Rotation3};
         self.loc = target.disp + cgmath::vec3(0.0, -64.0, 40.0);
-        self.rot = cgmath::Quaternion::from_axis_angle(
-            cgmath::Vector3::unit_x(), cgmath::Rad::turn_div_6());
+        self.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad::turn_div_6());
     }
 
-    pub fn rotate_focus(&mut self, target: &Transform, hor: cgmath::Rad<f32>, ver: cgmath::Rad<f32>) {
+    pub fn rotate_focus(
+        &mut self,
+        target: &Transform,
+        hor: cgmath::Rad<f32>,
+        ver: cgmath::Rad<f32>,
+    ) {
         use cgmath::{Decomposed, One, Rotation3, Transform, Zero};
         let mut view = Decomposed {
             scale: 1.0,

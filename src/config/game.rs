@@ -1,7 +1,6 @@
-use std::collections::HashMap;
 use config::Settings;
 use config::text::Reader;
-
+use std::collections::HashMap;
 
 pub struct ModelInfo {
     pub path: String,
@@ -22,9 +21,7 @@ impl Registry {
         while !fi.cur().starts_with("NumModel") {
             fi.advance();
         }
-        let count: u32 = fi.cur().split_whitespace()
-            .nth(1).unwrap()
-            .parse().unwrap();
+        let count: u32 = fi.cur().split_whitespace().nth(1).unwrap().parse().unwrap();
         fi.advance(); // MaxSize
 
         for i in 0 .. count {
@@ -33,10 +30,13 @@ impl Registry {
             let name: String = fi.next_key_value("Name");
             let size: u8 = fi.next_key_value("Size");
             let key: String = fi.next_key_value("NameID");
-            reg.model_infos.insert(key, ModelInfo {
-                path: name,
-                scale: size as f32 / 255.0
-            });
+            reg.model_infos.insert(
+                key,
+                ModelInfo {
+                    path: name,
+                    scale: size as f32 / 255.0,
+                },
+            );
         }
 
         reg

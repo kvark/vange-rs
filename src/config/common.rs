@@ -1,6 +1,5 @@
-use std::fs::File;
 use config::text::Reader;
-
+use std::fs::File;
 
 pub const ORIGINAL_FPS: u8 = 14; //TODO: read from PRM
 pub const SPEED_CORRECTION_FACTOR: f32 = 1.0; // it is in the config, but the original game uses a hard-coded 1.0
@@ -125,7 +124,10 @@ pub struct Common {
     pub contact: Contact,
 }
 
-fn get_pair(reader: &mut Reader<File>, name: &str) -> VelocityPair {
+fn get_pair(
+    reader: &mut Reader<File>,
+    name: &str,
+) -> VelocityPair {
     let sv = format!("V_{}:", name);
     let sw = format!("W_{}:", name);
     VelocityPair {

@@ -1,7 +1,6 @@
-use std::fs::File;
 use ini::Ini;
 use level;
-
+use std::fs::File;
 
 #[derive(Deserialize)]
 pub struct Car {
@@ -34,24 +33,34 @@ impl Settings {
         use toml;
 
         let mut string = String::new();
-        File::open(path).unwrap()
-            .read_to_string(&mut string).unwrap();
+        File::open(path)
+            .unwrap()
+            .read_to_string(&mut string)
+            .unwrap();
         let set: Settings = toml::from_str(&string).unwrap();
 
         if !set.check_path("options.dat") {
-            panic!("Can't find the resources of the original Vangers game at {}, {}",
-               set.data_path, "please check your `config/settings.xml`");
+            panic!(
+                "Can't find the resources of the original Vangers game at {}, {}",
+                set.data_path, "please check your `config/settings.xml`"
+            );
         }
 
         set
     }
 
-    pub fn open(&self, path: &str) -> File {
+    pub fn open(
+        &self,
+        path: &str,
+    ) -> File {
         let full = format!("{}/{}", self.data_path, path);
         File::open(full).unwrap()
     }
 
-    pub fn check_path(&self, path: &str) -> bool {
+    pub fn check_path(
+        &self,
+        path: &str,
+    ) -> bool {
         let full = format!("{}/{}", self.data_path, path);
         File::open(full).is_ok()
     }
@@ -64,13 +73,16 @@ impl Settings {
         format!("{}/resource/pal/objects.pal", self.data_path)
     }
 
-    pub fn _get_vehicle_model_path(&self, name: &str) -> String {
+    pub fn _get_vehicle_model_path(
+        &self,
+        name: &str,
+    ) -> String {
         format!("{}/resource/m3d/mechous/{}.m3d", self.data_path, name)
     }
 
     pub fn get_level(&self) -> Option<level::LevelConfig> {
         if self.game.level.is_empty() {
-            return None
+            return None;
         }
         let ini_path = format!("{}/thechain/{}/world.ini", self.data_path, self.game.level);
         let ini = Ini::load_from_file(&ini_path).unwrap();
@@ -78,32 +90,53 @@ impl Settings {
         let storage = &ini["Storage"];
         let render = &ini["Rendering Parameters"];
         let mut terrains = [level::TerrainConfig {
-                shadow_offset: 0,
-                height_shift: 0,
-                color_range: (0, 0),
-            }; level::NUM_TERRAINS];
-        for (t, val) in terrains.iter_mut().zip(render["Shadow Offsets"].split_whitespace()) {
+            shadow_offset: 0,
+            height_shift: 0,
+            color_range: (0, 0),
+        }; level::NUM_TERRAINS];
+        for (t, val) in terrains
+            .iter_mut()
+            .zip(render["Shadow Offsets"].split_whitespace())
+        {
             t.shadow_offset = val.parse().unwrap();
         }
-        for (t, val) in terrains.iter_mut().zip(render["Height Shifts"].split_whitespace()) {
+        for (t, val) in terrains
+            .iter_mut()
+            .zip(render["Height Shifts"].split_whitespace())
+        {
             t.height_shift = val.parse().unwrap();
         }
-        for (t, val) in terrains.iter_mut().zip(render["Begin Colors"].split_whitespace()) {
+        for (t, val) in terrains
+            .iter_mut()
+            .zip(render["Begin Colors"].split_whitespace())
+        {
             t.color_range.0 = val.parse().unwrap();
         }
-        for (t, val) in terrains.iter_mut().zip(render["End Colors"].split_whitespace()) {
+        for (t, val) in terrains
+            .iter_mut()
+            .zip(render["End Colors"].split_whitespace())
+        {
             t.color_range.1 = val.parse().unwrap();
         }
         let biname = &storage["File Name"];
         Some(level::LevelConfig {
-            path_vpr: format!("{}/thechain/{}/{}.vpr", self.data_path, self.game.level, biname),
-            path_vmc: format!("{}/thechain/{}/{}.vmc", self.data_path, self.game.level, biname),
-            path_palette: format!("{}/thechain/{}/{}", self.data_path, self.game.level, storage["Palette File"]),
+            path_vpr: format!(
+                "{}/thechain/{}/{}.vpr",
+                self.data_path, self.game.level, biname
+            ),
+            path_vmc: format!(
+                "{}/thechain/{}/{}.vmc",
+                self.data_path, self.game.level, biname
+            ),
+            path_palette: format!(
+                "{}/thechain/{}/{}",
+                self.data_path, self.game.level, storage["Palette File"]
+            ),
             is_compressed: storage["Compressed Format Using"] != "0",
             name: self.game.level.clone(),
             size: (
                 level::Power(global["Map Power X"].parse().unwrap()),
-                level::Power(global["Map Power Y"].parse().unwrap())
+                level::Power(global["Map Power Y"].parse().unwrap()),
             ),
             geo: level::Power(global["GeoNet Power"].parse().unwrap()),
             section: level::Power(global["Section Size Power"].parse().unwrap()),

@@ -1,8 +1,7 @@
 extern crate byteorder;
 
-use std::io::Read;
 use byteorder::{LittleEndian as E, ReadBytesExt};
-
+use std::io::Read;
 
 pub struct Splay {
     tree1: [i32; 512],
@@ -15,19 +14,23 @@ impl Splay {
             tree1: [0; 512],
             tree2: [0; 512],
         };
-        for i in 0..512 {
+        for i in 0 .. 512 {
             let v = input.read_i32::<E>().unwrap();
             splay.tree1[i] = v;
         }
-        for i in 0..512 {
+        for i in 0 .. 512 {
             let v = input.read_i32::<E>().unwrap();
             splay.tree2[i] = v;
         }
         splay
     }
 
-    fn decompress<I: Read, F: Fn(u8, u8)->u8>(tree: &[i32],
-                  input: &mut I, output: &mut [u8], fun: F) {
+    fn decompress<I: Read, F: Fn(u8, u8) -> u8>(
+        tree: &[i32],
+        input: &mut I,
+        output: &mut [u8],
+        fun: F,
+    ) {
         let mut last_char = 0u8;
         let mut bit = 0;
         let mut cur = 0u8;
@@ -49,14 +52,18 @@ impl Splay {
     }
 
     #[allow(dead_code)]
-    fn decompress_orig<I: Read, F: Fn(u8, u8)->u8>(tree: &[i32],
-                       input: &mut I, output: &mut [u8], fun: F) {
+    fn decompress_orig<I: Read, F: Fn(u8, u8) -> u8>(
+        tree: &[i32],
+        input: &mut I,
+        output: &mut [u8],
+        fun: F,
+    ) {
         let mut last_char = 0u8;
         let mut c_index = 1usize;
         let mut cur_size = 0;
         loop {
             let cur = input.read_u8().unwrap();
-            for bit in (0..8).rev() {
+            for bit in (0 .. 8).rev() {
                 let i = (c_index << 1) + ((cur >> bit) as usize & 1);
                 let code = tree[i];
                 c_index = if code <= 0 {
@@ -64,7 +71,7 @@ impl Splay {
                     output[cur_size] = last_char;
                     cur_size += 1;
                     if cur_size == output.len() {
-                        return
+                        return;
                     }
                     1
                 } else {
@@ -74,10 +81,20 @@ impl Splay {
         }
     }
 
-    pub fn expand1<I: Read>(&self, input: &mut I, output: &mut [u8]) {
-        Splay::decompress(&self.tree1, input, output, |b, c| b.wrapping_add(c));
+    pub fn expand1<I: Read>(
+        &self,
+        input: &mut I,
+        output: &mut [u8],
+    ) {
+        Splay::decompress(&self.tree1, input, output, |b, c| {
+            b.wrapping_add(c)
+        });
     }
-    pub fn expand2<I: Read>(&self, input: &mut I, output: &mut [u8]) {
-        Splay::decompress(&self.tree2, input, output, |b, c| b^c);
+    pub fn expand2<I: Read>(
+        &self,
+        input: &mut I,
+        output: &mut [u8],
+    ) {
+        Splay::decompress(&self.tree2, input, output, |b, c| b ^ c);
     }
 }

@@ -1,5 +1,5 @@
-use splay::Splay;
 use byteorder::{LittleEndian as E, ReadBytesExt};
+use splay::Splay;
 
 pub const NUM_TERRAINS: usize = 8;
 
@@ -42,9 +42,9 @@ pub struct LevelConfig {
 
 pub type Altitude = u8;
 pub type Delta = u8;
-const DOUBLE_LEVEL: u8 = 1<<6;
+const DOUBLE_LEVEL: u8 = 1 << 6;
 const DELTA_BITS: u8 = 2;
-const DELTA_MASK: u8 = (1 << DELTA_BITS) -1;
+const DELTA_MASK: u8 = (1 << DELTA_BITS) - 1;
 const DELTA_SHIFT: u8 = 3;
 pub const HEIGHT_SCALE: u32 = 48;
 
@@ -88,27 +88,33 @@ impl Level {
         }
     }
 
-    pub fn get(&self, mut coord: (i32, i32)) -> Texel {
+    pub fn get(
+        &self,
+        mut coord: (i32, i32),
+    ) -> Texel {
         fn get_terrain(meta: u8) -> TerrainType {
             match (meta >> DELTA_SHIFT) & (NUM_TERRAINS as u8 - 1) {
                 0 => TerrainType::Water,
                 _ => TerrainType::Main,
             }
         }
-        while coord.0 < 0 { coord.0 += self.size.0; }
-        while coord.1 < 0 { coord.1 += self.size.1; }
+        while coord.0 < 0 {
+            coord.0 += self.size.0;
+        }
+        while coord.1 < 0 {
+            coord.1 += self.size.1;
+        }
         let i = ((coord.1 % self.size.1) * self.size.0 + (coord.0 % self.size.0)) as usize;
         let meta = self.meta[i];
         if meta & DOUBLE_LEVEL != 0 {
             let meta0 = self.meta[i & !1];
             let meta1 = self.meta[i | 1];
-            let delta = ((meta0 & DELTA_MASK) << DELTA_BITS +
-                (meta1 & DELTA_MASK)) << DELTA_SHIFT;
+            let delta = ((meta0 & DELTA_MASK) << DELTA_BITS + (meta1 & DELTA_MASK)) << DELTA_SHIFT;
             Texel {
                 low: (self.height[i & !1], get_terrain(meta0)),
                 high: Some((delta, self.height[i | 1], get_terrain(meta1))),
             }
-        }else {
+        } else {
             Texel {
                 low: (self.height[i], get_terrain(meta)),
                 high: None,
@@ -125,7 +131,7 @@ pub fn load_palette(path: &str) -> [[u8; 4]; 0x100] {
     let mut file = BufReader::new(File::open(path).unwrap());
     let mut data = [[0; 4]; 0x100];
     for p in data.iter_mut() {
-        file.read(&mut p[..3]).unwrap();
+        file.read(&mut p[.. 3]).unwrap();
     }
     data
 }
@@ -143,16 +149,19 @@ pub fn load(config: &LevelConfig) -> Level {
         let flood_size = size.1 >> config.section.as_power();
         let geo_pow = config.geo.as_power();
         let net_size = size.0 * size.1 >> (2 * geo_pow);
-        let flood_offset = (2*4 + (1 + 4 + 4)*4 + 2*net_size + 2*geo_pow*4 + 2*flood_size*geo_pow*4) as u64;
-        let expected_file_size = flood_offset + (flood_size*4) as u64;
-        assert_eq!(vpr_file.metadata().unwrap().len(), expected_file_size as u64);
+        let flood_offset = (2 * 4 + (1 + 4 + 4) * 4 + 2 * net_size + 2 * geo_pow * 4 + 2 * flood_size * geo_pow * 4) as u64;
+        let expected_file_size = flood_offset + (flood_size * 4) as u64;
+        assert_eq!(
+            vpr_file.metadata().unwrap().len(),
+            expected_file_size as u64
+        );
         let mut vpr = BufReader::new(vpr_file);
         vpr.seek(SeekFrom::Start(flood_offset)).unwrap();
-        (0..flood_size).map(|_|
-            vpr.read_u32::<E>().unwrap()
-        ).collect()
+        (0 .. flood_size)
+            .map(|_| vpr.read_u32::<E>().unwrap())
+            .collect()
     };
-    
+
     info!("Loading vmc...");
     let (height, meta) = {
         use progressive::progress;
@@ -171,8 +180,9 @@ pub fn load(config: &LevelConfig) -> Level {
         let mut height = vec![0u8; total];
         let mut meta = vec![0u8; total];
         for y in progress(0 .. size.1) {
-            vpc.seek(SeekFrom::Start(st_table[y as usize] as u64)).unwrap();
-            let range = ((y * size.0) as usize) .. (((y+1) * size.0) as usize);
+            vpc.seek(SeekFrom::Start(st_table[y as usize] as u64))
+                .unwrap();
+            let range = ((y * size.0) as usize) .. (((y + 1) * size.0) as usize);
             splay.expand1(&mut vpc, &mut height[range.clone()]);
             splay.expand2(&mut vpc, &mut meta[range]);
         }
