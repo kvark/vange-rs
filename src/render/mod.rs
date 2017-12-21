@@ -1,4 +1,5 @@
 use {level, model};
+use config::settings;
 use cgmath::{Decomposed, Matrix4};
 use gfx;
 use gfx::traits::FactoryExt;
@@ -138,13 +139,14 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     targets: MainTargets<R>,
     level: &level::Level,
     object_palette: &[[u8; 4]],
+    settings: &settings::Render,
 ) -> Render<R> {
     use gfx::{format, texture as tex};
 
     let mut light_clr_material = [[0; 0x200]; NUM_MATERIALS];
     {
         let dx_scale = 8.0;
-        let sd_scale = 0x100 as f32 / SHADOW_DEPTH as f32;
+        let sd_scale = 256f32 / SHADOW_DEPTH as f32;
         for (lcm, mat) in light_clr_material.iter_mut().zip(MATERIALS.iter()) {
             let dx = mat.dx * dx_scale;
             let sd = mat.sd * sd_scale;
@@ -265,7 +267,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             out_color: targets.color.clone(),
             out_depth: targets.depth.clone(),
         },
-        debug: DebugRender::new(factory, 512, targets),
+        debug: DebugRender::new(factory, targets, &settings.debug),
     }
 }
 

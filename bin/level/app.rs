@@ -29,9 +29,10 @@ impl<R: gfx::Resources> LevelView<R> {
             None => level::Level::new_test(),
         };
         let pal_data = level::read_palette(settings.open_palette());
+        let render = render::init(factory, targets, &level, &pal_data, &settings.render);
 
         LevelView {
-            render: render::init(factory, targets, &level, &pal_data),
+            render,
             //level: level,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, 0.0, 200.0),

@@ -20,12 +20,25 @@ pub struct Window {
     pub size: [u32; 2],
 }
 
+#[derive(Clone, Deserialize)]
+pub struct DebugRender {
+    pub max_vertices: usize,
+    pub collision_shapes: bool,
+    pub impulses: bool,
+}
+
+#[derive(Deserialize)]
+pub struct Render {
+    pub debug: DebugRender,
+}
+
 #[derive(Deserialize)]
 pub struct Settings {
     pub data_path: PathBuf,
     pub car: Car,
     pub game: Game,
     pub window: Window,
+    pub render: Render,
 }
 
 impl Settings {

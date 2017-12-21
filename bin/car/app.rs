@@ -46,16 +46,16 @@ impl<R: gfx::Resources> CarView<R> {
         };
 
         CarView {
-            model: model,
+            mode,
             transform: cgmath::Decomposed {
                 scale: cinfo.scale,
                 disp: cgmath::Vector3::unit_z(),
                 rot: cgmath::One::one(),
             },
             pso: render::Render::create_object_pso(factory),
-            debug_render: render::DebugRender::new(factory, 512, targets),
+            debug_render: render::DebugRender::new(factory, targets, &settings.render.debug),
             physics: cinfo.physics.clone(),
-            data: data,
+            data,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, -64.0, 32.0),
                 rot: cgmath::Rotation3::from_axis_angle::<cgmath::Rad<_>>(

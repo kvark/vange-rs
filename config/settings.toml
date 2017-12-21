@@ -13,3 +13,8 @@ slots = []
 [window]
 title = "Rusty Road"
 size = [1280, 800]
+
+[render.debug]
+max_vertices = 512
+collision_shapes = false
+impulses = true
