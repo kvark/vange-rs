@@ -4,6 +4,7 @@ use gfx::format::I8Norm;
 use render::{DebugPos, ObjectVertex, COLOR_ID_BODY, NUM_COLOR_IDS};
 use std::fs::File;
 use std::io::{self, Seek, Write};
+use std::ops::Range;
 
 const MAX_SLOTS: u32 = 3;
 
@@ -27,7 +28,7 @@ pub struct Mesh<R: gfx::Resources> {
 pub struct Polygon {
     pub middle: [f32; 3],
     pub normal: [f32; 3],
-    pub sample_range: (u16, u16),
+    pub samples: Range<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -40,7 +41,7 @@ pub struct DebugShape<R: gfx::Resources> {
 #[derive(Clone, Debug)]
 pub struct Shape<R: gfx::Resources> {
     pub polygons: Vec<Polygon>,
-    pub samples: Vec<[i8; 3]>,
+    pub samples: Vec<RawVertex>,
     pub debug: Option<DebugShape<R>>,
 }
 
@@ -77,14 +78,14 @@ pub struct Model<R: gfx::Resources> {
     pub slots: Vec<Slot<R>>,
 }
 
-type RawVertex = [i8; 3];
+pub type RawVertex = [i8; 3];
 
 struct Tessellator {
     samples: Vec<RawVertex>,
 }
 
 impl Tessellator {
-    fn new() -> Tessellator {
+    fn new() -> Self {
         Tessellator {
             samples: Vec::new(),
         }
@@ -92,10 +93,30 @@ impl Tessellator {
     fn tessellate(
         &mut self,
         corners: &[DebugPos],
-        middle: RawVertex,
+        _middle: RawVertex,
     ) -> &[RawVertex] {
         self.samples.clear();
-        self.samples.push(middle);
+        //self.samples.push(middle);
+        let mid = corners
+            .iter()
+            .fold([0f32; 3], |sum, cur| [
+                sum[0] + cur.pos[0],
+                sum[1] + cur.pos[1],
+                sum[2] + cur.pos[2],
+            ]);
+        let div = 0.5f32 / corners.len() as f32;
+        let half_mid = [
+            (mid[0] * div) as i8,
+            (mid[1] * div) as i8,
+            (mid[2] * div) as i8,
+        ];
+        self.samples.extend(corners.iter().map(|c| {
+            [
+                (0.5 * c.pos[0]) as i8 + half_mid[0],
+                (0.5 * c.pos[1]) as i8 + half_mid[1],
+                (0.5 * c.pos[2]) as i8 + half_mid[2],
+            ]
+        }));
         /*
         self.samples.extend(corners.iter().map(|dv| {
             [
@@ -426,11 +447,23 @@ where
                 ind.push(pids[3]);
                 ind.push(pids[0]);
             }
+            let mut nlen = 16.0;
+            samp.push(DebugPos {
+                pos: [middle[0], middle[1], middle[2], 1.0],
+            });
+            samp.push(DebugPos {
+                pos: [
+                    middle[0] + normal[0] * nlen,
+                    middle[1] + normal[1] * nlen,
+                    middle[2] + normal[2] * nlen,
+                    1.0,
+                ],
+            });
+            nlen = 4.0;
             for s in samples.iter() {
                 samp.push(DebugPos {
                     pos: [s[0] as f32, s[1] as f32, s[2] as f32, 1.0],
                 });
-                let nlen = 16.0;
                 samp.push(DebugPos {
                     pos: [
                         s[0] as f32 + normal[0] * nlen,
@@ -444,12 +477,9 @@ where
         shape.polygons.push(Polygon {
             middle,
             normal,
-            sample_range: (
-                shape.samples.len() as u16,
-                (shape.samples.len() + samples.len()) as u16,
-            ),
+            samples: shape.samples.len() .. shape.samples.len() + samples.len(),
         });
-        shape.samples.extend_from_slice(samples);
+        shape.samples.extend(samples);
     }
 
     if let (Some((ind, samp)), Some(f)) = (debug, factory) {

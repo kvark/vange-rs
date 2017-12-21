@@ -122,15 +122,15 @@ fn get_height(altitude: u8) -> f32 {
 
 fn collide_low(
     poly: &model::Polygon,
-    samples: &[[i8; 3]],
+    samples: &[model::RawVertex],
     scale: f32,
     transform: &space::Transform,
     level: &level::Level,
     terraconf: &config::common::Terrain,
 ) -> CollisionData {
     let (mut soft, mut hard) = (Accumulator::new(), Accumulator::new());
-    for &s in samples[poly.sample_range.0 as usize .. poly.sample_range.1 as usize].iter() {
-        let sp = cgmath::Point3::from([s[0] as f32, s[1] as f32, s[2] as f32]);
+    for s in samples[poly.samples.clone()].iter() {
+        let sp = cgmath::Point3::from(*s).cast::<f32>();
         let pos = transform.transform_point(sp * scale).to_vec();
         let texel = level.get((pos.x as i32, pos.y as i32));
         let lo_alt = texel.low.0;
@@ -229,6 +229,7 @@ impl<R: gfx::Resources> Agent<R> {
 
         let mut wheels_touch = 0u32;
         let mut spring_touch;
+        //let mut in_water = false;
 
         /*for _ in 0 .. common.nature.num_calls_analysis*/
         {
@@ -401,13 +402,15 @@ impl<R: gfx::Resources> Agent<R> {
 
             let _ = (float_count, water_immersion, terrain_immersion); //TODO
             if wheels_touch != 0 && stand_on_wheels {
+                let f_turbo = if self.control.turbo {
+                    common.global.k_traction_turbo
+                } else {
+                    1.0
+                };
                 let f_traction_per_wheel = self.car.physics.mobility_factor
                     * common.global.mobility_factor
-                    * if self.control.turbo {
-                        common.global.k_traction_turbo
-                    } else {
-                        1.0
-                    } * self.dynamo.traction
+                    * f_turbo
+                    * self.dynamo.traction
                     / (self.car.model.wheels.len() as f32);
                 for wheel in self.car.model.wheels.iter() {
                     let mut pos = cgmath::Vector3::from(wheel.pos) * self.transform.scale;
@@ -419,18 +422,20 @@ impl<R: gfx::Resources> Agent<R> {
                     }
                 }
             }
-            if spring_touch + wheels_touch != 0 {
+
+            if spring_touch + wheels_touch != 0 { //|| in_water
                 let tmp = cgmath::Vector3::new(
                     0.0,
                     0.0,
                     self.car.physics.z_offset_of_mass_center * self.transform.scale,
                 );
-                acc_cur.k -= common.nature.gravity * z_axis.cross(tmp);
+                acc_cur.k -= common.nature.gravity * tmp.cross(z_axis);
                 let vz = z_axis.dot(v_vel);
                 if vz < -10.0 {
                     v_drag *= common.drag.z.powf(-vz);
                 }
             }
+
             debug!("\tcur acc {:?}", acc_cur);
             v_vel += acc_cur.f * dt;
             w_vel += (j_inv * acc_cur.k) * dt;
@@ -442,22 +447,18 @@ impl<R: gfx::Resources> Agent<R> {
             }
             let (v_mag, w_mag) = (v_vel.magnitude(), w_vel.magnitude());
             if stand_on_wheels && v_mag < common.drag.abs_min.v && w_mag < common.drag.abs_min.w {
-                v_drag *= common
-                    .drag
-                    .coll
-                    .v
-                    .powf(common.drag.abs_min.v / (v_mag + EPSILON));
-                w_drag *= common
-                    .drag
-                    .coll
-                    .w
-                    .powf(common.drag.abs_min.w / (w_mag + EPSILON));
+                let v_pow = common.drag.abs_min.v / (v_mag + EPSILON);
+                let w_pow = common.drag.abs_min.w / (w_mag + EPSILON);
+                v_drag *= common.drag.coll.v.powf(v_pow);
+                w_drag *= common.drag.coll.w.powf(w_pow);
             }
+
             if v_mag * v_drag > common.drag.abs_stop.v || w_mag * w_drag > common.drag.abs_stop.w {
-                let vs = v_vel
-                    - (down_minus_up.signum() as f32)
-                        * (z_axis * (self.car.model.body.bbox.2 * common.impulse.rolling_scale))
-                            .cross(w_vel);
+                let radius = self.car.model.body.bbox.2; //approx?
+                let local_z_scaled = z_axis * (radius * common.impulse.rolling_scale);
+                let r_diff_sign = down_minus_up.signum() as f32;
+                let vs = v_vel - r_diff_sign * local_z_scaled.cross(w_vel);
+
                 let angle = cgmath::Rad(-dt * w_mag);
                 let vel_rot_inv =
                     cgmath::Quaternion::from_axis_angle(w_vel / (w_mag + EPSILON), angle);
