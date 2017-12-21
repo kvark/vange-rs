@@ -123,7 +123,8 @@ pub struct DebugRender<R: gfx::Resources> {
     buf_col: gfx::handle::Buffer<R, DebugColor>,
     data: debug::Data<R>,
     psos_line: HashMap<Selector, gfx::PipelineState<R, debug::Meta>>,
-    pso_triangle: Option<gfx::PipelineState<R, debug::Meta>>,
+    pso_face: Option<gfx::PipelineState<R, debug::Meta>>,
+    pso_edge: Option<gfx::PipelineState<R, debug::Meta>>,
 }
 
 impl<R: gfx::Resources> DebugRender<R> {
@@ -160,7 +161,8 @@ impl<R: gfx::Resources> DebugRender<R> {
             buf_col: data.buf_col.clone(),
             data: data,
             psos_line: HashMap::new(),
-            pso_triangle: None,
+            pso_face: None,
+            pso_edge: None,
         };
         result.reload(factory);
         result
@@ -178,12 +180,25 @@ impl<R: gfx::Resources> DebugRender<R> {
             .unwrap();
         let raster = gfx::state::Rasterizer::new_fill();
 
-        self.pso_triangle = Some(
+        self.pso_face = Some(
             factory
                 .create_pipeline_from_program(
                     &program,
                     gfx::Primitive::TriangleList,
                     raster,
+                    debug::new(),
+                )
+                .unwrap(),
+        );
+        self.pso_edge = Some(
+            factory
+                .create_pipeline_from_program(
+                    &program,
+                    gfx::Primitive::TriangleList,
+                    gfx::state::Rasterizer {
+                        method: gfx::state::RasterMethod::Line(1),
+                        .. raster
+                    },
                     debug::new(),
                 )
                 .unwrap(),
@@ -262,7 +277,8 @@ impl<R: gfx::Resources> DebugRender<R> {
             },
         );
 
-        if let Some(ref pso) = self.pso_triangle {
+        // draw collision polygon faces
+        if let Some(ref pso) = self.pso_face {
             self.data.buf_pos = shape.bound_vb.clone();
             encoder
                 .update_buffer(
@@ -278,6 +294,23 @@ impl<R: gfx::Resources> DebugRender<R> {
             encoder.draw(&shape.bound_slice, pso, &self.data);
         }
 
+        // draw collision polygon edges
+        if let Some(ref pso) = self.pso_edge {
+            encoder
+                .update_buffer(
+                    &self.buf_col,
+                    &[
+                        DebugColor {
+                            color: [1.0, 1.0, 0.0, 0.1],
+                        },
+                    ],
+                    0,
+                )
+                .unwrap();
+            encoder.draw(&shape.bound_slice, pso, &self.data);
+        }
+
+        // draw sample normals
         encoder
             .update_buffer(
                 &self.buf_col,

@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::f32::EPSILON;
 use vangers::{config, level, model, render, space};
 
+
 const MAX_TRACTION: config::common::Traction = 4.0;
 
 #[derive(Debug)]
@@ -305,7 +306,8 @@ impl<R: gfx::Resources> Agent<R> {
                         Some(ref cp) => cp.depth.abs(),
                         None => 0.0,
                     };
-                    /*let origin = self.transform.disp;
+                    /*
+                    let origin = self.transform.disp;
                     match cdata {
                         CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
                             let r1 = rot_inv * cgmath::vec3(
@@ -370,9 +372,14 @@ impl<R: gfx::Resources> Agent<R> {
                         sum_df += df;
 
                         if let Some(ref mut lbuf) = line_buffer {
+                            // Red: center -> collision point
                             lbuf.add(self.transform.disp.into(), rglob.into(), 0xFF000000);
+                            // Yellow: collision point -> linear force
                             let up = rglob + cgmath::vec3(0.0, 0.0, df0);
                             lbuf.add(rglob.into(), up.into(), 0xFFFF0000);
+                            // Purple: collision point -> angular force
+                            let end = rglob + df * cgmath::vec3(rg0.y, -rg0.x, 0.0);
+                            lbuf.add(rglob.into(), end.into(), 0xFF00FF00);
                         }
                     }
                 } else {
@@ -468,15 +475,20 @@ impl<R: gfx::Resources> Agent<R> {
             w_vel *= w_drag.powf(config::common::SPEED_CORRECTION_FACTOR);
 
             if let Some(ref mut lbuf) = line_buffer {
-                let p0 = self.transform.disp + cgmath::vec3(0.0, 0.0, 10.0);
-                let xf = p0 + acc_cur.f;
-                let xk = p0 + acc_cur.k;
-                lbuf.add(p0.into(), xf.into(), 0x0000FF00);
-                lbuf.add(p0.into(), xk.into(), 0xFF00FF00);
-                let xv = p0 + v_vel;
-                let xw = p0 + w_vel * 10.0; //TEMP
-                lbuf.add(p0.into(), xv.into(), 0x00FF0000);
-                lbuf.add(p0.into(), xw.into(), 0x00FFFF00);
+                // Note: velocity and acceleration are in local space
+                let rot = self.transform.rot;
+                let ba = self.transform.disp + cgmath::vec3(3.0, 0.0, 10.0);
+                let xf = ba + rot * acc_cur.f;
+                let xk = ba + rot * acc_cur.k;
+                lbuf.add(ba.into(), xf.into(), 0x0000FF00);
+                lbuf.add(ba.into(), xk.into(), 0xFF00FF00);
+                // Yellow: center -> angular springs total
+                lbuf.add(ba.into(), (ba + acc_springs.k).into(), 0xFFFF0000);
+                let bv = self.transform.disp + cgmath::vec3(-3.0, 0.0, 10.0);
+                let xv = bv + rot * v_vel;
+                let xw = bv + rot * w_vel * 10.0; //TEMP
+                lbuf.add(bv.into(), xv.into(), 0x00FF0000);
+                lbuf.add(bv.into(), xw.into(), 0x00FFFF00);
             }
         }
 

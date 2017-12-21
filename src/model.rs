@@ -96,13 +96,14 @@ impl Tessellator {
     ) -> &[RawVertex] {
         self.samples.clear();
         self.samples.push(middle);
+        /*
         self.samples.extend(corners.iter().map(|dv| {
             [
                 ((dv.pos[0] as i8) / 3 * 2 + middle[0] / 3),
                 ((dv.pos[1] as i8) / 3 * 2 + middle[1] / 3),
                 ((dv.pos[2] as i8) / 3 * 2 + middle[2] / 3),
             ]
-        }));
+        }));*/
         &self.samples
     }
 }
@@ -363,7 +364,7 @@ where
 
     let positions: Vec<_> = (0 .. num_positions)
         .map(|_| {
-            read_vec(source); //unknown
+            read_vec(source); //unknown "ti"
             let pos = [
                 source.read_i8().unwrap() as f32,
                 source.read_i8().unwrap() as f32,
@@ -390,7 +391,7 @@ where
     debug!("\tReading {} polygons...", num_polygons);
     let mut tess = Tessellator::new();
     for _ in 0 .. num_polygons {
-        let num_corners = source.read_u32::<E>().unwrap();
+        let num_corners = source.read_u32::<E>().unwrap() as usize;
         assert!(3 <= num_corners && num_corners <= 4);
         source.seek(Current(4 + 4 + 4)).unwrap(); // sort info and color
         let mut d = [0i8; 7];
@@ -399,7 +400,7 @@ where
         }
         let mut pids = [0u32; 4];
         for i in 0 .. num_corners {
-            pids[i as usize] = source.read_u32::<E>().unwrap();
+            pids[i] = source.read_u32::<E>().unwrap();
             let _ = source.read_u32::<E>().unwrap(); //nid
         }
         let corners = [
@@ -408,17 +409,18 @@ where
             positions[pids[2] as usize],
             positions[pids[3] as usize],
         ];
-        let mid = [d[4] as f32, d[5] as f32, d[6] as f32];
+        let middle = [d[4] as f32, d[5] as f32, d[6] as f32];
         let normal = [
             d[0] as f32 / 128.0,
             d[1] as f32 / 128.0,
             d[2] as f32 / 128.0,
         ];
-        let samples = tess.tessellate(&corners, [d[4], d[5], d[6]]);
+        let samples = tess.tessellate(
+            &corners[.. num_corners],
+            [d[4], d[5], d[6]],
+        );
         if let Some((ref mut ind, ref mut samp)) = debug {
-            for p in pids[0 .. 3].iter() {
-                ind.push(*p);
-            }
+            ind.extend(pids[.. 3].iter().cloned());
             if num_corners > 3 {
                 ind.push(pids[2]);
                 ind.push(pids[3]);
@@ -440,8 +442,8 @@ where
             }
         }
         shape.polygons.push(Polygon {
-            middle: mid,
-            normal: normal,
+            middle,
+            normal,
             sample_range: (
                 shape.samples.len() as u16,
                 (shape.samples.len() + samples.len()) as u16,
