@@ -4,6 +4,7 @@ use gfx;
 use glutin::KeyboardInput;
 use std::collections::HashMap;
 use std::f32::EPSILON;
+use boilerplate::Application;
 use vangers::{config, level, model, render, space};
 
 
@@ -595,15 +596,19 @@ impl<R: gfx::Resources> Game<R> {
         back.z = 0.0;
         self.cam.loc -= back.normalize() * step;
     }
+}
 
-    pub fn on_key<F>(
-        &mut self,
-        input: KeyboardInput,
-        factory: &mut F,
-    ) -> bool
-    where
-        F: gfx::Factory<R>,
-    {
+impl<R: gfx::Resources> Application<R> for Game<R> {
+    fn resize<F: gfx::Factory<R>>(
+        &mut self, targets: render::MainTargets<R>, _factory: &mut F
+    ) {
+        self.cam.proj.aspect = targets.get_aspect();
+        self.render.resize(targets);
+    }
+
+    fn on_key<F: gfx::Factory<R>>(
+        &mut self, input: KeyboardInput, factory: &mut F
+    ) -> bool {
         use glutin::{ElementState, VirtualKeyCode as Key};
 
         let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
@@ -672,21 +677,7 @@ impl<R: gfx::Resources> Game<R> {
         true
     }
 
-    pub fn resize<F>(
-        &mut self,
-        targets: render::MainTargets<R>,
-        _factory: &mut F,
-    ) where
-        F: gfx::Factory<R>
-    {
-        self.cam.proj.aspect = targets.get_aspect();
-        self.render.resize(targets);
-    }
-
-    pub fn update(
-        &mut self,
-        delta: f32,
-    ) {
+    fn update(&mut self, delta: f32) {
         //let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
         //let dt = delta * 6.0;//TODO
         let dt = 0.093912; //TODO
@@ -751,16 +742,15 @@ impl<R: gfx::Resources> Game<R> {
         }
     }
 
-    pub fn draw<C: gfx::CommandBuffer<R>>(
-        &mut self,
-        enc: &mut gfx::Encoder<R, C>,
+    fn draw<C: gfx::CommandBuffer<R>>(
+        &mut self, encoder: &mut gfx::Encoder<R, C>
     ) {
         let items = self.agents
             .iter()
             .map(|a| (&a.car.model, &a.transform, a.car.physics.scale_bound));
-        self.render.draw_world(enc, items, &self.cam, false);
+        self.render.draw_world(encoder, items, &self.cam, false);
         self.render
             .debug
-            .draw_lines(&self.line_buffer, self.cam.get_view_proj().into(), enc);
+            .draw_lines(&self.line_buffer, self.cam.get_view_proj().into(), encoder);
     }
 }
