@@ -9,6 +9,7 @@ use super::{read_file, ColorFormat, DepthFormat, MainTargets};
 use config::settings;
 use model;
 
+
 const BLEND_FRONT: gfx::state::Blend = gfx::state::Blend {
     color: gfx::state::BlendChannel {
         equation: gfx::state::Equation::Add,
@@ -236,6 +237,11 @@ impl<R: gfx::Resources> DebugRender<R> {
                 }
             }
         }
+    }
+
+    pub fn resize(&mut self, targets: MainTargets<R>) {
+        self.data.out_color = targets.color;
+        self.data.out_depth = targets.depth;
     }
 
     fn draw_liner<C>(

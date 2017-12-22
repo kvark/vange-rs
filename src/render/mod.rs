@@ -14,6 +14,13 @@ pub struct MainTargets<R: gfx::Resources> {
     pub depth: gfx::handle::DepthStencilView<R, DepthFormat>,
 }
 
+impl<R: gfx::Resources> MainTargets<R> {
+    pub fn get_aspect(&self) -> f32 {
+        let (w, h, _, _) = self.color.get_dimensions();
+        w as f32 / h as f32
+    }
+}
+
 struct MaterialParams {
     dx: f32,
     sd: f32,
@@ -477,5 +484,13 @@ impl<R: gfx::Resources> Render<R> {
         info!("Reloading shaders");
         self.terrain.pso = Render::create_terrain_pso(factory);
         self.object_pso = Render::create_object_pso(factory);
+    }
+
+    pub fn resize(&mut self, targets: MainTargets<R>) {
+        self.terrain.data.out_color = targets.color.clone();
+        self.terrain.data.out_depth = targets.depth.clone();
+        self.object_data.out_color = targets.color.clone();
+        self.object_data.out_depth = targets.depth.clone();
+        self.debug.resize(targets);
     }
 }

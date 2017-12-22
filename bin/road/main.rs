@@ -41,12 +41,25 @@ fn main() {
         use gfx::Device;
         use glutin::GlContext;
 
-        events_loop.poll_events(|event| {
-            if let glutin::Event::WindowEvent { event, .. } = event {
-                if !game.react(event, &mut factory) {
-                    running = false;
+        events_loop.poll_events(|event| match event {
+            glutin::Event::WindowEvent { window_id, ref event } if window_id == window.id() => {
+                match *event {
+                    glutin::WindowEvent::Resized(_, _) => {
+                        let new_targets = boilerplate::resize(&window);
+                        game.resize(new_targets, &mut factory);
+                    }
+                    glutin::WindowEvent::Closed => {
+                        running = false;
+                    }
+                    glutin::WindowEvent::KeyboardInput { input, .. } => {
+                        if !game.on_key(input, &mut factory) {
+                            running = false;
+                        }
+                    }
+                    _ => {}
                 }
             }
+            _ => {}
         });
 
         let delta = time::precise_time_s() as f32 - last_time;

@@ -77,10 +77,6 @@ impl Settings {
         self.data_path.join(path).exists()
     }
 
-    pub fn get_screen_aspect(&self) -> f32 {
-        self.window.size[0] as f32 / self.window.size[1] as f32
-    }
-
     pub fn open_palette(&self) -> File {
         let path = self.data_path
             .join("resource")

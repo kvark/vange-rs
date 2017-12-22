@@ -46,7 +46,7 @@ impl<R: gfx::Resources> CarView<R> {
         };
 
         CarView {
-            mode,
+            model,
             transform: cgmath::Decomposed {
                 scale: cinfo.scale,
                 disp: cgmath::Vector3::unit_z(),

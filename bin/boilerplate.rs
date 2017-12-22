@@ -7,6 +7,8 @@ extern crate vangers;
 
 use vangers::{config, render};
 
+//pub struct Harness<R: gfx::Resources> {}
+
 pub fn init() -> (
     config::Settings,
     glutin::EventsLoop,
@@ -35,4 +37,11 @@ pub fn init() -> (
 
     let targets = render::MainTargets { color, depth };
     (settings, events_loop, window, device, factory, targets)
+}
+
+pub fn resize(
+    window: &glutin::GlWindow
+) -> render::MainTargets<gfx_device_gl::Resources> {
+    let (color, depth) = gfx_window_glutin::new_views(window);
+    render::MainTargets { color, depth }
 }

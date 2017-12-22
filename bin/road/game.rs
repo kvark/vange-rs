@@ -1,7 +1,7 @@
 use cgmath;
 use cgmath::prelude::*;
 use gfx;
-use glutin::WindowEvent as Event;
+use glutin::KeyboardInput;
 use std::collections::HashMap;
 use std::f32::EPSILON;
 use vangers::{config, level, model, render, space};
@@ -541,6 +541,7 @@ impl<R: gfx::Resources> Game<R> {
             None => level::Level::new_test(),
         };
 
+        let aspect = targets.get_aspect();
         let pal_data = level::read_palette(settings.open_palette());
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
 
@@ -564,17 +565,17 @@ impl<R: gfx::Resources> Game<R> {
         };
 
         Game {
-            db: db,
+            db,
             render,
             line_buffer: render::LineBuffer::new(),
-            level: level,
+            level,
             agents: vec![agent],
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, 0.0, 200.0),
                 rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
-                    aspect: settings.get_screen_aspect(),
+                    aspect,
                     near: 10.0,
                     far: 10000.0,
                 },
@@ -595,31 +596,24 @@ impl<R: gfx::Resources> Game<R> {
         self.cam.loc -= back.normalize() * step;
     }
 
-    pub fn react<F>(
+    pub fn on_key<F>(
         &mut self,
-        event: Event,
+        input: KeyboardInput,
         factory: &mut F,
     ) -> bool
     where
         F: gfx::Factory<R>,
     {
-        use glutin::{KeyboardInput, VirtualKeyCode as Key};
-        use glutin::ElementState::*;
+        use glutin::{ElementState, VirtualKeyCode as Key};
 
         let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
             Some(agent) => agent,
             None => return false,
         };
-        match event {
-            Event::Closed => return false,
-            //Event::Resized(width, height) => self.render.resize(width, height),
-            Event::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: Pressed,
-                        virtual_keycode: Some(key),
-                        ..
-                    },
+        match input {
+            KeyboardInput {
+                state: ElementState::Pressed,
+                virtual_keycode: Some(key),
                 ..
             } => match key {
                 Key::Escape => return false,
@@ -648,20 +642,16 @@ impl<R: gfx::Resources> Game<R> {
                 Key::A => self.spin_hor = -1.0,
                 Key::D => self.spin_hor = 1.0,
                 _ => (),
-            },
-            Event::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: Released,
-                        virtual_keycode: Some(key),
-                        ..
-                    },
+            }
+            KeyboardInput {
+                state: ElementState::Released,
+                virtual_keycode: Some(key),
                 ..
             } => match key {
                 Key::W | Key::S => self.spin_ver = 0.0,
                 Key::A | Key::D => self.spin_hor = 0.0,
                 _ => (),
-            },
+            }
             /*
             Event::KeyboardInput(_, _, Some(Key::R)) =>
                 self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
@@ -676,10 +666,21 @@ impl<R: gfx::Resources> Game<R> {
             Event::KeyboardInput(_, _, Some(Key::D)) =>
                 self.cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), -angle) * self.cam.rot,
             */
-            _ => (),
+            _ => {}
         }
 
         true
+    }
+
+    pub fn resize<F>(
+        &mut self,
+        targets: render::MainTargets<R>,
+        _factory: &mut F,
+    ) where
+        F: gfx::Factory<R>
+    {
+        self.cam.proj.aspect = targets.get_aspect();
+        self.render.resize(targets);
     }
 
     pub fn update(
