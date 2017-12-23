@@ -6,12 +6,13 @@ extern crate glutin;
 extern crate vangers;
 
 use vangers::{config, render};
-pub use glutin::{ElementState, KeyboardInput, VirtualKeyCode as Key};
+
+pub use self::glutin::{ElementState, KeyboardInput, VirtualKeyCode as Key};
 
 
 pub trait Application<R: gfx::Resources> {
     fn on_resize<F: gfx::Factory<R>>(&mut self, render::MainTargets<R>, &mut F);
-    fn on_key<F: gfx::Factory<R>>(&mut self, glutin::KeyboardInput, &mut F) -> bool;
+    fn on_key<F: gfx::Factory<R>>(&mut self, KeyboardInput, &mut F) -> bool;
     fn update(&mut self, delta: f32);
     fn draw<C: gfx::CommandBuffer<R>>(&mut self, &mut gfx::Encoder<R, C>);
 }
@@ -68,7 +69,7 @@ impl Harness {
 
         while running {
             use gfx::Device;
-            use glutin::GlContext;
+            use self::glutin::GlContext;
 
             let (win, factory) = (&self.window, &mut self.factory);
             self.events_loop.poll_events(|event| match event {

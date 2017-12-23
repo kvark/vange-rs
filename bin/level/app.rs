@@ -1,6 +1,7 @@
 use cgmath;
 use gfx;
-use glutin::WindowEvent as Event;
+
+use boilerplate::{Application, KeyboardInput};
 use vangers::{config, level, render, space};
 
 #[derive(Debug)]

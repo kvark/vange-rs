@@ -36,6 +36,7 @@ impl<R: gfx::Resources> CarView<R> {
         }
 
         let pal_data = level::read_palette(settings.open_palette());
+        let aspect = targets.get_aspect();
         let data = render::object::Data {
             vbuf: model.body.buffer.clone(),
             locals: factory.create_constant_buffer(1),
@@ -44,7 +45,6 @@ impl<R: gfx::Resources> CarView<R> {
             out_color: targets.color.clone(),
             out_depth: targets.depth.clone(),
         };
-        let aspect = targets.get_aspect();
 
         CarView {
             model,
@@ -59,8 +59,7 @@ impl<R: gfx::Resources> CarView<R> {
             data,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, -64.0, 32.0),
-                rot: cgmath::Rotation3::from_axis_angle::<cgmath::Rad<_>>(
-                    cgmath::Vector3::unit_x(),
+                rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(
                     cgmath::Angle::turn_div_6(),
                 ),
                 proj: cgmath::PerspectiveFov {
@@ -81,7 +80,7 @@ impl<R: gfx::Resources> CarView<R> {
         use cgmath::Transform;
         let other = cgmath::Decomposed {
             scale: 1.0,
-            rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_z(), angle),
+            rot: cgmath::Rotation3::from_angle_z(angle),
             disp: cgmath::Zero::zero(),
         };
         self.transform = other.concat(&self.transform);
@@ -94,7 +93,7 @@ impl<R: gfx::Resources> CarView<R> {
         use cgmath::Transform;
         let other = cgmath::Decomposed {
             scale: 1.0,
-            rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), angle),
+            rot: cgmath::Rotation3::from_angle_x(angle),
             disp: cgmath::Zero::zero(),
         };
         self.transform = self.transform.concat(&other);

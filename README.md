@@ -62,6 +62,12 @@ Controls:
 
 <img alt="level view" src="etc/shots/Road5-color.png" width="25%">
 
+#### Converter
+`convert` binary is a command line utility for converting models to Wavefront OBJ format.
+```bash
+cargo run --bin convert resource/m3d/items/i21.m3d i21.obj
+```
+
 ### Technonolgy
 
 The game uses [gfx-rs pre-LL](https://github.com/gfx-rs/gfx/tree/pre-ll) for graphics and [glutin](https://github.com/tomaka/glutin) for context creation.

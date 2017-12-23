@@ -1,10 +1,8 @@
 extern crate cgmath;
 extern crate getopts;
 extern crate gfx;
-extern crate glutin;
 #[macro_use]
 extern crate log;
-extern crate time;
 extern crate vangers;
 
 mod app;
