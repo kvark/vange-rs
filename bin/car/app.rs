@@ -1,7 +1,7 @@
 use cgmath;
 use gfx;
-use glutin::WindowEvent as Event;
 
+use boilerplate::{Application, KeyboardInput};
 use vangers::{config, level, model, render, space};
 
 pub struct CarView<R: gfx::Resources> {
@@ -44,6 +44,7 @@ impl<R: gfx::Resources> CarView<R> {
             out_color: targets.color.clone(),
             out_depth: targets.depth.clone(),
         };
+        let aspect = targets.get_aspect();
 
         CarView {
             model,
@@ -64,7 +65,7 @@ impl<R: gfx::Resources> CarView<R> {
                 ),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
-                    aspect: settings.get_screen_aspect(),
+                    aspect,
                     near: 1.0,
                     far: 100.0,
                 },
@@ -98,27 +99,33 @@ impl<R: gfx::Resources> CarView<R> {
         };
         self.transform = self.transform.concat(&other);
     }
+}
 
-    pub fn react<F>(
+impl<R: gfx::Resources> Application<R> for CarView<R> {
+    fn on_resize<F: gfx::Factory<R>>(
+        &mut self, targets: render::MainTargets<R>, _factory: &mut F
+    ) {
+        self.cam.proj.aspect = targets.get_aspect();
+        self.data.out_color = targets.color.clone();
+        self.data.out_depth = targets.depth.clone();
+        self.debug_render.resize(targets);
+    }
+
+    fn on_key<F>(
         &mut self,
-        event: Event,
+        input: KeyboardInput,
         factory: &mut F,
     ) -> bool
     where
         F: gfx::Factory<R>,
     {
-        use glutin::{KeyboardInput, VirtualKeyCode as Key};
-        use glutin::ElementState::*;
+        use boilerplate::{ElementState, Key};
+
         let angle = cgmath::Rad(2.0);
-        match event {
-            Event::Closed => return false,
-            Event::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: Pressed,
-                        virtual_keycode: Some(key),
-                        ..
-                    },
+        match input {
+            KeyboardInput {
+                state: ElementState::Pressed,
+                virtual_keycode: Some(key),
                 ..
             } => match key {
                 Key::Escape => return false,
@@ -128,26 +135,23 @@ impl<R: gfx::Resources> CarView<R> {
                 Key::S => self.rotation.1 = angle,
                 Key::L => self.pso = render::Render::create_object_pso(factory),
                 _ => (),
-            },
-            Event::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: Released,
-                        virtual_keycode: Some(key),
-                        ..
-                    },
+            }
+            KeyboardInput {
+                state: ElementState::Released,
+                virtual_keycode: Some(key),
                 ..
             } => match key {
                 Key::A | Key::D => self.rotation.0 = cgmath::Rad(0.),
                 Key::W | Key::S => self.rotation.1 = cgmath::Rad(0.),
                 _ => (),
-            },
-            _ => (),
+            }
+            _ => {}
         }
+
         true
     }
 
-    pub fn update(
+    fn update(
         &mut self,
         delta: f32,
     ) {
@@ -161,7 +165,7 @@ impl<R: gfx::Resources> CarView<R> {
         }
     }
 
-    pub fn draw<C: gfx::CommandBuffer<R>>(
+    fn draw<C: gfx::CommandBuffer<R>>(
         &mut self,
         enc: &mut gfx::Encoder<R, C>,
     ) {

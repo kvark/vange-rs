@@ -1,10 +1,10 @@
 use cgmath;
 use cgmath::prelude::*;
 use gfx;
-use glutin::KeyboardInput;
 use std::collections::HashMap;
 use std::f32::EPSILON;
-use boilerplate::Application;
+
+use boilerplate::{Application, KeyboardInput};
 use vangers::{config, level, model, render, space};
 
 
@@ -599,7 +599,7 @@ impl<R: gfx::Resources> Game<R> {
 }
 
 impl<R: gfx::Resources> Application<R> for Game<R> {
-    fn resize<F: gfx::Factory<R>>(
+    fn on_resize<F: gfx::Factory<R>>(
         &mut self, targets: render::MainTargets<R>, _factory: &mut F
     ) {
         self.cam.proj.aspect = targets.get_aspect();
@@ -609,7 +609,7 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
     fn on_key<F: gfx::Factory<R>>(
         &mut self, input: KeyboardInput, factory: &mut F
     ) -> bool {
-        use glutin::{ElementState, VirtualKeyCode as Key};
+        use boilerplate::{ElementState, Key};
 
         let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
             Some(agent) => agent,
