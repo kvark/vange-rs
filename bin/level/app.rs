@@ -30,6 +30,8 @@ impl<R: gfx::Resources> LevelView<R> {
             None => level::Level::new_test(),
         };
         let pal_data = level::read_palette(settings.open_palette());
+        let aspect = targets.get_aspect();
+
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
 
         LevelView {
@@ -40,7 +42,7 @@ impl<R: gfx::Resources> LevelView<R> {
                 rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
-                    aspect: settings.get_screen_aspect(),
+                    aspect,
                     near: 10.0,
                     far: 10000.0,
                 },
@@ -48,11 +50,57 @@ impl<R: gfx::Resources> LevelView<R> {
             input: Input::Empty,
         }
     }
+}
 
-    pub fn update(
-        &mut self,
-        delta: f32,
+impl<R: gfx::Resources> Application<R> for LevelView<R> {
+    fn on_resize<F: gfx::Factory<R>>(
+        &mut self, targets: render::MainTargets<R>, _factory: &mut F
     ) {
+        self.cam.proj.aspect = targets.get_aspect();
+        self.render.resize(targets);
+    }
+
+    fn on_key(&mut self, input: KeyboardInput) -> bool {
+        use boilerplate::{ElementState, Key, ModifiersState};
+
+        let i = &mut self.input;
+        match input {
+            KeyboardInput {
+                state: ElementState::Pressed,
+                virtual_keycode: Some(key),
+                modifiers: ModifiersState { alt, .. },
+                ..
+            } => match key {
+                Key::Escape => return false,
+                Key::W => *i = Input::Ver { dir: 1.0, alt },
+                Key::S => *i = Input::Ver { dir: -1.0, alt },
+                Key::A => *i = Input::Hor { dir: -1.0, alt },
+                Key::D => *i = Input::Hor { dir: 1.0, alt },
+                Key::Z => *i = Input::Dep { dir: -1.0, alt },
+                Key::X => *i = Input::Dep { dir: 1.0, alt },
+                _ => (),
+            }
+            KeyboardInput {
+                state: ElementState::Released,
+                virtual_keycode: Some(key),
+                ..
+            } => match key {
+                Key::W | Key::S | Key::A | Key::D | Key::Z | Key::X => *i = Input::Empty,
+                _ => (),
+            }
+            /*
+            Event::KeyboardInput(_, _, Some(Key::R)) =>
+                self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
+            Event::KeyboardInput(_, _, Some(Key::F)) =>
+                self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), -angle),
+            */
+            _ => {}
+        }
+
+        true
+    }
+
+    fn update(&mut self, delta: f32) {
         use cgmath::{InnerSpace, Rotation3, Zero};
 
         match self.input {
@@ -86,69 +134,15 @@ impl<R: gfx::Resources> LevelView<R> {
         }
     }
 
-    pub fn react<F>(
-        &mut self,
-        event: Event,
-        factory: &mut F,
-    ) -> bool
-    where
-        F: gfx::Factory<R>,
-    {
-        use glutin::{KeyboardInput, ModifiersState, VirtualKeyCode as Key};
-        use glutin::ElementState::*;
-
-        let i = &mut self.input;
-        match event {
-            Event::Closed => return false,
-            //Event::Resized(width, height) => self.render.resize(width, height),
-            Event::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: Pressed,
-                        virtual_keycode: Some(key),
-                        modifiers: ModifiersState { alt, .. },
-                        ..
-                    },
-                ..
-            } => match key {
-                Key::Escape => return false,
-                Key::L => self.render.reload(factory),
-                Key::W => *i = Input::Ver { dir: 1.0, alt },
-                Key::S => *i = Input::Ver { dir: -1.0, alt },
-                Key::A => *i = Input::Hor { dir: -1.0, alt },
-                Key::D => *i = Input::Hor { dir: 1.0, alt },
-                Key::Z => *i = Input::Dep { dir: -1.0, alt },
-                Key::X => *i = Input::Dep { dir: 1.0, alt },
-                _ => (),
-            },
-            Event::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: Released,
-                        virtual_keycode: Some(key),
-                        ..
-                    },
-                ..
-            } => match key {
-                Key::W | Key::S | Key::A | Key::D | Key::Z | Key::X => *i = Input::Empty,
-                _ => (),
-            },
-            /*
-            Event::KeyboardInput(_, _, Some(Key::R)) =>
-                self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
-            Event::KeyboardInput(_, _, Some(Key::F)) =>
-                self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), -angle),
-            */
-            _ => (),
-        }
-        true
-    }
-
-    pub fn draw<C: gfx::CommandBuffer<R>>(
+    fn draw<C: gfx::CommandBuffer<R>>(
         &mut self,
         enc: &mut gfx::Encoder<R, C>,
     ) {
         self.render
             .draw_world(enc, None.into_iter(), &self.cam, false);
+    }
+
+    fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
+        self.render.reload(factory);
     }
 }

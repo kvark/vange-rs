@@ -110,14 +110,7 @@ impl<R: gfx::Resources> Application<R> for CarView<R> {
         self.debug_render.resize(targets);
     }
 
-    fn on_key<F>(
-        &mut self,
-        input: KeyboardInput,
-        factory: &mut F,
-    ) -> bool
-    where
-        F: gfx::Factory<R>,
-    {
+    fn on_key(&mut self, input: KeyboardInput) -> bool {
         use boilerplate::{ElementState, Key};
 
         let angle = cgmath::Rad(2.0);
@@ -132,7 +125,6 @@ impl<R: gfx::Resources> Application<R> for CarView<R> {
                 Key::D => self.rotation.0 = angle,
                 Key::W => self.rotation.1 = -angle,
                 Key::S => self.rotation.1 = angle,
-                Key::L => self.pso = render::Render::create_object_pso(factory),
                 _ => (),
             }
             KeyboardInput {
@@ -180,5 +172,9 @@ impl<R: gfx::Resources> Application<R> for CarView<R> {
             &mut self.data,
             Some((&mut self.debug_render, self.physics.scale_bound)),
         );
+    }
+
+    fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
+        self.pso = render::Render::create_object_pso(factory);
     }
 }

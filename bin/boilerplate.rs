@@ -7,14 +7,15 @@ extern crate vangers;
 
 use vangers::{config, render};
 
-pub use self::glutin::{ElementState, KeyboardInput, VirtualKeyCode as Key};
+pub use self::glutin::{ElementState, KeyboardInput, ModifiersState, VirtualKeyCode as Key};
 
 
 pub trait Application<R: gfx::Resources> {
     fn on_resize<F: gfx::Factory<R>>(&mut self, render::MainTargets<R>, &mut F);
-    fn on_key<F: gfx::Factory<R>>(&mut self, KeyboardInput, &mut F) -> bool;
+    fn on_key(&mut self, KeyboardInput) -> bool;
     fn update(&mut self, delta: f32);
     fn draw<C: gfx::CommandBuffer<R>>(&mut self, &mut gfx::Encoder<R, C>);
+    fn reload_shaders<F: gfx::Factory<R>>(&mut self, &mut F);
 }
 
 type MainTargets = render::MainTargets<gfx_device_gl::Resources>;
@@ -75,16 +76,21 @@ impl Harness {
             self.events_loop.poll_events(|event| match event {
                 glutin::Event::WindowEvent { window_id, ref event } if window_id == win.id() => {
                     match *event {
-                        glutin::WindowEvent::Resized(_, _) => {
+                        glutin::WindowEvent::Resized(width, height) => {
+                            info!("Resizing to {}x{}", width, height);
                             let (color, depth) = gfx_window_glutin::new_views(win);
                             let new_targets = render::MainTargets { color, depth };
                             app.on_resize(new_targets, factory);
+                        }
+                        glutin::WindowEvent::Focused(true) => {
+                            info!("Reloading shaders");
+                            app.reload_shaders(factory);
                         }
                         glutin::WindowEvent::Closed => {
                             running = false;
                         }
                         glutin::WindowEvent::KeyboardInput { input, .. } => {
-                            if !app.on_key(input, factory) {
+                            if !app.on_key(input) {
                                 running = false;
                             }
                         }

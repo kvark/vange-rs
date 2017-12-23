@@ -73,14 +73,7 @@ impl<R: gfx::Resources> Application<R> for ResourceView<R> {
         self.data.out_depth = targets.depth;
     }
 
-    fn on_key<F>(
-        &mut self,
-        input: KeyboardInput,
-        factory: &mut F,
-    ) -> bool
-    where
-        F: gfx::Factory<R>,
-    {
+    fn on_key(&mut self, input: KeyboardInput) -> bool {
         use boilerplate::{ElementState, Key};
 
         let angle = cgmath::Rad(2.0);
@@ -93,7 +86,6 @@ impl<R: gfx::Resources> Application<R> for ResourceView<R> {
                 Key::Escape => return false,
                 Key::A => self.rotation = -angle,
                 Key::D => self.rotation = angle,
-                Key::L => self.pso = render::Render::create_object_pso(factory),
                 _ => (),
             }
             KeyboardInput {
@@ -143,5 +135,9 @@ impl<R: gfx::Resources> Application<R> for ResourceView<R> {
             &mut self.data,
             None,
         );
+    }
+
+    fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
+        self.pso = render::Render::create_object_pso(factory);
     }
 }

@@ -606,9 +606,7 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
         self.render.resize(targets);
     }
 
-    fn on_key<F: gfx::Factory<R>>(
-        &mut self, input: KeyboardInput, factory: &mut F
-    ) -> bool {
+    fn on_key(&mut self, input: KeyboardInput) -> bool {
         use boilerplate::{ElementState, Key};
 
         let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
@@ -622,7 +620,6 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
                 ..
             } => match key {
                 Key::Escape => return false,
-                Key::L => self.render.reload(factory),
                 Key::P => {
                     let center = &player.transform;
                     self.tick = None;
@@ -752,5 +749,9 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
         self.render
             .debug
             .draw_lines(&self.line_buffer, self.cam.get_view_proj().into(), encoder);
+    }
+
+    fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
+        self.render.reload(factory);
     }
 }
