@@ -1,6 +1,7 @@
 use cgmath;
 use gfx;
-use glutin::WindowEvent as Event;
+
+use boilerplate::{Application, KeyboardInput};
 use vangers::{config, level, model, render, space};
 
 pub struct ResourceView<R: gfx::Resources> {
@@ -9,6 +10,7 @@ pub struct ResourceView<R: gfx::Resources> {
     pso: gfx::PipelineState<R, render::object::Meta>,
     data: render::object::Data<R>,
     cam: space::Camera,
+    rotation: cgmath::Rad<f32>,
 }
 
 impl<R: gfx::Resources> ResourceView<R> {
@@ -17,11 +19,12 @@ impl<R: gfx::Resources> ResourceView<R> {
         settings: &config::settings::Settings,
         targets: render::MainTargets<R>,
         factory: &mut F,
-    ) -> ResourceView<R> {
+    ) -> Self {
         use gfx::traits::FactoryExt;
         use std::io::BufReader;
 
         let pal_data = level::read_palette(settings.open_palette());
+        let aspect = targets.get_aspect();
 
         info!("Loading model {}", path);
         let mut file = BufReader::new(settings.open_relative(path));
@@ -46,69 +49,77 @@ impl<R: gfx::Resources> ResourceView<R> {
             data: data,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, -200.0, 100.0),
-                rot: cgmath::Rotation3::from_axis_angle::<cgmath::Rad<_>>(
-                    cgmath::Vector3::unit_x(),
+                rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(
                     cgmath::Angle::turn_div_6(),
                 ),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
-                    aspect: settings.get_screen_aspect(),
+                    aspect,
                     near: 5.0,
                     far: 400.0,
                 },
             },
+            rotation: cgmath::Rad(0.),
         }
     }
+}
 
-    fn rotate(
-        &mut self,
-        angle: cgmath::Rad<f32>,
+impl<R: gfx::Resources> Application<R> for ResourceView<R> {
+    fn on_resize<F: gfx::Factory<R>>(
+        &mut self, targets: render::MainTargets<R>, _factory: &mut F
     ) {
-        use cgmath::Transform;
-        let other = cgmath::Decomposed {
-            scale: 1.0,
-            rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_z(), angle),
-            disp: cgmath::Zero::zero(),
-        };
-        self.transform = other.concat(&self.transform);
+        self.cam.proj.aspect = targets.get_aspect();
+        self.data.out_color = targets.color;
+        self.data.out_depth = targets.depth;
     }
 
-    pub fn react<F>(
-        &mut self,
-        event: Event,
-        delta: f32,
-        factory: &mut F,
-    ) -> bool
-    where
-        F: gfx::Factory<R>,
-    {
-        use glutin::{KeyboardInput, VirtualKeyCode as Key};
-        use glutin::ElementState::Pressed;
+    fn on_key(&mut self, input: KeyboardInput) -> bool {
+        use boilerplate::{ElementState, Key};
 
-        let angle = cgmath::Rad(delta * 2.0);
-        match event {
-            Event::Closed => return false,
-            Event::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: Pressed,
-                        virtual_keycode: Some(key),
-                        ..
-                    },
+        let angle = cgmath::Rad(2.0);
+        match input {
+            KeyboardInput {
+                state: ElementState::Pressed,
+                virtual_keycode: Some(key),
                 ..
             } => match key {
                 Key::Escape => return false,
-                Key::A => self.rotate(-angle),
-                Key::D => self.rotate(angle),
-                Key::L => self.pso = render::Render::create_object_pso(factory),
+                Key::A => self.rotation = -angle,
+                Key::D => self.rotation = angle,
                 _ => (),
-            },
-            _ => (),
+            }
+            KeyboardInput {
+                state: ElementState::Released,
+                virtual_keycode: Some(key),
+                ..
+            } => match key {
+                Key::A | Key::D => self.rotation = cgmath::Rad(0.0),
+                _ => (),
+            }
+            _ => {}
         }
+
         true
     }
 
-    pub fn draw<C: gfx::CommandBuffer<R>>(
+    fn update(
+        &mut self,
+        delta: f32,
+    ) {
+        use cgmath::Transform;
+
+        if self.rotation != cgmath::Rad(0.) {
+            let angle = self.rotation * delta;
+            let other = cgmath::Decomposed {
+                scale: 1.0,
+                rot: cgmath::Rotation3::from_angle_z(angle),
+                disp: cgmath::Zero::zero(),
+            };
+            self.transform = other.concat(&self.transform);
+        }
+    }
+
+    fn draw<C: gfx::CommandBuffer<R>>(
         &mut self,
         enc: &mut gfx::Encoder<R, C>,
     ) {
@@ -124,5 +135,9 @@ impl<R: gfx::Resources> ResourceView<R> {
             &mut self.data,
             None,
         );
+    }
+
+    fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
+        self.pso = render::Render::create_object_pso(factory);
     }
 }

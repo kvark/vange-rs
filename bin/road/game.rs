@@ -1,9 +1,10 @@
 use cgmath;
 use cgmath::prelude::*;
 use gfx;
-use glutin::WindowEvent as Event;
 use std::collections::HashMap;
 use std::f32::EPSILON;
+
+use boilerplate::{Application, KeyboardInput};
 use vangers::{config, level, model, render, space};
 
 
@@ -493,47 +494,6 @@ impl<R: gfx::Resources> Agent<R> {
             }
         }
 
-        /* dt 0.095507, num 5
-        resulting v=(0.212911,8.957590,9.813052) w=(-0.865242,0.182465,0.072018)
-        A_rot_inv=(0.999825, 0.006150, -0.017690, -0.007590, 0.996564, -0.082478, 0.017122, 0.082598, 0.996436)
-        A_l2g=(0.714473, -0.661982, -0.226515, -0.658047, -0.745775, 0.103892, 0.237704, -0.074829, 0.968451)
-        A_l2g_new=(0.714283, -0.646447, -0.268153, -0.664356, -0.746787, 0.030655, 0.220070, -0.156253, 0.962889)
-        W new = (-0.865242, 0.182465, 0.072018)
-        */
-        if false {
-            let w = cgmath::vec3(-0.865242, 0.182465, 0.072018);
-            let wmag = w.magnitude();
-            let a_l2g = cgmath::Matrix3::new(
-                0.714473,
-                -0.661982,
-                -0.226515,
-                0.237704,
-                -0.074829,
-                0.968451,
-                -0.658047,
-                -0.745775,
-                0.103892,
-            ).transpose();
-            let q_l2g = cgmath::Quaternion::from(a_l2g);
-            let angle = cgmath::Rad(-0.095507 * wmag);
-            let q_rot_inv = cgmath::Quaternion::from_axis_angle(w / (wmag + EPSILON), angle);
-            let wnew = q_rot_inv * w;
-            let q_l2g_new = q_l2g * q_rot_inv.invert();
-            println!(
-                "\twnew: {:?}\n\ta_rot_inv: {:?}\n\tq_l2g: {:?}\n\tq_l2g_new: {:?}",
-                wnew,
-                cgmath::Matrix3::from(q_rot_inv).transpose(),
-                cgmath::Matrix3::from(q_l2g).transpose(),
-                cgmath::Matrix3::from(q_l2g_new).transpose()
-            );
-        }
-        /*
-        wnew: Vector3 [-0.865242, 0.182465, 0.072018]
-        a_rot_inv: Matrix3 [[0.9998246, 0.006150384, -0.017689865], [-0.007589605, 0.996564, -0.08247791], [0.01712181, 0.0825977, 0.9964359]]
-        q_l2g: Matrix3 [[0.7144726, -0.66198176, -0.22651473], [0.23770414, -0.07482864, 0.96845084], [-0.6580467, -0.74577504, 0.10389289]]
-        q_l2g_new: Matrix3 [[0.7142829, -0.6464473, -0.26815253], [0.22007042, -0.15625153, 0.9628885], [-0.664356, -0.7467872, 0.030656204]]
-        */
-
         self.dynamo.linear_velocity = v_vel;
         self.dynamo.angular_velocity = w_vel;
         // slow down
@@ -581,7 +541,11 @@ impl<R: gfx::Resources> Game<R> {
             Some(lev_config) => level::load(&lev_config),
             None => level::Level::new_test(),
         };
+
+        let aspect = targets.get_aspect();
         let pal_data = level::read_palette(settings.open_palette());
+        let render = render::init(factory, targets, &level, &pal_data, &settings.render);
+
         let car = db.cars[&settings.car.id].clone();
         let player_height = get_height(level.get((0, 0)).get_top()) + 5.; //center offset
 
@@ -602,17 +566,17 @@ impl<R: gfx::Resources> Game<R> {
         };
 
         Game {
-            db: db,
-            render: render::init(factory, targets, &level, &pal_data),
+            db,
+            render,
             line_buffer: render::LineBuffer::new(),
-            level: level,
+            level,
             agents: vec![agent],
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, 0.0, 200.0),
                 rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
-                    aspect: settings.get_screen_aspect(),
+                    aspect,
                     near: 10.0,
                     far: 10000.0,
                 },
@@ -632,36 +596,30 @@ impl<R: gfx::Resources> Game<R> {
         back.z = 0.0;
         self.cam.loc -= back.normalize() * step;
     }
+}
 
-    pub fn react<F>(
-        &mut self,
-        event: Event,
-        factory: &mut F,
-    ) -> bool
-    where
-        F: gfx::Factory<R>,
-    {
-        use glutin::{KeyboardInput, VirtualKeyCode as Key};
-        use glutin::ElementState::*;
+impl<R: gfx::Resources> Application<R> for Game<R> {
+    fn on_resize<F: gfx::Factory<R>>(
+        &mut self, targets: render::MainTargets<R>, _factory: &mut F
+    ) {
+        self.cam.proj.aspect = targets.get_aspect();
+        self.render.resize(targets);
+    }
+
+    fn on_key(&mut self, input: KeyboardInput) -> bool {
+        use boilerplate::{ElementState, Key};
 
         let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
             Some(agent) => agent,
             None => return false,
         };
-        match event {
-            Event::Closed => return false,
-            //Event::Resized(width, height) => self.render.resize(width, height),
-            Event::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: Pressed,
-                        virtual_keycode: Some(key),
-                        ..
-                    },
+        match input {
+            KeyboardInput {
+                state: ElementState::Pressed,
+                virtual_keycode: Some(key),
                 ..
             } => match key {
                 Key::Escape => return false,
-                Key::L => self.render.reload(factory),
                 Key::P => {
                     let center = &player.transform;
                     self.tick = None;
@@ -686,20 +644,16 @@ impl<R: gfx::Resources> Game<R> {
                 Key::A => self.spin_hor = -1.0,
                 Key::D => self.spin_hor = 1.0,
                 _ => (),
-            },
-            Event::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: Released,
-                        virtual_keycode: Some(key),
-                        ..
-                    },
+            }
+            KeyboardInput {
+                state: ElementState::Released,
+                virtual_keycode: Some(key),
                 ..
             } => match key {
                 Key::W | Key::S => self.spin_ver = 0.0,
                 Key::A | Key::D => self.spin_hor = 0.0,
                 _ => (),
-            },
+            }
             /*
             Event::KeyboardInput(_, _, Some(Key::R)) =>
                 self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
@@ -714,16 +668,13 @@ impl<R: gfx::Resources> Game<R> {
             Event::KeyboardInput(_, _, Some(Key::D)) =>
                 self.cam.rot = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), -angle) * self.cam.rot,
             */
-            _ => (),
+            _ => {}
         }
 
         true
     }
 
-    pub fn update(
-        &mut self,
-        delta: f32,
-    ) {
+    fn update(&mut self, delta: f32) {
         //let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
         //let dt = delta * 6.0;//TODO
         let dt = 0.093912; //TODO
@@ -752,13 +703,29 @@ impl<R: gfx::Resources> Game<R> {
             //self.dyn_target.steer += cgmath::Rad(0.2 * delta * self.spin_hor);
             self.agents[pid].control.motor = 1.0 * self.spin_ver;
 
-            self.cam.look_by(
-                &self.agents[pid].transform,
-                &space::Direction {
-                    view: cgmath::vec3(0.0, 1.0, -3.0),
-                    height: 200.0,
-                },
-            );
+            if false {
+                self.cam.follow(
+                    &self.agents[pid].transform,
+                    dt,
+                    &space::Follow {
+                        transform: cgmath::Decomposed {
+                            disp: cgmath::vec3(0.0, -300.0, 500.0),
+                            rot: cgmath::Quaternion::from_angle_x(cgmath::Rad(0.7)),
+                            scale: 1.0,
+                        },
+                        speed: 1.0,
+                    },
+                );
+            } else {
+                self.cam.look_by(
+                    &self.agents[pid].transform,
+                    &space::Direction {
+                        view: cgmath::vec3(0.0, 1.0, -3.0),
+                        height: 200.0,
+                    },
+                );
+            }
+
             self.line_buffer.clear();
 
             for a in self.agents.iter_mut() {
@@ -772,16 +739,19 @@ impl<R: gfx::Resources> Game<R> {
         }
     }
 
-    pub fn draw<C: gfx::CommandBuffer<R>>(
-        &mut self,
-        enc: &mut gfx::Encoder<R, C>,
+    fn draw<C: gfx::CommandBuffer<R>>(
+        &mut self, encoder: &mut gfx::Encoder<R, C>
     ) {
         let items = self.agents
             .iter()
             .map(|a| (&a.car.model, &a.transform, a.car.physics.scale_bound));
-        self.render.draw_world(enc, items, &self.cam, false);
+        self.render.draw_world(encoder, items, &self.cam, false);
         self.render
             .debug
-            .draw_lines(&self.line_buffer, self.cam.get_view_proj().into(), enc);
+            .draw_lines(&self.line_buffer, self.cam.get_view_proj().into(), encoder);
+    }
+
+    fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
+        self.render.reload(factory);
     }
 }

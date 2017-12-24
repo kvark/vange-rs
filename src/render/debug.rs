@@ -6,7 +6,9 @@ pub use gfx::pso::buffer::{InstanceRate, VertexBufferCommon};
 use gfx::traits::FactoryExt; // reduce the line width at use site
 
 use super::{read_file, ColorFormat, DepthFormat, MainTargets};
+use config::settings;
 use model;
+
 
 const BLEND_FRONT: gfx::state::Blend = gfx::state::Blend {
     color: gfx::state::BlendChannel {
@@ -118,7 +120,7 @@ impl LineBuffer {
 }
 
 pub struct DebugRender<R: gfx::Resources> {
-    max_vertices: usize,
+    settings: settings::DebugRender,
     buf_pos: gfx::handle::Buffer<R, DebugPos>,
     buf_col: gfx::handle::Buffer<R, DebugColor>,
     data: debug::Data<R>,
@@ -130,13 +132,13 @@ pub struct DebugRender<R: gfx::Resources> {
 impl<R: gfx::Resources> DebugRender<R> {
     pub fn new<F: gfx::Factory<R>>(
         factory: &mut F,
-        max_vertices: usize,
         targets: MainTargets<R>,
+        settings: &settings::DebugRender,
     ) -> Self {
         let data = debug::Data {
             buf_pos: factory
                 .create_buffer(
-                    max_vertices,
+                    settings.max_vertices,
                     gfx::buffer::Role::Vertex,
                     gfx::memory::Usage::Dynamic,
                     gfx::Bind::empty(),
@@ -144,7 +146,7 @@ impl<R: gfx::Resources> DebugRender<R> {
                 .unwrap(),
             buf_col: factory
                 .create_buffer(
-                    max_vertices,
+                    settings.max_vertices,
                     gfx::buffer::Role::Vertex,
                     gfx::memory::Usage::Dynamic,
                     gfx::Bind::empty(),
@@ -156,10 +158,10 @@ impl<R: gfx::Resources> DebugRender<R> {
             blend_ref: [0.0, 0.0, 0.0, 0.5],
         };
         let mut result = DebugRender {
-            max_vertices: max_vertices,
+            settings: settings.clone(),
             buf_pos: data.buf_pos.clone(),
             buf_col: data.buf_col.clone(),
-            data: data,
+            data,
             psos_line: HashMap::new(),
             pso_face: None,
             pso_edge: None,
@@ -180,57 +182,66 @@ impl<R: gfx::Resources> DebugRender<R> {
             .unwrap();
         let raster = gfx::state::Rasterizer::new_fill();
 
-        self.pso_face = Some(
-            factory
-                .create_pipeline_from_program(
-                    &program,
-                    gfx::Primitive::TriangleList,
-                    raster,
-                    debug::new(),
-                )
-                .unwrap(),
-        );
-        self.pso_edge = Some(
-            factory
-                .create_pipeline_from_program(
-                    &program,
-                    gfx::Primitive::TriangleList,
-                    gfx::state::Rasterizer {
-                        method: gfx::state::RasterMethod::Line(1),
-                        .. raster
-                    },
-                    debug::new(),
-                )
-                .unwrap(),
-        );
-
-        self.psos_line.clear();
-        for &visibility in &[Visibility::Front, Visibility::Behind] {
-            for &color_rate in &[ColorRate::Vertex, ColorRate::Instance] {
-                let (blend, depth) = match visibility {
-                    Visibility::Front => (BLEND_FRONT, gfx::preset::depth::LESS_EQUAL_WRITE),
-                    Visibility::Behind => (BLEND_BEHIND, DEPTH_BEHIND),
-                };
-                let rate = match color_rate {
-                    ColorRate::Vertex => 0,
-                    ColorRate::Instance => 1,
-                };
-                let pso = factory
+        if self.settings.collision_shapes {
+            self.pso_face = Some(
+                factory
                     .create_pipeline_from_program(
                         &program,
-                        gfx::Primitive::LineList,
+                        gfx::Primitive::TriangleList,
                         raster,
-                        debug::Init {
-                            out_color: ("Target0", gfx::state::MASK_ALL, blend),
-                            out_depth: depth,
-                            buf_col: rate,
-                            ..debug::new()
-                        },
+                        debug::new(),
                     )
-                    .unwrap();
-                self.psos_line.insert((visibility, color_rate), pso);
+                    .unwrap(),
+            );
+            self.pso_edge = Some(
+                factory
+                    .create_pipeline_from_program(
+                        &program,
+                        gfx::Primitive::TriangleList,
+                        gfx::state::Rasterizer {
+                            method: gfx::state::RasterMethod::Line(1),
+                            .. raster
+                        },
+                        debug::new(),
+                    )
+                    .unwrap(),
+            );
+        }
+
+        self.psos_line.clear();
+        if self.settings.impulses {
+            for &visibility in &[Visibility::Front, Visibility::Behind] {
+                for &color_rate in &[ColorRate::Vertex, ColorRate::Instance] {
+                    let (blend, depth) = match visibility {
+                        Visibility::Front => (BLEND_FRONT, gfx::preset::depth::LESS_EQUAL_WRITE),
+                        Visibility::Behind => (BLEND_BEHIND, DEPTH_BEHIND),
+                    };
+                    let rate = match color_rate {
+                        ColorRate::Vertex => 0,
+                        ColorRate::Instance => 1,
+                    };
+                    let pso = factory
+                        .create_pipeline_from_program(
+                            &program,
+                            gfx::Primitive::LineList,
+                            raster,
+                            debug::Init {
+                                out_color: ("Target0", gfx::state::MASK_ALL, blend),
+                                out_depth: depth,
+                                buf_col: rate,
+                                ..debug::new()
+                            },
+                        )
+                        .unwrap();
+                    self.psos_line.insert((visibility, color_rate), pso);
+                }
             }
         }
+    }
+
+    pub fn resize(&mut self, targets: MainTargets<R>) {
+        self.data.out_color = targets.color;
+        self.data.out_depth = targets.depth;
     }
 
     fn draw_liner<C>(
@@ -335,13 +346,13 @@ impl<R: gfx::Resources> DebugRender<R> {
     {
         let mut vertices = linebuf.vertices.as_slice();
         let mut colors = linebuf.colors.as_slice();
-        if vertices.len() > self.max_vertices {
+        if vertices.len() > self.settings.max_vertices {
             error!(
                 "Exceeded the maximum vertex capacity: {} > {}",
                 vertices.len(),
-                self.max_vertices
+                self.settings.max_vertices
             );
-            vertices = &vertices[.. self.max_vertices];
+            vertices = &vertices[.. self.settings.max_vertices];
         }
         if vertices.len() != colors.len() {
             error!(

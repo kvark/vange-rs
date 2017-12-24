@@ -1,4 +1,5 @@
 use {level, model};
+use config::settings;
 use cgmath::{Decomposed, Matrix4};
 use gfx;
 use gfx::traits::FactoryExt;
@@ -11,6 +12,13 @@ pub use self::debug::{DebugPos, DebugRender, LineBuffer};
 pub struct MainTargets<R: gfx::Resources> {
     pub color: gfx::handle::RenderTargetView<R, ColorFormat>,
     pub depth: gfx::handle::DepthStencilView<R, DepthFormat>,
+}
+
+impl<R: gfx::Resources> MainTargets<R> {
+    pub fn get_aspect(&self) -> f32 {
+        let (w, h, _, _) = self.color.get_dimensions();
+        w as f32 / h as f32
+    }
 }
 
 struct MaterialParams {
@@ -138,13 +146,14 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     targets: MainTargets<R>,
     level: &level::Level,
     object_palette: &[[u8; 4]],
+    settings: &settings::Render,
 ) -> Render<R> {
     use gfx::{format, texture as tex};
 
     let mut light_clr_material = [[0; 0x200]; NUM_MATERIALS];
     {
         let dx_scale = 8.0;
-        let sd_scale = 0x100 as f32 / SHADOW_DEPTH as f32;
+        let sd_scale = 256f32 / SHADOW_DEPTH as f32;
         for (lcm, mat) in light_clr_material.iter_mut().zip(MATERIALS.iter()) {
             let dx = mat.dx * dx_scale;
             let sd = mat.sd * sd_scale;
@@ -265,7 +274,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             out_color: targets.color.clone(),
             out_depth: targets.depth.clone(),
         },
-        debug: DebugRender::new(factory, 512, targets),
+        debug: DebugRender::new(factory, targets, &settings.debug),
     }
 }
 
@@ -475,5 +484,13 @@ impl<R: gfx::Resources> Render<R> {
         info!("Reloading shaders");
         self.terrain.pso = Render::create_terrain_pso(factory);
         self.object_pso = Render::create_object_pso(factory);
+    }
+
+    pub fn resize(&mut self, targets: MainTargets<R>) {
+        self.terrain.data.out_color = targets.color.clone();
+        self.terrain.data.out_depth = targets.depth.clone();
+        self.object_data.out_color = targets.color.clone();
+        self.object_data.out_depth = targets.depth.clone();
+        self.debug.resize(targets);
     }
 }

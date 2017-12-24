@@ -1,7 +1,7 @@
 use cgmath;
 use gfx;
-use glutin::WindowEvent as Event;
 
+use boilerplate::{Application, KeyboardInput};
 use vangers::{config, level, model, render, space};
 
 pub struct CarView<R: gfx::Resources> {
@@ -36,6 +36,7 @@ impl<R: gfx::Resources> CarView<R> {
         }
 
         let pal_data = level::read_palette(settings.open_palette());
+        let aspect = targets.get_aspect();
         let data = render::object::Data {
             vbuf: model.body.buffer.clone(),
             locals: factory.create_constant_buffer(1),
@@ -46,25 +47,24 @@ impl<R: gfx::Resources> CarView<R> {
         };
 
         CarView {
-            model: model,
+            model,
             transform: cgmath::Decomposed {
                 scale: cinfo.scale,
                 disp: cgmath::Vector3::unit_z(),
                 rot: cgmath::One::one(),
             },
             pso: render::Render::create_object_pso(factory),
-            debug_render: render::DebugRender::new(factory, 512, targets),
+            debug_render: render::DebugRender::new(factory, targets, &settings.render.debug),
             physics: cinfo.physics.clone(),
-            data: data,
+            data,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, -64.0, 32.0),
-                rot: cgmath::Rotation3::from_axis_angle::<cgmath::Rad<_>>(
-                    cgmath::Vector3::unit_x(),
+                rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(
                     cgmath::Angle::turn_div_6(),
                 ),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
-                    aspect: settings.get_screen_aspect(),
+                    aspect,
                     near: 1.0,
                     far: 100.0,
                 },
@@ -80,7 +80,7 @@ impl<R: gfx::Resources> CarView<R> {
         use cgmath::Transform;
         let other = cgmath::Decomposed {
             scale: 1.0,
-            rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_z(), angle),
+            rot: cgmath::Rotation3::from_angle_z(angle),
             disp: cgmath::Zero::zero(),
         };
         self.transform = other.concat(&self.transform);
@@ -93,32 +93,31 @@ impl<R: gfx::Resources> CarView<R> {
         use cgmath::Transform;
         let other = cgmath::Decomposed {
             scale: 1.0,
-            rot: cgmath::Rotation3::from_axis_angle(cgmath::Vector3::unit_x(), angle),
+            rot: cgmath::Rotation3::from_angle_x(angle),
             disp: cgmath::Zero::zero(),
         };
         self.transform = self.transform.concat(&other);
     }
+}
 
-    pub fn react<F>(
-        &mut self,
-        event: Event,
-        factory: &mut F,
-    ) -> bool
-    where
-        F: gfx::Factory<R>,
-    {
-        use glutin::{KeyboardInput, VirtualKeyCode as Key};
-        use glutin::ElementState::*;
+impl<R: gfx::Resources> Application<R> for CarView<R> {
+    fn on_resize<F: gfx::Factory<R>>(
+        &mut self, targets: render::MainTargets<R>, _factory: &mut F
+    ) {
+        self.cam.proj.aspect = targets.get_aspect();
+        self.data.out_color = targets.color.clone();
+        self.data.out_depth = targets.depth.clone();
+        self.debug_render.resize(targets);
+    }
+
+    fn on_key(&mut self, input: KeyboardInput) -> bool {
+        use boilerplate::{ElementState, Key};
+
         let angle = cgmath::Rad(2.0);
-        match event {
-            Event::Closed => return false,
-            Event::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: Pressed,
-                        virtual_keycode: Some(key),
-                        ..
-                    },
+        match input {
+            KeyboardInput {
+                state: ElementState::Pressed,
+                virtual_keycode: Some(key),
                 ..
             } => match key {
                 Key::Escape => return false,
@@ -126,28 +125,24 @@ impl<R: gfx::Resources> CarView<R> {
                 Key::D => self.rotation.0 = angle,
                 Key::W => self.rotation.1 = -angle,
                 Key::S => self.rotation.1 = angle,
-                Key::L => self.pso = render::Render::create_object_pso(factory),
                 _ => (),
-            },
-            Event::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: Released,
-                        virtual_keycode: Some(key),
-                        ..
-                    },
+            }
+            KeyboardInput {
+                state: ElementState::Released,
+                virtual_keycode: Some(key),
                 ..
             } => match key {
                 Key::A | Key::D => self.rotation.0 = cgmath::Rad(0.),
                 Key::W | Key::S => self.rotation.1 = cgmath::Rad(0.),
                 _ => (),
-            },
-            _ => (),
+            }
+            _ => {}
         }
+
         true
     }
 
-    pub fn update(
+    fn update(
         &mut self,
         delta: f32,
     ) {
@@ -161,7 +156,7 @@ impl<R: gfx::Resources> CarView<R> {
         }
     }
 
-    pub fn draw<C: gfx::CommandBuffer<R>>(
+    fn draw<C: gfx::CommandBuffer<R>>(
         &mut self,
         enc: &mut gfx::Encoder<R, C>,
     ) {
@@ -177,5 +172,9 @@ impl<R: gfx::Resources> CarView<R> {
             &mut self.data,
             Some((&mut self.debug_render, self.physics.scale_bound)),
         );
+    }
+
+    fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
+        self.pso = render::Render::create_object_pso(factory);
     }
 }
