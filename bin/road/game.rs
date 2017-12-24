@@ -675,9 +675,8 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
     }
 
     fn update(&mut self, delta: f32) {
-        //let dt = delta * config::common::SPEED_CORRECTION_FACTOR;
-        //let dt = delta * 6.0;//TODO
-        let dt = 0.093912; //TODO
+        let dt = delta * self.db.common.nature.num_calls_analysis as f32;
+
         let pid = self.agents
             .iter()
             .position(|a| a.spirit == Spirit::Player)
@@ -703,7 +702,7 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
             //self.dyn_target.steer += cgmath::Rad(0.2 * delta * self.spin_hor);
             self.agents[pid].control.motor = 1.0 * self.spin_ver;
 
-            if false {
+            if true {
                 self.cam.follow(
                     &self.agents[pid].transform,
                     dt,
@@ -713,7 +712,8 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
                             rot: cgmath::Quaternion::from_angle_x(cgmath::Rad(0.7)),
                             scale: 1.0,
                         },
-                        speed: 1.0,
+                        speed: 0.5,
+                        fix_z: true,
                     },
                 );
             } else {

@@ -101,15 +101,16 @@ impl Harness {
             });
 
             let duration = time::Instant::now() - last_time;
+            last_time += duration;
             let delta = duration.as_secs() as f32 +
                 duration.subsec_nanos() as f32 * 1.0e-9;
+
             app.update(delta);
             app.draw(&mut encoder);
 
             encoder.flush(&mut self.device);
             self.window.swap_buffers().unwrap();
             self.device.cleanup();
-            last_time += duration;
         }
     }
 }

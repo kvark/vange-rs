@@ -1,4 +1,5 @@
 use cgmath;
+use cgmath::{Rotation3 as Rotation3_, Transform as Transform_};
 
 pub type Transform = cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>;
 
@@ -11,6 +12,7 @@ pub struct Camera {
 pub struct Follow {
     pub transform: Transform,
     pub speed: f32,
+    pub fix_z: bool,
 }
 
 pub struct Direction {
@@ -20,7 +22,7 @@ pub struct Direction {
 
 impl Camera {
     pub fn get_view_proj(&self) -> cgmath::Matrix4<f32> {
-        use cgmath::{Decomposed, Matrix4, Transform};
+        use cgmath::{Decomposed, Matrix4};
         let view = Decomposed {
             scale: 1.0,
             rot: self.rot,
@@ -37,8 +39,19 @@ impl Camera {
         dt: f32,
         follow: &Follow,
     ) {
-        use cgmath::Transform;
-        let result = target.concat(&follow.transform);
+        let new_target = if follow.fix_z {
+            let z_axis = target.rot * cgmath::vec3(0.0, 0.0, 1.0);
+            let adjust_quat = cgmath::Quaternion::from_arc(z_axis, cgmath::vec3(0.0, 0.0, 1.0), None);
+            Transform {
+                disp: target.disp,
+                rot: adjust_quat * target.rot,
+                scale: 1.0,
+            }
+        } else {
+            target.clone()
+        };
+
+        let result = new_target.concat(&follow.transform);
         let k = (dt * -follow.speed).exp();
         //TODO
         self.loc = result.disp * (1.0 - k) + self.loc * k;
@@ -50,7 +63,6 @@ impl Camera {
         target: &Transform,
         dir: &Direction,
     ) {
-        use cgmath::Rotation3;
         debug_assert!(dir.view.z < 0.0);
         let k = (target.disp.z - self.loc.z) / -dir.view.z;
         self.loc = target.disp + dir.view * k;
@@ -63,7 +75,7 @@ impl Camera {
         &mut self,
         target: &Transform,
     ) {
-        use cgmath::{Angle, Rotation3};
+        use cgmath::{Angle};
         self.loc = target.disp + cgmath::vec3(0.0, -64.0, 40.0);
         self.rot = cgmath::Quaternion::from_axis_angle(
             cgmath::Vector3::unit_x(),
@@ -77,7 +89,7 @@ impl Camera {
         hor: cgmath::Rad<f32>,
         ver: cgmath::Rad<f32>,
     ) {
-        use cgmath::{Decomposed, One, Rotation3, Transform, Zero};
+        use cgmath::{Decomposed, One, Zero};
         let mut view = Decomposed {
             scale: 1.0,
             rot: self.rot,
