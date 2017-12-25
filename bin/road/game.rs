@@ -105,6 +105,7 @@ impl Dynamo {
 
 struct Control {
     motor: f32,
+    rudder: f32,
     brake: bool,
     turbo: bool,
 }
@@ -202,6 +203,13 @@ impl<R: gfx::Resources> Agent<R> {
         common: &config::common::Common,
         mut line_buffer: Option<&mut render::LineBuffer>,
     ) {
+        if self.control.rudder != 0.0 {
+            let angle = self.dynamo.rudder.0 +
+                common.car.rudder_step * 2.0 * dt * self.control.rudder;
+            self.dynamo.rudder.0 = angle
+                .min(common.car.rudder_max)
+                .max(-common.car.rudder_max);
+        }
         if self.control.motor != 0.0 {
             self.dynamo
                 .change_traction(self.control.motor * dt * common.car.traction_incr);
@@ -209,6 +217,7 @@ impl<R: gfx::Resources> Agent<R> {
         if self.control.brake && self.dynamo.traction != 0.0 {
             self.dynamo.traction *= (config::common::ORIGINAL_FPS as f32 * -dt).exp2();
         }
+
         let acc_global = AccelerationVectors {
             f: cgmath::vec3(0.0, 0.0, -common.nature.gravity),
             k: cgmath::vec3(0.0, 0.0, 0.0),
@@ -416,7 +425,7 @@ impl<R: gfx::Resources> Agent<R> {
                     / (self.car.model.wheels.len() as f32);
                 let rudder_vec = {
                     let (sin, cos) = self.dynamo.rudder.sin_cos();
-                    cgmath::vec3(cos, sin, 0.0)
+                    cgmath::vec3(cos, -sin, 0.0)
                 };
                 for wheel in self.car.model.wheels.iter() {
                     let rx_max = if wheel.pos[0] > 0.0 {
@@ -524,6 +533,11 @@ impl<R: gfx::Resources> Agent<R> {
 
         self.dynamo.linear_velocity = v_vel;
         self.dynamo.angular_velocity = w_vel;
+        // unsteer
+        if self.dynamo.rudder.0 != 0.0 && wheels_touch != 0 {
+            let change = self.dynamo.rudder.0 * v_vel.y * dt * common.car.rudder_k_decr;
+            self.dynamo.rudder.0 -= self.dynamo.rudder.0.signum() * change.abs();
+        }
         // slow down
         let traction_step = -self.dynamo.traction.signum() * dt;
         self.dynamo
@@ -555,7 +569,7 @@ impl<R: gfx::Resources> Game<R> {
         settings: &config::Settings,
         targets: render::MainTargets<R>,
         factory: &mut F,
-    ) -> Game<R> {
+    ) -> Self {
         info!("Loading world parameters");
         let db = {
             let game = config::game::Registry::load(settings);
@@ -584,10 +598,11 @@ impl<R: gfx::Resources> Game<R> {
                 disp: cgmath::vec3(0.0, 0.0, player_height),
                 rot: cgmath::One::one(),
             },
-            car: car,
+            car,
             dynamo: Dynamo::default(),
             control: Control {
                 motor: 0.0,
+                rudder: 0.0,
                 brake: false,
                 turbo: false,
             },
@@ -728,7 +743,7 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
                 cgmath::Rad(delta * self.spin_ver),
             );
         } else {
-            //self.dyn_target.steer += cgmath::Rad(0.2 * delta * self.spin_hor);
+            self.agents[pid].control.rudder = self.spin_hor;
             self.agents[pid].control.motor = 1.0 * self.spin_ver;
 
             if true {

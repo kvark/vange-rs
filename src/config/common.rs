@@ -5,6 +5,8 @@ pub const ORIGINAL_FPS: u8 = 14; //TODO: read from PRM
 pub const SPEED_CORRECTION_FACTOR: f32 = 1.0; // it is in the config, but the original game uses a hard-coded 1.0
 
 pub type Traction = f32;
+pub type Angle = f32;
+
 #[derive(Debug)]
 pub struct VelocityPair {
     pub v: f32, //linear
@@ -31,8 +33,8 @@ pub struct Impulse {
 }
 
 pub struct Car {
-    pub rudder_step: u16,
-    pub rudder_max: u16,
+    pub rudder_step: Angle,
+    pub rudder_max: Angle,
     pub rudder_k_decr: f32,
     pub traction_incr: Traction,
     pub traction_decr: Traction,
@@ -140,7 +142,12 @@ pub fn load(file: File) -> Common {
     let mut fi = Reader::new(file);
     fi.advance();
     assert_eq!(fi.cur(), "COMMON:\t\t2");
-    let traction_scale = 14.0 / 64.0;
+    let traction_scale = 1.0 / 64.0;
+    let angle_scale = {
+        use std::f32::consts::PI;
+        const PI_BITS: usize = 11;
+        PI / (1 << PI_BITS) as f32
+    };
     Common {
         nature: Nature {
             gravity: fi.next_key_value("g:"),
@@ -169,8 +176,8 @@ pub fn load(file: File) -> Common {
             k_friction: fi.next_key_value("k_friction_impulse:"),
         },
         car: Car {
-            rudder_step: fi.next_key_value("rudder_step:"),
-            rudder_max: fi.next_key_value("rudder_max:"),
+            rudder_step: fi.next_key_value::<u16>("rudder_step:") as f32 * angle_scale,
+            rudder_max: fi.next_key_value::<u16>("rudder_max:") as f32 * angle_scale,
             rudder_k_decr: fi.next_key_value("rudder_k_decr:"),
             traction_incr: fi.next_key_value::<u16>("traction_increment:") as f32 * traction_scale,
             traction_decr: fi.next_key_value::<u16>("traction_decrement:") as f32 * traction_scale,
