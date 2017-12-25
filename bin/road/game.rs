@@ -74,16 +74,16 @@ enum Spirit {
 
 struct Dynamo {
     traction: config::common::Traction,
-    _steer: cgmath::Rad<f32>,
+    rudder: cgmath::Rad<f32>,
     linear_velocity: cgmath::Vector3<f32>,
     angular_velocity: cgmath::Vector3<f32>,
 }
 
 impl Default for Dynamo {
-    fn default() -> Dynamo {
+    fn default() -> Self {
         Dynamo {
             traction: 0.,
-            _steer: cgmath::Rad(0.),
+            rudder: cgmath::Rad(0.),
             linear_velocity: cgmath::Vector3::zero(),
             angular_velocity: cgmath::Vector3::zero(),
         }
@@ -167,7 +167,7 @@ fn collide_low(
     }
 }
 
-fn _calc_collision_matrix_inv(
+fn calc_collision_matrix_inv(
     r: cgmath::Vector3<f32>,
     ji: &cgmath::Matrix3<f32>,
 ) -> cgmath::Matrix3<f32> {
@@ -402,6 +402,7 @@ impl<R: gfx::Resources> Agent<R> {
             }
 
             let _ = (float_count, water_immersion, terrain_immersion); //TODO
+            let is_after_collision = false;
             if wheels_touch != 0 && stand_on_wheels {
                 let f_turbo = if self.control.turbo {
                     common.global.k_traction_turbo
@@ -413,13 +414,40 @@ impl<R: gfx::Resources> Agent<R> {
                     * f_turbo
                     * self.dynamo.traction
                     / (self.car.model.wheels.len() as f32);
+                let rudder_vec = {
+                    let (sin, cos) = self.dynamo.rudder.sin_cos();
+                    cgmath::vec3(cos, sin, 0.0)
+                };
                 for wheel in self.car.model.wheels.iter() {
-                    let mut pos = cgmath::Vector3::from(wheel.pos) * self.transform.scale;
-                    pos.x = pos.x.signum() * self.car.model.body.bbox.1[0]; // why?
+                    let rx_max = if wheel.pos[0] > 0.0 {
+                        self.car.model.body.bbox.1[0]
+                    } else {
+                        self.car.model.body.bbox.0[0]
+                    };
+                    let pos = cgmath::vec3(rx_max, wheel.pos[1], wheel.pos[2])
+                        * self.transform.scale;
                     acc_cur.f.y += f_traction_per_wheel;
+
+                    let vw = v_vel + w_vel.cross(pos);
                     if self.control.brake {
-                        let vw = v_vel + w_vel.cross(pos);
                         acc_cur.f -= vw * common.global.f_brake_max;
+                    }
+                    if !is_after_collision {
+                        let normal = if wheel.steer != 0 {
+                            rudder_vec
+                        } else {
+                            cgmath::Vector3::unit_x()
+                        };
+                        let u0 = normal * vw.dot(normal);
+                        let mx = calc_collision_matrix_inv(pos, &j_inv);
+                        let pulse = -common.impulse.k_wheel * (mx * u0);
+                        v_vel += pulse;
+                        w_vel += j_inv * pos.cross(pulse);
+                        if let Some(ref mut lbuf) = line_buffer {
+                            let pw = self.transform.transform_point(cgmath::Point3::from(wheel.pos));
+                            let dest = pw + self.transform.transform_vector(pulse) * 10.0;
+                            lbuf.add(pw.into(), dest.into(), 0xFFFFFF00);
+                        }
                     }
                 }
             }
@@ -676,6 +704,7 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
 
     fn update(&mut self, delta: f32) {
         let dt = delta * self.db.common.nature.num_calls_analysis as f32;
+        //let dt = 0.092;
 
         let pid = self.agents
             .iter()

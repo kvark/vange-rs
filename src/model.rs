@@ -547,10 +547,10 @@ where
             } else {
                 None
             },
-            steer: steer,
-            pos: pos,
-            width: width,
-            radius: radius,
+            steer,
+            pos,
+            width,
+            radius,
         })
     }
 
