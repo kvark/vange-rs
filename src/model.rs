@@ -5,6 +5,7 @@ use render::{DebugPos, ObjectVertex, COLOR_ID_BODY, NUM_COLOR_IDS};
 use std::fs::File;
 use std::io::{self, Seek, Write};
 use std::ops::Range;
+use std::path::PathBuf;
 
 const MAX_SLOTS: u32 = 3;
 
@@ -152,7 +153,7 @@ impl RawMesh {
     pub fn load<I: ReadBytesExt>(
         source: &mut I,
         compact: bool,
-    ) -> RawMesh {
+    ) -> Self {
         let version = source.read_u32::<E>().unwrap();
         assert_eq!(version, 8);
         let num_positions = source.read_u32::<E>().unwrap();
@@ -222,9 +223,10 @@ impl RawMesh {
                 source.read_u32::<E>().unwrap(),
                 source.read_u32::<E>().unwrap(),
             ];
-            let mut dummy = [0; 4];
-            source.read_exact(&mut dummy[.. 4]).unwrap(); //skip flat normal
-            source.read_exact(&mut dummy[.. 3]).unwrap(); //skip middle point
+            let mut flat_normal = [0; 4];
+            source.read_exact(&mut flat_normal).unwrap();
+            let mut middle = [0; 3];
+            source.read_exact(&mut middle).unwrap();
             for k in 0 .. num_corners {
                 let pid = source.read_u32::<E>().unwrap();
                 let nid = source.read_u32::<E>().unwrap();
@@ -588,11 +590,15 @@ where
 
 pub fn convert_m3d(
     mut input: File,
-    out_path: &str,
+    out_path: PathBuf,
 ) {
+    if !out_path.is_dir() {
+        panic!("The output path must be an existing directory!");
+    }
+
     debug!("\tReading the body...");
     let body = RawMesh::load(&mut input, false);
-    body.save_obj(File::create(format!("{}/body.obj", out_path)).unwrap())
+    body.save_obj(File::create(out_path.join("body.obj")).unwrap())
         .unwrap();
     let _bounds = read_vec(&mut input);
     let _max_radius = input.read_u32::<E>().unwrap();
@@ -615,7 +621,7 @@ pub fn convert_m3d(
         let _radius = input.read_u32::<E>().unwrap();
         let _bound_index = input.read_u32::<E>().unwrap();
         if steer != 0 {
-            let path = format!("{}/wheel{}.obj", out_path, i);
+            let path = out_path.join(format!("wheel{}.obj", i));
             let wheel = RawMesh::load(&mut input, false);
             wheel.save_obj(File::create(path).unwrap()).unwrap();
         }
@@ -623,7 +629,7 @@ pub fn convert_m3d(
 
     debug!("\tReading {} debris...", num_debris);
     for i in 0 .. num_debris {
-        let path = format!("{}/debrie{}.obj", out_path, i);
+        let path = out_path.join(format!("debrie{}.obj", i));
         let debrie = RawMesh::load(&mut input, false);
         debrie.save_obj(File::create(path).unwrap()).unwrap();
         let _shape = RawMesh::load(&mut input, false);

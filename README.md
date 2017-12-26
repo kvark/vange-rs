@@ -63,9 +63,9 @@ Controls:
 <img alt="level view" src="etc/shots/Road5-color.png" width="25%">
 
 #### Converter
-`convert` binary is a command line utility for converting models to Wavefront OBJ format.
+`convert` binary is a command line utility for converting models to Wavefront OBJ format. The body, wheels, and debris are saved as separate OBJ files inside the output folder.
 ```bash
-cargo run --bin convert resource/m3d/items/i21.m3d i21.obj
+cargo run --bin convert resource/m3d/items/i21.m3d my_dir
 ```
 
 ### Technonolgy

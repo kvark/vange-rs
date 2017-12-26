@@ -28,5 +28,5 @@ fn main() {
     }
 
     let file = settings.open_relative(&matches.free[0]);
-    model::convert_m3d(file, &matches.free[1]);
+    model::convert_m3d(file, matches.free[1].as_str().into());
 }
