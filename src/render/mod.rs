@@ -465,13 +465,12 @@ impl<R: gfx::Resources> Render<R> {
                 &read_file("data/shader/object.frag"),
             )
             .unwrap();
-        let mut raster = gfx::state::Rasterizer::new_fill().with_cull_back();
-        raster.front_face = gfx::state::FrontFace::Clockwise;
+        // no culling because the old rasterizer was not polygonal
         factory
             .create_pipeline_from_program(
                 &program,
                 gfx::Primitive::TriangleList,
-                raster,
+                gfx::state::Rasterizer::new_fill(),
                 object::new(),
             )
             .unwrap()
