@@ -1,3 +1,6 @@
+use serde::Deserialize;
+use serde_scan;
+
 use std::fmt::Debug;
 use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
@@ -8,7 +11,7 @@ pub struct Reader<I> {
 }
 
 impl<I: Read> Reader<I> {
-    pub fn new(input: I) -> Reader<I> {
+    pub fn new(input: I) -> Self {
         Reader {
             input: BufReader::new(input),
             line: String::new(),
@@ -19,17 +22,17 @@ impl<I: Read> Reader<I> {
         self.line.trim_right()
     }
 
-    pub fn advance(&mut self) {
+    pub fn advance(&mut self) -> bool {
         loop {
             self.line.clear();
-            if self.input.read_line(&mut self.line).is_err() {
-                // skip
+            if self.input.read_line(&mut self.line).unwrap() == 0 {
+                return false;
             } else if self.line.starts_with("/*") {
                 while !self.cur().ends_with("*/") {
                     self.advance();
                 }
             } else if !self.cur().is_empty() && !self.line.starts_with("//") {
-                break;
+                return true;
             }
         }
     }
@@ -68,5 +71,10 @@ impl<I: Read> Reader<I> {
         let name = tokens.next().unwrap();
         let data = tokens.map(|t| t.parse().unwrap()).collect();
         (name, data)
+    }
+
+    pub fn scan<'a, T: Deserialize<'a>>(&'a mut self) -> T {
+        serde_scan::from_str(&self.line)
+            .expect(&format!("Unable to scan line: {}", self.line))
     }
 }

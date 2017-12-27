@@ -632,6 +632,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_scan"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "serde 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "shared_library"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -785,6 +793,7 @@ dependencies = [
  "rust-ini 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_derive 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_scan 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "splay 0.1.0",
  "toml 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -1033,6 +1042,7 @@ dependencies = [
 "checksum serde_derive 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)" = "9fd81eef9f0b4ec341b11095335b6a4b28ed85581b12dd27585dee1529df35e0"
 "checksum serde_derive_internals 0.15.0 (registry+https://github.com/rust-lang/crates.io-index)" = "021c338d22c7e30f957a6ab7e388cb6098499dda9fd4ba1661ee074ca7a180d1"
 "checksum serde_json 0.9.10 (registry+https://github.com/rust-lang/crates.io-index)" = "ad8bcf487be7d2e15d3d543f04312de991d631cfe1b43ea0ade69e6a8a5b16a1"
+"checksum serde_scan 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "8a46bde9df7cd825e0753a19b5454e9466d1c062b3b544a716ba032cfe8b5159"
 "checksum shared_library 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)" = "fb04126b6fcfd2710fb5b6d18f4207b6c535f2850a7e1a43bcd526d44f30a79a"
 "checksum shell32-sys 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "72f20b8f3c060374edb8046591ba28f62448c369ccbdc7b02075103fb3a9e38d"
 "checksum siphasher 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "0df90a788073e8d0235a67e50441d47db7c8ad9debd91cbf43736a2a92d36537"
