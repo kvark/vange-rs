@@ -5,3 +5,7 @@ rust:
 os:
   - linux
   - osx
+
+branches:
+  except:
+    - staging.tmp
