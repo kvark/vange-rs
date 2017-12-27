@@ -546,9 +546,10 @@ impl<R: gfx::Resources> Agent<R> {
 }
 
 struct DataBase<R: gfx::Resources> {
-    bunches: Vec<config::bunches::Bunch>,
+    _bunches: Vec<config::bunches::Bunch>,
     cars: HashMap<String, config::car::CarInfo<R>>,
     common: config::common::Common,
+    _escaves: Vec<config::escaves::Escave>,
     _game: config::game::Registry,
 }
 
@@ -575,9 +576,10 @@ impl<R: gfx::Resources> Game<R> {
         let db = {
             let game = config::game::Registry::load(settings);
             DataBase {
-                bunches: config::bunches::load(settings.open_relative("bunches.prm")),
+                _bunches: config::bunches::load(settings.open_relative("bunches.prm")),
                 cars: config::car::load_registry(settings, &game, factory),
                 common: config::common::load(settings.open_relative("common.prm")),
+                _escaves: config::escaves::load(settings.open_relative("escaves.prm")),
                 _game: game,
             }
         };
