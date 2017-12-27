@@ -3,7 +3,7 @@ use cgmath::{Angle, Rotation3, Zero};
 use gfx;
 use std::collections::HashMap;
 
-use boilerplate::{Application, KeyboardInput, MouseScrollDelta};
+use boilerplate::{Application, KeyboardInput};
 use physics;
 use vangers::{config, level, render, space};
 
@@ -350,12 +350,5 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
 
     fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
         self.render.reload(factory);
-    }
-    fn on_mouse_wheel(&mut self, _: MouseScrollDelta) {
-        // noop
-    }
-
-    fn on_mouse_move(&mut self, delta_x: f32, delta_y: f32, alt: bool) {
-        // noop
     }
 }

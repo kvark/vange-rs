@@ -177,11 +177,4 @@ impl<R: gfx::Resources> Application<R> for CarView<R> {
     fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
         self.pso = render::Render::create_object_pso(factory);
     }
-    fn on_mouse_wheel(&mut self, _: MouseScrollDelta) {
-        // noop
-    }
-
-    fn on_mouse_move(&mut self, delta_x: f32, delta_y: f32, alt: bool) {
-        // noop
-    }
 }

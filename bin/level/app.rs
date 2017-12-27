@@ -1,7 +1,7 @@
 use cgmath;
 use gfx;
 
-use boilerplate::{Application, KeyboardInput, MouseScrollDelta};
+use boilerplate::{Application, KeyboardInput, MouseScrollDelta, MouseButton, ElementState};
 use vangers::{config, level, render, space};
 
 #[derive(Debug)]
@@ -10,8 +10,8 @@ enum Input {
     Ver { dir: f32, alt: bool },
     Dep { dir: f32, alt: bool },
     DepQuant {dir: f32},
-    PlaneQuant {x: f32, y: f32},
-    RotQuant {x: f32, y: f32},
+    PlaneQuant {dir: cgmath::Vector2<f32>},
+    RotQuant {dir: cgmath::Vector2<f32>},
     Empty,
 }
 
@@ -20,6 +20,10 @@ pub struct LevelView<R: gfx::Resources> {
     _level: level::Level,
     cam: space::Camera,
     input: Input,
+
+    _last_mouse_pos: cgmath::Vector2<f32>,
+    _alt_button_pressed: bool,
+    _mouse_button_pressed: bool,
 }
 
 impl<R: gfx::Resources> LevelView<R> {
@@ -86,6 +90,9 @@ impl<R: gfx::Resources> LevelView<R> {
                 },
             },
             input: Input::Empty,
+            _last_mouse_pos: cgmath::vec2(-1.0, -1.0),
+            _alt_button_pressed: false,
+            _mouse_button_pressed: false,
         }
     }
 }
@@ -97,23 +104,42 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
         self.cam.proj.aspect = targets.get_aspect();
         self.render.resize(targets);
     }
-    fn on_mouse_move(&mut self, delta_x: f32, delta_y: f32, alt: bool){
-        if !alt {
-            self.input = Input::PlaneQuant {x: delta_x, y: delta_y};
-        }else {
-            self.input = Input::RotQuant {x: delta_x, y: delta_y};
+
+    fn on_mouse_move(&mut self, position: (f64, f64)){
+        if !self._mouse_button_pressed {
+            return;
+        }
+        let position_vec = cgmath::vec2(position.0 as f32, position.1 as f32);
+
+        if self._last_mouse_pos.x < 0.0 {
+            self._last_mouse_pos = position_vec;
+            return;
         }
 
+        let shift = position_vec - self._last_mouse_pos;
+        if !self._alt_button_pressed {
+            self.input = Input::PlaneQuant {dir: shift};
+        }else {
+            self.input = Input::RotQuant {dir: shift};
+        }
+        self._last_mouse_pos = position_vec;
     }
 
     fn on_mouse_wheel(&mut self, delta: MouseScrollDelta) {
         match delta {
-            MouseScrollDelta::LineDelta(x, y) => {
-                self.input =  Input::DepQuant { dir: y};
+            MouseScrollDelta::LineDelta(_, y) => {
+                self.input = Input::DepQuant {dir: y};
             }
             _ => {}
         }
 
+    }
+
+    fn on_mouse_button(&mut self, state: ElementState, button: MouseButton) {
+        if button == MouseButton::Left {
+            self._mouse_button_pressed = state == ElementState::Pressed;
+            self._last_mouse_pos = cgmath::vec2(-1.0, -1.0);
+        }
     }
 
     fn on_key(&mut self, input: KeyboardInput) -> bool {
@@ -134,6 +160,7 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
                 Key::D => *i = Input::Hor { dir: 1.0, alt },
                 Key::Z => *i = Input::Dep { dir: -1.0, alt },
                 Key::X => *i = Input::Dep { dir: 1.0, alt },
+                Key::LAlt => self._alt_button_pressed = true,
                 _ => (),
             }
             KeyboardInput {
@@ -142,6 +169,7 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
                 ..
             } => match key {
                 Key::W | Key::S | Key::A | Key::D | Key::Z | Key::X => *i = Input::Empty,
+                Key::LAlt => self._alt_button_pressed = false,
                 _ => (),
             }
             /*
@@ -190,9 +218,11 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
                 self.cam.loc += 1000.0 * delta * dir * vec.normalize();
                 self.input = Input::Empty;
             }
-            Input::PlaneQuant {x, y} => {
-                let mut vec_x = self.cam.rot * cgmath::Vector3::unit_x() * -1.0 * x;
-                let mut vec_y = self.cam.rot * cgmath::Vector3::unit_y() * y;
+            Input::PlaneQuant {dir} => {
+                let cgmath::Vector2{x, y} = dir;
+
+                let vec_x = self.cam.rot * cgmath::Vector3::unit_x() * -x;
+                let vec_y = self.cam.rot * cgmath::Vector3::unit_y() * y;
 
                 let mut vec = vec_x + vec_y;
 
@@ -201,12 +231,13 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
                 let y1 = vec.y;
                 vec.z = 0.0;
                 let norm = vec.magnitude();
-                vec = cgmath::Vector3{x: x1 * norm1/norm, y: y1 * norm1/norm, z: 0.0};
+                vec = cgmath::vec3(x1 * norm1/norm, y1 * norm1/norm, 0.0);
 
                 self.cam.loc += self.cam.loc.z * 0.2  * delta * vec;
                 self.input = Input::Empty;
             }
-            Input::RotQuant {x, y} => {
+            Input::RotQuant {dir} => {
+                let cgmath::Vector2{x, y} = dir;
                 let rot_x = cgmath::Quaternion::from_angle_z(cgmath::Rad(0.3 * 1.0 * delta * x));
                 let rot_y = cgmath::Quaternion::from_angle_x(cgmath::Rad(0.3 * 1.0 * delta * y));
                 self.cam.rot = rot_x  * self.cam.rot * rot_y;
