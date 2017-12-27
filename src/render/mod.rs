@@ -74,7 +74,7 @@ const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
     [224, 4], // rotten item
 ];
 
-pub type ColorFormat = gfx::format::Rgba8;
+pub type ColorFormat = gfx::format::Rgba8; //should be Srgba8
 pub type DepthFormat = gfx::format::DepthStencil;
 
 gfx_defines!{
@@ -409,7 +409,7 @@ impl<R: gfx::Resources> Render<R> {
     ) {
         use gfx::texture as tex;
         let (_, view) = factory
-            .create_texture_immutable::<gfx::format::Rgba8>(tex::Kind::D1(0x100), &[data])
+            .create_texture_immutable::<gfx::format::Srgba8>(tex::Kind::D1(0x100), &[data])
             .unwrap();
         let sampler = factory.create_sampler(tex::SamplerInfo::new(
             tex::FilterMethod::Bilinear,

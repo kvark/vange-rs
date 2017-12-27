@@ -129,6 +129,7 @@ pub fn read_palette<I: Read>(input: I) -> [[u8; 4]; 0x100] {
     let mut data = [[0; 4]; 0x100];
     for p in data.iter_mut() {
         file.read(&mut p[.. 3]).unwrap();
+        p[0] <<= 2; p[1] <<= 2; p[2] <<= 2;
     }
     data
 }
@@ -152,7 +153,7 @@ pub fn load(config: &LevelConfig) -> Level {
 
     info!("Loading vpr...");
     let start_vpr = Instant::now();
-    let flood = {
+    let flood_map = {
         let vpr_file = File::open(&config.path_vpr).unwrap();
         let flood_size = size.1 >> config.section.as_power();
         let geo_pow = config.geo.as_power();
@@ -211,10 +212,10 @@ pub fn load(config: &LevelConfig) -> Level {
     let palette = File::open(&config.path_palette).expect("Unable to open the palette file");
 
     Level {
-        size: size,
-        flood_map: flood,
-        height: height,
-        meta: meta,
+        size,
+        flood_map,
+        height,
+        meta,
         palette: read_palette(palette),
         terrains: config.terrains,
     }
