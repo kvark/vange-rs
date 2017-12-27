@@ -2,7 +2,7 @@ data_path = "/opt/gog/Vangers/game" #Linux (example)
 #data_path = "/Applications/GOG/Vangers.app/Contents/Resources/game" #OSX
 
 [game]
-level = "fostral"
+level = "Fostral"
 cycle = "Plump-up"
 
 [car]

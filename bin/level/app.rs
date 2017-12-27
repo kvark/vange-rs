@@ -15,7 +15,6 @@ enum Input {
 pub struct LevelView<R: gfx::Resources> {
     render: render::Render<R>,
     _level: level::Level,
-    _bunch: config::bunches::Bunch,
     cam: space::Camera,
     input: Input,
 }
@@ -26,37 +25,54 @@ impl<R: gfx::Resources> LevelView<R> {
         targets: render::MainTargets<R>,
         factory: &mut F,
     ) -> Self {
-        let bunch = {
-            let file = settings.open_relative("bunches.prm");
-            let mut bunches = config::bunches::load(file);
-            bunches.swap_remove(0) //TODO
-        };
-
-        let pal_file = if settings.game.cycle.is_empty() {
-            info!("Using default palette");
-            settings.open_palette()
+        let (level, pal_file) = if settings.game.level.is_empty() {
+            info!("Using default level");
+            (level::Level::new_test(), settings.open_palette())
         } else {
-            let cycle = bunch.cycles
+            let escaves = config::escaves::load(settings.open_relative("escaves.prm"));
+            let escave = escaves
                 .iter()
-                .find(|c| c.name == settings.game.cycle)
-                .expect("Unknown cycle is provided");
-            info!("Using palette {}", cycle.palette_path);
-            settings.open_relative(&cycle.palette_path)
+                .find(|e| e.world == settings.game.level)
+                .expect("Unable to find the world");
+
+            let bunch = {
+                let file = settings.open_relative("bunches.prm");
+                let mut bunches = config::bunches::load(file);
+                let index = bunches
+                    .iter()
+                    .position(|b| b.escave == escave.name)
+                    .expect("Unable to find the bunch");
+                bunches.swap_remove(index)
+            };
+
+            let pal_file = if settings.game.cycle.is_empty() {
+                info!("Using default palette");
+                settings.open_palette()
+            } else {
+                let cycle = bunch.cycles
+                    .iter()
+                    .find(|c| c.name == settings.game.cycle)
+                    .expect("Unknown cycle is provided");
+                info!("Using palette {}", cycle.palette_path);
+                settings.open_relative(&cycle.palette_path)
+            };
+
+            let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
+            let ini_name = &worlds[&settings.game.level];
+            let ini_path = settings.data_path.join(ini_name);
+            info!("Using level {}", ini_name);
+            let level_config = settings.load_level(&ini_path);
+
+            (level::load(&level_config), pal_file)
         };
+
         let pal_data = level::read_palette(pal_file);
-
-        let level = match settings.get_level() {
-            Some(lev_config) => level::load(&lev_config),
-            None => level::Level::new_test(),
-        };
-
         let aspect = targets.get_aspect();
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
 
         LevelView {
             render,
             _level: level,
-            _bunch: bunch,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, 0.0, 200.0),
                 rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),

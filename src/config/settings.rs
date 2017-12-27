@@ -99,13 +99,8 @@ impl Settings {
         File::open(path).expect(&format!("Unable to open vehicle {}", name))
     }
 
-    pub fn get_level(&self) -> Option<level::LevelConfig> {
-        if self.game.level.is_empty() {
-            return None;
-        }
-        let level_path = self.data_path.join("thechain").join(&self.game.level);
-
-        let ini = Ini::load_from_file(level_path.join("world.ini"))
+    pub fn load_level(&self, ini_path: &PathBuf) -> level::LevelConfig {
+        let ini = Ini::load_from_file(ini_path)
             .expect("Unable to read the level's INI description");
         let global = &ini["Global Parameters"];
         let storage = &ini["Storage"];
@@ -141,11 +136,11 @@ impl Settings {
             t.color_range.1 = val.parse().unwrap();
         }
 
-        let biname = &storage["File Name"];
-        Some(level::LevelConfig {
-            path_vpr: level_path.join(biname).with_extension("vpr"),
-            path_vmc: level_path.join(biname).with_extension("vmc"),
-            path_palette: level_path.join(&storage["Palette File"]),
+        let file_path = ini_path.with_file_name(&storage["File Name"]);
+        level::LevelConfig {
+            path_vpr: file_path.with_extension("vpr"),
+            path_vmc: file_path.with_extension("vmc"),
+            path_palette: ini_path.with_file_name(&storage["Palette File"]),
             is_compressed: storage["Compressed Format Using"] != "0",
             name: self.game.level.clone(),
             size: (
@@ -156,6 +151,6 @@ impl Settings {
             section: level::Power(global["Section Size Power"].parse().unwrap()),
             min_square: level::Power(global["Minimal Square Power"].parse().unwrap()),
             terrains: terrains,
-        })
+        }
     }
 }
