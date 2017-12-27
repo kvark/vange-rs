@@ -1,7 +1,7 @@
 use cgmath;
 use gfx;
 
-use boilerplate::{Application, KeyboardInput};
+use boilerplate::{Application, KeyboardInput, MouseScrollDelta};
 use vangers::{config, level, render, space};
 
 #[derive(Debug)]
@@ -9,6 +9,9 @@ enum Input {
     Hor { dir: f32, alt: bool },
     Ver { dir: f32, alt: bool },
     Dep { dir: f32, alt: bool },
+    DepQuant {dir: f32},
+    PlaneQuant {x: f32, y: f32},
+    RotQuant {x: f32, y: f32},
     Empty,
 }
 
@@ -73,7 +76,7 @@ impl<R: gfx::Resources> LevelView<R> {
             render,
             _level: level,
             cam: space::Camera {
-                loc: cgmath::vec3(0.0, 0.0, 200.0),
+                loc: cgmath::vec3(0.0, 0.0, 400.0),
                 rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
@@ -93,6 +96,28 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
     ) {
         self.cam.proj.aspect = targets.get_aspect();
         self.render.resize(targets);
+    }
+    fn on_mouse_move(&mut self, delta_x: f32, delta_y: f32, alt: bool){
+        info!("on_mouse_move: {}, {}, {}", delta_x, delta_y, alt);
+        if !alt {
+            self.input = Input::PlaneQuant {x: delta_x, y: delta_y};
+        }else {
+            self.input = Input::RotQuant {x: delta_x, y: delta_y};
+        }
+
+    }
+
+    fn on_mouse_wheel(&mut self, delta: MouseScrollDelta) {
+        match delta {
+            MouseScrollDelta::LineDelta(x, y) => {
+                info!("LineDelta: x={}, y={}", x, y);
+                self.input =  Input::DepQuant { dir: y};
+            }
+            MouseScrollDelta::PixelDelta(x, y) => {
+                info!("PixelDelta: x={}, y={}", x, y);
+            }
+        }
+
     }
 
     fn on_key(&mut self, input: KeyboardInput) -> bool {
@@ -137,7 +162,6 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
 
     fn update(&mut self, delta: f32) {
         use cgmath::{InnerSpace, Rotation3, Zero};
-
         match self.input {
             Input::Hor { dir, alt: false } if dir != 0.0 => {
                 let mut vec = self.cam.rot * cgmath::Vector3::unit_x();
@@ -164,6 +188,35 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
             Input::Ver { dir, alt: true } if dir != 0.0 => {
                 let rot = cgmath::Quaternion::from_angle_x(cgmath::Rad(1.0 * delta * dir));
                 self.cam.rot = self.cam.rot * rot;
+            }
+            Input::DepQuant {dir} => {
+                let vec = cgmath::Vector3::unit_z();
+                self.cam.loc += 1000.0 * delta * dir * vec.normalize();
+                self.input = Input::Empty;
+            }
+            Input::PlaneQuant {x, y} => {
+                let mut vec_x = self.cam.rot * cgmath::Vector3::unit_x() * -1.0 * x;
+                let mut vec_y = self.cam.rot * cgmath::Vector3::unit_y() * y;
+
+                let mut vec = vec_x + vec_y;
+
+                let norm1 = vec.magnitude();
+                let x1 = vec.x;
+                let y1 = vec.y;
+                vec.z = 0.0;
+                let norm = vec.magnitude();
+                vec = cgmath::Vector3{x: x1 * norm1/norm, y: y1 * norm1/norm, z: 0.0};
+
+                self.cam.loc += self.cam.loc.z * 0.2  * delta * vec;
+                self.input = Input::Empty;
+            }
+            Input::RotQuant {x, y} => {
+                let rot_x = cgmath::Quaternion::from_angle_z(cgmath::Rad(0.3 * 1.0 * delta * x));
+                let rot_y = cgmath::Quaternion::from_angle_x(cgmath::Rad(0.3 * 1.0 * delta * y));
+                self.cam.rot = rot_x  * self.cam.rot * rot_y;
+//                self.cam.rot = rot_x * self.cam.rot;
+//                self.cam.rot = rot_x * rot_z * self.cam.rot;
+                self.input = Input::Empty;
             }
             _ => {}
         }

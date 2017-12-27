@@ -7,12 +7,14 @@ extern crate vangers;
 
 use vangers::{config, render};
 
-pub use self::glutin::{ElementState, KeyboardInput, ModifiersState, VirtualKeyCode as Key};
+pub use self::glutin::{ElementState, KeyboardInput, ModifiersState, VirtualKeyCode as Key, MouseScrollDelta, MouseButton};
 
 
 pub trait Application<R: gfx::Resources> {
     fn on_resize<F: gfx::Factory<R>>(&mut self, render::MainTargets<R>, &mut F);
     fn on_key(&mut self, KeyboardInput) -> bool;
+    fn on_mouse_wheel(&mut self, MouseScrollDelta);
+    fn on_mouse_move(&mut self, delta_x: f32, delta_y: f32, alt: bool);
     fn update(&mut self, delta: f32);
     fn draw<C: gfx::CommandBuffer<R>>(&mut self, &mut gfx::Encoder<R, C>);
     fn reload_shaders<F: gfx::Factory<R>>(&mut self, &mut F);
@@ -67,6 +69,10 @@ impl Harness {
         let mut encoder = gfx::Encoder::from(self.factory.create_command_buffer());
         let mut last_time = time::Instant::now();
         let mut running = true;
+        let mut last_mouse_x: f32 = -1.0;
+        let mut last_mouse_y: f32 = -1.0;
+        let mut mouse_pressed: bool = false;
+        let mut alt_pressed: bool = false;
 
         while running {
             use gfx::Device;
@@ -92,6 +98,44 @@ impl Harness {
                         glutin::WindowEvent::KeyboardInput { input, .. } => {
                             if !app.on_key(input) {
                                 running = false;
+                            }
+                            info!("alt_pressed: {:?}", input);
+                            match input.virtual_keycode {
+                                Some(Key::LControl) => {
+                                    alt_pressed = input.state == ElementState::Pressed;
+                                }
+                                _ => {}
+                            }
+
+                        }
+                        glutin::WindowEvent::MouseWheel {delta, ..} => {
+                            app.on_mouse_wheel(delta)
+                        }
+                        glutin::WindowEvent::CursorMoved {position, ..} => {
+                            if mouse_pressed {
+                                match position {
+                                    (x, y) => {
+                                        if last_mouse_x >= 0.0 {
+                                            app.on_mouse_move(
+                                                x as f32 - last_mouse_x,
+                                                y as f32- last_mouse_y ,
+                                                alt_pressed,
+                                            );
+                                        }
+                                        last_mouse_x = x as f32;
+                                        last_mouse_y = y as f32;
+                                    }
+                                }
+                            }
+                        }
+                        glutin::WindowEvent::MouseInput {state, button, ..} => {
+                            if button == MouseButton::Left {
+                                if state == ElementState::Released {
+                                    mouse_pressed = false;
+                                    last_mouse_x = -1.0;
+                                } else {
+                                    mouse_pressed = true;
+                                }
                             }
                         }
                         _ => {}
