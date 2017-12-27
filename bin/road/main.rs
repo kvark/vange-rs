@@ -6,6 +6,7 @@ extern crate log;
 extern crate vangers;
 
 mod game;
+mod physics;
 #[path = "../boilerplate.rs"]
 mod boilerplate;
 
