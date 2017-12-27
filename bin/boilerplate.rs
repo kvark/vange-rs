@@ -104,7 +104,7 @@ impl Harness {
                             app.on_mouse_move(position)
                         }
                         glutin::WindowEvent::MouseInput {state, button, ..} => {
-                            app.on_mouse_button(state, button, )
+                            app.on_mouse_button(state, button)
                         }
                         _ => {}
                     }
