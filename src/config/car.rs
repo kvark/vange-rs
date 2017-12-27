@@ -39,7 +39,7 @@ pub struct CarStats {
 }
 
 impl CarStats {
-    fn new(d: &[u32]) -> CarStats {
+    fn new(d: &[u32]) -> Self {
         CarStats {
             class: d[0] as u8,
             price_buy: d[1] as Price,
@@ -104,7 +104,7 @@ pub struct CarPhysics {
 }
 
 impl CarPhysics {
-    fn load(file: File) -> CarPhysics {
+    fn load(file: File) -> Self {
         let mut fi = Reader::new(file);
         fi.advance();
         CarPhysics {

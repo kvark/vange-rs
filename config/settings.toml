@@ -3,6 +3,7 @@ data_path = "/opt/gog/Vangers/game" #Linux (example)
 
 [game]
 level = "fostral"
+cycle = "Plump-up"
 
 [car]
 id = "OxidizeMonk"

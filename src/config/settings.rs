@@ -12,6 +12,7 @@ pub struct Car {
 #[derive(Deserialize)]
 pub struct Game {
     pub level: String,
+    pub cycle: String,
 }
 
 #[derive(Deserialize)]

@@ -73,7 +73,7 @@ impl Texel {
 }
 
 impl Level {
-    pub fn new_test() -> Level {
+    pub fn new_test() -> Self {
         let tc = TerrainConfig {
             shadow_offset: 0,
             height_shift: 0,
