@@ -98,7 +98,6 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
         self.render.resize(targets);
     }
     fn on_mouse_move(&mut self, delta_x: f32, delta_y: f32, alt: bool){
-        info!("on_mouse_move: {}, {}, {}", delta_x, delta_y, alt);
         if !alt {
             self.input = Input::PlaneQuant {x: delta_x, y: delta_y};
         }else {
@@ -110,12 +109,9 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
     fn on_mouse_wheel(&mut self, delta: MouseScrollDelta) {
         match delta {
             MouseScrollDelta::LineDelta(x, y) => {
-                info!("LineDelta: x={}, y={}", x, y);
                 self.input =  Input::DepQuant { dir: y};
             }
-            MouseScrollDelta::PixelDelta(x, y) => {
-                info!("PixelDelta: x={}, y={}", x, y);
-            }
+            _ => {}
         }
 
     }
@@ -214,8 +210,6 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
                 let rot_x = cgmath::Quaternion::from_angle_z(cgmath::Rad(0.3 * 1.0 * delta * x));
                 let rot_y = cgmath::Quaternion::from_angle_x(cgmath::Rad(0.3 * 1.0 * delta * y));
                 self.cam.rot = rot_x  * self.cam.rot * rot_y;
-//                self.cam.rot = rot_x * self.cam.rot;
-//                self.cam.rot = rot_x * rot_z * self.cam.rot;
                 self.input = Input::Empty;
             }
             _ => {}
