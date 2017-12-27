@@ -1,5 +1,3 @@
-use ini::Ini;
-use level;
 use std::fs::File;
 use std::path::PathBuf;
 
@@ -97,60 +95,5 @@ impl Settings {
             .join(name)
             .with_extension("m3d");
         File::open(path).expect(&format!("Unable to open vehicle {}", name))
-    }
-
-    pub fn load_level(&self, ini_path: &PathBuf) -> level::LevelConfig {
-        let ini = Ini::load_from_file(ini_path)
-            .expect("Unable to read the level's INI description");
-        let global = &ini["Global Parameters"];
-        let storage = &ini["Storage"];
-        let render = &ini["Rendering Parameters"];
-
-        let mut terrains = [level::TerrainConfig {
-            shadow_offset: 0,
-            height_shift: 0,
-            color_range: (0, 0),
-        }; level::NUM_TERRAINS];
-        for (t, val) in terrains
-            .iter_mut()
-            .zip(render["Shadow Offsets"].split_whitespace())
-        {
-            t.shadow_offset = val.parse().unwrap();
-        }
-        for (t, val) in terrains
-            .iter_mut()
-            .zip(render["Height Shifts"].split_whitespace())
-        {
-            t.height_shift = val.parse().unwrap();
-        }
-        for (t, val) in terrains
-            .iter_mut()
-            .zip(render["Begin Colors"].split_whitespace())
-        {
-            t.color_range.0 = val.parse().unwrap();
-        }
-        for (t, val) in terrains
-            .iter_mut()
-            .zip(render["End Colors"].split_whitespace())
-        {
-            t.color_range.1 = val.parse().unwrap();
-        }
-
-        let file_path = ini_path.with_file_name(&storage["File Name"]);
-        level::LevelConfig {
-            path_vpr: file_path.with_extension("vpr"),
-            path_vmc: file_path.with_extension("vmc"),
-            path_palette: ini_path.with_file_name(&storage["Palette File"]),
-            is_compressed: storage["Compressed Format Using"] != "0",
-            name: self.game.level.clone(),
-            size: (
-                level::Power(global["Map Power X"].parse().unwrap()),
-                level::Power(global["Map Power Y"].parse().unwrap()),
-            ),
-            geo: level::Power(global["GeoNet Power"].parse().unwrap()),
-            section: level::Power(global["Section Size Power"].parse().unwrap()),
-            min_square: level::Power(global["Minimal Square Power"].parse().unwrap()),
-            terrains: terrains,
-        }
     }
 }

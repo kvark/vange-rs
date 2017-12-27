@@ -583,9 +583,25 @@ impl<R: gfx::Resources> Game<R> {
                 _game: game,
             }
         };
-        let level = match settings.get_level() {
-            Some(lev_config) => level::load(&lev_config),
-            None => level::Level::new_test(),
+        let (level, coords) = if settings.game.level.is_empty() {
+            info!("Using test level");
+            (level::Level::new_test(), (0, 0))
+        } else {
+            let escaves = config::escaves::load(settings.open_relative("escaves.prm"));
+            let coordinates = escaves
+                .iter()
+                .find(|e| e.world == settings.game.level)
+                .map_or((0, 0), |e| e.coordinates);
+
+            let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
+            let ini_name = &worlds[&settings.game.level];
+            let ini_path = settings.data_path.join(ini_name);
+            info!("Using level {}", ini_name);
+
+            let config = level::LevelConfig::load(&ini_path);
+            let level = level::load(&config);
+
+            (level, coordinates)
         };
 
         let aspect = targets.get_aspect();
@@ -593,14 +609,15 @@ impl<R: gfx::Resources> Game<R> {
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
 
         let car = db.cars[&settings.car.id].clone();
-        let player_height = get_height(level.get((0, 0)).get_top()) + 5.; //center offset
+        let player_height = get_height(level.get(coords).get_top()) + 5.; //center offset
+        let player_pos = cgmath::vec3(coords.0 as f32, coords.1 as f32, player_height);
 
         let agent = Agent {
             spirit: Spirit::Player,
             transform: cgmath::Decomposed {
                 scale: car.scale,
-                disp: cgmath::vec3(0.0, 0.0, player_height),
-                rot: cgmath::One::one(),
+                disp: player_pos,
+                rot: cgmath::Quaternion::from_angle_z(cgmath::Rad::turn_div_2()),
             },
             car,
             dynamo: Dynamo::default(),
@@ -619,8 +636,8 @@ impl<R: gfx::Resources> Game<R> {
             level,
             agents: vec![agent],
             cam: space::Camera {
-                loc: cgmath::vec3(0.0, 0.0, 200.0),
-                rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
+                loc: cgmath::vec3(coords.0 as f32, coords.1 as f32, 200.0),
+                rot: cgmath::Quaternion::new(0.0, 0.0, 1.0, 0.0),
                 proj: cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
                     aspect,

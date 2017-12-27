@@ -1,6 +1,10 @@
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use std::io::{BufReader, Read, Seek, SeekFrom};
-use std::path::PathBuf;
+
+mod config;
+
+pub use self::config::{LevelConfig, TerrainConfig};
+
 
 pub const NUM_TERRAINS: usize = 8;
 
@@ -9,36 +13,6 @@ pub const NUM_TERRAINS: usize = 8;
 pub enum TerrainType {
     Water,
     Main,
-}
-
-pub struct Power(pub i32);
-impl Power {
-    fn as_value(&self) -> i32 {
-        1 << self.0
-    }
-    fn as_power(&self) -> i32 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct TerrainConfig {
-    pub shadow_offset: u8,
-    pub height_shift: u8,
-    pub color_range: (u8, u8),
-}
-
-pub struct LevelConfig {
-    pub name: String,
-    pub path_palette: PathBuf,
-    pub path_vpr: PathBuf,
-    pub path_vmc: PathBuf,
-    pub is_compressed: bool,
-    pub size: (Power, Power),
-    pub geo: Power,
-    pub section: Power,
-    pub min_square: Power,
-    pub terrains: [TerrainConfig; NUM_TERRAINS],
 }
 
 pub type Altitude = u8;

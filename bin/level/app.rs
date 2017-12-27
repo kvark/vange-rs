@@ -26,29 +26,28 @@ impl<R: gfx::Resources> LevelView<R> {
         factory: &mut F,
     ) -> Self {
         let (level, pal_file) = if settings.game.level.is_empty() {
-            info!("Using default level");
+            info!("Using test level");
             (level::Level::new_test(), settings.open_palette())
         } else {
             let escaves = config::escaves::load(settings.open_relative("escaves.prm"));
-            let escave = escaves
-                .iter()
-                .find(|e| e.world == settings.game.level)
-                .expect("Unable to find the world");
-
-            let bunch = {
-                let file = settings.open_relative("bunches.prm");
-                let mut bunches = config::bunches::load(file);
-                let index = bunches
-                    .iter()
-                    .position(|b| b.escave == escave.name)
-                    .expect("Unable to find the bunch");
-                bunches.swap_remove(index)
-            };
 
             let pal_file = if settings.game.cycle.is_empty() {
                 info!("Using default palette");
                 settings.open_palette()
             } else {
+                let escave = escaves
+                    .iter()
+                    .find(|e| e.world == settings.game.level)
+                    .expect("Unable to find the world");
+                let bunch = {
+                    let file = settings.open_relative("bunches.prm");
+                    let mut bunches = config::bunches::load(file);
+                    let index = bunches
+                        .iter()
+                        .position(|b| b.escave == escave.name)
+                        .expect("Unable to find the bunch");
+                    bunches.swap_remove(index)
+                };
                 let cycle = bunch.cycles
                     .iter()
                     .find(|c| c.name == settings.game.cycle)
@@ -61,7 +60,7 @@ impl<R: gfx::Resources> LevelView<R> {
             let ini_name = &worlds[&settings.game.level];
             let ini_path = settings.data_path.join(ini_name);
             info!("Using level {}", ini_name);
-            let level_config = settings.load_level(&ini_path);
+            let level_config = level::LevelConfig::load(&ini_path);
 
             (level::load(&level_config), pal_file)
         };
