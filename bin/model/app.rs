@@ -1,7 +1,7 @@
 use cgmath;
 use gfx;
 
-use boilerplate::{Application, KeyboardInput};
+use boilerplate::{Application, KeyboardInput, MouseScrollDelta};
 use vangers::{config, level, model, render, space};
 
 pub struct ResourceView<R: gfx::Resources> {

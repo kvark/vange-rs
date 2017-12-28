@@ -7,12 +7,15 @@ extern crate vangers;
 
 use vangers::{config, render};
 
-pub use self::glutin::{ElementState, KeyboardInput, ModifiersState, VirtualKeyCode as Key};
+pub use self::glutin::{ElementState, KeyboardInput, ModifiersState, VirtualKeyCode as Key, MouseScrollDelta, MouseButton};
 
 
 pub trait Application<R: gfx::Resources> {
     fn on_resize<F: gfx::Factory<R>>(&mut self, render::MainTargets<R>, &mut F);
     fn on_key(&mut self, KeyboardInput) -> bool;
+    fn on_mouse_wheel(&mut self, _delta: MouseScrollDelta) {}
+    fn on_mouse_move(&mut self, _position: (f64, f64)) {}
+    fn on_mouse_button(&mut self, _state: ElementState, _button: MouseButton) {}
     fn update(&mut self, delta: f32);
     fn draw<C: gfx::CommandBuffer<R>>(&mut self, &mut gfx::Encoder<R, C>);
     fn reload_shaders<F: gfx::Factory<R>>(&mut self, &mut F);
@@ -93,6 +96,15 @@ impl Harness {
                             if !app.on_key(input) {
                                 running = false;
                             }
+                        }
+                        glutin::WindowEvent::MouseWheel {delta, ..} => {
+                            app.on_mouse_wheel(delta)
+                        }
+                        glutin::WindowEvent::CursorMoved {position, ..} => {
+                            app.on_mouse_move(position)
+                        }
+                        glutin::WindowEvent::MouseInput {state, button, ..} => {
+                            app.on_mouse_button(state, button)
                         }
                         _ => {}
                     }
