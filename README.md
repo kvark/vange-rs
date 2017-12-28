@@ -15,6 +15,7 @@ Note: leaving the `level=""` empty in the config would load a flat boring debug 
 ```bash
 git clone https://github.com/kvark/vange-rs
 cd vange-rs
+cp config/settings.tpl.toml config/settings.toml 
 vi config/settings.toml # set the game path
 cargo run --bin road
 ```
