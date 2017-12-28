@@ -1,10 +1,12 @@
-data_path = "/opt/gog/Vangers/game" #Linux (example)
+#data_path = "/opt/gog/Vangers/game" #Linux (example)
 #data_path = "/Applications/GOG/Vangers.app/Contents/Resources/game" #OSX
 
 [game]
 level = "Fostral"
 cycle = "Plump-up"
-other_vangers = 10
+#level = "Xplo"
+#cycle = "" #Leave empty for bonus worlds
+other_vangers = 10 #Number of NPC vangers
 
 [car]
 id = "OxidizeMonk"
