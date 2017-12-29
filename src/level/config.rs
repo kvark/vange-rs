@@ -1,6 +1,7 @@
 use super::NUM_TERRAINS;
 
 use ini::Ini;
+use std::ops::Range;
 use std::path::PathBuf;
 
 
@@ -14,11 +15,11 @@ impl Power {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct TerrainConfig {
     pub shadow_offset: u8,
     pub height_shift: u8,
-    pub color_range: (u8, u8),
+    pub colors: Range<u8>,
 }
 
 pub struct LevelConfig {
@@ -42,11 +43,15 @@ impl LevelConfig {
         let storage = &ini["Storage"];
         let render = &ini["Rendering Parameters"];
 
-        let mut terrains = [TerrainConfig {
+        let tc = TerrainConfig {
             shadow_offset: 0,
             height_shift: 0,
-            color_range: (0, 0),
-        }; NUM_TERRAINS];
+            colors: 0..0,
+        };
+        let mut terrains = [
+            tc.clone(), tc.clone(), tc.clone(), tc.clone(),
+            tc.clone(), tc.clone(), tc.clone(), tc.clone(),
+        ];
         for (t, val) in terrains
             .iter_mut()
             .zip(render["Shadow Offsets"].split_whitespace())
@@ -63,13 +68,13 @@ impl LevelConfig {
             .iter_mut()
             .zip(render["Begin Colors"].split_whitespace())
         {
-            t.color_range.0 = val.parse().unwrap();
+            t.colors.start = val.parse().unwrap();
         }
         for (t, val) in terrains
             .iter_mut()
             .zip(render["End Colors"].split_whitespace())
         {
-            t.color_range.1 = val.parse().unwrap();
+            t.colors.end = val.parse().unwrap();
         }
 
         let file_path = ini_path.with_file_name(&storage["File Name"]);
@@ -86,7 +91,7 @@ impl LevelConfig {
             geo: Power(global["GeoNet Power"].parse().unwrap()),
             section: Power(global["Section Size Power"].parse().unwrap()),
             min_square: Power(global["Minimal Square Power"].parse().unwrap()),
-            terrains: terrains,
+            terrains,
         }
     }
 }

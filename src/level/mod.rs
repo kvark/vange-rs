@@ -20,7 +20,7 @@ pub type Delta = u8;
 const DOUBLE_LEVEL: u8 = 1 << 6;
 const DELTA_BITS: u8 = 2;
 const DELTA_MASK: u8 = (1 << DELTA_BITS) - 1;
-const DELTA_SHIFT: u8 = 3;
+const TERRAIN_SHIFT: u8 = 3;
 pub const HEIGHT_SCALE: u32 = 48;
 
 pub struct Level {
@@ -51,7 +51,7 @@ impl Level {
         let tc = TerrainConfig {
             shadow_offset: 0,
             height_shift: 0,
-            color_range: (0, 1),
+            colors: 0..1,
         };
         Level {
             size: (2, 1),
@@ -59,7 +59,11 @@ impl Level {
             height: vec![0, 0],
             meta: vec![0, 0],
             palette: [[0xFF; 4]; 0x100],
-            terrains: [tc; NUM_TERRAINS],
+            // not pretty, I know
+            terrains: [
+                tc.clone(), tc.clone(), tc.clone(), tc.clone(),
+                tc.clone(), tc.clone(), tc.clone(), tc.clone(),
+            ],
         }
     }
 
@@ -68,7 +72,7 @@ impl Level {
         mut coord: (i32, i32),
     ) -> Texel {
         fn get_terrain(meta: u8) -> TerrainType {
-            match (meta >> DELTA_SHIFT) & (NUM_TERRAINS as u8 - 1) {
+            match (meta >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1) {
                 0 => TerrainType::Water,
                 _ => TerrainType::Main,
             }
@@ -84,7 +88,7 @@ impl Level {
         if meta & DOUBLE_LEVEL != 0 {
             let meta0 = self.meta[i & !1];
             let meta1 = self.meta[i | 1];
-            let delta = ((meta0 & DELTA_MASK) << DELTA_BITS + (meta1 & DELTA_MASK)) << DELTA_SHIFT;
+            let delta = (meta0 & DELTA_MASK) << DELTA_BITS + (meta1 & DELTA_MASK);
             Texel {
                 low: (self.height[i & !1], get_terrain(meta0)),
                 high: Some((delta, self.height[i | 1], get_terrain(meta1))),
@@ -191,6 +195,6 @@ pub fn load(config: &LevelConfig) -> Level {
         height,
         meta,
         palette: read_palette(palette),
-        terrains: config.terrains,
+        terrains: config.terrains.clone(),
     }
 }

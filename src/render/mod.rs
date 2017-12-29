@@ -157,13 +157,18 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         for (lcm, mat) in light_clr_material.iter_mut().zip(MATERIALS.iter()) {
             let dx = mat.dx * dx_scale;
             let sd = mat.sd * sd_scale;
-            for i in 0 .. 0x200 {
+            for (i, out) in lcm.iter_mut().enumerate() {
                 let jj = mat.jj * (i as f32 - 255.5);
                 let v = (dx * sd - jj) / ((1.0 + sd * sd) * (dx * dx + jj * jj)).sqrt();
-                lcm[i] = (v.max(0.0).min(1.0) * 255.0 + 0.5) as u8;
+                *out = (v.max(0.0).min(1.0) * 255.0) as u8;
             }
         }
     }
+    // This table has 2 lines 0x200 width each, on each layer
+    // of a layered texture, where layer = terrain ID.
+    // First line corresponds to `lightCLR` table of the original,
+    // which is computed in `light_clr_material` here.
+    // Second line corresponds to `palCLR` of the original.
     let mut color_table = [[0; 0x400]; level::NUM_TERRAINS];
     for (ct, (terr, &mid)) in color_table
         .iter_mut()
@@ -176,12 +181,12 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             *c = *lcm;
         }
         for c in ct[0x200 .. 0x300].iter_mut() {
-            *c = terr.color_range.0;
+            *c = terr.colors.start;
         }
-        let color_num = (terr.color_range.1 - terr.color_range.0) as usize;
-        for j in 0 .. 0x100 {
+        let color_num = (terr.colors.end - terr.colors.start) as usize;
+        for (j, c) in ct[0x300 .. 0x400].iter_mut().enumerate() {
             //TODO: separate case for the first terrain type
-            ct[0x300 + j] = terr.color_range.0 + ((j * color_num) / 0x100) as u8;
+            *c = terr.colors.start + ((j * color_num) / 0x100) as u8;
         }
     }
 
