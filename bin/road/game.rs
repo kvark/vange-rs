@@ -1,6 +1,7 @@
 use cgmath;
 use cgmath::{Angle, Rotation3, Zero};
 use gfx;
+use rand;
 use std::collections::HashMap;
 
 use boilerplate::{Application, KeyboardInput};
@@ -11,9 +12,10 @@ use vangers::{config, level, render, space};
 #[derive(Eq, PartialEq)]
 enum Spirit {
     Player,
-    //Computer,
+    Other,
 }
 
+#[derive(Debug, Default)]
 struct Control {
     motor: f32,
     rudder: f32,
@@ -22,6 +24,7 @@ struct Control {
 }
 
 pub struct Agent<R: gfx::Resources> {
+    _name: String,
     spirit: Spirit,
     pub transform: space::Transform,
     pub car: config::car::CarInfo<R>,
@@ -30,6 +33,28 @@ pub struct Agent<R: gfx::Resources> {
 }
 
 impl<R: gfx::Resources> Agent<R> {
+    fn spawn(
+        name: String,
+        car: &config::car::CarInfo<R>,
+        coords: (i32, i32),
+        orientation: cgmath::Rad<f32>,
+        level: &level::Level,
+    ) -> Self {
+        let height = physics::get_height(level.get(coords).get_top()) + 5.; //center offset
+        Agent {
+            _name: name,
+            spirit: Spirit::Other,
+            transform: cgmath::Decomposed {
+                scale: car.scale,
+                disp: cgmath::vec3(coords.0 as f32, coords.1 as f32, height),
+                rot: cgmath::Quaternion::from_angle_z(orientation),
+            },
+            car: car.clone(),
+            dynamo: physics::Dynamo::default(),
+            control: Control::default(),
+        }
+    }
+
     fn step(
         &mut self,
         dt: f32,
@@ -97,6 +122,7 @@ pub struct Game<R: gfx::Resources> {
     tick: Option<f32>,
 }
 
+
 impl<R: gfx::Resources> Game<R> {
     pub fn new<F: gfx::Factory<R>>(
         settings: &config::Settings,
@@ -139,33 +165,40 @@ impl<R: gfx::Resources> Game<R> {
         let pal_data = level::read_palette(settings.open_palette());
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
 
-        let car = db.cars[&settings.car.id].clone();
-        let player_height = physics::get_height(level.get(coords).get_top()) + 5.; //center offset
-        let player_pos = cgmath::vec3(coords.0 as f32, coords.1 as f32, player_height);
-
-        let agent = Agent {
-            spirit: Spirit::Player,
-            transform: cgmath::Decomposed {
-                scale: car.scale,
-                disp: player_pos,
-                rot: cgmath::Quaternion::from_angle_z(cgmath::Rad::turn_div_2()),
-            },
-            car,
-            dynamo: physics::Dynamo::default(),
-            control: Control {
-                motor: 0.0,
-                rudder: 0.0,
-                brake: false,
-                turbo: false,
-            },
-        };
+        let mut player_agent = Agent::spawn(
+            "Player".to_string(),
+            &db.cars[&settings.car.id],
+            coords,
+            cgmath::Rad::turn_div_2(),
+            &level,
+        );
+        player_agent.spirit = Spirit::Player;
+        let mut agents = vec![player_agent];
+        let mut rng = rand::thread_rng();
+        let car_names = db.cars.keys().cloned().collect::<Vec<_>>();
+        // populate with random agents
+        for i in 0 .. settings.game.other_vangers {
+            use rand::Rng;
+            let car_id = rng.choose(&car_names).unwrap();
+            let x = rng.gen_range(0, level.size.0);
+            let y = rng.gen_range(0, level.size.1);
+            let mut agent = Agent::spawn(
+                format!("Other-{}", i),
+                &db.cars[car_id],
+                (x, y),
+                cgmath::Rad(rng.gen()),
+                &level,
+            );
+            agent.control.motor = 1.0; //full on
+            agents.push(agent);
+        }
 
         Game {
             db,
             render,
             line_buffer: render::LineBuffer::new(),
             level,
-            agents: vec![agent],
+            agents,
             cam: space::Camera {
                 loc: cgmath::vec3(coords.0 as f32, coords.1 as f32, 200.0),
                 rot: cgmath::Quaternion::new(0.0, 0.0, 1.0, 0.0),
@@ -326,11 +359,15 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
             self.line_buffer.clear();
 
             for a in self.agents.iter_mut() {
+                let lbuf = match a.spirit {
+                    Spirit::Player => Some(&mut self.line_buffer),
+                    Spirit::Other => None,
+                };
                 a.step(
                     dt,
                     &self.level,
                     &self.db.common,
-                    Some(&mut self.line_buffer),
+                    lbuf,
                 );
             }
         }
@@ -339,10 +376,19 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
     fn draw<C: gfx::CommandBuffer<R>>(
         &mut self, encoder: &mut gfx::Encoder<R, C>
     ) {
-        let items = self.agents
+        let models = self.agents
             .iter()
-            .map(|a| (&a.car.model, &a.transform, a.car.physics.scale_bound));
-        self.render.draw_world(encoder, items, &self.cam, false);
+            .map(|a| render::RenderModel {
+                model: &a.car.model,
+                transform: a.transform.clone(),
+                debug_shape_scale: match a.spirit {
+                    Spirit::Player => Some(a.car.physics.scale_bound),
+                    Spirit::Other => None,
+                },
+            })
+            .collect::<Vec<_>>();
+
+        self.render.draw_world(encoder, &models, &self.cam);
         self.render
             .debug
             .draw_lines(&self.line_buffer, self.cam.get_view_proj().into(), encoder);

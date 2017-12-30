@@ -198,9 +198,9 @@ pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
                     Kind::Constructor
                 },
                 stats: CarStats::new(&data),
-                physics: physics,
+                physics,
                 model: model::load_m3d(&mut file, factory),
-                scale: scale,
+                scale,
             },
         );
     }

@@ -47,6 +47,8 @@ Surface get_surface(vec2 pos) {
 	suf.is_shadowed = (meta & c_ShadowMask) != 0U;
 	suf.low_type = get_terrain_type(meta);
 	if ((meta & c_DoubleLevelMask) != 0U) {
+		//TODO: we need either low or high for the most part
+		// so this can be more efficient with a boolean param
 		uint delta;
 		if (mod(pos.x, 2.0) >= 1.0) {
 			uint meta_low = textureOffset(t_Meta, tc, ivec2(-1, 0)).x;

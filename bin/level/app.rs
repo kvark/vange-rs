@@ -247,7 +247,7 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
         enc: &mut gfx::Encoder<R, C>,
     ) {
         self.render
-            .draw_world(enc, None.into_iter(), &self.cam, false);
+            .draw_world(enc, &[], &self.cam);
     }
 
     fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {

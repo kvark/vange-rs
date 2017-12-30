@@ -22,7 +22,7 @@ impl Registry {
             fi.advance();
         }
         let count: u32 = fi.cur().split_whitespace().nth(1).unwrap().parse().unwrap();
-        fi.advance(); // MaxSize
+        let max_size: u8 = fi.next_key_value("MaxSize");
 
         for i in 0 .. count {
             let num = fi.next_key_value("ModelNum");
@@ -34,7 +34,7 @@ impl Registry {
                 key,
                 ModelInfo {
                     path: name,
-                    scale: size as f32 / 255.0,
+                    scale: size as f32 * 256.0 / max_size as f32,
                 },
             );
         }

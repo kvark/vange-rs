@@ -131,6 +131,12 @@ pub struct Render<R: gfx::Resources> {
     pub debug: debug::DebugRender<R>,
 }
 
+pub struct RenderModel<'a, R: gfx::Resources> {
+    pub model: &'a model::Model<R>,
+    pub transform: Transform,
+    pub debug_shape_scale: Option<f32>,
+}
+
 #[doc(hidden)]
 pub fn read_file(name: &str) -> Vec<u8> {
     use std::fs::File;
@@ -358,19 +364,18 @@ impl<R: gfx::Resources> Render<R> {
         }
     }
 
-    pub fn draw_world<'a, C, I>(
+    pub fn draw_world<'a, C>(
         &mut self,
         encoder: &mut gfx::Encoder<R, C>,
-        iter: I,
+        render_models: &[RenderModel<'a, R>],
         cam: &Camera,
-        draw_debug: bool,
     ) where
         C: gfx::CommandBuffer<R>,
-        I: Iterator<Item = (&'a model::Model<R>, &'a Transform, f32)>,
     {
         // clear buffers
         encoder.clear(&self.terrain.data.out_color, [0.1, 0.2, 0.3, 1.0]);
         encoder.clear_depth(&self.terrain.data.out_depth, 1.0);
+
         // draw terrain
         {
             use cgmath::SquareMatrix;
@@ -387,19 +392,19 @@ impl<R: gfx::Resources> Render<R> {
             encoder.update_constant_buffer(&self.terrain.data.locals, &locals);
         }
         self.terrain.encode(encoder);
+
         // draw vehicle models
-        for (model, transform, shape_scale) in iter {
+        for rm in render_models {
             Render::draw_model(
                 encoder,
-                model,
-                *transform,
+                rm.model,
+                rm.transform,
                 cam,
                 &self.object_pso,
                 &mut self.object_data,
-                if draw_debug {
-                    Some((&mut self.debug, shape_scale))
-                } else {
-                    None
+                match rm.debug_shape_scale {
+                    Some(scale) => Some((&mut self.debug, scale)),
+                    None => None,
                 },
             );
         }
