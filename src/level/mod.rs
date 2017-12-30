@@ -109,6 +109,8 @@ pub fn read_palette<I: Read>(input: I) -> [[u8; 4]; 0x100] {
         file.read(&mut p[.. 3]).unwrap();
         p[0] <<= 2; p[1] <<= 2; p[2] <<= 2;
     }
+    //TODO: there is quite a bit of logic missing here,
+    // see `GeneralTableOpen` and `PalettePrepare` of the original.
     data
 }
 

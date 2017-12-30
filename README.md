@@ -60,7 +60,7 @@ Controls:
   - `Alt` + `WSAD`: rotate the camera
   - `Esc`: exit
 
-<img alt="level view" src="etc/shots/Road5-color.png" width="25%">
+<img alt="level view" src="etc/shots/Road12-ray-trace.png" width="25%">
 
 #### Converter
 `convert` binary is a command line utility for converting models to Wavefront OBJ format. The body, wheels, and debris are saved as separate OBJ files inside the output folder.
