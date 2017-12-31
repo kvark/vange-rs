@@ -225,13 +225,13 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         .collect();
     let table_chunks: Vec<_> = color_table.iter().map(|t| &t[..]).collect();
     let (_, height) = factory
-        .create_texture_immutable::<(format::R8, format::Unorm)>(kind, &height_chunks)
+        .create_texture_immutable::<(format::R8, format::Unorm)>(kind, tex::Mipmap::Provided, &height_chunks)
         .unwrap();
     let (_, meta) = factory
-        .create_texture_immutable::<(format::R8, format::Uint)>(kind, &meta_chunks)
+        .create_texture_immutable::<(format::R8, format::Uint)>(kind, tex::Mipmap::Provided, &meta_chunks)
         .unwrap();
     let (_, table) = factory
-        .create_texture_immutable::<(format::R8, format::Unorm)>(table_kind, &table_chunks)
+        .create_texture_immutable::<(format::R8, format::Unorm)>(table_kind, tex::Mipmap::Provided, &table_chunks)
         .unwrap();
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale,
@@ -419,7 +419,7 @@ impl<R: gfx::Resources> Render<R> {
     ) {
         use gfx::texture as tex;
         let (_, view) = factory
-            .create_texture_immutable::<gfx::format::Srgba8>(tex::Kind::D1(0x100), &[data])
+            .create_texture_immutable::<gfx::format::Srgba8>(tex::Kind::D1(0x100), tex::Mipmap::Provided, &[data])
             .unwrap();
         let sampler = factory.create_sampler(tex::SamplerInfo::new(
             tex::FilterMethod::Bilinear,
@@ -438,7 +438,7 @@ impl<R: gfx::Resources> Render<R> {
         type Format = (gfx::format::R8_G8, gfx::format::Uint);
         let kind = tex::Kind::D1(NUM_COLOR_IDS as tex::Size);
         let (_, view) = factory
-            .create_texture_immutable::<Format>(kind, &[&COLOR_TABLE])
+            .create_texture_immutable::<Format>(kind, tex::Mipmap::Provided, &[&COLOR_TABLE])
             .unwrap();
         let sampler = factory.create_sampler(tex::SamplerInfo::new(
             tex::FilterMethod::Scale,
