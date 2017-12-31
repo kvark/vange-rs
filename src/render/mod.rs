@@ -14,13 +14,6 @@ pub struct MainTargets<R: gfx::Resources> {
     pub depth: gfx::handle::DepthStencilView<R, DepthFormat>,
 }
 
-impl<R: gfx::Resources> MainTargets<R> {
-    pub fn get_aspect(&self) -> f32 {
-        let (w, h, _, _) = self.color.get_dimensions();
-        w as f32 / h as f32
-    }
-}
-
 struct MaterialParams {
     dx: f32,
     sd: f32,
@@ -245,6 +238,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         tex::FilterMethod::Bilinear,
         tex::WrapMode::Clamp,
     ));
+    let palette = Render::create_palette(&level.palette, factory);
 
     Render {
         terrain: {
@@ -259,11 +253,11 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             let indices: &[u16] = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
             let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
             let data = terrain::Data {
-                vbuf: vbuf,
+                vbuf,
                 locals: factory.create_constant_buffer(1),
                 height: (height, sm_height),
                 meta: (meta, sm_meta),
-                palette: Render::create_palette(&level.palette, factory),
+                palette,
                 table: (table, sm_table),
                 out_color: targets.color.clone(),
                 out_depth: targets.depth.clone(),
@@ -379,9 +373,9 @@ impl<R: gfx::Resources> Render<R> {
         // draw terrain
         {
             use cgmath::SquareMatrix;
-            let mx_vp = cam.get_view_proj();
-            let cpos: [f32; 3] = cam.loc.into();
             let (wid, het, _, _) = self.terrain.data.out_color.get_dimensions();
+            let cpos: [f32; 3] = cam.loc.into();
+            let mx_vp = cam.get_view_proj();
             let locals = TerrainLocals {
                 cam_pos: [cpos[0], cpos[1], cpos[2], 1.0],
                 scr_size: [wid as f32, het as f32, 0.0, 0.0],

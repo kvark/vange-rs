@@ -161,7 +161,8 @@ impl<R: gfx::Resources> Game<R> {
             (level, coordinates)
         };
 
-        let aspect = targets.get_aspect();
+        let (width, height, _, _) = targets.color.get_dimensions();
+        let depth = 10f32 .. 10000f32;
         let pal_data = level::read_palette(settings.open_palette());
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
 
@@ -202,11 +203,19 @@ impl<R: gfx::Resources> Game<R> {
             cam: space::Camera {
                 loc: cgmath::vec3(coords.0 as f32, coords.1 as f32, 200.0),
                 rot: cgmath::Quaternion::new(0.0, 0.0, 1.0, 0.0),
-                proj: cgmath::PerspectiveFov {
-                    fovy: cgmath::Deg(45.0).into(),
-                    aspect,
-                    near: 10.0,
-                    far: 10000.0,
+                proj: match settings.game.view {
+                    config::settings::View::Perspective => {
+                        let pf = cgmath::PerspectiveFov {
+                            fovy: cgmath::Deg(45.0).into(),
+                            aspect: width as f32 / height as f32,
+                            near: depth.start,
+                            far: depth.end,
+                        };
+                        space::Projection::Perspective(pf)
+                    }
+                    config::settings::View::Flat => {
+                        space::Projection::ortho(width, height, depth)
+                    }
                 },
             },
             spin_hor: 0.0,
@@ -231,7 +240,8 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
     fn on_resize<F: gfx::Factory<R>>(
         &mut self, targets: render::MainTargets<R>, _factory: &mut F
     ) {
-        self.cam.proj.aspect = targets.get_aspect();
+        let (w, h, _, _) = targets.color.get_dimensions();
+        self.cam.proj.update(w, h);
         self.render.resize(targets);
     }
 

@@ -73,7 +73,8 @@ impl<R: gfx::Resources> LevelView<R> {
         };
 
         let pal_data = level::read_palette(pal_file);
-        let aspect = targets.get_aspect();
+        let (width, height, _, _) = targets.color.get_dimensions();
+        let depth = 10f32 .. 10000f32;
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
 
         LevelView {
@@ -82,11 +83,19 @@ impl<R: gfx::Resources> LevelView<R> {
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, 0.0, 400.0),
                 rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
-                proj: cgmath::PerspectiveFov {
-                    fovy: cgmath::Deg(45.0).into(),
-                    aspect,
-                    near: 10.0,
-                    far: 10000.0,
+                proj: match settings.game.view {
+                    config::settings::View::Perspective => {
+                        let pf = cgmath::PerspectiveFov {
+                            fovy: cgmath::Deg(45.0).into(),
+                            aspect: width as f32 / height as f32,
+                            near: depth.start,
+                            far: depth.end,
+                        };
+                        space::Projection::Perspective(pf)
+                    }
+                    config::settings::View::Flat => {
+                        space::Projection::ortho(width, height, depth)
+                    }
                 },
             },
             input: Input::Empty,
@@ -101,7 +110,8 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
     fn on_resize<F: gfx::Factory<R>>(
         &mut self, targets: render::MainTargets<R>, _factory: &mut F
     ) {
-        self.cam.proj.aspect = targets.get_aspect();
+        let (w, h, _, _) = targets.color.get_dimensions();
+        self.cam.proj.update(w, h);
         self.render.resize(targets);
     }
 
@@ -186,11 +196,15 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
 
     fn update(&mut self, delta: f32) {
         use cgmath::{InnerSpace, Rotation3, Zero};
+        let move_speed = match self.cam.proj {
+            space::Projection::Perspective(_) => 100.0,
+            space::Projection::Ortho{..} => 500.0,
+        };
         match self.input {
             Input::Hor { dir, alt: false } if dir != 0.0 => {
                 let mut vec = self.cam.rot * cgmath::Vector3::unit_x();
                 vec.z = 0.0;
-                self.cam.loc += 100.0 * delta * dir * vec.normalize();
+                self.cam.loc += move_speed * delta * dir * vec.normalize();
             }
             Input::Ver { dir, alt: false } if dir != 0.0 => {
                 let mut vec = self.cam.rot * cgmath::Vector3::unit_z();
@@ -199,11 +213,11 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
                     vec = self.cam.rot * -cgmath::Vector3::unit_y();
                     vec.z = 0.0;
                 }
-                self.cam.loc -= 100.0 * delta * dir * vec.normalize();
+                self.cam.loc -= move_speed * delta * dir * vec.normalize();
             }
             Input::Dep { dir, alt: false } if dir != 0.0 => {
                 let vec = cgmath::Vector3::unit_z();
-                self.cam.loc += 100.0 * delta * dir * vec.normalize();
+                self.cam.loc += move_speed * delta * dir * vec.normalize();
             }
             Input::Hor { dir, alt: true } if dir != 0.0 => {
                 let rot = cgmath::Quaternion::from_angle_z(cgmath::Rad(-1.0 * delta * dir));

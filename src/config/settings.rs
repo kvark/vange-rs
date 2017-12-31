@@ -8,9 +8,16 @@ pub struct Car {
 }
 
 #[derive(Deserialize)]
+pub enum View {
+    Flat,
+    Perspective,
+}
+
+#[derive(Deserialize)]
 pub struct Game {
     pub level: String,
     pub cycle: String,
+    pub view: View,
     pub other_vangers: usize,
 }
 
