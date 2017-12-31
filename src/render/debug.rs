@@ -70,7 +70,7 @@ gfx_defines! {
         buf_pos: gfx::VertexBuffer<DebugPos> = (),
         buf_col: VertexBufferCommon<DebugColor, InstanceRate> = 1,
         locals: gfx::ConstantBuffer<DebugLocals> = "c_Locals",
-        out_color: gfx::BlendTarget<ColorFormat> = ("Target0", gfx::state::MASK_ALL, gfx::preset::blend::ALPHA),
+        out_color: gfx::BlendTarget<ColorFormat> = ("Target0", gfx::state::ColorMask::all(), gfx::preset::blend::ALPHA),
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_TEST,
         blend_ref: gfx::BlendRef = (),
     }
@@ -141,7 +141,7 @@ impl<R: gfx::Resources> DebugRender<R> {
                     settings.max_vertices,
                     gfx::buffer::Role::Vertex,
                     gfx::memory::Usage::Dynamic,
-                    gfx::Bind::empty(),
+                    gfx::memory::Bind::empty(),
                 )
                 .unwrap(),
             buf_col: factory
@@ -149,7 +149,7 @@ impl<R: gfx::Resources> DebugRender<R> {
                     settings.max_vertices,
                     gfx::buffer::Role::Vertex,
                     gfx::memory::Usage::Dynamic,
-                    gfx::Bind::empty(),
+                    gfx::memory::Bind::empty(),
                 )
                 .unwrap(),
             locals: factory.create_constant_buffer(1),
@@ -226,7 +226,7 @@ impl<R: gfx::Resources> DebugRender<R> {
                             gfx::Primitive::LineList,
                             raster,
                             debug::Init {
-                                out_color: ("Target0", gfx::state::MASK_ALL, blend),
+                                out_color: ("Target0", gfx::state::ColorMask::all(), blend),
                                 out_depth: depth,
                                 buf_col: rate,
                                 ..debug::new()
