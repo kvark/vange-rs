@@ -1,11 +1,16 @@
 #version 150 core
 
-uniform c_Locals {
-	vec4 u_CamPos;
-	vec4 u_ScreenSize;		// XY = size
-	vec4 u_TextureScale;	// XY = size, Z = height scale, w = number of layers
+uniform c_Globals {
+	vec4 u_CameraPos;
 	mat4 u_ViewProj;
 	mat4 u_InvViewProj;
+	vec4 u_LightPos;
+	vec4 u_LightColor;
+};
+
+uniform c_Locals {
+	vec4 u_ScreenSize;		// XY = size
+	vec4 u_TextureScale;	// XY = size, Z = height scale, w = number of layers
 };
 
 uniform sampler2DArray t_Height;
@@ -126,7 +131,7 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
 	vec3 a = cast_ray_to_plane(u_TextureScale.z, base, dir);
 	vec3 c = cast_ray_to_plane(0.0, base, dir);
 	vec3 b = c;
-	Surface suf = cast_ray_impl(a, b, true, 10, 5);
+	Surface suf = cast_ray_impl(a, b, true, 8, 4);
 	CastPoint result;
 	result.type = suf.high_type;
 	result.is_underground = false;
@@ -134,7 +139,7 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
 	if (suf.low_alt <= b.z && b.z < suf.low_alt + suf.delta) {
 		// continue the cast underground
 		a = b; b = c;
-		suf = cast_ray_impl(a, b, false, 6, 4);
+		suf = cast_ray_impl(a, b, false, 6, 3);
 		result.type = suf.low_type;
 		result.is_underground = true;
 	}
@@ -163,7 +168,7 @@ void main() {
 	vec4 sp_zero = u_InvViewProj * vec4(0.0, 0.0, -1.0, 1.0);
 	vec3 near_plane = sp_world.xyz / sp_world.w;
 	vec3 view_base = u_ViewProj[2][3] == 0.0 ? sp_zero.xyz/sp_zero.w : near_plane;
-	vec3 view = normalize(view_base - u_CamPos.xyz);
+	vec3 view = normalize(view_base - u_CameraPos.xyz);
 
 	CastPoint pt = cast_ray_to_map(near_plane, view);
 	vec4 frag_color = evaluate_color(pt);

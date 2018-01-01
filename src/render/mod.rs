@@ -308,7 +308,7 @@ impl<R: gfx::Resources> Render<R> {
             camera_pos: cam.loc.extend(1.0).into(),
             m_vp: mx_vp.into(),
             m_inv_vp: mx_vp.invert().unwrap().into(),
-            light_pos: [10000.0, 0.0, 20000.0, 1.0],
+            light_pos: [0.5, 1.0, 2.0, 0.0],
             light_color: [1.0, 1.0, 1.0, 1.0],
         };
 
