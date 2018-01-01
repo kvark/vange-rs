@@ -1,12 +1,63 @@
 use cgmath;
 use cgmath::{Rotation3 as Rotation3_, Transform as Transform_};
+use std::ops::Range;
 
 pub type Transform = cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>;
+
+pub enum Projection {
+    Ortho {
+        p: cgmath::Ortho<f32>,
+        original: (u16, u16),
+    },
+    Perspective(cgmath::PerspectiveFov<f32>),
+}
+
+impl Projection {
+    pub fn ortho(w: u16, h: u16, depth: Range<f32>) -> Self {
+        Projection::Ortho {
+            p: cgmath::Ortho {
+                left: -0.5 * w as f32,
+                right: 0.5 * w as f32,
+                top: -0.5 * h as f32,
+                bottom: 0.5 * h as f32,
+                near: depth.start,
+                far: depth.end,
+            },
+            original: (w, h),
+        }
+    }
+
+    pub fn update(&mut self, w: u16, h: u16) {
+        match *self {
+            Projection::Ortho { ref mut p, ref mut original } => {
+                let scale_x = w as f32 / original.0 as f32;
+                let scale_y = h as f32 / original.1 as f32;
+                let center_x = 0.5 * p.left + 0.5 * p.right;
+                let center_y = 0.5 * p.top + 0.5 * p.bottom;
+                *original = (w, h);
+                p.left = center_x - scale_x * (center_x - p.left);
+                p.right = center_x - scale_x * (center_x - p.right);
+                p.top = center_y - scale_y * (center_y - p.top);
+                p.bottom = center_y - scale_y * (center_y - p.bottom);
+            }
+            Projection::Perspective(ref mut p) => {
+                p.aspect = w as f32 / h as f32;
+            }
+        }
+    }
+
+    pub fn to_matrix(&self) -> cgmath::Matrix4<f32> {
+        match *self {
+            Projection::Ortho { p, .. } => p.into(),
+            Projection::Perspective(p) => p.into(),
+        }
+    }
+}
 
 pub struct Camera {
     pub loc: cgmath::Vector3<f32>,
     pub rot: cgmath::Quaternion<f32>,
-    pub proj: cgmath::PerspectiveFov<f32>,
+    pub proj: Projection,
 }
 
 pub struct Follow {
@@ -28,9 +79,8 @@ impl Camera {
             rot: self.rot,
             disp: self.loc,
         };
-        let view_mx: Matrix4<f32> = view.inverse_transform().unwrap().into();
-        let proj_mx: Matrix4<f32> = self.proj.into();
-        proj_mx * view_mx
+        let view_mx = Matrix4::from(view.inverse_transform().unwrap());
+        self.proj.to_matrix() * view_mx
     }
 
     pub fn follow(

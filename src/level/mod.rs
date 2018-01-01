@@ -21,7 +21,7 @@ const DOUBLE_LEVEL: u8 = 1 << 6;
 const DELTA_BITS: u8 = 2;
 const DELTA_MASK: u8 = (1 << DELTA_BITS) - 1;
 const TERRAIN_SHIFT: u8 = 3;
-pub const HEIGHT_SCALE: u32 = 48;
+pub const HEIGHT_SCALE: u32 = 64;
 
 pub struct Level {
     pub size: (i32, i32),

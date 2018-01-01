@@ -14,7 +14,7 @@ uniform sampler1D t_Palette;
 uniform sampler2DArray t_Table;
 
 const float c_HorFactor = 0.5; //H_CORRECTION
-const float c_ReflectionVariance = 0.5, c_ReflectionPower = 0.1;
+const float c_ReflectionVariance = 0.5, c_ReflectionPower = 0.2;
 const uint c_DoubleLevelMask = 1U<<6, c_ShadowMask = 1U<<7;
 const uint c_TerrainShift = 3U, c_TerrainBits = 3U;
 const uint c_DeltaShift = 0U, c_DeltaBits = 2U;
@@ -63,7 +63,7 @@ Surface get_surface(vec2 pos) {
 		}
 		suf.low_alt = textureOffset(t_Height, suf.tex_coord, ivec2(-1, 0)).x * u_TextureScale.z;
 		suf.high_alt = texture(t_Height, suf.tex_coord).x * u_TextureScale.z;
-		suf.delta = float(delta) * u_TextureScale.z / 255.0;
+		suf.delta = float(delta) / 192.0 * u_TextureScale.z;
 	}else {
 		suf.low_alt = texture(t_Height, tc).x * u_TextureScale.z;
 		suf.high_alt = suf.low_alt;
@@ -126,7 +126,7 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
 	vec3 a = cast_ray_to_plane(u_TextureScale.z, base, dir);
 	vec3 c = cast_ray_to_plane(0.0, base, dir);
 	vec3 b = c;
-	Surface suf = cast_ray_impl(a, b, true, 7, 7);
+	Surface suf = cast_ray_impl(a, b, true, 10, 5);
 	CastPoint result;
 	result.type = suf.high_type;
 	result.is_underground = false;
@@ -134,7 +134,7 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
 	if (suf.low_alt <= b.z && b.z < suf.low_alt + suf.delta) {
 		// continue the cast underground
 		a = b; b = c;
-		suf = cast_ray_impl(a, b, false, 3, 3);
+		suf = cast_ray_impl(a, b, false, 6, 4);
 		result.type = suf.low_type;
 		result.is_underground = true;
 	}
@@ -158,11 +158,14 @@ vec4 evaluate_color(CastPoint pt) {
 }
 
 void main() {
-	vec4 sp_ndc = vec4((gl_FragCoord.xy / u_ScreenSize.xy) * 2.0 - 1.0, 0.0, 1.0);
+	vec4 sp_ndc = vec4((gl_FragCoord.xy / u_ScreenSize.xy) * 2.0 - 1.0, -1.0, 1.0);
 	vec4 sp_world = u_InvViewProj * sp_ndc;
-	vec3 view = normalize(sp_world.xyz / sp_world.w - u_CamPos.xyz);
+	vec4 sp_zero = u_InvViewProj * vec4(0.0, 0.0, -1.0, 1.0);
+	vec3 near_plane = sp_world.xyz / sp_world.w;
+	vec3 view_base = u_ViewProj[2][3] == 0.0 ? sp_zero.xyz/sp_zero.w : near_plane;
+	vec3 view = normalize(view_base - u_CamPos.xyz);
 
-	CastPoint pt = cast_ray_to_map(u_CamPos.xyz, view);
+	CastPoint pt = cast_ray_to_map(near_plane, view);
 	vec4 frag_color = evaluate_color(pt);
 	if (pt.type == TERRAIN_WATER) {
 		vec3 a = pt.pos;

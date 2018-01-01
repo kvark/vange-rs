@@ -36,7 +36,7 @@ impl<R: gfx::Resources> CarView<R> {
         }
 
         let pal_data = level::read_palette(settings.open_palette());
-        let aspect = targets.get_aspect();
+        let (width, height, _, _) = targets.color.get_dimensions();
         let data = render::object::Data {
             vbuf: model.body.buffer.clone(),
             locals: factory.create_constant_buffer(1),
@@ -62,12 +62,12 @@ impl<R: gfx::Resources> CarView<R> {
                 rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(
                     cgmath::Angle::turn_div_6(),
                 ),
-                proj: cgmath::PerspectiveFov {
+                proj: space::Projection::Perspective(cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
-                    aspect,
+                    aspect: width as f32 / height as f32,
                     near: 1.0,
                     far: 100.0,
-                },
+                }),
             },
             rotation: (cgmath::Rad(0.), cgmath::Rad(0.)),
         }
@@ -104,7 +104,8 @@ impl<R: gfx::Resources> Application<R> for CarView<R> {
     fn on_resize<F: gfx::Factory<R>>(
         &mut self, targets: render::MainTargets<R>, _factory: &mut F
     ) {
-        self.cam.proj.aspect = targets.get_aspect();
+        let (w, h, _, _) = targets.color.get_dimensions();
+        self.cam.proj.update(w, h);
         self.data.out_color = targets.color.clone();
         self.data.out_depth = targets.depth.clone();
         self.debug_render.resize(targets);

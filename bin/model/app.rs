@@ -24,7 +24,7 @@ impl<R: gfx::Resources> ResourceView<R> {
         use std::io::BufReader;
 
         let pal_data = level::read_palette(settings.open_palette());
-        let aspect = targets.get_aspect();
+        let (width, height, _, _) = targets.color.get_dimensions();
 
         info!("Loading model {}", path);
         let mut file = BufReader::new(settings.open_relative(path));
@@ -52,12 +52,12 @@ impl<R: gfx::Resources> ResourceView<R> {
                 rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(
                     cgmath::Angle::turn_div_6(),
                 ),
-                proj: cgmath::PerspectiveFov {
+                proj: space::Projection::Perspective(cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
-                    aspect,
+                    aspect: width as f32 / height as f32,
                     near: 5.0,
                     far: 400.0,
-                },
+                }),
             },
             rotation: cgmath::Rad(0.),
         }
@@ -68,7 +68,8 @@ impl<R: gfx::Resources> Application<R> for ResourceView<R> {
     fn on_resize<F: gfx::Factory<R>>(
         &mut self, targets: render::MainTargets<R>, _factory: &mut F
     ) {
-        self.cam.proj.aspect = targets.get_aspect();
+        let (w, h, _, _) = targets.color.get_dimensions();
+        self.cam.proj.update(w, h);
         self.data.out_color = targets.color;
         self.data.out_depth = targets.depth;
     }
