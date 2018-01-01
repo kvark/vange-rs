@@ -39,6 +39,7 @@ impl<R: gfx::Resources> CarView<R> {
         let (width, height, _, _) = targets.color.get_dimensions();
         let data = render::object::Data {
             vbuf: model.body.buffer.clone(),
+            globals: factory.create_constant_buffer(1),
             locals: factory.create_constant_buffer(1),
             ctable: render::Render::create_color_table(factory),
             palette: render::Render::create_palette(&pal_data, factory),
@@ -164,14 +165,15 @@ impl<R: gfx::Resources> Application<R> for CarView<R> {
         enc.clear(&self.data.out_color, [0.1, 0.2, 0.3, 1.0]);
         enc.clear_depth(&self.data.out_depth, 1.0);
 
+        let mx_vp = render::Render::set_globals(enc, &self.cam, &self.data.globals);
+
         render::Render::draw_model(
             enc,
             &self.model,
             self.transform,
-            &self.cam,
             &self.pso,
             &mut self.data,
-            Some((&mut self.debug_render, self.physics.scale_bound)),
+            Some((&mut self.debug_render, self.physics.scale_bound, &mx_vp)),
         );
     }
 

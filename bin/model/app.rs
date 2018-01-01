@@ -32,6 +32,7 @@ impl<R: gfx::Resources> ResourceView<R> {
         let data = render::object::Data {
             vbuf: model.body.buffer.clone(),
             locals: factory.create_constant_buffer(1),
+            globals: factory.create_constant_buffer(1),
             ctable: render::Render::create_color_table(factory),
             palette: render::Render::create_palette(&pal_data, factory),
             out_color: targets.color,
@@ -39,14 +40,14 @@ impl<R: gfx::Resources> ResourceView<R> {
         };
 
         ResourceView {
-            model: model,
+            model,
             transform: cgmath::Decomposed {
                 scale: 1.0,
                 disp: cgmath::Vector3::unit_z(),
                 rot: cgmath::One::one(),
             },
             pso: render::Render::create_object_pso(factory),
-            data: data,
+            data,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, -200.0, 100.0),
                 rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(
@@ -127,11 +128,12 @@ impl<R: gfx::Resources> Application<R> for ResourceView<R> {
         enc.clear(&self.data.out_color, [0.1, 0.2, 0.3, 1.0]);
         enc.clear_depth(&self.data.out_depth, 1.0);
 
+        render::Render::set_globals(enc, &self.cam, &self.data.globals);
+
         render::Render::draw_model(
             enc,
             &self.model,
             self.transform,
-            &self.cam,
             &self.pso,
             &mut self.data,
             None,
