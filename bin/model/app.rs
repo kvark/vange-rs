@@ -11,6 +11,7 @@ pub struct ResourceView<R: gfx::Resources> {
     data: render::object::Data<R>,
     cam: space::Camera,
     rotation: cgmath::Rad<f32>,
+    light_config: config::settings::Light,
 }
 
 impl<R: gfx::Resources> ResourceView<R> {
@@ -61,6 +62,7 @@ impl<R: gfx::Resources> ResourceView<R> {
                 }),
             },
             rotation: cgmath::Rad(0.),
+            light_config: settings.render.light.clone(),
         }
     }
 }
@@ -128,7 +130,12 @@ impl<R: gfx::Resources> Application<R> for ResourceView<R> {
         enc.clear(&self.data.out_color, [0.1, 0.2, 0.3, 1.0]);
         enc.clear_depth(&self.data.out_depth, 1.0);
 
-        render::Render::set_globals(enc, &self.cam, &self.data.globals);
+        render::Render::set_globals(
+            enc,
+            &self.cam,
+            &self.light_config,
+            &self.data.globals,
+        );
 
         render::Render::draw_model(
             enc,

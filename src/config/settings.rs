@@ -14,11 +14,16 @@ pub enum View {
 }
 
 #[derive(Deserialize)]
+pub struct Other {
+    pub count: usize,
+}
+
+#[derive(Deserialize)]
 pub struct Game {
     pub level: String,
     pub cycle: String,
     pub view: View,
-    pub other_vangers: usize,
+    pub other: Other,
 }
 
 #[derive(Deserialize)]
@@ -34,8 +39,15 @@ pub struct DebugRender {
     pub impulses: bool,
 }
 
+#[derive(Clone, Deserialize)]
+pub struct Light {
+    pub pos: [f32; 4],
+    pub color: [f32; 4],
+}
+
 #[derive(Deserialize)]
 pub struct Render {
+    pub light: Light,
     pub debug: DebugRender,
 }
 

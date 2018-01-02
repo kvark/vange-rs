@@ -178,7 +178,7 @@ impl<R: gfx::Resources> Game<R> {
         let mut rng = rand::thread_rng();
         let car_names = db.cars.keys().cloned().collect::<Vec<_>>();
         // populate with random agents
-        for i in 0 .. settings.game.other_vangers {
+        for i in 0 .. settings.game.other.count {
             use rand::Rng;
             let car_id = rng.choose(&car_names).unwrap();
             let x = rng.gen_range(0, level.size.0);

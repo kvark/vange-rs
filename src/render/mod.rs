@@ -1,8 +1,9 @@
-use {level, model};
-use config::settings;
 use cgmath::{Decomposed, Matrix4};
 use gfx;
 use gfx::traits::FactoryExt;
+
+use {level, model};
+use config::settings;
 use space::{Camera, Transform};
 
 mod debug;
@@ -126,6 +127,7 @@ pub struct Render<R: gfx::Resources> {
     terrain_scale: [f32; 4],
     object_pso: gfx::PipelineState<R, object::Meta>,
     object_data: object::Data<R>,
+    pub light_config: settings::Light,
     pub debug: debug::DebugRender<R>,
 }
 
@@ -288,6 +290,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             out_color: targets.color.clone(),
             out_depth: targets.depth.clone(),
         },
+        light_config: settings.light.clone(),
         debug: DebugRender::new(factory, targets, &settings.debug),
     }
 }
@@ -296,6 +299,7 @@ impl<R: gfx::Resources> Render<R> {
     pub fn set_globals<C>(
         encoder: &mut gfx::Encoder<R, C>,
         cam: &Camera,
+        light: &settings::Light,
         buffer: &gfx::handle::Buffer<R, Globals>,
     ) -> Matrix4<f32>
     where
@@ -308,8 +312,8 @@ impl<R: gfx::Resources> Render<R> {
             camera_pos: cam.loc.extend(1.0).into(),
             m_vp: mx_vp.into(),
             m_inv_vp: mx_vp.invert().unwrap().into(),
-            light_pos: [0.5, 1.0, 2.0, 0.0],
-            light_color: [1.0, 1.0, 1.0, 1.0],
+            light_pos: light.pos,
+            light_color: light.color,
         };
 
         encoder.update_constant_buffer(buffer, &globals);
@@ -389,7 +393,12 @@ impl<R: gfx::Resources> Render<R> {
     ) where
         C: gfx::CommandBuffer<R>,
     {
-        let mx_vp = Self::set_globals(encoder, cam, &self.terrain.data.globals);
+        let mx_vp = Self::set_globals(
+            encoder,
+            cam,
+            &self.light_config,
+            &self.terrain.data.globals,
+        );
 
         // clear buffers
         encoder.clear(&self.terrain.data.out_color, [0.1, 0.2, 0.3, 1.0]);

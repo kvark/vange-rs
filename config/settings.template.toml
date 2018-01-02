@@ -2,12 +2,12 @@
 #data_path = "/Applications/GOG/Vangers.app/Contents/Resources/game" #OSX
 
 [game]
-level = "Fostral"
-cycle = "Plump-up"
-#level = "Xplo"
-#cycle = "" # leave empty for bonus worlds
+level = "Fostral" # see `wrlds.dat` for the list
+cycle = "Plump-up" # see `bunches.prm` for the list, leave empty for bonus worlds
 view = "Perspective" # can be "Flat" or "Perspective"
-other_vangers = 10 # number of NPC vangers
+
+[game.other]
+count = 10 # number of NPC vangers
 
 [car]
 id = "OxidizeMonk"
@@ -18,6 +18,10 @@ slots = []
 [window]
 title = "Rusty Road"
 size = [1280, 800]
+
+[render.light]
+pos = [1, 2, 4, 0] # w=0 for directional, w=1 for point light
+color = [1, 1, 1, 1]
 
 [render.debug]
 max_vertices = 512
