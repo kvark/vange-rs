@@ -76,15 +76,21 @@ gfx_defines!{
     }
 
     constant TerrainLocals {
-        cam_pos: [f32; 4] = "u_CamPos",
         scr_size: [f32; 4] = "u_ScreenSize",
         tex_scale: [f32; 4] = "u_TextureScale",
+    }
+
+    constant Globals {
+        camera_pos: [f32; 4] = "u_CameraPos",
         m_vp: [[f32; 4]; 4] = "u_ViewProj",
         m_inv_vp: [[f32; 4]; 4] = "u_InvViewProj",
+        light_pos: [f32; 4] = "u_LightPos",
+        light_color: [f32; 4] = "u_LightColor",
     }
 
     pipeline terrain {
         vbuf: gfx::VertexBuffer<TerrainVertex> = (),
+        globals: gfx::ConstantBuffer<Globals> = "c_Globals",
         locals: gfx::ConstantBuffer<TerrainLocals> = "c_Locals",
         height: gfx::TextureSampler<f32> = "t_Height",
         meta: gfx::TextureSampler<u32> = "t_Meta",
@@ -101,13 +107,12 @@ gfx_defines!{
     }
 
     constant ObjectLocals {
-        m_mvp: [[f32; 4]; 4] = "u_ModelViewProj",
-        m_normal: [[f32; 4]; 4] = "u_NormalMatrix",
-        v_cam: [f32; 4] = "u_CameraWorldPos",
+        m_model: [[f32; 4]; 4] = "u_Model",
     }
 
     pipeline object {
         vbuf: gfx::VertexBuffer<ObjectVertex> = (),
+        globals: gfx::ConstantBuffer<Globals> = "c_Globals",
         locals: gfx::ConstantBuffer<ObjectLocals> = "c_Locals",
         ctable: gfx::TextureSampler<[u32; 2]> = "t_ColorTable",
         palette: gfx::TextureSampler<[f32; 4]> = "t_Palette",
@@ -238,7 +243,9 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         tex::FilterMethod::Bilinear,
         tex::WrapMode::Clamp,
     ));
+
     let palette = Render::create_palette(&level.palette, factory);
+    let globals = factory.create_constant_buffer(1);
 
     Render {
         terrain: {
@@ -255,6 +262,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             let data = terrain::Data {
                 vbuf,
                 locals: factory.create_constant_buffer(1),
+                globals: globals.clone(),
                 height: (height, sm_height),
                 meta: (meta, sm_meta),
                 palette,
@@ -274,6 +282,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         object_data: object::Data {
             vbuf: factory.create_vertex_buffer(&[]), //dummy
             locals: factory.create_constant_buffer(1),
+            globals,
             palette: Render::create_palette(&object_palette, factory),
             ctable: Render::create_color_table(factory),
             out_color: targets.color.clone(),
@@ -284,25 +293,41 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
 }
 
 impl<R: gfx::Resources> Render<R> {
+    pub fn set_globals<C>(
+        encoder: &mut gfx::Encoder<R, C>,
+        cam: &Camera,
+        buffer: &gfx::handle::Buffer<R, Globals>,
+    ) -> Matrix4<f32>
+    where
+        C: gfx::CommandBuffer<R>,
+    {
+        use cgmath::SquareMatrix;
+
+        let mx_vp = cam.get_view_proj();
+        let globals = Globals {
+            camera_pos: cam.loc.extend(1.0).into(),
+            m_vp: mx_vp.into(),
+            m_inv_vp: mx_vp.invert().unwrap().into(),
+            light_pos: [0.5, 1.0, 2.0, 0.0],
+            light_color: [1.0, 1.0, 1.0, 1.0],
+        };
+
+        encoder.update_constant_buffer(buffer, &globals);
+        mx_vp
+    }
+
     pub fn draw_mesh<C>(
         encoder: &mut gfx::Encoder<R, C>,
         mesh: &model::Mesh<R>,
         model2world: Transform,
-        cam: &Camera,
         pso: &gfx::PipelineState<R, object::Meta>,
         data: &mut object::Data<R>,
     ) where
         C: gfx::CommandBuffer<R>,
     {
         let mx_world = Matrix4::from(model2world);
-        let mut normal2world = model2world;
-        normal2world.scale = 1.0;
-        let mx_normal = Matrix4::from(normal2world);
-        let cp: [f32; 3] = cam.loc.into();
         let locals = ObjectLocals {
-            m_mvp: (cam.get_view_proj() * mx_world).into(),
-            m_normal: mx_normal.into(),
-            v_cam: [cp[0], cp[1], cp[2], 1.0],
+            m_model: mx_world.into(),
         };
         data.vbuf = mesh.buffer.clone();
         encoder.update_constant_buffer(&data.locals, &locals);
@@ -313,23 +338,21 @@ impl<R: gfx::Resources> Render<R> {
         encoder: &mut gfx::Encoder<R, C>,
         model: &model::Model<R>,
         model2world: Transform,
-        cam: &Camera,
         pso: &gfx::PipelineState<R, object::Meta>,
         data: &mut object::Data<R>,
-        debug_context: Option<(&mut DebugRender<R>, f32)>,
+        debug_context: Option<(&mut DebugRender<R>, f32, &Matrix4<f32>)>,
     ) where
         C: gfx::CommandBuffer<R>,
     {
         use cgmath::{Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
 
         // body
-        Render::draw_mesh(encoder, &model.body, model2world, cam, pso, data);
+        Render::draw_mesh(encoder, &model.body, model2world, pso, data);
         // debug render
-        if let (Some((debug, scale)), Some(shape)) = (debug_context, model.shape.debug.as_ref()) {
-            let mx_vp = cam.get_view_proj();
+        if let (Some((debug, scale, world2screen)), Some(shape)) = (debug_context, model.shape.debug.as_ref()) {
             let mut mx_shape = model2world;
             mx_shape.scale *= scale;
-            let transform = mx_vp * Matrix4::from(mx_shape);
+            let transform = world2screen * Matrix4::from(mx_shape);
             debug.draw_shape(shape, transform, encoder);
         }
         // wheels
@@ -340,7 +363,7 @@ impl<R: gfx::Resources> Render<R> {
                     rot: Quaternion::one(),
                     scale: 1.0,
                 });
-                Render::draw_mesh(encoder, mesh, transform, cam, pso, data);
+                Render::draw_mesh(encoder, mesh, transform, pso, data);
             }
         }
         // slots
@@ -353,7 +376,7 @@ impl<R: gfx::Resources> Render<R> {
                 };
                 local.disp -= local.transform_vector(Vector3::from(mesh.offset));
                 let transform = model2world.concat(&local);
-                Render::draw_mesh(encoder, mesh, transform, cam, pso, data);
+                Render::draw_mesh(encoder, mesh, transform, pso, data);
             }
         }
     }
@@ -366,25 +389,19 @@ impl<R: gfx::Resources> Render<R> {
     ) where
         C: gfx::CommandBuffer<R>,
     {
+        let mx_vp = Self::set_globals(encoder, cam, &self.terrain.data.globals);
+
         // clear buffers
         encoder.clear(&self.terrain.data.out_color, [0.1, 0.2, 0.3, 1.0]);
         encoder.clear_depth(&self.terrain.data.out_depth, 1.0);
 
         // draw terrain
-        {
-            use cgmath::SquareMatrix;
-            let (wid, het, _, _) = self.terrain.data.out_color.get_dimensions();
-            let cpos: [f32; 3] = cam.loc.into();
-            let mx_vp = cam.get_view_proj();
-            let locals = TerrainLocals {
-                cam_pos: [cpos[0], cpos[1], cpos[2], 1.0],
-                scr_size: [wid as f32, het as f32, 0.0, 0.0],
-                tex_scale: self.terrain_scale,
-                m_vp: mx_vp.into(),
-                m_inv_vp: mx_vp.invert().unwrap().into(),
-            };
-            encoder.update_constant_buffer(&self.terrain.data.locals, &locals);
-        }
+        let (wid, het, _, _) = self.terrain.data.out_color.get_dimensions();
+        let locals = TerrainLocals {
+            scr_size: [wid as f32, het as f32, 0.0, 0.0],
+            tex_scale: self.terrain_scale,
+        };
+        encoder.update_constant_buffer(&self.terrain.data.locals, &locals);
         self.terrain.encode(encoder);
 
         // draw vehicle models
@@ -393,11 +410,10 @@ impl<R: gfx::Resources> Render<R> {
                 encoder,
                 rm.model,
                 rm.transform,
-                cam,
                 &self.object_pso,
                 &mut self.object_data,
                 match rm.debug_shape_scale {
-                    Some(scale) => Some((&mut self.debug, scale)),
+                    Some(scale) => Some((&mut self.debug, scale, &mx_vp)),
                     None => None,
                 },
             );

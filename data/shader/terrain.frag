@@ -1,11 +1,16 @@
 #version 150 core
 
-uniform c_Locals {
-	vec4 u_CamPos;
-	vec4 u_ScreenSize;		// XY = size
-	vec4 u_TextureScale;	// XY = size, Z = height scale, w = number of layers
+uniform c_Globals {
+	vec4 u_CameraPos;
 	mat4 u_ViewProj;
 	mat4 u_InvViewProj;
+	vec4 u_LightPos;
+	vec4 u_LightColor;
+};
+
+uniform c_Locals {
+	vec4 u_ScreenSize;		// XY = size
+	vec4 u_TextureScale;	// XY = size, Z = height scale, w = number of layers
 };
 
 uniform sampler2DArray t_Height;
@@ -119,14 +124,14 @@ struct CastPoint {
 	uint type;
 	vec3 tex_coord;
 	bool is_underground;
-	bool is_shadowed;
+	//bool is_shadowed;
 };
 
 CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
 	vec3 a = cast_ray_to_plane(u_TextureScale.z, base, dir);
 	vec3 c = cast_ray_to_plane(0.0, base, dir);
 	vec3 b = c;
-	Surface suf = cast_ray_impl(a, b, true, 10, 5);
+	Surface suf = cast_ray_impl(a, b, true, 8, 4);
 	CastPoint result;
 	result.type = suf.high_type;
 	result.is_underground = false;
@@ -134,7 +139,7 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
 	if (suf.low_alt <= b.z && b.z < suf.low_alt + suf.delta) {
 		// continue the cast underground
 		a = b; b = c;
-		suf = cast_ray_impl(a, b, false, 6, 4);
+		suf = cast_ray_impl(a, b, false, 6, 3);
 		result.type = suf.low_type;
 		result.is_underground = true;
 	}
@@ -142,18 +147,17 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
 	//float t = a.z > a.w + 0.1 ? (b.w - a.w - b.z + a.z) / (a.z - a.w) : 0.5;
 	result.pos = b;
 	result.tex_coord = suf.tex_coord;
-	result.is_shadowed = suf.is_shadowed;
+	//result.is_shadowed = suf.is_shadowed;
 	return result;
 }
 
-vec4 evaluate_color(CastPoint pt) {
+vec4 evaluate_color(CastPoint pt, float lit_factor) {
 	float terrain = float(pt.type) + 0.5;
 	float diff = textureOffset(t_Height, pt.tex_coord, ivec2(1, 0)).x -
 				 textureOffset(t_Height, pt.tex_coord, ivec2(-1, 0)).x;
 	float light_clr = texture(t_Table, vec3(0.5 * diff + 0.5, 0.25, terrain)).x;
 	float tmp = light_clr - c_HorFactor * (1.0 - pt.pos.z / u_TextureScale.z);
-	float shadow_koeff = pt.is_shadowed ? 0.25 : 0.5;
-	float color_id = texture(t_Table, vec3(shadow_koeff * tmp + 0.5, 0.75, terrain)).x;
+	float color_id = texture(t_Table, vec3(0.5 * lit_factor * tmp + 0.5, 0.75, terrain)).x;
 	return texture(t_Palette, color_id);
 }
 
@@ -163,10 +167,23 @@ void main() {
 	vec4 sp_zero = u_InvViewProj * vec4(0.0, 0.0, -1.0, 1.0);
 	vec3 near_plane = sp_world.xyz / sp_world.w;
 	vec3 view_base = u_ViewProj[2][3] == 0.0 ? sp_zero.xyz/sp_zero.w : near_plane;
-	vec3 view = normalize(view_base - u_CamPos.xyz);
+	vec3 view = normalize(view_base - u_CameraPos.xyz);
 
 	CastPoint pt = cast_ray_to_map(near_plane, view);
-	vec4 frag_color = evaluate_color(pt);
+	float lit_factor;
+	if (pt.is_underground) {
+		lit_factor = 0.25;
+	} else {
+		vec3 light_vec = normalize(u_LightPos.xyz - pt.pos * u_LightPos.w);
+		vec3 a = pt.pos;
+		vec3 outside = cast_ray_to_plane(u_TextureScale.z, a, light_vec);
+		vec3 b = outside;
+		Surface suf = cast_ray_impl(a, b, true, 4, 4);
+		lit_factor = b == outside ? 1.0 : 0.5;
+	}
+
+	vec4 frag_color = evaluate_color(pt, lit_factor);
+
 	if (pt.type == TERRAIN_WATER) {
 		vec3 a = pt.pos;
 		vec2 variance = mod(a.xy, c_ReflectionVariance);
@@ -179,8 +196,8 @@ void main() {
 			other.pos = b;
 			other.type = suf.high_type;
 			other.tex_coord = suf.tex_coord;
-			other.is_shadowed = suf.is_shadowed;
-			frag_color += c_ReflectionPower * evaluate_color(other);
+			//other.is_shadowed = suf.is_shadowed;
+			frag_color += c_ReflectionPower * evaluate_color(other, 0.8);
 		}
 	}
 	Target0 = frag_color;

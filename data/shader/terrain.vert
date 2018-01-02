@@ -1,11 +1,11 @@
 #version 150 core
 
-uniform c_Locals {
-	vec4 u_CamPos;
-	vec4 u_ScreenSize;
-	vec4 u_TextureScale;
+uniform c_Globals {
+	vec4 u_CameraPos;
 	mat4 u_ViewProj;
 	mat4 u_InvViewProj;
+	vec4 u_LightPos;
+	vec4 u_LightColor;
 };
 
 in ivec4 a_Pos;
