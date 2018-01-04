@@ -107,15 +107,13 @@ Surface cast_ray_impl(
 	bool high, int num_forward, int num_binary
 ) {
 	vec3 step = (1.0 / float(num_forward + 1)) * (b - a);
-	Surface result;
 
 	for (int i = 0; i < num_forward; ++i) {
 		vec3 c = a + step;
 		Surface suf = get_surface(c.xy);
 
 		float height = mix(suf.low_alt, suf.high_alt, high);
-		if (c.z < height) {
-			result = suf;
+		if (c.z <= height) {
 			b = c;
 			break;
 		} else {
@@ -123,14 +121,16 @@ Surface cast_ray_impl(
 		}
 	}
 
+	Surface result = get_surface(b.xy);
+
 	for (int i = 0; i < num_binary; ++i) {
 		vec3 c = mix(a, b, 0.5);
 		Surface suf = get_surface(c.xy);
 
 		float height = mix(suf.low_alt, suf.high_alt, high);
-		if (c.z < height) {
-			result = suf;
+		if (c.z <= height) {
 			b = c;
+			result = suf;
 		} else {
 			a = c;
 		}
@@ -158,7 +158,7 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
 	result.type = suf.high_type;
 	result.is_underground = false;
 
-	if (suf.low_alt <= b.z && b.z < suf.low_alt + suf.delta) {
+	if (suf.delta != 0.0 && b.z < suf.low_alt + suf.delta) {
 		// continue the cast underground
 		a = b; b = c;
 		suf = cast_ray_impl(a, b, false, 6, 3);
@@ -166,7 +166,6 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
 		result.is_underground = true;
 	}
 
-	//float t = a.z > a.w + 0.1 ? (b.w - a.w - b.z + a.z) / (a.z - a.w) : 0.5;
 	result.pos = b;
 	result.tex_coord = suf.tex_coord;
 	//result.is_shadowed = suf.is_shadowed;
@@ -213,7 +212,7 @@ void main() {
 		vec3 outside = cast_ray_to_plane(u_TextureScale.z, a, light_vec);
 		vec3 b = outside;
 
-		Surface suf = cast_ray_impl(a, b, true, 4, 4);
+		cast_ray_impl(a, b, true, 4, 4);
 		lit_factor = b == outside ? 1.0 : 0.5;
 	}
 
@@ -233,7 +232,7 @@ void main() {
 			other.type = suf.high_type;
 			other.tex_coord = suf.tex_coord;
 			//other.is_shadowed = suf.is_shadowed;
-			frag_color += c_ReflectionPower * evaluate_color(other, 0.8);
+			//frag_color += c_ReflectionPower * evaluate_color(other, 0.8);
 		}
 	}
 	Target0 = frag_color;
