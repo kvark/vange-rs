@@ -441,7 +441,7 @@ impl<R: gfx::Resources> Render<R> {
             .create_texture_immutable::<gfx::format::Srgba8>(tex::Kind::D1(0x100), tex::Mipmap::Provided, &[data])
             .unwrap();
         let sampler = factory.create_sampler(tex::SamplerInfo::new(
-            tex::FilterMethod::Bilinear,
+            tex::FilterMethod::Scale,
             tex::WrapMode::Clamp,
         ));
         (view, sampler)

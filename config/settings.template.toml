@@ -3,7 +3,7 @@
 
 [game]
 level = "Fostral" # see `wrlds.dat` for the list
-cycle = "Plump-up" # see `bunches.prm` for the list, leave empty for bonus worlds
+cycle = "Eleerection" # see `bunches.prm` for the list, leave empty for bonus worlds
 view = "Perspective" # can be "Flat" or "Perspective"
 
 [game.other]

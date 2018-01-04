@@ -12,6 +12,7 @@ pub struct Cycle {
     pub palette_path: String,
 }
 
+#[derive(Debug)]
 pub struct Bunch {
     pub escave: String,
     pub bios: String,
