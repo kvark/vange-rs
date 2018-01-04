@@ -166,7 +166,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             for (i, out) in lcm.iter_mut().enumerate() {
                 let jj = mat.jj * (i as f32 - 255.5);
                 let v = (dx * sd - jj) / ((1.0 + sd * sd) * (dx * dx + jj * jj)).sqrt();
-                *out = (v.max(0.0).min(1.0) * 255.0) as u8;
+                *out = (v.max(0.0).min(1.0) * 65535.0) as u16;
             }
         }
     }
@@ -175,7 +175,12 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     // First line corresponds to `lightCLR` table of the original,
     // which is computed in `light_clr_material` here.
     // Second line corresponds to `palCLR` of the original.
+    // Note: we use R16Unorm format to store fractional indices
+    // into the palette, allowing smoother transitions.
     let mut color_table = [[0; 0x400]; level::NUM_TERRAINS];
+    let word = |byte: u8| {
+        ((byte as usize * 0xFFFF) / 0xFF) as u16
+    };
     for (ct, (terr, &mid)) in color_table
         .iter_mut()
         .zip(level.terrains.iter().zip(TERRAIN_MATERIAL.iter()))
@@ -187,12 +192,15 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             *c = *lcm;
         }
         for c in ct[0x200 .. 0x300].iter_mut() {
-            *c = terr.colors.start;
+            *c = word(terr.colors.start) + 0x7F; //round to the texel center
         }
-        let color_num = (terr.colors.end - terr.colors.start) as usize;
+        let start = terr.colors.start as usize * 0xFFFF;
+        let end = terr.colors.end as usize * 0xFFFF;
         for (j, c) in ct[0x300 .. 0x400].iter_mut().enumerate() {
             //TODO: separate case for the first terrain type
-            *c = terr.colors.start + ((j * color_num) / 0x100) as u8;
+            let offset = ((end - start) * j) / 0x100;
+            // has to be in (start+0x7F) .. (end-0x80)
+            *c = ((start + offset.max(0x7F)).min(end - 0x80) / 0xFF) as _;
         }
     }
 
@@ -231,7 +239,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         .create_texture_immutable::<(format::R8, format::Uint)>(kind, tex::Mipmap::Provided, &meta_chunks)
         .unwrap();
     let (_, table) = factory
-        .create_texture_immutable::<(format::R8, format::Unorm)>(table_kind, tex::Mipmap::Provided, &table_chunks)
+        .create_texture_immutable::<(format::R16, format::Unorm)>(table_kind, tex::Mipmap::Provided, &table_chunks)
         .unwrap();
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale,
