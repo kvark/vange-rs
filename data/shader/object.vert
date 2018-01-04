@@ -26,8 +26,10 @@ out vec3 v_Light;
 void main() {
 	vec4 world = u_Model * a_Pos;
 	gl_Position = u_ViewProj * world;
+
 	uvec2 color_params = texelFetch(t_ColorTable, int(a_ColorIndex), 0).xy;
 	v_Color = texelFetch(t_Palette, int(color_params[0]), 0);
+
 	vec3 n = normalize(a_Normal.xyz);
 	v_Normal = mat3(u_Model) * n;
 	v_Light = u_LightPos.xyz - world.xyz * u_LightPos.w;  

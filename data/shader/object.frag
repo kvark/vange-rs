@@ -22,5 +22,6 @@ void main() {
 	vec3 light_dir = normalize(v_Light);
 	float n_dot_l = max(0.0, dot(normal, light_dir));
 	float kd = c_Ambient + c_Diffuse * n_dot_l;
+
 	Target0 = v_Color * (c_Emissive + kd * u_LightColor);
 }
