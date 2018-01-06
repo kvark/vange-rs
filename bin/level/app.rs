@@ -39,7 +39,10 @@ impl<R: gfx::Resources> LevelView<R> {
             let escaves = config::escaves::load(settings.open_relative("escaves.prm"));
             let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
 
-            let ini_name = &worlds[&settings.game.level];
+            let ini_name = worlds.get(&settings.game.level)
+                .expect(&format!("Unable to find the world, supported: {:?}",
+                    worlds.keys().collect::<Vec<_>>()
+                ));
             let ini_path = settings.data_path.join(ini_name);
             info!("Using level {}", ini_name);
 
@@ -50,7 +53,7 @@ impl<R: gfx::Resources> LevelView<R> {
                 let escave = escaves
                     .iter()
                     .find(|e| e.world == settings.game.level)
-                    .expect(&format!("Unable to find the world, supported: {:?}",
+                    .expect(&format!("Unable to find the escave for this world, supported: {:?}",
                         escaves.iter().map(|e| &e.world).collect::<Vec<_>>()
                     ));
                 let bunch = {
@@ -121,7 +124,7 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
         self.render.resize(targets);
     }
 
-    fn on_mouse_move(&mut self, position: (f64, f64)){
+    fn on_cursor_move(&mut self, position: (f64, f64)){
         if !self.mouse_button_pressed {
             return;
         }

@@ -89,10 +89,19 @@ impl Dynamo {
         &mut self,
         delta: config::common::Traction,
     ) {
+        self.traction = (self.traction + delta)
+            .min(MAX_TRACTION)
+            .max(-MAX_TRACTION);
+    }
+
+    pub fn slow_down(
+        &mut self,
+        delta: config::common::Traction,
+    ) {
         let old = self.traction;
-        self.traction = (old + delta).min(MAX_TRACTION).max(-MAX_TRACTION);
+        self.change_traction(delta * -old.signum());
         if old * self.traction < 0.0 {
-            self.traction = 0.0; // full stop
+            self.traction = 0.0;
         }
     }
 }
@@ -502,7 +511,5 @@ pub fn step<R: gfx::Resources>(
         dynamo.rudder.0 -= dynamo.rudder.0.signum() * change.abs();
     }
     // slow down
-    let traction_step = -dynamo.traction.signum() * dt;
-    dynamo
-        .change_traction(traction_step * common.car.traction_decr);
+    dynamo.slow_down(dt * common.car.traction_decr);
 }
