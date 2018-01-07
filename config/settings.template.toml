@@ -1,3 +1,4 @@
+data_path = ""
 #data_path = "/opt/gog/Vangers/game" #Linux (example)
 #data_path = "/Applications/GOG/Vangers.app/Contents/Resources/game" #OSX
 
@@ -8,6 +9,9 @@ view = "Perspective" # can be "Flat" or "Perspective"
 
 [game.other]
 count = 10 # number of NPC vangers
+
+[game.physics]
+max_quant = 0.05
 
 [car]
 id = "OxidizeMonk"
