@@ -19,11 +19,17 @@ pub struct Other {
 }
 
 #[derive(Deserialize)]
+pub struct Physics {
+    pub max_quant: f32,
+}
+
+#[derive(Deserialize)]
 pub struct Game {
     pub level: String,
     pub cycle: String,
     pub view: View,
     pub other: Other,
+    pub physics: Physics,
 }
 
 #[derive(Deserialize)]

@@ -55,13 +55,7 @@ impl<R: gfx::Resources> Agent<R> {
         }
     }
 
-    fn step(
-        &mut self,
-        dt: f32,
-        level: &level::Level,
-        common: &config::common::Common,
-        line_buffer: Option<&mut render::LineBuffer>,
-    ) {
+    fn apply_control(&mut self, dt: f32, common: &config::common::Common) {
         if self.control.rudder != 0.0 {
             let angle = self.dynamo.rudder.0 +
                 common.car.rudder_step * 2.0 * dt * self.control.rudder;
@@ -74,19 +68,17 @@ impl<R: gfx::Resources> Agent<R> {
                 .change_traction(self.control.motor * dt * common.car.traction_incr);
         }
         if self.control.brake && self.dynamo.traction != 0.0 {
-            self.dynamo.traction *= (config::common::ORIGINAL_FPS as f32 * -dt).exp2();
+            self.dynamo.traction *= (-dt).exp2();
         }
-        let f_turbo = if self.control.turbo {
-            common.global.k_traction_turbo
-        } else {
-            1.0
-        };
-        let f_brake = if self.control.brake {
-            common.global.f_brake_max
-        } else {
-            0.0
-        };
+    }
 
+    fn step(
+        &mut self,
+        dt: f32,
+        level: &level::Level,
+        common: &config::common::Common,
+        line_buffer: Option<&mut render::LineBuffer>,
+    ) {
         physics::step(
             &mut self.dynamo,
             &mut self.transform,
@@ -94,8 +86,8 @@ impl<R: gfx::Resources> Agent<R> {
             &self.car,
             level,
             common,
-            f_turbo,
-            f_brake,
+            if self.control.turbo { common.global.k_traction_turbo } else { 1.0 },
+            if self.control.brake { common.global.f_brake_max } else { 0.0 },
             line_buffer,
         )
     }
@@ -116,6 +108,7 @@ pub struct Game<R: gfx::Resources> {
     level: level::Level,
     agents: Vec<Agent<R>>,
     cam: space::Camera,
+    max_quant: f32,
     spin_hor: f32,
     spin_ver: f32,
     is_paused: bool,
@@ -218,6 +211,7 @@ impl<R: gfx::Resources> Game<R> {
                     }
                 },
             },
+            max_quant: settings.game.physics.max_quant,
             spin_hor: 0.0,
             spin_ver: 0.0,
             is_paused: false,
@@ -314,9 +308,6 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
     }
 
     fn update(&mut self, delta: f32) {
-        let dt = delta * self.db.common.nature.num_calls_analysis as f32;
-        //let dt = 0.092;
-
         let pid = self.agents
             .iter()
             .position(|a| a.spirit == Spirit::Player)
@@ -327,7 +318,7 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
             if let Some(tick) = self.tick.take() {
                 self.line_buffer.clear();
                 player.step(
-                    tick * dt,
+                    tick * self.max_quant,
                     &self.level,
                     &self.db.common,
                     Some(&mut self.line_buffer),
@@ -345,14 +336,14 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
             if true {
                 self.cam.follow(
                     &self.agents[pid].transform,
-                    dt,
+                    delta,
                     &space::Follow {
                         transform: cgmath::Decomposed {
                             disp: cgmath::vec3(0.0, -300.0, 500.0),
                             rot: cgmath::Quaternion::from_angle_x(cgmath::Rad(0.7)),
                             scale: 1.0,
                         },
-                        speed: 0.5,
+                        speed: 100.0,
                         fix_z: true,
                     },
                 );
@@ -366,7 +357,34 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
                 );
             }
 
+            const TIME_HACK: f32 = 0.5; //TODO: ...
+            let input_factor = TIME_HACK * delta / config::common::MAIN_LOOP_TIME;
+            let mut physics_dt = TIME_HACK * delta * {
+                let n = &self.db.common.nature;
+                let fps = self.db.common.speed.standard_frame_rate as f32;
+                fps * n.time_delta0 * n.num_calls_analysis as f32
+            };
+
             self.line_buffer.clear();
+
+            for a in self.agents.iter_mut() {
+                a.apply_control(
+                    input_factor,
+                    &self.db.common,
+                );
+            }
+
+            while physics_dt > self.max_quant {
+                for a in self.agents.iter_mut() {
+                    a.step(
+                        self.max_quant,
+                        &self.level,
+                        &self.db.common,
+                        None,
+                    );
+                }
+                physics_dt -= self.max_quant;
+            }
 
             for a in self.agents.iter_mut() {
                 let lbuf = match a.spirit {
@@ -374,7 +392,7 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
                     Spirit::Other => None,
                 };
                 a.step(
-                    dt,
+                    physics_dt,
                     &self.level,
                     &self.db.common,
                     lbuf,

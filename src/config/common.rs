@@ -1,8 +1,7 @@
 use config::text::Reader;
 use std::fs::File;
 
-pub const ORIGINAL_FPS: u8 = 14; //TODO: read from PRM
-pub const SPEED_CORRECTION_FACTOR: f32 = 1.0; // it is in the config, but the original game uses a hard-coded 1.0
+pub const MAIN_LOOP_TIME: f32 = 0.05; //TODO: why?
 
 pub type Traction = f32;
 pub type Angle = f32;
@@ -114,6 +113,11 @@ pub struct Contact {
     pub k_friction_spring: f32,
 }
 
+pub struct Speed {
+    pub standard_frame_rate: u32,
+    pub speed_correction_tau: f32,
+}
+
 pub struct Common {
     pub nature: Nature,
     pub impulse: Impulse,
@@ -124,6 +128,7 @@ pub struct Common {
     pub terrain: Terrain,
     pub mole: Mole,
     pub contact: Contact,
+    pub speed: Speed,
 }
 
 fn get_pair(
@@ -260,5 +265,10 @@ pub fn load(file: File) -> Common {
             k_friction_wheel_z: fi.next_key_value("k_friction_wheel_z:"),
             k_friction_spring: fi.next_key_value("k_friction_spring:"),
         },
+        //TODO: actually read from the config
+        speed: Speed {
+            standard_frame_rate: 14,
+            speed_correction_tau: 1.6e-2,
+        }
     }
 }
