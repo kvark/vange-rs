@@ -108,7 +108,7 @@ impl Dynamo {
 
 
 pub fn get_height(altitude: u8) -> f32 {
-    altitude as f32 * (level::HEIGHT_SCALE as f32) / 256.0
+    altitude as f32 * (level::HEIGHT_SCALE as f32) / 255.0
 }
 
 fn collide_low(
@@ -124,22 +124,25 @@ fn collide_low(
         let sp = cgmath::Point3::from(*s).cast::<f32>();
         let pos = transform.transform_point(sp * scale).to_vec();
         let texel = level.get((pos.x as i32, pos.y as i32));
-        let lo_alt = texel.low.0;
-        let height = match texel.high {
-            Some((delta, hi_alt, _)) => {
-                let middle = get_height(lo_alt.saturating_add(delta));
+        let height = match texel {
+            level::Texel::Single(point) => {
+                get_height(point.0)
+            }
+            level::Texel::Dual { high, low, .. } => {
+                // see `GET_MIDDLE_HIGHT` macro
+                let extra_room = if high.0.saturating_sub(low.0) > 130 { 110 } else { 48 };
+                let middle = get_height(low.0.saturating_add(extra_room));
                 if pos.z > middle {
-                    let high = get_height(hi_alt);
-                    if pos.z - middle > high - pos.z {
-                        high
+                    let top = get_height(high.0);
+                    if pos.z - middle > top - pos.z {
+                        top
                     } else {
                         continue;
                     }
                 } else {
-                    get_height(lo_alt)
+                    get_height(low.0)
                 }
             }
-            None => get_height(lo_alt),
         };
         let dz = height - pos.z;
         //debug!("\t\t\tSample h={:?} at {:?}, dz={}", height, pos, dz);
@@ -267,14 +270,17 @@ pub fn step<R: gfx::Resources>(
         );
         //let vr = v_vel + w_vel.cross(r);
         //let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
-        let texel = level.get((rglob.x as i32, rglob.y as i32));
-        if texel.low.1 == level::TerrainType::Water {
-            let dz = flood_level - rglob.z;
-            if dz > 0.0 {
-                float_count += 1;
-                water_immersion += dz;
-            }
-        }
+        match level.get((rglob.x as i32, rglob.y as i32)) {
+            level::Texel::Single(level::Point(_, level::TerrainType::Water)) |
+            level::Texel::Dual { low: level::Point(_, level::TerrainType::Water), ..} => {
+                let dz = flood_level - rglob.z;
+                if dz > 0.0 {
+                    float_count += 1;
+                    water_immersion += dz;
+                }
+            },
+            _ => {}
+        };
         let poly_norm = cgmath::Vector3::from(poly.normal).normalize();
         if z_axis.dot(poly_norm) < 0.0 {
             let cdata = collide_low(

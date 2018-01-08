@@ -31,6 +31,7 @@ const uint
 const uint
 	c_DeltaShift = 0U,
 	c_DeltaBits = 2U;
+const float c_DeltaScale = 8.0 / 255.0;
 
 #define TERRAIN_WATER	0U
 
@@ -71,20 +72,20 @@ Surface get_surface(vec2 pos) {
 			suf.high_type = suf.low_type;
 			suf.low_type = get_terrain_type(meta_low);
 
-			delta = get_delta(meta_low) << c_DeltaBits + get_delta(meta);
+			delta = (get_delta(meta_low) << c_DeltaBits) + get_delta(meta);
 		} else {
 			uint meta_high = textureOffset(t_Meta, tc, ivec2(1, 0)).x;
 			suf.tex_coord.x += 1.0 / u_TextureScale.x;
 			suf.high_type = get_terrain_type(meta_high);
 
-			delta = get_delta(meta) << c_DeltaBits + get_delta(meta_high);
+			delta = (get_delta(meta) << c_DeltaBits) + get_delta(meta_high);
 		}
 
 		suf.low_alt =
 			textureOffset(t_Height, suf.tex_coord, ivec2(-1, 0)).x
 			* u_TextureScale.z;
 		suf.high_alt = texture(t_Height, suf.tex_coord).x * u_TextureScale.z;
-		suf.delta = float(delta) / 192.0 * u_TextureScale.z;
+		suf.delta = float(delta) * c_DeltaScale * u_TextureScale.z;
 	} else {
 		suf.high_type = suf.low_type;
 
@@ -232,7 +233,7 @@ void main() {
 			other.type = suf.high_type;
 			other.tex_coord = suf.tex_coord;
 			//other.is_shadowed = suf.is_shadowed;
-			//frag_color += c_ReflectionPower * evaluate_color(other, 0.8);
+			frag_color += c_ReflectionPower * evaluate_color(other, 0.8);
 		}
 	}
 	Target0 = frag_color;

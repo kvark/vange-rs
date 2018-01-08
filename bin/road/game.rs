@@ -40,7 +40,7 @@ impl<R: gfx::Resources> Agent<R> {
         orientation: cgmath::Rad<f32>,
         level: &level::Level,
     ) -> Self {
-        let height = physics::get_height(level.get(coords).get_top()) + 5.; //center offset
+        let height = physics::get_height(level.get(coords).top()) + 5.; //center offset
         Agent {
             _name: name,
             spirit: Spirit::Other,
@@ -357,7 +357,11 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
                 );
             }
 
-            const TIME_HACK: f32 = 0.5; //TODO: ...
+            const TIME_HACK: f32 = 0.5;
+            // Note: the equations below make the game absolutely match the original
+            // in terms of time scale for both input and physics.
+            // However! the game feels much faster, presumably because of the lack
+            // of collision/drag forces that slow you down.
             let input_factor = TIME_HACK * delta / config::common::MAIN_LOOP_TIME;
             let mut physics_dt = TIME_HACK * delta * {
                 let n = &self.db.common.nature;

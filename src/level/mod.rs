@@ -16,10 +16,11 @@ pub enum TerrainType {
 }
 
 pub type Altitude = u8;
-pub type Delta = u8;
+pub type Delta = Altitude;
 const DOUBLE_LEVEL: u8 = 1 << 6;
-const DELTA_BITS: u8 = 2;
-const DELTA_MASK: u8 = (1 << DELTA_BITS) - 1;
+const DELTA_SHIFT0: u8 = 2 + 3;
+const DELTA_SHIFT1: u8 = 0 + 3;
+const DELTA_MASK: u8 = 0x3;
 const TERRAIN_SHIFT: u8 = 3;
 pub const HEIGHT_SCALE: u32 = 64;
 
@@ -32,16 +33,22 @@ pub struct Level {
     pub terrains: [TerrainConfig; NUM_TERRAINS],
 }
 
-pub struct Texel {
-    pub low: (Altitude, TerrainType),
-    pub high: Option<(Delta, Altitude, TerrainType)>,
+pub struct Point(pub Altitude, pub TerrainType);
+
+pub enum Texel {
+    Single(Point),
+    Dual {
+        low: Point,
+        high: Point,
+        delta: Delta,
+    }
 }
 
 impl Texel {
-    pub fn get_top(&self) -> Altitude {
-        match self.high {
-            Some((_, alt, _)) => alt,
-            None => self.low.0,
+    pub fn top(&self) -> Altitude {
+        match *self {
+            Texel::Single(ref p) => p.0,
+            Texel::Dual { ref high, .. } => high.0,
         }
     }
 }
@@ -88,16 +95,15 @@ impl Level {
         if meta & DOUBLE_LEVEL != 0 {
             let meta0 = self.meta[i & !1];
             let meta1 = self.meta[i | 1];
-            let delta = (meta0 & DELTA_MASK) << DELTA_BITS + (meta1 & DELTA_MASK);
-            Texel {
-                low: (self.height[i & !1], get_terrain(meta0)),
-                high: Some((delta, self.height[i | 1], get_terrain(meta1))),
+            let d0 = (meta0 & DELTA_MASK) << DELTA_SHIFT0;
+            let d1 = (meta1 & DELTA_MASK) << DELTA_SHIFT1;
+            Texel::Dual {
+                low: Point(self.height[i & !1], get_terrain(meta0)),
+                high: Point(self.height[i | 1], get_terrain(meta1)),
+                delta: d0 + d1,
             }
         } else {
-            Texel {
-                low: (self.height[i], get_terrain(meta)),
-                high: None,
-            }
+            Texel::Single(Point(self.height[i], get_terrain(meta)))
         }
     }
 }

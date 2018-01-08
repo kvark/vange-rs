@@ -1,7 +1,8 @@
 use config::text::Reader;
 use std::fs::File;
 
-pub const MAIN_LOOP_TIME: f32 = 0.05; //TODO: why?
+// see `src/runtime.h` for original defines
+pub const MAIN_LOOP_TIME: f32 = 0.05;
 
 pub type Traction = f32;
 pub type Angle = f32;
