@@ -104,6 +104,7 @@ struct DataBase<R: gfx::Resources> {
 pub struct Game<R: gfx::Resources> {
     db: DataBase<R>,
     render: render::Render<R>,
+    collider: render::GpuCollider<R>,
     line_buffer: render::LineBuffer,
     level: level::Level,
     agents: Vec<Agent<R>>,
@@ -158,6 +159,7 @@ impl<R: gfx::Resources> Game<R> {
         let depth = 10f32 .. 10000f32;
         let pal_data = level::read_palette(settings.open_palette());
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
+        let collider = render::GpuCollider::new(factory, (256, 256), 400, 1000);
 
         let mut player_agent = Agent::spawn(
             "Player".to_string(),
@@ -190,6 +192,7 @@ impl<R: gfx::Resources> Game<R> {
         Game {
             db,
             render,
+            collider,
             line_buffer: render::LineBuffer::new(),
             level,
             agents,
@@ -408,6 +411,12 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
     fn draw<C: gfx::CommandBuffer<R>>(
         &mut self, encoder: &mut gfx::Encoder<R, C>
     ) {
+        self.collider.reset();
+        for agent in &self.agents {
+            self.collider.add(&agent.car.model.shape, &agent.transform, encoder);
+        }
+        self.collider.process(encoder);
+
         let models = self.agents
             .iter()
             .map(|a| render::RenderModel {
@@ -428,5 +437,6 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
 
     fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
         self.render.reload(factory);
+        self.collider.reload(factory);
     }
 }

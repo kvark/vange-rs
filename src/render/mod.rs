@@ -9,6 +9,7 @@ use space::{Camera, Transform};
 mod collision;
 mod debug;
 
+pub use self::collision::{GpuCollider};
 pub use self::debug::{DebugPos, DebugRender, LineBuffer};
 
 
