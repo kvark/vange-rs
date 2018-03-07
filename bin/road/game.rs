@@ -411,12 +411,13 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
     fn draw<C: gfx::CommandBuffer<R>>(
         &mut self, encoder: &mut gfx::Encoder<R, C>
     ) {
-        //TODO: turn the reset/add/process chain into a single function
-        self.collider.reset(encoder);
-        for agent in &self.agents {
-            self.collider.add(&agent.car.model.shape, &agent.transform, encoder);
-        }
-        self.collider.process(encoder);
+        let _ = {
+            let mut collider = self.collider.start(encoder);
+            for agent in &self.agents {
+                let _ = collider.add(&agent.car.model.shape, &agent.transform);
+            }
+            collider.finish()
+        };
 
         let models = self.agents
             .iter()
