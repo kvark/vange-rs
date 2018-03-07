@@ -277,6 +277,7 @@ impl<'a,
     }
 
     pub fn finish(mut self) -> CollisionResults<R> {
+        self.downsampler.atlas.reset();
         while self.inputs.iter().any(|rect| rect.w > 1 || rect.h > 1) {
             for rect in &mut self.inputs {
                 *rect = self.downsampler.downsample(*rect);
