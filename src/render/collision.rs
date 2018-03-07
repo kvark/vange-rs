@@ -207,27 +207,98 @@ impl<R: gfx::Resources> Downsampler<R> {
 }
 
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Epoch(usize);
 
-pub struct GpuCollider<R: gfx::Resources> {
-    downsampler: Downsampler<R>,
-    pso: gfx::PipelineState<R, collision::Meta>,
-    locals: h::Buffer<R, CollisionLocals>,
-    polys: h::Buffer<R, CollisionPolygon>,
+#[must_use]
+#[derive(Debug, PartialEq)]
+pub struct ShapeId(usize, Epoch);
+
+#[must_use]
+pub struct CollisionResults<R: gfx::Resources> {
+    results: Vec<Rect>,
+    epoch: Epoch,
+    pub view: h::ShaderResourceView<R, CollisionFormatView>,
+}
+
+impl<R: gfx::Resources> ops::Index<ShapeId> for CollisionResults<R> {
+    type Output = Rect;
+    fn index(&self, id: ShapeId) -> &Self::Output {
+        assert_eq!(id.1, self.epoch);
+        &self.results[id.0]
+    }
+}
+
+pub struct CollisionBuilder<'a, R: gfx::Resources, C: 'a> {
+    downsampler: &'a mut Downsampler<R>,
+    encoder: &'a mut gfx::Encoder<R, C>,
+    pso: &'a gfx::PipelineState<R, collision::Meta>,
+    shader_data: collision::Data<R>,
     inputs: Vec<Rect>,
     epoch: Epoch,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ShapeId(usize, Epoch);
+impl<'a,
+    R: gfx::Resources,
+    C: gfx::CommandBuffer<R>,
+> CollisionBuilder<'a, R, C> {
+    pub fn add(
+        &mut self, shape: &Shape<R>, transform: &Transform,
+    ) -> ShapeId {
+        use cgmath;
 
-impl<R: gfx::Resources> ops::Index<ShapeId> for GpuCollider<R> {
-    type Output = Rect;
-    fn index(&self, id: ShapeId) -> &Self::Output {
-        assert_eq!(id.1, self.epoch);
-        &self.inputs[id.0]
+        let size = (
+            (shape.bounds.coord_max[0] - shape.bounds.coord_min[0]) as Size,
+            (shape.bounds.coord_max[1] - shape.bounds.coord_min[1]) as Size,
+        );
+        let rect = self.downsampler.atlas.add(size);
+        self.inputs.push(rect);
+
+        //TODO: build orthographic projection based on the target rect
+
+        self.encoder.update_constant_buffer(
+            &self.shader_data.locals,
+            &CollisionLocals {
+                mvp: cgmath::Matrix4::from(transform.clone()).into(),
+            },
+        );
+
+        let poly_data: Vec<CollisionPolygon> = Vec::new(); //TODO
+        self.encoder
+            .update_buffer(&self.shader_data.polys, &poly_data, 0)
+            .unwrap();
+
+        let debug = shape.debug.as_ref().unwrap(); //TODO
+        self.shader_data.vbuf = debug.bound_vb.clone();
+
+        self.encoder.draw(&debug.bound_slice, self.pso, &self.shader_data);
+
+        ShapeId(self.inputs.len() - 1, self.epoch.clone())
     }
+
+    pub fn finish(mut self) -> CollisionResults<R> {
+        while self.inputs.iter().any(|rect| rect.w > 1 || rect.h > 1) {
+            for rect in &mut self.inputs {
+                *rect = self.downsampler.downsample(*rect);
+            }
+            self.downsampler.flush(&mut self.encoder);
+        }
+
+        CollisionResults {
+            results: self.inputs,
+            epoch: self.epoch,
+            view: self.downsampler.primary.1.clone(),
+        }
+    }
+}
+
+pub struct GpuCollider<R: gfx::Resources> {
+    downsampler: Downsampler<R>,
+    pso: gfx::PipelineState<R, collision::Meta>,
+    dummy_vb: h::Buffer<R, DebugPos>,
+    locals: h::Buffer<R, CollisionLocals>,
+    polys: h::Buffer<R, CollisionPolygon>,
+    epoch: Epoch,
 }
 
 impl<R: gfx::Resources> GpuCollider<R> {
@@ -263,82 +334,9 @@ impl<R: gfx::Resources> GpuCollider<R> {
             pso: Self::create_pso(factory),
             locals: factory.create_constant_buffer(1),
             polys: factory.create_constant_buffer(max_shape_polygons),
-            inputs: Vec::new(),
+            dummy_vb: factory.create_vertex_buffer(&[]),
             epoch: Epoch(0),
         }
-    }
-
-    pub fn reset<C>(
-        &mut self, encoder: &mut gfx::Encoder<R, C>
-    )
-    where
-        C: gfx::CommandBuffer<R>,
-    {
-        self.epoch.0 += 1;
-        self.downsampler.reset();
-        self.inputs.clear();
-
-        encoder.clear(&self.downsampler.primary.0, [0.0; 4]);
-    }
-
-    pub fn add<C>(
-        &mut self,
-        shape: &Shape<R>,
-        transform: &Transform,
-        encoder: &mut gfx::Encoder<R, C>,
-    ) -> ShapeId
-    where
-        C: gfx::CommandBuffer<R>,
-    {
-        use cgmath;
-
-        let size = (
-            (shape.bounds.coord_max[0] - shape.bounds.coord_min[0]) as Size,
-            (shape.bounds.coord_max[1] - shape.bounds.coord_min[1]) as Size,
-        );
-        let rect = self.downsampler.atlas.add(size);
-        self.inputs.push(rect);
-
-        //TODO: build orthographic projection based on the target rect
-
-        encoder.update_constant_buffer(
-            &self.locals,
-            &CollisionLocals {
-                mvp: cgmath::Matrix4::from(transform.clone()).into(),
-            },
-        );
-
-        let poly_data: Vec<CollisionPolygon> = Vec::new(); //TODO
-        encoder
-            .update_buffer(&self.polys, &poly_data, 0)
-            .unwrap();
-
-        let debug = shape.debug.as_ref().unwrap(); //TODO
-
-        encoder.draw(&debug.bound_slice, &self.pso, &collision::Data {
-            vbuf: debug.bound_vb.clone(),
-            locals: self.locals.clone(),
-            polys: self.polys.clone(),
-            destination: self.downsampler.primary.0.clone(),
-        });
-
-        ShapeId(self.inputs.len() - 1, self.epoch.clone())
-    }
-
-    pub fn process<C>(
-        &mut self, encoder: &mut gfx::Encoder<R, C>
-    ) -> h::ShaderResourceView<R, CollisionFormatView>
-    where
-        C: gfx::CommandBuffer<R>,
-    {
-        while self.inputs.iter().any(|rect| rect.w > 1 || rect.h > 1) {
-            for rect in &mut self.inputs {
-                *rect = self.downsampler.downsample(*rect);
-            }
-            self.downsampler.flush(encoder);
-        }
-
-        self.downsampler.primary.1.clone()
     }
 
     pub fn reload<F>(
@@ -348,5 +346,32 @@ impl<R: gfx::Resources> GpuCollider<R> {
     {
         self.pso = Self::create_pso(factory);
         self.downsampler.reload(factory);
+    }
+
+    pub fn start<'a, C>(
+        &'a mut self, encoder: &'a mut gfx::Encoder<R, C>
+    ) -> CollisionBuilder<'a, R, C>
+    where
+        C: gfx::CommandBuffer<R>,
+    {
+        self.epoch.0 += 1;
+        self.downsampler.reset();
+
+        let destination = self.downsampler.primary.0.clone();
+        encoder.clear(&destination, [0.0; 4]);
+
+        CollisionBuilder {
+            downsampler: &mut self.downsampler,
+            encoder,
+            pso: &self.pso,
+            shader_data: collision::Data {
+                vbuf: self.dummy_vb.clone(),
+                locals: self.locals.clone(),
+                polys: self.polys.clone(),
+                destination,
+            },
+            inputs: Vec::new(),
+            epoch: self.epoch.clone(),
+        }
     }
 }
