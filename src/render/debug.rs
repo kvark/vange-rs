@@ -5,7 +5,7 @@ use gfx;
 pub use gfx::pso::buffer::{InstanceRate, VertexBufferCommon};
 use gfx::traits::FactoryExt; // reduce the line width at use site
 
-use super::{read_file, ColorFormat, DepthFormat, MainTargets};
+use super::{read_shaders, ColorFormat, DepthFormat, MainTargets};
 use config::settings;
 use model;
 
@@ -174,11 +174,10 @@ impl<R: gfx::Resources> DebugRender<R> {
         &mut self,
         factory: &mut F,
     ) {
+        let (vs, fs) = read_shaders("debug")
+            .unwrap();
         let program = factory
-            .link_program(
-                &read_file("data/shader/debug.vert"),
-                &read_file("data/shader/debug.frag"),
-            )
+            .link_program(&vs, &fs)
             .unwrap();
         let raster = gfx::state::Rasterizer::new_fill();
 

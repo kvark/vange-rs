@@ -6,6 +6,8 @@ use {level, model};
 use config::settings;
 use space::{Camera, Transform};
 
+use std::io::Error as IoError;
+
 mod collision;
 mod debug;
 
@@ -141,13 +143,38 @@ pub struct RenderModel<'a, R: gfx::Resources> {
 }
 
 #[doc(hidden)]
-pub fn read_file(name: &str) -> Vec<u8> {
+pub fn read_shaders(name: &str) -> Result<(Vec<u8>, Vec<u8>), IoError> {
     use std::fs::File;
-    use std::io::{BufReader, Read};
-    let mut buf = Vec::new();
-    let mut file = BufReader::new(File::open(name).unwrap());
-    file.read_to_end(&mut buf).unwrap();
-    buf
+    use std::io::{BufReader, Read, Write};
+    use std::path::PathBuf;
+
+    let path = PathBuf::from("data")
+        .join("shader")
+        .join(name)
+        .with_extension("glsl");
+    if !path.is_file() {
+        panic!("Shader not found: {:?}", path);
+    }
+    let mut code = format!("// shader: {}\n\n", name);
+    let mut file = BufReader::new(File::open(&path)?);
+    file.read_to_string(&mut code)?;
+
+    let mut buf_vs = Vec::new();
+    write!(buf_vs, "#version 150 core\n")?;
+    write!(buf_vs, "#define SHADER_VS\n")?;
+    write!(buf_vs, "{}", code
+        .replace("attribute", "in")
+        .replace("varying", "out")
+    )?;
+
+    let mut buf_fs = Vec::new();
+    write!(buf_fs, "#version 150 core\n")?;
+    write!(buf_fs, "#define SHADER_FS\n")?;
+    write!(buf_fs, "{}", code
+        .replace("varying", "in")
+    )?;
+
+    Ok((buf_vs, buf_fs))
 }
 
 pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
@@ -472,11 +499,10 @@ impl<R: gfx::Resources> Render<R> {
     fn create_terrain_pso<F: gfx::Factory<R>>(
         factory: &mut F,
     ) -> gfx::PipelineState<R, terrain::Meta> {
+        let (vs, fs) = read_shaders("terrain")
+            .unwrap();
         let program = factory
-            .link_program(
-                &read_file("data/shader/terrain.vert"),
-                &read_file("data/shader/terrain.frag"),
-            )
+            .link_program(&vs, &fs)
             .unwrap();
         factory
             .create_pipeline_from_program(
@@ -491,11 +517,10 @@ impl<R: gfx::Resources> Render<R> {
     pub fn create_object_pso<F: gfx::Factory<R>>(
         factory: &mut F,
     ) -> gfx::PipelineState<R, object::Meta> {
+        let (vs, fs) = read_shaders("object")
+            .unwrap();
         let program = factory
-            .link_program(
-                &read_file("data/shader/object.vert"),
-                &read_file("data/shader/object.frag"),
-            )
+            .link_program(&vs, &fs)
             .unwrap();
         // no culling because the old rasterizer was not polygonal
         factory

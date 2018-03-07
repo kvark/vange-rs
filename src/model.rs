@@ -168,18 +168,29 @@ fn read_vec<I: ReadBytesExt>(source: &mut I) -> [f32; 3] {
 pub struct Bounds {
     pub coord_min: [i32; 3],
     pub coord_max: [i32; 3],
-    pub max_radius: i32,
 }
 
-fn read_bounds<I: ReadBytesExt>(source: &mut I) -> Bounds {
-    let mut b = [0i32; 7];
-    for b in &mut b {
-        *b = source.read_i32::<E>().unwrap();
+impl Bounds {
+    fn read<I: ReadBytesExt>(source: &mut I) -> Self {
+        let mut b = [0i32; 6];
+        for b in &mut b {
+            *b = source.read_i32::<E>().unwrap();
+        }
+        Bounds {
+            coord_min: [b[3], b[4], b[5]],
+            coord_max: [b[0], b[1], b[2]],
+        }
     }
-    Bounds {
-        coord_min: [b[0], b[1], b[2]],
-        coord_max: [b[3], b[4], b[5]],
-        max_radius: b[6],
+
+    fn read_short<I: ReadBytesExt>(source: &mut I) -> Self {
+        let mut b = [0i32; 3];
+        for b in &mut b {
+            *b = source.read_i32::<E>().unwrap() / 2;
+        }
+        Bounds {
+            coord_min: [-b[0], -b[1], -b[2]],
+            coord_max: [b[0], b[1], b[2]],
+        }
     }
 }
 
@@ -417,7 +428,7 @@ where
         polygons: Vec::with_capacity(num_polygons as usize),
         samples: Vec::new(),
         debug: None,
-        bounds: read_bounds(source),
+        bounds: Bounds::read(source),
     };
     debug!("\tBounds {:?}", shape.bounds);
 
@@ -552,20 +563,20 @@ where
     F: gfx::traits::FactoryExt<R>,
 {
     debug!("\tReading the body...");
-    let bounds = read_bounds(source);
     let mut model = Model {
         body: load_c3d(source, factory),
         shape: Shape {
             polygons: Vec::new(),
             samples: Vec::new(),
             debug: None,
-            bounds,
+            bounds: Bounds::read_short(source),
         },
         color: [0, 0],
         wheels: Vec::new(),
         debris: Vec::new(),
         slots: Vec::new(),
     };
+    let _max_radius = source.read_u32::<E>().unwrap();
     let num_wheels = source.read_u32::<E>().unwrap();
     let num_debris = source.read_u32::<E>().unwrap();
     model.color = [
