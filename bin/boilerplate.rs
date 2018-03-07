@@ -43,6 +43,10 @@ impl Harness {
         let context_build = glutin::ContextBuilder::new()
             .with_gl_profile(glutin::GlProfile::Core)
             .with_vsync(true);
+        #[cfg(target_os = "linux")]
+        let events_loop = <glutin::EventsLoop as glutin::os::unix::EventsLoopExt>::new_x11()
+            .unwrap();
+        #[cfg(not(target_os = "linux"))]
         let events_loop = glutin::EventsLoop::new();
         let (window, device, factory, color, depth) = gfx_window_glutin::init(
             win_builder,
