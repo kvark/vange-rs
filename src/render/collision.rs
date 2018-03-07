@@ -1,13 +1,13 @@
 use model::Shape;
 use render::{DebugPos, read_file};
+use space::Transform;
 
-use cgmath;
 use gfx::{self, handle as h};
 use gfx::Rect;
 use gfx::texture::Size;
 use gfx::traits::FactoryExt;
 
-use std::mem;
+use std::{mem, ops};
 
 
 pub type CollisionFormat = gfx::format::Rgba32F;
@@ -197,10 +197,21 @@ impl<R: gfx::Resources> Downsampler<R> {
         mem::swap(&mut self.primary, &mut self.secondary);
         self.reset();
     }
+
+    pub fn reload<F>(
+        &mut self, factory: &mut F
+    ) where
+        F: gfx::Factory<R>
+    {
+        self.pso = Self::create_pso(factory);
+    }
 }
 
 
-struct GpuCollider<R: gfx::Resources> {
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct Epoch(usize);
+
+pub struct GpuCollider<R: gfx::Resources> {
     downsampler: Downsampler<R>,
     pso: gfx::PipelineState<R, collision::Meta>,
     locals: h::Buffer<R, CollisionLocals>,
@@ -209,10 +220,16 @@ struct GpuCollider<R: gfx::Resources> {
     epoch: Epoch,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Epoch(usize);
-
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ShapeId(usize, Epoch);
+
+impl<R: gfx::Resources> ops::Index<ShapeId> for GpuCollider<R> {
+    type Output = Rect;
+    fn index(&self, id: ShapeId) -> &Self::Output {
+        assert_eq!(id.1, self.epoch);
+        &self.inputs[id.0]
+    }
+}
 
 impl<R: gfx::Resources> GpuCollider<R> {
     fn create_pso<F: gfx::Factory<R>>(
@@ -262,12 +279,14 @@ impl<R: gfx::Resources> GpuCollider<R> {
     pub fn add<C>(
         &mut self,
         shape: &Shape<R>,
-        transform: cgmath::Matrix4<f32>,
+        transform: &Transform,
         encoder: &mut gfx::Encoder<R, C>,
     ) -> ShapeId
     where
         C: gfx::CommandBuffer<R>,
     {
+        use cgmath;
+
         let size = (
             (shape.bounds.coord_max[0] - shape.bounds.coord_min[0]) as Size,
             (shape.bounds.coord_max[1] - shape.bounds.coord_min[1]) as Size,
@@ -280,7 +299,7 @@ impl<R: gfx::Resources> GpuCollider<R> {
         encoder.update_constant_buffer(
             &self.locals,
             &CollisionLocals {
-                mvp: transform.into(),
+                mvp: cgmath::Matrix4::from(transform.clone()).into(),
             },
         );
 
@@ -317,8 +336,12 @@ impl<R: gfx::Resources> GpuCollider<R> {
         self.downsampler.primary.1.clone()
     }
 
-    pub fn retrieve(&self, id: ShapeId) -> Rect {
-        assert_eq!(id.1, self.epoch);
-        self.inputs[id.0]
+    pub fn reload<F>(
+        &mut self, factory: &mut F
+    ) where
+        F: gfx::Factory<R>
+    {
+        self.pso = Self::create_pso(factory);
+        self.downsampler.reload(factory);
     }
 }
