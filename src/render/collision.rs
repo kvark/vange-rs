@@ -1,5 +1,5 @@
 use model::Shape;
-use render::{DebugPos, read_file};
+use render::{DebugPos, read_shaders};
 use space::Transform;
 
 use gfx::{self, handle as h};
@@ -15,7 +15,7 @@ pub type CollisionFormatView = <CollisionFormat as gfx::format::Formatted>::View
 
 gfx_defines!{
     constant CollisionLocals {
-        mvp: [[f32; 4]; 4] = "u_Mvp",
+        mvp: [[f32; 4]; 4] = "u_ModelViewProj",
     }
 
     constant CollisionPolygon {
@@ -103,11 +103,10 @@ impl<R: gfx::Resources> Downsampler<R> {
     fn create_pso<F: gfx::Factory<R>>(
         factory: &mut F,
     ) -> gfx::PipelineState<R, downsample::Meta> {
+        let (vs, fs) = read_shaders("downsample")
+            .unwrap();
         let program = factory
-            .link_program(
-                &read_file("data/shader/downsample.vert"),
-                &read_file("data/shader/downsample.frag"),
-            )
+            .link_program(&vs, &fs)
             .unwrap();
         factory
             .create_pipeline_from_program(
@@ -235,11 +234,10 @@ impl<R: gfx::Resources> GpuCollider<R> {
     fn create_pso<F: gfx::Factory<R>>(
         factory: &mut F,
     ) -> gfx::PipelineState<R, collision::Meta> {
+        let (vs, fs) = read_shaders("collision")
+            .unwrap();
         let program = factory
-            .link_program(
-                &read_file("data/shader/collision.vert"),
-                &read_file("data/shader/collision.frag"),
-            )
+            .link_program(&vs, &fs)
             .unwrap();
         factory
             .create_pipeline_from_program(
@@ -270,10 +268,17 @@ impl<R: gfx::Resources> GpuCollider<R> {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub fn reset<C>(
+        &mut self, encoder: &mut gfx::Encoder<R, C>
+    )
+    where
+        C: gfx::CommandBuffer<R>,
+    {
         self.epoch.0 += 1;
         self.downsampler.reset();
         self.inputs.clear();
+
+        encoder.clear(&self.downsampler.primary.0, [0.0; 4]);
     }
 
     pub fn add<C>(
