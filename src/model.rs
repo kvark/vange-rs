@@ -44,6 +44,7 @@ pub struct Shape<R: gfx::Resources> {
     pub polygons: Vec<Polygon>,
     pub samples: Vec<RawVertex>,
     pub debug: Option<DebugShape<R>>,
+    pub bounds: Bounds,
 }
 
 #[derive(Clone)]
@@ -96,36 +97,61 @@ impl Tessellator {
         corners: &[DebugPos],
         _middle: RawVertex,
     ) -> &[RawVertex] {
+        let go_deeper = false;
         self.samples.clear();
         //self.samples.push(middle);
-        let mid = corners
+        let mid_sum = corners
             .iter()
             .fold([0f32; 3], |sum, cur| [
                 sum[0] + cur.pos[0],
                 sum[1] + cur.pos[1],
                 sum[2] + cur.pos[2],
             ]);
-        let div = 0.5f32 / corners.len() as f32;
-        let half_mid = [
-            (mid[0] * div) as i8,
-            (mid[1] * div) as i8,
-            (mid[2] * div) as i8,
-        ];
-        self.samples.extend(corners.iter().map(|c| {
-            [
-                (0.5 * c.pos[0]) as i8 + half_mid[0],
-                (0.5 * c.pos[1]) as i8 + half_mid[1],
-                (0.5 * c.pos[2]) as i8 + half_mid[2],
-            ]
-        }));
-        /*
-        self.samples.extend(corners.iter().map(|dv| {
-            [
-                ((dv.pos[0] as i8) / 3 * 2 + middle[0] / 3),
-                ((dv.pos[1] as i8) / 3 * 2 + middle[1] / 3),
-                ((dv.pos[2] as i8) / 3 * 2 + middle[2] / 3),
-            ]
-        }));*/
+        if go_deeper {
+            let corner_ratio = 0.66f32;
+            let div = (1.0 - corner_ratio) / corners.len() as f32;
+            let mid_rationed = [
+                (mid_sum[0] * div) as i8,
+                (mid_sum[1] * div) as i8,
+                (mid_sum[2] * div) as i8,
+            ];
+            let ring1 = corners.iter().map(|c| {
+                [
+                    (corner_ratio * c.pos[0]) as i8 + mid_rationed[0],
+                    (corner_ratio * c.pos[1]) as i8 + mid_rationed[1],
+                    (corner_ratio * c.pos[2]) as i8 + mid_rationed[2],
+                ]
+            }).collect::<Vec<_>>();
+            self.samples.extend((0 .. corners.len()).map(|i| {
+                let c0 = &ring1[i];
+                let c1 = &ring1[(i+1)%corners.len()];
+                [
+                    c0[0] / 2 + c1[0] / 2,
+                    c0[1] / 2 + c1[1] / 2,
+                    c0[2] / 2 + c1[2] / 2,
+                ]
+            }));
+            self.samples.extend(ring1);
+            self.samples.push([
+                (mid_sum[0] / corners.len() as f32) as i8,
+                (mid_sum[1] / corners.len() as f32) as i8,
+                (mid_sum[2] / corners.len() as f32) as i8,
+            ]);
+        } else {
+            let div = 0.5 / corners.len() as f32;
+            let mid_half = [
+                (mid_sum[0] * div) as i8,
+                (mid_sum[1] * div) as i8,
+                (mid_sum[2] * div) as i8,
+            ];
+            self.samples.extend(corners.iter().map(|c| {
+                [
+                    (0.5 * c.pos[0]) as i8 + mid_half[0],
+                    (0.5 * c.pos[1]) as i8 + mid_half[1],
+                    (0.5 * c.pos[2]) as i8 + mid_half[2],
+                ]
+            }));
+        }
         &self.samples
     }
 }
@@ -136,6 +162,25 @@ fn read_vec<I: ReadBytesExt>(source: &mut I) -> [f32; 3] {
         source.read_i32::<E>().unwrap() as f32,
         source.read_i32::<E>().unwrap() as f32,
     ]
+}
+
+#[derive(Clone, Debug)]
+pub struct Bounds {
+    pub coord_min: [i32; 3],
+    pub coord_max: [i32; 3],
+    pub max_radius: i32,
+}
+
+fn read_bounds<I: ReadBytesExt>(source: &mut I) -> Bounds {
+    let mut b = [0i32; 7];
+    for b in &mut b {
+        *b = source.read_i32::<E>().unwrap();
+    }
+    Bounds {
+        coord_min: [b[0], b[1], b[2]],
+        coord_max: [b[3], b[4], b[5]],
+        max_radius: b[6],
+    }
 }
 
 pub struct RawMesh {
@@ -372,10 +417,9 @@ where
         polygons: Vec::with_capacity(num_polygons as usize),
         samples: Vec::new(),
         debug: None,
+        bounds: read_bounds(source),
     };
-    let coord_max = read_vec(source);
-    let coord_min = read_vec(source);
-    debug!("\tBound {:?} to {:?}", coord_min, coord_max);
+    debug!("\tBounds {:?}", shape.bounds);
 
     source
         .seek(Current(
@@ -395,7 +439,7 @@ where
                 1.0,
             ];
             let _sort_info = source.read_u32::<E>().unwrap();
-            DebugPos { pos: pos }
+            DebugPos { pos }
         })
         .collect();
 
@@ -508,20 +552,20 @@ where
     F: gfx::traits::FactoryExt<R>,
 {
     debug!("\tReading the body...");
+    let bounds = read_bounds(source);
     let mut model = Model {
         body: load_c3d(source, factory),
         shape: Shape {
             polygons: Vec::new(),
             samples: Vec::new(),
             debug: None,
+            bounds,
         },
         color: [0, 0],
         wheels: Vec::new(),
         debris: Vec::new(),
         slots: Vec::new(),
     };
-    let _bounds = read_vec(source);
-    let _max_radius = source.read_u32::<E>().unwrap();
     let num_wheels = source.read_u32::<E>().unwrap();
     let num_debris = source.read_u32::<E>().unwrap();
     model.color = [

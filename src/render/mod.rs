@@ -6,9 +6,11 @@ use {level, model};
 use config::settings;
 use space::{Camera, Transform};
 
+mod collision;
 mod debug;
 
 pub use self::debug::{DebugPos, DebugRender, LineBuffer};
+
 
 pub struct MainTargets<R: gfx::Resources> {
     pub color: gfx::handle::RenderTargetView<R, ColorFormat>,
