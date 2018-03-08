@@ -159,7 +159,10 @@ impl<R: gfx::Resources> Game<R> {
         let depth = 10f32 .. 10000f32;
         let pal_data = level::read_palette(settings.open_palette());
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
-        let collider = render::GpuCollider::new(factory, (256, 256), 400, 1000);
+        let collider = render::GpuCollider::new(factory,
+            (256, 256), 400, 1000,
+            render.surface_data(),
+        );
 
         let mut player_agent = Agent::spawn(
             "Player".to_string(),
@@ -414,7 +417,9 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
         let _ = {
             let mut collider = self.collider.start(encoder);
             for agent in &self.agents {
-                let _ = collider.add(&agent.car.model.shape, &agent.transform);
+                let mut transform = agent.transform.clone();
+                transform.scale *= agent.car.physics.scale_bound;
+                let _ = collider.add(&agent.car.model.shape, transform);
             }
             collider.finish()
         };

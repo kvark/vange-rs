@@ -1,5 +1,5 @@
 use model::Shape;
-use render::{DebugPos, read_shaders};
+use render::{DebugPos, SurfaceConstants, SurfaceData, read_shaders};
 use space::Transform;
 
 use gfx::{self, handle as h};
@@ -15,7 +15,8 @@ pub type CollisionFormatView = <CollisionFormat as gfx::format::Formatted>::View
 
 gfx_defines!{
     constant CollisionLocals {
-        mvp: [[f32; 4]; 4] = "u_ModelViewProj",
+        model: [[f32; 4]; 4] = "u_Model",
+        target: [f32; 4] = "u_TargetCenterScale",
     }
 
     constant CollisionPolygon {
@@ -25,8 +26,11 @@ gfx_defines!{
 
     pipeline collision {
         vbuf: gfx::VertexBuffer<DebugPos> = (),
+        suf_constants: gfx::ConstantBuffer<SurfaceConstants> = "c_Surface",
         locals: gfx::ConstantBuffer<CollisionLocals> = "c_Locals",
         polys: gfx::ConstantBuffer<CollisionPolygon> = "c_Polys",
+        height: gfx::TextureSampler<f32> = "t_Height",
+        meta: gfx::TextureSampler<u32> = "t_Meta",
         destination: gfx::RenderTarget<CollisionFormat> = "Target0",
     }
 
@@ -243,23 +247,27 @@ impl<'a,
     C: gfx::CommandBuffer<R>,
 > CollisionBuilder<'a, R, C> {
     pub fn add(
-        &mut self, shape: &Shape<R>, transform: &Transform,
+        &mut self, shape: &Shape<R>, transform: Transform,
     ) -> ShapeId {
         use cgmath;
 
         let size = (
-            (shape.bounds.coord_max[0] - shape.bounds.coord_min[0]) as Size,
-            (shape.bounds.coord_max[1] - shape.bounds.coord_min[1]) as Size,
+            ((shape.bounds.coord_max[0] - shape.bounds.coord_min[0]) as f32 * transform.scale) as Size,
+            ((shape.bounds.coord_max[1] - shape.bounds.coord_min[1]) as f32 * transform.scale) as Size,
         );
         let rect = self.downsampler.atlas.add(size);
         self.inputs.push(rect);
 
-        //TODO: build orthographic projection based on the target rect
-
         self.encoder.update_constant_buffer(
             &self.shader_data.locals,
             &CollisionLocals {
-                mvp: cgmath::Matrix4::from(transform.clone()).into(),
+                model: cgmath::Matrix4::from(transform).into(),
+                target: [
+                    rect.x as f32 - shape.bounds.coord_min[0] as f32 * transform.scale,
+                    rect.y as f32 - shape.bounds.coord_min[1] as f32 * transform.scale,
+                    2.0 / self.downsampler.atlas.size.0 as f32,
+                    2.0 / self.downsampler.atlas.size.1 as f32,
+                ],
             },
         );
 
@@ -297,6 +305,7 @@ pub struct GpuCollider<R: gfx::Resources> {
     downsampler: Downsampler<R>,
     pso: gfx::PipelineState<R, collision::Meta>,
     dummy_vb: h::Buffer<R, DebugPos>,
+    surface_data: SurfaceData<R>,
     locals: h::Buffer<R, CollisionLocals>,
     polys: h::Buffer<R, CollisionPolygon>,
     epoch: Epoch,
@@ -326,6 +335,7 @@ impl<R: gfx::Resources> GpuCollider<R> {
         size: (Size, Size),
         max_downsample_vertices: usize,
         max_shape_polygons: usize,
+        surface_data: SurfaceData<R>,
     ) -> Self
     where
         F: gfx::Factory<R>
@@ -333,9 +343,10 @@ impl<R: gfx::Resources> GpuCollider<R> {
         GpuCollider {
             downsampler: Downsampler::new(factory, size, max_downsample_vertices),
             pso: Self::create_pso(factory),
+            dummy_vb: factory.create_vertex_buffer(&[]),
+            surface_data,
             locals: factory.create_constant_buffer(1),
             polys: factory.create_constant_buffer(max_shape_polygons),
-            dummy_vb: factory.create_vertex_buffer(&[]),
             epoch: Epoch(0),
         }
     }
@@ -367,8 +378,11 @@ impl<R: gfx::Resources> GpuCollider<R> {
             pso: &self.pso,
             shader_data: collision::Data {
                 vbuf: self.dummy_vb.clone(),
+                suf_constants: self.surface_data.constants.clone(),
                 locals: self.locals.clone(),
                 polys: self.polys.clone(),
+                height: self.surface_data.height.clone(),
+                meta: self.surface_data.meta.clone(),
                 destination,
             },
             inputs: Vec::new(),
