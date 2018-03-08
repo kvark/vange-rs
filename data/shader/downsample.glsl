@@ -20,6 +20,8 @@ uniform sampler2D t_Source;
 out vec4 Target0;
 
 void main() {
+	//TODO: sum the 2x2 texel area
+	//TODO: limit the sampled area
     Target0 = texture(t_Source, v_TexCoord);
 }
 #endif //FS

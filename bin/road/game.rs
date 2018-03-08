@@ -415,7 +415,7 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
         &mut self, encoder: &mut gfx::Encoder<R, C>
     ) {
         let _ = {
-            let mut collider = self.collider.start(encoder);
+            let mut collider = self.collider.start(encoder, &self.db.common);
             for agent in &self.agents {
                 let mut transform = agent.transform.clone();
                 transform.scale *= agent.car.physics.scale_bound;
