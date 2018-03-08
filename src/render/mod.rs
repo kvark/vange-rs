@@ -20,6 +20,12 @@ pub struct MainTargets<R: gfx::Resources> {
     pub depth: gfx::handle::DepthStencilView<R, DepthFormat>,
 }
 
+pub struct SurfaceData<R: gfx::Resources> {
+    pub constants: gfx::handle::Buffer<R, SurfaceConstants>,
+    pub height: (gfx::handle::ShaderResourceView<R, f32>, gfx::handle::Sampler<R>),
+    pub meta: (gfx::handle::ShaderResourceView<R, u32>, gfx::handle::Sampler<R>),
+}
+
 struct MaterialParams {
     dx: f32,
     sd: f32,
@@ -81,9 +87,12 @@ gfx_defines!{
         pos: [i8; 4] = "a_Pos",
     }
 
-    constant TerrainLocals {
-        scr_size: [f32; 4] = "u_ScreenSize",
+    constant SurfaceConstants {
         tex_scale: [f32; 4] = "u_TextureScale",
+    }
+
+    constant TerrainConstants {
+        scr_size: [f32; 4] = "u_ScreenSize",
     }
 
     constant Globals {
@@ -97,7 +106,8 @@ gfx_defines!{
     pipeline terrain {
         vbuf: gfx::VertexBuffer<TerrainVertex> = (),
         globals: gfx::ConstantBuffer<Globals> = "c_Globals",
-        locals: gfx::ConstantBuffer<TerrainLocals> = "c_Locals",
+        suf_constants: gfx::ConstantBuffer<SurfaceConstants> = "c_Surface",
+        terr_constants: gfx::ConstantBuffer<TerrainConstants> = "c_Locals",
         height: gfx::TextureSampler<f32> = "t_Height",
         meta: gfx::TextureSampler<u32> = "t_Meta",
         palette: gfx::TextureSampler<[f32; 4]> = "t_Palette",
@@ -155,24 +165,41 @@ pub fn read_shaders(name: &str) -> Result<(Vec<u8>, Vec<u8>), IoError> {
     if !path.is_file() {
         panic!("Shader not found: {:?}", path);
     }
-    let mut code = format!("// shader: {}\n\n", name);
-    let mut file = BufReader::new(File::open(&path)?);
-    file.read_to_string(&mut code)?;
 
+    let prelude = format!("#version 150 core\n// shader: {}\n", name);
     let mut buf_vs = Vec::new();
-    write!(buf_vs, "#version 150 core\n")?;
-    write!(buf_vs, "#define SHADER_VS\n")?;
-    write!(buf_vs, "{}", code
+    write!(buf_vs, "{}", prelude)?;
+    let mut buf_fs = Vec::new();
+    write!(buf_fs, "{}", prelude)?;
+
+    let mut code = String::new();
+    BufReader::new(File::open(&path)?)
+        .read_to_string(&mut code)?;
+    let first = code.lines().next().unwrap();
+    if first.starts_with("//!include") {
+        for include in first.split_whitespace().skip(1) {
+            let target = if include.ends_with(".vert") {
+                &mut buf_vs
+            } else if include.ends_with(".frag") {
+                &mut buf_fs
+            } else {
+                panic!("Unknown include: {}", include);
+            };
+            BufReader::new(File::open(path.with_file_name(include))?)
+                .read_to_end(target)?;
+        }
+    }
+
+    write!(buf_vs, "\n#define SHADER_VS\n{}", code
         .replace("attribute", "in")
         .replace("varying", "out")
     )?;
-
-    let mut buf_fs = Vec::new();
-    write!(buf_fs, "#version 150 core\n")?;
-    write!(buf_fs, "#define SHADER_FS\n")?;
-    write!(buf_fs, "{}", code
+    write!(buf_fs, "\n#define SHADER_FS\n{}", code
         .replace("varying", "in")
     )?;
+
+    debug!("vs:\n{}", String::from_utf8_lossy(&buf_vs));
+    debug!("fs:\n{}", String::from_utf8_lossy(&buf_fs));
 
     Ok((buf_vs, buf_fs))
 }
@@ -293,7 +320,8 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
             let data = terrain::Data {
                 vbuf,
-                locals: factory.create_constant_buffer(1),
+                suf_constants: factory.create_constant_buffer(1),
+                terr_constants: factory.create_constant_buffer(1),
                 globals: globals.clone(),
                 height: (height, sm_height),
                 meta: (meta, sm_meta),
@@ -436,11 +464,14 @@ impl<R: gfx::Resources> Render<R> {
 
         // draw terrain
         let (wid, het, _, _) = self.terrain.data.out_color.get_dimensions();
-        let locals = TerrainLocals {
-            scr_size: [wid as f32, het as f32, 0.0, 0.0],
+        let suf_constants = SurfaceConstants {
             tex_scale: self.terrain_scale,
         };
-        encoder.update_constant_buffer(&self.terrain.data.locals, &locals);
+        encoder.update_constant_buffer(&self.terrain.data.suf_constants, &suf_constants);
+        let terr_constants = TerrainConstants {
+            scr_size: [wid as f32, het as f32, 0.0, 0.0],
+        };
+        encoder.update_constant_buffer(&self.terrain.data.terr_constants, &terr_constants);
         self.terrain.encode(encoder);
 
         // draw vehicle models
@@ -548,5 +579,13 @@ impl<R: gfx::Resources> Render<R> {
         self.object_data.out_color = targets.color.clone();
         self.object_data.out_depth = targets.depth.clone();
         self.debug.resize(targets);
+    }
+
+    pub fn surface_data(&self) -> SurfaceData<R> {
+        SurfaceData {
+            constants: self.terrain.data.suf_constants.clone(),
+            height: self.terrain.data.height.clone(),
+            meta: self.terrain.data.meta.clone(),
+        }
     }
 }
