@@ -1,3 +1,4 @@
+use config::common::Common;
 use model::Shape;
 use render::{DebugPos, SurfaceConstants, SurfaceData, read_shaders};
 use space::Transform;
@@ -19,6 +20,10 @@ gfx_defines!{
         target: [f32; 4] = "u_TargetCenterScale",
     }
 
+    constant CollisionGlobals {
+        penetration: [f32; 4] = "u_Penetration",
+    }
+
     constant CollisionPolygon {
         origin: [f32; 4] = "u_Origin",
         normal: [f32; 4] = "u_Normal",
@@ -28,6 +33,7 @@ gfx_defines!{
         vbuf: gfx::VertexBuffer<DebugPos> = (),
         suf_constants: gfx::ConstantBuffer<SurfaceConstants> = "c_Surface",
         locals: gfx::ConstantBuffer<CollisionLocals> = "c_Locals",
+        globals: gfx::ConstantBuffer<CollisionGlobals> = "c_Globals",
         polys: gfx::ConstantBuffer<CollisionPolygon> = "c_Polys",
         height: gfx::TextureSampler<f32> = "t_Height",
         meta: gfx::TextureSampler<u32> = "t_Meta",
@@ -271,12 +277,19 @@ impl<'a,
             },
         );
 
-        let poly_data: Vec<CollisionPolygon> = Vec::new(); //TODO
+        let poly_data = shape.polygons
+            .iter()
+            .map(|p| CollisionPolygon {
+                origin: [p.middle[0], p.middle[1], p.middle[2], 1.0],
+                normal: [p.normal[0], p.normal[1], p.normal[2], 0.0],
+            })
+            .collect::<Vec<_>>();
         self.encoder
             .update_buffer(&self.shader_data.polys, &poly_data, 0)
             .unwrap();
 
-        let debug = shape.debug.as_ref().unwrap(); //TODO
+        //TODO: make `bound_vb` and `bound_slice` permanent
+        let debug = shape.debug.as_ref().unwrap();
         self.shader_data.vbuf = debug.bound_vb.clone();
 
         self.encoder.draw(&debug.bound_slice, self.pso, &self.shader_data);
@@ -307,6 +320,7 @@ pub struct GpuCollider<R: gfx::Resources> {
     dummy_vb: h::Buffer<R, DebugPos>,
     surface_data: SurfaceData<R>,
     locals: h::Buffer<R, CollisionLocals>,
+    globals: h::Buffer<R, CollisionGlobals>,
     polys: h::Buffer<R, CollisionPolygon>,
     epoch: Epoch,
 }
@@ -324,7 +338,8 @@ impl<R: gfx::Resources> GpuCollider<R> {
             .create_pipeline_from_program(
                 &program,
                 gfx::Primitive::TriangleList,
-                gfx::state::Rasterizer::new_fill(),
+                gfx::state::Rasterizer::new_fill()
+                    .with_cull_back(),
                 collision::new(),
             )
             .unwrap()
@@ -346,6 +361,7 @@ impl<R: gfx::Resources> GpuCollider<R> {
             dummy_vb: factory.create_vertex_buffer(&[]),
             surface_data,
             locals: factory.create_constant_buffer(1),
+            globals: factory.create_constant_buffer(1),
             polys: factory.create_constant_buffer(max_shape_polygons),
             epoch: Epoch(0),
         }
@@ -361,13 +377,25 @@ impl<R: gfx::Resources> GpuCollider<R> {
     }
 
     pub fn start<'a, C>(
-        &'a mut self, encoder: &'a mut gfx::Encoder<R, C>
+        &'a mut self, encoder: &'a mut gfx::Encoder<R, C>, common: &Common,
     ) -> CollisionBuilder<'a, R, C>
     where
         C: gfx::CommandBuffer<R>,
     {
         self.epoch.0 += 1;
         self.downsampler.reset();
+
+        encoder.update_constant_buffer(
+            &self.globals,
+            &CollisionGlobals {
+                penetration: [
+                    common.contact.k_elastic_spring,
+                    common.impulse.elastic_restriction,
+                    0.0,
+                    0.0,
+                ],
+            },
+        );
 
         let destination = self.downsampler.primary.0.clone();
         encoder.clear(&destination, [0.0; 4]);
@@ -380,6 +408,7 @@ impl<R: gfx::Resources> GpuCollider<R> {
                 vbuf: self.dummy_vb.clone(),
                 suf_constants: self.surface_data.constants.clone(),
                 locals: self.locals.clone(),
+                globals: self.globals.clone(),
                 polys: self.polys.clone(),
                 height: self.surface_data.height.clone(),
                 meta: self.surface_data.meta.clone(),
