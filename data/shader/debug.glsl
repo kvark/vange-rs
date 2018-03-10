@@ -4,7 +4,7 @@ varying vec4 v_Color;
 #ifdef SHADER_VS
 
 uniform c_Locals {
-	mat4 u_ModelViewProj;
+    mat4 u_ModelViewProj;
 };
 
 attribute vec4 a_Pos;
@@ -22,6 +22,6 @@ void main() {
 out vec4 Target0;
 
 void main() {
-	Target0 = v_Color;
+    Target0 = v_Color;
 }
 #endif //FS
