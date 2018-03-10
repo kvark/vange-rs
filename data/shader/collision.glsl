@@ -1,8 +1,11 @@
 //!include surface.frag
 
+#define MAX_POLYGONS 0x100
+
 flat varying vec3 v_Rg0;
 varying vec3 v_World;
 varying vec3 v_PolyNormal;
+flat varying float v_PolyId;
 
 
 #ifdef SHADER_VS
@@ -18,15 +21,19 @@ struct Polygon {
 };
 
 uniform c_Polys {
-    Polygon polygons[0x100];
+    Polygon polygons[MAX_POLYGONS];
 };
 
 attribute vec4 a_Pos;
 
 void main() {
     v_World = (u_Model * a_Pos).xyz;
+    //Note: this is incorrect. Indices are loaded from the model file
+    // they are all over the place. Need to dispatch manually in VS.
+    int poly_id = gl_VertexID >> 2;
+    v_PolyId = float(poly_id) / float(MAX_POLYGONS);
 
-    Polygon poly = polygons[gl_VertexID >> 2];
+    Polygon poly = polygons[poly_id];
     v_Rg0 = mat3(u_Model) * poly.u_Origin.xyz;
     v_PolyNormal = normalize(poly.u_Normal.xyz);
 
@@ -51,6 +58,6 @@ void main() {
     float depth_raw = max(0.0, suf.high_alt - v_World.z);
     float depth = min(u_Penetration.y, u_Penetration.x * depth_raw);
 
-    Target0 = depth * vec4(v_Rg0.y, -v_Rg0.x, 1.0, 0.0);
+    Target0 = vec4(depth * vec3(v_Rg0.y, -v_Rg0.x, 1.0), v_PolyId);
 }
 #endif //FS

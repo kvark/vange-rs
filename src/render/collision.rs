@@ -42,12 +42,13 @@ gfx_defines!{
 
     //TODO: use fixed point
     vertex DownsampleVertex {
-        src: [f32; 2] = "a_SourcePos",
-        dst: [f32; 2] = "a_DestPos",
+        src: [u16; 4] = "a_SourceRect",
+        dst: [u16; 4] = "a_DestRect",
     }
 
     pipeline downsample {
-        vbuf: gfx::VertexBuffer<DownsampleVertex> = (),
+        vbuf: gfx::InstanceBuffer<DownsampleVertex> = (),
+        dest_size: gfx::Global<[f32; 2]> = "u_DestSize",
         source: gfx::TextureSampler<CollisionFormatView> = "t_Source",
         destination: gfx::RenderTarget<CollisionFormat> = "Target0",
     }
@@ -121,7 +122,7 @@ impl<R: gfx::Resources> Downsampler<R> {
         factory
             .create_pipeline_from_program(
                 &program,
-                gfx::Primitive::TriangleList,
+                gfx::Primitive::TriangleStrip,
                 gfx::state::Rasterizer::new_fill(),
                 downsample::new(),
             )
@@ -164,21 +165,13 @@ impl<R: gfx::Resources> Downsampler<R> {
     }
 
     fn downsample(&mut self, source: Rect) -> Rect {
-        let (atlas_w, atlas_h, _, _) = self.primary.0.get_dimensions();
         let size = ((source.w + 1) >> 1, (source.h + 1) >> 1);
         let dest = self.atlas.add(size);
 
-        const RELATIVE: [(Size, Size); 6] = [(0, 0), (1, 0), (0, 1), (0, 1), (1, 0), (1, 1)];
-        self.vertices.extend(RELATIVE.iter().map(|&(rx, ry)| DownsampleVertex {
-            src: [
-                (source.x + rx * source.w) as f32 / atlas_w as f32,
-                (source.y + ry * source.h) as f32 / atlas_h as f32,
-            ],
-            dst: [
-                2.0 * (dest.x + rx * dest.w) as f32 / atlas_w as f32 - 1.0,
-                2.0 * (dest.y + ry * dest.h) as f32 / atlas_h as f32 - 1.0,
-            ],
-        }));
+        self.vertices.push(DownsampleVertex {
+            src: [source.x, source.y, source.w, source.h],
+            dst: [dest.x, dest.y, dest.w, dest.h],
+        });
 
         dest
     }
@@ -193,12 +186,17 @@ impl<R: gfx::Resources> Downsampler<R> {
             .update_buffer(&self.v_buf, &self.vertices, 0)
             .unwrap();
 
+        let (dw, dh, _, _) = self.secondary.0.get_dimensions();
         let slice = gfx::Slice {
-            end: self.vertices.len() as _,
-            .. gfx::Slice::new_match_vertex_buffer(&self.v_buf)
+            start: 0,
+            end: 4,
+            base_vertex: 0,
+            instances: Some((self.vertices.len() as _, 0)),
+            buffer: gfx::IndexBuffer::Auto,
         };
         encoder.draw(&slice, &self.pso, &downsample::Data {
             vbuf: self.v_buf.clone(),
+            dest_size: [dw as f32, dh as f32],
             source: (self.primary.1.clone(), self.sampler.clone()),
             destination: self.secondary.0.clone(),
         });
