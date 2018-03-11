@@ -5,7 +5,10 @@ use gfx;
 pub use gfx::pso::buffer::{InstanceRate, VertexBufferCommon};
 use gfx::traits::FactoryExt; // reduce the line width at use site
 
-use super::{read_shaders, ColorFormat, DepthFormat, MainTargets};
+use super::{
+    read_shaders,
+    ColorFormat, DepthFormat, MainTargets, ShapePolygon,
+};
 use config::settings;
 use model;
 
@@ -74,6 +77,15 @@ gfx_defines! {
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_TEST,
         blend_ref: gfx::BlendRef = (),
     }
+
+    pipeline shape {
+        vertices: gfx::ShaderResource<[f32; 4]> = "t_Position",
+        polygons: gfx::InstanceBuffer<ShapePolygon> = (),
+        color: gfx::Global<[f32; 4]> = "u_Color",
+        locals: gfx::ConstantBuffer<DebugLocals> = "c_Locals",
+        out_color: gfx::BlendTarget<ColorFormat> = ("Target0", gfx::state::ColorMask::all(), gfx::preset::blend::ALPHA),
+        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_TEST,
+    }
 }
 
 pub struct LineBuffer {
@@ -125,8 +137,8 @@ pub struct DebugRender<R: gfx::Resources> {
     buf_col: gfx::handle::Buffer<R, DebugColor>,
     data: debug::Data<R>,
     psos_line: HashMap<Selector, gfx::PipelineState<R, debug::Meta>>,
-    pso_face: Option<gfx::PipelineState<R, debug::Meta>>,
-    pso_edge: Option<gfx::PipelineState<R, debug::Meta>>,
+    pso_face: Option<gfx::PipelineState<R, shape::Meta>>,
+    pso_edge: Option<gfx::PipelineState<R, shape::Meta>>,
 }
 
 impl<R: gfx::Resources> DebugRender<R> {
@@ -174,21 +186,21 @@ impl<R: gfx::Resources> DebugRender<R> {
         &mut self,
         factory: &mut F,
     ) {
-        let (vs, fs) = read_shaders("debug")
-            .unwrap();
-        let program = factory
-            .link_program(&vs, &fs)
-            .unwrap();
         let raster = gfx::state::Rasterizer::new_fill();
 
         if self.settings.collision_shapes {
+            let (vs, fs) = read_shaders("debug_shape")
+                .unwrap();
+            let program = factory
+                .link_program(&vs, &fs)
+                .unwrap();
             self.pso_face = Some(
                 factory
                     .create_pipeline_from_program(
                         &program,
-                        gfx::Primitive::TriangleList,
+                        gfx::Primitive::TriangleStrip,
                         raster,
-                        debug::new(),
+                        shape::new(),
                     )
                     .unwrap(),
             );
@@ -196,12 +208,12 @@ impl<R: gfx::Resources> DebugRender<R> {
                 factory
                     .create_pipeline_from_program(
                         &program,
-                        gfx::Primitive::TriangleList,
+                        gfx::Primitive::TriangleStrip,
                         gfx::state::Rasterizer {
                             method: gfx::state::RasterMethod::Line(1),
                             .. raster
                         },
-                        debug::new(),
+                        shape::new(),
                     )
                     .unwrap(),
             );
@@ -209,6 +221,11 @@ impl<R: gfx::Resources> DebugRender<R> {
 
         self.psos_line.clear();
         if self.settings.impulses {
+            let (vs, fs) = read_shaders("debug")
+                .unwrap();
+            let program = factory
+                .link_program(&vs, &fs)
+                .unwrap();
             for &visibility in &[Visibility::Front, Visibility::Behind] {
                 for &color_rate in &[ColorRate::Vertex, ColorRate::Instance] {
                     let (blend, depth) = match visibility {
@@ -274,7 +291,7 @@ impl<R: gfx::Resources> DebugRender<R> {
 
     pub fn draw_shape<C>(
         &mut self,
-        shape: &model::DebugShape<R>,
+        shape: &model::Shape<R>,
         transform: cgmath::Matrix4<f32>,
         encoder: &mut gfx::Encoder<R, C>,
     ) where
@@ -287,52 +304,43 @@ impl<R: gfx::Resources> DebugRender<R> {
             },
         );
 
+        let slice = shape.make_draw_slice();
+        let mut data = shape::Data {
+            vertices: shape.vertex_view.clone(),
+            polygons: shape.polygon_buf.clone(),
+            color: [0.0; 4],
+            locals: self.data.locals.clone(),
+            out_color: self.data.out_color.clone(),
+            out_depth: self.data.out_depth.clone(),
+        };
+
         // draw collision polygon faces
         if let Some(ref pso) = self.pso_face {
-            self.data.buf_pos = shape.bound_vb.clone();
-            encoder
-                .update_buffer(
-                    &self.buf_col,
-                    &[
-                        DebugColor {
-                            color: [0.0, 1.0, 0.0, 0.1],
-                        },
-                    ],
-                    0,
-                )
-                .unwrap();
-            encoder.draw(&shape.bound_slice, pso, &self.data);
+            data.color = [0.0, 1.0, 0.0, 0.1];
+            encoder.draw(&slice, pso, &data);
         }
 
         // draw collision polygon edges
         if let Some(ref pso) = self.pso_edge {
+            data.color = [1.0, 1.0, 0.0, 0.1];
+            encoder.draw(&slice, pso, &data);
+        }
+
+        // draw sample normals
+        if let Some(ref samples) = shape.sample_buf {
             encoder
                 .update_buffer(
                     &self.buf_col,
                     &[
                         DebugColor {
-                            color: [1.0, 1.0, 0.0, 0.1],
+                            color: [1.0, 0.0, 0.0, 0.5],
                         },
                     ],
                     0,
                 )
                 .unwrap();
-            encoder.draw(&shape.bound_slice, pso, &self.data);
+            self.draw_liner(samples.clone(), None, encoder);
         }
-
-        // draw sample normals
-        encoder
-            .update_buffer(
-                &self.buf_col,
-                &[
-                    DebugColor {
-                        color: [1.0, 0.0, 0.0, 0.5],
-                    },
-                ],
-                0,
-            )
-            .unwrap();
-        self.draw_liner(shape.sample_vb.clone(), None, encoder);
     }
 
     pub fn draw_lines<C>(

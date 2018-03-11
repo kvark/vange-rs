@@ -1,7 +1,10 @@
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use gfx;
 use gfx::format::I8Norm;
-use render::{DebugPos, ObjectVertex, COLOR_ID_BODY, NUM_COLOR_IDS};
+use render::{
+    COLOR_ID_BODY, NUM_COLOR_IDS,
+    DebugPos, ObjectVertex, ShapeVertex, ShapePolygon,
+};
 use std::fs::File;
 use std::io::{self, Seek, Write};
 use std::ops::Range;
@@ -33,18 +36,26 @@ pub struct Polygon {
 }
 
 #[derive(Clone, Debug)]
-pub struct DebugShape<R: gfx::Resources> {
-    pub bound_vb: gfx::handle::Buffer<R, DebugPos>,
-    pub bound_slice: gfx::Slice<R>,
-    pub sample_vb: gfx::handle::Buffer<R, DebugPos>,
-}
-
-#[derive(Clone, Debug)]
 pub struct Shape<R: gfx::Resources> {
     pub polygons: Vec<Polygon>,
     pub samples: Vec<RawVertex>,
-    pub debug: Option<DebugShape<R>>,
+    pub vertex_buf: gfx::handle::Buffer<R, ShapeVertex>,
+    pub vertex_view: gfx::handle::ShaderResourceView<R, [f32; 4]>,
+    pub polygon_buf: gfx::handle::Buffer<R, ShapePolygon>,
+    pub sample_buf: Option<gfx::handle::Buffer<R, DebugPos>>,
     pub bounds: Bounds,
+}
+
+impl<R: gfx::Resources> Shape<R> {
+    pub fn make_draw_slice(&self) -> gfx::Slice<R> {
+        gfx::Slice {
+            start: 0,
+            end: 4,
+            base_vertex: 0,
+            instances: Some((self.polygons.len() as _, 0)),
+            buffer: gfx::IndexBuffer::Auto,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -94,7 +105,7 @@ impl Tessellator {
     }
     fn tessellate(
         &mut self,
-        corners: &[DebugPos],
+        corners: &[ShapeVertex],
         _middle: RawVertex,
     ) -> &[RawVertex] {
         let go_deeper = false;
@@ -103,9 +114,9 @@ impl Tessellator {
         let mid_sum = corners
             .iter()
             .fold([0f32; 3], |sum, cur| [
-                sum[0] + cur.pos[0],
-                sum[1] + cur.pos[1],
-                sum[2] + cur.pos[2],
+                sum[0] + cur[0],
+                sum[1] + cur[1],
+                sum[2] + cur[2],
             ]);
         if go_deeper {
             let corner_ratio = 0.66f32;
@@ -117,9 +128,9 @@ impl Tessellator {
             ];
             let ring1 = corners.iter().map(|c| {
                 [
-                    (corner_ratio * c.pos[0]) as i8 + mid_rationed[0],
-                    (corner_ratio * c.pos[1]) as i8 + mid_rationed[1],
-                    (corner_ratio * c.pos[2]) as i8 + mid_rationed[2],
+                    (corner_ratio * c[0]) as i8 + mid_rationed[0],
+                    (corner_ratio * c[1]) as i8 + mid_rationed[1],
+                    (corner_ratio * c[2]) as i8 + mid_rationed[2],
                 ]
             }).collect::<Vec<_>>();
             self.samples.extend((0 .. corners.len()).map(|i| {
@@ -146,9 +157,9 @@ impl Tessellator {
             ];
             self.samples.extend(corners.iter().map(|c| {
                 [
-                    (0.5 * c.pos[0]) as i8 + mid_half[0],
-                    (0.5 * c.pos[1]) as i8 + mid_half[1],
-                    (0.5 * c.pos[2]) as i8 + mid_half[2],
+                    (0.5 * c[0]) as i8 + mid_half[0],
+                    (0.5 * c[1]) as i8 + mid_half[1],
+                    (0.5 * c[2]) as i8 + mid_half[2],
                 ]
             }));
         }
@@ -380,8 +391,7 @@ impl RawMesh {
 }
 
 pub fn load_c3d<I, R, F>(
-    source: &mut I,
-    factory: &mut F,
+    source: &mut I, factory: &mut F
 ) -> Mesh<R>
 where
     I: ReadBytesExt,
@@ -407,8 +417,7 @@ where
 }
 
 pub fn load_c3d_shape<I, R, F>(
-    source: &mut I,
-    factory: Option<&mut F>,
+    source: &mut I, factory: &mut F, with_sample_buf: bool,
 ) -> Shape<R>
 where
     I: ReadBytesExt + Seek,
@@ -424,13 +433,12 @@ where
     let num_polygons = source.read_u32::<E>().unwrap();
     let _total_verts = source.read_u32::<E>().unwrap();
 
-    let mut shape = Shape {
-        polygons: Vec::with_capacity(num_polygons as usize),
-        samples: Vec::new(),
-        debug: None,
-        bounds: Bounds::read(source),
-    };
-    debug!("\tBounds {:?}", shape.bounds);
+    let mut polygons = Vec::with_capacity(num_polygons as _);
+    let mut samples = Vec::new();
+    let bounds = Bounds::read(source);
+    debug!("\tBounds {:?}", bounds);
+    let mut polygon_data = Vec::with_capacity(num_polygons as _);
+    let mut sample_data = Vec::new();
 
     source
         .seek(Current(
@@ -450,7 +458,7 @@ where
                 1.0,
             ];
             let _sort_info = source.read_u32::<E>().unwrap();
-            DebugPos { pos }
+            pos
         })
         .collect();
 
@@ -460,55 +468,49 @@ where
         ))
         .unwrap();
 
-    let mut debug = if factory.is_some() {
-        Some((Vec::with_capacity(num_polygons as usize * 6), Vec::new()))
-    } else {
-        None
-    };
-
     debug!("\tReading {} polygons...", num_polygons);
     let mut tess = Tessellator::new();
     for _ in 0 .. num_polygons {
         let num_corners = source.read_u32::<E>().unwrap() as usize;
-        assert!(3 <= num_corners && num_corners <= 4);
+        assert_eq!(num_corners, 4);
         source.seek(Current(4 + 4 + 4)).unwrap(); // sort info and color
         let mut d = [0i8; 7];
         for b in d.iter_mut() {
             *b = source.read_i8().unwrap();
         }
-        let mut pids = [0u32; 4];
+        let mut indices = [0u16; 4];
         for i in 0 .. num_corners {
-            pids[i] = source.read_u32::<E>().unwrap();
+            indices[i] = source.read_u32::<E>().unwrap() as _;
             let _ = source.read_u32::<E>().unwrap(); //nid
         }
         let corners = [
-            positions[pids[0] as usize],
-            positions[pids[1] as usize],
-            positions[pids[2] as usize],
-            positions[pids[3] as usize],
+            positions[indices[0] as usize],
+            positions[indices[1] as usize],
+            positions[indices[2] as usize],
+            positions[indices[3] as usize],
         ];
+        let square = 1.0; //TODO: compute polygon square
+        polygon_data.push(ShapePolygon {
+            indices,
+            normal: [I8Norm(d[0]), I8Norm(d[1]), I8Norm(d[2]), I8Norm(0)],
+            origin_square: [d[4] as f32, d[5] as f32, d[6] as f32, square],
+        });
         let middle = [d[4] as f32, d[5] as f32, d[6] as f32];
         let normal = [
             d[0] as f32 / 128.0,
             d[1] as f32 / 128.0,
             d[2] as f32 / 128.0,
         ];
-        let samples = tess.tessellate(
+        let cur_samples = tess.tessellate(
             &corners[.. num_corners],
             [d[4], d[5], d[6]],
         );
-        if let Some((ref mut ind, ref mut samp)) = debug {
-            ind.extend(pids[.. 3].iter().cloned());
-            if num_corners > 3 {
-                ind.push(pids[2]);
-                ind.push(pids[3]);
-                ind.push(pids[0]);
-            }
+        if with_sample_buf {
             let mut nlen = 16.0;
-            samp.push(DebugPos {
+            sample_data.push(DebugPos {
                 pos: [middle[0], middle[1], middle[2], 1.0],
             });
-            samp.push(DebugPos {
+            sample_data.push(DebugPos {
                 pos: [
                     middle[0] + normal[0] * nlen,
                     middle[1] + normal[1] * nlen,
@@ -517,11 +519,11 @@ where
                 ],
             });
             nlen = 4.0;
-            for s in samples.iter() {
-                samp.push(DebugPos {
+            for s in cur_samples {
+                sample_data.push(DebugPos {
                     pos: [s[0] as f32, s[1] as f32, s[2] as f32, 1.0],
                 });
-                samp.push(DebugPos {
+                sample_data.push(DebugPos {
                     pos: [
                         s[0] as f32 + normal[0] * nlen,
                         s[1] as f32 + normal[1] * nlen,
@@ -531,31 +533,43 @@ where
                 });
             }
         }
-        shape.polygons.push(Polygon {
+        polygons.push(Polygon {
             middle,
             normal,
-            samples: shape.samples.len() .. shape.samples.len() + samples.len(),
+            samples: samples.len() .. samples.len() + cur_samples.len(),
         });
-        shape.samples.extend(samples);
-    }
-
-    if let (Some((ind, samp)), Some(f)) = (debug, factory) {
-        let (vbo, slice) = f.create_vertex_buffer_with_slice(&positions, &ind[..]);
-        shape.debug = Some(DebugShape {
-            bound_vb: vbo,
-            bound_slice: slice,
-            sample_vb: f.create_vertex_buffer(&samp),
-        });
+        samples.extend(cur_samples);
     }
 
     source.seek(Current(3 * (num_polygons as i64) * 4)).unwrap(); // sorted var polys
 
-    shape
+    let vertex_buf = factory
+        .create_buffer_immutable(
+            &positions,
+            gfx::buffer::Role::Vertex,
+            gfx::memory::Bind::SHADER_RESOURCE,
+        )
+        .unwrap();
+
+    Shape {
+        polygons,
+        samples,
+        vertex_view: factory
+            .view_buffer_as_shader_resource(&vertex_buf)
+            .unwrap(),
+        vertex_buf,
+        polygon_buf: factory.create_vertex_buffer(&polygon_data),
+        sample_buf: if with_sample_buf {
+            Some(factory.create_vertex_buffer(&sample_data))
+        } else {
+            None
+        },
+        bounds,
+    }
 }
 
 pub fn load_m3d<I, R, F>(
-    source: &mut I,
-    factory: &mut F,
+    source: &mut I, factory: &mut F
 ) -> Model<R>
 where
     I: ReadBytesExt + Seek,
@@ -563,30 +577,19 @@ where
     F: gfx::traits::FactoryExt<R>,
 {
     debug!("\tReading the body...");
-    let mut model = Model {
-        body: load_c3d(source, factory),
-        shape: Shape {
-            polygons: Vec::new(),
-            samples: Vec::new(),
-            debug: None,
-            bounds: Bounds::read_short(source),
-        },
-        color: [0, 0],
-        wheels: Vec::new(),
-        debris: Vec::new(),
-        slots: Vec::new(),
-    };
+    let body = load_c3d(source, factory);
+    let _bounds = Bounds::read_short(source);
+
     let _max_radius = source.read_u32::<E>().unwrap();
     let num_wheels = source.read_u32::<E>().unwrap();
     let num_debris = source.read_u32::<E>().unwrap();
-    model.color = [
+    let color = [
         source.read_u32::<E>().unwrap(),
         source.read_u32::<E>().unwrap(),
     ];
-    model.wheels.reserve_exact(num_wheels as usize);
-    model.debris.reserve_exact(num_debris as usize);
 
     debug!("\tReading {} wheels...", num_wheels);
+    let mut wheels = Vec::with_capacity(num_wheels as _);
     for _ in 0 .. num_wheels {
         let steer = source.read_u32::<E>().unwrap();
         let pos = [
@@ -598,7 +601,7 @@ where
         let radius = source.read_u32::<E>().unwrap();
         let _bound_index = source.read_u32::<E>().unwrap();
         debug!("\tSteer {}, width {}, radius {}", steer, width, radius);
-        model.wheels.push(Wheel {
+        wheels.push(Wheel {
             mesh: if steer != 0 {
                 Some(load_c3d(source, factory))
             } else {
@@ -612,16 +615,18 @@ where
     }
 
     debug!("\tReading {} debris...", num_debris);
+    let mut debris = Vec::with_capacity(num_debris as _);
     for _ in 0 .. num_debris {
-        model.debris.push(Debrie {
+        debris.push(Debrie {
             mesh: load_c3d(source, factory),
-            shape: load_c3d_shape(source, None::<&mut F>),
+            shape: load_c3d_shape(source, factory, false),
         })
     }
 
     debug!("\tReading the physical shape...");
-    model.shape = load_c3d_shape(source, Some(factory));
+    let shape = load_c3d_shape(source, factory, true);
 
+    let mut slots = Vec::new();
     let slot_mask = source.read_u32::<E>().unwrap();
     debug!("\tReading {} slot mask...", slot_mask);
     if slot_mask != 0 {
@@ -630,7 +635,7 @@ where
             let angle = source.read_i32::<E>().unwrap();
             if slot_mask & (1 << i) != 0 {
                 debug!("\tSlot {} at pos {:?} and angle of {}", i, pos, angle);
-                model.slots.push(Slot {
+                slots.push(Slot {
                     mesh: None,
                     scale: 1.0,
                     pos: [pos[0] as f32, pos[1] as f32, pos[2] as f32],
@@ -640,7 +645,14 @@ where
         }
     }
 
-    model
+    Model {
+        body,
+        shape,
+        color,
+        wheels,
+        debris,
+        slots,
+    }
 }
 
 pub fn convert_m3d(

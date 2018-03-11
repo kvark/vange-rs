@@ -1,6 +1,8 @@
 use config::common::Common;
 use model::Shape;
-use render::{DebugPos, SurfaceConstants, SurfaceData, read_shaders};
+use render::{read_shaders,
+    ShapePolygon, SurfaceConstants, SurfaceData,
+};
 use space::Transform;
 
 use gfx::{self, handle as h};
@@ -24,17 +26,12 @@ gfx_defines!{
         penetration: [f32; 4] = "u_Penetration",
     }
 
-    constant CollisionPolygon {
-        origin: [f32; 4] = "u_Origin",
-        normal: [f32; 4] = "u_Normal",
-    }
-
     pipeline collision {
-        vbuf: gfx::VertexBuffer<DebugPos> = (),
+        vertices: gfx::ShaderResource<[f32; 4]> = "t_Position",
+        polygons: gfx::InstanceBuffer<ShapePolygon> = (),
         suf_constants: gfx::ConstantBuffer<SurfaceConstants> = "c_Surface",
         locals: gfx::ConstantBuffer<CollisionLocals> = "c_Locals",
         globals: gfx::ConstantBuffer<CollisionGlobals> = "c_Globals",
-        polys: gfx::ConstantBuffer<CollisionPolygon> = "c_Polys",
         height: gfx::TextureSampler<f32> = "t_Height",
         meta: gfx::TextureSampler<u32> = "t_Meta",
         destination: gfx::RenderTarget<CollisionFormat> = "Target0",
@@ -275,22 +272,11 @@ impl<'a,
             },
         );
 
-        let poly_data = shape.polygons
-            .iter()
-            .map(|p| CollisionPolygon {
-                origin: [p.middle[0], p.middle[1], p.middle[2], 1.0],
-                normal: [p.normal[0], p.normal[1], p.normal[2], 0.0],
-            })
-            .collect::<Vec<_>>();
-        self.encoder
-            .update_buffer(&self.shader_data.polys, &poly_data, 0)
-            .unwrap();
+        self.shader_data.vertices = shape.vertex_view.clone();
+        self.shader_data.polygons = shape.polygon_buf.clone();
+        let slice = shape.make_draw_slice();
 
-        //TODO: make `bound_vb` and `bound_slice` permanent
-        let debug = shape.debug.as_ref().unwrap();
-        self.shader_data.vbuf = debug.bound_vb.clone();
-
-        self.encoder.draw(&debug.bound_slice, self.pso, &self.shader_data);
+        self.encoder.draw(&slice, self.pso, &self.shader_data);
 
         ShapeId(self.inputs.len() - 1, self.epoch.clone())
     }
@@ -315,11 +301,11 @@ impl<'a,
 pub struct GpuCollider<R: gfx::Resources> {
     downsampler: Downsampler<R>,
     pso: gfx::PipelineState<R, collision::Meta>,
-    dummy_vb: h::Buffer<R, DebugPos>,
+    dummy_view: h::ShaderResourceView<R, [f32; 4]>,
+    dummy_poly: h::Buffer<R, ShapePolygon>,
     surface_data: SurfaceData<R>,
     locals: h::Buffer<R, CollisionLocals>,
     globals: h::Buffer<R, CollisionGlobals>,
-    polys: h::Buffer<R, CollisionPolygon>,
     epoch: Epoch,
 }
 
@@ -347,20 +333,27 @@ impl<R: gfx::Resources> GpuCollider<R> {
         factory: &mut F,
         size: (Size, Size),
         max_downsample_vertices: usize,
-        max_shape_polygons: usize,
         surface_data: SurfaceData<R>,
     ) -> Self
     where
         F: gfx::Factory<R>
     {
+        let dummy_vert = factory
+            .create_buffer_immutable(
+                &[],
+                gfx::buffer::Role::Vertex,
+                gfx::memory::Bind::SHADER_RESOURCE,
+            ).unwrap();
         GpuCollider {
             downsampler: Downsampler::new(factory, size, max_downsample_vertices),
             pso: Self::create_pso(factory),
-            dummy_vb: factory.create_vertex_buffer(&[]),
+            dummy_view: factory
+                .view_buffer_as_shader_resource(&dummy_vert)
+                .unwrap(),
+            dummy_poly: factory.create_vertex_buffer(&[]),
             surface_data,
             locals: factory.create_constant_buffer(1),
             globals: factory.create_constant_buffer(1),
-            polys: factory.create_constant_buffer(max_shape_polygons),
             epoch: Epoch(0),
         }
     }
@@ -403,11 +396,11 @@ impl<R: gfx::Resources> GpuCollider<R> {
             encoder,
             pso: &self.pso,
             shader_data: collision::Data {
-                vbuf: self.dummy_vb.clone(),
+                vertices: self.dummy_view.clone(),
+                polygons: self.dummy_poly.clone(),
                 suf_constants: self.surface_data.constants.clone(),
                 locals: self.locals.clone(),
                 globals: self.globals.clone(),
-                polys: self.polys.clone(),
                 height: self.surface_data.height.clone(),
                 meta: self.surface_data.meta.clone(),
                 destination,
