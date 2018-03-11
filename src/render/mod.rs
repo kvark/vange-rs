@@ -81,8 +81,15 @@ const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
 
 pub type ColorFormat = gfx::format::Rgba8; //should be Srgba8
 pub type DepthFormat = gfx::format::DepthStencil;
+pub type ShapeVertex = [f32; 4];
 
 gfx_defines!{
+    vertex ShapePolygon {
+        indices: [u16; 4] = "a_Indices",
+        normal: [gfx::format::I8Norm; 4] = "a_Normal",
+        origin_square: [f32; 4] = "a_OriginSquare",
+    }
+
     vertex TerrainVertex {
         pos: [i8; 4] = "a_Pos",
     }
@@ -411,11 +418,11 @@ impl<R: gfx::Resources> Render<R> {
         // body
         Render::draw_mesh(encoder, &model.body, model2world, pso, data);
         // debug render
-        if let (Some((debug, scale, world2screen)), Some(shape)) = (debug_context, model.shape.debug.as_ref()) {
+        if let Some((debug, scale, world2screen)) = debug_context {
             let mut mx_shape = model2world;
             mx_shape.scale *= scale;
             let transform = world2screen * Matrix4::from(mx_shape);
-            debug.draw_shape(shape, transform, encoder);
+            debug.draw_shape(&model.shape, transform, encoder);
         }
         // wheels
         for w in model.wheels.iter() {
