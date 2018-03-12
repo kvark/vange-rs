@@ -321,7 +321,7 @@ impl<R: gfx::Resources> GpuCollider<R> {
         factory
             .create_pipeline_from_program(
                 &program,
-                gfx::Primitive::TriangleList,
+                gfx::Primitive::TriangleStrip,
                 gfx::state::Rasterizer::new_fill()
                     .with_cull_back(),
                 collision::new(),

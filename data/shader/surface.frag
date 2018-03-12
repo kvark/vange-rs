@@ -1,4 +1,4 @@
-// Common routines for fetching the level surface data.
+// Common FS routines for fetching the level surface data.
 
 uniform c_Surface {
     vec4 u_TextureScale;    // XY = size, Z = height scale, w = number of layers
