@@ -25,7 +25,7 @@ void main() {
     v_Vector = mix(mat3(u_Model) * poly.origin, offset, EXACT_VECTOR);
     v_PolyNormal = poly.normal;
 
-    vec2 out_pos = (offset.xy + u_TargetCenterScale.xy) * u_TargetCenterScale.zw - vec2(1.0);
+    vec2 out_pos = (poly.vertex.xy + u_TargetCenterScale.xy) * u_TargetCenterScale.zw - vec2(1.0);
     gl_Position = vec4(out_pos, 0.0, 1.0);
 }
 #endif //VS
@@ -48,9 +48,20 @@ out vec4 Target0;
 
 void main() {
     Surface suf = get_surface(v_World.xy);
-    float depth_raw = max(0.0, suf.high_alt - v_World.z);
-    float depth = SCALE * min(u_Penetration.y, u_Penetration.x * depth_raw);
 
-    Target0 = depth * vec4(v_Vector.y, -v_Vector.x, 1.0, 0.0);
+    // see `GET_MIDDLE_HIGHT` macro in the original
+    float extra_room = suf.high_alt - suf.low_alt > 130.0 ? 110.0 : 48.0;
+    float middle = suf.low_alt + extra_room;
+    float depth_raw = max(0.0, suf.low_alt - v_World.z);
+
+    if (v_World.z > middle && middle < suf.high_alt) {
+        depth_raw = max(0.0, suf.high_alt - v_World.z);
+        if (v_World.z - middle < depth_raw) {
+            depth_raw = 0.0;
+        }
+    }
+
+    float depth = SCALE * min(u_Penetration.y, u_Penetration.x * depth_raw);
+    Target0 = depth * vec4(v_Vector.y, -v_Vector.x, 1.0, 1.0);
 }
 #endif //FS

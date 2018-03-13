@@ -6,6 +6,8 @@ use render::{read_shaders,
 use space::Transform;
 
 use gfx::{self, handle as h};
+use gfx::format::Formatted;
+use gfx::memory::Typed;
 use gfx::Rect;
 use gfx::texture::Size;
 use gfx::traits::FactoryExt;
@@ -13,6 +15,7 @@ use gfx::traits::FactoryExt;
 use std::{mem, ops};
 
 
+pub use render::ColorFormat;
 pub type CollisionFormat = gfx::format::Rgba32F;
 pub type CollisionFormatView = <CollisionFormat as gfx::format::Formatted>::View;
 
@@ -47,7 +50,8 @@ gfx_defines!{
         vbuf: gfx::InstanceBuffer<DownsampleVertex> = (),
         dest_size: gfx::Global<[f32; 2]> = "u_DestSize",
         source: gfx::TextureSampler<CollisionFormatView> = "t_Source",
-        destination: gfx::RenderTarget<CollisionFormat> = "Target0",
+        destination: gfx::RawRenderTarget =
+            ("Target0", CollisionFormat::get_format(), gfx::state::ColorMask::all(), None),
     }
 }
 
@@ -94,7 +98,11 @@ impl AtlasMap {
     }
 }
 
-
+pub struct DebugBlit<R: gfx::Resources> {
+    pub shape: ShapeId,
+    pub target: gfx::handle::RenderTargetView<R, ColorFormat>,
+    pub scale: Size,
+}
 
 
 struct Downsampler<R: gfx::Resources> {
@@ -105,25 +113,43 @@ struct Downsampler<R: gfx::Resources> {
     vertices: Vec<DownsampleVertex>,
     v_buf: h::Buffer<R, DownsampleVertex>,
     pso: gfx::PipelineState<R, downsample::Meta>,
+    pso_debug: gfx::PipelineState<R, downsample::Meta>,
 }
 
 impl<R: gfx::Resources> Downsampler<R> {
-    fn create_pso<F: gfx::Factory<R>>(
+    fn create_psos<F: gfx::Factory<R>>(
         factory: &mut F,
-    ) -> gfx::PipelineState<R, downsample::Meta> {
+    ) -> (
+        gfx::PipelineState<R, downsample::Meta>,
+        gfx::PipelineState<R, downsample::Meta>,
+    ) {
         let (vs, fs) = read_shaders("downsample")
             .unwrap();
         let program = factory
             .link_program(&vs, &fs)
             .unwrap();
-        factory
+
+        let pso = factory
             .create_pipeline_from_program(
                 &program,
                 gfx::Primitive::TriangleStrip,
                 gfx::state::Rasterizer::new_fill(),
                 downsample::new(),
             )
-            .unwrap()
+            .unwrap();
+        let pso_debug = factory
+            .create_pipeline_from_program(
+                &program,
+                gfx::Primitive::TriangleStrip,
+                gfx::state::Rasterizer::new_fill(),
+                downsample::Init {
+                    destination: ("Target0", ColorFormat::get_format(), gfx::state::ColorMask::all(), None),
+                    .. downsample::new()
+                },
+            )
+            .unwrap();
+
+        (pso, pso_debug)
     }
 
     pub fn new<F>(
@@ -140,6 +166,7 @@ impl<R: gfx::Resources> Downsampler<R> {
         let (_, sec_srv, sec_rtv) = factory
             .create_render_target(size.0, size.1)
             .unwrap();
+        let (pso, pso_debug) = Self::create_psos(factory);
         Downsampler {
             primary: (pri_rtv, pri_srv),
             secondary: (sec_rtv, sec_srv),
@@ -152,7 +179,8 @@ impl<R: gfx::Resources> Downsampler<R> {
                 gfx::memory::Usage::Dynamic,
                 gfx::memory::Bind::empty(),
             ).unwrap(),
-            pso: Self::create_pso(factory),
+            pso,
+            pso_debug,
         }
     }
 
@@ -174,7 +202,8 @@ impl<R: gfx::Resources> Downsampler<R> {
     }
 
     fn flush<C>(
-        &mut self, encoder: &mut gfx::Encoder<R ,C>
+        &mut self,
+        encoder: &mut gfx::Encoder<R ,C>,
     ) where
         C: gfx::CommandBuffer<R>,
     {
@@ -195,11 +224,40 @@ impl<R: gfx::Resources> Downsampler<R> {
             vbuf: self.v_buf.clone(),
             dest_size: [dw as f32, dh as f32],
             source: (self.primary.1.clone(), self.sampler.clone()),
-            destination: self.secondary.0.clone(),
+            destination: self.secondary.0.raw().clone(),
         });
 
         mem::swap(&mut self.primary, &mut self.secondary);
         self.reset();
+    }
+
+    fn debug_blit<C>(
+        &mut self,
+        encoder: &mut gfx::Encoder<R ,C>,
+        destination: gfx::handle::RawRenderTargetView<R>,
+        src: Rect,
+        dst: Rect,
+    ) where
+        C: gfx::CommandBuffer<R>,
+    {
+        let slice = gfx::Slice {
+            start: 0,
+            end: 4,
+            base_vertex: 0,
+            instances: Some((1, 0)),
+            buffer: gfx::IndexBuffer::Auto,
+        };
+        encoder.update_constant_buffer(&self.v_buf, &DownsampleVertex {
+            src: [src.x, src.y, src.w, src.h],
+            dst: [dst.x, dst.y, dst.w, dst.h],
+        });
+        let (w, h, _, _) = destination.get_dimensions();
+        encoder.draw(&slice, &self.pso_debug, &downsample::Data {
+            vbuf: self.v_buf.clone(),
+            dest_size: [w as f32, h as f32],
+            source: (self.primary.1.clone(), self.sampler.clone()),
+            destination,
+        });
     }
 
     pub fn reload<F>(
@@ -207,7 +265,9 @@ impl<R: gfx::Resources> Downsampler<R> {
     ) where
         F: gfx::Factory<R>
     {
-        self.pso = Self::create_pso(factory);
+        let (pso, pso_debug) = Self::create_psos(factory);
+        self.pso = pso;
+        self.pso_debug = pso_debug;
     }
 }
 
@@ -281,9 +341,26 @@ impl<'a,
         ShapeId(self.inputs.len() - 1, self.epoch.clone())
     }
 
-    pub fn finish(mut self) -> CollisionResults<R> {
+    pub fn finish(
+        mut self, debug_blit: Option<DebugBlit<R>>
+    ) -> CollisionResults<R> {
+        let mut debug = debug_blit.map(|d| {
+            let (w, h, _, _) = d.target.get_dimensions();
+            (d, AtlasMap::new((w, h)))
+        });
         self.downsampler.atlas.reset();
+
         while self.inputs.iter().any(|rect| rect.w > 1 || rect.h > 1) {
+            if let Some((ref blit, ref mut atlas)) = debug {
+                let src = self.inputs[blit.shape.0];
+                let dst = atlas.add((src.w * blit.scale, src.h * blit.scale));
+                self.downsampler.debug_blit(
+                    &mut self.encoder,
+                    blit.target.raw().clone(),
+                    src,
+                    dst
+                );
+            }
             for rect in &mut self.inputs {
                 *rect = self.downsampler.downsample(*rect);
             }
@@ -368,7 +445,9 @@ impl<R: gfx::Resources> GpuCollider<R> {
     }
 
     pub fn start<'a, C>(
-        &'a mut self, encoder: &'a mut gfx::Encoder<R, C>, common: &Common,
+        &'a mut self,
+        encoder: &'a mut gfx::Encoder<R, C>,
+        common: &Common,
     ) -> CollisionBuilder<'a, R, C>
     where
         C: gfx::CommandBuffer<R>,

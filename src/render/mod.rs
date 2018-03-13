@@ -11,7 +11,7 @@ use std::io::Error as IoError;
 mod collision;
 mod debug;
 
-pub use self::collision::{GpuCollider};
+pub use self::collision::{DebugBlit, GpuCollider};
 pub use self::debug::{DebugPos, DebugRender, LineBuffer};
 
 
@@ -594,5 +594,9 @@ impl<R: gfx::Resources> Render<R> {
             height: self.terrain.data.height.clone(),
             meta: self.terrain.data.meta.clone(),
         }
+    }
+
+    pub fn target_color(&self) -> gfx::handle::RenderTargetView<R, ColorFormat> {
+        self.terrain.data.out_color.clone()
     }
 }

@@ -30,4 +30,5 @@ color = [1, 1, 1, 1]
 [render.debug]
 max_vertices = 512
 collision_shapes = false
+collision_map = false
 impulses = false
