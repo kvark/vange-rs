@@ -5,6 +5,7 @@ varying vec4 v_Color;
 
 uniform c_Locals {
     mat4 u_ModelViewProj;
+    vec4 u_Color;
 };
 
 attribute vec4 a_Pos;

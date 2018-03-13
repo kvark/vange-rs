@@ -113,6 +113,7 @@ pub struct Game<R: gfx::Resources> {
     spin_hor: f32,
     spin_ver: f32,
     is_paused: bool,
+    debug_collision_map: bool,
     tick: Option<f32>,
 }
 
@@ -222,6 +223,7 @@ impl<R: gfx::Resources> Game<R> {
             spin_hor: 0.0,
             spin_ver: 0.0,
             is_paused: false,
+            debug_collision_map: settings.render.debug.collision_map,
             tick: None,
         }
     }
@@ -415,16 +417,6 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
     fn draw<C: gfx::CommandBuffer<R>>(
         &mut self, encoder: &mut gfx::Encoder<R, C>
     ) {
-        let _ = {
-            let mut collider = self.collider.start(encoder, &self.db.common);
-            for agent in &self.agents {
-                let mut transform = agent.transform.clone();
-                transform.scale *= agent.car.physics.scale_bound;
-                let _ = collider.add(&agent.car.model.shape, transform);
-            }
-            collider.finish()
-        };
-
         let models = self.agents
             .iter()
             .map(|a| render::RenderModel {
@@ -441,6 +433,23 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
         self.render
             .debug
             .draw_lines(&self.line_buffer, self.cam.get_view_proj().into(), encoder);
+
+        let _ = {
+            let mut collider = self.collider.start(encoder, &self.db.common);
+            let mut player_shape = None;
+            for agent in &self.agents {
+                let mut transform = agent.transform.clone();
+                transform.scale *= agent.car.physics.scale_bound;
+                let shape = collider.add(&agent.car.model.shape, transform);
+                if self.debug_collision_map && Spirit::Player == agent.spirit {
+                    player_shape = Some(shape);
+                }
+            }
+            let target = self.render.target_color();
+            collider.finish(player_shape.map(|shape|
+                render::DebugBlit { target, shape, scale: 4 }
+            ))
+        };
     }
 
     fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {

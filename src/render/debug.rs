@@ -67,6 +67,7 @@ gfx_defines! {
 
     constant DebugLocals {
         m_mvp: [[f32; 4]; 4] = "u_ModelViewProj",
+        color: [f32; 4] = "u_Color",
     }
 
     pipeline debug {
@@ -81,7 +82,6 @@ gfx_defines! {
     pipeline shape {
         vertices: gfx::ShaderResource<[f32; 4]> = "t_Position",
         polygons: gfx::InstanceBuffer<ShapePolygon> = (),
-        color: gfx::Global<[f32; 4]> = "u_Color",
         locals: gfx::ConstantBuffer<DebugLocals> = "c_Locals",
         out_color: gfx::BlendTarget<ColorFormat> = ("Target0", gfx::state::ColorMask::all(), gfx::preset::blend::ALPHA),
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_TEST,
@@ -297,18 +297,15 @@ impl<R: gfx::Resources> DebugRender<R> {
     ) where
         C: gfx::CommandBuffer<R>,
     {
-        encoder.update_constant_buffer(
-            &self.data.locals,
-            &DebugLocals {
-                m_mvp: transform.into(),
-            },
-        );
-
+        let mut locals = DebugLocals {
+            m_mvp: transform.into(),
+            color: [0.0, 1.0, 0.0, 0.1],
+        };
         let slice = shape.make_draw_slice();
-        let mut data = shape::Data {
+
+        let data = shape::Data {
             vertices: shape.vertex_view.clone(),
             polygons: shape.polygon_buf.clone(),
-            color: [0.0; 4],
             locals: self.data.locals.clone(),
             out_color: self.data.out_color.clone(),
             out_depth: self.data.out_depth.clone(),
@@ -316,18 +313,21 @@ impl<R: gfx::Resources> DebugRender<R> {
 
         // draw collision polygon faces
         if let Some(ref pso) = self.pso_face {
-            data.color = [0.0, 1.0, 0.0, 0.1];
+            locals.color = [0.0, 1.0, 0.0, 0.1];
+            encoder.update_constant_buffer(&self.data.locals, &locals);
             encoder.draw(&slice, pso, &data);
         }
 
         // draw collision polygon edges
         if let Some(ref pso) = self.pso_edge {
-            data.color = [1.0, 1.0, 0.0, 0.1];
+            locals.color = [1.0, 1.0, 0.0, 0.1];
+            encoder.update_constant_buffer(&self.data.locals, &locals);
             encoder.draw(&slice, pso, &data);
         }
 
         // draw sample normals
         if let Some(ref samples) = shape.sample_buf {
+            encoder.update_constant_buffer(&self.data.locals, &locals);
             encoder
                 .update_buffer(
                     &self.buf_col,
@@ -378,6 +378,7 @@ impl<R: gfx::Resources> DebugRender<R> {
             &self.data.locals,
             &DebugLocals {
                 m_mvp: transform.into(),
+                color: [0.0; 4],
             },
         );
 

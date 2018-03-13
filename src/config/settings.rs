@@ -42,6 +42,7 @@ pub struct Window {
 pub struct DebugRender {
     pub max_vertices: usize,
     pub collision_shapes: bool,
+    pub collision_map: bool,
     pub impulses: bool,
 }
 
