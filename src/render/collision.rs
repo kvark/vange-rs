@@ -22,6 +22,7 @@ pub type CollisionFormatView = <CollisionFormat as gfx::format::Formatted>::View
 gfx_defines!{
     constant CollisionLocals {
         model: [[f32; 4]; 4] = "u_Model",
+        scale: [f32; 4] = "u_ModelScale",
         target: [f32; 4] = "u_TargetCenterScale",
     }
 
@@ -313,8 +314,8 @@ impl<'a,
         use cgmath;
 
         let size = (
-            ((shape.bounds.coord_max[0] - shape.bounds.coord_min[0]) as f32 * transform.scale) as Size,
-            ((shape.bounds.coord_max[1] - shape.bounds.coord_min[1]) as f32 * transform.scale) as Size,
+            ((1 + shape.bounds.coord_max[0] - shape.bounds.coord_min[0]) as f32 * transform.scale).ceil() as Size,
+            ((1 + shape.bounds.coord_max[1] - shape.bounds.coord_min[1]) as f32 * transform.scale).ceil() as Size,
         );
         let rect = self.downsampler.atlas.add(size);
         self.inputs.push(rect);
@@ -323,9 +324,10 @@ impl<'a,
             &self.shader_data.locals,
             &CollisionLocals {
                 model: cgmath::Matrix4::from(transform).into(),
+                scale: [transform.scale; 4],
                 target: [
-                    rect.x as f32 - shape.bounds.coord_min[0] as f32 * transform.scale,
-                    rect.y as f32 - shape.bounds.coord_min[1] as f32 * transform.scale,
+                    rect.x as f32 + (1.0 - shape.bounds.coord_min[0] as f32) * transform.scale,
+                    rect.y as f32 + (1.0 - shape.bounds.coord_min[1] as f32) * transform.scale,
                     2.0 / self.downsampler.atlas.size.0 as f32,
                     2.0 / self.downsampler.atlas.size.1 as f32,
                 ],
