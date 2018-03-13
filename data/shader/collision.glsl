@@ -14,6 +14,7 @@ const float EXACT_VECTOR = 0.0;
 
 uniform c_Locals {
     mat4 u_Model;
+    vec4 u_ModelScale;
     vec4 u_TargetCenterScale;
 };
 
@@ -21,11 +22,11 @@ void main() {
     Polygon poly = get_shape_polygon();
     v_World = (u_Model * poly.vertex).xyz;
 
-    vec3 offset = v_World - u_Model[3].xyz;
-    v_Vector = mix(mat3(u_Model) * poly.origin, offset, EXACT_VECTOR);
+    v_Vector = mix(mat3(u_Model) * poly.origin, v_World - u_Model[3].xyz, EXACT_VECTOR);
     v_PolyNormal = poly.normal;
 
-    vec2 out_pos = (poly.vertex.xy + u_TargetCenterScale.xy) * u_TargetCenterScale.zw - vec2(1.0);
+    vec2 local_pos = poly.vertex.xy * u_ModelScale.xy;
+    vec2 out_pos = (local_pos + u_TargetCenterScale.xy) * u_TargetCenterScale.zw - vec2(1.0);
     gl_Position = vec4(out_pos, 0.0, 1.0);
 }
 #endif //VS
