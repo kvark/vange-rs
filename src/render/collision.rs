@@ -8,16 +8,17 @@ use space::Transform;
 use gfx::{self, handle as h};
 use gfx::format::Formatted;
 use gfx::memory::Typed;
-use gfx::Rect;
 use gfx::texture::Size;
 use gfx::traits::FactoryExt;
+use gfx::Rect;
 
 use std::{mem, ops};
 
 
 pub use render::ColorFormat;
 pub type CollisionFormat = gfx::format::Rgba32F;
-pub type CollisionFormatView = <CollisionFormat as gfx::format::Formatted>::View;
+pub type CollisionFormatView = <CollisionFormat as Formatted>::View;
+pub type CollisionFormatSurface = <CollisionFormat as Formatted>::Surface;
 
 gfx_defines!{
     constant CollisionLocals {
@@ -101,14 +102,44 @@ impl AtlasMap {
 
 pub struct DebugBlit<R: gfx::Resources> {
     pub shape: ShapeId,
-    pub target: gfx::handle::RenderTargetView<R, ColorFormat>,
+    pub target: h::RenderTargetView<R, ColorFormat>,
     pub scale: Size,
 }
 
+//TODO: use mipmaps
+struct RichTexture<R: gfx::Resources> {
+    texture: h::Texture<R, CollisionFormatSurface>,
+    rtv: h::RenderTargetView<R, CollisionFormat>,
+    srv: h::ShaderResourceView<R, CollisionFormatView>,
+}
+
+impl<R: gfx::Resources> RichTexture<R> {
+    fn new<F: gfx::Factory<R>>(
+        size: (Size, Size), factory: &mut F
+    ) -> Self {
+        use gfx::texture as t;
+        use gfx::format::{ChannelTyped, Swizzle};
+        use gfx::memory::Bind;
+
+        let kind = t::Kind::D2(size.0, size.1, t::AaMode::Single);
+        let bind = Bind::SHADER_RESOURCE | Bind::RENDER_TARGET | Bind::TRANSFER_SRC;
+        let cty = <<CollisionFormat as Formatted>::Channel as ChannelTyped>::get_channel_type();
+        let texture = factory
+            .create_texture(kind, 1, bind, gfx::memory::Usage::Data, Some(cty))
+            .unwrap();
+        let srv = factory
+            .view_texture_as_shader_resource::<CollisionFormat>(&texture, (0, 0), Swizzle::new())
+            .unwrap();
+        let rtv = factory
+            .view_texture_as_render_target(&texture, 0, None)
+            .unwrap();
+        RichTexture { texture, srv, rtv }
+    }
+}
 
 struct Downsampler<R: gfx::Resources> {
-    primary: (h::RenderTargetView<R, CollisionFormat>, h::ShaderResourceView<R, CollisionFormatView>),
-    secondary: (h::RenderTargetView<R, CollisionFormat>, h::ShaderResourceView<R, CollisionFormatView>),
+    primary: RichTexture<R>,
+    secondary: RichTexture<R>,
     sampler: h::Sampler<R>,
     atlas: AtlasMap,
     vertices: Vec<DownsampleVertex>,
@@ -153,24 +184,17 @@ impl<R: gfx::Resources> Downsampler<R> {
         (pso, pso_debug)
     }
 
-    pub fn new<F>(
+    pub fn new<F: gfx::Factory<R>>(
         factory: &mut F,
         size: (Size, Size),
         max_vertices: usize,
-    ) -> Self
-    where
-        F: gfx::Factory<R>
-    {
-        let (_, pri_srv, pri_rtv) = factory
-            .create_render_target(size.0, size.1)
-            .unwrap();
-        let (_, sec_srv, sec_rtv) = factory
-            .create_render_target(size.0, size.1)
-            .unwrap();
+    ) -> Self {
+        let primary = RichTexture::new(size, factory);
+        let secondary = RichTexture::new(size, factory);
         let (pso, pso_debug) = Self::create_psos(factory);
         Downsampler {
-            primary: (pri_rtv, pri_srv),
-            secondary: (sec_rtv, sec_srv),
+            primary,
+            secondary,
             sampler: factory.create_sampler_linear(),
             atlas: AtlasMap::new(size),
             vertices: Vec::new(),
@@ -213,7 +237,7 @@ impl<R: gfx::Resources> Downsampler<R> {
             .update_buffer(&self.v_buf, &self.vertices, 0)
             .unwrap();
 
-        let (dw, dh, _, _) = self.secondary.0.get_dimensions();
+        let (dw, dh, _, _) = self.secondary.rtv.get_dimensions();
         let slice = gfx::Slice {
             start: 0,
             end: 4,
@@ -224,8 +248,8 @@ impl<R: gfx::Resources> Downsampler<R> {
         encoder.draw(&slice, &self.pso, &downsample::Data {
             vbuf: self.v_buf.clone(),
             dest_size: [dw as f32, dh as f32],
-            source: (self.primary.1.clone(), self.sampler.clone()),
-            destination: self.secondary.0.raw().clone(),
+            source: (self.primary.srv.clone(), self.sampler.clone()),
+            destination: self.secondary.rtv.raw().clone(),
         });
 
         mem::swap(&mut self.primary, &mut self.secondary);
@@ -235,7 +259,7 @@ impl<R: gfx::Resources> Downsampler<R> {
     fn debug_blit<C>(
         &mut self,
         encoder: &mut gfx::Encoder<R ,C>,
-        destination: gfx::handle::RawRenderTargetView<R>,
+        destination: h::RawRenderTargetView<R>,
         src: Rect,
         dst: Rect,
     ) where
@@ -256,7 +280,7 @@ impl<R: gfx::Resources> Downsampler<R> {
         encoder.draw(&slice, &self.pso_debug, &downsample::Data {
             vbuf: self.v_buf.clone(),
             dest_size: [w as f32, h as f32],
-            source: (self.primary.1.clone(), self.sampler.clone()),
+            source: (self.primary.srv.clone(), self.sampler.clone()),
             destination,
         });
     }
@@ -277,7 +301,7 @@ impl<R: gfx::Resources> Downsampler<R> {
 struct Epoch(usize);
 
 #[must_use]
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ShapeId(usize, Epoch);
 
 #[must_use]
@@ -301,6 +325,8 @@ pub struct CollisionBuilder<'a, R: gfx::Resources, C: 'a> {
     pso: &'a gfx::PipelineState<R, collision::Meta>,
     shader_data: collision::Data<R>,
     inputs: Vec<Rect>,
+    final_texture: &'a h::Texture<R, CollisionFormatSurface>,
+    read_buffer: Option<&'a h::Buffer<R, [f32; 4]>>,
     epoch: Epoch,
 }
 
@@ -369,13 +395,58 @@ impl<'a,
             self.downsampler.flush(&mut self.encoder);
         }
 
+        if let Some(read_buffer) = self.read_buffer {
+            //Note: using an intermediate 1D texture, since GL backend doesn't allow reading
+            // only part of the texture into a buffer.
+            let cty = <<CollisionFormat as Formatted>::Channel as gfx::format::ChannelTyped>::get_channel_type();
+            let source_image_info = self.downsampler.primary.texture
+                .get_info()
+                .to_raw_image_info(cty, 0);
+
+            self.encoder
+                .copy_texture_to_texture_raw(
+                    self.downsampler.primary.texture.raw(),
+                    None,
+                    gfx::texture::RawImageInfo {
+                        height: 0,
+                        depth: 0,
+                        .. source_image_info
+                    },
+                    self.final_texture.raw(),
+                    None,
+                    gfx::texture::RawImageInfo {
+                        xoffset: 0,
+                        yoffset: 0,
+                        zoffset: 0,
+                        width: source_image_info.width,
+                        height: 0,
+                        depth: 0,
+                        format: CollisionFormat::get_format(),
+                        mipmap: 0,
+                    },
+                )
+                .unwrap();
+            self.encoder
+                .copy_texture_to_buffer_raw(
+                    self.final_texture.raw(),
+                    None,
+                    self.final_texture
+                        .get_info()
+                        .to_raw_image_info(cty, 0),
+                    read_buffer.raw(),
+                    0,
+                )
+                .unwrap();
+        }
+
         CollisionResults {
             results: self.inputs,
             epoch: self.epoch,
-            view: self.downsampler.primary.1.clone(),
+            view: self.downsampler.primary.srv.clone(),
         }
     }
 }
+
 
 pub struct GpuCollider<R: gfx::Resources> {
     downsampler: Downsampler<R>,
@@ -385,6 +456,8 @@ pub struct GpuCollider<R: gfx::Resources> {
     surface_data: SurfaceData<R>,
     locals: h::Buffer<R, CollisionLocals>,
     globals: h::Buffer<R, CollisionGlobals>,
+    final_texture: h::Texture<R, CollisionFormatSurface>,
+    read_buffer: h::Buffer<R, [f32; 4]>,
     epoch: Epoch,
 }
 
@@ -417,6 +490,8 @@ impl<R: gfx::Resources> GpuCollider<R> {
     where
         F: gfx::Factory<R>
     {
+        let cty = <<CollisionFormat as Formatted>::Channel as gfx::format::ChannelTyped>::get_channel_type();
+
         let dummy_vert = factory
             .create_buffer_immutable(
                 &[],
@@ -433,6 +508,19 @@ impl<R: gfx::Resources> GpuCollider<R> {
             surface_data,
             locals: factory.create_constant_buffer(1),
             globals: factory.create_constant_buffer(1),
+            final_texture: factory
+                .create_texture(
+                    gfx::texture::Kind::D2(size.0, 1, gfx::texture::AaMode::Single),
+                    1,
+                    // Note: SHADER_RESOURCE is only here to make it a GL texture as opposed to a GL surface
+                    gfx::memory::Bind::TRANSFER_SRC | gfx::memory::Bind::TRANSFER_DST | gfx::memory::Bind::SHADER_RESOURCE,
+                    gfx::memory::Usage::Data,
+                    Some(cty),
+                )
+                .unwrap(),
+            read_buffer: factory
+                .create_download_buffer(size.0 as _)
+                .unwrap(),
             epoch: Epoch(0),
         }
     }
@@ -469,7 +557,7 @@ impl<R: gfx::Resources> GpuCollider<R> {
             },
         );
 
-        let destination = self.downsampler.primary.0.clone();
+        let destination = self.downsampler.primary.rtv.clone();
         encoder.clear(&destination, [0.0; 4]);
 
         CollisionBuilder {
@@ -487,7 +575,13 @@ impl<R: gfx::Resources> GpuCollider<R> {
                 destination,
             },
             inputs: Vec::new(),
+            final_texture: &self.final_texture,
+            read_buffer: Some(&self.read_buffer),
             epoch: self.epoch.clone(),
         }
+    }
+
+    pub fn readback(&self) -> &h::Buffer<R, [f32; 4]> {
+        &self.read_buffer
     }
 }

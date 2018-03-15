@@ -12,6 +12,7 @@ count = 10 # number of NPC vangers
 
 [game.physics]
 max_quant = 0.05
+gpu_collision = false
 
 [car]
 id = "OxidizeMonk"

@@ -11,7 +11,7 @@ use std::io::Error as IoError;
 mod collision;
 mod debug;
 
-pub use self::collision::{DebugBlit, GpuCollider};
+pub use self::collision::{DebugBlit, GpuCollider, ShapeId};
 pub use self::debug::{DebugPos, DebugRender, LineBuffer};
 
 

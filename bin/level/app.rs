@@ -116,14 +116,6 @@ impl<R: gfx::Resources> LevelView<R> {
 }
 
 impl<R: gfx::Resources> Application<R> for LevelView<R> {
-    fn on_resize<F: gfx::Factory<R>>(
-        &mut self, targets: render::MainTargets<R>, _factory: &mut F
-    ) {
-        let (w, h, _, _) = targets.color.get_dimensions();
-        self.cam.proj.update(w, h);
-        self.render.resize(targets);
-    }
-
     fn on_cursor_move(&mut self, position: (f64, f64)){
         if !self.mouse_button_pressed {
             return;
@@ -273,7 +265,18 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
             .draw_world(enc, &[], &self.cam);
     }
 
-    fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
-        self.render.reload(factory);
+    fn gpu_update<F: gfx::Factory<R>>(
+        &mut self, factory: &mut F,
+        resized_targets: Option<render::MainTargets<R>>,
+        reload_shaders: bool,
+    ) {
+        if let Some(targets) = resized_targets {
+            let (w, h, _, _) = targets.color.get_dimensions();
+            self.cam.proj.update(w, h);
+            self.render.resize(targets);
+        }
+        if reload_shaders {
+            self.render.reload(factory);
+        }
     }
 }
