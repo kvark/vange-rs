@@ -104,16 +104,6 @@ impl<R: gfx::Resources> CarView<R> {
 }
 
 impl<R: gfx::Resources> Application<R> for CarView<R> {
-    fn on_resize<F: gfx::Factory<R>>(
-        &mut self, targets: render::MainTargets<R>, _factory: &mut F
-    ) {
-        let (w, h, _, _) = targets.color.get_dimensions();
-        self.cam.proj.update(w, h);
-        self.data.out_color = targets.color.clone();
-        self.data.out_depth = targets.depth.clone();
-        self.debug_render.resize(targets);
-    }
-
     fn on_key(&mut self, input: KeyboardInput) -> bool {
         use boilerplate::{ElementState, Key};
 
@@ -184,7 +174,20 @@ impl<R: gfx::Resources> Application<R> for CarView<R> {
         );
     }
 
-    fn reload_shaders<F: gfx::Factory<R>>(&mut self, factory: &mut F) {
-        self.pso = render::Render::create_object_pso(factory);
+    fn gpu_update<F: gfx::Factory<R>>(
+        &mut self, factory: &mut F,
+        resized_targets: Option<render::MainTargets<R>>,
+        reload_shaders: bool,
+    ) {
+        if let Some(targets) = resized_targets {
+            let (w, h, _, _) = targets.color.get_dimensions();
+            self.cam.proj.update(w, h);
+            self.data.out_color = targets.color.clone();
+            self.data.out_depth = targets.depth.clone();
+            self.debug_render.resize(targets);
+        }
+        if reload_shaders {
+            self.pso = render::Render::create_object_pso(factory);
+        }
     }
 }

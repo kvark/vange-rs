@@ -11,14 +11,17 @@ pub use self::glutin::{ElementState, KeyboardInput, ModifiersState, VirtualKeyCo
 
 
 pub trait Application<R: gfx::Resources> {
-    fn on_resize<F: gfx::Factory<R>>(&mut self, render::MainTargets<R>, &mut F);
     fn on_key(&mut self, KeyboardInput) -> bool;
     fn on_mouse_wheel(&mut self, _delta: MouseScrollDelta) {}
     fn on_cursor_move(&mut self, _position: (f64, f64)) {}
     fn on_mouse_button(&mut self, _state: ElementState, _button: MouseButton) {}
+    fn gpu_update<F: gfx::Factory<R>>(
+        &mut self, &mut F, resize: Option<render::MainTargets<R>>, reload: bool
+    );
     fn update(&mut self, delta: f32);
-    fn draw<C: gfx::CommandBuffer<R>>(&mut self, &mut gfx::Encoder<R, C>);
-    fn reload_shaders<F: gfx::Factory<R>>(&mut self, &mut F);
+    fn draw<C: gfx::CommandBuffer<R>>(
+        &mut self, &mut gfx::Encoder<R, C>
+    );
 }
 
 type MainTargets = render::MainTargets<gfx_device_gl::Resources>;
@@ -79,19 +82,20 @@ impl Harness {
             use gfx::Device;
             use self::glutin::GlContext;
 
-            let (win, factory) = (&self.window, &mut self.factory);
+            let win = &self.window;
+            let mut resized_targets = None;
+            let mut reload_shaders = false;
             self.events_loop.poll_events(|event| match event {
                 glutin::Event::WindowEvent { window_id, ref event } if window_id == win.id() => {
                     match *event {
                         glutin::WindowEvent::Resized(width, height) => {
                             info!("Resizing to {}x{}", width, height);
                             let (color, depth) = gfx_window_glutin::new_views(win);
-                            let new_targets = render::MainTargets { color, depth };
-                            app.on_resize(new_targets, factory);
+                            resized_targets = Some(render::MainTargets { color, depth });
                         }
                         glutin::WindowEvent::Focused(true) => {
                             info!("Reloading shaders");
-                            app.reload_shaders(factory);
+                            reload_shaders = true;
                         }
                         glutin::WindowEvent::Closed => {
                             running = false;
@@ -115,6 +119,8 @@ impl Harness {
                 }
                 _ => {}
             });
+
+            app.gpu_update(&mut self.factory, resized_targets, reload_shaders);
 
             let duration = time::Instant::now() - last_time;
             last_time += duration;

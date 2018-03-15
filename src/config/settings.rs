@@ -21,6 +21,7 @@ pub struct Other {
 #[derive(Deserialize)]
 pub struct Physics {
     pub max_quant: f32,
+    pub gpu_collision: bool,
 }
 
 #[derive(Deserialize)]
