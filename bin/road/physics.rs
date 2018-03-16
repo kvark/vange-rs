@@ -197,6 +197,7 @@ pub fn step<R: gfx::Resources>(
     common: &config::common::Common,
     f_turbo: f32,
     f_brake: f32,
+    gpu_momentum: Option<(f32, cgmath::Vector2<f32>)>,
     mut line_buffer: Option<&mut LineBuffer>,
 ) {
     let speed_correction_factor = dt / common.nature.time_delta0;
@@ -220,31 +221,19 @@ pub fn step<R: gfx::Resources>(
     };
 
     let mut wheels_touch = 0u32;
-    let mut spring_touch;
+    let mut spring_touch = 0;
     //let mut in_water = false;
 
     let mut float_count = 0;
     let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
-    let stand_on_wheels =
-        z_axis.z > 0.0 && (transform.rot * cgmath::Vector3::unit_x()).z.abs() < 0.7;
+    let stand_on_wheels = z_axis.z > 0.0 &&
+        (transform.rot * cgmath::Vector3::unit_x()).z.abs() < 0.7;
     let modulation = 1.0;
     let mut acc_cur = AccelerationVectors {
         f: rot_inv * acc_global.f,
         k: rot_inv * acc_global.k,
     };
 
-    // apply drag
-    let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(v_vel.magnitude());
-    let mut w_drag = common.drag.free.w * common.drag.speed.w.powf(w_vel.magnitude2()); //why mag2?
-    if wheels_touch > 0 {
-        //TODO: why `ln()`?
-        let speed = common.drag.wheel_speed.ln() * car.physics.mobility_factor
-            * common.global.speed_factor
-            / car.physics.speed_factor;
-        v_vel.y *= (1.0 + speed).powf(speed_correction_factor);
-    }
-    wheels_touch = 0;
-    spring_touch = 0;
     let mut down_minus_up = 0i32;
     let mut acc_springs = AccelerationVectors {
         f: cgmath::Vector3::zero(),
@@ -255,7 +244,20 @@ pub fn step<R: gfx::Resources>(
     let mut sum_rg0 = cgmath::Vector3::zero();
     let mut sum_df = 0.;
 
-    for (bound_poly_id, poly) in car.model.shape.polygons.iter().enumerate() {
+    let empty_polys = [];
+    let soft_polys = match gpu_momentum {
+        Some((ground_force, angular_force)) => {
+            if ground_force != 0.0 {
+                wheels_touch += 1;
+            }
+            acc_springs.f.z += ground_force;
+            acc_springs.k += angular_force.extend(0.0);
+            &empty_polys[..]
+        },
+        None => &car.model.shape.polygons,
+    };
+
+    for (bound_poly_id, poly) in soft_polys.iter().enumerate() {
         let r = cgmath::Vector3::from(poly.middle)
             * (transform.scale * car.physics.scale_bound);
         let rg0 = transform.rot * r;
@@ -391,6 +393,17 @@ pub fn step<R: gfx::Resources>(
         debug!("\tsprings total {:?}", acc_springs);
         acc_cur.f += rot_inv * acc_springs.f;
         acc_cur.k += rot_inv * acc_springs.k;
+    }
+
+    // apply drag
+    let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(v_vel.magnitude());
+    let mut w_drag = common.drag.free.w * common.drag.speed.w.powf(w_vel.magnitude2()); //why mag2?
+    if wheels_touch > 0 {
+        //TODO: why `ln()`?
+        let speed = common.drag.wheel_speed.ln() * car.physics.mobility_factor
+            * common.global.speed_factor
+            / car.physics.speed_factor;
+        v_vel.y *= (1.0 + speed).powf(speed_correction_factor);
     }
 
     let _ = (float_count, water_immersion, terrain_immersion); //TODO
