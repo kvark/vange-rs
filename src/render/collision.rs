@@ -325,7 +325,6 @@ pub struct CollisionBuilder<'a, R: gfx::Resources, C: 'a> {
     pso: &'a gfx::PipelineState<R, collision::Meta>,
     shader_data: collision::Data<R>,
     inputs: Vec<Rect>,
-    final_texture: &'a h::Texture<R, CollisionFormatSurface>,
     read_buffer: Option<&'a h::Buffer<R, [f32; 4]>>,
     epoch: Epoch,
 }
@@ -396,43 +395,18 @@ impl<'a,
         }
 
         if let Some(read_buffer) = self.read_buffer {
-            //Note: using an intermediate 1D texture, since GL backend doesn't allow reading
-            // only part of the texture into a buffer.
             let cty = <<CollisionFormat as Formatted>::Channel as gfx::format::ChannelTyped>::get_channel_type();
             let source_image_info = self.downsampler.primary.texture
                 .get_info()
                 .to_raw_image_info(cty, 0);
-
             self.encoder
-                .copy_texture_to_texture_raw(
+                .copy_texture_to_buffer_raw(
                     self.downsampler.primary.texture.raw(),
                     None,
                     gfx::texture::RawImageInfo {
-                        height: 0,
-                        depth: 0,
+                        height: 1,
                         .. source_image_info
                     },
-                    self.final_texture.raw(),
-                    None,
-                    gfx::texture::RawImageInfo {
-                        xoffset: 0,
-                        yoffset: 0,
-                        zoffset: 0,
-                        width: source_image_info.width,
-                        height: 0,
-                        depth: 0,
-                        format: CollisionFormat::get_format(),
-                        mipmap: 0,
-                    },
-                )
-                .unwrap();
-            self.encoder
-                .copy_texture_to_buffer_raw(
-                    self.final_texture.raw(),
-                    None,
-                    self.final_texture
-                        .get_info()
-                        .to_raw_image_info(cty, 0),
                     read_buffer.raw(),
                     0,
                 )
@@ -456,7 +430,6 @@ pub struct GpuCollider<R: gfx::Resources> {
     surface_data: SurfaceData<R>,
     locals: h::Buffer<R, CollisionLocals>,
     globals: h::Buffer<R, CollisionGlobals>,
-    final_texture: h::Texture<R, CollisionFormatSurface>,
     read_buffer: h::Buffer<R, [f32; 4]>,
     epoch: Epoch,
 }
@@ -490,8 +463,6 @@ impl<R: gfx::Resources> GpuCollider<R> {
     where
         F: gfx::Factory<R>
     {
-        let cty = <<CollisionFormat as Formatted>::Channel as gfx::format::ChannelTyped>::get_channel_type();
-
         let dummy_vert = factory
             .create_buffer_immutable(
                 &[],
@@ -508,16 +479,6 @@ impl<R: gfx::Resources> GpuCollider<R> {
             surface_data,
             locals: factory.create_constant_buffer(1),
             globals: factory.create_constant_buffer(1),
-            final_texture: factory
-                .create_texture(
-                    gfx::texture::Kind::D2(size.0, 1, gfx::texture::AaMode::Single),
-                    1,
-                    // Note: SHADER_RESOURCE is only here to make it a GL texture as opposed to a GL surface
-                    gfx::memory::Bind::TRANSFER_SRC | gfx::memory::Bind::TRANSFER_DST | gfx::memory::Bind::SHADER_RESOURCE,
-                    gfx::memory::Usage::Data,
-                    Some(cty),
-                )
-                .unwrap(),
             read_buffer: factory
                 .create_download_buffer(size.0 as _)
                 .unwrap(),
@@ -575,7 +536,6 @@ impl<R: gfx::Resources> GpuCollider<R> {
                 destination,
             },
             inputs: Vec::new(),
-            final_texture: &self.final_texture,
             read_buffer: Some(&self.read_buffer),
             epoch: self.epoch.clone(),
         }

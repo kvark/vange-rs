@@ -39,7 +39,7 @@ void main() {
 // and contributes to the total momentum. The universal scale between
 // individual impulses here and the rough overage computed by the
 // original game is encoded in this constant.
-const float SCALE = 0.1;
+const float SCALE = 0.01;
 
 uniform c_Globals {
     vec4 u_Penetration; // X=scale, Y=limit
@@ -63,6 +63,6 @@ void main() {
     }
 
     float depth = SCALE * min(u_Penetration.y, u_Penetration.x * depth_raw);
-    Target0 = depth * vec4(v_Vector.y, -v_Vector.x, 1.0, 1.0);
+    Target0 = depth * vec4(v_Vector.y, -v_Vector.x, 1.0, 0.0);
 }
 #endif //FS

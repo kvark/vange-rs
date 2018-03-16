@@ -26,7 +26,10 @@ struct Control {
 enum GpuMomentum {
     Pending(render::ShapeId),
     Computed(usize),
-    Ready(cgmath::Vector3<f32>),
+    Ready {
+        ground_force: f32,
+        angular_force: cgmath::Vector2<f32>,
+    },
 }
 
 pub struct Agent<R: gfx::Resources> {
@@ -96,6 +99,11 @@ impl<R: gfx::Resources> Agent<R> {
             common,
             if self.control.turbo { common.global.k_traction_turbo } else { 1.0 },
             if self.control.brake { common.global.f_brake_max } else { 0.0 },
+            match self.gpu_momentum {
+                Some(GpuMomentum::Ready { ground_force, angular_force }) =>
+                    Some((ground_force, angular_force)),
+                _ => None,
+            },
             line_buffer,
         )
     }
@@ -368,7 +376,7 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
                 );
             }
 
-            const TIME_HACK: f32 = 0.5;
+            const TIME_HACK: f32 = 1.0;
             // Note: the equations below make the game absolutely match the original
             // in terms of time scale for both input and physics.
             // However! the game feels much faster, presumably because of the lack
@@ -500,7 +508,10 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
             for agent in &mut self.agents {
                 if let Some(GpuMomentum::Computed(index)) = agent.gpu_momentum.take() {
                     let v = mapping[index];
-                    agent.gpu_momentum = Some(GpuMomentum::Ready(cgmath::vec3(v[0], v[1], v[2])));
+                    agent.gpu_momentum = Some(GpuMomentum::Ready {
+                        ground_force: v[2],
+                        angular_force: cgmath::vec2(v[0], v[1]),
+                    });
                 }
             }
         }
