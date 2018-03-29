@@ -20,14 +20,19 @@ pub type StoreFormatSurface = <StoreFormat as gfx::format::Formatted>::Surface;
 pub type StoreFormatView = <StoreFormat as gfx::format::Formatted>::View;
 
 gfx_defines!{
-    vertex PulseVertex {
+    vertex ResetVertex {
         linear: [f32; 4] = "a_Linear",
         angular: [f32; 4] = "a_Angular",
         entry: [f32; 4] = "a_Entry",
     }
 
+    pipeline reset {
+        instances: gfx::InstanceBuffer<ResetVertex> = (),
+        output: gfx::RenderTarget<StoreFormat> = "Target0",
+    }
+
     pipeline pulse {
-        instances: gfx::InstanceBuffer<PulseVertex> = (),
+        instances: gfx::InstanceBuffer<ResetVertex> = (),
         output: gfx::BlendTarget<StoreFormat> = (
             "Target0",
             gfx::state::ColorMask::all(),
@@ -39,13 +44,13 @@ gfx_defines!{
         force: [f32; 4] = "u_GlobalForce",
     }
 
-    constant ForceLocals {
-        time: [f32; 4] = "u_Time",
+    vertex ForceVertex {
+        entry_delta_did: [f32; 4] = "a_EntryDeltaDid",
     }
 
     pipeline force {
         globals: gfx::ConstantBuffer<ForceGlobals> = "c_Globals",
-        locals: gfx::ConstantBuffer<ForceLocals> = "c_Locals",
+        instances: gfx::InstanceBuffer<ForceVertex> = (),
         collisions: gfx::TextureSampler<CollisionFormatView> = "t_Collisions",
         velocities: gfx::TextureSampler<StoreFormatView> = "t_Velocities",
         output: gfx::RenderTarget<StoreFormat> = "Target0",
@@ -68,91 +73,68 @@ gfx_defines!{
 
 pub struct Entry(usize);
 
+struct Pipelines<R: gfx::Resources> {
+    reset: gfx::PipelineState<R, reset::Meta>,
+    pulse: gfx::PipelineState<R, pulse::Meta>,
+    force: gfx::PipelineState<R, force::Meta>,
+    step: gfx::PipelineState<R, step::Meta>,
+}
+
+impl<R: gfx::Resources> Pipelines<R> {
+    fn load<F: gfx::Factory<R>, I: gfx::pso::PipelineInit>(
+        factory: &mut F, name: &str, init: I,
+    ) -> gfx::PipelineState<R, I::Meta> {
+        let (vs, fs) = read_shaders(name)
+            .unwrap();
+        let program = factory
+            .link_program(&vs, &fs)
+            .unwrap();
+        factory
+            .create_pipeline_from_program(
+                &program,
+                gfx::Primitive::LineList,
+                gfx::state::Rasterizer::new_fill(),
+                init,
+            )
+            .unwrap()
+    }
+
+    fn new<F: gfx::Factory<R>>(
+        factory: &mut F,
+    ) -> Self {
+        Pipelines {
+            reset: Self::load(factory, "reset", reset::new()),
+            pulse: Self::load(factory, "pulse", pulse::new()),
+            force: Self::load(factory, "force", force::new()),
+            step: Self::load(factory, "step", step::new()),
+        }
+    }
+}
+
 pub struct Store<R: gfx::Resources> {
     capacity: usize,
     entries: Vec<bool>,
-    actions: Vec<(usize, Action)>,
+    removals: Vec<Entry>,
     texture: gfx::handle::Texture<R, StoreFormatSurface>,
     texture_vel: gfx::handle::Texture<R, StoreFormatSurface>,
     rtv: gfx::handle::RenderTargetView<R, StoreFormat>,
     srv: gfx::handle::ShaderResourceView<R, StoreFormatView>,
     srv_vel: gfx::handle::ShaderResourceView<R, StoreFormatView>,
     sampler: gfx::handle::Sampler<R>,
-    pso_pulse: gfx::PipelineState<R, pulse::Meta>,
-    pso_force: gfx::PipelineState<R, force::Meta>,
-    pso_step: gfx::PipelineState<R, step::Meta>,
-    inst_pulse: gfx::handle::Buffer<R, PulseVertex>,
+    pso: Pipelines<R>,
+    inst_reset: gfx::handle::Buffer<R, ResetVertex>,
+    inst_force: gfx::handle::Buffer<R, ForceVertex>,
     inst_step: gfx::handle::Buffer<R, StepVertex>,
     cb_force_globals: gfx::handle::Buffer<R, ForceGlobals>,
-    cb_force_locals: gfx::handle::Buffer<R, ForceLocals>,
-}
-
-enum Action {
-    Init(Transform),
-    Pulse { v: Vector3<f32>, w: Vector3<f32> },
-    Force { time: f32 },
-    Step { time: f32 },
+    pending_reset: Vec<ResetVertex>,
+    pending_pulse: Vec<ResetVertex>,
+    pending_force: Vec<ForceVertex>,
+    pending_step: Vec<StepVertex>,
 }
 
 impl<R: gfx::Resources> Store<R> {
-    fn create_psos<F: gfx::Factory<R>>(
-        factory: &mut F,
-    ) -> (
-        gfx::PipelineState<R, pulse::Meta>,
-        gfx::PipelineState<R, force::Meta>,
-        gfx::PipelineState<R, step::Meta>,
-    ) {
-        let pso_pulse = {
-            let (vs, fs) = read_shaders("pulse")
-                .unwrap();
-            let program = factory
-                .link_program(&vs, &fs)
-                .unwrap();
-            factory
-                .create_pipeline_from_program(
-                    &program,
-                    gfx::Primitive::LineList,
-                    gfx::state::Rasterizer::new_fill(),
-                    pulse::new(),
-                )
-                .unwrap()
-        };
-        let pso_force = {
-            let (vs, fs) = read_shaders("force")
-                .unwrap();
-            let program = factory
-                .link_program(&vs, &fs)
-                .unwrap();
-            factory
-                .create_pipeline_from_program(
-                    &program,
-                    gfx::Primitive::LineList,
-                    gfx::state::Rasterizer::new_fill(),
-                    force::new(),
-                )
-                .unwrap()
-        };
-        let pso_step = {
-            let (vs, fs) = read_shaders("step")
-                .unwrap();
-            let program = factory
-                .link_program(&vs, &fs)
-                .unwrap();
-            factory
-                .create_pipeline_from_program(
-                    &program,
-                    gfx::Primitive::LineList,
-                    gfx::state::Rasterizer::new_fill(),
-                    step::new(),
-                )
-                .unwrap()
-        };
-
-        (pso_pulse, pso_force, pso_step)
-    }
-
     pub fn new<F: gfx::Factory<R>>(
-        capacity: usize, factory: &mut F
+        capacity: usize, instances: usize, factory: &mut F
     ) -> Self {
         use gfx::texture as t;
         use gfx::format::{ChannelTyped, Formatted, Swizzle};
@@ -185,53 +167,91 @@ impl<R: gfx::Resources> Store<R> {
             .view_texture_as_shader_resource::<StoreFormat>(&texture_vel, (0, 0), Swizzle::new())
             .unwrap();
 
-        let (pso_pulse, pso_force, pso_step) = Self::create_psos(factory);
-
         Store {
             capacity,
             entries: vec![false; capacity],
-            actions: Vec::new(),
+            removals: Vec::new(),
             texture,
             texture_vel,
             rtv,
             srv,
             srv_vel,
             sampler: factory.create_sampler_linear(),
-            pso_pulse,
-            pso_force,
-            pso_step,
-            inst_pulse: factory
+            pso: Pipelines::new(factory),
+            inst_reset: factory
                 .create_buffer(
-                    10, //TODO
+                    instances as _,
+                    gfx::buffer::Role::Vertex,
+                    gfx::memory::Usage::Dynamic,
+                    gfx::memory::Bind::empty(),
+                ).unwrap(),
+            inst_force: factory
+                .create_buffer(
+                    instances as _,
                     gfx::buffer::Role::Vertex,
                     gfx::memory::Usage::Dynamic,
                     gfx::memory::Bind::empty(),
                 ).unwrap(),
             inst_step: factory
                 .create_buffer(
-                    10, //TODO
+                    instances as _,
                     gfx::buffer::Role::Vertex,
                     gfx::memory::Usage::Dynamic,
                     gfx::memory::Bind::empty(),
                 ).unwrap(),
             cb_force_globals: factory.create_constant_buffer(1),
-            cb_force_locals: factory.create_constant_buffer(1),
+            pending_reset: Vec::new(),
+            pending_pulse: Vec::new(),
+            pending_force: Vec::new(),
+            pending_step: Vec::new(),
         }
     }
 
     pub fn add(&mut self, transform: Transform) -> Entry {
         let index = self.entries.iter().position(|e| !*e).unwrap();
-        self.actions.push((index, Action::Init(transform)));
+        self.entries[index] = true;
+        self.entry_reset(&Entry(index), transform);
         Entry(index)
     }
 
+    pub fn remove(&mut self, entry: Entry) {
+        self.removals.push(entry);
+    }
+
+    fn entry_coord(&self, entry: &Entry) -> f32 {
+        (2 * entry.0 + 1) as f32 / self.capacity as f32 - 1.0
+    }
+
+    pub fn entry_reset(&mut self, entry: &Entry, t: Transform) {
+        let coord = self.entry_coord(entry);
+        self.pending_reset.push(ResetVertex {
+            linear: t.disp.extend(t.scale).into(),
+            angular: t.rot.into(),
+            entry: [coord, 0.0, 0.0, 0.0],
+        })
+    }
+
     pub fn entry_pulse(&mut self, entry: &Entry, v: Vector3<f32>, w: Vector3<f32>) {
-        self.actions.push((entry.0, Action::Pulse { v, w }));
+        let coord = self.entry_coord(entry);
+        self.pending_pulse.push(ResetVertex {
+            linear: v.extend(0.0).into(),
+            angular: w.extend(0.0).into(),
+            entry: [coord, 0.0, 0.0, 0.0],
+        });
+    }
+
+    pub fn entry_force(&mut self, entry: &Entry, time: f32, downsample_id: usize) {
+        let coord = self.entry_coord(entry);
+        self.pending_force.push(ForceVertex {
+            entry_delta_did: [coord, time, downsample_id as f32, 0.0],
+        });
     }
 
     pub fn entry_step(&mut self, entry: &Entry, time: f32) {
-        self.actions.push((entry.0, Action::Force { time }));
-        self.actions.push((entry.0, Action::Step { time }));
+        let coord = self.entry_coord(entry);
+        self.pending_step.push(StepVertex {
+            entry_delta: [coord, time, 0.0, 0.0],
+        });
     }
 
     pub fn update<C: gfx::CommandBuffer<R>>(
@@ -239,10 +259,12 @@ impl<R: gfx::Resources> Store<R> {
         collision_view: gfx::handle::ShaderResourceView<R, CollisionFormatView>,
         encoder: &mut gfx::Encoder<R, C>,
     ) {
+        use gfx::memory::Typed;
+
         encoder.update_constant_buffer(&self.cb_force_globals, &ForceGlobals {
             force: [0.0, 0.0, -10.0, 0.0], //TEMP
         });
-        let slice = gfx::Slice {
+        let mut slice = gfx::Slice {
             start: 0,
             end: 2,
             base_vertex: 0,
@@ -250,108 +272,75 @@ impl<R: gfx::Resources> Store<R> {
             buffer: gfx::IndexBuffer::Auto,
         };
 
-        // TODO:
-        // 1. flat out actions per type
-        // 2. execute each group at once, instanced
-        // 3. copy velocities in one go
+        // apply resets
+        slice.instances = Some((self.pending_reset.len() as _, 0));
+        encoder
+            .update_buffer(&self.inst_reset, &self.pending_reset, 0)
+            .unwrap();
+        encoder.draw(&slice, &self.pso.reset, &reset::Data {
+            instances: self.inst_reset.clone(),
+            output: self.rtv.clone(),
+        });
+        self.pending_reset.clear();
 
-        for (entry_id, action) in self.actions.drain(..) {
-            let coord = (2 * entry_id + 1) as f32 / self.capacity as f32 - 1.0;
-            match action {
-                Action::Init(transform) => {
-                    encoder.update_texture::<StoreFormatSurface, StoreFormat>(
-                        &self.texture,
-                        None,
-                        gfx::texture::ImageInfoCommon {
-                            xoffset: 0,
-                            yoffset: entry_id as _,
-                            zoffset: 0,
-                            width: 4,
-                            height: 1,
-                            depth: 1,
-                            format: (),
-                            mipmap: 0,
-                        },
-                        gfx::memory::cast_slice(&[
-                            [transform.disp.x, transform.disp.y, transform.disp.z, transform.scale],
-                            transform.rot.into(),
-                            [0.0; 4],
-                            [0.0; 4],
-                        ]),
-                    ).unwrap();
-                }
-                Action::Pulse { v, w } => {
-                    let data = pulse::Data {
-                        instances: self.inst_pulse.clone(),
-                        output: self.rtv.clone(),
-                    };
-                    let instance = PulseVertex {
-                        linear: v.extend(0.0).into(),
-                        angular: w.extend(0.0).into(),
-                        entry: [coord, 0.0, 0.0, 0.0],
-                    };
-                    encoder
-                        .update_buffer(&self.inst_pulse, &[instance], 0)
-                        .unwrap();
-                    encoder.draw(&slice, &self.pso_pulse, &data);
-                }
-                Action::Force { time } => {
-                    use gfx::memory::Typed;
-                    let format = <StoreFormat as gfx::format::Formatted>::get_format();
-                    // backup the velocities
-                    encoder.copy_texture_to_texture_raw(
-                        self.texture.raw(),
-                        None,
-                        gfx::texture::ImageInfoCommon {
-                            xoffset: 2,
-                            yoffset: entry_id as _,
-                            zoffset: 0,
-                            width: 2,
-                            height: 1,
-                            depth: 1,
-                            format,
-                            mipmap: 0,
-                        },
-                        self.texture_vel.raw(),
-                        None,
-                        gfx::texture::ImageInfoCommon {
-                            xoffset: 0,
-                            yoffset: entry_id as _,
-                            zoffset: 0,
-                            width: 2,
-                            height: 1,
-                            depth: 1,
-                            format,
-                            mipmap: 0,
-                        },
-                    ).unwrap();
-                    // integrate forces
-                    encoder.update_constant_buffer(&self.cb_force_locals, &ForceLocals {
-                        time: [time, 0.0, 0.0, 0.0],
-                    });
-                    let data = force::Data {
-                        globals: self.cb_force_globals.clone(),
-                        locals: self.cb_force_locals.clone(),
-                        collisions: (collision_view.clone(), self.sampler.clone()),
-                        velocities: (self.srv_vel.clone(), self.sampler.clone()),
-                        output: self.rtv.clone(),
-                    };
-                    encoder.draw(&slice, &self.pso_force, &data);
-                }
-                Action::Step { time } => {
-                    let data = step::Data {
-                        instances: self.inst_step.clone(),
-                        output: self.rtv.clone(),
-                    };
-                    let instance = StepVertex {
-                        entry_delta: [coord, time, 0.0, 0.0],
-                    };
-                    encoder
-                        .update_buffer(&self.inst_step, &[instance], 0)
-                        .unwrap();
-                    encoder.draw(&slice, &self.pso_step, &data);
-                }
-            }
+        // apply pulses
+        slice.instances = Some((self.pending_pulse.len() as _, 0));
+        encoder
+            .update_buffer(&self.inst_reset, &self.pending_pulse, 0)
+            .unwrap();
+        encoder.draw(&slice, &self.pso.pulse, &pulse::Data {
+            instances: self.inst_reset.clone(),
+            output: self.rtv.clone(),
+        });
+        self.pending_pulse.clear();
+
+        // backup the velocities
+        let cty = <<StoreFormat as gfx::format::Formatted>::Channel as gfx::format::ChannelTyped>::get_channel_type();
+        let info = self.texture_vel
+            .get_info()
+            .to_raw_image_info(cty, 0);
+        encoder
+            .copy_texture_to_texture_raw(
+                self.texture.raw(),
+                None,
+                gfx::texture::ImageInfoCommon {
+                    xoffset: 2,
+                    .. info.clone()
+                },
+                self.texture_vel.raw(),
+                None,
+                info,
+            )
+            .unwrap();
+
+        // integrate forces
+        slice.instances = Some((self.pending_force.len() as _, 0));
+        encoder
+            .update_buffer(&self.inst_force, &self.pending_force, 0)
+            .unwrap();
+        encoder.draw(&slice, &self.pso.force, &force::Data {
+            globals: self.cb_force_globals.clone(),
+            instances: self.inst_force.clone(),
+            collisions: (collision_view.clone(), self.sampler.clone()),
+            velocities: (self.srv_vel.clone(), self.sampler.clone()),
+            output: self.rtv.clone(),
+        });
+        self.pending_force.clear();
+
+        // perform a physics step
+        slice.instances = Some((self.pending_step.len() as _, 0));
+        encoder
+            .update_buffer(&self.inst_step, &self.pending_step, 0)
+            .unwrap();
+        encoder.draw(&slice, &self.pso.step, &step::Data {
+            instances: self.inst_step.clone(),
+            output: self.rtv.clone(),
+        });
+        self.pending_step.clear();
+
+        // cleanup
+        for Entry(index) in self.removals.drain(..) {
+            self.entries[index] = false;
         }
     }
 
@@ -359,14 +348,9 @@ impl<R: gfx::Resources> Store<R> {
         self.srv.clone()
     }
 
-    pub fn reload<F>(
+    pub fn reload<F: gfx::Factory<R>>(
         &mut self, factory: &mut F
-    ) where
-        F: gfx::Factory<R>
-    {
-        let (pso_pulse, pso_force, pso_step) = Self::create_psos(factory);
-        self.pso_pulse = pso_pulse;
-        self.pso_force = pso_force;
-        self.pso_step = pso_step;
+    ) {
+        self.pso = Pipelines::new(factory);
     }
 }
