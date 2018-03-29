@@ -10,9 +10,11 @@ use std::io::Error as IoError;
 
 mod collision;
 mod debug;
+mod store;
 
 pub use self::collision::{DebugBlit, GpuCollider, ShapeId};
 pub use self::debug::{DebugPos, DebugRender, LineBuffer};
+pub use self::store::{Entry, Store};
 
 
 pub struct MainTargets<R: gfx::Resources> {

@@ -34,7 +34,7 @@ struct Accumulator {
 }
 
 impl Accumulator {
-    fn new() -> Accumulator {
+    fn new() -> Self {
         Accumulator {
             pos: cgmath::vec3(0.0, 0.0, 0.0),
             depth: 0.0,
