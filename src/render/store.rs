@@ -16,7 +16,7 @@ use space::Transform;
 
 
 pub type StoreFormat = gfx::format::Rgba32F;
-pub type StoreFormatSurface = <StoreFormat as gfx::format::Formatted>::Surface;
+//pub type StoreFormatSurface = <StoreFormat as gfx::format::Formatted>::Surface;
 pub type StoreFormatView = <StoreFormat as gfx::format::Formatted>::View;
 
 gfx_defines!{
@@ -51,6 +51,7 @@ gfx_defines!{
     pipeline force {
         globals: gfx::ConstantBuffer<ForceGlobals> = "c_Globals",
         instances: gfx::InstanceBuffer<ForceVertex> = (),
+        entries: gfx::TextureSampler<StoreFormatView> = "t_Entries",
         collisions: gfx::TextureSampler<CollisionFormatView> = "t_Collisions",
         output: gfx::RenderTarget<StoreFormat> = "Target0",
     }
@@ -115,8 +116,8 @@ pub struct Store<R: gfx::Resources> {
     capacity: usize,
     entries: Vec<bool>,
     removals: Vec<Entry>,
-    texture: gfx::handle::Texture<R, StoreFormatSurface>,
-    texture_vel: gfx::handle::Texture<R, StoreFormatSurface>,
+    //texture: gfx::handle::Texture<R, StoreFormatSurface>,
+    //texture_vel: gfx::handle::Texture<R, StoreFormatSurface>,
     rtv: gfx::handle::RenderTargetView<R, StoreFormat>,
     rtv_vel: gfx::handle::RenderTargetView<R, StoreFormat>,
     srv: gfx::handle::ShaderResourceView<R, StoreFormatView>,
@@ -175,13 +176,15 @@ impl<R: gfx::Resources> Store<R> {
             capacity,
             entries: vec![false; capacity],
             removals: Vec::new(),
-            texture,
-            texture_vel,
+            //texture,
+            //texture_vel,
             rtv,
             rtv_vel,
             srv,
             srv_vel,
-            sampler: factory.create_sampler_linear(),
+            sampler: factory.create_sampler(
+                t::SamplerInfo::new(t::FilterMethod::Scale, t::WrapMode::Clamp)
+            ),
             pso: Pipelines::new(factory),
             inst_reset: factory
                 .create_buffer(
@@ -298,6 +301,7 @@ impl<R: gfx::Resources> Store<R> {
         self.pending_pulse.clear();
 
         // integrate forces
+        // writes the resulting velocities into an intermediate surface
         slice.instances = Some((self.pending_force.len() as _, 0));
         encoder
             .update_buffer(&self.inst_force, &self.pending_force, 0)
@@ -305,12 +309,13 @@ impl<R: gfx::Resources> Store<R> {
         encoder.draw(&slice, &self.pso.force, &force::Data {
             globals: self.cb_force_globals.clone(),
             instances: self.inst_force.clone(),
+            entries: (self.srv.clone(), self.sampler.clone()),
             collisions: (collision_view.clone(), self.sampler.clone()),
             output: self.rtv_vel.clone(),
         });
         self.pending_force.clear();
 
-        // perform a physics step
+        // perform a physics step, reading the intermediate results
         slice.instances = Some((self.pending_step.len() as _, 0));
         encoder
             .update_buffer(&self.inst_step, &self.pending_step, 0)
