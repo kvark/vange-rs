@@ -52,7 +52,6 @@ gfx_defines!{
         globals: gfx::ConstantBuffer<ForceGlobals> = "c_Globals",
         instances: gfx::InstanceBuffer<ForceVertex> = (),
         collisions: gfx::TextureSampler<CollisionFormatView> = "t_Collisions",
-        velocities: gfx::TextureSampler<StoreFormatView> = "t_Velocities",
         output: gfx::RenderTarget<StoreFormat> = "Target0",
     }
 
@@ -62,6 +61,7 @@ gfx_defines!{
 
     pipeline step {
         instances: gfx::InstanceBuffer<StepVertex> = (),
+        velocities: gfx::TextureSampler<StoreFormatView> = "t_Velocities",
         output: gfx::BlendTarget<StoreFormat> = (
             "Target0",
             gfx::state::ColorMask::all(),
@@ -103,10 +103,10 @@ impl<R: gfx::Resources> Pipelines<R> {
         factory: &mut F,
     ) -> Self {
         Pipelines {
-            reset: Self::load(factory, "reset", reset::new()),
-            pulse: Self::load(factory, "pulse", pulse::new()),
-            force: Self::load(factory, "force", force::new()),
-            step: Self::load(factory, "step", step::new()),
+            reset: Self::load(factory, "e_reset", reset::new()),
+            pulse: Self::load(factory, "e_pulse", pulse::new()),
+            force: Self::load(factory, "e_force", force::new()),
+            step: Self::load(factory, "e_step", step::new()),
         }
     }
 }
@@ -118,6 +118,7 @@ pub struct Store<R: gfx::Resources> {
     texture: gfx::handle::Texture<R, StoreFormatSurface>,
     texture_vel: gfx::handle::Texture<R, StoreFormatSurface>,
     rtv: gfx::handle::RenderTargetView<R, StoreFormat>,
+    rtv_vel: gfx::handle::RenderTargetView<R, StoreFormat>,
     srv: gfx::handle::ShaderResourceView<R, StoreFormatView>,
     srv_vel: gfx::handle::ShaderResourceView<R, StoreFormatView>,
     sampler: gfx::handle::Sampler<R>,
@@ -134,7 +135,7 @@ pub struct Store<R: gfx::Resources> {
 
 impl<R: gfx::Resources> Store<R> {
     pub fn new<F: gfx::Factory<R>>(
-        capacity: usize, instances: usize, factory: &mut F
+        factory: &mut F, capacity: usize
     ) -> Self {
         use gfx::texture as t;
         use gfx::format::{ChannelTyped, Formatted, Swizzle};
@@ -166,6 +167,9 @@ impl<R: gfx::Resources> Store<R> {
         let srv_vel = factory
             .view_texture_as_shader_resource::<StoreFormat>(&texture_vel, (0, 0), Swizzle::new())
             .unwrap();
+        let rtv_vel = factory
+            .view_texture_as_render_target(&texture, 0, None)
+            .unwrap();
 
         Store {
             capacity,
@@ -174,27 +178,28 @@ impl<R: gfx::Resources> Store<R> {
             texture,
             texture_vel,
             rtv,
+            rtv_vel,
             srv,
             srv_vel,
             sampler: factory.create_sampler_linear(),
             pso: Pipelines::new(factory),
             inst_reset: factory
                 .create_buffer(
-                    instances as _,
+                    capacity as _,
                     gfx::buffer::Role::Vertex,
                     gfx::memory::Usage::Dynamic,
                     gfx::memory::Bind::empty(),
                 ).unwrap(),
             inst_force: factory
                 .create_buffer(
-                    instances as _,
+                    capacity as _,
                     gfx::buffer::Role::Vertex,
                     gfx::memory::Usage::Dynamic,
                     gfx::memory::Bind::empty(),
                 ).unwrap(),
             inst_step: factory
                 .create_buffer(
-                    instances as _,
+                    capacity as _,
                     gfx::buffer::Role::Vertex,
                     gfx::memory::Usage::Dynamic,
                     gfx::memory::Bind::empty(),
@@ -207,7 +212,7 @@ impl<R: gfx::Resources> Store<R> {
         }
     }
 
-    pub fn add(&mut self, transform: Transform) -> Entry {
+    pub fn add(&mut self, transform: &Transform) -> Entry {
         let index = self.entries.iter().position(|e| !*e).unwrap();
         self.entries[index] = true;
         self.entry_reset(&Entry(index), transform);
@@ -222,7 +227,7 @@ impl<R: gfx::Resources> Store<R> {
         (2 * entry.0 + 1) as f32 / self.capacity as f32 - 1.0
     }
 
-    pub fn entry_reset(&mut self, entry: &Entry, t: Transform) {
+    pub fn entry_reset(&mut self, entry: &Entry, t: &Transform) {
         let coord = self.entry_coord(entry);
         self.pending_reset.push(ResetVertex {
             linear: t.disp.extend(t.scale).into(),
@@ -259,8 +264,6 @@ impl<R: gfx::Resources> Store<R> {
         collision_view: gfx::handle::ShaderResourceView<R, CollisionFormatView>,
         encoder: &mut gfx::Encoder<R, C>,
     ) {
-        use gfx::memory::Typed;
-
         encoder.update_constant_buffer(&self.cb_force_globals, &ForceGlobals {
             force: [0.0, 0.0, -10.0, 0.0], //TEMP
         });
@@ -294,25 +297,6 @@ impl<R: gfx::Resources> Store<R> {
         });
         self.pending_pulse.clear();
 
-        // backup the velocities
-        let cty = <<StoreFormat as gfx::format::Formatted>::Channel as gfx::format::ChannelTyped>::get_channel_type();
-        let info = self.texture_vel
-            .get_info()
-            .to_raw_image_info(cty, 0);
-        encoder
-            .copy_texture_to_texture_raw(
-                self.texture.raw(),
-                None,
-                gfx::texture::ImageInfoCommon {
-                    xoffset: 2,
-                    .. info.clone()
-                },
-                self.texture_vel.raw(),
-                None,
-                info,
-            )
-            .unwrap();
-
         // integrate forces
         slice.instances = Some((self.pending_force.len() as _, 0));
         encoder
@@ -322,8 +306,7 @@ impl<R: gfx::Resources> Store<R> {
             globals: self.cb_force_globals.clone(),
             instances: self.inst_force.clone(),
             collisions: (collision_view.clone(), self.sampler.clone()),
-            velocities: (self.srv_vel.clone(), self.sampler.clone()),
-            output: self.rtv.clone(),
+            output: self.rtv_vel.clone(),
         });
         self.pending_force.clear();
 
@@ -334,6 +317,7 @@ impl<R: gfx::Resources> Store<R> {
             .unwrap();
         encoder.draw(&slice, &self.pso.step, &step::Data {
             instances: self.inst_step.clone(),
+            velocities: (self.srv_vel.clone(), self.sampler.clone()),
             output: self.rtv.clone(),
         });
         self.pending_step.clear();

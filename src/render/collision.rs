@@ -422,7 +422,7 @@ impl<'a,
 }
 
 
-pub struct GpuCollider<R: gfx::Resources> {
+pub struct Collider<R: gfx::Resources> {
     downsampler: Downsampler<R>,
     pso: gfx::PipelineState<R, collision::Meta>,
     dummy_view: h::ShaderResourceView<R, [f32; 4]>,
@@ -434,7 +434,7 @@ pub struct GpuCollider<R: gfx::Resources> {
     epoch: Epoch,
 }
 
-impl<R: gfx::Resources> GpuCollider<R> {
+impl<R: gfx::Resources> Collider<R> {
     fn create_pso<F: gfx::Factory<R>>(
         factory: &mut F,
     ) -> gfx::PipelineState<R, collision::Meta> {
@@ -469,7 +469,7 @@ impl<R: gfx::Resources> GpuCollider<R> {
                 gfx::buffer::Role::Vertex,
                 gfx::memory::Bind::SHADER_RESOURCE,
             ).unwrap();
-        GpuCollider {
+        Collider {
             downsampler: Downsampler::new(factory, size, max_downsample_vertices),
             pso: Self::create_pso(factory),
             dummy_view: factory

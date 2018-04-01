@@ -12,9 +12,9 @@ mod collision;
 mod debug;
 mod store;
 
-pub use self::collision::{DebugBlit, GpuCollider, ShapeId};
+pub use self::collision::{DebugBlit, Collider as GpuCollider, ShapeId as GpuShapeId};
 pub use self::debug::{DebugPos, DebugRender, LineBuffer};
-pub use self::store::{Entry, Store};
+pub use self::store::{Entry as GpuEntry, Store as GpuStore};
 
 
 pub struct MainTargets<R: gfx::Resources> {

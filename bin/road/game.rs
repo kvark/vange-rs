@@ -24,7 +24,7 @@ struct Control {
 }
 
 enum GpuMomentum {
-    Pending(render::ShapeId),
+    Pending(render::GpuShapeId),
     Computed(usize),
     Ready {
         ground_force: f32,
@@ -40,6 +40,7 @@ pub struct Agent<R: gfx::Resources> {
     dynamo: physics::Dynamo,
     control: Control,
     gpu_momentum: Option<GpuMomentum>,
+    gpu_entry: render::GpuEntry,
 }
 
 impl<R: gfx::Resources> Agent<R> {
@@ -49,20 +50,24 @@ impl<R: gfx::Resources> Agent<R> {
         coords: (i32, i32),
         orientation: cgmath::Rad<f32>,
         level: &level::Level,
+        gpu_store: &mut render::GpuStore<R>,
     ) -> Self {
         let height = physics::get_height(level.get(coords).top()) + 5.; //center offset
+        let transform = cgmath::Decomposed {
+            scale: car.scale,
+            disp: cgmath::vec3(coords.0 as f32, coords.1 as f32, height),
+            rot: cgmath::Quaternion::from_angle_z(orientation),
+        };
+        let gpu_entry = gpu_store.add(&transform);
         Agent {
             _name: name,
             spirit: Spirit::Other,
-            transform: cgmath::Decomposed {
-                scale: car.scale,
-                disp: cgmath::vec3(coords.0 as f32, coords.1 as f32, height),
-                rot: cgmath::Quaternion::from_angle_z(orientation),
-            },
+            transform,
             car: car.clone(),
             dynamo: physics::Dynamo::default(),
             control: Control::default(),
             gpu_momentum: None,
+            gpu_entry,
         }
     }
 
@@ -109,6 +114,7 @@ impl<R: gfx::Resources> Agent<R> {
     }
 }
 
+
 struct DataBase<R: gfx::Resources> {
     _bunches: Vec<config::bunches::Bunch>,
     cars: HashMap<String, config::car::CarInfo<R>>,
@@ -120,7 +126,8 @@ struct DataBase<R: gfx::Resources> {
 pub struct Game<R: gfx::Resources> {
     db: DataBase<R>,
     render: render::Render<R>,
-    collider: render::GpuCollider<R>,
+    gpu_collider: render::GpuCollider<R>,
+    gpu_store: render::GpuStore<R>,
     compute_gpu_collision: bool,
     debug_collision_map: bool,
     line_buffer: render::LineBuffer,
@@ -132,6 +139,7 @@ pub struct Game<R: gfx::Resources> {
     spin_ver: f32,
     is_paused: bool,
     tick: Option<f32>,
+    pending_gpu_delta: f32,
 }
 
 
@@ -177,11 +185,12 @@ impl<R: gfx::Resources> Game<R> {
         let depth = 10f32 .. 10000f32;
         let pal_data = level::read_palette(settings.open_palette());
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
-        let collider = render::GpuCollider::new(
+        let gpu_collider = render::GpuCollider::new(
             factory,
             (256, 256), 400,
             render.surface_data(),
         );
+        let mut gpu_store = render::GpuStore::new(factory, 100);
 
         let mut player_agent = Agent::spawn(
             "Player".to_string(),
@@ -189,6 +198,7 @@ impl<R: gfx::Resources> Game<R> {
             coords,
             cgmath::Rad::turn_div_2(),
             &level,
+            &mut gpu_store,
         );
         player_agent.spirit = Spirit::Player;
         let mut agents = vec![player_agent];
@@ -206,6 +216,7 @@ impl<R: gfx::Resources> Game<R> {
                 (x, y),
                 cgmath::Rad(rng.gen()),
                 &level,
+                &mut gpu_store,
             );
             agent.control.motor = 1.0; //full on
             agents.push(agent);
@@ -214,7 +225,8 @@ impl<R: gfx::Resources> Game<R> {
         Game {
             db,
             render,
-            collider,
+            gpu_collider,
+            gpu_store,
             line_buffer: render::LineBuffer::new(),
             level,
             agents,
@@ -243,6 +255,7 @@ impl<R: gfx::Resources> Game<R> {
             spin_ver: 0.0,
             is_paused: false,
             tick: None,
+            pending_gpu_delta: 0.0,
         }
     }
 
@@ -422,11 +435,58 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
                 );
             }
         }
+
+        if self.compute_gpu_collision {
+            self.pending_gpu_delta += delta;
+        }
     }
 
     fn draw<C: gfx::CommandBuffer<R>>(
         &mut self, encoder: &mut gfx::Encoder<R, C>
     ) {
+        if self.compute_gpu_collision {
+            let results = {
+                let mut collider = self.gpu_collider.start(encoder, &self.db.common);
+                for agent in &mut self.agents {
+                    let mut transform = agent.transform.clone();
+                    transform.scale *= agent.car.physics.scale_bound;
+                    let shape_id = collider.add(&agent.car.model.shape, transform);
+                    agent.gpu_momentum = Some(GpuMomentum::Pending(shape_id));
+                }
+
+                let debug_blit = if self.debug_collision_map {
+                    let target = self.render.target_color();
+                    self.agents
+                        .iter()
+                        .find(|a| a.spirit == Spirit::Player)
+                        .and_then(|a| match a.gpu_momentum {
+                            Some(GpuMomentum::Pending(ref shape)) => Some(render::DebugBlit {
+                                target,
+                                shape: shape.clone(),
+                                scale: 4,
+                            }),
+                            _ => None,
+                        })
+                } else {
+                    None
+                };
+                collider.finish(debug_blit)
+            };
+
+            for agent in &mut self.agents {
+                if let Some(GpuMomentum::Pending(shape_id)) = agent.gpu_momentum.take() {
+                    let rect = results[shape_id];
+                    assert_eq!((rect.y, rect.w, rect.h), (0, 1, 1));
+                    agent.gpu_momentum = Some(GpuMomentum::Computed(rect.x as usize));
+                    self.gpu_store.entry_force(&agent.gpu_entry, self.pending_gpu_delta, rect.x as _);
+                }
+                self.gpu_store.entry_step(&agent.gpu_entry, self.pending_gpu_delta);
+            }
+
+            self.gpu_store.update(results.view, encoder);
+            self.pending_gpu_delta = 0.0;
+        }
+
         {
             let models = self.agents
                 .iter()
@@ -448,42 +508,6 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
             self.cam.get_view_proj().into(),
             encoder,
         );
-
-        if self.compute_gpu_collision {
-            let mut collider = self.collider.start(encoder, &self.db.common);
-            for agent in &mut self.agents {
-                let mut transform = agent.transform.clone();
-                transform.scale *= agent.car.physics.scale_bound;
-                let shape_id = collider.add(&agent.car.model.shape, transform);
-                agent.gpu_momentum = Some(GpuMomentum::Pending(shape_id));
-            }
-
-            let debug_blit = if self.debug_collision_map {
-                let target = self.render.target_color();
-                self.agents
-                    .iter()
-                    .find(|a| a.spirit == Spirit::Player)
-                    .and_then(|a| match a.gpu_momentum {
-                        Some(GpuMomentum::Pending(ref shape)) => Some(render::DebugBlit {
-                            target,
-                            shape: shape.clone(),
-                            scale: 4,
-                        }),
-                        _ => None,
-                    })
-            } else {
-                None
-            };
-
-            let results = collider.finish(debug_blit);
-            for agent in &mut self.agents {
-                if let Some(GpuMomentum::Pending(shape_id)) = agent.gpu_momentum.take() {
-                    let rect = results[shape_id];
-                    assert_eq!((rect.y, rect.w, rect.h), (0, 1, 1));
-                    agent.gpu_momentum = Some(GpuMomentum::Computed(rect.x as usize));
-                }
-            }
-        }
     }
 
     fn gpu_update<F: gfx::Factory<R>>(
@@ -498,12 +522,12 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
         }
         if reload_shaders {
             self.render.reload(factory);
-            self.collider.reload(factory);
+            self.gpu_collider.reload(factory);
         }
 
         if self.compute_gpu_collision {
             let mapping = factory
-                .read_mapping(self.collider.readback())
+                .read_mapping(self.gpu_collider.readback())
                 .unwrap();
             for agent in &mut self.agents {
                 if let Some(GpuMomentum::Computed(index)) = agent.gpu_momentum.take() {
