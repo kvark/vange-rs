@@ -72,6 +72,7 @@ gfx_defines!{
 }
 
 
+#[derive(Debug, PartialEq)]
 pub struct Entry(usize);
 
 struct Pipelines<R: gfx::Resources> {
@@ -279,53 +280,61 @@ impl<R: gfx::Resources> Store<R> {
         };
 
         // apply resets
-        slice.instances = Some((self.pending_reset.len() as _, 0));
-        encoder
-            .update_buffer(&self.inst_reset, &self.pending_reset, 0)
-            .unwrap();
-        encoder.draw(&slice, &self.pso.reset, &reset::Data {
-            instances: self.inst_reset.clone(),
-            output: self.rtv.clone(),
-        });
-        self.pending_reset.clear();
+        if !self.pending_reset.is_empty() {
+            slice.instances = Some((self.pending_reset.len() as _, 0));
+            encoder
+                .update_buffer(&self.inst_reset, &self.pending_reset, 0)
+                .unwrap();
+            encoder.draw(&slice, &self.pso.reset, &reset::Data {
+                instances: self.inst_reset.clone(),
+                output: self.rtv.clone(),
+            });
+            self.pending_reset.clear();
+        }
 
         // apply pulses
-        slice.instances = Some((self.pending_pulse.len() as _, 0));
-        encoder
-            .update_buffer(&self.inst_reset, &self.pending_pulse, 0)
-            .unwrap();
-        encoder.draw(&slice, &self.pso.pulse, &pulse::Data {
-            instances: self.inst_reset.clone(),
-            output: self.rtv.clone(),
-        });
-        self.pending_pulse.clear();
+        if !self.pending_pulse.is_empty() {
+            slice.instances = Some((self.pending_pulse.len() as _, 0));
+            encoder
+                .update_buffer(&self.inst_reset, &self.pending_pulse, 0)
+                .unwrap();
+            encoder.draw(&slice, &self.pso.pulse, &pulse::Data {
+                instances: self.inst_reset.clone(),
+                output: self.rtv.clone(),
+            });
+            self.pending_pulse.clear();
+        }
 
         // integrate forces
         // writes the resulting velocities into an intermediate surface
-        slice.instances = Some((self.pending_force.len() as _, 0));
-        encoder
-            .update_buffer(&self.inst_force, &self.pending_force, 0)
-            .unwrap();
-        encoder.draw(&slice, &self.pso.force, &force::Data {
-            globals: self.cb_force_globals.clone(),
-            instances: self.inst_force.clone(),
-            entries: (self.srv.clone(), self.sampler.clone()),
-            collisions: (collision_view.clone(), self.sampler.clone()),
-            output: self.rtv_vel.clone(),
-        });
-        self.pending_force.clear();
+        if !self.pending_force.is_empty() {
+            slice.instances = Some((self.pending_force.len() as _, 0));
+            encoder
+                .update_buffer(&self.inst_force, &self.pending_force, 0)
+                .unwrap();
+            encoder.draw(&slice, &self.pso.force, &force::Data {
+                globals: self.cb_force_globals.clone(),
+                instances: self.inst_force.clone(),
+                entries: (self.srv.clone(), self.sampler.clone()),
+                collisions: (collision_view.clone(), self.sampler.clone()),
+                output: self.rtv_vel.clone(),
+            });
+            self.pending_force.clear();
+        }
 
         // perform a physics step, reading the intermediate results
-        slice.instances = Some((self.pending_step.len() as _, 0));
-        encoder
-            .update_buffer(&self.inst_step, &self.pending_step, 0)
-            .unwrap();
-        encoder.draw(&slice, &self.pso.step, &step::Data {
-            instances: self.inst_step.clone(),
-            velocities: (self.srv_vel.clone(), self.sampler.clone()),
-            output: self.rtv.clone(),
-        });
-        self.pending_step.clear();
+        if !self.pending_step.is_empty() {
+            slice.instances = Some((self.pending_step.len() as _, 0));
+            encoder
+                .update_buffer(&self.inst_step, &self.pending_step, 0)
+                .unwrap();
+            encoder.draw(&slice, &self.pso.step, &step::Data {
+                instances: self.inst_step.clone(),
+                velocities: (self.srv_vel.clone(), self.sampler.clone()),
+                output: self.rtv.clone(),
+            });
+            self.pending_step.clear();
+        }
 
         // cleanup
         for Entry(index) in self.removals.drain(..) {
