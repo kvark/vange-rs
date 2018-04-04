@@ -478,9 +478,8 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
                     let rect = results[shape_id];
                     assert_eq!((rect.y, rect.w, rect.h), (0, 1, 1));
                     agent.gpu_momentum = Some(GpuMomentum::Computed(rect.x as usize));
-                    self.gpu_store.entry_force(&agent.gpu_entry, self.pending_gpu_delta, rect.x as _);
+                    self.gpu_store.entry_step(&agent.gpu_entry, self.pending_gpu_delta, rect.x as _);
                 }
-                self.gpu_store.entry_step(&agent.gpu_entry, self.pending_gpu_delta);
             }
 
             self.gpu_store.update(results.view, encoder);

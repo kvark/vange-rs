@@ -482,6 +482,7 @@ impl<R: gfx::Resources> Collider<R> {
             read_buffer: factory
                 .create_download_buffer(size.0 as _)
                 .unwrap(),
+                //factory.create_constant_buffer(1), //TEMP!
             epoch: Epoch(0),
         }
     }
@@ -536,7 +537,8 @@ impl<R: gfx::Resources> Collider<R> {
                 destination,
             },
             inputs: Vec::new(),
-            read_buffer: Some(&self.read_buffer),
+            //read_buffer: Some(&self.read_buffer),
+            read_buffer: None, //TODO
             epoch: self.epoch.clone(),
         }
     }

@@ -40,34 +40,30 @@ gfx_defines!{
         ),
     }
 
-    constant ForceGlobals {
+    constant StepGlobals {
         force: [f32; 4] = "u_GlobalForce",
     }
 
-    vertex ForceVertex {
+    vertex StepVertex {
         entry_delta_did: [f32; 4] = "a_EntryDeltaDid",
     }
 
-    pipeline force {
-        globals: gfx::ConstantBuffer<ForceGlobals> = "c_Globals",
-        instances: gfx::InstanceBuffer<ForceVertex> = (),
+    pipeline step {
+        globals: gfx::ConstantBuffer<StepGlobals> = "c_Globals",
+        instances: gfx::InstanceBuffer<StepVertex> = (),
         entries: gfx::TextureSampler<StoreFormatView> = "t_Entries",
         collisions: gfx::TextureSampler<CollisionFormatView> = "t_Collisions",
         output: gfx::RenderTarget<StoreFormat> = "Target0",
     }
 
-    vertex StepVertex {
-        entry_delta: [f32; 4] = "a_EntryDelta",
+    vertex CopyVertex {
+        entry: [f32; 4] = "a_Entry",
     }
 
-    pipeline step {
-        instances: gfx::InstanceBuffer<StepVertex> = (),
-        velocities: gfx::TextureSampler<StoreFormatView> = "t_Velocities",
-        output: gfx::BlendTarget<StoreFormat> = (
-            "Target0",
-            gfx::state::ColorMask::all(),
-            gfx::preset::blend::ADD,
-        ),
+    pipeline copy {
+        instances: gfx::InstanceBuffer<CopyVertex> = (),
+        entries: gfx::TextureSampler<StoreFormatView> = "t_Entries",
+        output: gfx::RenderTarget<StoreFormat> = "Target0",
     }
 }
 
@@ -78,8 +74,8 @@ pub struct Entry(usize);
 struct Pipelines<R: gfx::Resources> {
     reset: gfx::PipelineState<R, reset::Meta>,
     pulse: gfx::PipelineState<R, pulse::Meta>,
-    force: gfx::PipelineState<R, force::Meta>,
     step: gfx::PipelineState<R, step::Meta>,
+    copy: gfx::PipelineState<R, copy::Meta>,
 }
 
 impl<R: gfx::Resources> Pipelines<R> {
@@ -107,8 +103,8 @@ impl<R: gfx::Resources> Pipelines<R> {
         Pipelines {
             reset: Self::load(factory, "e_reset", reset::new()),
             pulse: Self::load(factory, "e_pulse", pulse::new()),
-            force: Self::load(factory, "e_force", force::new()),
             step: Self::load(factory, "e_step", step::new()),
+            copy: Self::load(factory, "e_copy", copy::new()),
         }
     }
 }
@@ -118,21 +114,21 @@ pub struct Store<R: gfx::Resources> {
     entries: Vec<bool>,
     removals: Vec<Entry>,
     //texture: gfx::handle::Texture<R, StoreFormatSurface>,
-    //texture_vel: gfx::handle::Texture<R, StoreFormatSurface>,
+    //texture2: gfx::handle::Texture<R, StoreFormatSurface>,
     rtv: gfx::handle::RenderTargetView<R, StoreFormat>,
-    rtv_vel: gfx::handle::RenderTargetView<R, StoreFormat>,
+    rtv2: gfx::handle::RenderTargetView<R, StoreFormat>,
     srv: gfx::handle::ShaderResourceView<R, StoreFormatView>,
-    srv_vel: gfx::handle::ShaderResourceView<R, StoreFormatView>,
+    srv2: gfx::handle::ShaderResourceView<R, StoreFormatView>,
     sampler: gfx::handle::Sampler<R>,
     pso: Pipelines<R>,
     inst_reset: gfx::handle::Buffer<R, ResetVertex>,
-    inst_force: gfx::handle::Buffer<R, ForceVertex>,
     inst_step: gfx::handle::Buffer<R, StepVertex>,
-    cb_force_globals: gfx::handle::Buffer<R, ForceGlobals>,
+    inst_copy: gfx::handle::Buffer<R, CopyVertex>,
+    cb_step_globals: gfx::handle::Buffer<R, StepGlobals>,
     pending_reset: Vec<ResetVertex>,
     pending_pulse: Vec<ResetVertex>,
-    pending_force: Vec<ForceVertex>,
     pending_step: Vec<StepVertex>,
+    pending_copy: Vec<CopyVertex>,
 }
 
 impl<R: gfx::Resources> Store<R> {
@@ -140,37 +136,13 @@ impl<R: gfx::Resources> Store<R> {
         factory: &mut F, capacity: usize
     ) -> Self {
         use gfx::texture as t;
-        use gfx::format::{ChannelTyped, Formatted, Swizzle};
-        use gfx::memory::{Bind, Usage};
 
-        let cty = <<StoreFormat as Formatted>::Channel as ChannelTyped>::get_channel_type();
-
-        let texture = {
-            let kind = t::Kind::D2(4, capacity as _, t::AaMode::Single);
-            let bind = Bind::SHADER_RESOURCE | Bind::RENDER_TARGET | Bind::TRANSFER_SRC;
-            factory
-                .create_texture(kind, 1, bind, Usage::Data, Some(cty))
-                .unwrap()
-        };
-        let srv = factory
-            .view_texture_as_shader_resource::<StoreFormat>(&texture, (0, 0), Swizzle::new())
-            .unwrap();
-        let rtv = factory
-            .view_texture_as_render_target(&texture, 0, None)
+        let (_texture, srv, rtv) = factory
+            .create_render_target(4, capacity as _)
             .unwrap();
 
-        let texture_vel = {
-            let kind = t::Kind::D2(2, capacity as _, t::AaMode::Single);
-            let bind = Bind::SHADER_RESOURCE | Bind::TRANSFER_DST;
-            factory
-                .create_texture(kind, 1, bind, Usage::Data, Some(cty))
-                .unwrap()
-        };
-        let srv_vel = factory
-            .view_texture_as_shader_resource::<StoreFormat>(&texture_vel, (0, 0), Swizzle::new())
-            .unwrap();
-        let rtv_vel = factory
-            .view_texture_as_render_target(&texture, 0, None)
+        let (_texture2, srv2, rtv2) = factory
+            .create_render_target(4, capacity as _)
             .unwrap();
 
         Store {
@@ -178,23 +150,16 @@ impl<R: gfx::Resources> Store<R> {
             entries: vec![false; capacity],
             removals: Vec::new(),
             //texture,
-            //texture_vel,
+            //texture2,
             rtv,
-            rtv_vel,
+            rtv2,
             srv,
-            srv_vel,
+            srv2,
             sampler: factory.create_sampler(
                 t::SamplerInfo::new(t::FilterMethod::Scale, t::WrapMode::Clamp)
             ),
             pso: Pipelines::new(factory),
             inst_reset: factory
-                .create_buffer(
-                    capacity as _,
-                    gfx::buffer::Role::Vertex,
-                    gfx::memory::Usage::Dynamic,
-                    gfx::memory::Bind::empty(),
-                ).unwrap(),
-            inst_force: factory
                 .create_buffer(
                     capacity as _,
                     gfx::buffer::Role::Vertex,
@@ -208,11 +173,18 @@ impl<R: gfx::Resources> Store<R> {
                     gfx::memory::Usage::Dynamic,
                     gfx::memory::Bind::empty(),
                 ).unwrap(),
-            cb_force_globals: factory.create_constant_buffer(1),
+            inst_copy: factory
+                .create_buffer(
+                    capacity as _,
+                    gfx::buffer::Role::Vertex,
+                    gfx::memory::Usage::Dynamic,
+                    gfx::memory::Bind::empty(),
+                ).unwrap(),
+            cb_step_globals: factory.create_constant_buffer(1),
             pending_reset: Vec::new(),
             pending_pulse: Vec::new(),
-            pending_force: Vec::new(),
             pending_step: Vec::new(),
+            pending_copy: Vec::new(),
         }
     }
 
@@ -249,17 +221,13 @@ impl<R: gfx::Resources> Store<R> {
         });
     }
 
-    pub fn entry_force(&mut self, entry: &Entry, time: f32, downsample_id: usize) {
-        let coord = self.entry_coord(entry);
-        self.pending_force.push(ForceVertex {
-            entry_delta_did: [coord, time, downsample_id as f32, 0.0],
-        });
-    }
-
-    pub fn entry_step(&mut self, entry: &Entry, time: f32) {
+    pub fn entry_step(&mut self, entry: &Entry, time: f32, downsample_id: usize) {
         let coord = self.entry_coord(entry);
         self.pending_step.push(StepVertex {
-            entry_delta: [coord, time, 0.0, 0.0],
+            entry_delta_did: [coord, time, downsample_id as f32, 0.0],
+        });
+        self.pending_copy.push(CopyVertex {
+            entry: [coord, 0.0, 0.0, 0.0],
         });
     }
 
@@ -268,9 +236,6 @@ impl<R: gfx::Resources> Store<R> {
         collision_view: gfx::handle::ShaderResourceView<R, CollisionFormatView>,
         encoder: &mut gfx::Encoder<R, C>,
     ) {
-        encoder.update_constant_buffer(&self.cb_force_globals, &ForceGlobals {
-            force: [0.0, 0.0, -10.0, 0.0], //TEMP
-        });
         let mut slice = gfx::Slice {
             start: 0,
             end: 2,
@@ -306,34 +271,37 @@ impl<R: gfx::Resources> Store<R> {
         }
 
         // integrate forces
-        // writes the resulting velocities into an intermediate surface
-        if !self.pending_force.is_empty() {
-            slice.instances = Some((self.pending_force.len() as _, 0));
-            encoder
-                .update_buffer(&self.inst_force, &self.pending_force, 0)
-                .unwrap();
-            encoder.draw(&slice, &self.pso.force, &force::Data {
-                globals: self.cb_force_globals.clone(),
-                instances: self.inst_force.clone(),
-                entries: (self.srv.clone(), self.sampler.clone()),
-                collisions: (collision_view.clone(), self.sampler.clone()),
-                output: self.rtv_vel.clone(),
-            });
-            self.pending_force.clear();
-        }
-
-        // perform a physics step, reading the intermediate results
+        // writes the results into an intermediate buffer
         if !self.pending_step.is_empty() {
+            encoder.update_constant_buffer(&self.cb_step_globals, &StepGlobals {
+                force: [0.0, 0.0, -10.0, 0.0], //TEMP
+            });
             slice.instances = Some((self.pending_step.len() as _, 0));
             encoder
                 .update_buffer(&self.inst_step, &self.pending_step, 0)
                 .unwrap();
             encoder.draw(&slice, &self.pso.step, &step::Data {
+                globals: self.cb_step_globals.clone(),
                 instances: self.inst_step.clone(),
-                velocities: (self.srv_vel.clone(), self.sampler.clone()),
-                output: self.rtv.clone(),
+                entries: (self.srv.clone(), self.sampler.clone()),
+                collisions: (collision_view.clone(), self.sampler.clone()),
+                output: self.rtv2.clone(),
             });
             self.pending_step.clear();
+        }
+
+        // copy the physics results into the main buffer
+        if !self.pending_copy.is_empty() {
+            slice.instances = Some((self.pending_copy.len() as _, 0));
+            encoder
+                .update_buffer(&self.inst_copy, &self.pending_copy, 0)
+                .unwrap();
+            encoder.draw(&slice, &self.pso.copy, &copy::Data {
+                instances: self.inst_copy.clone(),
+                entries: (self.srv2.clone(), self.sampler.clone()),
+                output: self.rtv.clone(),
+            });
+            self.pending_copy.clear();
         }
 
         // cleanup
