@@ -129,6 +129,7 @@ pub struct Game<R: gfx::Resources> {
     gpu_collider: render::GpuCollider<R>,
     gpu_store: render::GpuStore<R>,
     compute_gpu_collision: bool,
+    feed_gpu_collision: bool,
     debug_collision_map: bool,
     line_buffer: render::LineBuffer,
     level: level::Level,
@@ -188,6 +189,7 @@ impl<R: gfx::Resources> Game<R> {
         let gpu_collider = render::GpuCollider::new(
             factory,
             (256, 256), 400,
+            !settings.game.physics.gpu_feedback,
             render.surface_data(),
         );
         let mut gpu_store = render::GpuStore::new(factory, 100);
@@ -250,6 +252,7 @@ impl<R: gfx::Resources> Game<R> {
             },
             max_quant: settings.game.physics.max_quant,
             compute_gpu_collision: settings.game.physics.gpu_collision,
+            feed_gpu_collision: settings.game.physics.gpu_feedback,
             debug_collision_map: settings.render.debug.collision_map,
             spin_hor: 0.0,
             spin_ver: 0.0,
@@ -478,7 +481,9 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
                     let rect = results[shape_id];
                     assert_eq!((rect.y, rect.w, rect.h), (0, 1, 1));
                     agent.gpu_momentum = Some(GpuMomentum::Computed(rect.x as usize));
-                    self.gpu_store.entry_step(&agent.gpu_entry, self.pending_gpu_delta, rect.x as _);
+                    if self.feed_gpu_collision {
+                        self.gpu_store.entry_step(&agent.gpu_entry, self.pending_gpu_delta, rect.x as _);
+                    }
                 }
             }
 
@@ -525,16 +530,18 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
         }
 
         if self.compute_gpu_collision {
-            let mapping = factory
-                .read_mapping(self.gpu_collider.readback())
-                .unwrap();
-            for agent in &mut self.agents {
-                if let Some(GpuMomentum::Computed(index)) = agent.gpu_momentum.take() {
-                    let v = mapping[index];
-                    agent.gpu_momentum = Some(GpuMomentum::Ready {
-                        ground_force: v[2],
-                        angular_force: cgmath::vec2(v[0], v[1]),
-                    });
+            if let Some(read_buffer) = self.gpu_collider.readback() {
+                let mapping = factory
+                    .read_mapping(read_buffer)
+                    .unwrap();
+                for agent in &mut self.agents {
+                    if let Some(GpuMomentum::Computed(index)) = agent.gpu_momentum.take() {
+                        let v = mapping[index];
+                        agent.gpu_momentum = Some(GpuMomentum::Ready {
+                            ground_force: v[2],
+                            angular_force: cgmath::vec2(v[0], v[1]),
+                        });
+                    }
                 }
             }
         }

@@ -430,7 +430,7 @@ pub struct Collider<R: gfx::Resources> {
     surface_data: SurfaceData<R>,
     locals: h::Buffer<R, CollisionLocals>,
     globals: h::Buffer<R, CollisionGlobals>,
-    read_buffer: h::Buffer<R, [f32; 4]>,
+    read_buffer: Option<h::Buffer<R, [f32; 4]>>,
     epoch: Epoch,
 }
 
@@ -458,6 +458,7 @@ impl<R: gfx::Resources> Collider<R> {
         factory: &mut F,
         size: (Size, Size),
         max_downsample_vertices: usize,
+        enable_readback: bool,
         surface_data: SurfaceData<R>,
     ) -> Self
     where
@@ -479,10 +480,14 @@ impl<R: gfx::Resources> Collider<R> {
             surface_data,
             locals: factory.create_constant_buffer(1),
             globals: factory.create_constant_buffer(1),
-            read_buffer: factory
-                .create_download_buffer(size.0 as _)
-                .unwrap(),
-                //factory.create_constant_buffer(1), //TEMP!
+            read_buffer: if enable_readback {
+                Some(factory
+                    .create_download_buffer(size.0 as _)
+                    .unwrap()
+                )
+            } else {
+                None
+            },
             epoch: Epoch(0),
         }
     }
@@ -537,13 +542,12 @@ impl<R: gfx::Resources> Collider<R> {
                 destination,
             },
             inputs: Vec::new(),
-            //read_buffer: Some(&self.read_buffer),
-            read_buffer: None, //TODO
+            read_buffer: self.read_buffer.as_ref(),
             epoch: self.epoch.clone(),
         }
     }
 
-    pub fn readback(&self) -> &h::Buffer<R, [f32; 4]> {
-        &self.read_buffer
+    pub fn readback(&self) -> Option<&h::Buffer<R, [f32; 4]>> {
+        self.read_buffer.as_ref()
     }
 }
