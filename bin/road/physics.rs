@@ -273,8 +273,8 @@ pub fn step<R: gfx::Resources>(
         //let vr = v_vel + w_vel.cross(r);
         //let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
         match level.get((rglob.x as i32, rglob.y as i32)) {
-            level::Texel::Single(level::Point(_, level::TerrainType::Water)) |
-            level::Texel::Dual { low: level::Point(_, level::TerrainType::Water), ..} => {
+            level::Texel::Single(level::Point(_, 0)) |
+            level::Texel::Dual { low: level::Point(_, 0), ..} => {
                 let dz = flood_level - rglob.z;
                 if dz > 0.0 {
                     float_count += 1;

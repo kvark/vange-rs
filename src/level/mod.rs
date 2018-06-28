@@ -5,15 +5,8 @@ mod config;
 
 pub use self::config::{LevelConfig, TerrainConfig};
 
-
+pub type TerrainType = u8;
 pub const NUM_TERRAINS: usize = 8;
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum TerrainType {
-    Water,
-    Main,
-}
 
 pub type Altitude = u8;
 pub type Delta = Altitude;
@@ -79,10 +72,7 @@ impl Level {
         mut coord: (i32, i32),
     ) -> Texel {
         fn get_terrain(meta: u8) -> TerrainType {
-            match (meta >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1) {
-                0 => TerrainType::Water,
-                _ => TerrainType::Main,
-            }
+            (meta >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1)
         }
         while coord.0 < 0 {
             coord.0 += self.size.0;

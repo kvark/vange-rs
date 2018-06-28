@@ -38,7 +38,7 @@ pub struct LevelConfig {
 impl LevelConfig {
     pub fn load(ini_path: &PathBuf) -> Self {
         let ini = Ini::load_from_file(ini_path)
-            .expect("Unable to read the level's INI description");
+            .expect(&format!("Unable to read the level's INI description: {:?}", ini_path));
         let global = &ini["Global Parameters"];
         let storage = &ini["Storage"];
         let render = &ini["Rendering Parameters"];

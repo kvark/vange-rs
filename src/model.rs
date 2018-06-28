@@ -657,7 +657,7 @@ where
 
 pub fn convert_m3d(
     mut input: File,
-    out_path: PathBuf,
+    out_path: &PathBuf,
 ) {
     if !out_path.is_dir() {
         panic!("The output path must be an existing directory!");
