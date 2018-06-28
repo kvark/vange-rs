@@ -1,4 +1,4 @@
-//!include shape.vert surface.frag
+//!include quat.vert transform.vert shape.vert surface.frag
 
 flat varying vec3 v_Vector;
 varying vec3 v_World;
@@ -6,26 +6,28 @@ flat varying vec3 v_PolyNormal;
 
 
 #ifdef SHADER_VS
-//imported: Polygon, get_shape_polygon
+//imported: Polygon, get_shape_polygon,
+//imported: Transform, fetch_entry_transform, transform
 
 // Compute the exact collision vector instead of using the origin
 // of the input polygon.
 const float EXACT_VECTOR = 0.0;
 
 uniform c_Locals {
-    mat4 u_Model;
-    vec4 u_ModelScale;
+    vec4 u_BoundScaleEntry;
     vec4 u_TargetCenterScale;
 };
 
 void main() {
     Polygon poly = get_shape_polygon();
-    v_World = (u_Model * poly.vertex).xyz;
+    Transform world = fetch_entry_transform(int(u_BoundScaleEntry.y));
+    world.scale = u_BoundScaleEntry.x;
+    v_World = transform(world, poly.vertex);
 
-    v_Vector = mix(mat3(u_Model) * poly.origin, v_World - u_Model[3].xyz, EXACT_VECTOR);
+    v_Vector = mix(transform(world, vec4(poly.origin, 0.0)), v_World - world.pos, EXACT_VECTOR);
     v_PolyNormal = poly.normal;
 
-    vec2 local_pos = poly.vertex.xy * u_ModelScale.xy;
+    vec2 local_pos = poly.vertex.xy * u_BoundScaleEntry.xx;
     vec2 out_pos = (local_pos + u_TargetCenterScale.xy) * u_TargetCenterScale.zw - vec2(1.0);
     gl_Position = vec4(out_pos, 0.0, 1.0);
 }

@@ -22,6 +22,10 @@ pub struct MainTargets<R: gfx::Resources> {
     pub depth: gfx::handle::DepthStencilView<R, DepthFormat>,
 }
 
+pub struct EntryData<R: gfx::Resources> {
+    pub entries: (gfx::handle::ShaderResourceView<R, [f32; 4]>, gfx::handle::Sampler<R>),
+}
+
 pub struct SurfaceData<R: gfx::Resources> {
     pub constants: gfx::handle::Buffer<R, SurfaceConstants>,
     pub height: (gfx::handle::ShaderResourceView<R, f32>, gfx::handle::Sampler<R>),
@@ -132,13 +136,16 @@ gfx_defines!{
     }
 
     constant ObjectLocals {
-        m_model: [[f32; 4]; 4] = "u_Model",
+        entry: [u32; 4] = "u_Entry",
+        pos_scale: [f32; 4] = "u_PosScale",
+        rot: [f32; 4] = "u_Rot",
     }
 
     pipeline object {
         vbuf: gfx::VertexBuffer<ObjectVertex> = (),
         globals: gfx::ConstantBuffer<Globals> = "c_Globals",
         locals: gfx::ConstantBuffer<ObjectLocals> = "c_Locals",
+        entries: gfx::TextureSampler<[u32; 2]> = "t_Entries",
         ctable: gfx::TextureSampler<[u32; 2]> = "t_ColorTable",
         palette: gfx::TextureSampler<[f32; 4]> = "t_Palette",
         out_color: gfx::RenderTarget<ColorFormat> = "Target0",
@@ -157,6 +164,7 @@ pub struct Render<R: gfx::Resources> {
 
 pub struct RenderModel<'a, R: gfx::Resources> {
     pub model: &'a model::Model<R>,
+    pub entry: &'a GpuEntry,
     pub transform: Transform,
     pub debug_shape_scale: Option<f32>,
 }
@@ -390,15 +398,17 @@ impl<R: gfx::Resources> Render<R> {
     pub fn draw_mesh<C>(
         encoder: &mut gfx::Encoder<R, C>,
         mesh: &model::Mesh<R>,
-        model2world: Transform,
+        entry: &GpuEntry,
+        local: Transform,
         pso: &gfx::PipelineState<R, object::Meta>,
         data: &mut object::Data<R>,
     ) where
         C: gfx::CommandBuffer<R>,
     {
-        let mx_world = Matrix4::from(model2world);
         let locals = ObjectLocals {
-            m_model: mx_world.into(),
+            entry: [entry.id() as u32, 0, 0, 0],
+            pos_scale: local.disp.extend(local.scale).into(),
+            rot: local.rot.into(),
         };
         data.vbuf = mesh.buffer.clone();
         encoder.update_constant_buffer(&data.locals, &locals);
@@ -408,48 +418,50 @@ impl<R: gfx::Resources> Render<R> {
     pub fn draw_model<C>(
         encoder: &mut gfx::Encoder<R, C>,
         model: &model::Model<R>,
-        model2world: Transform,
+        entry: &GpuEntry,
+        _model2world: Transform, //TODO: remove
         pso: &gfx::PipelineState<R, object::Meta>,
         data: &mut object::Data<R>,
-        debug_context: Option<(&mut DebugRender<R>, f32, &Matrix4<f32>)>,
+        _debug_context: Option<(&mut DebugRender<R>, f32, &Matrix4<f32>)>,
     ) where
         C: gfx::CommandBuffer<R>,
     {
-        use cgmath::{Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
+        use cgmath::{One, Quaternion, Transform};
 
         // body
-        Render::draw_mesh(encoder, &model.body, model2world, pso, data);
+        Render::draw_mesh(encoder, &model.body, entry, Decomposed::one(), pso, data);
         // debug render
+        /*
         if let Some((debug, scale, world2screen)) = debug_context {
             let mut mx_shape = model2world;
             mx_shape.scale *= scale;
             let transform = world2screen * Matrix4::from(mx_shape);
             debug.draw_shape(&model.shape, transform, encoder);
-        }
+        }*/
         // wheels
         for w in model.wheels.iter() {
             if let Some(ref mesh) = w.mesh {
-                let transform = model2world.concat(&Decomposed {
+                let local = Decomposed {
                     disp: mesh.offset.into(),
                     rot: Quaternion::one(),
                     scale: 1.0,
-                });
-                Render::draw_mesh(encoder, mesh, transform, pso, data);
+                };
+                Render::draw_mesh(encoder, mesh, entry, local, pso, data);
             }
         }
         // slots
-        for s in model.slots.iter() {
+        /*for s in model.slots.iter() {
             if let Some(ref mesh) = s.mesh {
                 let mut local = Decomposed {
+                    use {Deg, Rotation3};
                     disp: Vector3::from(s.pos),
                     rot: Quaternion::from_angle_y(Rad::from(Deg(s.angle as f32))),
                     scale: s.scale / model2world.scale,
                 };
                 local.disp -= local.transform_vector(Vector3::from(mesh.offset));
-                let transform = model2world.concat(&local);
-                Render::draw_mesh(encoder, mesh, transform, pso, data);
+                Render::draw_mesh(encoder, mesh, entry, local, pso, data);
             }
-        }
+        }*/
     }
 
     pub fn draw_world<'a, C>(
@@ -488,6 +500,7 @@ impl<R: gfx::Resources> Render<R> {
             Render::draw_model(
                 encoder,
                 rm.model,
+                rm.entry,
                 rm.transform,
                 &self.object_pso,
                 &mut self.object_data,

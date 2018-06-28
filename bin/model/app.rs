@@ -131,6 +131,7 @@ impl<R: gfx::Resources> Application<R> for ResourceView<R> {
         render::Render::draw_model(
             enc,
             &self.model,
+            &render::GpuEntry::DUMMY,
             self.transform,
             &self.pso,
             &mut self.data,

@@ -126,8 +126,8 @@ struct DataBase<R: gfx::Resources> {
 pub struct Game<R: gfx::Resources> {
     db: DataBase<R>,
     render: render::Render<R>,
-    gpu_collider: render::GpuCollider<R>,
     gpu_store: render::GpuStore<R>,
+    gpu_collider: render::GpuCollider<R>,
     compute_gpu_collision: bool,
     feed_gpu_collision: bool,
     debug_collision_map: bool,
@@ -186,13 +186,14 @@ impl<R: gfx::Resources> Game<R> {
         let depth = 10f32 .. 10000f32;
         let pal_data = level::read_palette(settings.open_palette());
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
+        let mut gpu_store = render::GpuStore::new(factory, 100);
         let gpu_collider = render::GpuCollider::new(
             factory,
             (256, 256), 400,
             !settings.game.physics.gpu_feedback,
+            gpu_store.data(),
             render.surface_data(),
         );
-        let mut gpu_store = render::GpuStore::new(factory, 100);
 
         let mut player_agent = Agent::spawn(
             "Player".to_string(),
@@ -227,8 +228,8 @@ impl<R: gfx::Resources> Game<R> {
         Game {
             db,
             render,
-            gpu_collider,
             gpu_store,
+            gpu_collider,
             line_buffer: render::LineBuffer::new(),
             level,
             agents,
@@ -451,9 +452,7 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
             let results = {
                 let mut collider = self.gpu_collider.start(encoder, &self.db.common);
                 for agent in &mut self.agents {
-                    let mut transform = agent.transform.clone();
-                    transform.scale *= agent.car.physics.scale_bound;
-                    let shape_id = collider.add(&agent.car.model.shape, transform);
+                    let shape_id = collider.add(&agent.car, &agent.gpu_entry);
                     agent.gpu_momentum = Some(GpuMomentum::Pending(shape_id));
                 }
 
@@ -496,6 +495,7 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
                 .iter()
                 .map(|a| render::RenderModel {
                     model: &a.car.model,
+                    entry: &a.gpu_entry,
                     transform: a.transform.clone(),
                     debug_shape_scale: match a.spirit {
                         Spirit::Player => Some(a.car.physics.scale_bound),

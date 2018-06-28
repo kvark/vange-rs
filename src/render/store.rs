@@ -10,7 +10,7 @@ use cgmath::{Vector3};
 use gfx;
 use gfx::traits::FactoryExt;
 
-use render::{read_shaders};
+use render::{read_shaders, EntryData};
 use render::collision::{CollisionFormatView};
 use space::Transform;
 
@@ -70,6 +70,13 @@ gfx_defines!{
 
 #[derive(Debug, PartialEq)]
 pub struct Entry(usize);
+
+impl Entry {
+    pub const DUMMY: Self = Entry(!0);
+    pub fn id(&self) -> usize {
+        self.0
+    }
+}
 
 struct Pipelines<R: gfx::Resources> {
     reset: gfx::PipelineState<R, reset::Meta>,
@@ -310,8 +317,10 @@ impl<R: gfx::Resources> Store<R> {
         }
     }
 
-    pub fn view(&self) -> gfx::handle::ShaderResourceView<R, StoreFormatView> {
-        self.srv.clone()
+    pub fn data(&self) -> EntryData<R> {
+        EntryData {
+            entries: (self.srv.clone(), self.sampler.clone()),
+        }
     }
 
     pub fn reload<F: gfx::Factory<R>>(

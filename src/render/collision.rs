@@ -1,9 +1,8 @@
 use config::common::Common;
-use model::Shape;
+use config::car::CarInfo;
 use render::{read_shaders,
-    ShapePolygon, SurfaceConstants, SurfaceData,
+    EntryData, GpuEntry, ShapePolygon, SurfaceConstants, SurfaceData,
 };
-use space::Transform;
 
 use gfx::{self, handle as h};
 use gfx::format::Formatted;
@@ -22,8 +21,7 @@ pub type CollisionFormatSurface = <CollisionFormat as Formatted>::Surface;
 
 gfx_defines!{
     constant CollisionLocals {
-        model: [[f32; 4]; 4] = "u_Model",
-        scale: [f32; 4] = "u_ModelScale",
+        scale_entry: [f32; 4] = "u_BoundScaleEntry",
         target: [f32; 4] = "u_TargetCenterScale",
     }
 
@@ -39,6 +37,7 @@ gfx_defines!{
         globals: gfx::ConstantBuffer<CollisionGlobals> = "c_Globals",
         height: gfx::TextureSampler<f32> = "t_Height",
         meta: gfx::TextureSampler<u32> = "t_Meta",
+        entries: gfx::TextureSampler<[f32; 4]> = "t_Entries",
         destination: gfx::RenderTarget<CollisionFormat> = "Target0",
     }
 
@@ -334,13 +333,14 @@ impl<'a,
     C: gfx::CommandBuffer<R>,
 > CollisionBuilder<'a, R, C> {
     pub fn add(
-        &mut self, shape: &Shape<R>, transform: Transform,
+        &mut self, car: &CarInfo<R>, entry: &GpuEntry,
     ) -> ShapeId {
-        use cgmath;
-
+        let scale = car.scale * car.physics.scale_bound;
+        let shape = &car.model.shape;
+        let b = &shape.bounds;
         let size = (
-            ((1 + shape.bounds.coord_max[0] - shape.bounds.coord_min[0]) as f32 * transform.scale).ceil() as Size,
-            ((1 + shape.bounds.coord_max[1] - shape.bounds.coord_min[1]) as f32 * transform.scale).ceil() as Size,
+            ((1 + b.coord_max[0] - b.coord_min[0]) as f32 * scale).ceil() as Size,
+            ((1 + b.coord_max[1] - b.coord_min[1]) as f32 * scale).ceil() as Size,
         );
         let rect = self.downsampler.atlas.add(size);
         self.inputs.push(rect);
@@ -348,11 +348,10 @@ impl<'a,
         self.encoder.update_constant_buffer(
             &self.shader_data.locals,
             &CollisionLocals {
-                model: cgmath::Matrix4::from(transform).into(),
-                scale: [transform.scale; 4],
+                scale_entry: [scale, entry.id() as f32, 0.0, 0.0],
                 target: [
-                    rect.x as f32 + (1.0 - shape.bounds.coord_min[0] as f32) * transform.scale,
-                    rect.y as f32 + (1.0 - shape.bounds.coord_min[1] as f32) * transform.scale,
+                    rect.x as f32 + (1.0 - b.coord_min[0] as f32) * scale,
+                    rect.y as f32 + (1.0 - b.coord_min[1] as f32) * scale,
                     2.0 / self.downsampler.atlas.size.0 as f32,
                     2.0 / self.downsampler.atlas.size.1 as f32,
                 ],
@@ -427,6 +426,7 @@ pub struct Collider<R: gfx::Resources> {
     pso: gfx::PipelineState<R, collision::Meta>,
     dummy_view: h::ShaderResourceView<R, [f32; 4]>,
     dummy_poly: h::Buffer<R, ShapePolygon>,
+    entry_data: EntryData<R>,
     surface_data: SurfaceData<R>,
     locals: h::Buffer<R, CollisionLocals>,
     globals: h::Buffer<R, CollisionGlobals>,
@@ -459,6 +459,7 @@ impl<R: gfx::Resources> Collider<R> {
         size: (Size, Size),
         max_downsample_vertices: usize,
         enable_readback: bool,
+        entry_data: EntryData<R>,
         surface_data: SurfaceData<R>,
     ) -> Self
     where
@@ -477,6 +478,7 @@ impl<R: gfx::Resources> Collider<R> {
                 .view_buffer_as_shader_resource(&dummy_vert)
                 .unwrap(),
             dummy_poly: factory.create_vertex_buffer(&[]),
+            entry_data,
             surface_data,
             locals: factory.create_constant_buffer(1),
             globals: factory.create_constant_buffer(1),
@@ -539,6 +541,7 @@ impl<R: gfx::Resources> Collider<R> {
                 globals: self.globals.clone(),
                 height: self.surface_data.height.clone(),
                 meta: self.surface_data.meta.clone(),
+                entries: self.entry_data.entries.clone(),
                 destination,
             },
             inputs: Vec::new(),

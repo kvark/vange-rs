@@ -1,3 +1,5 @@
+//!include quat.vert transform.vert
+
 uniform c_Globals {
     vec4 u_CameraPos;
     mat4 u_ViewProj;
@@ -12,9 +14,12 @@ varying vec3 v_Light;
 
 
 #ifdef SHADER_VS
+//imports: Transform, fetch_entry_transform, transform, qrot
 
 uniform c_Locals {
-    mat4 u_Model;
+    uvec4 u_Entry;
+    vec4 u_PosScale;
+    vec4 u_Rot;
 };
 
 uniform usampler1D t_ColorTable;
@@ -25,15 +30,18 @@ attribute vec4 a_Normal;
 attribute uint a_ColorIndex;
 
 void main() {
-    vec4 world = u_Model * a_Pos;
-    gl_Position = u_ViewProj * world;
+    Transform base = fetch_entry_transform(int(u_Entry.x));
+    Transform local = Transform(u_PosScale.xyz, u_PosScale.w, u_Rot);
+
+    vec3 world = transform(local, vec4(transform(base, a_Pos), 1.0));
+    gl_Position = u_ViewProj * vec4(world, 1.0);
 
     uvec2 color_params = texelFetch(t_ColorTable, int(a_ColorIndex), 0).xy;
     v_Color = texelFetch(t_Palette, int(color_params[0]), 0);
 
     vec3 n = normalize(a_Normal.xyz);
-    v_Normal = mat3(u_Model) * n;
-    v_Light = u_LightPos.xyz - world.xyz * u_LightPos.w;  
+    v_Normal = qrot(local.rot, qrot(base.rot, n));
+    v_Light = u_LightPos.xyz - world * u_LightPos.w;  
 }
 #endif //VS
 
