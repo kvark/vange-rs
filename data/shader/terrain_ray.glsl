@@ -1,4 +1,4 @@
-//!include fs:surface.inc
+//!include fs:surface.inc fs:color.inc
 
 uniform c_Globals {
     vec4 u_CameraPos;
@@ -20,16 +20,12 @@ void main() {
 
 
 #ifdef SHADER_FS
-//imported: t_Height, Surface, u_TextureScale, get_surface
+//imported: Surface, u_TextureScale, get_surface, evaluate_color
 
 uniform c_Locals {
     vec4 u_ScreenSize;      // XY = size
 };
 
-uniform sampler1D t_Palette;
-uniform sampler2DArray t_Table;
-
-const float c_HorFactor = 0.5; //H_CORRECTION
 const float
     c_ReflectionVariance = 0.5,
     c_ReflectionPower = 0.2;
@@ -116,19 +112,8 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
     return result;
 }
 
-vec4 evaluate_color(CastPoint pt, float lit_factor) {
-    float terrain = float(pt.type) + 0.5;
-    float diff =
-        textureOffset(t_Height, pt.tex_coord, ivec2(1, 0)).x
-        - textureOffset(t_Height, pt.tex_coord, ivec2(-1, 0)).x;
-    float light_clr =
-        texture(t_Table, vec3(0.5 * diff + 0.5, 0.25, terrain)).x;
-    float tmp =
-        light_clr - c_HorFactor * (1.0 - pt.pos.z / u_TextureScale.z);
-    float color_id =
-        texture(t_Table, vec3(0.5 * lit_factor * tmp + 0.5, 0.75, terrain)).x;
-
-    return texture(t_Palette, color_id);
+vec4 color_point(CastPoint pt, float lit_factor) {
+    return evaluate_color(pt.type, pt.tex_coord, pt.pos.z / u_TextureScale.z, lit_factor);
 }
 
 void main() {
@@ -159,7 +144,7 @@ void main() {
         lit_factor = b == outside ? 1.0 : 0.5;
     }
 
-    vec4 frag_color = evaluate_color(pt, lit_factor);
+    vec4 frag_color = color_point(pt, lit_factor);
 
     if (pt.type == TERRAIN_WATER) {
         vec3 a = pt.pos;
@@ -175,7 +160,8 @@ void main() {
             other.type = suf.high_type;
             other.tex_coord = suf.tex_coord;
             //other.is_shadowed = suf.is_shadowed;
-            frag_color += c_ReflectionPower * evaluate_color(other, 0.8);
+            vec4 ref_color = color_point(other, 0.8);
+            frag_color += c_ReflectionPower * ref_color;
         }
     }
     Target0 = frag_color;

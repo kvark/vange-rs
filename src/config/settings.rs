@@ -53,9 +53,15 @@ pub struct Light {
     pub color: [f32; 4],
 }
 
+#[derive(Clone, Deserialize)]
+pub struct Terrain {
+    pub tessellate: bool,
+}
+
 #[derive(Deserialize)]
 pub struct Render {
     pub light: Light,
+    pub terrain: Terrain,
     pub debug: DebugRender,
 }
 

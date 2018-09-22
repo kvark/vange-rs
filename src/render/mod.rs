@@ -150,6 +150,7 @@ pub struct Render<R: gfx::Resources> {
     object_pso: gfx::PipelineState<R, object::Meta>,
     object_data: object::Data<R>,
     pub light_config: settings::Light,
+    terrain_config: settings::Terrain,
     pub debug: debug::DebugRender<R>,
 }
 
@@ -209,7 +210,10 @@ pub fn read_shaders(name: &str, tessellate: bool) -> Result<Shaders, IoError> {
                 other => panic!("Unknown target: {}", other),
             };
             let include = temp.next().unwrap();
-            BufReader::new(File::open(path.with_file_name(include))?)
+            let inc_path = path
+                .with_file_name(include)
+                .with_extension("inc.glsl");
+            BufReader::new(File::open(inc_path)?)
                 .read_to_end(target)?;
         }
     }
@@ -344,7 +348,17 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
 
     Render {
         terrain: {
-            let (pso, vbuf, slice) = if true { //TEMP
+            let (pso, vbuf, slice) = if settings.terrain.tessellate {
+                let pso = Render::create_terrain_tess_pso(factory);
+                let vertices = [
+                    TerrainVertex { pos: [-1, -1, 0, 1] },
+                    TerrainVertex { pos: [1, -1, 0, 1] },
+                    TerrainVertex { pos: [1, 1, 0, 1] },
+                    TerrainVertex { pos: [-1, 1, 0, 1] },
+                ];
+                let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, ());
+                (pso, vbuf, slice)
+            } else {
                 let pso = Render::create_terrain_ray_pso(factory);
                 let vertices = [
                     TerrainVertex { pos: [0, 0, 0, 1] },
@@ -355,16 +369,6 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
                 ];
                 let indices: &[u16] = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
                 let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
-                (pso, vbuf, slice)
-            } else {
-                let pso = Render::create_terrain_tess_pso(factory);
-                let vertices = [
-                    TerrainVertex { pos: [-1, -1, 0, 1] },
-                    TerrainVertex { pos: [1, -1, 0, 0] },
-                    TerrainVertex { pos: [1, 1, 0, 0] },
-                    TerrainVertex { pos: [-1, 1, 0, 0] },
-                ];
-                let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, ());
                 (pso, vbuf, slice)
             };
             let data = terrain::Data {
@@ -398,6 +402,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             out_depth: targets.depth.clone(),
         },
         light_config: settings.light.clone(),
+        terrain_config: settings.terrain.clone(),
         debug: DebugRender::new(factory, targets, &settings.debug),
     }
 }
@@ -641,7 +646,11 @@ impl<R: gfx::Resources> Render<R> {
         factory: &mut F,
     ) {
         info!("Reloading shaders");
-        self.terrain.pso = Render::create_terrain_ray_pso(factory);
+        self.terrain.pso = if self.terrain_config.tessellate {
+            Render::create_terrain_tess_pso(factory)
+        } else {
+            Render::create_terrain_ray_pso(factory)
+        };
         self.object_pso = Render::create_object_pso(factory);
     }
 
