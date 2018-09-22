@@ -189,10 +189,10 @@ impl<R: gfx::Resources> DebugRender<R> {
         let raster = gfx::state::Rasterizer::new_fill();
 
         if self.settings.collision_shapes {
-            let (vs, fs) = read_shaders("debug_shape")
+            let shaders = read_shaders("debug_shape", false)
                 .unwrap();
             let program = factory
-                .link_program(&vs, &fs)
+                .link_program(&shaders.vs, &shaders.fs)
                 .unwrap();
             self.pso_face = Some(
                 factory
@@ -221,10 +221,10 @@ impl<R: gfx::Resources> DebugRender<R> {
 
         self.psos_line.clear();
         if self.settings.impulses {
-            let (vs, fs) = read_shaders("debug")
+            let shaders = read_shaders("debug", false)
                 .unwrap();
             let program = factory
-                .link_program(&vs, &fs)
+                .link_program(&shaders.vs, &shaders.fs)
                 .unwrap();
             for &visibility in &[Visibility::Front, Visibility::Behind] {
                 for &color_rate in &[ColorRate::Vertex, ColorRate::Instance] {

@@ -159,8 +159,15 @@ pub struct RenderModel<'a, R: gfx::Resources> {
     pub debug_shape_scale: Option<f32>,
 }
 
+pub struct Shaders {
+    vs: Vec<u8>,
+    tec: Vec<u8>,
+    tev: Vec<u8>,
+    fs: Vec<u8>,
+}
+
 #[doc(hidden)]
-pub fn read_shaders(name: &str) -> Result<(Vec<u8>, Vec<u8>), IoError> {
+pub fn read_shaders(name: &str, tessellate: bool) -> Result<Shaders, IoError> {
     use std::fs::File;
     use std::io::{BufReader, Read, Write};
     use std::path::PathBuf;
@@ -179,6 +186,14 @@ pub fn read_shaders(name: &str) -> Result<(Vec<u8>, Vec<u8>), IoError> {
     let mut buf_fs = Vec::new();
     write!(buf_fs, "{}", prelude)?;
 
+    let mut buf_tec = Vec::new();
+    let mut buf_tev = Vec::new();
+    if tessellate {
+        let ext = format!("#extension GL_ARB_tessellation_shader: require\n");
+        write!(buf_tec, "{}{}", prelude, ext)?;
+        write!(buf_tev, "{}{}", prelude, ext)?;
+    }
+
     let mut code = String::new();
     BufReader::new(File::open(&path)?)
         .read_to_string(&mut code)?;
@@ -187,6 +202,10 @@ pub fn read_shaders(name: &str) -> Result<(Vec<u8>, Vec<u8>), IoError> {
         for include in first.split_whitespace().skip(1) {
             let target = if include.ends_with(".vert") {
                 &mut buf_vs
+            } else if include.ends_with(".tec") {
+                &mut buf_tec
+            } else if include.ends_with(".tev") {
+                &mut buf_tev
             } else if include.ends_with(".frag") {
                 &mut buf_fs
             } else {
@@ -208,7 +227,19 @@ pub fn read_shaders(name: &str) -> Result<(Vec<u8>, Vec<u8>), IoError> {
     debug!("vs:\n{}", String::from_utf8_lossy(&buf_vs));
     debug!("fs:\n{}", String::from_utf8_lossy(&buf_fs));
 
-    Ok((buf_vs, buf_fs))
+    if tessellate {
+        write!(buf_tec, "\n#define SHADER_TEC\n{}", code)?;
+        write!(buf_tev, "\n#define SHADER_TEV\n{}", code)?;
+        debug!("tec:\n{}", String::from_utf8_lossy(&buf_tec));
+        debug!("tev:\n{}", String::from_utf8_lossy(&buf_tev));
+    }
+
+    Ok(Shaders {
+        vs: buf_vs,
+        tec: buf_tec,
+        tev: buf_tev,
+        fs: buf_fs,
+    })
 }
 
 pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
@@ -315,16 +346,29 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
 
     Render {
         terrain: {
-            let pso = Render::create_terrain_pso(factory);
-            let vertices = [
-                TerrainVertex { pos: [0, 0, 0, 1] },
-                TerrainVertex { pos: [-1, 0, 0, 0] },
-                TerrainVertex { pos: [0, -1, 0, 0] },
-                TerrainVertex { pos: [1, 0, 0, 0] },
-                TerrainVertex { pos: [0, 1, 0, 0] },
-            ];
-            let indices: &[u16] = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
-            let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
+            let (pso, vbuf, slice) = if true {
+                let pso = Render::create_terrain_ray_pso(factory);
+                let vertices = [
+                    TerrainVertex { pos: [0, 0, 0, 1] },
+                    TerrainVertex { pos: [-1, 0, 0, 0] },
+                    TerrainVertex { pos: [0, -1, 0, 0] },
+                    TerrainVertex { pos: [1, 0, 0, 0] },
+                    TerrainVertex { pos: [0, 1, 0, 0] },
+                ];
+                let indices: &[u16] = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
+                let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
+                (pso, vbuf, slice)
+            } else {
+                let pso = Render::create_terrain_tess_pso(factory);
+                let vertices = [
+                    TerrainVertex { pos: [-1, -1, 0, 1] },
+                    TerrainVertex { pos: [1, -1, 0, 0] },
+                    TerrainVertex { pos: [1, 1, 0, 0] },
+                    TerrainVertex { pos: [-1, 1, 0, 0] },
+                ];
+                let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, ());
+                (pso, vbuf, slice)
+            };
             let data = terrain::Data {
                 vbuf,
                 suf_constants: factory.create_constant_buffer(1),
@@ -534,13 +578,13 @@ impl<R: gfx::Resources> Render<R> {
         (view, sampler)
     }
 
-    fn create_terrain_pso<F: gfx::Factory<R>>(
+    fn create_terrain_ray_pso<F: gfx::Factory<R>>(
         factory: &mut F,
     ) -> gfx::PipelineState<R, terrain::Meta> {
-        let (vs, fs) = read_shaders("terrain")
+        let shaders = read_shaders("terrain_ray", false)
             .unwrap();
         let program = factory
-            .link_program(&vs, &fs)
+            .link_program(&shaders.vs, &shaders.fs)
             .unwrap();
         factory
             .create_pipeline_from_program(
@@ -552,13 +596,36 @@ impl<R: gfx::Resources> Render<R> {
             .unwrap()
     }
 
+    fn create_terrain_tess_pso<F: gfx::Factory<R>>(
+        factory: &mut F,
+    ) -> gfx::PipelineState<R, terrain::Meta> {
+        let shaders = read_shaders("terrain_tess", true)
+            .unwrap();
+        let set = factory
+            .create_shader_set_tessellation(
+                &shaders.vs,
+                &shaders.tec,
+                &shaders.tev,
+                &shaders.fs
+            )
+            .unwrap();
+        factory
+            .create_pipeline_state(
+                &set,
+                gfx::Primitive::PatchList(4),
+                gfx::state::Rasterizer::new_fill(),
+                terrain::new(),
+            )
+            .unwrap()
+    }
+
     pub fn create_object_pso<F: gfx::Factory<R>>(
         factory: &mut F,
     ) -> gfx::PipelineState<R, object::Meta> {
-        let (vs, fs) = read_shaders("object")
+        let shaders = read_shaders("object", false)
             .unwrap();
         let program = factory
-            .link_program(&vs, &fs)
+            .link_program(&shaders.vs, &shaders.fs)
             .unwrap();
         // no culling because the old rasterizer was not polygonal
         factory
@@ -576,7 +643,7 @@ impl<R: gfx::Resources> Render<R> {
         factory: &mut F,
     ) {
         info!("Reloading shaders");
-        self.terrain.pso = Render::create_terrain_pso(factory);
+        self.terrain.pso = Render::create_terrain_ray_pso(factory);
         self.object_pso = Render::create_object_pso(factory);
     }
 

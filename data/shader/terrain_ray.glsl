@@ -92,7 +92,8 @@ struct CastPoint {
 CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
     CastPoint result;
 
-    vec3 a = cast_ray_to_plane(u_TextureScale.z, base, dir);
+    vec3 a = base.z <= u_TextureScale.z ? base :
+        cast_ray_to_plane(u_TextureScale.z, base, dir);
     vec3 c = cast_ray_to_plane(0.0, base, dir);
     vec3 b = c;
 
