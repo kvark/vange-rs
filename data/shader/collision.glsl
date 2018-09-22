@@ -1,4 +1,4 @@
-//!include shape.vert surface.frag
+//!include vs:shape.inc fs:surface.inc
 
 flat varying vec3 v_Vector;
 varying vec3 v_World;

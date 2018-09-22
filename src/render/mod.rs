@@ -199,18 +199,16 @@ pub fn read_shaders(name: &str, tessellate: bool) -> Result<Shaders, IoError> {
         .read_to_string(&mut code)?;
     let first = code.lines().next().unwrap();
     if first.starts_with("//!include") {
-        for include in first.split_whitespace().skip(1) {
-            let target = if include.ends_with(".vert") {
-                &mut buf_vs
-            } else if include.ends_with(".tec") {
-                &mut buf_tec
-            } else if include.ends_with(".tev") {
-                &mut buf_tev
-            } else if include.ends_with(".frag") {
-                &mut buf_fs
-            } else {
-                panic!("Unknown include: {}", include);
+        for include_pair in first.split_whitespace().skip(1) {
+            let mut temp = include_pair.split(':');
+            let target = match temp.next().unwrap() {
+                "vs" => &mut buf_vs,
+                "tec" => &mut buf_tec,
+                "tev" => &mut buf_tev,
+                "fs" => &mut buf_fs,
+                other => panic!("Unknown target: {}", other),
             };
+            let include = temp.next().unwrap();
             BufReader::new(File::open(path.with_file_name(include))?)
                 .read_to_end(target)?;
         }
@@ -346,7 +344,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
 
     Render {
         terrain: {
-            let (pso, vbuf, slice) = if true {
+            let (pso, vbuf, slice) = if true { //TEMP
                 let pso = Render::create_terrain_ray_pso(factory);
                 let vertices = [
                     TerrainVertex { pos: [0, 0, 0, 1] },

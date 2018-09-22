@@ -1,4 +1,4 @@
-//!include shape.vert
+//!include vs:shape.inc
 
 varying vec4 v_Color;
 

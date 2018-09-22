@@ -1,4 +1,4 @@
-//!include surface.frag
+//!include fs:surface.inc
 
 uniform c_Globals {
     vec4 u_CameraPos;
