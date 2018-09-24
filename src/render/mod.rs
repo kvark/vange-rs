@@ -144,13 +144,22 @@ gfx_defines!{
     }
 }
 
+enum Terrain<R: gfx::Resources> {
+    Ray(gfx::PipelineState<R, terrain::Meta>),
+    Tess {
+        low: gfx::PipelineState<R, terrain::Meta>,
+        high: gfx::PipelineState<R, terrain::Meta>,
+    },
+}
+
 pub struct Render<R: gfx::Resources> {
-    terrain: gfx::Bundle<R, terrain::Data<R>>,
+    terrain: Terrain<R>,
+    terrain_data: terrain::Data<R>,
+    terrain_slice: gfx::Slice<R>,
     terrain_scale: [f32; 4],
     object_pso: gfx::PipelineState<R, object::Meta>,
     object_data: object::Data<R>,
     pub light_config: settings::Light,
-    terrain_config: settings::Terrain,
     pub debug: debug::DebugRender<R>,
 }
 
@@ -168,7 +177,7 @@ pub struct Shaders {
 }
 
 #[doc(hidden)]
-pub fn read_shaders(name: &str, tessellate: bool) -> Result<Shaders, IoError> {
+pub fn read_shaders(name: &str, tessellate: bool, specialization: &[&str]) -> Result<Shaders, IoError> {
     use std::fs::File;
     use std::io::{BufReader, Read, Write};
     use std::path::PathBuf;
@@ -198,23 +207,43 @@ pub fn read_shaders(name: &str, tessellate: bool) -> Result<Shaders, IoError> {
     let mut code = String::new();
     BufReader::new(File::open(&path)?)
         .read_to_string(&mut code)?;
-    let first = code.lines().next().unwrap();
-    if first.starts_with("//!include") {
-        for include_pair in first.split_whitespace().skip(1) {
-            let mut temp = include_pair.split(':');
-            let target = match temp.next().unwrap() {
-                "vs" => &mut buf_vs,
-                "tec" => &mut buf_tec,
-                "tev" => &mut buf_tev,
-                "fs" => &mut buf_fs,
-                other => panic!("Unknown target: {}", other),
-            };
-            let include = temp.next().unwrap();
-            let inc_path = path
-                .with_file_name(include)
-                .with_extension("inc.glsl");
-            BufReader::new(File::open(inc_path)?)
-                .read_to_end(target)?;
+    // parse meta-data
+    {
+        let mut lines = code.lines();
+        let first = lines.next().unwrap();
+        if first.starts_with("//!include") {
+            for include_pair in first.split_whitespace().skip(1) {
+                let mut temp = include_pair.split(':');
+                let target = match temp.next().unwrap() {
+                    "vs" => &mut buf_vs,
+                    "tec" => &mut buf_tec,
+                    "tev" => &mut buf_tev,
+                    "fs" => &mut buf_fs,
+                    other => panic!("Unknown target: {}", other),
+                };
+                let include = temp.next().unwrap();
+                let inc_path = path
+                    .with_file_name(include)
+                    .with_extension("inc.glsl");
+                BufReader::new(File::open(inc_path)?)
+                    .read_to_end(target)?;
+            }
+        }
+        let second = lines.next().unwrap();
+        if second.starts_with("//!specialization") {
+            for define in second.split_whitespace().skip(1) {
+                let value = if specialization.contains(&define) {
+                    1
+                } else {
+                    0
+                };
+                write!(buf_vs, "#define {} {}\n", define, value)?;
+                write!(buf_fs, "#define {} {}\n", define, value)?;
+                if tessellate {
+                    write!(buf_tec, "#define {} {}\n", define, value)?;
+                    write!(buf_tev, "#define {} {}\n", define, value)?;
+                }
+            }
         }
     }
 
@@ -346,45 +375,50 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     let palette = Render::create_palette(&level.palette, factory);
     let globals = factory.create_constant_buffer(1);
 
+    let (terrain, terrain_slice, terrain_data) = {
+        let (terrain, vbuf, slice) = if settings.terrain.tessellate {
+            let (low, high) = Render::create_terrain_tess_psos(factory);
+            let vertices = [
+                TerrainVertex { pos: [0, 0, 0, 1] },
+                TerrainVertex { pos: [1, 0, 0, 1] },
+                TerrainVertex { pos: [1, 1, 0, 1] },
+                TerrainVertex { pos: [0, 1, 0, 1] },
+            ];
+            let (vbuf, mut slice) = factory.create_vertex_buffer_with_slice(&vertices, ());
+            slice.instances = Some((256, 0));
+            (Terrain::Tess { low, high }, vbuf, slice)
+        } else {
+            let pso = Render::create_terrain_ray_pso(factory);
+            let vertices = [
+                TerrainVertex { pos: [0, 0, 0, 1] },
+                TerrainVertex { pos: [-1, 0, 0, 0] },
+                TerrainVertex { pos: [0, -1, 0, 0] },
+                TerrainVertex { pos: [1, 0, 0, 0] },
+                TerrainVertex { pos: [0, 1, 0, 0] },
+            ];
+            let indices: &[u16] = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
+            let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
+            (Terrain::Ray(pso), vbuf, slice)
+        };
+        let data = terrain::Data {
+            vbuf,
+            suf_constants: factory.create_constant_buffer(1),
+            terr_constants: factory.create_constant_buffer(1),
+            globals: globals.clone(),
+            height: (height, sm_height),
+            meta: (meta, sm_meta),
+            palette,
+            table: (table, sm_table),
+            out_color: targets.color.clone(),
+            out_depth: targets.depth.clone(),
+        };
+        (terrain, slice, data)
+    };
+
     Render {
-        terrain: {
-            let (pso, vbuf, slice) = if settings.terrain.tessellate {
-                let pso = Render::create_terrain_tess_pso(factory);
-                let vertices = [
-                    TerrainVertex { pos: [-1, -1, 0, 1] },
-                    TerrainVertex { pos: [1, -1, 0, 1] },
-                    TerrainVertex { pos: [1, 1, 0, 1] },
-                    TerrainVertex { pos: [-1, 1, 0, 1] },
-                ];
-                let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, ());
-                (pso, vbuf, slice)
-            } else {
-                let pso = Render::create_terrain_ray_pso(factory);
-                let vertices = [
-                    TerrainVertex { pos: [0, 0, 0, 1] },
-                    TerrainVertex { pos: [-1, 0, 0, 0] },
-                    TerrainVertex { pos: [0, -1, 0, 0] },
-                    TerrainVertex { pos: [1, 0, 0, 0] },
-                    TerrainVertex { pos: [0, 1, 0, 0] },
-                ];
-                let indices: &[u16] = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
-                let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
-                (pso, vbuf, slice)
-            };
-            let data = terrain::Data {
-                vbuf,
-                suf_constants: factory.create_constant_buffer(1),
-                terr_constants: factory.create_constant_buffer(1),
-                globals: globals.clone(),
-                height: (height, sm_height),
-                meta: (meta, sm_meta),
-                palette,
-                table: (table, sm_table),
-                out_color: targets.color.clone(),
-                out_depth: targets.depth.clone(),
-            };
-            gfx::Bundle::new(slice, pso, data)
-        },
+        terrain,
+        terrain_slice,
+        terrain_data,
         terrain_scale: [
             level.size.0 as f32,
             real_height as f32,
@@ -402,7 +436,6 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             out_depth: targets.depth.clone(),
         },
         light_config: settings.light.clone(),
-        terrain_config: settings.terrain.clone(),
         debug: DebugRender::new(factory, targets, &settings.debug),
     }
 }
@@ -509,24 +542,32 @@ impl<R: gfx::Resources> Render<R> {
             encoder,
             cam,
             &self.light_config,
-            &self.terrain.data.globals,
+            &self.terrain_data.globals,
         );
 
         // clear buffers
-        encoder.clear(&self.terrain.data.out_color, [0.1, 0.2, 0.3, 1.0]);
-        encoder.clear_depth(&self.terrain.data.out_depth, 1.0);
+        encoder.clear(&self.terrain_data.out_color, [0.1, 0.2, 0.3, 1.0]);
+        encoder.clear_depth(&self.terrain_data.out_depth, 1.0);
 
         // draw terrain
-        let (wid, het, _, _) = self.terrain.data.out_color.get_dimensions();
+        let (wid, het, _, _) = self.terrain_data.out_color.get_dimensions();
         let suf_constants = SurfaceConstants {
             tex_scale: self.terrain_scale,
         };
-        encoder.update_constant_buffer(&self.terrain.data.suf_constants, &suf_constants);
+        encoder.update_constant_buffer(&self.terrain_data.suf_constants, &suf_constants);
         let terr_constants = TerrainConstants {
             scr_size: [wid as f32, het as f32, 0.0, 0.0],
         };
-        encoder.update_constant_buffer(&self.terrain.data.terr_constants, &terr_constants);
-        self.terrain.encode(encoder);
+        encoder.update_constant_buffer(&self.terrain_data.terr_constants, &terr_constants);
+        match self.terrain {
+            Terrain::Ray(ref pso) => {
+                encoder.draw(&self.terrain_slice, pso, &self.terrain_data);
+            }
+            Terrain::Tess { ref low, ref high } => {
+                encoder.draw(&self.terrain_slice, low, &self.terrain_data);
+                encoder.draw(&self.terrain_slice, high, &self.terrain_data);
+            }
+        }
 
         // draw vehicle models
         for rm in render_models {
@@ -584,7 +625,7 @@ impl<R: gfx::Resources> Render<R> {
     fn create_terrain_ray_pso<F: gfx::Factory<R>>(
         factory: &mut F,
     ) -> gfx::PipelineState<R, terrain::Meta> {
-        let shaders = read_shaders("terrain_ray", false)
+        let shaders = read_shaders("terrain_ray", false, &[])
             .unwrap();
         let program = factory
             .link_program(&shaders.vs, &shaders.fs)
@@ -599,10 +640,10 @@ impl<R: gfx::Resources> Render<R> {
             .unwrap()
     }
 
-    fn create_terrain_tess_pso<F: gfx::Factory<R>>(
-        factory: &mut F,
+    fn create_terrain_tess_pso_impl<F: gfx::Factory<R>>(
+        factory: &mut F, specialization: &[&str]
     ) -> gfx::PipelineState<R, terrain::Meta> {
-        let shaders = read_shaders("terrain_tess", true)
+        let shaders = read_shaders("terrain_tess", true, specialization)
             .unwrap();
         let set = factory
             .create_shader_set_tessellation(
@@ -622,10 +663,18 @@ impl<R: gfx::Resources> Render<R> {
             .unwrap()
     }
 
+    fn create_terrain_tess_psos<F: gfx::Factory<R>>(
+        factory: &mut F,
+    ) -> (gfx::PipelineState<R, terrain::Meta>, gfx::PipelineState<R, terrain::Meta>) {
+        let lo = Self::create_terrain_tess_pso_impl(factory, &[]);
+        let hi = Self::create_terrain_tess_pso_impl(factory, &["HIGH_LEVEL", "USE_DISCARD"]);
+        (lo, hi)
+    }
+
     pub fn create_object_pso<F: gfx::Factory<R>>(
         factory: &mut F,
     ) -> gfx::PipelineState<R, object::Meta> {
-        let shaders = read_shaders("object", false)
+        let shaders = read_shaders("object", false, &[])
             .unwrap();
         let program = factory
             .link_program(&shaders.vs, &shaders.fs)
@@ -646,17 +695,22 @@ impl<R: gfx::Resources> Render<R> {
         factory: &mut F,
     ) {
         info!("Reloading shaders");
-        self.terrain.pso = if self.terrain_config.tessellate {
-            Render::create_terrain_tess_pso(factory)
-        } else {
-            Render::create_terrain_ray_pso(factory)
-        };
+        match self.terrain {
+            Terrain::Ray(ref mut pso) => {
+                *pso = Render::create_terrain_ray_pso(factory);
+            }
+            Terrain::Tess { ref mut low, ref mut high } => {
+                let (lo, hi) = Render::create_terrain_tess_psos(factory);
+                *low = lo;
+                *high = hi;
+            }
+        }
         self.object_pso = Render::create_object_pso(factory);
     }
 
     pub fn resize(&mut self, targets: MainTargets<R>) {
-        self.terrain.data.out_color = targets.color.clone();
-        self.terrain.data.out_depth = targets.depth.clone();
+        self.terrain_data.out_color = targets.color.clone();
+        self.terrain_data.out_depth = targets.depth.clone();
         self.object_data.out_color = targets.color.clone();
         self.object_data.out_depth = targets.depth.clone();
         self.debug.resize(targets);
@@ -664,13 +718,13 @@ impl<R: gfx::Resources> Render<R> {
 
     pub fn surface_data(&self) -> SurfaceData<R> {
         SurfaceData {
-            constants: self.terrain.data.suf_constants.clone(),
-            height: self.terrain.data.height.clone(),
-            meta: self.terrain.data.meta.clone(),
+            constants: self.terrain_data.suf_constants.clone(),
+            height: self.terrain_data.height.clone(),
+            meta: self.terrain_data.meta.clone(),
         }
     }
 
     pub fn target_color(&self) -> gfx::handle::RenderTargetView<R, ColorFormat> {
-        self.terrain.data.out_color.clone()
+        self.terrain_data.out_color.clone()
     }
 }

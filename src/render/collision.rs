@@ -155,7 +155,7 @@ impl<R: gfx::Resources> Downsampler<R> {
         gfx::PipelineState<R, downsample::Meta>,
         gfx::PipelineState<R, downsample::Meta>,
     ) {
-        let shaders = read_shaders("downsample", false)
+        let shaders = read_shaders("downsample", false, &[])
             .unwrap();
         let program = factory
             .link_program(&shaders.vs, &shaders.fs)
@@ -438,7 +438,7 @@ impl<R: gfx::Resources> GpuCollider<R> {
     fn create_pso<F: gfx::Factory<R>>(
         factory: &mut F,
     ) -> gfx::PipelineState<R, collision::Meta> {
-        let shaders = read_shaders("collision", false)
+        let shaders = read_shaders("collision", false, &[])
             .unwrap();
         let program = factory
             .link_program(&shaders.vs, &shaders.fs)

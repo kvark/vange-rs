@@ -189,7 +189,7 @@ impl<R: gfx::Resources> DebugRender<R> {
         let raster = gfx::state::Rasterizer::new_fill();
 
         if self.settings.collision_shapes {
-            let shaders = read_shaders("debug_shape", false)
+            let shaders = read_shaders("debug_shape", false, &[])
                 .unwrap();
             let program = factory
                 .link_program(&shaders.vs, &shaders.fs)
@@ -221,7 +221,7 @@ impl<R: gfx::Resources> DebugRender<R> {
 
         self.psos_line.clear();
         if self.settings.impulses {
-            let shaders = read_shaders("debug", false)
+            let shaders = read_shaders("debug", false, &[])
                 .unwrap();
             let program = factory
                 .link_program(&shaders.vs, &shaders.fs)
