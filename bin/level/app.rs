@@ -65,6 +65,7 @@ impl<R: gfx::Resources> LevelView<R> {
                         .expect(&format!("Unable to find the bunch, supported: {:?}",
                             bunches.iter().map(|b| &b.escave).collect::<Vec<_>>()
                         ));
+                    info!("Found bunch {}", index);
                     bunches.swap_remove(index)
                 };
                 let cycle = bunch.cycles
@@ -73,15 +74,14 @@ impl<R: gfx::Resources> LevelView<R> {
                     .expect(&format!("Unknown cycle is provided, supported: {:?}",
                         bunch.cycles.iter().map(|c| &c.name).collect::<Vec<_>>()
                     ));
-                info!("Using palette {}", cycle.palette_path);
                 let pal_file = settings.open_relative(&cycle.palette_path);
-                level.palette = level::read_palette(pal_file);
+                level.palette = level::read_palette(pal_file, Some(&level_config.terrains));
             }
 
             level
         };
 
-        let objects_palette = level::read_palette(settings.open_palette());
+        let objects_palette = level::read_palette(settings.open_palette(), None);
         let (width, height, _, _) = targets.color.get_dimensions();
         let depth = 10f32 .. 10000f32;
         let render = render::init(factory, targets, &level, &objects_palette, &settings.render);

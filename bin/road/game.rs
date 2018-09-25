@@ -175,7 +175,7 @@ impl<R: gfx::Resources> Game<R> {
 
         let (width, height, _, _) = targets.color.get_dimensions();
         let depth = 10f32 .. 10000f32;
-        let pal_data = level::read_palette(settings.open_palette());
+        let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
         let collider = render::GpuCollider::new(
             factory,

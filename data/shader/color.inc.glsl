@@ -1,7 +1,9 @@
 // Common FS routines for evaluating terrain color.
 
 //uniform sampler2DArray t_Height;
+// This texture has a layer per terrain type. First row is `lightCLR`, second in `palCLR`.
 uniform sampler2DArray t_Table;
+// corresponds to SDL palette
 uniform sampler1D t_Palette;
 
 const float c_HorFactor = 0.5; //H_CORRECTION

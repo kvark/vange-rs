@@ -24,7 +24,7 @@ impl<R: gfx::Resources> ResourceView<R> {
         use gfx::traits::FactoryExt;
         use std::io::BufReader;
 
-        let pal_data = level::read_palette(settings.open_palette());
+        let pal_data = level::read_palette(settings.open_palette(), None);
         let (width, height, _, _) = targets.color.get_dimensions();
 
         info!("Loading model {}", path);

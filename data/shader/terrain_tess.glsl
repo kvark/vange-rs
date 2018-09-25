@@ -121,6 +121,7 @@ out vec4 Target0;
 void main() {
     Surface suf = get_surface(v_Pos.xy);
     #if USE_DISCARD
+        //TODO: just use the depth-testing instead of discard here
         if (suf.delta == 0.0) {
             discard;
         }

@@ -36,7 +36,7 @@ impl<R: gfx::Resources> CarView<R> {
             ms.scale = info.scale;
         }
 
-        let pal_data = level::read_palette(settings.open_palette());
+        let pal_data = level::read_palette(settings.open_palette(), None);
         let (width, height, _, _) = targets.color.get_dimensions();
         let data = render::object::Data {
             vbuf: model.body.buffer.clone(),

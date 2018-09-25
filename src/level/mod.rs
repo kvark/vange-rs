@@ -98,13 +98,49 @@ impl Level {
     }
 }
 
-pub fn read_palette<I: Read>(input: I) -> [[u8; 4]; 0x100] {
+#[allow(unused)]
+fn print_palette(data: &[[u8; 4]], info: &str) {
+    print!("Palette - {}:", info);
+    for i in 0 .. 3 {
+        print!("\n\t");
+        for j in 0 .. 0x100 {
+            print!("{:02X}", data[j][i]);
+        }
+    }
+    print!("\n");
+}
+
+pub fn read_palette<I: Read>(input: I, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 0x100] {
     let mut file = BufReader::new(input);
     let mut data = [[0; 4]; 0x100];
     for p in data.iter_mut() {
         file.read(&mut p[.. 3]).unwrap();
+        //p[0] <<= 2; p[1] <<= 2; p[2] <<= 2;
+    }
+    //print_palette(&data, "read from file");
+    if let Some(terrains) = config {
+        // see `PalettePrepare` of the original
+        data[0] = [0; 4];
+
+        for tc in terrains {
+            for c in &mut data[tc.colors.start as usize][.. 3] {
+                *c >>= 1;
+            }
+        }
+
+        for i in 0 .. 16 {
+            let mut value = [(i * 4) as u8; 4];
+            value[3] = 0;
+            data[224 + i] = value;
+        }
+
+        //print_palette(&data, "corrected");
+    }
+    // see `XGR_Screen::setpal` of the original
+    for p in data.iter_mut() {
         p[0] <<= 2; p[1] <<= 2; p[2] <<= 2;
     }
+    //print_palette(&data, "scale");
     //TODO: there is quite a bit of logic missing here,
     // see `GeneralTableOpen` and `PalettePrepare` of the original.
     data
@@ -185,14 +221,15 @@ pub fn load(config: &LevelConfig) -> Level {
         (height, meta)
     };
     report_time(start_vmc);
-    let palette = File::open(&config.path_palette).expect("Unable to open the palette file");
+    let palette = File::open(&config.path_palette)
+        .expect("Unable to open the palette file");
 
     Level {
         size,
         flood_map,
         height,
         meta,
-        palette: read_palette(palette),
+        palette: read_palette(palette, Some(&config.terrains)),
         terrains: config.terrains.clone(),
     }
 }
