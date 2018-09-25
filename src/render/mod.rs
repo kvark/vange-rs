@@ -149,6 +149,7 @@ enum Terrain<R: gfx::Resources> {
     Tess {
         low: gfx::PipelineState<R, terrain::Meta>,
         high: gfx::PipelineState<R, terrain::Meta>,
+        screen_space: bool,
     },
 }
 
@@ -377,7 +378,8 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
 
     let (terrain, terrain_slice, terrain_data) = {
         let (terrain, vbuf, slice) = if settings.terrain.tessellate {
-            let (low, high) = Render::create_terrain_tess_psos(factory);
+            let screen_space = settings.terrain.screen_space;
+            let (low, high) = Render::create_terrain_tess_psos(factory, screen_space);
             let vertices = [
                 TerrainVertex { pos: [0, 0, 0, 1] },
                 TerrainVertex { pos: [1, 0, 0, 1] },
@@ -385,8 +387,9 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
                 TerrainVertex { pos: [0, 1, 0, 1] },
             ];
             let (vbuf, mut slice) = factory.create_vertex_buffer_with_slice(&vertices, ());
-            slice.instances = Some((256, 0));
-            (Terrain::Tess { low, high }, vbuf, slice)
+            let num_instances = if screen_space { 16 * 12 } else { 256 };
+            slice.instances = Some((num_instances, 0));
+            (Terrain::Tess { low, high, screen_space }, vbuf, slice)
         } else {
             let pso = Render::create_terrain_ray_pso(factory);
             let vertices = [
@@ -563,7 +566,7 @@ impl<R: gfx::Resources> Render<R> {
             Terrain::Ray(ref pso) => {
                 encoder.draw(&self.terrain_slice, pso, &self.terrain_data);
             }
-            Terrain::Tess { ref low, ref high } => {
+            Terrain::Tess { ref low, ref high, .. } => {
                 encoder.draw(&self.terrain_slice, low, &self.terrain_data);
                 encoder.draw(&self.terrain_slice, high, &self.terrain_data);
             }
@@ -664,10 +667,11 @@ impl<R: gfx::Resources> Render<R> {
     }
 
     fn create_terrain_tess_psos<F: gfx::Factory<R>>(
-        factory: &mut F,
+        factory: &mut F, screen_space: bool,
     ) -> (gfx::PipelineState<R, terrain::Meta>, gfx::PipelineState<R, terrain::Meta>) {
-        let lo = Self::create_terrain_tess_pso_impl(factory, &[]);
-        let hi = Self::create_terrain_tess_pso_impl(factory, &["HIGH_LEVEL", "USE_DISCARD"]);
+        let ss_spec = if screen_space { "SCREEN_SPACE" } else { "" };
+        let lo = Self::create_terrain_tess_pso_impl(factory, &[ss_spec]);
+        let hi = Self::create_terrain_tess_pso_impl(factory, &["HIGH_LEVEL", "USE_DISCARD", ss_spec]);
         (lo, hi)
     }
 
@@ -699,8 +703,8 @@ impl<R: gfx::Resources> Render<R> {
             Terrain::Ray(ref mut pso) => {
                 *pso = Render::create_terrain_ray_pso(factory);
             }
-            Terrain::Tess { ref mut low, ref mut high } => {
-                let (lo, hi) = Render::create_terrain_tess_psos(factory);
+            Terrain::Tess { ref mut low, ref mut high, screen_space } => {
+                let (lo, hi) = Render::create_terrain_tess_psos(factory, screen_space);
                 *low = lo;
                 *high = hi;
             }

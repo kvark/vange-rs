@@ -30,6 +30,7 @@ color = [1, 1, 1, 1]
 
 [render.terrain]
 tessellate = false
+screen_space = false
 
 [render.debug]
 max_vertices = 512

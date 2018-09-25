@@ -56,6 +56,7 @@ pub struct Light {
 #[derive(Clone, Deserialize)]
 pub struct Terrain {
     pub tessellate: bool,
+    pub screen_space: bool,
 }
 
 #[derive(Deserialize)]
