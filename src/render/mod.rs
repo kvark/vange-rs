@@ -46,6 +46,7 @@ const MATERIALS: [MaterialParams; NUM_MATERIALS] = [
         jj: 0.5,
     },
 ];
+const H_CORRECTION: usize = 1;
 const SHADOW_DEPTH: usize = 0x180; // each 0x100 is 1 voxel/step
 const MAX_TEX_HEIGHT: i32 = 4096;
 pub const NUM_COLOR_IDS: u32 = 25;
@@ -291,9 +292,9 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             let dx = mat.dx * dx_scale;
             let sd = mat.sd * sd_scale;
             for (i, out) in lcm.iter_mut().enumerate() {
-                let jj = mat.jj * (i as f32 - 255.5);
+                let jj = mat.jj * (i as f32 - 256.0);
                 let v = (dx * sd - jj) / ((1.0 + sd * sd) * (dx * dx + jj * jj)).sqrt();
-                *out = (v.max(0.0).min(1.0) * 255.0) as u8;
+                *out = (v.max(0.0).min(1.0) * 255.0).round() as u8;
             }
         }
     }
@@ -317,9 +318,22 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             *c = terr.colors.start;
         }
         let color_num = (terr.colors.end - terr.colors.start) as usize;
-        for (j, c) in ct[0x300 .. 0x400].iter_mut().enumerate() {
-            //TODO: separate case for the first terrain type
-            *c = terr.colors.start + ((j * color_num) / 0x100) as u8;
+        if mid == 0 {
+            // ground
+            for (j, c) in ct[0x300 .. 0x400].iter_mut().enumerate() {
+                //TODO: separate case for the first terrain type
+                *c = terr.colors.start + ((j * color_num + 0x7F) / 0xFF) as u8;
+            }
+        } else {
+            // water
+            let d = (0xFF - level.flood_map[0] as usize) >> H_CORRECTION;
+            for c in ct[0x400 - d .. 0x400].iter_mut() {
+                *c = terr.colors.end;
+            }
+            for (j, c) in ct[0x300 .. 0x400 - d].iter_mut().enumerate() {
+                let v = ((j as f32) * 1.25 * (color_num as f32) / (255.0 - d as f32) - 0.25 * (color_num as f32)).round().max(0.0);
+                *c = terr.colors.start + (v as u8);
+            }
         }
     }
 
