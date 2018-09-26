@@ -50,12 +50,17 @@ Surface cast_ray_impl(
         vec3 c = a + step;
         Surface suf = get_surface(c.xy);
 
-        float height = mix(suf.low_alt, suf.high_alt, high);
-        if (c.z <= height) {
-            b = c;
-            break;
-        } else {
+        if (c.z > suf.high_alt) {
+            high = true; // re-appear on the surface
             a = c;
+        } else {
+            float height = mix(suf.low_alt, suf.high_alt, high);
+            if (c.z <= height) {
+                b = c;
+                break;
+            } else {
+                a = c;
+            }
         }
     }
 
@@ -98,11 +103,17 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
     result.is_underground = false;
 
     if (suf.delta != 0.0 && b.z < suf.low_alt + suf.delta) {
-        // continue the cast underground
+        // continue the cast underground, but reserve
+        // the right to re-appear above the surface.
         a = b; b = c;
         suf = cast_ray_impl(a, b, false, 6, 3);
-        result.type = suf.low_type;
-        result.is_underground = true;
+        if (b.z >= suf.low_alt + suf.delta) {
+            result.type = suf.high_type;
+        } else {
+            result.type = suf.low_type;
+            // underground is better indicated by a real shadow
+            //result.is_underground = true;
+        }
     }
 
     result.pos = b;
@@ -140,7 +151,12 @@ void main() {
         vec3 outside = cast_ray_to_plane(u_TextureScale.z, a, light_vec);
         vec3 b = outside;
 
-        cast_ray_impl(a, b, true, 4, 4);
+        Surface suf = cast_ray_impl(a, b, true, 4, 4);
+        if (suf.delta != 0.0 && b.z < suf.low_alt + suf.delta) {
+            // continue casting overground
+            a = b; b = outside;
+            cast_ray_impl(a, b, true, 3, 3);
+        }
         lit_factor = b == outside ? 1.0 : 0.5;
     }
 
