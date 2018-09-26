@@ -101,7 +101,8 @@ impl Settings {
         &self,
         path: &str,
     ) -> File {
-        File::open(self.data_path.join(path)).expect(&format!("Unable to open game file: {}", path))
+        File::open(self.data_path.join(path))
+            .expect(&format!("Unable to open game file: {}", path))
     }
 
     pub fn check_path(

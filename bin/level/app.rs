@@ -47,7 +47,7 @@ impl<R: gfx::Resources> LevelView<R> {
             info!("Using level {}", ini_name);
 
             let level_config = level::LevelConfig::load(&ini_path);
-            let mut level = level::load(&level_config);
+            let mut override_palette = None;
 
             if !settings.game.cycle.is_empty() {
                 let escave = escaves
@@ -74,10 +74,13 @@ impl<R: gfx::Resources> LevelView<R> {
                     .expect(&format!("Unknown cycle is provided, supported: {:?}",
                         bunch.cycles.iter().map(|c| &c.name).collect::<Vec<_>>()
                     ));
-                let pal_file = settings.open_relative(&cycle.palette_path);
-                level.palette = level::read_palette(pal_file, Some(&level_config.terrains));
+                override_palette = Some(settings.open_relative(&cycle.palette_path));
             }
 
+            let mut level = level::load(&level_config);
+            if let Some(pal_file) = override_palette {
+                level.palette = level::read_palette(pal_file, Some(&level_config.terrains));
+            }
             level
         };
 
