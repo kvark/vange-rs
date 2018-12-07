@@ -6,6 +6,7 @@ extern crate ini;
 #[macro_use]
 extern crate log;
 extern crate rayon;
+extern crate ron;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
