@@ -78,19 +78,20 @@ pub struct Settings {
 impl Settings {
     pub fn load(path: &str) -> Self {
         use std::io::Read;
-        use toml;
+        use ron;
 
         let mut string = String::new();
         File::open(path)
             .expect("Unable to open the settings file")
             .read_to_string(&mut string)
             .unwrap();
-        let set: Settings = toml::from_str(&string).expect("Unable to parse settings TOML");
+        let set: Settings = ron::de::from_str(&string)
+            .expect("Unable to parse settings RON");
 
         if !set.check_path("options.dat") {
             panic!(
                 "Can't find the resources of the original Vangers game at {:?}, {}",
-                set.data_path, "please check your `config/settings.xml`"
+                set.data_path, "please check your `config/settings.ron`"
             );
         }
 

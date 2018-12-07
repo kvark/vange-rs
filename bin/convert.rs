@@ -11,7 +11,7 @@ fn main() {
     use std::env;
     env_logger::init().unwrap();
 
-    let settings = config::settings::Settings::load("config/settings.toml");
+    let settings = config::settings::Settings::load("config/settings.ron");
 
     let args: Vec<_> = env::args().collect();
     let mut options = getopts::Options::new();

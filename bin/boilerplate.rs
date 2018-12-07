@@ -37,7 +37,7 @@ impl Harness {
     pub fn init() -> (Self, config::Settings, MainTargets) {
         env_logger::init().unwrap();
         info!("Loading the settings");
-        let settings = config::Settings::load("config/settings.toml");
+        let settings = config::Settings::load("config/settings.ron");
 
         info!("Creating the window with GL context");
         let win_builder = glutin::WindowBuilder::new()

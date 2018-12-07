@@ -12,7 +12,6 @@ extern crate serde;
 extern crate serde_derive;
 extern crate serde_scan;
 extern crate splay;
-extern crate toml;
 
 //TODO: cleanup externs
 
