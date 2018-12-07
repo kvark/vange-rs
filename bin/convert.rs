@@ -18,6 +18,7 @@ fn main() {
     options
         .parsing_style(getopts::ParsingStyle::StopAtFirstFree)
         .optopt("m", "model", "M3D model resourcepath to export", "resource_path")
+        .optopt("o", "object", "Object folder to import as M3D model", "resource_path")
         .optopt("l", "level", "INI level resource path to export", "level_path")
         .optflag("h", "help", "print this help menu");
 
@@ -36,6 +37,10 @@ fn main() {
     if let Some(model_path) = matches.opt_str("m") {
         let file = settings.open_relative(&model_path);
         model::convert_m3d(file, &out_dir);
+    }
+    if let Some(object_path) = matches.opt_str("o") {
+        let model = model::FullModel::import(&PathBuf::from(object_path));
+        model.save(&out_dir);
     }
     if let Some(level_path) = matches.opt_str("l") {
         let ini_path = settings.data_path.join(&level_path);

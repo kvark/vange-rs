@@ -5,7 +5,7 @@
 	game: (
 		level: "Fostral", // see `wrlds.dat` for the list
 		cycle: "Eleerection", // see `bunches.prm` for the list, leave empty for bonus worlds
-		view: "Perspective", // can be "Flat" or "Perspective"
+		view: Perspective, // can be "Flat" or "Perspective"
 		other: (
 			count: 10, // number of NPC vangers
 		),
@@ -22,12 +22,12 @@
 	),
 	window: (
 		title: "Rusty Road",
-		size: [1280, 800],
+		size: (1280, 800),
 	),
 	render: (
 		light: (
-			pos: [1, 2, 4, 0], // w=0 for directional, w=1 for point light
-			color: [1, 1, 1, 1],
+			pos: (1, 2, 4, 0), // w=0 for directional, w=1 for point light
+			color: (1, 1, 1, 1),
 		),
 		terrain: (
 			tessellate: false,
@@ -40,4 +40,4 @@
 			impulses: false,
 		),
 	),
-),
+)
