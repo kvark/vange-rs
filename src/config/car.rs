@@ -149,7 +149,7 @@ pub struct CarInfo<R: gfx::Resources> {
     pub kind: Kind,
     pub stats: CarStats,
     pub physics: CarPhysics,
-    pub model: model::Model<R>,
+    pub model: model::RenderModel<R>,
     pub scale: f32,
 }
 

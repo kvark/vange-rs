@@ -166,7 +166,7 @@ pub struct Render<R: gfx::Resources> {
 }
 
 pub struct RenderModel<'a, R: gfx::Resources> {
-    pub model: &'a model::Model<R>,
+    pub model: &'a model::RenderModel<R>,
     pub transform: Transform,
     pub debug_shape_scale: Option<f32>,
 }
@@ -502,7 +502,7 @@ impl<R: gfx::Resources> Render<R> {
 
     pub fn draw_model<C>(
         encoder: &mut gfx::Encoder<R, C>,
-        model: &model::Model<R>,
+        model: &model::RenderModel<R>,
         model2world: Transform,
         pso: &gfx::PipelineState<R, object::Meta>,
         data: &mut object::Data<R>,
@@ -536,7 +536,7 @@ impl<R: gfx::Resources> Render<R> {
         for s in model.slots.iter() {
             if let Some(ref mesh) = s.mesh {
                 let mut local = Decomposed {
-                    disp: Vector3::from(s.pos),
+                    disp: Vector3::new(s.pos[0] as f32, s.pos[1] as f32, s.pos[2] as f32),
                     rot: Quaternion::from_angle_y(Rad::from(Deg(s.angle as f32))),
                     scale: s.scale / model2world.scale,
                 };

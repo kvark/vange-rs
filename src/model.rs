@@ -1,18 +1,21 @@
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use gfx;
 use gfx::format::I8Norm;
+use ron;
+
 use render::{
     COLOR_ID_BODY, NUM_COLOR_IDS,
     DebugPos, ObjectVertex, ShapeVertex, ShapePolygon,
 };
+
 use std::fs::File;
 use std::io::{self, Seek, Write};
 use std::ops::Range;
 use std::path::PathBuf;
 
-const MAX_SLOTS: u32 = 3;
+const MAX_SLOTS: usize = 3;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct Physics {
     pub volume: f32,
     pub rcm: [f32; 3],
@@ -58,37 +61,51 @@ impl<R: gfx::Resources> Shape<R> {
     }
 }
 
-#[derive(Clone)]
-pub struct Wheel<R: gfx::Resources> {
-    pub mesh: Option<Mesh<R>>,
+#[derive(Clone, Serialize)]
+pub struct Wheel<M> {
+    pub mesh: Option<M>,
     pub steer: u32,
     pub pos: [f32; 3],
     pub width: u32,
     pub radius: u32,
+    bound_index: u32,
 }
 
-#[derive(Clone)]
-pub struct Debrie<R: gfx::Resources> {
-    pub mesh: Mesh<R>,
-    pub shape: Shape<R>,
+#[derive(Clone, Serialize)]
+pub struct Debrie<M, S> {
+    pub mesh: M,
+    pub shape: S,
 }
 
-#[derive(Clone)]
-pub struct Slot<R: gfx::Resources> {
-    pub mesh: Option<Mesh<R>>,
+#[derive(Clone, Serialize)]
+pub struct Slot<M> {
+    pub mesh: Option<M>,
     pub scale: f32,
-    pub pos: [f32; 3],
+    pub pos: [i32; 3],
     pub angle: i32,
 }
 
-#[derive(Clone)]
-pub struct Model<R: gfx::Resources> {
-    pub body: Mesh<R>,
-    pub shape: Shape<R>,
+impl<M> Slot<M> {
+    fn empty() -> Self {
+        Slot {
+            mesh: None,
+            scale: 0.0,
+            pos: [0; 3],
+            angle: 0,
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub struct Model<M, S> {
+    pub body: M,
+    pub shape: S,
+    dimensions: [u32; 3],
+    max_radius: u32,
     pub color: [u32; 2],
-    pub wheels: Vec<Wheel<R>>,
-    pub debris: Vec<Debrie<R>>,
-    pub slots: Vec<Slot<R>>,
+    pub wheels: Vec<Wheel<M>>,
+    pub debris: Vec<Debrie<M, S>>,
+    pub slots: [Slot<M>; MAX_SLOTS],
 }
 
 pub type RawVertex = [i8; 3];
@@ -175,7 +192,7 @@ fn read_vec<I: ReadBytesExt>(source: &mut I) -> [f32; 3] {
     ]
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Bounds {
     pub coord_min: [i32; 3],
     pub coord_max: [i32; 3],
@@ -192,31 +209,75 @@ impl Bounds {
             coord_max: [b[0], b[1], b[2]],
         }
     }
+}
 
-    fn read_short<I: ReadBytesExt>(source: &mut I) -> Self {
-        let mut b = [0i32; 3];
-        for b in &mut b {
-            *b = source.read_i32::<E>().unwrap() / 2;
+#[derive(Default)]
+pub struct Geometry {
+    vertices: Vec<ObjectVertex>,
+    indices: Vec<u16>,
+}
+
+impl Geometry {
+    pub fn save_obj<W: Write>(
+        &self,
+        mut dest: W,
+    ) -> io::Result<()> {
+        for v in self.vertices.iter() {
+            try!(writeln!(dest, "v {} {} {}", v.pos[0], v.pos[1], v.pos[2]));
         }
-        Bounds {
-            coord_min: [-b[0], -b[1], -b[2]],
-            coord_max: [b[0], b[1], b[2]],
+        try!(writeln!(dest, ""));
+        for v in self.vertices.iter() {
+            try!(writeln!(
+                dest,
+                "vn {} {} {}",
+                v.normal[0].0 as f32 / 124.0,
+                v.normal[1].0 as f32 / 124.0,
+                v.normal[2].0 as f32 / 124.0
+            ));
         }
+        try!(writeln!(dest, ""));
+        if self.indices.is_empty() {
+            for i in 0 .. self.vertices.len() / 3 {
+                try!(writeln!(
+                    dest,
+                    "f {} {} {}",
+                    i * 3 + 1,
+                    i * 3 + 2,
+                    i * 3 + 3
+                ));
+            }
+        } else {
+            for c in self.indices.chunks(3) {
+                // notice the winding order change
+                try!(writeln!(dest, "f {} {} {}", c[0] + 1, c[1] + 1, c[2] + 1));
+            }
+        }
+        Ok(())
     }
 }
 
-pub struct RawMesh {
-    vertices: Vec<ObjectVertex>,
-    indices: Vec<u16>,
-    coord_min: [f32; 3],
-    coord_max: [f32; 3],
+#[derive(Serialize)]
+pub struct RawMesh<G> {
+    geometry: G,
+    bounds: Bounds,
     parent_off: [f32; 3],
-    _parent_rot: [f32; 3],
+    parent_rot: [f32; 3],
     max_radius: f32,
     physics: Physics,
 }
 
-impl RawMesh {
+impl RawMesh<Geometry> {
+    fn with_geometry<T>(self, geometry: T) -> RawMesh<T> {
+        RawMesh {
+            geometry,
+            bounds: self.bounds,
+            parent_off: self.parent_off,
+            parent_rot: self.parent_rot,
+            max_radius: self.max_radius,
+            physics: self.physics,
+        }
+    }
+
     pub fn load<I: ReadBytesExt>(
         source: &mut I,
         compact: bool,
@@ -229,13 +290,11 @@ impl RawMesh {
         let _total_verts = source.read_u32::<E>().unwrap();
 
         let mut result = RawMesh {
-            vertices: Vec::new(),
-            indices: Vec::new(),
-            coord_min: read_vec(source),
-            coord_max: read_vec(source),
+            geometry: Geometry::default(),
+            bounds: Bounds::read(source),
             parent_off: read_vec(source),
             max_radius: source.read_u32::<E>().unwrap() as f32,
-            _parent_rot: read_vec(source),
+            parent_rot: read_vec(source),
             physics: {
                 let mut q = [0.0f32; 1 + 3 + 9];
                 for qel in q.iter_mut() {
@@ -253,8 +312,8 @@ impl RawMesh {
             },
         };
         debug!(
-            "\tBound {:?} to {:?} with offset {:?}",
-            result.coord_min, result.coord_max, result.parent_off
+            "\tBounds {:?} with offset {:?}",
+            result.bounds, result.parent_off
         );
 
         debug!("\tReading {} positions...", num_positions);
@@ -331,63 +390,29 @@ impl RawMesh {
             debug!("\tCompacting...");
             vertices.sort_by_key(|v| v.1);
             //vertices.dedup();
-            result.indices.extend((0 .. vertices.len()).map(|_| 0));
+            result.geometry.indices.extend((0 .. vertices.len()).map(|_| 0));
             let mut last = vertices[0].1;
             last.2[0] ^= 1; //change something
             let mut v_id = 0;
             for v in vertices.into_iter() {
                 if v.1 != last {
                     last = v.1;
-                    v_id = result.vertices.len() as u16;
-                    result.vertices.push(convert(v.1));
+                    v_id = result.geometry.vertices.len() as u16;
+                    result.geometry.vertices.push(convert(v.1));
                 }
-                result.indices[v.0 as usize] = v_id;
+                result.geometry.indices[v.0 as usize] = v_id;
             }
         } else {
-            result
-                .vertices
+            result.geometry.vertices
                 .extend(vertices.into_iter().map(|v| convert(v.1)))
         };
 
         result
     }
+}
 
-    pub fn save_obj<W: Write>(
-        &self,
-        mut dest: W,
-    ) -> io::Result<()> {
-        for v in self.vertices.iter() {
-            try!(writeln!(dest, "v {} {} {}", v.pos[0], v.pos[1], v.pos[2]));
-        }
-        try!(writeln!(dest, ""));
-        for v in self.vertices.iter() {
-            try!(writeln!(
-                dest,
-                "vn {} {} {}",
-                v.normal[0].0 as f32 / 124.0,
-                v.normal[1].0 as f32 / 124.0,
-                v.normal[2].0 as f32 / 124.0
-            ));
-        }
-        try!(writeln!(dest, ""));
-        if self.indices.is_empty() {
-            for i in 0 .. self.vertices.len() / 3 {
-                try!(writeln!(
-                    dest,
-                    "f {} {} {}",
-                    i * 3 + 1,
-                    i * 3 + 2,
-                    i * 3 + 3
-                ));
-            }
-        } else {
-            for c in self.indices.chunks(3) {
-                // notice the winding order change
-                try!(writeln!(dest, "f {} {} {}", c[0] + 1, c[1] + 1, c[2] + 1));
-            }
-        }
-        Ok(())
-    }
+fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
+    [v[0] as f32, v[1] as f32, v[2] as f32]
 }
 
 pub fn load_c3d<I, R, F>(
@@ -400,18 +425,22 @@ where
 {
     let raw = RawMesh::load(source, true);
 
-    let (vbuf, slice) = if raw.indices.is_empty() {
-        factory.create_vertex_buffer_with_slice(&raw.vertices, ())
+    let (vbuf, slice) = if raw.geometry.indices.is_empty() {
+        factory.create_vertex_buffer_with_slice(&raw.geometry.vertices, ())
     } else {
-        factory.create_vertex_buffer_with_slice(&raw.vertices, &raw.indices[..])
+        factory.create_vertex_buffer_with_slice(&raw.geometry.vertices, &raw.geometry.indices[..])
     };
 
-    debug!("\tGot {} GPU vertices...", raw.vertices.len());
+    debug!("\tGot {} GPU vertices...", raw.geometry.vertices.len());
     Mesh {
         slice: slice,
         buffer: vbuf,
         offset: raw.parent_off,
-        bbox: (raw.coord_min, raw.coord_max, raw.max_radius),
+        bbox: (
+            vec_i2f(raw.bounds.coord_min),
+            vec_i2f(raw.bounds.coord_max),
+            raw.max_radius,
+        ),
         physics: raw.physics,
     }
 }
@@ -570,7 +599,7 @@ where
 
 pub fn load_m3d<I, R, F>(
     source: &mut I, factory: &mut F
-) -> Model<R>
+) -> Model<Mesh<R>, Shape<R>>
 where
     I: ReadBytesExt + Seek,
     R: gfx::Resources,
@@ -578,9 +607,13 @@ where
 {
     debug!("\tReading the body...");
     let body = load_c3d(source, factory);
-    let _bounds = Bounds::read_short(source);
+    let dimensions = [
+        source.read_u32::<E>().unwrap(),
+        source.read_u32::<E>().unwrap(),
+        source.read_u32::<E>().unwrap(),
+    ];
 
-    let _max_radius = source.read_u32::<E>().unwrap();
+    let max_radius = source.read_u32::<E>().unwrap();
     let num_wheels = source.read_u32::<E>().unwrap();
     let num_debris = source.read_u32::<E>().unwrap();
     let color = [
@@ -599,8 +632,9 @@ where
         ];
         let width = source.read_u32::<E>().unwrap();
         let radius = source.read_u32::<E>().unwrap();
-        let _bound_index = source.read_u32::<E>().unwrap();
+        let bound_index = source.read_u32::<E>().unwrap();
         debug!("\tSteer {}, width {}, radius {}", steer, width, radius);
+
         wheels.push(Wheel {
             mesh: if steer != 0 {
                 Some(load_c3d(source, factory))
@@ -611,6 +645,7 @@ where
             pos,
             width,
             radius,
+            bound_index,
         })
     }
 
@@ -626,21 +661,18 @@ where
     debug!("\tReading the physical shape...");
     let shape = load_c3d_shape(source, factory, true);
 
-    let mut slots = Vec::new();
+    let mut slots = [Slot::empty(), Slot::empty(), Slot::empty()];
     let slot_mask = source.read_u32::<E>().unwrap();
     debug!("\tReading {} slot mask...", slot_mask);
     if slot_mask != 0 {
-        for i in 0 .. MAX_SLOTS {
-            let pos = read_vec(source);
-            let angle = source.read_i32::<E>().unwrap();
-            if slot_mask & (1 << i) != 0 {
-                debug!("\tSlot {} at pos {:?} and angle of {}", i, pos, angle);
-                slots.push(Slot {
-                    mesh: None,
-                    scale: 1.0,
-                    pos: [pos[0] as f32, pos[1] as f32, pos[2] as f32],
-                    angle: angle,
-                });
+        for (i, slot) in slots.iter_mut().enumerate() {
+            for p in &mut slot.pos {
+                *p = source.read_i32::<E>().unwrap();
+            }
+            slot.angle = source.read_i32::<E>().unwrap();
+            if slot_mask & (1 << i as i32) != 0 {
+                debug!("\tSlot {} at pos {:?} and angle of {}", i, slot.pos, slot.angle);
+                slot.scale = 1.0;
             }
         }
     }
@@ -648,6 +680,8 @@ where
     Model {
         body,
         shape,
+        dimensions,
+        max_radius,
         color,
         wheels,
         debris,
@@ -655,50 +689,111 @@ where
     }
 }
 
+type RawModel = Model<RawMesh<String>, RawMesh<String>>;
+pub type RenderModel<R> = Model<Mesh<R>, Shape<R>>;
+
 pub fn convert_m3d(
     mut input: File,
     out_path: &PathBuf,
 ) {
+    const BODY_PATH: &str = "body.obj";
+    const SHAPE_PATH: &str = "body-shape.obj";
     if !out_path.is_dir() {
         panic!("The output path must be an existing directory!");
     }
 
     debug!("\tReading the body...");
     let body = RawMesh::load(&mut input, false);
-    body.save_obj(File::create(out_path.join("body.obj")).unwrap())
+    body.geometry.save_obj(File::create(out_path.join(BODY_PATH)).unwrap())
         .unwrap();
-    let _bounds = read_vec(&mut input);
-    let _max_radius = input.read_u32::<E>().unwrap();
+
+    let dimensions = [
+        input.read_u32::<E>().unwrap(),
+        input.read_u32::<E>().unwrap(),
+        input.read_u32::<E>().unwrap(),
+    ];
+    let max_radius = input.read_u32::<E>().unwrap();
     let num_wheels = input.read_u32::<E>().unwrap();
     let num_debris = input.read_u32::<E>().unwrap();
-    let _color = [
+    let color = [
         input.read_u32::<E>().unwrap(),
         input.read_u32::<E>().unwrap(),
     ];
 
+    let mut wheels = Vec::with_capacity(num_wheels as usize);
     debug!("\tReading {} wheels...", num_wheels);
     for i in 0 .. num_wheels {
         let steer = input.read_u32::<E>().unwrap();
-        let _pos = [
+        let pos = [
             input.read_f64::<E>().unwrap() as f32,
             input.read_f64::<E>().unwrap() as f32,
             input.read_f64::<E>().unwrap() as f32,
         ];
-        let _width = input.read_u32::<E>().unwrap();
-        let _radius = input.read_u32::<E>().unwrap();
-        let _bound_index = input.read_u32::<E>().unwrap();
-        if steer != 0 {
-            let path = out_path.join(format!("wheel{}.obj", i));
+        let width = input.read_u32::<E>().unwrap();
+        let radius = input.read_u32::<E>().unwrap();
+        let bound_index = input.read_u32::<E>().unwrap();
+        let mesh = if steer != 0 {
+            let name = format!("wheel{}.obj", i);
+            let path = out_path.join(&name);
             let wheel = RawMesh::load(&mut input, false);
-            wheel.save_obj(File::create(path).unwrap()).unwrap();
-        }
+            wheel.geometry.save_obj(File::create(path).unwrap()).unwrap();
+            Some(wheel.with_geometry(name))
+        } else {
+            None
+        };
+
+        wheels.push(Wheel {
+            mesh,
+            steer,
+            pos,
+            width,
+            radius,
+            bound_index,
+        });
     }
 
+    let mut debris = Vec::with_capacity(num_debris as usize);
     debug!("\tReading {} debris...", num_debris);
     for i in 0 .. num_debris {
-        let path = out_path.join(format!("debrie{}.obj", i));
+        let name = format!("debrie{}.obj", i);
         let debrie = RawMesh::load(&mut input, false);
-        debrie.save_obj(File::create(path).unwrap()).unwrap();
-        let _shape = RawMesh::load(&mut input, false);
+        debrie.geometry.save_obj(File::create(out_path.join(&name)).unwrap()).unwrap();
+        let shape_name = format!("debrie{}-shape.obj", i);
+        let shape = RawMesh::load(&mut input, false);
+        shape.geometry.save_obj(File::create(out_path.join(&shape_name)).unwrap()).unwrap();
+        debris.push(Debrie {
+            mesh: debrie.with_geometry(name),
+            shape: shape.with_geometry(shape_name),
+        });
     }
+
+    debug!("\tReading the shape...");
+    let shape = RawMesh::load(&mut input, false);
+    shape.geometry.save_obj(File::create(out_path.join(SHAPE_PATH)).unwrap())
+        .unwrap();
+
+    let mut slots = [Slot::empty(), Slot::empty(), Slot::empty()];
+    let slot_mask = input.read_u32::<E>().unwrap();
+    debug!("\tReading {} slot mask...", slot_mask);
+    for slot in &mut slots {
+        for p in &mut slot.pos {
+            *p = input.read_i32::<E>().unwrap();
+        }
+        slot.angle = input.read_i32::<E>().unwrap();
+        slot.scale = 1.0;
+    }
+
+    let model = RawModel {
+        body: body.with_geometry(BODY_PATH.to_string()),
+        shape: shape.with_geometry(SHAPE_PATH.to_string()),
+        dimensions,
+        max_radius,
+        color,
+        wheels,
+        debris,
+        slots,
+    };
+    let string = ron::ser::to_string_pretty(&model, ron::ser::PrettyConfig::default()).unwrap();
+    let mut model_file = File::create(out_path.join("model.ron")).unwrap();
+    write!(model_file, "{}", string).unwrap();
 }

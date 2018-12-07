@@ -5,7 +5,7 @@ use boilerplate::{Application, KeyboardInput};
 use vangers::{config, level, model, render, space};
 
 pub struct ResourceView<R: gfx::Resources> {
-    model: model::Model<R>,
+    model: model::RenderModel<R>,
     transform: space::Transform,
     pso: gfx::PipelineState<R, render::object::Meta>,
     data: render::object::Data<R>,
