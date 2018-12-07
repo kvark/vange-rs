@@ -1,7 +1,6 @@
 use byteorder::{LittleEndian as E, ReadBytesExt};
 use gfx;
 use gfx::format::I8Norm;
-use ron;
 
 use render::{
     COLOR_ID_BODY, NUM_COLOR_IDS,
@@ -696,6 +695,8 @@ pub fn convert_m3d(
     mut input: File,
     out_path: &PathBuf,
 ) {
+    use ron;
+
     const BODY_PATH: &str = "body.obj";
     const SHAPE_PATH: &str = "body-shape.obj";
     if !out_path.is_dir() {

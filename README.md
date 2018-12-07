@@ -5,7 +5,7 @@
 [Vangers](https://www.gog.com/game/vangers) is a legendary game featuring unique gameplay and technical innovation.
 The idea of this project is to replicate the old look and behavior, but with native hardware acceleration for the graphics.
 
-You need the **original game** in order to try out `vange-rs`. The path to resources needs to be set in `config/settings.toml`.
+You need the **original game** in order to try out `vange-rs`. The path to resources needs to be set in `config/settings.ron`.
 
 ### Instructions
 
@@ -15,7 +15,7 @@ Note: leaving the `level=""` empty in the config would load a flat boring debug 
 ```bash
 git clone https://github.com/kvark/vange-rs
 cd vange-rs
-cp config/settings.template.toml config/settings.toml
+cp config/settings.template.ron config/settings.ron
 vi config/settings.toml # set the game path
 cargo run --bin road
 ```
