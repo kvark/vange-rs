@@ -1,16 +1,11 @@
-extern crate toml;
+extern crate ron;
 extern crate vangers;
 
 use std::fs::File;
-use std::io::Read;
 
 #[test]
 fn load_settings() {
-    let mut string = String::new();
-    File::open("config/settings.template.toml")
-        .unwrap()
-        .read_to_string(&mut string)
-        .unwrap();
-    toml::from_str::<vangers::config::settings::Settings>(&string)
+    let file = File::open("config/settings.template.ron").unwrap();
+    ron::de::from_reader::<_, vangers::config::settings::Settings>(file)
         .unwrap();
 }
