@@ -8,9 +8,10 @@ use render::{
 };
 
 use std::fs::File;
-use std::io::{self, Read, Seek, Write};
+use std::io::{self, Seek, Write};
 use std::ops::Range;
 use std::path::PathBuf;
+
 
 const MAX_SLOTS: usize = 3;
 
@@ -254,8 +255,36 @@ impl Geometry {
         Ok(())
     }
 
-    fn load_obj<R: Read>(_source: R) -> io::Result<Self> {
-        unimplemented!()
+    #[cfg(feature = "obj")]
+    fn load_obj(path: PathBuf) -> Self {
+        use obj::{IndexTuple, Obj, SimplePolygon};
+        let obj: Obj<SimplePolygon> = Obj::load(&path).unwrap();
+        assert_eq!(obj.position.len(), obj.normal.len());
+        let mut vertices = Vec::new();
+        for object in &obj.objects {
+            for group in &object.groups {
+                for poly in &group.polys {
+                    for &IndexTuple(a, _b, c) in poly {
+                        let p = obj.position[a];
+                        let n = obj.normal[c.unwrap_or(a)];
+                        vertices.push(ObjectVertex {
+                            pos: [p[0] as i8, p[1] as i8, p[2] as i8, 1],
+                            color: 0, //TODO!
+                            normal: [
+                                gfx::format::I8Norm((n[0] * 127.5) as i8),
+                                gfx::format::I8Norm((n[1] * 127.5) as i8),
+                                gfx::format::I8Norm((n[2] * 127.5) as i8),
+                                gfx::format::I8Norm(0),
+                            ],
+                        });
+                    }
+                }
+            }
+        }
+        Geometry {
+            vertices,
+            indices: Vec::new(),
+        }
     }
 }
 
@@ -811,10 +840,10 @@ pub fn convert_m3d(
 }
 
 impl RawMesh<String> {
+    #[cfg(feature = "obj")]
     fn resolve(&self, source_dir: &PathBuf) -> RawMesh<Geometry> {
-        let file = File::open(source_dir.join(&self.geometry)).unwrap();
         RawMesh {
-            geometry: Geometry::load_obj(file).unwrap(),
+            geometry: Geometry::load_obj(source_dir.join(&self.geometry)),
             bounds: self.bounds.clone(),
             parent_off: self.parent_off,
             parent_rot: self.parent_rot,
@@ -825,6 +854,7 @@ impl RawMesh<String> {
 }
 
 impl Slot<RawMesh<String>> {
+    #[cfg(feature = "obj")]
     fn resolve(&self, source_dir: &PathBuf) -> Slot<RawMesh<Geometry>> {
         Slot {
             mesh: self.mesh.as_ref().map(|m| m.resolve(source_dir)),
@@ -836,6 +866,7 @@ impl Slot<RawMesh<String>> {
 }
 
 impl FullModel {
+    #[cfg(feature = "obj")]
     pub fn import(dir_path: &PathBuf) -> Self {
         let model_file = File::open(dir_path.join(MODEL_PATH)).unwrap();
         let model = ron::de::from_reader::<_, RefModel>(model_file).unwrap();
