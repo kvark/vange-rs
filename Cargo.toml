@@ -29,6 +29,7 @@ path = "bin/level/main.rs"
 [[bin]]
 name = "convert"
 path = "bin/convert.rs"
+required-features = ["obj"]
 
 [dependencies]
 # internals
@@ -38,6 +39,7 @@ byteorder = "1.0"
 cgmath = "0.15"
 gfx = "0.17"
 log = "0.3"
+obj = { version = "0.9", optional = true }
 rand = "0.4"
 rayon = "0.9"
 ron = "0.4"

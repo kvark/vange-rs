@@ -9,3 +9,8 @@ os:
 branches:
   except:
     - staging.tmp
+
+script:
+  - cargo check
+  - cargo test
+  - cargo test --all-features
