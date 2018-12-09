@@ -5,6 +5,7 @@ authors = ["kvark"]
 
 [workspace]
 members = [
+	"lib/m3d",
     "lib/splay",
 ]
 
@@ -33,13 +34,13 @@ required-features = ["obj"]
 
 [dependencies]
 # internals
-splay = {path = "lib/splay"}
+m3d = { path = "lib/m3d" }
+splay = { path = "lib/splay" }
 # library
 byteorder = "1.0"
 cgmath = "0.15"
 gfx = "0.17"
-log = "0.3"
-obj = { version = "0.9", optional = true }
+log = "0.4"
 rand = "0.4"
 rayon = "0.9"
 ron = "0.4"
