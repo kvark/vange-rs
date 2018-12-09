@@ -5,8 +5,7 @@ extern crate gfx;
 extern crate ini;
 #[macro_use]
 extern crate log;
-#[cfg(feature = "obj")]
-extern crate obj;
+extern crate m3d;
 extern crate rayon;
 extern crate ron;
 extern crate serde;

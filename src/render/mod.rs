@@ -49,10 +49,8 @@ const MATERIALS: [MaterialParams; NUM_MATERIALS] = [
 const H_CORRECTION: usize = 1;
 const SHADOW_DEPTH: usize = 0x180; // each 0x100 is 1 voxel/step
 const MAX_TEX_HEIGHT: i32 = 4096;
-pub const NUM_COLOR_IDS: u32 = 25;
-pub const COLOR_ID_BODY: u32 = 1;
 
-const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
+const COLOR_TABLE: [[u8; 2]; model::NUM_COLOR_IDS as usize] = [
     [0, 0],   // reserved
     [128, 3], // body
     [176, 4], // window
@@ -628,7 +626,7 @@ impl<R: gfx::Resources> Render<R> {
     ) {
         use gfx::texture as tex;
         type Format = (gfx::format::R8_G8, gfx::format::Uint);
-        let kind = tex::Kind::D1(NUM_COLOR_IDS as tex::Size);
+        let kind = tex::Kind::D1(model::NUM_COLOR_IDS as tex::Size);
         let (_, view) = factory
             .create_texture_immutable::<Format>(kind, tex::Mipmap::Provided, &[&COLOR_TABLE])
             .unwrap();
