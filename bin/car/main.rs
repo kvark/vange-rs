@@ -3,6 +3,7 @@ extern crate getopts;
 extern crate gfx;
 #[macro_use]
 extern crate log;
+extern crate m3d;
 extern crate vangers;
 
 mod app;

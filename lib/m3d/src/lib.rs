@@ -10,7 +10,7 @@ extern crate serde_derive;
 
 mod geometry;
 
-pub use self::geometry::{CollisionQuad, DrawTriangle, Geometry, Vertex};
+pub use self::geometry::{CollisionQuad, DrawTriangle, Geometry, Vertex, NORMALIZER};
 
 use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 #[cfg(feature = "obj")]
@@ -357,7 +357,11 @@ impl<P: Polygon> Mesh<Geometry<P>> {
 }
 
 
-pub type FullModel = Model<Mesh<DrawTriangle>, Mesh<CollisionQuad>>;
+pub type DrawMesh = Mesh<Geometry<DrawTriangle>>;
+pub type CollisionMesh = Mesh<Geometry<CollisionQuad>>;
+
+#[cfg(feature = "obj")]
+pub type FullModel = Model<DrawMesh, CollisionMesh>;
 
 #[cfg(feature = "obj")]
 type RefModel = Model<Mesh<String>, Mesh<String>>;
@@ -379,8 +383,8 @@ pub fn convert_m3d(
     }
 
     debug!("\tReading the body...");
-    let body = Mesh::load(&mut input, false);
-    body.geometry.save_obj(File::create(out_path.join(BODY_PATH)).unwrap())
+    let body: DrawMesh = Mesh::load(&mut input);
+    body.geometry.save_obj(out_path.join(BODY_PATH))
         .unwrap();
 
     let dimensions = [
@@ -410,9 +414,8 @@ pub fn convert_m3d(
         let bound_index = input.read_u32::<E>().unwrap();
         let mesh = if steer != 0 {
             let name = format!("wheel{}.obj", i);
-            let path = out_path.join(&name);
-            let wheel = Mesh::load(&mut input, false);
-            wheel.geometry.save_obj(File::create(path).unwrap()).unwrap();
+            let wheel: DrawMesh = Mesh::load(&mut input);
+            wheel.geometry.save_obj(out_path.join(&name)).unwrap();
             Some(wheel.with_geometry(name))
         } else {
             None
@@ -432,11 +435,11 @@ pub fn convert_m3d(
     debug!("\tReading {} debris...", num_debris);
     for i in 0 .. num_debris {
         let name = format!("debrie{}.obj", i);
-        let debrie = Mesh::load(&mut input, false);
-        debrie.geometry.save_obj(File::create(out_path.join(&name)).unwrap()).unwrap();
+        let debrie: DrawMesh = Mesh::load(&mut input);
+        debrie.geometry.save_obj(out_path.join(&name)).unwrap();
         let shape_name = format!("debrie{}-shape.obj", i);
-        let shape = Mesh::load(&mut input, false);
-        shape.geometry.save_obj(File::create(out_path.join(&shape_name)).unwrap()).unwrap();
+        let shape: CollisionMesh = Mesh::load(&mut input);
+        shape.geometry.save_obj(out_path.join(&shape_name)).unwrap();
         debris.push(Debrie {
             mesh: debrie.with_geometry(name),
             shape: shape.with_geometry(shape_name),
@@ -444,11 +447,11 @@ pub fn convert_m3d(
     }
 
     debug!("\tReading the shape...");
-    let shape = Mesh::load(&mut input, false);
-    shape.geometry.save_obj(File::create(out_path.join(SHAPE_PATH)).unwrap())
+    let shape: CollisionMesh = Mesh::load(&mut input);
+    shape.geometry.save_obj(out_path.join(SHAPE_PATH))
         .unwrap();
 
-    let mut slots = [Slot::empty(), Slot::empty(), Slot::empty()];
+    let mut slots = [Slot::EMPTY, Slot::EMPTY, Slot::EMPTY];
     let slot_mask = input.read_u32::<E>().unwrap();
     debug!("\tReading {} slot mask...", slot_mask);
     for slot in &mut slots {

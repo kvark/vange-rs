@@ -4,6 +4,8 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 
+pub const NORMALIZER: f32 = 124.0;
+
 #[derive(Copy, Clone, Debug)]
 pub struct Vertex {
     pub pos: u16,
@@ -37,46 +39,40 @@ pub struct Geometry<P> {
 }
 
 #[cfg(feature = "obj")]
-impl Geometry {
-    pub fn save_obj<W: Write>(
-        &self,
-        mut dest: W,
-    ) -> io::Result<()> {
-        for v in self.vertices.iter() {
-            try!(writeln!(dest, "v {} {} {}", v.pos[0], v.pos[1], v.pos[2]));
+impl<P> Geometry<P> {
+    pub fn save_obj(&self, path: PathBuf) -> io::Result<()> {
+        use std::fs::File;
+
+        let mut dest = File::create(&path).unwrap();
+        for p in self.positions.iter() {
+            writeln!(dest, "v {} {} {}", p[0], p[1], p[2])?;
         }
-        try!(writeln!(dest, ""));
-        for v in self.vertices.iter() {
-            try!(writeln!(
+        writeln!(dest, "")?;
+        for n in self.normals.iter() {
+            writeln!(
                 dest,
                 "vn {} {} {}",
-                v.normal[0] as f32 / 124.0,
-                v.normal[1] as f32 / 124.0,
-                v.normal[2] as f32 / 124.0
-            ));
+                n[0] as f32 / NORMALIZER,
+                n[1] as f32 / NORMALIZER,
+                n[2] as f32 / NORMALIZER
+            )?;
         }
-        try!(writeln!(dest, ""));
-        if self.indices.is_empty() {
-            for i in 0 .. self.vertices.len() / 3 {
-                try!(writeln!(
-                    dest,
-                    "f {} {} {}",
-                    i * 3 + 1,
-                    i * 3 + 2,
-                    i * 3 + 3
-                ));
-            }
-        } else {
-            for c in self.indices.chunks(3) {
-                // notice the winding order change
-                try!(writeln!(dest, "f {} {} {}", c[0] + 1, c[1] + 1, c[2] + 1));
-            }
+        writeln!(dest, "")?;
+        for i in 0 .. self.positions.len() / 3 {
+            writeln!(
+                dest,
+                "f {} {} {}",
+                i * 3 + 1,
+                i * 3 + 2,
+                i * 3 + 3
+            )?;
         }
         Ok(())
     }
 
-    fn load_obj(path: PathBuf) -> Self {
-        use obj::{IndexTuple, Obj, SimplePolygon};
+    pub fn load_obj(_path: PathBuf) -> Self {
+        /*use obj::{IndexTuple, Obj, SimplePolygon};
+
         let obj: Obj<SimplePolygon> = Obj::load(&path).unwrap();
         assert_eq!(obj.position.len(), obj.normal.len());
         let mut vertices = Vec::new();
@@ -90,18 +86,20 @@ impl Geometry {
                             pos: [p[0] as i8, p[1] as i8, p[2] as i8],
                             color: 0, //TODO!
                             normal: [
-                                (n[0] * 127.5) as i8,
-                                (n[1] * 127.5) as i8,
-                                (n[2] * 127.5) as i8,
+                                (n[0] * NORMALIZER) as i8,
+                                (n[1] * NORMALIZER) as i8,
+                                (n[2] * NORMALIZER) as i8,
                             ],
                         });
                     }
                 }
             }
         }
+
         Geometry {
             vertices,
             indices: Vec::new(),
-        }
+        }*/
+        unimplemented!()
     }
 }

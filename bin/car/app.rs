@@ -2,6 +2,7 @@ use cgmath;
 use gfx;
 
 use boilerplate::{Application, KeyboardInput};
+use m3d::Mesh;
 use vangers::{config, level, model, render, space};
 
 pub struct CarView<R: gfx::Resources> {
@@ -31,8 +32,8 @@ impl<R: gfx::Resources> CarView<R> {
         let mut model = cinfo.model.clone();
         for (ms, sid) in model.slots.iter_mut().zip(settings.car.slots.iter()) {
             let info = &game_reg.model_infos[sid];
-            let mut file = settings.open_relative(&info.path);
-            ms.mesh = Some(model::load_c3d(&mut file, factory));
+            let raw = Mesh::load(&mut settings.open_relative(&info.path));
+            ms.mesh = Some(model::load_c3d(raw, factory));
             ms.scale = info.scale;
         }
 

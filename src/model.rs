@@ -7,7 +7,6 @@ use render::{
     DebugPos, ObjectVertex, ShapeVertex, ShapePolygon,
 };
 
-use std::io::Seek;
 use std::ops::Range;
 
 
@@ -67,7 +66,7 @@ impl Tessellator {
     }
     fn tessellate(
         &mut self,
-        corners: &[ShapeVertex],
+        corners: &[RawVertex],
         _middle: RawVertex,
     ) -> &[RawVertex] {
         let go_deeper = false;
@@ -76,9 +75,9 @@ impl Tessellator {
         let mid_sum = corners
             .iter()
             .fold([0f32; 3], |sum, cur| [
-                sum[0] + cur[0],
-                sum[1] + cur[1],
-                sum[2] + cur[2],
+                sum[0] + cur[0] as f32,
+                sum[1] + cur[1] as f32,
+                sum[2] + cur[2] as f32,
             ]);
         if go_deeper {
             let corner_ratio = 0.66f32;
@@ -90,9 +89,9 @@ impl Tessellator {
             ];
             let ring1 = corners.iter().map(|c| {
                 [
-                    (corner_ratio * c[0]) as i8 + mid_rationed[0],
-                    (corner_ratio * c[1]) as i8 + mid_rationed[1],
-                    (corner_ratio * c[2]) as i8 + mid_rationed[2],
+                    (corner_ratio * c[0] as f32) as i8 + mid_rationed[0],
+                    (corner_ratio * c[1] as f32) as i8 + mid_rationed[1],
+                    (corner_ratio * c[2] as f32) as i8 + mid_rationed[2],
                 ]
             }).collect::<Vec<_>>();
             self.samples.extend((0 .. corners.len()).map(|i| {
@@ -119,9 +118,9 @@ impl Tessellator {
             ];
             self.samples.extend(corners.iter().map(|c| {
                 [
-                    (0.5 * c[0]) as i8 + mid_half[0],
-                    (0.5 * c[1]) as i8 + mid_half[1],
-                    (0.5 * c[2]) as i8 + mid_half[2],
+                    c[0] / 2 + mid_half[0],
+                    c[1] / 2 + mid_half[1],
+                    c[2] / 2 + mid_half[2],
                 ]
             }));
         }
@@ -129,13 +128,6 @@ impl Tessellator {
     }
 }
 
-fn read_vec<I: ReadBytesExt>(source: &mut I) -> [f32; 3] {
-    [
-        source.read_i32::<E>().unwrap() as f32,
-        source.read_i32::<E>().unwrap() as f32,
-        source.read_i32::<E>().unwrap() as f32,
-    ]
-}
 
 fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
     [v[0] as f32, v[1] as f32, v[2] as f32]
@@ -149,18 +141,17 @@ fn color(material: u32) -> u32 {
     }
 }
 
-pub fn load_c3d<I, R, F>(
-    source: &mut I, factory: &mut F
+pub fn load_c3d<R, F>(
+    raw: m3d::Mesh<m3d::Geometry<m3d::DrawTriangle>>,
+    factory: &mut F,
 ) -> Mesh<R>
 where
-    I: ReadBytesExt,
     R: gfx::Resources,
     F: gfx::traits::FactoryExt<R>,
 {
-    let raw = m3d::Mesh::<m3d::Geometry<m3d::DrawTriangle>>::load(source);
-
-    let m3d::Geometry { ref positions, ref normals, ref polygons } = raw.geometry;
-    let vertices = polygons
+    let positions = &raw.geometry.positions;
+    let normals = &raw.geometry.normals;
+    let vertices = raw.geometry.polygons
         .iter()
         .flat_map(|tri| {
             tri.vertices.into_iter().map(move |v| {
@@ -191,105 +182,62 @@ where
     }
 }
 
-pub fn load_c3d_shape<I, R, F>(
-    source: &mut I, factory: &mut F, with_sample_buf: bool,
+pub fn load_c3d_shape<R, F>(
+    raw: m3d::Mesh<m3d::Geometry<m3d::CollisionQuad>>,
+    factory: &mut F,
+    with_sample_buf: bool,
 ) -> Shape<R>
 where
-    I: ReadBytesExt + Seek,
     R: gfx::Resources,
     F: gfx::traits::FactoryExt<R>,
 {
-    use std::io::SeekFrom::Current;
-
-    let version = source.read_u32::<E>().unwrap();
-    assert_eq!(version, 8);
-    let num_positions = source.read_u32::<E>().unwrap();
-    let num_normals = source.read_u32::<E>().unwrap();
-    let num_polygons = source.read_u32::<E>().unwrap();
-    let _total_verts = source.read_u32::<E>().unwrap();
-
-    let mut polygons = Vec::with_capacity(num_polygons as _);
+    debug!("\tTessellating polygons...");
+    let mut polygons = Vec::new();
+    let mut polygon_data = Vec::with_capacity(raw.geometry.polygons.len());
     let mut samples = Vec::new();
-    let bounds = m3d::Bounds::read(source);
-    debug!("\tBounds {:?}", bounds);
-    let mut polygon_data = Vec::with_capacity(num_polygons as _);
     let mut sample_data = Vec::new();
-
-    source
-        .seek(Current(
-            (3+1+3) * 4 + // parent offset, max radius, and parent rotation
-        (1+3+9) * 8 + // physics
-        0,
-        ))
-        .unwrap();
-
-    let positions: Vec<_> = (0 .. num_positions)
-        .map(|_| {
-            read_vec(source); //unknown "ti"
-            let pos = [
-                source.read_i8().unwrap() as f32,
-                source.read_i8().unwrap() as f32,
-                source.read_i8().unwrap() as f32,
-                1.0,
-            ];
-            let _sort_info = source.read_u32::<E>().unwrap();
-            pos
-        })
-        .collect();
-
-    source
-        .seek(Current(
-            (num_normals as i64) * (4 * 1 + 4), // normals
-        ))
-        .unwrap();
-
-    debug!("\tReading {} polygons...", num_polygons);
     let mut tess = Tessellator::new();
-    for _ in 0 .. num_polygons {
-        let num_corners = source.read_u32::<E>().unwrap() as usize;
-        assert_eq!(num_corners, 4);
-        source.seek(Current(4 + 4 + 4)).unwrap(); // sort info and color
-        let mut d = [0i8; 7];
-        for b in d.iter_mut() {
-            *b = source.read_i8().unwrap();
-        }
-        let mut indices = [0u16; 4];
-        for i in 0 .. num_corners {
-            indices[i] = source.read_u32::<E>().unwrap() as _;
-            let _ = source.read_u32::<E>().unwrap(); //nid
-        }
+
+    for quad in &raw.geometry.polygons {
         let corners = [
-            positions[indices[0] as usize],
-            positions[indices[1] as usize],
-            positions[indices[2] as usize],
-            positions[indices[3] as usize],
+            raw.geometry.positions[quad.vertices[0] as usize],
+            raw.geometry.positions[quad.vertices[1] as usize],
+            raw.geometry.positions[quad.vertices[2] as usize],
+            raw.geometry.positions[quad.vertices[3] as usize],
         ];
         let square = 1.0; //TODO: compute polygon square
-        polygon_data.push(ShapePolygon {
-            indices,
-            normal: [I8Norm(d[0]), I8Norm(d[1]), I8Norm(d[2]), I8Norm(0)],
-            origin_square: [d[4] as f32, d[5] as f32, d[6] as f32, square],
-        });
-        let middle = [d[4] as f32, d[5] as f32, d[6] as f32];
-        let normal = [
-            d[0] as f32 / 128.0,
-            d[1] as f32 / 128.0,
-            d[2] as f32 / 128.0,
+        let middle = [
+            quad.middle[0] as f32,
+            quad.middle[1] as f32,
+            quad.middle[2] as f32,
         ];
-        let cur_samples = tess.tessellate(
-            &corners[.. num_corners],
-            [d[4], d[5], d[6]],
-        );
+        polygon_data.push(ShapePolygon {
+            indices: quad.vertices,
+            normal: [
+                I8Norm(quad.flat_normal[0]),
+                I8Norm(quad.flat_normal[1]),
+                I8Norm(quad.flat_normal[2]),
+                I8Norm(0),
+            ],
+            origin_square: [ middle[0], middle[1], middle[2], square ],
+        });
+        let normal = [
+            quad.flat_normal[0] as f32 / m3d::NORMALIZER,
+            quad.flat_normal[1] as f32 / m3d::NORMALIZER,
+            quad.flat_normal[2] as f32 / m3d::NORMALIZER,
+        ];
+        let cur_samples = tess.tessellate(&corners[..], quad.middle);
+
         if with_sample_buf {
             let mut nlen = 16.0;
             sample_data.push(DebugPos {
-                pos: [middle[0], middle[1], middle[2], 1.0],
+                pos: [ middle[0], middle[1], middle[2], 1.0],
             });
             sample_data.push(DebugPos {
                 pos: [
-                    middle[0] + normal[0] * nlen,
-                    middle[1] + normal[1] * nlen,
-                    middle[2] + normal[2] * nlen,
+                    middle[0] + quad.flat_normal[0] as f32 * nlen,
+                    middle[1] + quad.flat_normal[1] as f32 * nlen,
+                    middle[2] + quad.flat_normal[2] as f32 * nlen,
                     1.0,
                 ],
             });
@@ -300,14 +248,15 @@ where
                 });
                 sample_data.push(DebugPos {
                     pos: [
-                        s[0] as f32 + normal[0] * nlen,
-                        s[1] as f32 + normal[1] * nlen,
-                        s[2] as f32 + normal[2] * nlen,
+                        s[0] as f32 + quad.flat_normal[0] as f32 * nlen,
+                        s[1] as f32 + quad.flat_normal[1] as f32 * nlen,
+                        s[2] as f32 + quad.flat_normal[2] as f32 * nlen,
                         1.0,
                     ],
                 });
             }
         }
+
         polygons.push(Polygon {
             middle,
             normal,
@@ -316,11 +265,13 @@ where
         samples.extend(cur_samples);
     }
 
-    source.seek(Current(3 * (num_polygons as i64) * 4)).unwrap(); // sorted var polys
-
+    let vertices = raw.geometry.positions
+        .into_iter()
+        .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32, 1.0])
+        .collect::<Vec<_>>();
     let vertex_buf = factory
         .create_buffer_immutable(
-            &positions,
+            &vertices,
             gfx::buffer::Role::Vertex,
             gfx::memory::Bind::SHADER_RESOURCE,
         )
@@ -339,7 +290,7 @@ where
         } else {
             None
         },
-        bounds,
+        bounds: raw.bounds,
     }
 }
 
@@ -351,12 +302,12 @@ pub fn load_m3d<I, R, F>(
     source: &mut I, factory: &mut F
 ) -> RenderModel<R>
 where
-    I: ReadBytesExt + Seek,
+    I: ReadBytesExt,
     R: gfx::Resources,
     F: gfx::traits::FactoryExt<R>,
 {
     debug!("\tReading the body...");
-    let body = load_c3d(source, factory);
+    let body = load_c3d(m3d::Mesh::load(source), factory);
     let dimensions = [
         source.read_u32::<E>().unwrap(),
         source.read_u32::<E>().unwrap(),
@@ -387,7 +338,8 @@ where
 
         wheels.push(m3d::Wheel {
             mesh: if steer != 0 {
-                Some(load_c3d(source, factory))
+                let raw = m3d::Mesh::load(source);
+                Some(load_c3d(raw, factory))
             } else {
                 None
             },
@@ -403,13 +355,13 @@ where
     let mut debris = Vec::with_capacity(num_debris as _);
     for _ in 0 .. num_debris {
         debris.push(m3d::Debrie {
-            mesh: load_c3d(source, factory),
-            shape: load_c3d_shape(source, factory, false),
+            mesh: load_c3d(m3d::Mesh::load(source), factory),
+            shape: load_c3d_shape(m3d::Mesh::load(source), factory, false),
         })
     }
 
     debug!("\tReading the physical shape...");
-    let shape = load_c3d_shape(source, factory, true);
+    let shape = load_c3d_shape(m3d::Mesh::load(source), factory, true);
 
     let mut slots = [m3d::Slot::EMPTY, m3d::Slot::EMPTY, m3d::Slot::EMPTY];
     let slot_mask = source.read_u32::<E>().unwrap();
