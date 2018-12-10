@@ -8,6 +8,6 @@ authors = ["Dzmitry Malyshau <kvarkus@gmail.com>"]
 byteorder = "1.0"
 log = "0.4"
 obj = { version = "0.9", optional = true }
-ron = { version = "0.4", optional = true }
+ron = "0.4"
 serde = "1.0"
 serde_derive = "1.0"

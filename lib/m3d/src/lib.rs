@@ -3,7 +3,6 @@ extern crate byteorder;
 extern crate log;
 #[cfg(feature = "obj")]
 extern crate obj;
-#[cfg(feature = "ron")]
 extern crate ron;
 extern crate serde;
 #[macro_use]
@@ -11,11 +10,13 @@ extern crate serde_derive;
 
 mod geometry;
 
-pub use self::geometry::{Geometry, Vertex};
+pub use self::geometry::{CollisionQuad, DrawTriangle, Geometry, Vertex};
 
 use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
+#[cfg(feature = "obj")]
 use std::fs::File;
 use std::io::Write;
+#[cfg(feature = "obj")]
 use std::path::PathBuf;
 
 
@@ -27,6 +28,25 @@ pub struct Physics {
     pub volume: f32,
     pub rcm: [f32; 3],
     pub jacobi: [[f32; 3]; 3], // column-major
+}
+
+impl Physics {
+    fn load<I: ReadBytesExt>(source: &mut I) -> Self {
+        let mut q = [0.0f32; 1 + 3 + 9];
+        for qel in q.iter_mut() {
+            *qel = source.read_f64::<E>().unwrap() as f32;
+        }
+
+        Physics {
+            volume: q[0],
+            rcm: [q[1], q[2], q[3]],
+            jacobi: [
+                [q[4], q[7], q[10]],
+                [q[5], q[8], q[11]],
+                [q[6], q[9], q[12]],
+            ],
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -94,11 +114,19 @@ impl Bounds {
     }
 }
 
-fn read_vec<I: ReadBytesExt>(source: &mut I) -> [f32; 3] {
+fn read_vec_i32<I: ReadBytesExt>(source: &mut I) -> [i32; 3] {
     [
-        source.read_i32::<E>().unwrap() as f32,
-        source.read_i32::<E>().unwrap() as f32,
-        source.read_i32::<E>().unwrap() as f32,
+        source.read_i32::<E>().unwrap(),
+        source.read_i32::<E>().unwrap(),
+        source.read_i32::<E>().unwrap(),
+    ]
+}
+
+fn read_vec_i8<I: ReadBytesExt>(source: &mut I) -> [i8; 3] {
+    [
+        source.read_i8().unwrap(),
+        source.read_i8().unwrap(),
+        source.read_i8().unwrap(),
     ]
 }
 
@@ -107,14 +135,14 @@ fn read_vec<I: ReadBytesExt>(source: &mut I) -> [f32; 3] {
 pub struct Mesh<G> {
     pub geometry: G,
     pub bounds: Bounds,
-    pub parent_off: [f32; 3],
-    pub parent_rot: [f32; 3],
-    pub max_radius: f32,
+    pub parent_off: [i32; 3],
+    pub parent_rot: [i32; 3],
+    pub max_radius: u32,
     pub physics: Physics,
 }
 
-impl Mesh<Geometry> {
-    #[cfg(feature = "ron")]
+#[cfg(feature = "obj")]
+impl<G> Mesh<G> {
     fn with_geometry<T>(self, geometry: T) -> Mesh<T> {
         Mesh {
             geometry,
@@ -125,11 +153,40 @@ impl Mesh<Geometry> {
             physics: self.physics,
         }
     }
+}
 
-    pub fn load<I: ReadBytesExt>(
-        source: &mut I,
-        compact: bool,
+pub trait Polygon: Sized {
+    fn new(
+        middle: [i8; 3], flat_normal: [i8; 3], material: [u32; 2], vertices: &[Vertex]
+    ) -> Self;
+}
+impl Polygon for DrawTriangle {
+    fn new(
+        _middle: [i8; 3], flat_normal: [i8; 3], material: [u32; 2], v: &[Vertex]
     ) -> Self {
+        assert_eq!(v.len(), 3);
+        DrawTriangle {
+            vertices: [v[0], v[1], v[2]],
+            flat_normal,
+            material,
+        }
+    }
+}
+impl Polygon for CollisionQuad {
+    fn new(
+        middle: [i8; 3], flat_normal: [i8; 3], _material: [u32; 2], v: &[Vertex]
+    ) -> Self {
+        assert_eq!(v.len(), 4);
+        CollisionQuad {
+            vertices: [v[0].pos, v[1].pos, v[2].pos, v[3].pos],
+            middle,
+            flat_normal,
+        }
+    }
+}
+
+impl<P: Polygon> Mesh<Geometry<P>> {
+    pub fn load<I: ReadBytesExt>(source: &mut I) -> Self {
         let version = source.read_u32::<E>().unwrap();
         assert_eq!(version, MAGIC_VERSION);
         let num_positions = source.read_u32::<E>().unwrap();
@@ -138,26 +195,16 @@ impl Mesh<Geometry> {
         let _total_verts = source.read_u32::<E>().unwrap();
 
         let mut result = Mesh {
-            geometry: Geometry::default(),
-            bounds: Bounds::read(source),
-            parent_off: read_vec(source),
-            max_radius: source.read_u32::<E>().unwrap() as f32,
-            parent_rot: read_vec(source),
-            physics: {
-                let mut q = [0.0f32; 1 + 3 + 9];
-                for qel in q.iter_mut() {
-                    *qel = source.read_f64::<E>().unwrap() as f32;
-                }
-                Physics {
-                    volume: q[0],
-                    rcm: [q[1], q[2], q[3]],
-                    jacobi: [
-                        [q[4], q[7], q[10]],
-                        [q[5], q[8], q[11]],
-                        [q[6], q[9], q[12]],
-                    ],
-                }
+            geometry: Geometry {
+                positions: Vec::with_capacity(num_positions as usize),
+                normals: Vec::with_capacity(num_normals as usize),
+                polygons: Vec::with_capacity(num_polygons as usize),
             },
+            bounds: Bounds::read(source),
+            parent_off: read_vec_i32(source),
+            max_radius: source.read_u32::<E>().unwrap(),
+            parent_rot: read_vec_i32(source),
+            physics: Physics::load(source),
         };
         debug!(
             "\tBounds {:?} with offset {:?}",
@@ -165,51 +212,45 @@ impl Mesh<Geometry> {
         );
 
         debug!("\tReading {} positions...", num_positions);
-        let mut positions = Vec::with_capacity(num_positions as usize);
         for _ in 0 .. num_positions {
-            read_vec(source); //unknown
-            let pos = [
-                source.read_i8().unwrap(),
-                source.read_i8().unwrap(),
-                source.read_i8().unwrap(),
-                1,
-            ];
+            read_vec_i32(source); //unknown
+            let pos = read_vec_i8(source);
             let _sort_info = source.read_u32::<E>().unwrap();
-            positions.push(pos);
+            result.geometry.positions.push(pos);
         }
 
         debug!("\tReading {} normals...", num_normals);
-        let mut normals = Vec::with_capacity(num_normals as usize);
         for _ in 0 .. num_normals {
-            let mut norm = [0u8; 4];
-            source.read_exact(&mut norm).unwrap();
+            let norm = read_vec_i8(source);
+            let _something = source.read_i8().unwrap();
             let _sort_info = source.read_u32::<E>().unwrap();
-            normals.push(norm);
+            result.geometry.normals.push(norm);
         }
 
         debug!("\tReading {} polygons...", num_polygons);
-        let mut vertices = Vec::with_capacity(num_polygons as usize * 3);
-        for i in 0 .. num_polygons {
+        let mut vertices = Vec::with_capacity(4);
+        for _ in 0 .. num_polygons {
             let num_corners = source.read_u32::<E>().unwrap();
-            assert!(num_corners == 3 || num_corners == 4);
             let _sort_info = source.read_u32::<E>().unwrap();
-            let color = [
+            let material = [
                 source.read_u32::<E>().unwrap(),
                 source.read_u32::<E>().unwrap(),
             ];
-            let mut flat_normal = [0; 4];
-            source.read_exact(&mut flat_normal).unwrap();
-            let mut middle = [0; 3];
-            source.read_exact(&mut middle).unwrap();
-            for k in 0 .. num_corners {
-                let pid = source.read_u32::<E>().unwrap();
-                let nid = source.read_u32::<E>().unwrap();
-                let v = (
-                    i * 3 + k,
-                    (positions[pid as usize], normals[nid as usize], color),
-                );
-                vertices.push(v);
+            let flat_normal = read_vec_i8(source);
+            let _something = source.read_i8().unwrap();
+            let middle = read_vec_i8(source);
+
+            vertices.clear();
+            for _ in 0 .. num_corners {
+                vertices.push(Vertex {
+                    pos: source.read_u32::<E>().unwrap() as u16,
+                    normal: source.read_u32::<E>().unwrap() as u16,
+                });
             }
+
+            result.geometry.polygons.push(
+                P::new(middle, flat_normal, material, &vertices),
+            );
         }
 
         // sorted variable polygons
@@ -219,41 +260,10 @@ impl Mesh<Geometry> {
             }
         }
 
-        let convert = |(p, n, c): ([i8; 4], [u8; 4], [u32; 2])| Vertex {
-            pos: [p[0], p[1], p[2]],
-            color: c[0] as u8,
-            normal: [
-                n[0] as i8,
-                n[1] as i8,
-                n[2] as i8,
-            ],
-        };
-
-        if compact {
-            debug!("\tCompacting...");
-            vertices.sort_by_key(|v| v.1);
-            //vertices.dedup();
-            result.geometry.indices.extend((0 .. vertices.len()).map(|_| 0));
-            let mut last = vertices[0].1;
-            last.2[0] ^= 1; //change something
-            let mut v_id = 0;
-            for v in vertices.into_iter() {
-                if v.1 != last {
-                    last = v.1;
-                    v_id = result.geometry.vertices.len() as u16;
-                    result.geometry.vertices.push(convert(v.1));
-                }
-                result.geometry.indices[v.0 as usize] = v_id;
-            }
-        } else {
-            result.geometry.vertices
-                .extend(vertices.into_iter().map(|v| convert(v.1)))
-        };
-
         result
     }
 
-    fn save<W: Write>(&self, mut dest: W) {
+    pub fn save<W: Write>(&self, dest: &mut W) {
         dest.write_u32::<E>(MAGIC_VERSION).unwrap();
         /*
         let num_positions = dest.write_u32::<E>().unwrap();
@@ -346,18 +356,23 @@ impl Mesh<Geometry> {
     }
 }
 
-pub type FullModel = Model<Mesh<Geometry>, Mesh<Geometry>>;
 
-#[cfg(feature = "ron")]
+pub type FullModel = Model<Mesh<DrawTriangle>, Mesh<CollisionQuad>>;
+
+#[cfg(feature = "obj")]
+type RefModel = Model<Mesh<String>, Mesh<String>>;
+
+#[cfg(feature = "obj")]
+const MODEL_PATH: &str = "model.ron";
+
+#[cfg(feature = "obj")]
 pub fn convert_m3d(
     mut input: File,
     out_path: &PathBuf,
 ) {
     use ron;
-    type RefModel = Model<Mesh<String>, Mesh<String>>;
     const BODY_PATH: &str = "body.obj";
     const SHAPE_PATH: &str = "body-shape.obj";
-    const MODEL_PATH: &str = "model.ron";
 
     if !out_path.is_dir() {
         panic!("The output path must be an existing directory!");
@@ -463,7 +478,7 @@ pub fn convert_m3d(
 
 #[cfg(feature = "obj")]
 impl Mesh<String> {
-    fn resolve(&self, source_dir: &PathBuf) -> Mesh<Geometry> {
+    fn resolve<P>(&self, source_dir: &PathBuf) -> Mesh<Geometry<P>> {
         Mesh {
             geometry: Geometry::load_obj(source_dir.join(&self.geometry)),
             bounds: self.bounds.clone(),
@@ -477,7 +492,7 @@ impl Mesh<String> {
 
 #[cfg(feature = "obj")]
 impl Slot<Mesh<String>> {
-    fn resolve(&self, source_dir: &PathBuf) -> Slot<Mesh<Geometry>> {
+    fn resolve<P>(&self, source_dir: &PathBuf) -> Slot<Mesh<Geometry<P>>> {
         Slot {
             mesh: self.mesh.as_ref().map(|m| m.resolve(source_dir)),
             scale: self.scale,
@@ -487,8 +502,8 @@ impl Slot<Mesh<String>> {
     }
 }
 
+#[cfg(feature = "obj")]
 impl FullModel {
-    #[cfg(feature = "obj")]
     pub fn import(dir_path: &PathBuf) -> Self {
         let model_file = File::open(dir_path.join(MODEL_PATH)).unwrap();
         let model = ron::de::from_reader::<_, RefModel>(model_file).unwrap();

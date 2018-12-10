@@ -141,6 +141,14 @@ fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
     [v[0] as f32, v[1] as f32, v[2] as f32]
 }
 
+fn color(material: u32) -> u32 {
+    if material < NUM_COLOR_IDS {
+        material
+    } else {
+        COLOR_ID_BODY
+    }
+}
+
 pub fn load_c3d<I, R, F>(
     source: &mut I, factory: &mut F
 ) -> Mesh<R>
@@ -149,36 +157,35 @@ where
     R: gfx::Resources,
     F: gfx::traits::FactoryExt<R>,
 {
-    let raw = m3d::Mesh::load(source, true);
+    let raw = m3d::Mesh::<m3d::Geometry<m3d::DrawTriangle>>::load(source);
 
-    let vertices = raw.geometry.vertices
-        .into_iter()
-        .map(|m3d::Vertex { pos, normal, color }| ObjectVertex {
-            pos: [pos[0], pos[1], pos[2], 1],
-            color: if (color as u32) < NUM_COLOR_IDS {
-                color as u32
-            } else {
-                COLOR_ID_BODY
-            },
-            normal: [I8Norm(normal[0]), I8Norm(normal[1]), I8Norm(normal[2]), I8Norm(0)],
+    let m3d::Geometry { ref positions, ref normals, ref polygons } = raw.geometry;
+    let vertices = polygons
+        .iter()
+        .flat_map(|tri| {
+            tri.vertices.into_iter().map(move |v| {
+                let p = positions[v.pos as usize];
+                let n = normals[v.normal as usize];
+                ObjectVertex {
+                    pos: [p[0], p[1], p[2], 1],
+                    color: color(tri.material[0]),
+                    normal: [I8Norm(n[0]), I8Norm(n[1]), I8Norm(n[2]), I8Norm(0)],
+                }
+            })
         })
         .collect::<Vec<_>>();
 
-    let (vbuf, slice) = if raw.geometry.indices.is_empty() {
-        factory.create_vertex_buffer_with_slice(&vertices, ())
-    } else {
-        factory.create_vertex_buffer_with_slice(&vertices, &raw.geometry.indices[..])
-    };
+    let (buffer, slice) = factory.create_vertex_buffer_with_slice(&vertices, ());
 
     debug!("\tGot {} GPU vertices...", vertices.len());
     Mesh {
-        slice: slice,
-        buffer: vbuf,
-        offset: raw.parent_off,
+        slice,
+        buffer,
+        offset: vec_i2f(raw.parent_off),
         bbox: (
             vec_i2f(raw.bounds.coord_min),
             vec_i2f(raw.bounds.coord_max),
-            raw.max_radius,
+            raw.max_radius as f32,
         ),
         physics: raw.physics,
     }
