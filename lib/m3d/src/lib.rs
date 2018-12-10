@@ -23,6 +23,35 @@ use std::path::PathBuf;
 const MAX_SLOTS: usize = 3;
 const MAGIC_VERSION: u32 = 8;
 
+fn read_vec_i32<I: ReadBytesExt>(source: &mut I) -> [i32; 3] {
+    [
+        source.read_i32::<E>().unwrap(),
+        source.read_i32::<E>().unwrap(),
+        source.read_i32::<E>().unwrap(),
+    ]
+}
+
+fn read_vec_i8<I: ReadBytesExt>(source: &mut I) -> [i8; 3] {
+    [
+        source.read_i8().unwrap(),
+        source.read_i8().unwrap(),
+        source.read_i8().unwrap(),
+    ]
+}
+
+fn write_vec_i32<I: WriteBytesExt>(dest: &mut I, v: [i32; 3]) {
+    dest.write_i32::<E>(v[0]).unwrap();
+    dest.write_i32::<E>(v[1]).unwrap();
+    dest.write_i32::<E>(v[2]).unwrap();
+}
+
+fn write_vec_i8<I: WriteBytesExt>(dest: &mut I, v: [i8; 3]) {
+    dest.write_i8(v[0]).unwrap();
+    dest.write_i8(v[1]).unwrap();
+    dest.write_i8(v[2]).unwrap();
+}
+
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Physics {
     pub volume: f32,
@@ -47,7 +76,21 @@ impl Physics {
             ],
         }
     }
+
+    fn write<I: WriteBytesExt>(&self, dest: &mut I) {
+        let q = [
+            self.volume,
+            self.rcm[0], self.rcm[1], self.rcm[2],
+            self.jacobi[0][0], self.jacobi[1][0], self.jacobi[2][0],
+            self.jacobi[0][1], self.jacobi[1][1], self.jacobi[2][1],
+            self.jacobi[0][2], self.jacobi[1][2], self.jacobi[2][2],
+        ];
+        for qel in q.iter() {
+            dest.write_f64::<E>(*qel as f64).unwrap();
+        }
+    }
 }
+
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Wheel<M> {
@@ -102,32 +145,17 @@ pub struct Bounds {
 }
 
 impl Bounds {
-    pub fn read<I: ReadBytesExt>(source: &mut I) -> Self {
-        let mut b = [0i32; 6];
-        for b in &mut b {
-            *b = source.read_i32::<E>().unwrap();
-        }
+    fn read<I: ReadBytesExt>(source: &mut I) -> Self {
         Bounds {
-            coord_min: [b[3], b[4], b[5]],
-            coord_max: [b[0], b[1], b[2]],
+            coord_max: read_vec_i32(source),
+            coord_min: read_vec_i32(source),
         }
     }
-}
 
-fn read_vec_i32<I: ReadBytesExt>(source: &mut I) -> [i32; 3] {
-    [
-        source.read_i32::<E>().unwrap(),
-        source.read_i32::<E>().unwrap(),
-        source.read_i32::<E>().unwrap(),
-    ]
-}
-
-fn read_vec_i8<I: ReadBytesExt>(source: &mut I) -> [i8; 3] {
-    [
-        source.read_i8().unwrap(),
-        source.read_i8().unwrap(),
-        source.read_i8().unwrap(),
-    ]
+    fn write<I: WriteBytesExt>(&self, dest: &mut I) {
+        write_vec_i32(dest, self.coord_max);
+        write_vec_i32(dest, self.coord_min);
+    }
 }
 
 
@@ -159,6 +187,8 @@ pub trait Polygon: Sized {
     fn new(
         middle: [i8; 3], flat_normal: [i8; 3], material: [u32; 2], vertices: &[Vertex]
     ) -> Self;
+    fn dump(&self, vertices: &mut Vec<Vertex>) -> ([i8; 3], [i8; 3], [u32; 2]);
+    fn num_vertices() -> u32;
 }
 impl Polygon for DrawTriangle {
     fn new(
@@ -171,6 +201,13 @@ impl Polygon for DrawTriangle {
             material,
         }
     }
+    fn dump(&self, vertices: &mut Vec<Vertex>) -> ([i8; 3], [i8; 3], [u32; 2]) {
+        vertices.extend_from_slice(&self.vertices);
+        ([0; 3], self.flat_normal, self.material)
+    }
+    fn num_vertices() -> u32 {
+        3
+    }
 }
 impl Polygon for CollisionQuad {
     fn new(
@@ -182,6 +219,13 @@ impl Polygon for CollisionQuad {
             middle,
             flat_normal,
         }
+    }
+    fn dump(&self, vertices: &mut Vec<Vertex>) -> ([i8; 3], [i8; 3], [u32; 2]) {
+        vertices.extend(self.vertices.iter().map(|&pos| Vertex { pos, normal: 0 }));
+        (self.middle, self.flat_normal, [0; 2])
+    }
+    fn num_vertices() -> u32 {
+        4
     }
 }
 
@@ -265,94 +309,59 @@ impl<P: Polygon> Mesh<Geometry<P>> {
 
     pub fn save<W: Write>(&self, dest: &mut W) {
         dest.write_u32::<E>(MAGIC_VERSION).unwrap();
-        /*
-        let num_positions = dest.write_u32::<E>().unwrap();
-        let num_normals = dest.write_u32::<E>().unwrap();
-        let num_polygons = dest.write_u32::<E>().unwrap();
-        let _total_verts = dest.write_u32::<E>().unwrap();
+        dest.write_u32::<E>(self.geometry.positions.len() as u32).unwrap();
+        dest.write_u32::<E>(self.geometry.normals.len() as u32).unwrap();
+        dest.write_u32::<E>(self.geometry.polygons.len() as u32).unwrap();
+        let total_verts = self.geometry.polygons.len() as u32 * P::num_vertices();
+        dest.write_u32::<E>(total_verts).unwrap();
 
-        let mut result = Mesh {
-            geometry: Geometry::default(),
-            bounds: Bounds::read(source),
-            parent_off: read_vec(source),
-            max_radius: dest.write_u32::<E>().unwrap() as f32,
-            parent_rot: read_vec(source),
-            physics: {
-                let mut q = [0.0f32; 1 + 3 + 9];
-                for qel in q.iter_mut() {
-                    *qel = source.read_f64::<E>().unwrap() as f32;
-                }
-                Physics {
-                    volume: q[0],
-                    rcm: [q[1], q[2], q[3]],
-                    jacobi: [
-                        [q[4], q[7], q[10]],
-                        [q[5], q[8], q[11]],
-                        [q[6], q[9], q[12]],
-                    ],
-                }
-            },
-        };
-        debug!(
-            "\tBounds {:?} with offset {:?}",
-            result.bounds, result.parent_off
-        );
+        self.bounds.write(dest);
+        write_vec_i32(dest, self.parent_off);
+        dest.write_u32::<E>(self.max_radius).unwrap();
+        write_vec_i32(dest, self.parent_rot);
+        self.physics.write(dest);
 
-        debug!("\tReading {} positions...", num_positions);
-        let mut positions = Vec::with_capacity(num_positions as usize);
-        for _ in 0 .. num_positions {
-            read_vec(source); //unknown
-            let pos = [
-                source.read_i8().unwrap(),
-                source.read_i8().unwrap(),
-                source.read_i8().unwrap(),
-                1,
-            ];
-            let _sort_info = dest.write_u32::<E>().unwrap();
-            positions.push(pos);
+        for p in &self.geometry.positions {
+            write_vec_i32(dest, [p[0] as i32, p[1] as i32, p[2] as i32]);
+            write_vec_i8(dest, *p);
+            let sort_info = 0;
+            dest.write_u32::<E>(sort_info).unwrap();
         }
 
-        debug!("\tReading {} normals...", num_normals);
-        let mut normals = Vec::with_capacity(num_normals as usize);
-        for _ in 0 .. num_normals {
-            let mut norm = [0u8; 4];
-            source.read_exact(&mut norm).unwrap();
-            let _sort_info = dest.write_u32::<E>().unwrap();
-            normals.push(norm);
+        for n in &self.geometry.normals {
+            write_vec_i8(dest, *n);
+            dest.write_i8(0).unwrap();
+            let sort_info = 0;
+            dest.write_u32::<E>(sort_info).unwrap();
         }
 
-        debug!("\tReading {} polygons...", num_polygons);
-        let mut vertices = Vec::with_capacity(num_polygons as usize * 3);
-        for i in 0 .. num_polygons {
-            let num_corners = dest.write_u32::<E>().unwrap();
-            assert!(num_corners == 3 || num_corners == 4);
-            let _sort_info = dest.write_u32::<E>().unwrap();
-            let color = [
-                dest.write_u32::<E>().unwrap(),
-                dest.write_u32::<E>().unwrap(),
-            ];
-            let mut flat_normal = [0; 4];
-            source.read_exact(&mut flat_normal).unwrap();
-            let mut middle = [0; 3];
-            source.read_exact(&mut middle).unwrap();
-            for k in 0 .. num_corners {
-                let pid = dest.write_u32::<E>().unwrap();
-                let nid = dest.write_u32::<E>().unwrap();
-                let v = (
-                    i * 3 + k,
-                    (positions[pid as usize], normals[nid as usize], color),
-                );
-                vertices.push(v);
+        let mut vertices = Vec::new();
+        for poly in &self.geometry.polygons {
+            let (middle, flat_normal, materials) = poly.dump(&mut vertices);
+            dest.write_u32::<E>(vertices.len() as u32).unwrap();
+            let sort_info = 0;
+            dest.write_u32::<E>(sort_info).unwrap();
+
+            for m in &materials {
+                dest.write_u32::<E>(*m).unwrap();
+            }
+            write_vec_i8(dest, flat_normal);
+            let something = 0;
+            dest.write_i8(something).unwrap();
+            write_vec_i8(dest, middle);
+
+            for v in vertices.drain(..) {
+                dest.write_u32::<E>(v.pos as u32).unwrap();
+                dest.write_u32::<E>(v.normal as u32).unwrap();
             }
         }
 
-        // sorted variable polygons
         for _ in 0 .. 3 {
-            for _ in 0 .. num_polygons {
-                let _poly_ind = dest.write_u32::<E>().unwrap();
+            for _ in 0 .. self.geometry.polygons.len() {
+                let poly_ind = 0; //TODO?
+                dest.write_u32::<E>(poly_ind).unwrap();
             }
-        }*/
-        unimplemented!()
+        }
     }
 }
 
