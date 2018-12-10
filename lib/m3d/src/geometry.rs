@@ -1,20 +1,42 @@
+#[cfg(feature = "obj")]
 use std::io::{self, Write};
 #[cfg(feature = "obj")]
 use std::path::PathBuf;
 
 
+#[derive(Copy, Clone, Debug)]
 pub struct Vertex {
-    pub pos: [i8; 3],
-    pub color: u8,
-    pub normal: [i8; 3],
+    pub pos: u16,
+    pub normal: u16,
+}
+
+impl Vertex {
+    pub const DUMMY: Self = Vertex {
+        pos: !0,
+        normal: !0,
+    };
+}
+
+pub struct DrawTriangle {
+    pub vertices: [Vertex; 3],
+    pub flat_normal: [i8; 3],
+    pub material: [u32; 2],
+}
+
+pub struct CollisionQuad {
+    pub vertices: [u16; 4],
+    pub middle: [i8; 3],
+    pub flat_normal: [i8; 3],
 }
 
 #[derive(Default)]
-pub struct Geometry {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u16>,
+pub struct Geometry<P> {
+    pub positions: Vec<[i8; 3]>,
+    pub normals: Vec<[i8; 3]>,
+    pub polygons: Vec<P>,
 }
 
+#[cfg(feature = "obj")]
 impl Geometry {
     pub fn save_obj<W: Write>(
         &self,
@@ -53,7 +75,6 @@ impl Geometry {
         Ok(())
     }
 
-    #[cfg(feature = "obj")]
     fn load_obj(path: PathBuf) -> Self {
         use obj::{IndexTuple, Obj, SimplePolygon};
         let obj: Obj<SimplePolygon> = Obj::load(&path).unwrap();
