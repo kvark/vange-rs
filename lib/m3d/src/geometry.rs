@@ -1,9 +1,6 @@
-#[cfg(feature = "obj")]
 use std::io::{self, Write};
-#[cfg(feature = "obj")]
 use std::path::PathBuf;
 
-#[cfg(feature = "obj")]
 use Polygon;
 
 
@@ -84,7 +81,27 @@ pub struct Geometry<P> {
     pub polygons: Vec<P>,
 }
 
-#[cfg(feature = "obj")]
+fn flatten_normal(poly: &[obj::IndexTuple], normals: &[[f32; 3]]) -> [i8; 3] {
+    let n = poly.iter().fold([0f32; 3], |u, obj::IndexTuple(_, _, ni)| {
+        let n = match ni {
+            Some(index) => normals[*index],
+            None => [0.0, 0.0, 0.0],
+        };
+        [u[0] + n[0], u[1] + n[1], u[2] + n[2]]
+    });
+    let m2 = n.iter().fold(0f32, |u, v| u + v*v);
+    let scale = if m2 == 0.0 { 0.0 } else { NORMALIZER / m2.sqrt() };
+    [(n[0] * scale) as i8, (n[1] * scale) as i8, (n[2] * scale) as i8]
+}
+
+fn flatten_pos(poly: &[obj::IndexTuple], positions: &[[f32; 3]]) -> [i8; 3] {
+    let m = poly.iter().fold([0f32; 3], |u, obj::IndexTuple(pi, _, _)| {
+        let p = positions[*pi];
+        [u[0] + p[0], u[1] + p[1], u[2] + p[2]]
+    });
+    [ (m[0] * 0.25) as i8, (m[1] * 0.25) as i8, (m[2] * 0.25) as i8 ]
+}
+
 impl<P: Polygon> Geometry<P> {
     pub fn save_obj(&self, path: PathBuf) -> io::Result<()> {
         use std::fs::File;
@@ -152,17 +169,33 @@ impl<P: Polygon> Geometry<P> {
             .map(|id| format!("{:?}", ColorId::new(id)))
             .collect::<Vec<_>>();
 
-        let polygons = obj.objects
-            .into_iter()
+        let obj::Obj { ref objects, ref position, ref normal, .. } = obj;
+        let polygons = objects
+            .iter()
             .flat_map(|object| {
-                object.groups.into_iter().flat_map(|group| {
+                object.groups.iter().flat_map(|group| {
+                    let mut vertices = Vec::new();
                     let color_id = color_names
                         .iter()
                         .position(|c| c == &group.name)
                         .unwrap_or(0);
                     group.polys
-                        .into_iter()
-                        .map(move |poly| P::from_obj(poly, color_id as u32))
+                        .iter()
+                        .map(move |poly| {
+                            vertices.clear();
+                            for &obj::IndexTuple(pi, _, ni) in poly {
+                                vertices.push(Vertex {
+                                    pos: pi as u16,
+                                    normal: ni.unwrap_or(0) as u16,
+                                })
+                            }
+                            P::new(
+                                flatten_pos(poly, position),
+                                flatten_normal(poly, normal),
+                                [color_id as u32, 0],
+                                &vertices
+                            )
+                        })
                 })
             })
             .collect();

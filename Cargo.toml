@@ -30,7 +30,6 @@ path = "bin/level/main.rs"
 [[bin]]
 name = "convert"
 path = "bin/convert.rs"
-required-features = ["m3d/obj"]
 
 [dependencies]
 # internals
