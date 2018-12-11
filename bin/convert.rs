@@ -1,9 +1,10 @@
 extern crate env_logger;
 extern crate getopts;
 extern crate image;
+extern crate m3d;
 extern crate vangers;
 
-use vangers::{config, level, model};
+use vangers::{config, level};
 
 use std::path::PathBuf;
 
@@ -36,10 +37,10 @@ fn main() {
     let out_dir = PathBuf::from(matches.free[0].as_str());
     if let Some(model_path) = matches.opt_str("m") {
         let file = settings.open_relative(&model_path);
-        model::convert_m3d(file, &out_dir);
+        m3d::convert_m3d(file, &out_dir);
     }
     if let Some(object_path) = matches.opt_str("o") {
-        let model = model::FullModel::import(&PathBuf::from(object_path));
+        let model = m3d::FullModel::import(&PathBuf::from(object_path));
         model.save(&out_dir);
     }
     if let Some(level_path) = matches.opt_str("l") {

@@ -10,9 +10,6 @@ use render::{
 use std::ops::Range;
 
 
-pub const NUM_COLOR_IDS: u32 = 25;
-const COLOR_ID_BODY: u32 = 1;
-
 #[derive(Clone)]
 pub struct Mesh<R: gfx::Resources> {
     pub slice: gfx::Slice<R>,
@@ -133,14 +130,6 @@ fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
     [v[0] as f32, v[1] as f32, v[2] as f32]
 }
 
-fn color(material: u32) -> u32 {
-    if material < NUM_COLOR_IDS {
-        material
-    } else {
-        COLOR_ID_BODY
-    }
-}
-
 pub fn load_c3d<R, F>(
     raw: m3d::Mesh<m3d::Geometry<m3d::DrawTriangle>>,
     factory: &mut F,
@@ -159,7 +148,7 @@ where
                 let n = normals[v.normal as usize];
                 ObjectVertex {
                     pos: [p[0], p[1], p[2], 1],
-                    color: color(tri.material[0]),
+                    color: tri.material[0],
                     normal: [I8Norm(n[0]), I8Norm(n[1]), I8Norm(n[2]), I8Norm(0)],
                 }
             })

@@ -10,7 +10,10 @@ extern crate serde_derive;
 
 mod geometry;
 
-pub use self::geometry::{CollisionQuad, DrawTriangle, Geometry, Vertex, NORMALIZER};
+pub use self::geometry::{
+    CollisionQuad, ColorId, DrawTriangle, Geometry, Vertex,
+    NORMALIZER, NUM_COLOR_IDS,
+};
 
 use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 #[cfg(feature = "obj")]
@@ -189,6 +192,10 @@ pub trait Polygon: Sized {
     ) -> Self;
     fn dump(&self, vertices: &mut Vec<Vertex>) -> ([i8; 3], [i8; 3], [u32; 2]);
     fn num_vertices() -> u32;
+    #[cfg(feature = "obj")]
+    fn color_id(&self) -> u32;
+    #[cfg(feature = "obj")]
+    fn from_obj(poly: obj::SimplePolygon, color_id: u32) -> Self;
 }
 impl Polygon for DrawTriangle {
     fn new(
@@ -208,6 +215,25 @@ impl Polygon for DrawTriangle {
     fn num_vertices() -> u32 {
         3
     }
+    #[cfg(feature = "obj")]
+    fn color_id(&self) -> u32 {
+        self.material[0]
+    }
+    #[cfg(feature = "obj")]
+    fn from_obj(poly: obj::SimplePolygon, color_id: u32) -> Self {
+        assert_eq!(poly.len(), 3);
+        fn vert(obj::IndexTuple(pi, _, ni): obj::IndexTuple) -> Vertex {
+            Vertex {
+                pos: pi as u16,
+                normal: ni.unwrap_or(0) as u16,
+            }
+        }
+        DrawTriangle {
+            vertices: [ vert(poly[0]), vert(poly[1]), vert(poly[2]) ],
+            flat_normal: [0, 0, 1], //TODO
+            material: [color_id, 0],
+        }
+    }
 }
 impl Polygon for CollisionQuad {
     fn new(
@@ -226,6 +252,24 @@ impl Polygon for CollisionQuad {
     }
     fn num_vertices() -> u32 {
         4
+    }
+    #[cfg(feature = "obj")]
+    fn color_id(&self) -> u32 {
+        0
+    }
+    #[cfg(feature = "obj")]
+    fn from_obj(poly: obj::SimplePolygon, _color_id: u32) -> Self {
+        assert_eq!(poly.len(), 4);
+        CollisionQuad {
+            vertices: [
+                poly[0].0 as u16,
+                poly[1].0 as u16,
+                poly[2].0 as u16,
+                poly[3].0 as u16,
+            ],
+            middle: [0, 0, 0], //TODO
+            flat_normal: [0, 0, 1], //TODO
+        }
     }
 }
 
@@ -490,7 +534,7 @@ pub fn convert_m3d(
 
 #[cfg(feature = "obj")]
 impl Mesh<String> {
-    fn resolve<P>(&self, source_dir: &PathBuf) -> Mesh<Geometry<P>> {
+    fn resolve<P: Polygon>(&self, source_dir: &PathBuf) -> Mesh<Geometry<P>> {
         Mesh {
             geometry: Geometry::load_obj(source_dir.join(&self.geometry)),
             bounds: self.bounds.clone(),
@@ -504,7 +548,7 @@ impl Mesh<String> {
 
 #[cfg(feature = "obj")]
 impl Slot<Mesh<String>> {
-    fn resolve<P>(&self, source_dir: &PathBuf) -> Slot<Mesh<Geometry<P>>> {
+    fn resolve<P: Polygon>(&self, source_dir: &PathBuf) -> Slot<Mesh<Geometry<P>>> {
         Slot {
             mesh: self.mesh.as_ref().map(|m| m.resolve(source_dir)),
             scale: self.scale,
