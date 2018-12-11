@@ -5,6 +5,7 @@ rust:
 os:
   - linux
   - osx
+  - windows
 
 branches:
   except:
@@ -14,3 +15,4 @@ script:
   - cargo check
   - cargo test
   - cargo test --all-features
+  - cargo test --features=m3d/obj
