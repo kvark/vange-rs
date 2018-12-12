@@ -1,4 +1,3 @@
-use byteorder::{LittleEndian as E, ReadBytesExt};
 use gfx;
 use gfx::format::I8Norm;
 
@@ -7,6 +6,7 @@ use render::{
     DebugPos, ObjectVertex, ShapeVertex, ShapePolygon,
 };
 
+use std::fs::File;
 use std::ops::Range;
 
 
@@ -287,95 +287,34 @@ where
 
 pub type RenderModel<R> = m3d::Model<Mesh<R>, Shape<R>>;
 
-pub fn load_m3d<I, R, F>(
-    source: &mut I, factory: &mut F
+pub fn load_m3d<R, F>(
+    file: File, factory: &mut F
 ) -> RenderModel<R>
 where
-    I: ReadBytesExt,
     R: gfx::Resources,
     F: gfx::traits::FactoryExt<R>,
 {
-    debug!("\tReading the body...");
-    let body = load_c3d(m3d::Mesh::load(source), factory);
-    let dimensions = [
-        source.read_u32::<E>().unwrap(),
-        source.read_u32::<E>().unwrap(),
-        source.read_u32::<E>().unwrap(),
-    ];
-
-    let max_radius = source.read_u32::<E>().unwrap();
-    let num_wheels = source.read_u32::<E>().unwrap();
-    let num_debris = source.read_u32::<E>().unwrap();
-    let color = [
-        source.read_u32::<E>().unwrap(),
-        source.read_u32::<E>().unwrap(),
-    ];
-
-    debug!("\tReading {} wheels...", num_wheels);
-    let mut wheels = Vec::with_capacity(num_wheels as _);
-    for _ in 0 .. num_wheels {
-        let steer = source.read_u32::<E>().unwrap();
-        let pos = [
-            source.read_f64::<E>().unwrap() as f32,
-            source.read_f64::<E>().unwrap() as f32,
-            source.read_f64::<E>().unwrap() as f32,
-        ];
-        let width = source.read_u32::<E>().unwrap();
-        let radius = source.read_u32::<E>().unwrap();
-        let bound_index = source.read_u32::<E>().unwrap();
-        debug!("\tSteer {}, width {}, radius {}", steer, width, radius);
-
-        wheels.push(m3d::Wheel {
-            mesh: if steer != 0 {
-                let raw = m3d::Mesh::load(source);
-                Some(load_c3d(raw, factory))
-            } else {
-                None
-            },
-            steer,
-            pos,
-            width,
-            radius,
-            bound_index,
-        })
-    }
-
-    debug!("\tReading {} debris...", num_debris);
-    let mut debris = Vec::with_capacity(num_debris as _);
-    for _ in 0 .. num_debris {
-        debris.push(m3d::Debrie {
-            mesh: load_c3d(m3d::Mesh::load(source), factory),
-            shape: load_c3d_shape(m3d::Mesh::load(source), factory, false),
-        })
-    }
-
-    debug!("\tReading the physical shape...");
-    let shape = load_c3d_shape(m3d::Mesh::load(source), factory, true);
-
-    let mut slots = [m3d::Slot::EMPTY, m3d::Slot::EMPTY, m3d::Slot::EMPTY];
-    let slot_mask = source.read_u32::<E>().unwrap();
-    debug!("\tReading {} slot mask...", slot_mask);
-    if slot_mask != 0 {
-        for (i, slot) in slots.iter_mut().enumerate() {
-            for p in &mut slot.pos {
-                *p = source.read_i32::<E>().unwrap();
-            }
-            slot.angle = source.read_i32::<E>().unwrap();
-            if slot_mask & (1 << i as i32) != 0 {
-                debug!("\tSlot {} at pos {:?} and angle of {}", i, slot.pos, slot.angle);
-                slot.scale = 1.0;
-            }
-        }
-    }
+    let raw = m3d::FullModel::load(file);
 
     RenderModel {
-        body,
-        shape,
-        dimensions,
-        max_radius,
-        color,
-        wheels,
-        debris,
-        slots,
+        body: load_c3d(raw.body, factory),
+        shape: load_c3d_shape(raw.shape, factory, true),
+        dimensions: raw.dimensions,
+        max_radius: raw.max_radius,
+        color: raw.color,
+        wheels: raw.wheels
+            .into_iter()
+            .map(|wheel| wheel.map(|mesh| {
+                load_c3d(mesh, factory)
+            }))
+            .collect(),
+        debris: raw.debris
+            .into_iter()
+            .map(|debrie| m3d::Debrie {
+                mesh: load_c3d(debrie.mesh, factory),
+                shape: load_c3d_shape(debrie.shape, factory, false),
+            })
+            .collect(),
+        slots: m3d::Slot::map_all(raw.slots, |_, _| unreachable!()),
     }
 }

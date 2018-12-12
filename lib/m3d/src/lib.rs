@@ -102,6 +102,19 @@ pub struct Wheel<M> {
     pub bound_index: u32,
 }
 
+impl<M> Wheel<M> {
+    pub fn map<T, F: FnMut(M) -> T>(self, fun: F) -> Wheel<T> {
+        Wheel {
+            mesh: self.mesh.map(fun),
+            steer: self.steer,
+            pos: self.pos,
+            width: self.width,
+            radius: self.radius,
+            bound_index: self.bound_index,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Debrie<M, S> {
     pub mesh: M,
@@ -123,6 +136,34 @@ impl<M> Slot<M> {
         pos: [0; 3],
         angle: 0,
     };
+
+    fn map<T, F: FnMut(M) -> T>(self, fun: F) -> Slot<T> {
+        Slot {
+            mesh: self.mesh.map(fun),
+            scale: self.scale,
+            pos: self.pos,
+            angle: self.angle,
+        }
+    }
+
+    fn take(&mut self) -> Self {
+        Slot {
+            mesh: self.mesh.take(),
+            scale: self.scale,
+            pos: self.pos,
+            angle: self.angle,
+        }
+    }
+
+    pub fn map_all<T, F: FnMut(M, u8) -> T>(
+        mut slots: [Self; MAX_SLOTS], mut fun: F
+    ) -> [Slot<T>; MAX_SLOTS] {
+        [
+            slots[0].take().map(|m| fun(m, 0)),
+            slots[1].take().map(|m| fun(m, 1)),
+            slots[2].take().map(|m| fun(m, 2)),
+        ]
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -170,9 +211,9 @@ pub struct Mesh<G> {
 }
 
 impl<G> Mesh<G> {
-    fn with_geometry<T>(self, geometry: T) -> Mesh<T> {
+    fn map<T, F: Fn(G) -> T>(self, fun: F) -> Mesh<T> {
         Mesh {
-            geometry,
+            geometry: fun(self.geometry),
             bounds: self.bounds,
             parent_off: self.parent_off,
             parent_rot: self.parent_rot,
@@ -380,10 +421,7 @@ type RefModel = Model<Mesh<String>, Mesh<String>>;
 
 const MODEL_PATH: &str = "model.ron";
 
-pub fn convert_m3d(
-    mut input: File,
-    out_path: &PathBuf,
-) {
+pub fn convert_m3d(input: File, out_path: &PathBuf) {
     use ron;
     const BODY_PATH: &str = "body.obj";
     const SHAPE_PATH: &str = "body-shape.obj";
@@ -392,165 +430,179 @@ pub fn convert_m3d(
         panic!("The output path must be an existing directory!");
     }
 
-    debug!("\tReading the body...");
-    let body: DrawMesh = Mesh::load(&mut input);
-    body.geometry.save_obj(out_path.join(BODY_PATH))
-        .unwrap();
-
-    let dimensions = [
-        input.read_u32::<E>().unwrap(),
-        input.read_u32::<E>().unwrap(),
-        input.read_u32::<E>().unwrap(),
-    ];
-    let max_radius = input.read_u32::<E>().unwrap();
-    let num_wheels = input.read_u32::<E>().unwrap();
-    let num_debris = input.read_u32::<E>().unwrap();
-    let color = [
-        input.read_u32::<E>().unwrap(),
-        input.read_u32::<E>().unwrap(),
-    ];
-
-    let mut wheels = Vec::with_capacity(num_wheels as usize);
-    debug!("\tReading {} wheels...", num_wheels);
-    for i in 0 .. num_wheels {
-        let steer = input.read_u32::<E>().unwrap();
-        let pos = [
-            input.read_f64::<E>().unwrap() as f32,
-            input.read_f64::<E>().unwrap() as f32,
-            input.read_f64::<E>().unwrap() as f32,
-        ];
-        let width = input.read_u32::<E>().unwrap();
-        let radius = input.read_u32::<E>().unwrap();
-        let bound_index = input.read_u32::<E>().unwrap();
-        let mesh = if steer != 0 {
-            let name = format!("wheel{}.obj", i);
-            let wheel: DrawMesh = Mesh::load(&mut input);
-            wheel.geometry.save_obj(out_path.join(&name)).unwrap();
-            Some(wheel.with_geometry(name))
-        } else {
-            None
-        };
-
-        wheels.push(Wheel {
-            mesh,
-            steer,
-            pos,
-            width,
-            radius,
-            bound_index,
-        });
-    }
-
-    let mut debris = Vec::with_capacity(num_debris as usize);
-    debug!("\tReading {} debris...", num_debris);
-    for i in 0 .. num_debris {
-        let name = format!("debrie{}.obj", i);
-        let debrie: DrawMesh = Mesh::load(&mut input);
-        debrie.geometry.save_obj(out_path.join(&name)).unwrap();
-        let shape_name = format!("debrie{}-shape.obj", i);
-        let shape: CollisionMesh = Mesh::load(&mut input);
-        shape.geometry.save_obj(out_path.join(&shape_name)).unwrap();
-        debris.push(Debrie {
-            mesh: debrie.with_geometry(name),
-            shape: shape.with_geometry(shape_name),
-        });
-    }
-
-    debug!("\tReading the shape...");
-    let shape: CollisionMesh = Mesh::load(&mut input);
-    shape.geometry.save_obj(out_path.join(SHAPE_PATH))
-        .unwrap();
-
-    let mut slots = [Slot::EMPTY, Slot::EMPTY, Slot::EMPTY];
-    let slot_mask = input.read_u32::<E>().unwrap();
-    debug!("\tReading {} slot mask...", slot_mask);
-    for slot in &mut slots {
-        for p in &mut slot.pos {
-            *p = input.read_i32::<E>().unwrap();
-        }
-        slot.angle = input.read_i32::<E>().unwrap();
-        slot.scale = 1.0;
-    }
+    debug!("\tWriting the data...");
+    let raw = FullModel::load(input);
 
     let model = RefModel {
-        body: body.with_geometry(BODY_PATH.to_string()),
-        shape: shape.with_geometry(SHAPE_PATH.to_string()),
-        dimensions,
-        max_radius,
-        color,
-        wheels,
-        debris,
-        slots,
+        body: raw.body.map(|geom| {
+            geom.save_obj(out_path.join(BODY_PATH))
+                .unwrap();
+            BODY_PATH.to_string()
+        }),
+        shape: raw.shape.map(|geom| {
+            geom.save_obj(out_path.join(SHAPE_PATH))
+                .unwrap();
+            SHAPE_PATH.to_string()
+        }),
+        dimensions: raw.dimensions,
+        max_radius: raw.max_radius,
+        color: raw.color,
+        wheels: raw.wheels
+            .into_iter()
+            .enumerate()
+            .map(|(i, wheel)| {
+                wheel.map(|mesh| {
+                    mesh.map(|geom| {
+                        let name = format!("wheel{}.obj", i);
+                        geom.save_obj(out_path.join(&name)).unwrap();
+                        name
+                    })
+                })
+            })
+            .collect(),
+        debris: raw.debris
+            .into_iter()
+            .enumerate()
+            .map(|(i, debrie)| Debrie {
+                mesh: debrie.mesh.map(|geom| {
+                    let name = format!("debrie{}.obj", i);
+                    geom.save_obj(out_path.join(&name)).unwrap();
+                    name
+                }),
+                shape: debrie.shape.map(|geom| {
+                    let name = format!("debrie{}-shape.obj", i);
+                    geom.save_obj(out_path.join(&name)).unwrap();
+                    name
+                }),
+            })
+            .collect(),
+        slots: Slot::map_all(raw.slots, |mesh, i| {
+            mesh.map(|geom| {
+                let name = format!("slot{}.obj", i);
+                geom.save_obj(out_path.join(&name)).unwrap();
+                name
+            })
+        }),
     };
+
     let string = ron::ser::to_string_pretty(&model, ron::ser::PrettyConfig::default()).unwrap();
     let mut model_file = File::create(out_path.join(MODEL_PATH)).unwrap();
     write!(model_file, "{}", string).unwrap();
 }
 
 
-
-impl Mesh<String> {
-    fn resolve<P: Polygon>(&self, source_dir: &PathBuf) -> Mesh<Geometry<P>> {
-        Mesh {
-            geometry: Geometry::load_obj(source_dir.join(&self.geometry)),
-            bounds: self.bounds.clone(),
-            parent_off: self.parent_off,
-            parent_rot: self.parent_rot,
-            max_radius: self.max_radius,
-            physics: self.physics.clone(),
-        }
-    }
-}
-
-impl Slot<Mesh<String>> {
-    fn resolve<P: Polygon>(&self, source_dir: &PathBuf) -> Slot<Mesh<Geometry<P>>> {
-        Slot {
-            mesh: self.mesh.as_ref().map(|m| m.resolve(source_dir)),
-            scale: self.scale,
-            pos: self.pos,
-            angle: self.angle,
-        }
-    }
-}
-
 impl FullModel {
-    pub fn import(dir_path: &PathBuf) -> Self {
+    pub fn import_obj(dir_path: &PathBuf) -> Self {
+        let resolve_geom_draw = |name| -> Geometry<DrawTriangle> { Geometry::load_obj(dir_path.join(name)) };
+        let resolve_geom_coll = |name| -> Geometry<CollisionQuad> { Geometry::load_obj(dir_path.join(name)) };
+        let resolve_mesh = |mesh: Mesh<String>| { mesh.map(&resolve_geom_draw) };
+
         let model_file = File::open(dir_path.join(MODEL_PATH)).unwrap();
         let model = ron::de::from_reader::<_, RefModel>(model_file).unwrap();
         FullModel {
-            body: model.body.resolve(dir_path),
-            shape: model.shape.resolve(dir_path),
+            body: model.body.map(&resolve_geom_draw),
+            shape: model.shape.map(&resolve_geom_coll),
             dimensions: model.dimensions,
             max_radius: model.max_radius,
             color: model.color,
             wheels: model.wheels
                 .into_iter()
-                .map(|wheel| Wheel {
-                    mesh: wheel.mesh.map(|m| m.resolve(dir_path)),
-                    steer: wheel.steer,
-                    pos: wheel.pos,
-                    width: wheel.width,
-                    radius: wheel.radius,
-                    bound_index: wheel.bound_index,
-                })
+                .map(|wheel| wheel.map(&resolve_mesh))
                 .collect(),
             debris: model.debris
                 .into_iter()
                 .map(|debrie| Debrie {
-                    mesh: debrie.mesh.resolve(dir_path),
-                    shape: debrie.shape.resolve(dir_path),
+                    mesh: debrie.mesh.map(&resolve_geom_draw),
+                    shape: debrie.shape.map(&resolve_geom_coll),
                 })
                 .collect(),
-            slots: [
-                model.slots[0].resolve(dir_path),
-                model.slots[1].resolve(dir_path),
-                model.slots[2].resolve(dir_path),
-            ],
+            slots: Slot::map_all(model.slots, |mesh, _| {
+                resolve_mesh(mesh)
+            }),
         }
     }
 
-    pub fn save(&self, out_path: &PathBuf) {
-        let mut output = File::create(out_path).unwrap();
+    pub fn load(mut input: File) -> Self {
+        debug!("\tReading the body...");
+        let body: DrawMesh = Mesh::load(&mut input);
+
+        let dimensions = [
+            input.read_u32::<E>().unwrap(),
+            input.read_u32::<E>().unwrap(),
+            input.read_u32::<E>().unwrap(),
+        ];
+        let max_radius = input.read_u32::<E>().unwrap();
+        let num_wheels = input.read_u32::<E>().unwrap();
+        let num_debris = input.read_u32::<E>().unwrap();
+        let color = [
+            input.read_u32::<E>().unwrap(),
+            input.read_u32::<E>().unwrap(),
+        ];
+
+        let mut wheels = Vec::with_capacity(num_wheels as usize);
+        debug!("\tReading {} wheels...", num_wheels);
+        for _ in 0 .. num_wheels {
+            let steer = input.read_u32::<E>().unwrap();
+            let pos = [
+                input.read_f64::<E>().unwrap() as f32,
+                input.read_f64::<E>().unwrap() as f32,
+                input.read_f64::<E>().unwrap() as f32,
+            ];
+            let width = input.read_u32::<E>().unwrap();
+            let radius = input.read_u32::<E>().unwrap();
+            let bound_index = input.read_u32::<E>().unwrap();
+            let mesh: Option<DrawMesh> = if steer != 0 {
+                Some(Mesh::load(&mut input))
+            } else {
+                None
+            };
+
+            wheels.push(Wheel {
+                mesh,
+                steer,
+                pos,
+                width,
+                radius,
+                bound_index,
+            });
+        }
+
+        let mut debris = Vec::with_capacity(num_debris as usize);
+        debug!("\tReading {} debris...", num_debris);
+        for _ in 0 .. num_debris {
+            debris.push(Debrie {
+                mesh: Mesh::load(&mut input),
+                shape: Mesh::load(&mut input),
+            });
+        }
+
+        debug!("\tReading the shape...");
+        let shape: CollisionMesh = Mesh::load(&mut input);
+
+        let mut slots = [Slot::EMPTY, Slot::EMPTY, Slot::EMPTY];
+        let slot_mask = input.read_u32::<E>().unwrap();
+        debug!("\tReading {} slot mask...", slot_mask);
+        for slot in &mut slots {
+            for p in &mut slot.pos {
+                *p = input.read_i32::<E>().unwrap();
+            }
+            slot.angle = input.read_i32::<E>().unwrap();
+            slot.scale = 1.0;
+        }
+
+        FullModel {
+            body,
+            shape,
+            dimensions,
+            max_radius,
+            color,
+            wheels,
+            debris,
+            slots,
+        }
+    }
+
+    pub fn save(&self, mut output: File) {
         self.body.save(&mut output);
         for d in &self.dimensions {
             output.write_u32::<E>(*d).unwrap();

@@ -141,7 +141,7 @@ impl<P: Polygon> Geometry<P> {
                 for v in vertices.drain(..) {
                     write!(dest, " {}//{}", v.pos + 1, v.normal + 1)?;
                 }
-                writeln!(dest, "");
+                writeln!(dest, "")?;
             }
         }
         Ok(())
@@ -169,12 +169,12 @@ impl<P: Polygon> Geometry<P> {
             .map(|id| format!("{:?}", ColorId::new(id)))
             .collect::<Vec<_>>();
 
-        let obj::Obj { ref objects, ref position, ref normal, .. } = obj;
-        let polygons = objects
+        let obj_ref = &obj;
+        let polygons = obj.objects
             .iter()
             .flat_map(|object| {
                 object.groups.iter().flat_map(|group| {
-                    let mut vertices = Vec::new();
+                    let mut vertices = Vec::with_capacity(4);
                     let color_id = color_names
                         .iter()
                         .position(|c| c == &group.name)
@@ -190,8 +190,8 @@ impl<P: Polygon> Geometry<P> {
                                 })
                             }
                             P::new(
-                                flatten_pos(poly, position),
-                                flatten_normal(poly, normal),
+                                flatten_pos(poly, &obj_ref.position),
+                                flatten_normal(poly, &obj_ref.normal),
                                 [color_id as u32, 0],
                                 &vertices
                             )

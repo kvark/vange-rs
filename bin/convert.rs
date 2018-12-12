@@ -6,6 +6,7 @@ extern crate vangers;
 
 use vangers::{config, level};
 
+use std::fs::File;
 use std::path::PathBuf;
 
 fn main() {
@@ -40,8 +41,8 @@ fn main() {
         m3d::convert_m3d(file, &out_dir);
     }
     if let Some(object_path) = matches.opt_str("o") {
-        let model = m3d::FullModel::import(&PathBuf::from(object_path));
-        model.save(&out_dir);
+        let model = m3d::FullModel::import_obj(&PathBuf::from(object_path));
+        model.save(File::create(&out_dir).unwrap());
     }
     if let Some(level_path) = matches.opt_str("l") {
         let ini_path = settings.data_path.join(&level_path);

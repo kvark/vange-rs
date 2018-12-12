@@ -28,7 +28,13 @@ impl<R: gfx::Resources> CarView<R> {
         info!("Loading car registry");
         let game_reg = config::game::Registry::load(settings);
         let car_reg = config::car::load_registry(settings, &game_reg, factory);
-        let cinfo = &car_reg[&settings.car.id];
+        let cinfo = match car_reg.get(&settings.car.id) {
+            Some(ci) => ci,
+            None => {
+                let names = car_reg.keys().collect::<Vec<_>>();
+                panic!("Unable to find `{}` in {:?}", settings.car.id, names);
+            }
+        };
         let mut model = cinfo.model.clone();
         for (ms, sid) in model.slots.iter_mut().zip(settings.car.slots.iter()) {
             let info = &game_reg.model_infos[sid];

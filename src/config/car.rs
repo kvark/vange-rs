@@ -4,7 +4,6 @@ use gfx;
 use model;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufReader;
 
 pub type BoxSize = u8;
 pub type Price = u32;
@@ -186,7 +185,7 @@ pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
         } else {
             physics.scale_size
         };
-        let mut file = BufReader::new(settings.open_relative(&mi.path));
+        let file = settings.open_relative(&mi.path);
         map.insert(
             name.to_owned(),
             CarInfo {
@@ -199,7 +198,7 @@ pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
                 },
                 stats: CarStats::new(&data),
                 physics,
-                model: model::load_m3d(&mut file, factory),
+                model: model::load_m3d(file, factory),
                 scale,
             },
         );
