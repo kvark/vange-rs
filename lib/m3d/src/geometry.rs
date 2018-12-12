@@ -16,7 +16,7 @@ pub enum ColorId {
     Body = 1,
     Window = 2,
     Wheel = 3,
-    Defence = 4,
+    Defense = 4,
     Weapon = 5,
     Tube = 6,
     BodyRed = 7,
