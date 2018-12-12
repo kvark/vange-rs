@@ -189,7 +189,11 @@ impl<P: Polygon> Geometry<P> {
 
         let positions = obj.position
             .iter()
-            .map(|p| [p[0] as i8, p[1] as i8, p[2] as i8])
+            .map(|p| [
+                p[0].min(NORMALIZER).max(-NORMALIZER) as i8,
+                p[1].min(NORMALIZER).max(-NORMALIZER) as i8,
+                p[2].min(NORMALIZER).max(-NORMALIZER) as i8,
+            ])
             .collect();
         let normals = obj.normal
             .iter()
