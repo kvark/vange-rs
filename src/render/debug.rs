@@ -44,12 +44,12 @@ const DEPTH_BEHIND: gfx::state::Depth = gfx::state::Depth {
     write: false,
 };
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum Visibility {
     Front,
     Behind,
 }
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ColorRate {
     Vertex,
     Instance,

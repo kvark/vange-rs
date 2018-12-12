@@ -102,7 +102,7 @@ fn flatten_pos(poly: &[obj::IndexTuple], positions: &[[f32; 3]]) -> [i8; 3] {
     [ (m[0] * 0.25) as i8, (m[1] * 0.25) as i8, (m[2] * 0.25) as i8 ]
 }
 
-impl<P: Polygon> Geometry<P> {
+impl Geometry<DrawTriangle> {
     pub fn save_obj(&self, path: PathBuf) -> io::Result<()> {
         use std::fs::File;
 
@@ -124,29 +124,64 @@ impl<P: Polygon> Geometry<P> {
 
         let mut mask = 0u32;
         for p in &self.polygons {
-            mask |= 1 << p.color_id();
+            mask |= 1 << p.material[0];
         }
-        let mut vertices = Vec::new();
         for color_id in 0 .. NUM_COLOR_IDS {
             if mask & (1 << color_id) == 0 {
                 continue
             }
             writeln!(dest, "g {:?}", ColorId::new(color_id))?;
             for p in &self.polygons {
-                if p.color_id() != color_id {
+                if p.material[0] != color_id {
                     continue
                 }
                 write!(dest, "f")?;
-                let (_, _, _) = p.dump(&mut vertices);
-                for v in vertices.drain(..) {
+                for v in &p.vertices {
                     write!(dest, " {}//{}", v.pos + 1, v.normal + 1)?;
                 }
                 writeln!(dest, "")?;
             }
         }
+
         Ok(())
     }
+}
 
+impl Geometry<CollisionQuad> {
+    pub fn save_obj(&self, path: PathBuf) -> io::Result<()> {
+        use std::fs::File;
+
+        let mut dest = File::create(&path).unwrap();
+        for p in self.positions.iter() {
+            writeln!(dest, "v {} {} {}", p[0], p[1], p[2])?;
+        }
+        writeln!(dest, "")?;
+
+        // replace the normals with flat normals
+        for p in self.polygons.iter() {
+            writeln!(
+                dest,
+                "vn {} {} {}",
+                p.flat_normal[0] as f32 / NORMALIZER,
+                p.flat_normal[1] as f32 / NORMALIZER,
+                p.flat_normal[2] as f32 / NORMALIZER
+            )?;
+        }
+        writeln!(dest, "")?;
+
+        for (i, p) in self.polygons.iter().enumerate() {
+            write!(dest, "f")?;
+            for &pi in &p.vertices {
+                write!(dest, " {}//{}", pi + 1, i + 1)?;
+            }
+            writeln!(dest, "")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<P: Polygon> Geometry<P> {
     pub fn load_obj(path: PathBuf) -> Self {
         use obj::{Obj, SimplePolygon};
 

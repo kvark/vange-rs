@@ -421,81 +421,81 @@ type RefModel = Model<Mesh<String>, Mesh<String>>;
 
 const MODEL_PATH: &str = "model.ron";
 
-pub fn convert_m3d(input: File, out_path: &PathBuf) {
-    use ron;
-    const BODY_PATH: &str = "body.obj";
-    const SHAPE_PATH: &str = "body-shape.obj";
+impl FullModel {
+    pub fn export_obj(self, dir_path: &PathBuf) {
+        const BODY_PATH: &str = "body.obj";
+        const SHAPE_PATH: &str = "body-shape.obj";
 
-    if !out_path.is_dir() {
-        panic!("The output path must be an existing directory!");
-    }
+        if !dir_path.is_dir() {
+            panic!("The output path must be an existing directory!");
+        }
 
-    debug!("\tWriting the data...");
-    let raw = FullModel::load(input);
-
-    let model = RefModel {
-        body: raw.body.map(|geom| {
-            geom.save_obj(out_path.join(BODY_PATH))
-                .unwrap();
-            BODY_PATH.to_string()
-        }),
-        shape: raw.shape.map(|geom| {
-            geom.save_obj(out_path.join(SHAPE_PATH))
-                .unwrap();
-            SHAPE_PATH.to_string()
-        }),
-        dimensions: raw.dimensions,
-        max_radius: raw.max_radius,
-        color: raw.color,
-        wheels: raw.wheels
-            .into_iter()
-            .enumerate()
-            .map(|(i, wheel)| {
-                wheel.map(|mesh| {
-                    mesh.map(|geom| {
-                        let name = format!("wheel{}.obj", i);
-                        geom.save_obj(out_path.join(&name)).unwrap();
-                        name
+        debug!("\tWriting the data...");
+        let model = RefModel {
+            body: self.body.map(|geom| {
+                geom.save_obj(dir_path.join(BODY_PATH))
+                    .unwrap();
+                BODY_PATH.to_string()
+            }),
+            shape: self.shape.map(|geom| {
+                geom.save_obj(dir_path.join(SHAPE_PATH))
+                    .unwrap();
+                SHAPE_PATH.to_string()
+            }),
+            dimensions: self.dimensions,
+            max_radius: self.max_radius,
+            color: self.color,
+            wheels: self.wheels
+                .into_iter()
+                .enumerate()
+                .map(|(i, wheel)| {
+                    wheel.map(|mesh| {
+                        mesh.map(|geom| {
+                            let name = format!("wheel{}.obj", i);
+                            geom.save_obj(dir_path.join(&name)).unwrap();
+                            name
+                        })
                     })
                 })
-            })
-            .collect(),
-        debris: raw.debris
-            .into_iter()
-            .enumerate()
-            .map(|(i, debrie)| Debrie {
-                mesh: debrie.mesh.map(|geom| {
-                    let name = format!("debrie{}.obj", i);
-                    geom.save_obj(out_path.join(&name)).unwrap();
+                .collect(),
+            debris: self.debris
+                .into_iter()
+                .enumerate()
+                .map(|(i, debrie)| Debrie {
+                    mesh: debrie.mesh.map(|geom| {
+                        let name = format!("debrie{}.obj", i);
+                        geom.save_obj(dir_path.join(&name)).unwrap();
+                        name
+                    }),
+                    shape: debrie.shape.map(|geom| {
+                        let name = format!("debrie{}-shape.obj", i);
+                        geom.save_obj(dir_path.join(&name)).unwrap();
+                        name
+                    }),
+                })
+                .collect(),
+            slots: Slot::map_all(self.slots, |mesh, i| {
+                mesh.map(|geom| {
+                    let name = format!("slot{}.obj", i);
+                    geom.save_obj(dir_path.join(&name)).unwrap();
                     name
-                }),
-                shape: debrie.shape.map(|geom| {
-                    let name = format!("debrie{}-shape.obj", i);
-                    geom.save_obj(out_path.join(&name)).unwrap();
-                    name
-                }),
-            })
-            .collect(),
-        slots: Slot::map_all(raw.slots, |mesh, i| {
-            mesh.map(|geom| {
-                let name = format!("slot{}.obj", i);
-                geom.save_obj(out_path.join(&name)).unwrap();
-                name
-            })
-        }),
-    };
+                })
+            }),
+        };
 
-    let string = ron::ser::to_string_pretty(&model, ron::ser::PrettyConfig::default()).unwrap();
-    let mut model_file = File::create(out_path.join(MODEL_PATH)).unwrap();
-    write!(model_file, "{}", string).unwrap();
-}
+        let string = ron::ser::to_string_pretty(&model, ron::ser::PrettyConfig::default()).unwrap();
+        let mut model_file = File::create(dir_path.join(MODEL_PATH)).unwrap();
+        write!(model_file, "{}", string).unwrap();
+    }
 
-
-impl FullModel {
     pub fn import_obj(dir_path: &PathBuf) -> Self {
         let resolve_geom_draw = |name| -> Geometry<DrawTriangle> { Geometry::load_obj(dir_path.join(name)) };
         let resolve_geom_coll = |name| -> Geometry<CollisionQuad> { Geometry::load_obj(dir_path.join(name)) };
         let resolve_mesh = |mesh: Mesh<String>| { mesh.map(&resolve_geom_draw) };
+
+        if !dir_path.is_dir() {
+            panic!("The input path must be an existing directory!");
+        }
 
         let model_file = File::open(dir_path.join(MODEL_PATH)).unwrap();
         let model = ron::de::from_reader::<_, RefModel>(model_file).unwrap();

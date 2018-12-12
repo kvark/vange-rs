@@ -224,9 +224,9 @@ where
             });
             sample_data.push(DebugPos {
                 pos: [
-                    middle[0] + quad.flat_normal[0] as f32 * nlen,
-                    middle[1] + quad.flat_normal[1] as f32 * nlen,
-                    middle[2] + quad.flat_normal[2] as f32 * nlen,
+                    middle[0] + normal[0] * nlen,
+                    middle[1] + normal[1] * nlen,
+                    middle[2] + normal[2] * nlen,
                     1.0,
                 ],
             });
@@ -237,9 +237,9 @@ where
                 });
                 sample_data.push(DebugPos {
                     pos: [
-                        s[0] as f32 + quad.flat_normal[0] as f32 * nlen,
-                        s[1] as f32 + quad.flat_normal[1] as f32 * nlen,
-                        s[2] as f32 + quad.flat_normal[2] as f32 * nlen,
+                        s[0] as f32 + normal[0] * nlen,
+                        s[1] as f32 + normal[1] * nlen,
+                        s[2] as f32 + normal[2] * nlen,
                         1.0,
                     ],
                 });
@@ -282,8 +282,6 @@ where
         bounds: raw.bounds,
     }
 }
-
-//TODO: convert to use m3d::Model as a source
 
 pub type RenderModel<R> = m3d::Model<Mesh<R>, Shape<R>>;
 
