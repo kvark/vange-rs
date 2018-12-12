@@ -1,6 +1,8 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
 
+use obj::IndexTuple;
+
 use Polygon;
 
 
@@ -81,8 +83,8 @@ pub struct Geometry<P> {
     pub polygons: Vec<P>,
 }
 
-fn flatten_normal(poly: &[obj::IndexTuple], normals: &[[f32; 3]]) -> [i8; 3] {
-    let n = poly.iter().fold([0f32; 3], |u, obj::IndexTuple(_, _, ni)| {
+fn flatten_normal(poly: &[IndexTuple], normals: &[[f32; 3]]) -> [i8; 3] {
+    let n = poly.iter().fold([0f32; 3], |u, IndexTuple(_, _, ni)| {
         let n = match ni {
             Some(index) => normals[*index],
             None => [0.0, 0.0, 0.0],
@@ -94,8 +96,8 @@ fn flatten_normal(poly: &[obj::IndexTuple], normals: &[[f32; 3]]) -> [i8; 3] {
     [(n[0] * scale) as i8, (n[1] * scale) as i8, (n[2] * scale) as i8]
 }
 
-fn flatten_pos(poly: &[obj::IndexTuple], positions: &[[f32; 3]]) -> [i8; 3] {
-    let m = poly.iter().fold([0f32; 3], |u, obj::IndexTuple(pi, _, _)| {
+fn flatten_pos(poly: &[IndexTuple], positions: &[[f32; 3]]) -> [i8; 3] {
+    let m = poly.iter().fold([0f32; 3], |u, IndexTuple(pi, _, _)| {
         let p = positions[*pi];
         [u[0] + p[0], u[1] + p[1], u[2] + p[2]]
     });
@@ -222,7 +224,7 @@ impl<P: Polygon> Geometry<P> {
                         .iter()
                         .map(move |poly| {
                             vertices.clear();
-                            for &obj::IndexTuple(pi, _, ni) in poly {
+                            for &IndexTuple(pi, _, ni) in poly {
                                 vertices.push(Vertex {
                                     pos: pi as u16,
                                     normal: ni.unwrap_or(0) as u16,

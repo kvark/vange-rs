@@ -96,6 +96,36 @@ impl Level {
             Texel::Single(Point(self.height[i], get_terrain(meta)))
         }
     }
+
+    pub fn export(&self) -> Vec<u8> {
+        let mut data = vec![0; self.size.0 as usize * self.size.1 as usize * 4];
+        for y in 0 .. self.size.1 {
+            let base_y = (y * self.size.0) as usize * 4;
+            for x in 0 .. self.size.0 {
+                let base_x = base_y + x as usize * 4;
+                let mut color = &mut data[base_x .. base_x + 4];
+                match self.get((x, y)) {
+                    Texel::Single(Point(alt, ty)) => {
+                        color[0] = alt;
+                        color[1] = alt;
+                        color[2] = 0;
+                        color[3] = ty << 4;
+                    }
+                    Texel::Dual {
+                        low: Point(low_alt, low_ty),
+                        high: Point(high_alt, high_ty),
+                        delta,
+                    } => {
+                        color[0] = low_alt;
+                        color[1] = high_alt;
+                        color[2] = delta;
+                        color[3] = low_ty + (high_ty << 4);
+                    }
+                }
+            }
+        }
+        data
+    }
 }
 
 #[allow(unused)]
