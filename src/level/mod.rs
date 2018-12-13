@@ -252,10 +252,14 @@ fn report_time(start: Instant) {
 fn load_flood(config: &LevelConfig) -> Vec<u32> {
     let size = (config.size.0.as_value(), config.size.1.as_value());
 
-    info!("Loading flood map...");
     let instant = Instant::now();
     let flood_map = {
-        let vpr_file = File::open(&config.path_flood).unwrap();
+        let vpr_file = match File::open(&config.path_flood()) {
+            Ok(file) => file,
+            Err(_) => return Vec::new(),
+        };
+
+        info!("Loading flood map...");
         let flood_size = size.1 >> config.section.as_power();
         let geo_pow = config.geo.as_power();
         let net_size = size.0 * size.1 >> (2 * geo_pow);
@@ -286,12 +290,13 @@ pub fn load(config: &LevelConfig) -> Level {
     let total = (size.0 * size.1) as usize;
     let mut height = vec![0u8; total];
     let mut meta = vec![0u8; total];
+    let path_data = config.path_data();
 
     if config.is_compressed {
         use rayon::prelude::*;
         use splay::Splay;
 
-        let mut vmc_base = BufReader::new(File::open(&config.path_height).unwrap());
+        let mut vmc_base = BufReader::new(File::open(&path_data).unwrap());
 
         info!("\tLoading compression tables...");
         let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
@@ -312,7 +317,7 @@ pub fn load(config: &LevelConfig) -> Level {
             .par_chunks_mut(64)
             .for_each(|source_group| {
                 //Note: a separate file per group is required
-                let mut vmc = BufReader::new(File::open(&config.path_height).unwrap());
+                let mut vmc = BufReader::new(File::open(&path_data).unwrap());
                 for &mut ((ref mut h_row, ref mut m_row), offset) in source_group {
                     vmc.seek(SeekFrom::Start(*offset as u64)).unwrap();
                     splay.expand1(&mut vmc, h_row);
@@ -320,7 +325,7 @@ pub fn load(config: &LevelConfig) -> Level {
                 }
             });
     } else {
-        let mut vmp = BufReader::new(File::open(&config.path_height).unwrap());
+        let mut vmp = BufReader::new(File::open(&path_data).unwrap());
         height
             .chunks_mut(size.0 as _)
             .zip(meta.chunks_mut(size.0 as _))
