@@ -1,5 +1,9 @@
 use byteorder::{LittleEndian as E, ReadBytesExt};
-use std::io::{BufReader, Read, Seek, SeekFrom};
+
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::fs::File;
+use std::time::Instant;
+
 
 mod config;
 
@@ -67,10 +71,7 @@ impl Level {
         }
     }
 
-    pub fn get(
-        &self,
-        mut coord: (i32, i32),
-    ) -> Texel {
+    pub fn get(&self, mut coord: (i32, i32)) -> Texel {
         fn get_terrain(meta: u8) -> TerrainType {
             (meta >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1)
         }
@@ -97,6 +98,17 @@ impl Level {
         }
     }
 
+    pub fn save_vmp(&self, file: File) {
+        let mut vmp = BufWriter::new(file);
+        self.height
+            .chunks(self.size.0 as _)
+            .zip(self.meta.chunks(self.size.0 as _))
+            .for_each(|(h_row, m_row)| {
+                vmp.write(h_row).unwrap();
+                vmp.write(m_row).unwrap();
+            });
+    }
+
     pub fn export(&self) -> Vec<u8> {
         let mut data = vec![0; self.size.0 as usize * self.size.1 as usize * 4];
         for y in 0 .. self.size.1 {
@@ -109,7 +121,7 @@ impl Level {
                         color[0] = alt;
                         color[1] = alt;
                         color[2] = 0;
-                        color[3] = ty << 4;
+                        color[3] = ty + (ty << 4);
                     }
                     Texel::Dual {
                         low: Point(low_alt, low_ty),
@@ -126,6 +138,58 @@ impl Level {
         }
         data
     }
+
+    pub fn import(data: &[u8], config: &LevelConfig) -> Self {
+        fn avg(a: u8, b: u8) -> u8 {
+            (a>>1) + (b>>1) + (a & b & 1)
+        }
+
+        let size = (config.size.0.as_value(), config.size.1.as_value());
+        let total = (size.0 * size.1) as usize;
+        assert_eq!(data.len(), total * 4);
+        let mut height = vec![0u8; total];
+        let mut meta = vec![0u8; total];
+
+        for y in 0 .. size.1 as usize {
+            let row = y * size.0 as usize * 4 .. (y + 1) * size.0 as usize * 4;
+            for (xd2, color) in data[row].chunks(8).enumerate() {
+                let i = y * size.0 as usize + xd2 * 2;
+                let delta = (avg(color[2], color[6]) >> DELTA_SHIFT1).min(0xF);
+                // check if this is double layer
+                if delta != 0 {
+                    // average between two texels
+                    let mat = avg(color[3], color[7]);
+                    meta[i + 0] = DOUBLE_LEVEL |
+                        ((mat & 0xF) << TERRAIN_SHIFT) |
+                        ((delta >> 2) << DELTA_SHIFT1);
+                    meta[i + 1] = DOUBLE_LEVEL |
+                        ((mat >> 4) << TERRAIN_SHIFT) |
+                        ((delta & DELTA_MASK) << DELTA_SHIFT1);
+                    height[i + 0] = avg(color[0], color[4]);
+                    height[i + 1] = avg(color[1], color[5]);
+                } else {
+                    // average between low and high
+                    meta[i + 0] = (color[3] & 0xF) << TERRAIN_SHIFT;
+                    meta[i + 1] = (color[7] & 0xF) << TERRAIN_SHIFT;
+                    height[i + 0] = avg(color[0], color[1]);
+                    height[i + 1] = avg(color[4], color[5]);
+                }
+            }
+        }
+
+        let flood_map = load_flood(config);
+        let palette = File::open(&config.path_palette)
+            .expect("Unable to open the palette file");
+
+        Level {
+            size,
+            flood_map,
+            height,
+            meta,
+            palette: read_palette(palette, Some(&config.terrains)),
+            terrains: config.terrains.clone(),
+        }
+    }
 }
 
 #[allow(unused)]
@@ -140,7 +204,7 @@ fn print_palette(data: &[[u8; 4]], info: &str) {
     print!("\n");
 }
 
-pub fn read_palette<I: Read>(input: I, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 0x100] {
+pub fn read_palette(input: File, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 0x100] {
     let mut file = BufReader::new(input);
     let mut data = [[0; 4]; 0x100];
     for p in data.iter_mut() {
@@ -176,27 +240,22 @@ pub fn read_palette<I: Read>(input: I, config: Option<&[TerrainConfig]>) -> [[u8
     data
 }
 
-pub fn load(config: &LevelConfig) -> Level {
-    use rayon::prelude::*;
-    use splay::Splay;
-    use std::fs::File;
-    use std::time::Instant;
 
-    fn report_time(start: Instant) {
-        let d = Instant::now() - start;
-        info!(
-            "\ttook {} ms",
-            d.as_secs() as u32 * 1000 + d.subsec_nanos() / 1_000_000
-        );
-    }
+fn report_time(start: Instant) {
+    let d = Instant::now() - start;
+    info!(
+        "\ttook {} ms",
+        d.as_secs() as u32 * 1000 + d.subsec_nanos() / 1_000_000
+    );
+}
 
-    assert!(config.is_compressed);
+fn load_flood(config: &LevelConfig) -> Vec<u32> {
     let size = (config.size.0.as_value(), config.size.1.as_value());
 
-    info!("Loading vpr...");
-    let start_vpr = Instant::now();
+    info!("Loading flood map...");
+    let instant = Instant::now();
     let flood_map = {
-        let vpr_file = File::open(&config.path_vpr).unwrap();
+        let vpr_file = File::open(&config.path_flood).unwrap();
         let flood_size = size.1 >> config.section.as_power();
         let geo_pow = config.geo.as_power();
         let net_size = size.0 * size.1 >> (2 * geo_pow);
@@ -213,12 +272,27 @@ pub fn load(config: &LevelConfig) -> Level {
             .map(|_| vpr.read_u32::<E>().unwrap())
             .collect()
     };
-    report_time(start_vpr);
 
-    info!("Loading vmc...");
-    let start_vmc = Instant::now();
-    let (height, meta) = {
-        let mut vmc_base = BufReader::new(File::open(&config.path_vmc).unwrap());
+    report_time(instant);
+    flood_map
+}
+
+pub fn load(config: &LevelConfig) -> Level {
+    let flood_map = load_flood(config);
+
+    info!("Loading height map...");
+    let instant = Instant::now();
+    let size = (config.size.0.as_value(), config.size.1.as_value());
+    let total = (size.0 * size.1) as usize;
+    let mut height = vec![0u8; total];
+    let mut meta = vec![0u8; total];
+
+    if config.is_compressed {
+        use rayon::prelude::*;
+        use splay::Splay;
+
+        let mut vmc_base = BufReader::new(File::open(&config.path_height).unwrap());
+
         info!("\tLoading compression tables...");
         let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
         let mut sz_table = Vec::<i16>::with_capacity(size.1 as usize);
@@ -226,11 +300,9 @@ pub fn load(config: &LevelConfig) -> Level {
             st_table.push(vmc_base.read_i32::<E>().unwrap());
             sz_table.push(vmc_base.read_i16::<E>().unwrap());
         }
+
         info!("\tDecompressing level data...");
         let splay = Splay::new(&mut vmc_base);
-        let total = (size.0 * size.1) as usize;
-        let mut height = vec![0u8; total];
-        let mut meta = vec![0u8; total];
 
         height
             .chunks_mut(size.0 as _)
@@ -240,17 +312,25 @@ pub fn load(config: &LevelConfig) -> Level {
             .par_chunks_mut(64)
             .for_each(|source_group| {
                 //Note: a separate file per group is required
-                let mut vmc = BufReader::new(File::open(&config.path_vmc).unwrap());
+                let mut vmc = BufReader::new(File::open(&config.path_height).unwrap());
                 for &mut ((ref mut h_row, ref mut m_row), offset) in source_group {
                     vmc.seek(SeekFrom::Start(*offset as u64)).unwrap();
                     splay.expand1(&mut vmc, h_row);
                     splay.expand2(&mut vmc, m_row);
                 }
             });
+    } else {
+        let mut vmp = BufReader::new(File::open(&config.path_height).unwrap());
+        height
+            .chunks_mut(size.0 as _)
+            .zip(meta.chunks_mut(size.0 as _))
+            .for_each(|(h_row, m_row)| {
+                vmp.read(h_row).unwrap();
+                vmp.read(m_row).unwrap();
+            });
+    }
 
-        (height, meta)
-    };
-    report_time(start_vmc);
+    report_time(instant);
     let palette = File::open(&config.path_palette)
         .expect("Unable to open the palette file");
 

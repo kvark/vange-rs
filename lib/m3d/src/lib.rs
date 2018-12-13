@@ -229,7 +229,6 @@ pub trait Polygon: Sized {
     ) -> Self;
     fn dump(&self, vertices: &mut Vec<Vertex>) -> ([i8; 3], [i8; 3], [u32; 2]);
     fn num_vertices() -> u32;
-    fn color_id(&self) -> u32;
 }
 impl Polygon for DrawTriangle {
     fn new(
@@ -249,9 +248,6 @@ impl Polygon for DrawTriangle {
     fn num_vertices() -> u32 {
         3
     }
-    fn color_id(&self) -> u32 {
-        self.material[0]
-    }
 }
 impl Polygon for CollisionQuad {
     fn new(
@@ -270,9 +266,6 @@ impl Polygon for CollisionQuad {
     }
     fn num_vertices() -> u32 {
         4
-    }
-    fn color_id(&self) -> u32 {
-        0
     }
 }
 
@@ -419,18 +412,14 @@ pub type CollisionMesh = Mesh<Geometry<CollisionQuad>>;
 pub type FullModel = Model<DrawMesh, CollisionMesh>;
 type RefModel = Model<Mesh<String>, Mesh<String>>;
 
-const MODEL_PATH: &str = "model.ron";
-
 impl FullModel {
-    pub fn export_obj(self, dir_path: &PathBuf) {
+    pub fn export_obj(self, model_path: &PathBuf) {
         const BODY_PATH: &str = "body.obj";
         const SHAPE_PATH: &str = "body-shape.obj";
 
-        if !dir_path.is_dir() {
-            panic!("The output path must be an existing directory!");
-        }
+        debug!("\tExporting OBJ data...");
+        let dir_path = model_path.parent().unwrap();
 
-        debug!("\tWriting the data...");
         let model = RefModel {
             body: self.body.map(|geom| {
                 geom.save_obj(dir_path.join(BODY_PATH))
@@ -484,21 +473,19 @@ impl FullModel {
         };
 
         let string = ron::ser::to_string_pretty(&model, ron::ser::PrettyConfig::default()).unwrap();
-        let mut model_file = File::create(dir_path.join(MODEL_PATH)).unwrap();
+        let mut model_file = File::create(model_path).unwrap();
         write!(model_file, "{}", string).unwrap();
     }
 
-    pub fn import_obj(dir_path: &PathBuf) -> Self {
+    pub fn import_obj(model_path: &PathBuf) -> Self {
+        let dir_path = model_path.parent().unwrap();
+        let model_file = File::open(model_path).unwrap();
+        let model = ron::de::from_reader::<_, RefModel>(model_file).unwrap();
+
         let resolve_geom_draw = |name| -> Geometry<DrawTriangle> { Geometry::load_obj(dir_path.join(name)) };
         let resolve_geom_coll = |name| -> Geometry<CollisionQuad> { Geometry::load_obj(dir_path.join(name)) };
         let resolve_mesh = |mesh: Mesh<String>| { mesh.map(&resolve_geom_draw) };
 
-        if !dir_path.is_dir() {
-            panic!("The input path must be an existing directory!");
-        }
-
-        let model_file = File::open(dir_path.join(MODEL_PATH)).unwrap();
-        let model = ron::de::from_reader::<_, RefModel>(model_file).unwrap();
         FullModel {
             body: model.body.map(&resolve_geom_draw),
             shape: model.shape.map(&resolve_geom_coll),

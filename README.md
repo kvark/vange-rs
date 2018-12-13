@@ -65,26 +65,43 @@ Controls:
 <img alt="level view (tess)" src="etc/shots/Road13-tessellate.png" width="25%">
 
 ### Converter
-`convert` binary is a command line utility for converting the game data into formats that are more interoperable.
+`convert` binary is a command line utility for converting the game data into formats that are more interoperable. Basically you provide 2 arguments as fully-qualified file names (can be relative, but relative to the current directory - the settings paths are not used here), and the converter figures out the way to convert one into another. Note that only part after "--" makes sense when running a standalone binary.
 
 #### Model (M3D) -> OBJ+RON
 ```bash
-cargo run --bin convert -- -m resource/m3d/items/i21.m3d my_dir
+cargo run --bin convert -- resource/m3d/items/i21.m3d my_dir/model.ron
 ```
-The body, wheels, and debris are saved as separate Wavefront OBJ files inside the output folder. The model meta-data is saved as `model.ron` file in [RON](https://github.com/ron-rs/ron) format.
+The body, wheels, and debris are saved as separate Wavefront OBJ files near the target [RON](https://github.com/ron-rs/ron), which contains model meta-data.
 
 #### OBJ+RON -> Model(M3D)
-You can change the OBJ files using popular mesh editors, save them, and even manually tweak `model.ron`, after which you may want to generate a new M3D file:
+You can change the OBJ files using popular mesh editors, save them, and even manually tweak RON, after which you may want to generate a new M3D file:
 ```bash
-cargo run --bin convert -- -o my_dir resource/m3d/items/i21-new.m3d
+cargo run --bin convert -- my_dir/model.ron resource/m3d/items/i21-new.m3d
 ```
 
-<img alt="modified mechous" src="etc/shots/Road14-import.png" width="50%">
+<img alt="modified model" src="etc/shots/Road14-import-model.png" width="50%">
 
-#### Level(INI) -> BMP
+#### Level(INI+VMC/VMP) -> Image(BMP/PNG/TGA)
 ```bash
-cargo run --bin convert -- -l thechain/fostral/world.ini my_dir
+cargo run --bin convert -- thechain/fostral/world.ini my_dir/fostral.bmp
 ```
+
+The output image contains the following info in the RGBA channels:
+  - R stands for the bottom layer height
+  - G stands for the top layer height
+  - B stands for the delta between the bottom and the ground above
+  - low 4 bits of A contain the material index of the bottom layer
+  - high 4 bits of A contain the material index of the top layer
+
+#### Image(BMP/PNG/TGA)+INI -> Level(VMP)
+You can change the image in a photo editor, and then we can import it as a non-compressed level:
+```bash
+cargo run --bin convert -- my_dir/fostral.bmp thechain/fostral/world.ini
+```
+
+This command would write the VMP file in the target level. If you want the game to use it, set "Compressed Format Using = 0" in the INI file.
+
+<img alt="modified level" src="etc/shots/Road14-import-level.png" width="50%">
 
 ## Technonolgy
 
