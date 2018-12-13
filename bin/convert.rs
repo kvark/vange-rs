@@ -73,10 +73,10 @@ fn main() {
             println!("\tLoading the image...");
             let image = image::open(&src_path).unwrap().to_rgba().into_raw();
             println!("\tImporting the level...");
-            let mut config = vangers::level::LevelConfig::load(&dst_path);
+            let config = vangers::level::LevelConfig::load(&dst_path);
             let level = vangers::level::Level::import(&image, &config);
             let output = File::create(&config.path_data()).unwrap();
-            if config.is_compressed && false { //TODO
+            if config.is_compressed {
                 println!("\tSaving VMC...");
                 level.save_vmc(output);
             } else {

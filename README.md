@@ -105,7 +105,7 @@ This command would write the file in the target level:
 
 **Warning**: this will overwrite the level data without warning. Please use caution and back up the data before modifying.
 
-<img alt="modified level" src="etc/shots/Road14-import-level.png" width="50%">
+<img alt="modified level" src="etc/shots/Road15-import-level.png" width="50%">
 
 Note: one can easily turn a non-compressed level file (VMP) into a pseudo-compressed one (VMC) by prepending the unzipped `etc/vmc-header.zip` file.
 
