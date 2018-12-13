@@ -61,6 +61,13 @@ fn main() {
                 image::ColorType::RGBA(8),
             ).unwrap();
         }
+        ("ini", "vmp") => {
+            println!("\tLoading the level...");
+            let config = vangers::level::LevelConfig::load(&src_path);
+            let level = vangers::level::load(&config);
+            println!("\tSaving VMP...");
+            level.save_vmp(File::open(&dst_path).unwrap());
+        }
         (in_ext, out_ext) => {
             panic!("Don't know how to convert {} to {}", in_ext, out_ext);
         }

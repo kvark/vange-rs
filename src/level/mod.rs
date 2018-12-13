@@ -1,5 +1,8 @@
 use byteorder::{LittleEndian as E, ReadBytesExt};
-use std::io::{BufReader, Read, Seek, SeekFrom};
+
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::fs::File;
+
 
 mod config;
 
@@ -126,6 +129,17 @@ impl Level {
         }
         data
     }
+
+    pub fn save_vmp(&self, file: File) {
+        let mut vmp = BufWriter::new(file);
+        self.height
+            .chunks(self.size.0 as _)
+            .zip(self.meta.chunks(self.size.0 as _))
+            .for_each(|(h_row, m_row)| {
+                vmp.write(h_row).unwrap();
+                vmp.write(m_row).unwrap();
+            });
+    }
 }
 
 #[allow(unused)]
@@ -179,7 +193,6 @@ pub fn read_palette<I: Read>(input: I, config: Option<&[TerrainConfig]>) -> [[u8
 pub fn load(config: &LevelConfig) -> Level {
     use rayon::prelude::*;
     use splay::Splay;
-    use std::fs::File;
     use std::time::Instant;
 
     fn report_time(start: Instant) {
@@ -190,13 +203,12 @@ pub fn load(config: &LevelConfig) -> Level {
         );
     }
 
-    assert!(config.is_compressed);
     let size = (config.size.0.as_value(), config.size.1.as_value());
 
-    info!("Loading vpr...");
-    let start_vpr = Instant::now();
+    info!("Loading flood map...");
+    let start_flood = Instant::now();
     let flood_map = {
-        let vpr_file = File::open(&config.path_vpr).unwrap();
+        let vpr_file = File::open(&config.path_flood).unwrap();
         let flood_size = size.1 >> config.section.as_power();
         let geo_pow = config.geo.as_power();
         let net_size = size.0 * size.1 >> (2 * geo_pow);
@@ -213,12 +225,17 @@ pub fn load(config: &LevelConfig) -> Level {
             .map(|_| vpr.read_u32::<E>().unwrap())
             .collect()
     };
-    report_time(start_vpr);
+    report_time(start_flood);
 
-    info!("Loading vmc...");
-    let start_vmc = Instant::now();
-    let (height, meta) = {
-        let mut vmc_base = BufReader::new(File::open(&config.path_vmc).unwrap());
+    info!("Loading height map...");
+    let start_height = Instant::now();
+    let total = (size.0 * size.1) as usize;
+    let mut height = vec![0u8; total];
+    let mut meta = vec![0u8; total];
+
+    if config.is_compressed {
+        let mut vmc_base = BufReader::new(File::open(&config.path_height).unwrap());
+
         info!("\tLoading compression tables...");
         let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
         let mut sz_table = Vec::<i16>::with_capacity(size.1 as usize);
@@ -226,11 +243,9 @@ pub fn load(config: &LevelConfig) -> Level {
             st_table.push(vmc_base.read_i32::<E>().unwrap());
             sz_table.push(vmc_base.read_i16::<E>().unwrap());
         }
+
         info!("\tDecompressing level data...");
         let splay = Splay::new(&mut vmc_base);
-        let total = (size.0 * size.1) as usize;
-        let mut height = vec![0u8; total];
-        let mut meta = vec![0u8; total];
 
         height
             .chunks_mut(size.0 as _)
@@ -240,17 +255,25 @@ pub fn load(config: &LevelConfig) -> Level {
             .par_chunks_mut(64)
             .for_each(|source_group| {
                 //Note: a separate file per group is required
-                let mut vmc = BufReader::new(File::open(&config.path_vmc).unwrap());
+                let mut vmc = BufReader::new(File::open(&config.path_height).unwrap());
                 for &mut ((ref mut h_row, ref mut m_row), offset) in source_group {
                     vmc.seek(SeekFrom::Start(*offset as u64)).unwrap();
                     splay.expand1(&mut vmc, h_row);
                     splay.expand2(&mut vmc, m_row);
                 }
             });
+    } else {
+        let mut vmp = BufReader::new(File::open(&config.path_height).unwrap());
+        height
+            .chunks_mut(size.0 as _)
+            .zip(meta.chunks_mut(size.0 as _))
+            .for_each(|(h_row, m_row)| {
+                vmp.read(h_row).unwrap();
+                vmp.read(m_row).unwrap();
+            });
+    }
 
-        (height, meta)
-    };
-    report_time(start_vmc);
+    report_time(start_height);
     let palette = File::open(&config.path_palette)
         .expect("Unable to open the palette file");
 

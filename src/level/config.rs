@@ -25,8 +25,8 @@ pub struct TerrainConfig {
 pub struct LevelConfig {
     //pub name: String,
     pub path_palette: PathBuf,
-    pub path_vpr: PathBuf,
-    pub path_vmc: PathBuf,
+    pub path_flood: PathBuf,
+    pub path_height: PathBuf,
     pub is_compressed: bool,
     pub size: (Power, Power),
     pub geo: Power,
@@ -78,11 +78,12 @@ impl LevelConfig {
         }
 
         let file_path = ini_path.with_file_name(&storage["File Name"]);
+        let is_compressed = storage["Compressed Format Using"] != "0";
         LevelConfig {
-            path_vpr: file_path.with_extension("vpr"),
-            path_vmc: file_path.with_extension("vmc"),
+            path_flood: file_path.with_extension("vpr"),
+            path_height: file_path.with_extension(if is_compressed { "vmc" } else { "vmp" }),
             path_palette: ini_path.with_file_name(&storage["Palette File"]),
-            is_compressed: storage["Compressed Format Using"] != "0",
+            is_compressed,
             //name: self.game.level.clone(),
             size: (
                 Power(global["Map Power X"].parse().unwrap()),
