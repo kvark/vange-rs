@@ -1,4 +1,4 @@
-use byteorder::{LittleEndian as E, ReadBytesExt};
+use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::fs::File;
@@ -109,6 +109,27 @@ impl Level {
             });
     }
 
+    pub fn save_vmc(&self, file: File) {
+        use splay::Splay;
+        let mut vmc = BufWriter::new(file);
+
+        let base_offset = self.size.1 as u64 * (2 + 4) + Splay::tree_size();
+        for i in 0 .. self.size.1 {
+            vmc.write_i32::<E>(base_offset as i32 + i * self.size.0 * 2).unwrap();
+            vmc.write_i16::<E>(self.size.0 as i16 * 2).unwrap();
+        }
+
+        Splay::write_trivial(&mut vmc);
+        assert_eq!(vmc.seek(SeekFrom::Current(0)).unwrap(), base_offset);
+
+        self.height
+            .chunks(self.size.0 as _)
+            .zip(self.meta.chunks(self.size.0 as _))
+            .for_each(|(h_row, m_row)| {
+                Splay::compress_trivial(h_row, m_row, &mut vmc);
+            });
+    }
+
     pub fn export(&self) -> Vec<u8> {
         let mut data = vec![0; self.size.0 as usize * self.size.1 as usize * 4];
         for y in 0 .. self.size.1 {
@@ -121,7 +142,7 @@ impl Level {
                         color[0] = alt;
                         color[1] = alt;
                         color[2] = 0;
-                        color[3] = ty + (ty << 4);
+                        color[3] = ty | (ty << 4);
                     }
                     Texel::Dual {
                         low: Point(low_alt, low_ty),
@@ -131,7 +152,7 @@ impl Level {
                         color[0] = low_alt;
                         color[1] = high_alt;
                         color[2] = delta;
-                        color[3] = low_ty + (high_ty << 4);
+                        color[3] = low_ty | (high_ty << 4);
                     }
                 }
             }
@@ -161,10 +182,10 @@ impl Level {
                     let mat = avg(color[3], color[7]);
                     meta[i + 0] = DOUBLE_LEVEL |
                         ((mat & 0xF) << TERRAIN_SHIFT) |
-                        ((delta >> 2) << DELTA_SHIFT1);
+                        (delta >> 2);
                     meta[i + 1] = DOUBLE_LEVEL |
                         ((mat >> 4) << TERRAIN_SHIFT) |
-                        ((delta & DELTA_MASK) << DELTA_SHIFT1);
+                        (delta & DELTA_MASK);
                     height[i + 0] = avg(color[0], color[4]);
                     height[i + 1] = avg(color[1], color[5]);
                 } else {
@@ -320,8 +341,7 @@ pub fn load(config: &LevelConfig) -> Level {
                 let mut vmc = BufReader::new(File::open(&path_data).unwrap());
                 for &mut ((ref mut h_row, ref mut m_row), offset) in source_group {
                     vmc.seek(SeekFrom::Start(*offset as u64)).unwrap();
-                    splay.expand1(&mut vmc, h_row);
-                    splay.expand2(&mut vmc, m_row);
+                    splay.expand(&mut vmc, h_row, m_row);
                 }
             });
     } else {

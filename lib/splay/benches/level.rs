@@ -32,8 +32,7 @@ fn load_level(bench: &mut test::Bencher) {
         let mut cursor = Cursor::new(&mut buffer);
         for &offset in table[..0x100].iter() {
             cursor.seek(SeekFrom::Start(offset as u64 - base)).unwrap();
-            splay.expand1(&mut cursor, &mut height);
-            splay.expand2(&mut cursor, &mut meta);
+            splay.expand(&mut cursor, &mut height, &mut meta);
         }
     });
 }

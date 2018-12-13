@@ -1,15 +1,17 @@
 extern crate byteorder;
 
-use byteorder::{LittleEndian as E, ReadBytesExt};
-use std::io::Read;
+use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
+use std::io::{Read, Write};
 
 pub struct Splay {
     tree1: [i32; 512],
     tree2: [i32; 512],
 }
 
+//TODO: use iterators
+
 impl Splay {
-    pub fn new<I: ReadBytesExt>(input: &mut I) -> Splay {
+    pub fn new<I: ReadBytesExt>(input: &mut I) -> Self {
         let mut splay = Splay {
             tree1: [0; 512],
             tree2: [0; 512],
@@ -23,6 +25,21 @@ impl Splay {
             splay.tree2[i] = v;
         }
         splay
+    }
+
+    pub fn write_trivial<O: WriteBytesExt>(output: &mut O) {
+        for _ in 0 .. 2 {
+            for i in 0i32 .. 256 {
+                output.write_i32::<E>(i).unwrap();
+            }
+            for i in 0i32 .. 256 {
+                output.write_i32::<E>(-i).unwrap();
+            }
+        }
+    }
+
+    pub fn tree_size() -> u64 {
+        512 * 2 * 4
     }
 
     fn decompress<I: Read, F: Fn(u8, u8) -> u8>(
@@ -81,18 +98,30 @@ impl Splay {
         }
     }
 
-    pub fn expand1<I: Read>(
+    pub fn expand<I: Read>(
         &self,
         input: &mut I,
-        output: &mut [u8],
+        output1: &mut [u8],
+        output2: &mut [u8],
     ) {
-        Splay::decompress(&self.tree1, input, output, |b, c| b.wrapping_add(c));
+        Self::decompress(&self.tree1, input, output1, |b, c| b.wrapping_add(c));
+        Self::decompress(&self.tree2, input, output2, |b, c| b ^ c);
     }
-    pub fn expand2<I: Read>(
-        &self,
-        input: &mut I,
-        output: &mut [u8],
+
+    pub fn compress_trivial<O: Write>(
+        input1: &[u8],
+        input2: &[u8],
+        output: &mut O,
     ) {
-        Splay::decompress(&self.tree2, input, output, |b, c| b ^ c);
+        let mut last_char = 0;
+        for &b in input1 {
+            output.write_u8(b.wrapping_sub(last_char)).unwrap();
+            last_char = b;
+        }
+        last_char = 0;
+        for &b in input2 {
+            output.write_u8(b ^ last_char).unwrap();
+            last_char = b;
+        }
     }
 }

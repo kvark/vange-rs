@@ -83,7 +83,7 @@ cargo run --bin convert -- my_dir/model.ron resource/m3d/items/i21-new.m3d
 
 #### Level(INI+VMC/VMP) -> Image(BMP/PNG/TGA)
 ```bash
-cargo run --bin convert -- thechain/fostral/world.ini my_dir/fostral.bmp
+cargo run --bin convert --release -- thechain/fostral/world.ini my_dir/fostral.png
 ```
 
 The output image contains the following info in the RGBA channels:
@@ -93,15 +93,21 @@ The output image contains the following info in the RGBA channels:
   - low 4 bits of A contain the material index of the bottom layer
   - high 4 bits of A contain the material index of the top layer
 
-#### Image(BMP/PNG/TGA)+INI -> Level(VMP)
+#### Image(BMP/PNG/TGA)+INI -> Level(VMP/VMC)
 You can change the image in a photo editor, and then we can import it as a non-compressed level:
 ```bash
-cargo run --bin convert -- my_dir/fostral.bmp thechain/fostral/world.ini
+cargo run --bin convert --release -- my_dir/fostral.png thechain/fostral/world.ini
 ```
 
-This command would write the VMP file in the target level. If you want the game to use it, set "Compressed Format Using = 0" in the INI file.
+This command would write the file in the target level:
+  - VMC, if the level is configured to be compressed ("Compressed Format Using = 1") in the INI file
+  - VMP, if it's non-compressed ("Compressed Format Using = 0")
+
+**Warning**: this will overwrite the level data without warning. Please use caution and back up the data before modifying.
 
 <img alt="modified level" src="etc/shots/Road14-import-level.png" width="50%">
+
+Note: one can easily turn a non-compressed level file (VMP) into a pseudo-compressed one (VMC) by prepending the unzipped `etc/vmc-header.zip` file.
 
 ## Technonolgy
 

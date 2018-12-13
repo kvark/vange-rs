@@ -75,9 +75,14 @@ fn main() {
             println!("\tImporting the level...");
             let mut config = vangers::level::LevelConfig::load(&dst_path);
             let level = vangers::level::Level::import(&image, &config);
-            println!("\tSaving VMP...");
-            config.is_compressed = false;
-            level.save_vmp(File::create(&config.path_data()).unwrap());
+            let output = File::create(&config.path_data()).unwrap();
+            if config.is_compressed && false { //TODO
+                println!("\tSaving VMC...");
+                level.save_vmc(output);
+            } else {
+                println!("\tSaving VMP...");
+                level.save_vmp(output);
+            }
         }
         (in_ext, out_ext) => {
             panic!("Don't know how to convert {} to {}", in_ext, out_ext);
