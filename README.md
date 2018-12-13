@@ -79,7 +79,7 @@ You can change the OBJ files using popular mesh editors, save them, and even man
 cargo run --bin convert -- my_dir/model.ron resource/m3d/items/i21-new.m3d
 ```
 
-<img alt="modified mechous" src="etc/shots/Road14-import.png" width="50%">
+<img alt="modified model" src="etc/shots/Road14-import-model.png" width="50%">
 
 #### Level(INI+VMC/VMP) -> Image(BMP/PNG/TGA)
 ```bash
@@ -100,6 +100,8 @@ cargo run --bin convert -- my_dir/fostral.bmp thechain/fostral/world.ini
 ```
 
 This command would write the VMP file in the target level. If you want the game to use it, set "Compressed Format Using = 0" in the INI file.
+
+<img alt="modified level" src="etc/shots/Road14-import-level.png" width="50%">
 
 ## Technonolgy
 
