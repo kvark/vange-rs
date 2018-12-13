@@ -49,12 +49,12 @@ fn main() {
             println!("\tSaving M3D...");
             model.save(File::create(&dst_path).unwrap());
         }
-        ("ini", "bmp") => {
+        ("ini", "bmp") | ("ini", "png") | ("ini", "tga") => {
             println!("\tLoading the level...");
             let config = vangers::level::LevelConfig::load(&src_path);
             let level = vangers::level::load(&config);
             let data = level.export();
-            println!("\tSaving as BMP...");
+            println!("\tSaving the image...");
             image::save_buffer(
                 &dst_path, &data,
                 level.size.0 as u32, level.size.1 as u32,
@@ -66,7 +66,17 @@ fn main() {
             let config = vangers::level::LevelConfig::load(&src_path);
             let level = vangers::level::load(&config);
             println!("\tSaving VMP...");
-            level.save_vmp(File::open(&dst_path).unwrap());
+            level.save_vmp(File::create(&dst_path).unwrap());
+        }
+        ("bmp", "ini") | ("png", "ini") | ("tga", "ini") => {
+            println!("\tLoading the image...");
+            let image = image::open(&src_path).unwrap().to_rgba().into_raw();
+            println!("\tImporting the level...");
+            let config = vangers::level::LevelConfig::load(&dst_path);
+            let level = vangers::level::Level::import(&image, &config);
+            println!("\tSaving VMP...");
+            let vmp_path = config.path_height.with_extension("vmp");
+            level.save_vmp(File::create(&vmp_path).unwrap());
         }
         (in_ext, out_ext) => {
             panic!("Don't know how to convert {} to {}", in_ext, out_ext);
