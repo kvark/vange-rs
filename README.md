@@ -67,6 +67,8 @@ Controls:
 ### Converter
 `convert` binary is a command line utility for converting the game data into formats that are more interoperable. Basically you provide 2 arguments as fully-qualified file names (can be relative, but relative to the current directory - the settings paths are not used here), and the converter figures out the way to convert one into another. Note that only part after "--" makes sense when running a standalone binary.
 
+Note: the destination path is always to a file that gets created or overwritten!
+
 #### Model (M3D) -> OBJ+RON
 ```bash
 cargo run --bin convert -- resource/m3d/items/i21.m3d my_dir/model.ron
@@ -96,14 +98,8 @@ The output image contains the following info in the RGBA channels:
 #### Image(BMP/PNG/TGA)+INI -> Level(VMP/VMC)
 You can change the image in a photo editor, and then we can import it as a non-compressed level:
 ```bash
-cargo run --bin convert --release -- my_dir/fostral.png thechain/fostral/world.ini
+cargo run --bin convert --release -- my_dir/fostral.png thechain/fostral/output.vmp
 ```
-
-This command would write the file in the target level:
-  - VMC, if the level is configured to be compressed ("Compressed Format Using = 1") in the INI file
-  - VMP, if it's non-compressed ("Compressed Format Using = 0")
-
-**Warning**: this will overwrite the level data without warning. Please use caution and back up the data before modifying.
 
 <img alt="modified level" src="etc/shots/Road15-import-level.png" width="50%">
 

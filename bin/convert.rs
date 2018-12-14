@@ -8,6 +8,14 @@ extern crate vangers;
 use std::fs::File;
 use std::path::PathBuf;
 
+fn import_image(path: &PathBuf) -> vangers::level::LevelData {
+    println!("\tLoading the image...");
+    let image = image::open(path).unwrap().to_rgba();
+    println!("\tImporting the level...");
+    let size = (image.width() as i32, image.height() as i32);
+    vangers::level::LevelData::import(&image.into_raw(), size)
+}
+
 fn main() {
     use std::env;
     env_logger::init().unwrap();
@@ -63,26 +71,20 @@ fn main() {
         }
         ("ini", "vmp") => {
             println!("\tLoading the VMC...");
-            let mut config = vangers::level::LevelConfig::load(&src_path);
-            config.is_compressed = true;
+            let config = vangers::level::LevelConfig::load(&src_path);
             let level = vangers::level::load(&config);
             println!("\tSaving VMP...");
-            level.save_vmp(File::create(&dst_path).unwrap());
+            vangers::level::LevelData::from(level).save_vmp(&dst_path);
         }
-        ("bmp", "ini") | ("png", "ini") | ("tga", "ini") => {
-            println!("\tLoading the image...");
-            let image = image::open(&src_path).unwrap().to_rgba().into_raw();
-            println!("\tImporting the level...");
-            let config = vangers::level::LevelConfig::load(&dst_path);
-            let level = vangers::level::Level::import(&image, &config);
-            let output = File::create(&config.path_data()).unwrap();
-            if config.is_compressed {
-                println!("\tSaving VMC...");
-                level.save_vmc(output);
-            } else {
-                println!("\tSaving VMP...");
-                level.save_vmp(output);
-            }
+        ("bmp", "vmc") | ("png", "vmc") | ("tga", "vmc") => {
+            let level = import_image(&src_path);
+            println!("\tSaving VMC...");
+            level.save_vmc(&dst_path);
+        }
+        ("bmp", "vmp") | ("png", "vmp") | ("tga", "vmp") => {
+            let level = import_image(&src_path);
+            println!("\tSaving VMP...");
+            level.save_vmp(&dst_path);
         }
         (in_ext, out_ext) => {
             panic!("Don't know how to convert {} to {}", in_ext, out_ext);

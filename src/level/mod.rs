@@ -2,6 +2,7 @@ use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::fs::File;
+use std::path::Path;
 use std::time::Instant;
 
 
@@ -98,38 +99,6 @@ impl Level {
         }
     }
 
-    pub fn save_vmp(&self, file: File) {
-        let mut vmp = BufWriter::new(file);
-        self.height
-            .chunks(self.size.0 as _)
-            .zip(self.meta.chunks(self.size.0 as _))
-            .for_each(|(h_row, m_row)| {
-                vmp.write(h_row).unwrap();
-                vmp.write(m_row).unwrap();
-            });
-    }
-
-    pub fn save_vmc(&self, file: File) {
-        use splay::Splay;
-        let mut vmc = BufWriter::new(file);
-
-        let base_offset = self.size.1 as u64 * (2 + 4) + Splay::tree_size();
-        for i in 0 .. self.size.1 {
-            vmc.write_i32::<E>(base_offset as i32 + i * self.size.0 * 2).unwrap();
-            vmc.write_i16::<E>(self.size.0 as i16 * 2).unwrap();
-        }
-
-        Splay::write_trivial(&mut vmc);
-        assert_eq!(vmc.seek(SeekFrom::Current(0)).unwrap(), base_offset);
-
-        self.height
-            .chunks(self.size.0 as _)
-            .zip(self.meta.chunks(self.size.0 as _))
-            .for_each(|(h_row, m_row)| {
-                Splay::compress_trivial(h_row, m_row, &mut vmc);
-            });
-    }
-
     pub fn export(&self) -> Vec<u8> {
         let mut data = vec![0; self.size.0 as usize * self.size.1 as usize * 4];
         for y in 0 .. self.size.1 {
@@ -158,58 +127,6 @@ impl Level {
             }
         }
         data
-    }
-
-    pub fn import(data: &[u8], config: &LevelConfig) -> Self {
-        fn avg(a: u8, b: u8) -> u8 {
-            (a>>1) + (b>>1) + (a & b & 1)
-        }
-
-        let size = (config.size.0.as_value(), config.size.1.as_value());
-        let total = (size.0 * size.1) as usize;
-        assert_eq!(data.len(), total * 4);
-        let mut height = vec![0u8; total];
-        let mut meta = vec![0u8; total];
-
-        for y in 0 .. size.1 as usize {
-            let row = y * size.0 as usize * 4 .. (y + 1) * size.0 as usize * 4;
-            for (xd2, color) in data[row].chunks(8).enumerate() {
-                let i = y * size.0 as usize + xd2 * 2;
-                let delta = (avg(color[2], color[6]) >> DELTA_SHIFT1).min(0xF);
-                // check if this is double layer
-                if delta != 0 {
-                    // average between two texels
-                    let mat = avg(color[3], color[7]);
-                    meta[i + 0] = DOUBLE_LEVEL |
-                        ((mat & 0xF) << TERRAIN_SHIFT) |
-                        (delta >> 2);
-                    meta[i + 1] = DOUBLE_LEVEL |
-                        ((mat >> 4) << TERRAIN_SHIFT) |
-                        (delta & DELTA_MASK);
-                    height[i + 0] = avg(color[0], color[4]);
-                    height[i + 1] = avg(color[1], color[5]);
-                } else {
-                    // average between low and high
-                    meta[i + 0] = (color[3] & 0xF) << TERRAIN_SHIFT;
-                    meta[i + 1] = (color[7] & 0xF) << TERRAIN_SHIFT;
-                    height[i + 0] = avg(color[0], color[1]);
-                    height[i + 1] = avg(color[4], color[5]);
-                }
-            }
-        }
-
-        let flood_map = load_flood(config);
-        let palette = File::open(&config.path_palette)
-            .expect("Unable to open the palette file");
-
-        Level {
-            size,
-            flood_map,
-            height,
-            meta,
-            palette: read_palette(palette, Some(&config.terrains)),
-            terrains: config.terrains.clone(),
-        }
     }
 }
 
@@ -270,12 +187,12 @@ fn report_time(start: Instant) {
     );
 }
 
-fn load_flood(config: &LevelConfig) -> Vec<u32> {
+pub fn load_flood(config: &LevelConfig) -> Vec<u32> {
     let size = (config.size.0.as_value(), config.size.1.as_value());
 
     let instant = Instant::now();
     let flood_map = {
-        let vpr_file = match File::open(&config.path_flood()) {
+        let vpr_file = match File::open(&config.path_data.with_extension("vpr")) {
             Ok(file) => file,
             Err(_) => return Vec::new(),
         };
@@ -302,60 +219,178 @@ fn load_flood(config: &LevelConfig) -> Vec<u32> {
     flood_map
 }
 
-pub fn load(config: &LevelConfig) -> Level {
-    let flood_map = load_flood(config);
 
-    info!("Loading height map...");
-    let instant = Instant::now();
-    let size = (config.size.0.as_value(), config.size.1.as_value());
-    let total = (size.0 * size.1) as usize;
-    let mut height = vec![0u8; total];
-    let mut meta = vec![0u8; total];
-    let path_data = config.path_data();
+pub struct LevelData {
+    pub height: Vec<u8>,
+    pub meta: Vec<u8>,
+    size: (i32, i32),
+}
 
-    if config.is_compressed {
-        use rayon::prelude::*;
-        use splay::Splay;
-
-        let mut vmc_base = BufReader::new(File::open(&path_data).unwrap());
-
-        info!("\tLoading compression tables...");
-        let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
-        let mut sz_table = Vec::<i16>::with_capacity(size.1 as usize);
-        for _ in 0 .. size.1 {
-            st_table.push(vmc_base.read_i32::<E>().unwrap());
-            sz_table.push(vmc_base.read_i16::<E>().unwrap());
+impl From<Level> for LevelData {
+    fn from(level: Level) -> Self {
+        LevelData {
+            height: level.height,
+            meta: level.meta,
+            size: level.size,
         }
+    }
+}
 
-        info!("\tDecompressing level data...");
-        let splay = Splay::new(&mut vmc_base);
-
-        height
-            .chunks_mut(size.0 as _)
-            .zip(meta.chunks_mut(size.0 as _))
-            .zip(st_table.iter())
-            .collect::<Vec<_>>()
-            .par_chunks_mut(64)
-            .for_each(|source_group| {
-                //Note: a separate file per group is required
-                let mut vmc = BufReader::new(File::open(&path_data).unwrap());
-                for &mut ((ref mut h_row, ref mut m_row), offset) in source_group {
-                    vmc.seek(SeekFrom::Start(*offset as u64)).unwrap();
-                    splay.expand(&mut vmc, h_row, m_row);
-                }
-            });
-    } else {
-        let mut vmp = BufReader::new(File::open(&path_data).unwrap());
-        height
-            .chunks_mut(size.0 as _)
-            .zip(meta.chunks_mut(size.0 as _))
+impl LevelData {
+    pub fn save_vmp(&self, path: &Path) {
+        let mut vmp = BufWriter::new(File::create(path).unwrap());
+        self.height
+            .chunks(self.size.0 as _)
+            .zip(self.meta.chunks(self.size.0 as _))
             .for_each(|(h_row, m_row)| {
-                vmp.read(h_row).unwrap();
-                vmp.read(m_row).unwrap();
+                vmp.write(h_row).unwrap();
+                vmp.write(m_row).unwrap();
             });
     }
 
+    pub fn save_vmc(&self, path: &Path) {
+        use splay::Splay;
+        let mut vmc = BufWriter::new(File::create(path).unwrap());
+
+        let base_offset = self.size.1 as u64 * (2 + 4) + Splay::tree_size();
+        for i in 0 .. self.size.1 {
+            vmc.write_i32::<E>(base_offset as i32 + i * self.size.0 * 2).unwrap();
+            vmc.write_i16::<E>(self.size.0 as i16 * 2).unwrap();
+        }
+
+        Splay::write_trivial(&mut vmc);
+        assert_eq!(vmc.seek(SeekFrom::Current(0)).unwrap(), base_offset);
+
+        self.height
+            .chunks(self.size.0 as _)
+            .zip(self.meta.chunks(self.size.0 as _))
+            .for_each(|(h_row, m_row)| {
+                Splay::compress_trivial(h_row, m_row, &mut vmc);
+            });
+    }
+
+    pub fn import(data: &[u8], size: (i32, i32)) -> Self {
+        fn avg(a: u8, b: u8) -> u8 {
+            (a>>1) + (b>>1) + (a & b & 1)
+        }
+
+        let total = (size.0 * size.1) as usize;
+        assert_eq!(data.len(), total * 4);
+        let mut level = LevelData {
+            height: vec![0u8; total],
+            meta: vec![0u8; total],
+            size,
+        };
+
+
+        for y in 0 .. size.1 as usize {
+            let row = y * size.0 as usize * 4 .. (y + 1) * size.0 as usize * 4;
+            for (xd2, color) in data[row].chunks(8).enumerate() {
+                let i = y * size.0 as usize + xd2 * 2;
+                let delta = (avg(color[2], color[6]) >> DELTA_SHIFT1).min(0xF);
+                // check if this is double layer
+                if delta != 0 {
+                    // average between two texels
+                    let mat = avg(color[3], color[7]);
+                    level.meta[i + 0] = DOUBLE_LEVEL |
+                        ((mat & 0xF) << TERRAIN_SHIFT) |
+                        (delta >> 2);
+                    level.meta[i + 1] = DOUBLE_LEVEL |
+                        ((mat >> 4) << TERRAIN_SHIFT) |
+                        (delta & DELTA_MASK);
+                    level.height[i + 0] = avg(color[0], color[4]);
+                    level.height[i + 1] = avg(color[1], color[5]);
+                } else {
+                    // average between low and high
+                    level.meta[i + 0] = (color[3] & 0xF) << TERRAIN_SHIFT;
+                    level.meta[i + 1] = (color[7] & 0xF) << TERRAIN_SHIFT;
+                    level.height[i + 0] = avg(color[0], color[1]);
+                    level.height[i + 1] = avg(color[4], color[5]);
+                }
+            }
+        }
+
+        level
+    }
+}
+
+
+pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
+    use rayon::prelude::*;
+    use splay::Splay;
+
+    info!("Loading height map...");
+    let instant = Instant::now();
+    let total = (size.0 * size.1) as usize;
+    let mut level = LevelData {
+        height: vec![0u8; total],
+        meta: vec![0u8; total],
+        size,
+    };
+
+    let mut vmc_base = BufReader::new(File::open(path).unwrap());
+
+    info!("\tLoading compression tables...");
+    let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
+    let mut sz_table = Vec::<i16>::with_capacity(size.1 as usize);
+    for _ in 0 .. size.1 {
+        st_table.push(vmc_base.read_i32::<E>().unwrap());
+        sz_table.push(vmc_base.read_i16::<E>().unwrap());
+    }
+
+    info!("\tDecompressing level data...");
+    let splay = Splay::new(&mut vmc_base);
+
+    level.height
+        .chunks_mut(size.0 as _)
+        .zip(level.meta.chunks_mut(size.0 as _))
+        .zip(st_table.iter())
+        .collect::<Vec<_>>()
+        .par_chunks_mut(64)
+        .for_each(|source_group| {
+            //Note: a separate file per group is required
+            let mut vmc = BufReader::new(File::open(path).unwrap());
+            for &mut ((ref mut h_row, ref mut m_row), offset) in source_group {
+                vmc.seek(SeekFrom::Start(*offset as u64)).unwrap();
+                splay.expand(&mut vmc, h_row, m_row);
+            }
+        });
+
     report_time(instant);
+    level
+}
+
+pub fn load_vmp(path: &Path, size: (i32, i32)) -> LevelData {
+    let total = (size.0 * size.1) as usize;
+    let mut level = LevelData {
+        height: vec![0u8; total],
+        meta: vec![0u8; total],
+        size,
+    };
+
+    let mut vmp = BufReader::new(File::open(path).unwrap());
+    level.height
+        .chunks_mut(size.0 as _)
+        .zip(level.meta.chunks_mut(size.0 as _))
+        .for_each(|(h_row, m_row)| {
+            vmp.read(h_row).unwrap();
+            vmp.read(m_row).unwrap();
+        });
+
+    level
+}
+
+pub fn load(config: &LevelConfig) -> Level {
+    info!("Loading data map...");
+    let size = (config.size.0.as_value(), config.size.1.as_value());
+    let LevelData { height, meta, size } = if config.is_compressed {
+        load_vmc(&config.path_data.with_extension("vmc"), size)
+    } else {
+        load_vmp(&config.path_data.with_extension("vmp"), size)
+    };
+
+    info!("Loading flood map...");
+    let flood_map = load_flood(config);
     let palette = File::open(&config.path_palette)
         .expect("Unable to open the palette file");
 
