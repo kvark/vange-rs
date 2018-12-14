@@ -92,12 +92,4 @@ impl LevelConfig {
             terrains,
         }
     }
-
-    pub fn path_flood(&self) -> PathBuf {
-        self.path_data.with_extension("vpr")
-    }
-
-    pub fn path_data(&self) -> PathBuf {
-        self.path_data.with_extension(if self.is_compressed { "vmc" } else { "vmp" })
-    }
 }
