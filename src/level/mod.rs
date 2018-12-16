@@ -31,6 +31,15 @@ pub struct Level {
     pub terrains: [TerrainConfig; NUM_TERRAINS],
 }
 
+pub struct LevelLayers {
+    pub size: (i32, i32),
+    pub het0: Vec<u8>,
+    pub het1: Vec<u8>,
+    pub delta: Vec<u8>,
+    pub mat0: Vec<u8>,
+    pub mat1: Vec<u8>,
+}
+
 pub struct Point(pub Altitude, pub TerrainType);
 
 pub enum Texel {
@@ -127,6 +136,51 @@ impl Level {
             }
         }
         data
+    }
+
+    pub fn export_layers(&self) -> LevelLayers {
+        let total = (self.size.0 * self.size.1) as usize;
+        let mut het0 = Vec::with_capacity(total);
+        let mut het1 = Vec::with_capacity(total);
+        let mut delta = Vec::with_capacity(total);
+        let mut mat0 = Vec::with_capacity(total / 2);
+        let mut mat1 = Vec::with_capacity(total / 2);
+
+        for y in 0 .. self.size.1 as usize {
+            let range = y * self.size.0 as usize .. (y + 1) * self.size.0 as usize;
+            let hrow = &self.height[range.clone()];
+            let mrow = &self.meta[range];
+            for ((&h0, &h1), (&m0, &m1)) in hrow.iter().step_by(2)
+                .zip(hrow[1..].iter().step_by(2))
+                .zip(mrow.iter().step_by(2).zip(mrow[1..].iter().step_by(2)))
+            {
+                let t0 = (m0 >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1);
+                let t1 = (m1 >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1);
+                if m0 & DOUBLE_LEVEL != 0 {
+                    let d = ((m0 & DELTA_MASK) << DELTA_SHIFT0) + ((m1 & DELTA_MASK) << DELTA_SHIFT1);
+                    het0.push(h0); het0.push(h0);
+                    het1.push(h1); het1.push(h1);
+                    delta.push(d); delta.push(d);
+                    mat0.push(t0 | (t0 << 4));
+                    mat1.push(t1 | (t1 << 4));
+                } else {
+                    het0.push(h0); het0.push(h1);
+                    het1.push(h0); het1.push(h1);
+                    delta.push(0); delta.push(0);
+                    mat0.push(t0 | (t1 << 4));
+                    mat1.push(t0 | (t1 << 4));
+                }
+            }
+        }
+
+        LevelLayers {
+            size: self.size,
+            het0,
+            het1,
+            delta,
+            mat0,
+            mat1,
+        }
     }
 }
 

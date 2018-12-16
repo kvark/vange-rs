@@ -881,6 +881,13 @@ dependencies = [
 
 [[package]]
 name = "tiff"
+version = "0.1.0"
+dependencies = [
+ "byteorder 1.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "tiff"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
@@ -943,6 +950,7 @@ dependencies = [
  "serde_derive 1.0.79 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_scan 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "splay 0.1.0",
+ "tiff 0.1.0",
 ]
 
 [[package]]

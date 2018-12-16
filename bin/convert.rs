@@ -2,9 +2,11 @@ extern crate env_logger;
 extern crate getopts;
 extern crate image;
 extern crate m3d;
+extern crate tiff;
 extern crate vangers;
 
 
+use std::io::BufWriter;
 use std::fs::File;
 use std::path::PathBuf;
 
@@ -15,6 +17,50 @@ fn import_image(path: &PathBuf) -> vangers::level::LevelData {
     let size = (image.width() as i32, image.height() as i32);
     vangers::level::LevelData::import(&image.into_raw(), size)
 }
+
+pub fn save_tiff(path: &PathBuf, layers: vangers::level::LevelLayers) {
+    let images = [
+        tiff::Image {
+            width: layers.size.0 as u32,
+            height: layers.size.1 as u32,
+            bpp: 8,
+            name: "h0",
+            data: &layers.het0,
+        },
+        tiff::Image {
+            width: layers.size.0 as u32,
+            height: layers.size.1 as u32,
+            bpp: 8,
+            name: "h1",
+            data: &layers.het1,
+        },
+        tiff::Image {
+            width: layers.size.0 as u32,
+            height: layers.size.1 as u32,
+            bpp: 8,
+            name: "del",
+            data: &layers.delta,
+        },
+        tiff::Image {
+            width: layers.size.0 as u32,
+            height: layers.size.1 as u32,
+            bpp: 4,
+            name: "m0",
+            data: &layers.mat0,
+        },
+        tiff::Image {
+            width: layers.size.0 as u32,
+            height: layers.size.1 as u32,
+            bpp: 4,
+            name: "m1",
+            data: &layers.mat1,
+        },
+    ];
+
+    let file = BufWriter::new(File::create(path).unwrap());
+    tiff::save(file, &images).unwrap();
+}
+
 
 fn main() {
     use std::env;
@@ -68,6 +114,13 @@ fn main() {
                 level.size.0 as u32, level.size.1 as u32,
                 image::ColorType::RGBA(8),
             ).unwrap();
+        }
+        ("ini", "tiff") => {
+            println!("\tLoading the level...");
+            let config = vangers::level::LevelConfig::load(&src_path);
+            let layers = vangers::level::load(&config).export_layers();
+            println!("\tSaving TIFF layers...");
+            save_tiff(&dst_path, layers);
         }
         ("ini", "vmp") => {
             println!("\tLoading the VMC...");
