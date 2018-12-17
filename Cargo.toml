@@ -5,8 +5,9 @@ authors = ["kvark"]
 
 [workspace]
 members = [
-	"lib/m3d",
+    "lib/m3d",
     "lib/splay",
+    "lib/tiff",
 ]
 
 [lib]
@@ -35,6 +36,7 @@ path = "bin/convert.rs"
 # internals
 m3d = { path = "lib/m3d" }
 splay = { path = "lib/splay" }
+tiff = { path = "lib/tiff" }
 # library
 byteorder = "1.0"
 cgmath = "0.15"
