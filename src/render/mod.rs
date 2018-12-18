@@ -390,8 +390,8 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     let globals = factory.create_constant_buffer(1);
 
     let (terrain, terrain_slice, terrain_data) = {
-        let (terrain, vbuf, slice) = if settings.terrain.tessellate {
-            let screen_space = settings.terrain.screen_space;
+        let (terrain, vbuf, slice) = if let Some(ref tessellation) = settings.terrain.tessellate {
+            let screen_space = tessellation.screen_space;
             let (low, high) = Render::create_terrain_tess_psos(factory, screen_space);
             let vertices = [
                 TerrainVertex { pos: [0, 0, 0, 1] },

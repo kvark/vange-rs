@@ -6,8 +6,8 @@ use vangers::{config, level, render, space};
 
 #[derive(Debug)]
 enum Input {
-    Hor { dir: f32, alt: bool },
-    Ver { dir: f32, alt: bool },
+    Hor { dir: f32, alt: bool, shift: bool },
+    Ver { dir: f32, alt: bool, shift: bool },
     Dep { dir: f32, alt: bool },
     DepQuant(f32),
     PlaneQuant(cgmath::Vector2<f32>),
@@ -164,14 +164,14 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
             KeyboardInput {
                 state: ElementState::Pressed,
                 virtual_keycode: Some(key),
-                modifiers: ModifiersState { alt, .. },
+                modifiers: ModifiersState { alt, shift, .. },
                 ..
             } => match key {
                 Key::Escape => return false,
-                Key::W => *i = Input::Ver { dir: 1.0, alt },
-                Key::S => *i = Input::Ver { dir: -1.0, alt },
-                Key::A => *i = Input::Hor { dir: -1.0, alt },
-                Key::D => *i = Input::Hor { dir: 1.0, alt },
+                Key::W => *i = Input::Ver { dir: 1.0, alt, shift },
+                Key::S => *i = Input::Ver { dir: -1.0, alt, shift },
+                Key::A => *i = Input::Hor { dir: -1.0, alt, shift },
+                Key::D => *i = Input::Hor { dir: 1.0, alt, shift },
                 Key::Z => *i = Input::Dep { dir: -1.0, alt },
                 Key::X => *i = Input::Dep { dir: 1.0, alt },
                 Key::LAlt => self.alt_button_pressed = true,
@@ -204,30 +204,33 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
             space::Projection::Perspective(_) => 100.0,
             space::Projection::Ortho{..} => 500.0,
         };
+        let fast_move_speed = 5.0 * move_speed;
         match self.input {
-            Input::Hor { dir, alt: false } if dir != 0.0 => {
+            Input::Hor { dir, alt: false, shift } if dir != 0.0 => {
                 let mut vec = self.cam.rot * cgmath::Vector3::unit_x();
                 vec.z = 0.0;
-                self.cam.loc += move_speed * delta * dir * vec.normalize();
+                let speed = if shift { fast_move_speed } else { move_speed };
+                self.cam.loc += speed * delta * dir * vec.normalize();
             }
-            Input::Ver { dir, alt: false } if dir != 0.0 => {
+            Input::Ver { dir, alt: false, shift } if dir != 0.0 => {
                 let mut vec = self.cam.rot * cgmath::Vector3::unit_z();
                 vec.z = 0.0;
                 if vec == cgmath::Vector3::zero() {
                     vec = self.cam.rot * -cgmath::Vector3::unit_y();
                     vec.z = 0.0;
                 }
-                self.cam.loc -= move_speed * delta * dir * vec.normalize();
+                let speed = if shift { fast_move_speed } else { move_speed };
+                self.cam.loc -= speed * delta * dir * vec.normalize();
             }
             Input::Dep { dir, alt: false } if dir != 0.0 => {
                 let vec = cgmath::Vector3::unit_z();
                 self.cam.loc += move_speed * delta * dir * vec.normalize();
             }
-            Input::Hor { dir, alt: true } if dir != 0.0 => {
+            Input::Hor { dir, alt: true, .. } if dir != 0.0 => {
                 let rot = cgmath::Quaternion::from_angle_z(cgmath::Rad(-1.0 * delta * dir));
                 self.cam.rot = rot * self.cam.rot;
             }
-            Input::Ver { dir, alt: true } if dir != 0.0 => {
+            Input::Ver { dir, alt: true, .. } if dir != 0.0 => {
                 let rot = cgmath::Quaternion::from_angle_x(cgmath::Rad(1.0 * delta * dir));
                 self.cam.rot = self.cam.rot * rot;
             }

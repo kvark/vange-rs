@@ -30,8 +30,8 @@
 			color: (1, 1, 1, 1),
 		),
 		terrain: (
-			tessellate: false,
-			screen_space: false,
+			//example: Some(( screen_space: true )),
+			tessellate: None,
 		),
 		debug: (
 			max_vertices: 512,
