@@ -2,6 +2,10 @@ extern crate env_logger;
 extern crate getopts;
 extern crate image;
 extern crate m3d;
+extern crate png;
+extern crate ron;
+#[macro_use]
+extern crate serde;
 extern crate tiff;
 extern crate vangers;
 
@@ -61,6 +65,51 @@ pub fn save_tiff(path: &PathBuf, layers: vangers::level::LevelLayers) {
     tiff::save(file, &images).unwrap();
 }
 
+#[derive(Serialize, Deserialize)]
+struct MultiPng {
+    height_low: String,
+    height_high: String,
+    delta: String,
+    meta_low: String,
+    meta_high: String,
+}
+
+pub fn save_multi_png(path: &PathBuf, layers: vangers::level::LevelLayers) {
+    use png::Parameter;
+    use std::io::Write;
+
+    let mp = MultiPng {
+        height_low: "height_low.png".to_string(),
+        height_high: "height_high.png".to_string(),
+        delta: "delta.png".to_string(),
+        meta_low: "meta_low.png".to_string(),
+        meta_high: "meta_high.png".to_string(),
+    };
+    let string = ron::ser::to_string_pretty(&mp, ron::ser::PrettyConfig::default()).unwrap();
+    let mut level_file = File::create(path).unwrap();
+    write!(level_file, "{}", string).unwrap();
+
+    let entries = [
+        (&mp.height_low, &layers.het0, png::BitDepth::Eight),
+        (&mp.height_high, &layers.het1, png::BitDepth::Eight),
+        (&mp.delta, &layers.delta, png::BitDepth::Eight),
+        (&mp.meta_low, &layers.mat0, png::BitDepth::Four),
+        (&mp.meta_high, &layers.mat1, png::BitDepth::Four),
+    ];
+    for &(name, data, bpp) in &entries {
+        println!("\t\t{}...", name);
+        let file = File::create(path.with_file_name(name)).unwrap();
+        let mut encoder = png::Encoder::new(file, layers.size.0 as u32, layers.size.1 as u32);
+        png::ColorType::Grayscale.set_param(&mut encoder);
+        bpp.set_param(&mut encoder);
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(data)
+            .unwrap();
+    }
+}
+
 
 fn main() {
     use std::env;
@@ -114,6 +163,13 @@ fn main() {
                 level.size.0 as u32, level.size.1 as u32,
                 image::ColorType::RGBA(8),
             ).unwrap();
+        }
+        ("ini", "ron") => {
+            println!("\tLoading the level...");
+            let config = vangers::level::LevelConfig::load(&src_path);
+            let layers = vangers::level::load(&config).export_layers();
+            println!("\tSaving multiple PNGs...");
+            save_multi_png(&dst_path, layers);
         }
         ("ini", "tiff") => {
             println!("\tLoading the level...");
