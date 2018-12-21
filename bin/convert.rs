@@ -67,6 +67,7 @@ pub fn save_tiff(path: &PathBuf, layers: vangers::level::LevelLayers) {
 
 #[derive(Serialize, Deserialize)]
 struct MultiPng {
+    size: (u32, u32),
     height_low: String,
     height_high: String,
     delta: String,
@@ -79,6 +80,7 @@ pub fn save_multi_png(path: &PathBuf, layers: vangers::level::LevelLayers) {
     use std::io::Write;
 
     let mp = MultiPng {
+        size: layers.size,
         height_low: "height_low.png".to_string(),
         height_high: "height_high.png".to_string(),
         delta: "delta.png".to_string(),
@@ -108,6 +110,36 @@ pub fn save_multi_png(path: &PathBuf, layers: vangers::level::LevelLayers) {
             .write_image_data(data)
             .unwrap();
     }
+}
+
+pub fn load_multi_png(path: &PathBuf) -> vangers::level::LevelLayers {
+    let level_file = File::open(path).unwrap();
+    let mp = ron::de::from_reader::<_, MultiPng>(level_file).unwrap();
+    let mut layers = vangers::level::LevelLayers::new(mp.size);
+
+    {
+        let mut entries = [
+            (&mp.height_low, &mut layers.het0, png::BitDepth::Eight),
+            (&mp.height_high, &mut layers.het1, png::BitDepth::Eight),
+            (&mp.delta, &mut layers.delta, png::BitDepth::Eight),
+            (&mp.meta_low, &mut layers.mat0, png::BitDepth::Four),
+            (&mp.meta_high, &mut layers.mat1, png::BitDepth::Four),
+        ];
+        for &mut (name, ref mut data, bpp) in &mut entries {
+            println!("\t\t{}...", name);
+            let file = File::open(path.with_file_name(name)).unwrap();
+            let decoder = png::Decoder::new(file);
+            let (info, mut reader) = decoder.read_info().unwrap();
+            assert_eq!((info.width, info.height), mp.size);
+            assert_eq!(info.color_type, png::ColorType::Grayscale);
+            assert_eq!(info.bit_depth, bpp);
+            assert_eq!(info.buffer_size(), data.capacity());
+            data.resize(info.buffer_size(), 0);
+            reader.next_frame(data).unwrap();
+        }
+    }
+
+    layers
 }
 
 
@@ -167,14 +199,14 @@ fn main() {
         ("ini", "ron") => {
             println!("\tLoading the level...");
             let config = vangers::level::LevelConfig::load(&src_path);
-            let layers = vangers::level::load(&config).export_layers();
+            let layers = vangers::level::load_layers(&config);
             println!("\tSaving multiple PNGs...");
             save_multi_png(&dst_path, layers);
         }
         ("ini", "tiff") => {
             println!("\tLoading the level...");
             let config = vangers::level::LevelConfig::load(&src_path);
-            let layers = vangers::level::load(&config).export_layers();
+            let layers = vangers::level::load_layers(&config);
             println!("\tSaving TIFF layers...");
             save_tiff(&dst_path, layers);
         }
@@ -193,6 +225,13 @@ fn main() {
         ("bmp", "vmp") | ("png", "vmp") | ("tga", "vmp") => {
             let level = import_image(&src_path);
             println!("\tSaving VMP...");
+            level.save_vmp(&dst_path);
+        }
+        ("ron", "vmp") => {
+            println!("\tLoading multiple PNGs...");
+            let layers = load_multi_png(&src_path);
+            println!("\tSaving VMP...");
+            let level = vangers::level::LevelData::import_layers(layers);
             level.save_vmp(&dst_path);
         }
         (in_ext, out_ext) => {
