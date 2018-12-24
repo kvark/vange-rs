@@ -17,7 +17,6 @@ pub use self::geometry::{
 use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
 
 
 const MAX_SLOTS: usize = 3;
@@ -137,7 +136,7 @@ impl<M> Slot<M> {
         angle: 0,
     };
 
-    fn map<T, F: FnMut(M) -> T>(self, fun: F) -> Slot<T> {
+    pub fn map<T, F: FnMut(M) -> T>(self, fun: F) -> Slot<T> {
         Slot {
             mesh: self.mesh.map(fun),
             scale: self.scale,
@@ -211,7 +210,7 @@ pub struct Mesh<G> {
 }
 
 impl<G> Mesh<G> {
-    fn map<T, F: Fn(G) -> T>(self, fun: F) -> Mesh<T> {
+    pub fn map<T, F: Fn(G) -> T>(self, fun: F) -> Mesh<T> {
         Mesh {
             geometry: fun(self.geometry),
             bounds: self.bounds,
@@ -410,105 +409,8 @@ pub type DrawMesh = Mesh<Geometry<DrawTriangle>>;
 pub type CollisionMesh = Mesh<Geometry<CollisionQuad>>;
 
 pub type FullModel = Model<DrawMesh, CollisionMesh>;
-type RefModel = Model<Mesh<String>, Mesh<String>>;
 
 impl FullModel {
-    pub fn export_obj(self, model_path: &PathBuf) {
-        const BODY_PATH: &str = "body.obj";
-        const SHAPE_PATH: &str = "body-shape.obj";
-
-        debug!("\tExporting OBJ data...");
-        let dir_path = model_path.parent().unwrap();
-
-        let model = RefModel {
-            body: self.body.map(|geom| {
-                geom.save_obj(dir_path.join(BODY_PATH))
-                    .unwrap();
-                BODY_PATH.to_string()
-            }),
-            shape: self.shape.map(|geom| {
-                geom.save_obj(dir_path.join(SHAPE_PATH))
-                    .unwrap();
-                SHAPE_PATH.to_string()
-            }),
-            dimensions: self.dimensions,
-            max_radius: self.max_radius,
-            color: self.color,
-            wheels: self.wheels
-                .into_iter()
-                .enumerate()
-                .map(|(i, wheel)| {
-                    wheel.map(|mesh| {
-                        mesh.map(|geom| {
-                            let name = format!("wheel{}.obj", i);
-                            geom.save_obj(dir_path.join(&name)).unwrap();
-                            name
-                        })
-                    })
-                })
-                .collect(),
-            debris: self.debris
-                .into_iter()
-                .enumerate()
-                .map(|(i, debrie)| Debrie {
-                    mesh: debrie.mesh.map(|geom| {
-                        let name = format!("debrie{}.obj", i);
-                        geom.save_obj(dir_path.join(&name)).unwrap();
-                        name
-                    }),
-                    shape: debrie.shape.map(|geom| {
-                        let name = format!("debrie{}-shape.obj", i);
-                        geom.save_obj(dir_path.join(&name)).unwrap();
-                        name
-                    }),
-                })
-                .collect(),
-            slots: Slot::map_all(self.slots, |mesh, i| {
-                mesh.map(|geom| {
-                    let name = format!("slot{}.obj", i);
-                    geom.save_obj(dir_path.join(&name)).unwrap();
-                    name
-                })
-            }),
-        };
-
-        let string = ron::ser::to_string_pretty(&model, ron::ser::PrettyConfig::default()).unwrap();
-        let mut model_file = File::create(model_path).unwrap();
-        write!(model_file, "{}", string).unwrap();
-    }
-
-    pub fn import_obj(model_path: &PathBuf) -> Self {
-        let dir_path = model_path.parent().unwrap();
-        let model_file = File::open(model_path).unwrap();
-        let model = ron::de::from_reader::<_, RefModel>(model_file).unwrap();
-
-        let resolve_geom_draw = |name| -> Geometry<DrawTriangle> { Geometry::load_obj(dir_path.join(name)) };
-        let resolve_geom_coll = |name| -> Geometry<CollisionQuad> { Geometry::load_obj(dir_path.join(name)) };
-        let resolve_mesh = |mesh: Mesh<String>| { mesh.map(&resolve_geom_draw) };
-
-        FullModel {
-            body: model.body.map(&resolve_geom_draw),
-            shape: model.shape.map(&resolve_geom_coll),
-            dimensions: model.dimensions,
-            max_radius: model.max_radius,
-            color: model.color,
-            wheels: model.wheels
-                .into_iter()
-                .map(|wheel| wheel.map(&resolve_mesh))
-                .collect(),
-            debris: model.debris
-                .into_iter()
-                .map(|debrie| Debrie {
-                    mesh: debrie.mesh.map(&resolve_geom_draw),
-                    shape: debrie.shape.map(&resolve_geom_coll),
-                })
-                .collect(),
-            slots: Slot::map_all(model.slots, |mesh, _| {
-                resolve_mesh(mesh)
-            }),
-        }
-    }
-
     pub fn load(mut input: File) -> Self {
         debug!("\tReading the body...");
         let body: DrawMesh = Mesh::load(&mut input);

@@ -69,41 +69,52 @@ Controls:
 
 Note: the destination path is always to a file that gets created or overwritten!
 
-#### Model (M3D) -> OBJ+RON
+#### Model (M3D) <-> OBJ+RON
 ```bash
-cargo run --bin convert -- resource/m3d/items/i21.m3d my_dir/model.ron
+cargo run --bin convert -- game/resource/m3d/items/i21.m3d my_dir/model.ron
 ```
 The body, wheels, and debris are saved as separate Wavefront OBJ files near the target [RON](https://github.com/ron-rs/ron), which contains model meta-data.
 
-#### OBJ+RON -> Model(M3D)
 You can change the OBJ files using popular mesh editors, save them, and even manually tweak RON, after which you may want to generate a new M3D file:
 ```bash
-cargo run --bin convert -- my_dir/model.ron resource/m3d/items/i21-new.m3d
+cargo run --bin convert -- my_dir/model.ron game/resource/m3d/items/i21-new.m3d
 ```
 
 <img alt="modified model" src="etc/shots/Road14-import-model.png" width="50%">
 
-#### Level(INI+VMC/VMP) -> Image(BMP/PNG/TGA)
+#### Level(INI+VMC/VMP) <-> PNG+RON
 ```bash
-cargo run --bin convert --release -- thechain/fostral/world.ini my_dir/fostral.png
+cargo run --bin convert --release -- game/thechain/fostral/world.ini my_dir/fostral.ron
 ```
 
-The output image contains the following info in the RGBA channels:
+The RON file contains the size and names of two images: heights and materials. The former conains the following data:
   - R stands for the bottom layer height
   - G stands for the top layer height
   - B stands for the delta between the bottom and the ground above
-  - low 4 bits of A contain the material index of the bottom layer
-  - high 4 bits of A contain the material index of the top layer
 
-#### Image(BMP/PNG/TGA)+INI -> Level(VMP/VMC)
-You can change the image in a photo editor, and then we can import it as a non-compressed level:
+The materials image only uses two channels:
+  - R contains the index of the bottom layer material in its higher 4 bits. The lower 4 bits are ignored.
+  - G contains the index of the top layer
+
+You can change the images in a photo editor, and then we can import it as a non-compressed level:
 ```bash
-cargo run --bin convert --release -- my_dir/fostral.png thechain/fostral/output.vmp
+cargo run --bin convert --release -- my_dir/fostral.ron game/thechain/fostral/output.vmp
 ```
 
 <img alt="modified level" src="etc/shots/Road15-import-level.png" width="50%">
 
 Note: one can easily turn a non-compressed level file (VMP) into a pseudo-compressed one (VMC) by prepending the unzipped `etc/vmc-header.zip` file.
+
+#### PAL <-> PNG
+
+Palette files are really simple one-dimensional arrays of 256 colors. They ca be converted to PNG with the following command:
+```bash
+cargo run --bin convert -- game/thechain/fostral/harmony.pal my_dir/harmony.png
+```
+The image can be edited and then converted back to a palette:
+```bash
+cargo run --bin convert -- my_dir/harmony.png my_dir/harmony-new.pal
+```
 
 ## Technonolgy
 
