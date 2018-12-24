@@ -19,7 +19,7 @@ impl Power {
 pub struct TerrainConfig {
     pub shadow_offset: u8,
     pub height_shift: u8,
-    pub colors: Range<u8>,
+    pub colors: Range<u8>, // note: actually, this is inclusive range
 }
 
 pub struct LevelConfig {

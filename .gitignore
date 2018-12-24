@@ -1,3 +1,4 @@
 /target
 /.cargo
 /config/settings.ron
+.fuse_hidden*

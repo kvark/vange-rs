@@ -27,28 +27,6 @@ pub struct SurfaceData<R: gfx::Resources> {
     pub meta: (gfx::handle::ShaderResourceView<R, u32>, gfx::handle::Sampler<R>),
 }
 
-struct MaterialParams {
-    dx: f32,
-    sd: f32,
-    jj: f32,
-}
-
-const NUM_MATERIALS: usize = 2;
-const TERRAIN_MATERIAL: [usize; level::NUM_TERRAINS] = [1, 0, 0, 0, 0, 0, 0, 0];
-const MATERIALS: [MaterialParams; NUM_MATERIALS] = [
-    MaterialParams {
-        dx: 1.0,
-        sd: 1.0,
-        jj: 1.0,
-    },
-    MaterialParams {
-        dx: 5.0,
-        sd: 1.25,
-        jj: 0.5,
-    },
-];
-const H_CORRECTION: usize = 1;
-const SHADOW_DEPTH: usize = 0x180; // each 0x100 is 1 voxel/step
 const MAX_TEX_HEIGHT: i32 = 4096;
 
 const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
@@ -117,8 +95,9 @@ gfx_defines!{
         terr_constants: gfx::ConstantBuffer<TerrainConstants> = "c_Locals",
         height: gfx::TextureSampler<f32> = "t_Height",
         meta: gfx::TextureSampler<u32> = "t_Meta",
+        flood: gfx::TextureSampler<f32> = "t_Flood",
         palette: gfx::TextureSampler<[f32; 4]> = "t_Palette",
-        table: gfx::TextureSampler<f32> = "t_Table",
+        table: gfx::TextureSampler<[u32; 4]> = "t_Table",
         out_color: gfx::RenderTarget<ColorFormat> = "Target0",
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
     }
@@ -283,58 +262,15 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
 ) -> Render<R> {
     use gfx::{format, texture as tex};
 
-    let mut light_clr_material = [[0; 0x200]; NUM_MATERIALS];
-    {
-        let dx_scale = 8.0;
-        let sd_scale = 256f32 / SHADOW_DEPTH as f32;
-        for (lcm, mat) in light_clr_material.iter_mut().zip(MATERIALS.iter()) {
-            let dx = mat.dx * dx_scale;
-            let sd = mat.sd * sd_scale;
-            for (i, out) in lcm.iter_mut().enumerate() {
-                let jj = mat.jj * (i as f32 - 256.0);
-                let v = (dx * sd - jj) / ((1.0 + sd * sd) * (dx * dx + jj * jj)).sqrt();
-                *out = (v.max(0.0).min(1.0) * 255.0).round() as u8;
-            }
-        }
-    }
-    // This table has 2 lines 0x200 width each, on each layer
-    // of a layered texture, where layer = terrain ID.
-    // First line corresponds to `lightCLR` table of the original,
-    // which is computed in `light_clr_material` here.
-    // Second line corresponds to `palCLR` of the original.
-    let mut color_table = [[0; 0x400]; level::NUM_TERRAINS];
-    for (ct, (terr, &mid)) in color_table
-        .iter_mut()
-        .zip(level.terrains.iter().zip(TERRAIN_MATERIAL.iter()))
-    {
-        for (c, lcm) in ct[0x000 .. 0x200]
-            .iter_mut()
-            .zip(light_clr_material[mid].iter())
-        {
-            *c = *lcm;
-        }
-        for c in ct[0x200 .. 0x300].iter_mut() {
-            *c = terr.colors.start;
-        }
-        let color_num = (terr.colors.end - terr.colors.start) as usize;
-        if mid == 0 {
-            // ground
-            for (j, c) in ct[0x300 .. 0x400].iter_mut().enumerate() {
-                //TODO: separate case for the first terrain type
-                *c = terr.colors.start + ((j * color_num + 0x7F) / 0xFF) as u8;
-            }
-        } else {
-            // water
-            let d = (0xFF - level.flood_map[0] as usize) >> H_CORRECTION;
-            for c in ct[0x400 - d .. 0x400].iter_mut() {
-                *c = terr.colors.end;
-            }
-            for (j, c) in ct[0x300 .. 0x400 - d].iter_mut().enumerate() {
-                let v = ((j as f32) * 1.25 * (color_num as f32) / (255.0 - d as f32) - 0.25 * (color_num as f32)).round().max(0.0);
-                *c = terr.colors.start + (v as u8);
-            }
-        }
-    }
+    let terrrain_table = level.terrains
+        .iter()
+        .map(|terr| [
+            terr.shadow_offset,
+            terr.height_shift,
+            terr.colors.start,
+            terr.colors.end,
+        ])
+        .collect::<Vec<_>>();
 
     let real_height = if level.size.1 >= MAX_TEX_HEIGHT {
         assert_eq!(level.size.1 % MAX_TEX_HEIGHT, 0);
@@ -349,12 +285,6 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         num_layers as tex::Size,
         tex::AaMode::Single,
     );
-    let table_kind = tex::Kind::D2Array(
-        0x200,
-        2,
-        level::NUM_TERRAINS as tex::Size,
-        tex::AaMode::Single,
-    );
     let height_chunks: Vec<_> = level
         .height
         .chunks((level.size.0 * real_height) as usize)
@@ -363,16 +293,26 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         .meta
         .chunks((level.size.0 * real_height) as usize)
         .collect();
-    let table_chunks: Vec<_> = color_table.iter().map(|t| &t[..]).collect();
+
     let (_, height) = factory
         .create_texture_immutable::<(format::R8, format::Unorm)>(kind, tex::Mipmap::Provided, &height_chunks)
         .unwrap();
     let (_, meta) = factory
         .create_texture_immutable::<(format::R8, format::Uint)>(kind, tex::Mipmap::Provided, &meta_chunks)
         .unwrap();
+    let (_, flood) = factory
+        .create_texture_immutable::<(format::R8, format::Unorm)>(
+            tex::Kind::D1(level.size.1 as _),
+            tex::Mipmap::Provided,
+            &[&level.flood_map],
+        ).unwrap();
     let (_, table) = factory
-        .create_texture_immutable::<(format::R8, format::Unorm)>(table_kind, tex::Mipmap::Provided, &table_chunks)
-        .unwrap();
+        .create_texture_immutable::<(format::R8_G8_B8_A8, format::Uint)>(
+            tex::Kind::D1(level::NUM_TERRAINS as _),
+            tex::Mipmap::Provided,
+            &[&terrrain_table],
+        ).unwrap();
+
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale,
         tex::WrapMode::Tile,
@@ -381,8 +321,12 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         tex::FilterMethod::Scale,
         tex::WrapMode::Tile,
     ));
-    let sm_table = factory.create_sampler(tex::SamplerInfo::new(
+    let sm_flood = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Bilinear,
+        tex::WrapMode::Tile,
+    ));
+    let sm_table = factory.create_sampler(tex::SamplerInfo::new(
+        tex::FilterMethod::Scale,
         tex::WrapMode::Clamp,
     ));
 
@@ -423,6 +367,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             globals: globals.clone(),
             height: (height, sm_height),
             meta: (meta, sm_meta),
+            flood: (flood, sm_flood),
             palette,
             table: (table, sm_table),
             out_color: targets.color.clone(),
@@ -613,7 +558,7 @@ impl<R: gfx::Resources> Render<R> {
             .create_texture_immutable::<gfx::format::Srgba8>(tex::Kind::D1(0x100), tex::Mipmap::Provided, &[data])
             .unwrap();
         let sampler = factory.create_sampler(tex::SamplerInfo::new(
-            tex::FilterMethod::Scale,
+            tex::FilterMethod::Bilinear,
             tex::WrapMode::Clamp,
         ));
         (view, sampler)
