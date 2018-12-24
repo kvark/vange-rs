@@ -24,7 +24,7 @@ pub const HEIGHT_SCALE: u32 = 255;
 
 pub struct Level {
     pub size: (i32, i32),
-    pub flood_map: Vec<u32>,
+    pub flood_map: Vec<u8>,
     pub height: Vec<u8>,
     pub meta: Vec<u8>,
     pub palette: [[u8; 4]; 0x100],
@@ -210,7 +210,7 @@ fn report_time(start: Instant) {
     );
 }
 
-pub fn load_flood(config: &LevelConfig) -> Vec<u32> {
+pub fn load_flood(config: &LevelConfig) -> Vec<u8> {
     let size = (config.size.0.as_value(), config.size.1.as_value());
 
     let instant = Instant::now();
@@ -234,7 +234,7 @@ pub fn load_flood(config: &LevelConfig) -> Vec<u32> {
         let mut vpr = BufReader::new(vpr_file);
         vpr.seek(SeekFrom::Start(flood_offset)).unwrap();
         (0 .. flood_size)
-            .map(|_| vpr.read_u32::<E>().unwrap())
+            .map(|_| vpr.read_u32::<E>().unwrap() as u8)
             .collect()
     };
 

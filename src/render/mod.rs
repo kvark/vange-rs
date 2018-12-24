@@ -97,6 +97,7 @@ gfx_defines!{
         terr_constants: gfx::ConstantBuffer<TerrainConstants> = "c_Locals",
         height: gfx::TextureSampler<f32> = "t_Height",
         meta: gfx::TextureSampler<u32> = "t_Meta",
+        flood: gfx::TextureSampler<f32> = "t_Flood",
         palette: gfx::TextureSampler<[f32; 4]> = "t_Palette",
         table: gfx::TextureSampler<f32> = "t_Table",
         out_color: gfx::RenderTarget<ColorFormat> = "Target0",
@@ -330,6 +331,9 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     let (_, meta) = factory
         .create_texture_immutable::<(format::R8, format::Uint)>(kind, tex::Mipmap::Provided, &meta_chunks)
         .unwrap();
+    let (_, flood) = factory
+        .create_texture_immutable::<(format::R8, format::Unorm)>(tex::Kind::D1(level.size.1 as _), tex::Mipmap::Provided, &[&level.flood_map])
+        .unwrap();
     let (_, table) = factory
         .create_texture_immutable::<(format::R8, format::Unorm)>(table_kind, tex::Mipmap::Provided, &table_chunks)
         .unwrap();
@@ -340,6 +344,10 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     let sm_meta = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale,
         tex::WrapMode::Tile,
+    ));
+    let sm_flood = factory.create_sampler(tex::SamplerInfo::new(
+        tex::FilterMethod::Scale,
+        tex::WrapMode::Clamp,
     ));
     let sm_table = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Bilinear,
@@ -383,6 +391,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             globals: globals.clone(),
             height: (height, sm_height),
             meta: (meta, sm_meta),
+            flood: (flood, sm_flood),
             palette,
             table: (table, sm_table),
             out_color: targets.color.clone(),

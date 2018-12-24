@@ -11,6 +11,9 @@ uniform sampler1D t_Palette;
 // Information about materials. Each row has palette start, palette end, dx_scale, sd_scale, jj_scale
 //uniform sampler2D t_Material;
 
+// Flood map has the water level per Y.
+uniform sampler1D t_Flood;
+
 const float c_HorFactor = 0.5; //H_CORRECTION
 const float c_DiffuseScale = 8.0;
 const float c_ShadowDepthScale = 2.0 / 3.0;
