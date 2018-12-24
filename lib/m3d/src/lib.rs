@@ -1,8 +1,6 @@
 extern crate byteorder;
 #[macro_use]
 extern crate log;
-extern crate obj;
-extern crate ron;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;

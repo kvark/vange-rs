@@ -1,7 +1,7 @@
 extern crate env_logger;
 extern crate getopts;
-extern crate image;
 extern crate m3d;
+extern crate obj;
 extern crate png;
 extern crate ron;
 #[macro_use]
@@ -16,14 +16,6 @@ mod model_obj;
 use std::io::BufWriter;
 use std::fs::{File, read as fs_read};
 use std::path::PathBuf;
-
-fn import_image(path: &PathBuf) -> vangers::level::LevelData {
-    println!("\tLoading the image...");
-    let image = image::open(path).unwrap().to_rgba();
-    println!("\tImporting the level...");
-    let size = (image.width() as i32, image.height() as i32);
-    vangers::level::LevelData::import(&image.into_raw(), size)
-}
 
 pub fn save_tiff(path: &PathBuf, layers: vangers::level::LevelLayers) {
     let images = [
@@ -113,18 +105,6 @@ fn main() {
             println!("\tSaving M3D...");
             model.save(File::create(&dst_path).unwrap());
         }
-        ("ini", "bmp") | ("ini", "png") | ("ini", "tga") => {
-            println!("\tLoading the level...");
-            let config = vangers::level::LevelConfig::load(&src_path);
-            let level = vangers::level::load(&config);
-            let data = level.export();
-            println!("\tSaving the image...");
-            image::save_buffer(
-                &dst_path, &data,
-                level.size.0 as u32, level.size.1 as u32,
-                image::ColorType::RGBA(8),
-            ).unwrap();
-        }
         ("ini", "ron") => {
             println!("\tLoading the level...");
             let config = vangers::level::LevelConfig::load(&src_path);
@@ -145,16 +125,6 @@ fn main() {
             let level = vangers::level::load(&config);
             println!("\tSaving VMP...");
             vangers::level::LevelData::from(level).save_vmp(&dst_path);
-        }
-        ("bmp", "vmc") | ("png", "vmc") | ("tga", "vmc") => {
-            let level = import_image(&src_path);
-            println!("\tSaving VMC...");
-            level.save_vmc(&dst_path);
-        }
-        ("bmp", "vmp") | ("png", "vmp") | ("tga", "vmp") => {
-            let level = import_image(&src_path);
-            println!("\tSaving VMP...");
-            level.save_vmp(&dst_path);
         }
         ("ron", "vmp") => {
             println!("\tLoading multiple PNGs...");
