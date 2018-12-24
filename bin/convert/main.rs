@@ -2,6 +2,7 @@ extern crate env_logger;
 extern crate getopts;
 extern crate image;
 extern crate m3d;
+extern crate obj;
 extern crate png;
 extern crate ron;
 #[macro_use]
