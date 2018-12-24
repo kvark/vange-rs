@@ -10,6 +10,7 @@ extern crate tiff;
 extern crate vangers;
 
 mod level_png;
+mod model_obj;
 
 
 use std::io::BufWriter;
@@ -104,11 +105,11 @@ fn main() {
             println!("\tLoading M3D...");
             let raw = m3d::FullModel::load(file);
             println!("\tExporting OBJ data...");
-            raw.export_obj(&dst_path);
+            model_obj::export(raw, &dst_path);
         }
         ("ron", "md3") => {
             println!("\tImporting OBJ data...");
-            let model = m3d::FullModel::import_obj(&src_path);
+            let model = model_obj::import(&src_path);
             println!("\tSaving M3D...");
             model.save(File::create(&dst_path).unwrap());
         }
@@ -129,7 +130,7 @@ fn main() {
             let config = vangers::level::LevelConfig::load(&src_path);
             let layers = vangers::level::load_layers(&config);
             println!("\tSaving multiple PNGs...");
-            level_png::save_multi_png(&dst_path, layers);
+            level_png::save(&dst_path, layers);
         }
         ("ini", "tiff") => {
             println!("\tLoading the level...");
@@ -157,7 +158,7 @@ fn main() {
         }
         ("ron", "vmp") => {
             println!("\tLoading multiple PNGs...");
-            let layers = level_png::load_multi_png(&src_path);
+            let layers = level_png::load(&src_path);
             println!("\tSaving VMP...");
             let level = vangers::level::LevelData::import_layers(layers);
             level.save_vmp(&dst_path);

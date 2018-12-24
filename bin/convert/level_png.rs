@@ -13,7 +13,7 @@ struct MultiPng {
     material: String,
 }
 
-pub fn save_multi_png(path: &PathBuf, layers: LevelLayers) {
+pub fn save(path: &PathBuf, layers: LevelLayers) {
     use png::Parameter;
     use std::io::Write;
 
@@ -63,7 +63,7 @@ pub fn save_multi_png(path: &PathBuf, layers: LevelLayers) {
     }
 }
 
-pub fn load_multi_png(path: &PathBuf) -> LevelLayers {
+pub fn load(path: &PathBuf) -> LevelLayers {
     let level_file = File::open(path).unwrap();
     let mp = ron::de::from_reader::<_, MultiPng>(level_file).unwrap();
     let mut layers = LevelLayers::new(mp.size);
