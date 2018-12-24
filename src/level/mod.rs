@@ -439,15 +439,18 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
     level.height
         .chunks_mut(size.0 as _)
         .zip(level.meta.chunks_mut(size.0 as _))
-        .zip(st_table.iter())
+        .zip(st_table.iter().zip(&sz_table))
         .collect::<Vec<_>>()
         .par_chunks_mut(64)
         .for_each(|source_group| {
             //Note: a separate file per group is required
-            let mut vmc = BufReader::new(File::open(path).unwrap());
-            for &mut ((ref mut h_row, ref mut m_row), offset) in source_group {
+            let mut vmc = File::open(path).unwrap();
+            let data_size: i16 = source_group.iter().map(|(_, (_, &size))| size).max().unwrap();
+            let mut data = vec![0u8; data_size as usize];
+            for &mut ((ref mut h_row, ref mut m_row), (offset, &size)) in source_group {
                 vmc.seek(SeekFrom::Start(*offset as u64)).unwrap();
-                splay.expand(&mut vmc, h_row, m_row);
+                vmc.read(&mut data[.. size as usize]).unwrap();
+                splay.expand(&data[.. size as usize], h_row, m_row);
             }
         });
 
