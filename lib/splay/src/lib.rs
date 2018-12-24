@@ -42,12 +42,13 @@ impl Splay {
         512 * 2 * 4
     }
 
-    fn decompress<I: Read, F: Fn(u8, u8) -> u8>(
+    fn decompress<F: Fn(u8, u8) -> u8>(
         tree: &[i32],
-        input: &mut I,
+        input: &[u8],
         output: &mut [u8],
         fun: F,
-    ) {
+    ) -> usize {
+        let mut k_input = 0;
         let mut last_char = 0u8;
         let mut bit = 0;
         let mut cur = 0u8;
@@ -55,7 +56,8 @@ impl Splay {
             let mut code = 1i32;
             while code > 0 {
                 bit = if bit == 0 {
-                    cur = input.read_u8().unwrap();
+                    cur = input[k_input];
+                    k_input += 1;
                     7
                 } else {
                     bit - 1
@@ -66,6 +68,7 @@ impl Splay {
             last_char = fun(last_char, -code as u8);
             *out = last_char;
         }
+        k_input
     }
 
     #[allow(dead_code)]
@@ -98,14 +101,15 @@ impl Splay {
         }
     }
 
-    pub fn expand<I: Read>(
+    pub fn expand(
         &self,
-        input: &mut I,
+        input: &[u8],
         output1: &mut [u8],
         output2: &mut [u8],
     ) {
-        Self::decompress(&self.tree1, input, output1, |b, c| b.wrapping_add(c));
-        Self::decompress(&self.tree2, input, output2, |b, c| b ^ c);
+        let off1 = Self::decompress(&self.tree1, input, output1, |b, c| b.wrapping_add(c));
+        let off2 = Self::decompress(&self.tree2, &input[off1 ..], output2, |b, c| b ^ c);
+        assert_eq!(off1 + off2, input.len());
     }
 
     pub fn compress_trivial<O: Write>(
