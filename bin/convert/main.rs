@@ -13,7 +13,7 @@ mod level_png;
 
 
 use std::io::BufWriter;
-use std::fs::File;
+use std::fs::{File, read as fs_read};
 use std::path::PathBuf;
 
 fn import_image(path: &PathBuf) -> vangers::level::LevelData {
@@ -69,7 +69,10 @@ pub fn save_tiff(path: &PathBuf, layers: vangers::level::LevelLayers) {
 
 
 fn main() {
+    use png::Parameter;
     use std::env;
+    use std::io::Write;
+
     env_logger::init().unwrap();
 
     let args: Vec<_> = env::args().collect();
@@ -158,6 +161,38 @@ fn main() {
             println!("\tSaving VMP...");
             let level = vangers::level::LevelData::import_layers(layers);
             level.save_vmp(&dst_path);
+        }
+        ("pal", "png") => {
+            println!("Converting palette to PNG...");
+            let data = fs_read(&src_path).unwrap();
+            let file = File::create(&dst_path).unwrap();
+            let mut encoder = png::Encoder::new(file, 0x100, 1);
+            png::ColorType::RGB.set_param(&mut encoder);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&data)
+                .unwrap();
+        }
+        ("png", "pal") => {
+            println!("Converting PNG to palette...");
+            let file = File::open(&src_path).unwrap();
+            let decoder = png::Decoder::new(file);
+            let (info, mut reader) = decoder.read_info().unwrap();
+            assert_eq!((info.width, info.height), (0x100, 1));
+            let stride = match info.color_type {
+                png::ColorType::RGB => 3,
+                png::ColorType::RGBA => 4,
+                _ => panic!("non-RGB image provided"),
+            };
+            let mut data = vec![0u8; stride * 0x100];
+            assert_eq!(info.bit_depth, png::BitDepth::Eight);
+            assert_eq!(info.buffer_size(), data.len());
+            reader.next_frame(&mut data).unwrap();
+            let mut output = File::create(&dst_path).unwrap();
+            for chunk in data.chunks(stride) {
+                output.write(&chunk[..3]).unwrap();
+            }
         }
         (in_ext, out_ext) => {
             panic!("Don't know how to convert {} to {}", in_ext, out_ext);
