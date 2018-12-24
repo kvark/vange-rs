@@ -9,6 +9,8 @@ extern crate serde;
 extern crate tiff;
 extern crate vangers;
 
+mod level_png;
+
 
 use std::io::BufWriter;
 use std::fs::File;
@@ -63,112 +65,6 @@ pub fn save_tiff(path: &PathBuf, layers: vangers::level::LevelLayers) {
 
     let file = BufWriter::new(File::create(path).unwrap());
     tiff::save(file, &images).unwrap();
-}
-
-#[derive(Serialize, Deserialize)]
-struct MultiPng {
-    size: (u32, u32),
-    height: String,
-    material: String,
-}
-
-pub fn save_multi_png(path: &PathBuf, layers: vangers::level::LevelLayers) {
-    use png::Parameter;
-    use std::io::Write;
-
-    let mp = MultiPng {
-        size: layers.size,
-        height: "height.png".to_string(),
-        material: "material.png".to_string(),
-    };
-    let string = ron::ser::to_string_pretty(&mp, ron::ser::PrettyConfig::default()).unwrap();
-    let mut level_file = File::create(path).unwrap();
-    write!(level_file, "{}", string).unwrap();
-    let mut data = Vec::with_capacity(3 * (layers.size.0 as usize) * layers.size.1 as usize);
-
-    {
-        println!("\t\t{}...", mp.height);
-        let file = File::create(path.with_file_name(mp.height)).unwrap();
-        let mut encoder = png::Encoder::new(file, layers.size.0 as u32, layers.size.1 as u32);
-        png::ColorType::RGB.set_param(&mut encoder);
-        data.clear();
-        for ((&h0, &h1), &delta) in layers.het0
-            .iter()
-            .zip(&layers.het1)
-            .zip(&layers.delta)
-        {
-            data.extend_from_slice(&[h0, h1, delta]);
-        }
-        encoder
-            .write_header()
-            .unwrap()
-            .write_image_data(&data)
-            .unwrap();
-    }
-    {
-        println!("\t\t{}...", mp.material);
-        let file = File::create(path.with_file_name(mp.material)).unwrap();
-        let mut encoder = png::Encoder::new(file, layers.size.0 as u32, layers.size.1 as u32);
-        png::ColorType::RGB.set_param(&mut encoder);
-        data.clear();
-        for (&m0, &m1) in layers.mat0.iter().zip(&layers.mat1) {
-            data.extend_from_slice(&[m0 << 4, m1 << 4, 0, m0 & 0xF0, m1 & 0xF0, 0]);
-        }
-        encoder
-            .write_header()
-            .unwrap()
-            .write_image_data(&data)
-            .unwrap();
-    }
-}
-
-pub fn load_multi_png(path: &PathBuf) -> vangers::level::LevelLayers {
-    let level_file = File::open(path).unwrap();
-    let mp = ron::de::from_reader::<_, MultiPng>(level_file).unwrap();
-    let mut layers = vangers::level::LevelLayers::new(mp.size);
-    {
-        println!("\t\t{}...", mp.height);
-        let file = File::open(path.with_file_name(mp.height)).unwrap();
-        let decoder = png::Decoder::new(file);
-        let (info, mut reader) = decoder.read_info().unwrap();
-        assert_eq!((info.width, info.height), mp.size);
-        let stride = match info.color_type {
-            png::ColorType::RGB => 3,
-            png::ColorType::RGBA => 4,
-            _ => panic!("non-RGB image provided"),
-        };
-        let mut data = vec![0u8; stride * (layers.size.0 as usize) * (layers.size.1 as usize)];
-        assert_eq!(info.bit_depth, png::BitDepth::Eight);
-        assert_eq!(info.buffer_size(), data.len());
-        reader.next_frame(&mut data).unwrap();
-        for chunk in data.chunks(stride) {
-            layers.het0.push(chunk[0]);
-            layers.het1.push(chunk[1]);
-            layers.delta.push(chunk[2]);
-        }
-    }
-    {
-        println!("\t\t{}...", mp.material);
-        let file = File::open(path.with_file_name(mp.material)).unwrap();
-        let decoder = png::Decoder::new(file);
-        let (info, mut reader) = decoder.read_info().unwrap();
-        assert_eq!((info.width, info.height), mp.size);
-        let stride = match info.color_type {
-            png::ColorType::RGB => 3,
-            png::ColorType::RGBA => 4,
-            _ => panic!("non-RGB image provided"),
-        };
-        let mut data = vec![0u8; stride * (layers.size.0 as usize) * (layers.size.1 as usize)];
-        assert_eq!(info.bit_depth, png::BitDepth::Eight);
-        assert_eq!(info.buffer_size(), data.len());
-        reader.next_frame(&mut data).unwrap();
-        for chunk in data.chunks(stride + stride) {
-            layers.mat0.push((chunk[0] >> 4) | chunk[0 + stride]);
-            layers.mat1.push((chunk[1] >> 4) | chunk[1 + stride]);
-        }
-    }
-
-    layers
 }
 
 
@@ -230,7 +126,7 @@ fn main() {
             let config = vangers::level::LevelConfig::load(&src_path);
             let layers = vangers::level::load_layers(&config);
             println!("\tSaving multiple PNGs...");
-            save_multi_png(&dst_path, layers);
+            level_png::save_multi_png(&dst_path, layers);
         }
         ("ini", "tiff") => {
             println!("\tLoading the level...");
@@ -258,7 +154,7 @@ fn main() {
         }
         ("ron", "vmp") => {
             println!("\tLoading multiple PNGs...");
-            let layers = load_multi_png(&src_path);
+            let layers = level_png::load_multi_png(&src_path);
             println!("\tSaving VMP...");
             let level = vangers::level::LevelData::import_layers(layers);
             level.save_vmp(&dst_path);
