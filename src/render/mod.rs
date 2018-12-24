@@ -27,28 +27,8 @@ pub struct SurfaceData<R: gfx::Resources> {
     pub meta: (gfx::handle::ShaderResourceView<R, u32>, gfx::handle::Sampler<R>),
 }
 
-struct MaterialParams {
-    dx: f32,
-    sd: f32,
-    jj: f32,
-}
-
-const NUM_MATERIALS: usize = 2;
 const TERRAIN_MATERIAL: [usize; level::NUM_TERRAINS] = [1, 0, 0, 0, 0, 0, 0, 0];
-const MATERIALS: [MaterialParams; NUM_MATERIALS] = [
-    MaterialParams {
-        dx: 1.0,
-        sd: 1.0,
-        jj: 1.0,
-    },
-    MaterialParams {
-        dx: 5.0,
-        sd: 1.25,
-        jj: 0.5,
-    },
-];
 const H_CORRECTION: usize = 1;
-const SHADOW_DEPTH: usize = 0x180; // each 0x100 is 1 voxel/step
 const MAX_TEX_HEIGHT: i32 = 4096;
 
 const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
@@ -283,20 +263,6 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
 ) -> Render<R> {
     use gfx::{format, texture as tex};
 
-    let mut light_clr_material = [[0; 0x200]; NUM_MATERIALS];
-    {
-        let dx_scale = 8.0;
-        let sd_scale = 256f32 / SHADOW_DEPTH as f32;
-        for (lcm, mat) in light_clr_material.iter_mut().zip(MATERIALS.iter()) {
-            let dx = mat.dx * dx_scale;
-            let sd = mat.sd * sd_scale;
-            for (i, out) in lcm.iter_mut().enumerate() {
-                let jj = mat.jj * (i as f32 - 256.0);
-                let v = (dx * sd - jj) / ((1.0 + sd * sd) * (dx * dx + jj * jj)).sqrt();
-                *out = (v.max(0.0).min(1.0) * 255.0).round() as u8;
-            }
-        }
-    }
     // This table has 2 lines 0x200 width each, on each layer
     // of a layered texture, where layer = terrain ID.
     // First line corresponds to `lightCLR` table of the original,
@@ -307,12 +273,6 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         .iter_mut()
         .zip(level.terrains.iter().zip(TERRAIN_MATERIAL.iter()))
     {
-        for (c, lcm) in ct[0x000 .. 0x200]
-            .iter_mut()
-            .zip(light_clr_material[mid].iter())
-        {
-            *c = *lcm;
-        }
         for c in ct[0x200 .. 0x300].iter_mut() {
             *c = terr.colors.start;
         }
