@@ -285,10 +285,21 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         num_layers as tex::Size,
         tex::AaMode::Single,
     );
-    let height_chunks: Vec<_> = level.height
-        .chunks((level.size.0 * real_height) as usize)
-        .collect();
-    let meta_chunks: Vec<_> = level.meta
+
+    let num_height_mipmaps = 4; //TODO: move to the config
+    let zero = vec![0; (level.size.0 * real_height) as usize / 4];
+    let mut height_data = Vec::new();
+    for chunk in level.height.chunks((level.size.0 * real_height) as usize) {
+        height_data.push(chunk);
+        for mip in 1 .. num_height_mipmaps {
+            let w = level.size.0 as usize >> mip;
+            let h = real_height as usize >> mip;
+            height_data.push(&zero[.. w * h]);
+        }
+    }
+
+    let meta_data: Vec<_> = level
+        .meta
         .chunks((level.size.0 * real_height) as usize)
         .collect();
     let flood_height = real_height >> level.flood_section_power;
@@ -297,10 +308,10 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         .collect();
 
     let (_, height) = factory
-        .create_texture_immutable::<(format::R8, format::Unorm)>(kind, tex::Mipmap::Provided, &height_chunks)
+        .create_texture_immutable::<(format::R8, format::Unorm)>(kind, tex::Mipmap::Provided, &height_data)
         .unwrap();
     let (_, meta) = factory
-        .create_texture_immutable::<(format::R8, format::Uint)>(kind, tex::Mipmap::Provided, &meta_chunks)
+        .create_texture_immutable::<(format::R8, format::Uint)>(kind, tex::Mipmap::Provided, &meta_data)
         .unwrap();
     let (_, flood) = factory
         .create_texture_immutable::<(format::R8, format::Unorm)>(
