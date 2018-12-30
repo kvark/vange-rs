@@ -69,7 +69,7 @@ gfx_defines!{
     }
 
     vertex TerrainVertex {
-        pos: [i8; 4] = "a_Pos",
+        pos: [f32; 4] = "a_Pos",
     }
 
     constant SurfaceConstants {
@@ -121,6 +121,12 @@ gfx_defines!{
         out_color: gfx::RenderTarget<ColorFormat> = "Target0",
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
     }
+
+    pipeline terrain_mip {
+        vbuf: gfx::VertexBuffer<TerrainVertex> = (),
+        height: gfx::TextureSampler<f32> = "t_HeightLayer",
+        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
+    }
 }
 
 enum Terrain<R: gfx::Resources> {
@@ -137,6 +143,8 @@ pub struct Render<R: gfx::Resources> {
     terrain_data: terrain::Data<R>,
     terrain_slice: gfx::Slice<R>,
     terrain_scale: [f32; 4],
+    terrain_mip_pso: gfx::PipelineState<R, terrain_mip::Meta>,
+    terrain_mip_sampler: gfx::handle::Sampler<R>,
     object_pso: gfx::PipelineState<R, object::Meta>,
     object_data: object::Data<R>,
     pub light_config: settings::Light,
@@ -330,6 +338,10 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         tex::FilterMethod::Scale,
         tex::WrapMode::Tile,
     ));
+    let sm_height_mip = factory.create_sampler(tex::SamplerInfo::new(
+        tex::FilterMethod::Bilinear,
+        tex::WrapMode::Tile,
+    ));
     let sm_meta = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale,
         tex::WrapMode::Tile,
@@ -351,10 +363,10 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             let screen_space = tessellation.screen_space;
             let (low, high) = Render::create_terrain_tess_psos(factory, screen_space);
             let vertices = [
-                TerrainVertex { pos: [0, 0, 0, 1] },
-                TerrainVertex { pos: [1, 0, 0, 1] },
-                TerrainVertex { pos: [1, 1, 0, 1] },
-                TerrainVertex { pos: [0, 1, 0, 1] },
+                TerrainVertex { pos: [0., 0., 0., 1.] },
+                TerrainVertex { pos: [1., 0., 0., 1.] },
+                TerrainVertex { pos: [1., 1., 0., 1.] },
+                TerrainVertex { pos: [0., 1., 0., 1.] },
             ];
             let (vbuf, mut slice) = factory.create_vertex_buffer_with_slice(&vertices, ());
             let num_instances = if screen_space { 16 * 12 } else { 256 };
@@ -363,11 +375,11 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         } else {
             let pso = Render::create_terrain_ray_pso(factory);
             let vertices = [
-                TerrainVertex { pos: [0, 0, 0, 1] },
-                TerrainVertex { pos: [-1, 0, 0, 0] },
-                TerrainVertex { pos: [0, -1, 0, 0] },
-                TerrainVertex { pos: [1, 0, 0, 0] },
-                TerrainVertex { pos: [0, 1, 0, 0] },
+                TerrainVertex { pos: [0., 0., 0., 1.] },
+                TerrainVertex { pos: [-1., 0., 0., 0.] },
+                TerrainVertex { pos: [0., -1., 0., 0.] },
+                TerrainVertex { pos: [1., 0., 0., 0.] },
+                TerrainVertex { pos: [0., 1., 0., 0.] },
             ];
             let indices: &[u16] = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
             let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
@@ -389,6 +401,22 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         (terrain, slice, data)
     };
 
+    let terrain_mip_pso = {
+        let shaders = read_shaders("terrain_mip", false, &[])
+            .unwrap();
+        let program = factory
+            .link_program(&shaders.vs, &shaders.fs)
+            .unwrap();
+        factory
+            .create_pipeline_from_program(
+                &program,
+                gfx::Primitive::TriangleList,
+                gfx::state::Rasterizer::new_fill(),
+                terrain_mip::new(),
+            )
+            .unwrap()
+    };
+
     Render {
         terrain,
         terrain_slice,
@@ -399,6 +427,8 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             level::HEIGHT_SCALE as f32,
             num_layers as f32,
         ],
+        terrain_mip_pso,
+        terrain_mip_sampler: sm_height_mip,
         object_pso: Render::create_object_pso(factory),
         object_data: object::Data {
             vbuf: factory.create_vertex_buffer(&[]), //dummy

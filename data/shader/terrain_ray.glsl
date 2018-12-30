@@ -11,10 +11,10 @@ uniform c_Globals {
 
 #ifdef SHADER_VS
 
-attribute ivec4 a_Pos;
+attribute vec4 a_Pos;
 
 void main() {
-    gl_Position = u_ViewProj * vec4(a_Pos);
+    gl_Position = u_ViewProj * a_Pos;
 }
 #endif //VS
 

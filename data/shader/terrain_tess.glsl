@@ -12,7 +12,7 @@ uniform c_Globals {
 
 #ifdef SHADER_VS
 
-attribute ivec4 a_Pos;
+attribute vec4 a_Pos;
 
 out block {
     vec2 pos;
@@ -44,13 +44,13 @@ void main() {
     vec3 ndc;
     if (slice_id.y < slice_counts.y) {
         vec2 chunk_size = 2.0 / vec2(slice_counts);
-        ndc = vec3(1.0 - (vec2(slice_id) + vec2(a_Pos.xy)) * chunk_size, -1.0);
+        ndc = vec3(1.0 - (vec2(slice_id) + a_Pos.xy) * chunk_size, -1.0);
     } else {
         uint extra_instances = 16U * 2U;
         uvec2 extra_counts = uvec2(6U, 5U);
         uint extra_offset = uint(gl_InstanceID) - slice_counts.x * slice_counts.y;
         uvec2 extra_id = uvec2(extra_offset % extra_counts.x, extra_offset / extra_counts.x);
-        vec2 point_ratio = (vec2(extra_id) + vec2(a_Pos.xy)) / vec2(extra_counts);
+        vec2 point_ratio = (vec2(extra_id) + a_Pos.xy) / vec2(extra_counts);
         // figure out the ground point in NDC space
         vec4 ground_homo = u_ViewProj * vec4(u_CameraPos.xy, 0.0, 1.0);
         vec3 ground_ndc = ground_homo.xyz / ground_homo.w;
@@ -63,7 +63,7 @@ void main() {
     vec2 chunk_size = 2.0 * u_TextureScale.xy / float(axis_chunks);
     vec2 chunk_id = vec2(uint(gl_InstanceID) / axis_chunks, uint(gl_InstanceID) % axis_chunks);
     vec2 chunk_offset = (chunk_id - axis_chunks/2U) * chunk_size;
-    Out.pos = chunk_offset + vec2(a_Pos.xy) * chunk_size;
+    Out.pos = chunk_offset + a_Pos.xy * chunk_size;
     #endif
 }
 #endif //VS
@@ -107,7 +107,7 @@ void main() {
 
     Surface suf = get_surface(pos);
     v_Pos = vec3(pos, HIGH_LEVEL != 0 ? suf.high_alt : suf.low_alt);
-    
+
     gl_Position = u_ViewProj * vec4(v_Pos, 1.0);
 }
 #endif //TEV
