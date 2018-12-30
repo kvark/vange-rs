@@ -59,6 +59,7 @@ const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
 
 pub type ColorFormat = gfx::format::Rgba8; //should be Srgba8
 pub type DepthFormat = gfx::format::DepthStencil;
+type HeightFormat = (gfx::format::R8, gfx::format::Unorm);
 pub type ShapeVertex = [f32; 4];
 
 gfx_defines!{
@@ -125,7 +126,7 @@ gfx_defines!{
     pipeline terrain_mip {
         vbuf: gfx::VertexBuffer<TerrainVertex> = (),
         height: gfx::TextureSampler<f32> = "t_HeightLayer",
-        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
+        out_color: gfx::RenderTarget<HeightFormat> = "Target0",
     }
 }
 
@@ -138,13 +139,54 @@ enum Terrain<R: gfx::Resources> {
     },
 }
 
+struct MipperLayer<R: gfx::Resources> {
+    target: gfx::handle::RenderTargetView<R, HeightFormat>,
+    source: gfx::handle::ShaderResourceView<R, f32>,
+}
+
+struct MaxMipper<R: gfx::Resources> {
+    pso: gfx::PipelineState<R, terrain_mip::Meta>,
+    sampler: gfx::handle::Sampler<R>,
+    layers: Vec<MipperLayer<R>>,
+}
+
+impl<R: gfx::Resources> MaxMipper<R> {
+    fn new<F: gfx::Factory<R>>(factory: &mut F) -> Self {
+        use gfx::texture as tex;
+
+        let shaders = read_shaders("terrain_mip", false, &[])
+            .unwrap();
+        let program = factory
+            .link_program(&shaders.vs, &shaders.fs)
+            .unwrap();
+        let pso = factory
+            .create_pipeline_from_program(
+                &program,
+                gfx::Primitive::TriangleList,
+                gfx::state::Rasterizer::new_fill(),
+                terrain_mip::new(),
+            )
+            .unwrap();
+
+        let sampler = factory.create_sampler(tex::SamplerInfo::new(
+            tex::FilterMethod::Bilinear,
+            tex::WrapMode::Tile,
+        ));
+
+        MaxMipper {
+            pso,
+            sampler,
+            layers: Vec::new(),
+        }
+    }
+}
+
 pub struct Render<R: gfx::Resources> {
     terrain: Terrain<R>,
     terrain_data: terrain::Data<R>,
     terrain_slice: gfx::Slice<R>,
     terrain_scale: [f32; 4],
-    terrain_mip_pso: gfx::PipelineState<R, terrain_mip::Meta>,
-    terrain_mip_sampler: gfx::handle::Sampler<R>,
+    mipper: MaxMipper<R>,
     object_pso: gfx::PipelineState<R, object::Meta>,
     object_data: object::Data<R>,
     pub light_config: settings::Light,
@@ -268,7 +310,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     object_palette: &[[u8; 4]],
     settings: &settings::Render,
 ) -> Render<R> {
-    use gfx::{format, texture as tex};
+    use gfx::texture as tex;
 
     let terrrain_table = level.terrains
         .iter()
@@ -316,19 +358,19 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         .collect();
 
     let (_, height) = factory
-        .create_texture_immutable::<(format::R8, format::Unorm)>(kind, tex::Mipmap::Provided, &height_data)
+        .create_texture_immutable::<HeightFormat>(kind, tex::Mipmap::Provided, &height_data)
         .unwrap();
     let (_, meta) = factory
-        .create_texture_immutable::<(format::R8, format::Uint)>(kind, tex::Mipmap::Provided, &meta_data)
+        .create_texture_immutable::<(gfx::format::R8, gfx::format::Uint)>(kind, tex::Mipmap::Provided, &meta_data)
         .unwrap();
     let (_, flood) = factory
-        .create_texture_immutable::<(format::R8, format::Unorm)>(
+        .create_texture_immutable::<(gfx::format::R8, gfx::format::Unorm)>(
             tex::Kind::D1Array(flood_height as _, num_layers as _),
             tex::Mipmap::Provided,
             &flood_chunks,
         ).unwrap();
     let (_, table) = factory
-        .create_texture_immutable::<(format::R8_G8_B8_A8, format::Uint)>(
+        .create_texture_immutable::<(gfx::format::R8_G8_B8_A8, gfx::format::Uint)>(
             tex::Kind::D1(level::NUM_TERRAINS as _),
             tex::Mipmap::Provided,
             &[&terrrain_table],
@@ -336,10 +378,6 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
 
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
         tex::FilterMethod::Scale,
-        tex::WrapMode::Tile,
-    ));
-    let sm_height_mip = factory.create_sampler(tex::SamplerInfo::new(
-        tex::FilterMethod::Bilinear,
         tex::WrapMode::Tile,
     ));
     let sm_meta = factory.create_sampler(tex::SamplerInfo::new(
@@ -401,22 +439,6 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         (terrain, slice, data)
     };
 
-    let terrain_mip_pso = {
-        let shaders = read_shaders("terrain_mip", false, &[])
-            .unwrap();
-        let program = factory
-            .link_program(&shaders.vs, &shaders.fs)
-            .unwrap();
-        factory
-            .create_pipeline_from_program(
-                &program,
-                gfx::Primitive::TriangleList,
-                gfx::state::Rasterizer::new_fill(),
-                terrain_mip::new(),
-            )
-            .unwrap()
-    };
-
     Render {
         terrain,
         terrain_slice,
@@ -427,8 +449,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             level::HEIGHT_SCALE as f32,
             num_layers as f32,
         ],
-        terrain_mip_pso,
-        terrain_mip_sampler: sm_height_mip,
+        mipper: MaxMipper::new(factory),
         object_pso: Render::create_object_pso(factory),
         object_data: object::Data {
             vbuf: factory.create_vertex_buffer(&[]), //dummy
