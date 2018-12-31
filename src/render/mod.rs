@@ -139,34 +139,61 @@ enum Terrain<R: gfx::Resources> {
     },
 }
 
-struct MipperLayer<R: gfx::Resources> {
+struct TerrainMip<R: gfx::Resources> {
     target: gfx::handle::RenderTargetView<R, HeightFormat>,
-    source: gfx::handle::ShaderResourceView<R, f32>,
+    resource: gfx::handle::ShaderResourceView<R, f32>,
 }
 
 struct MaxMipper<R: gfx::Resources> {
     pso: gfx::PipelineState<R, terrain_mip::Meta>,
     sampler: gfx::handle::Sampler<R>,
-    layers: Vec<MipperLayer<R>>,
+    mips: Vec<Vec<TerrainMip<R>>>,
+    height_per_slice: u16,
 }
 
 impl<R: gfx::Resources> MaxMipper<R> {
-    fn new<F: gfx::Factory<R>>(factory: &mut F) -> Self {
-        use gfx::texture as tex;
-
-        let shaders = read_shaders("terrain_mip", false, &[])
+    fn create_pso<F: gfx::Factory<R>>(
+        factory: &mut F
+    ) -> gfx::PipelineState<R, terrain_mip::Meta> {
+         let shaders = read_shaders("terrain_mip", false, &[])
             .unwrap();
         let program = factory
             .link_program(&shaders.vs, &shaders.fs)
             .unwrap();
-        let pso = factory
+        factory
             .create_pipeline_from_program(
                 &program,
                 gfx::Primitive::TriangleList,
                 gfx::state::Rasterizer::new_fill(),
                 terrain_mip::new(),
             )
-            .unwrap();
+            .unwrap()
+    }
+
+    fn new<F: gfx::Factory<R>>(
+        factory: &mut F, texture: &gfx::handle::Texture<R, gfx::format::R8>
+    ) -> Self {
+        use gfx::texture as tex;
+
+        let info = texture.get_info();
+        let num_slices = info.kind.get_num_slices().unwrap_or(1);
+        let mut mips = Vec::new();
+        for slice in 0 .. num_slices {
+            let mut slice_mips = Vec::with_capacity(info.levels as usize);
+            for level in 0 .. info.levels {
+                slice_mips.push(TerrainMip {
+                    target: factory
+                        .view_texture_as_render_target(texture, level, Some(slice))
+                        .unwrap(),
+                    resource: factory
+                        .view_texture_as_shader_resource::<HeightFormat>(
+                            texture, (level, level), gfx::format::Swizzle::new()
+                        )
+                        .unwrap(),
+                });
+            }
+            mips.push(slice_mips);
+        }
 
         let sampler = factory.create_sampler(tex::SamplerInfo::new(
             tex::FilterMethod::Bilinear,
@@ -174,9 +201,31 @@ impl<R: gfx::Resources> MaxMipper<R> {
         ));
 
         MaxMipper {
-            pso,
+            pso: Self::create_pso(factory),
             sampler,
-            layers: Vec::new(),
+            mips,
+            height_per_slice: info.kind.get_dimensions().1,
+        }
+    }
+
+    fn update<C: gfx::CommandBuffer<R>>(
+        &self,
+        encoder: &mut gfx::Encoder<R, C>,
+        rects: &[gfx::Rect],
+    ) {
+        let mut slice_rects = vec![Vec::new(); self.mips.len()];
+        for r in rects {
+            let mut base_slice = r.y / self.height_per_slice;
+            while (r.y + r.h) > base_slice * self.height_per_slice {
+                let cut_bot = r.y.max(base_slice * self.height_per_slice);
+                let cut_top = (r.y + r.h).min((base_slice + 1) * self.height_per_slice);
+                slice_rects[base_slice as usize].push(gfx::Rect {
+                    y: cut_bot,
+                    h: cut_top - cut_bot,
+                    .. *r
+                });
+                base_slice += 1;
+            }
         }
     }
 }
@@ -187,6 +236,7 @@ pub struct Render<R: gfx::Resources> {
     terrain_slice: gfx::Slice<R>,
     terrain_scale: [f32; 4],
     mipper: MaxMipper<R>,
+    terrain_dirty_rects: Vec<gfx::Rect>,
     object_pso: gfx::PipelineState<R, object::Meta>,
     object_data: object::Data<R>,
     pub light_config: settings::Light,
@@ -310,7 +360,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     object_palette: &[[u8; 4]],
     settings: &settings::Render,
 ) -> Render<R> {
-    use gfx::texture as tex;
+    use gfx::{memory as mem, texture as tex};
 
     let terrrain_table = level.terrains
         .iter()
@@ -357,9 +407,26 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         .chunks(flood_height as usize)
         .collect();
 
-    let (_, height) = factory
-        .create_texture_immutable::<HeightFormat>(kind, tex::Mipmap::Provided, &height_data)
+    let tex_height_raw = factory
+        .create_texture_raw(
+            tex::Info {
+                kind,
+                levels: num_height_mipmaps,
+                format: gfx::format::SurfaceType::R8,
+                bind: mem::Bind::SHADER_RESOURCE | mem::Bind::RENDER_TARGET,
+                usage: mem::Usage::Data,
+            },
+            Some(gfx::format::ChannelType::Unorm),
+            Some((&height_data, tex::Mipmap::Provided)),
+        )
         .unwrap();
+    let tex_height = mem::Typed::new(tex_height_raw);
+    let height = factory
+        .view_texture_as_shader_resource::<HeightFormat>(
+            &tex_height, (0, 0), gfx::format::Swizzle::new()
+        )
+        .unwrap();
+
     let (_, meta) = factory
         .create_texture_immutable::<(gfx::format::R8, gfx::format::Uint)>(kind, tex::Mipmap::Provided, &meta_data)
         .unwrap();
@@ -449,7 +516,13 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             level::HEIGHT_SCALE as f32,
             num_layers as f32,
         ],
-        mipper: MaxMipper::new(factory),
+        mipper: MaxMipper::new(factory, &tex_height),
+        terrain_dirty_rects: vec![gfx::Rect {
+            x: 0,
+            y: 0,
+            w: level.size.0 as u16,
+            h: level.size.1 as u16,
+        }],
         object_pso: Render::create_object_pso(factory),
         object_data: object::Data {
             vbuf: factory.create_vertex_buffer(&[]), //dummy
@@ -563,6 +636,12 @@ impl<R: gfx::Resources> Render<R> {
     ) where
         C: gfx::CommandBuffer<R>,
     {
+        // prepare the data
+        if !self.terrain_dirty_rects.is_empty() {
+            self.mipper.update(encoder, &self.terrain_dirty_rects);
+            self.terrain_dirty_rects.clear();
+        }
+
         let mx_vp = Self::set_globals(
             encoder,
             cam,
@@ -732,6 +811,7 @@ impl<R: gfx::Resources> Render<R> {
             }
         }
         self.object_pso = Render::create_object_pso(factory);
+        self.mipper.pso = MaxMipper::create_pso(factory);
     }
 
     pub fn resize(&mut self, targets: MainTargets<R>) {
