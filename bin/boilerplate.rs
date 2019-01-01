@@ -40,22 +40,27 @@ impl Harness {
         let settings = config::Settings::load("config/settings.ron");
 
         info!("Creating the window with GL context");
-        let win_builder = glutin::WindowBuilder::new()
-            .with_title(settings.window.title.clone())
-            .with_dimensions(settings.window.size[0], settings.window.size[1]);
-        let context_build = glutin::ContextBuilder::new()
-            .with_gl_profile(glutin::GlProfile::Core)
-            .with_vsync(true);
         #[cfg(target_os = "linux")]
         let events_loop = <glutin::EventsLoop as glutin::os::unix::EventsLoopExt>::new_x11()
             .unwrap();
         #[cfg(not(target_os = "linux"))]
         let events_loop = glutin::EventsLoop::new();
+
+        let win_builder = glutin::WindowBuilder::new()
+            .with_title(settings.window.title.clone())
+            .with_dimensions(glutin::dpi::LogicalSize::from_physical(
+                (settings.window.size[0], settings.window.size[1]),
+                events_loop.get_primary_monitor().get_hidpi_factor(),
+            ));
+        let context_build = glutin::ContextBuilder::new()
+            .with_gl_profile(glutin::GlProfile::Core)
+            .with_vsync(true);
+
         let (window, device, factory, color, depth) = gfx_window_glutin::init(
             win_builder,
             context_build,
             &events_loop,
-        );
+        ).unwrap();
 
         let targets = render::MainTargets { color, depth };
         let harness = Harness {
@@ -80,7 +85,6 @@ impl Harness {
 
         while running {
             use gfx::Device;
-            use self::glutin::GlContext;
 
             let win = &self.window;
             let mut resized_targets = None;
@@ -88,8 +92,8 @@ impl Harness {
             self.events_loop.poll_events(|event| match event {
                 glutin::Event::WindowEvent { window_id, ref event } if window_id == win.id() => {
                     match *event {
-                        glutin::WindowEvent::Resized(width, height) => {
-                            info!("Resizing to {}x{}", width, height);
+                        glutin::WindowEvent::Resized(size) => {
+                            info!("Resizing to {:?}", size);
                             let (color, depth) = gfx_window_glutin::new_views(win);
                             resized_targets = Some(render::MainTargets { color, depth });
                         }
@@ -97,7 +101,7 @@ impl Harness {
                             info!("Reloading shaders");
                             reload_shaders = true;
                         }
-                        glutin::WindowEvent::Closed => {
+                        glutin::WindowEvent::CloseRequested => {
                             running = false;
                         }
                         glutin::WindowEvent::KeyboardInput { input, .. } => {
@@ -109,7 +113,7 @@ impl Harness {
                             app.on_mouse_wheel(delta)
                         }
                         glutin::WindowEvent::CursorMoved {position, ..} => {
-                            app.on_cursor_move(position)
+                            app.on_cursor_move(position.into())
                         }
                         glutin::WindowEvent::MouseInput {state, button, ..} => {
                             app.on_mouse_button(state, button)
