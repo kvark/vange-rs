@@ -54,13 +54,13 @@ pub struct Light {
 }
 
 #[derive(Clone, Deserialize)]
-pub struct Terrain {
-    pub tessellate: Option<Tessellation>,
-}
-
-#[derive(Clone, Deserialize)]
-pub struct Tessellation {
-    pub screen_space: bool,
+pub enum Terrain {
+    RayTraced {
+        mip_count: usize,
+    },
+    Tessellated {
+        screen_space: bool,
+    },
 }
 
 #[derive(Deserialize)]
