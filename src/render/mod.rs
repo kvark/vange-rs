@@ -79,6 +79,7 @@ gfx_defines!{
 
     constant TerrainConstants {
         scr_size: [f32; 4] = "u_ScreenSize",
+        params: [u32; 4] = "u_Params",
     }
 
     constant Globals {
@@ -303,6 +304,7 @@ pub struct Render<R: gfx::Resources> {
     terrain_data: terrain::Data<R>,
     terrain_slice: gfx::Slice<R>,
     terrain_scale: [f32; 4],
+    terrain_mip_count: usize,
     terrain_dirty_rects: Vec<gfx::Rect>,
     object_pso: gfx::PipelineState<R, object::Meta>,
     object_data: object::Data<R>,
@@ -453,7 +455,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         tex::AaMode::Single,
     );
 
-    let num_height_mipmaps = match settings.terrain {
+    let terrain_mip_count = match settings.terrain {
         settings::Terrain::RayTraced { mip_count } => mip_count,
         settings::Terrain::Tessellated { .. } => 1,
     };
@@ -461,7 +463,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     let mut height_data = Vec::new();
     for chunk in level.height.chunks((level.size.0 * real_height) as usize) {
         height_data.push(chunk);
-        for mip in 1 .. num_height_mipmaps {
+        for mip in 1 .. terrain_mip_count {
             let w = level.size.0 as usize >> mip;
             let h = real_height as usize >> mip;
             height_data.push(&zero[.. w * h]);
@@ -481,7 +483,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         .create_texture_raw(
             tex::Info {
                 kind,
-                levels: num_height_mipmaps as tex::Level,
+                levels: terrain_mip_count as tex::Level,
                 format: gfx::format::SurfaceType::R8,
                 bind: mem::Bind::SHADER_RESOURCE | mem::Bind::RENDER_TARGET,
                 usage: mem::Usage::Data,
@@ -494,7 +496,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     let height = factory
         .view_texture_as_shader_resource::<HeightFormat>(
             &tex_height,
-            (0, num_height_mipmaps as tex::Level - 1),
+            (0, terrain_mip_count as tex::Level - 1),
             gfx::format::Swizzle::new(),
         )
         .unwrap();
@@ -594,6 +596,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             level::HEIGHT_SCALE as f32,
             num_layers as f32,
         ],
+        terrain_mip_count,
         terrain_dirty_rects: vec![gfx::Rect {
             x: 0,
             y: 0,
@@ -738,8 +741,10 @@ impl<R: gfx::Resources> Render<R> {
             tex_scale: self.terrain_scale,
         };
         encoder.update_constant_buffer(&self.terrain_data.suf_constants, &suf_constants);
+        let max_iterations = 40;
         let terr_constants = TerrainConstants {
             scr_size: [wid as f32, het as f32, 0.0, 0.0],
+            params: [self.terrain_mip_count as u32 - 1, max_iterations, 0, 0],
         };
         encoder.update_constant_buffer(&self.terrain_data.terr_constants, &terr_constants);
         match self.terrain {

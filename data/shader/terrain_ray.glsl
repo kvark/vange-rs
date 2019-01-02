@@ -20,10 +20,11 @@ void main() {
 
 
 #ifdef SHADER_FS
-//imported: Surface, u_TextureScale, get_surface, evaluate_color
+//imported: Surface, u_TextureScale, get_lod_height, get_surface, evaluate_color
 
 uniform c_Locals {
     vec4 u_ScreenSize;      // XY = size
+    uvec4 u_Params; // X = max mipmap level, Y = max iterations
 };
 
 #define TERRAIN_WATER   0U
@@ -138,6 +139,52 @@ void main() {
         u_ViewProj[2][3] == 0.0 ? sp_zero.xyz/sp_zero.w : near_plane;
     vec3 view = normalize(view_base - u_CameraPos.xyz);
 
+    float iter_coeff = 0.0;
+
+    uint lod = u_Params.x;
+    vec3 point = view_base;
+    for(uint iter=0U; iter<u_Params.y; ++iter) {
+        iter_coeff = float(iter) / float(u_Params.y);
+        // step 1: get the LOD height and early out
+        float height = get_lod_height(point.xy, int(lod));
+        if (point.z < height) {
+            if (lod == 0U) {
+                break;
+            }
+            lod--;
+            continue;
+        }
+        // assumption: point.z >= height
+
+        // step 2: figure out the closest intersection with the cell
+        // it can be X axis, Y axis, or the depth
+        float cell_size = float(1 << lod);
+        vec2 cell_offset_base = mod(point.xy, cell_size);
+        vec2 cell_offset = cell_size * step(0.0, view.xy) - cell_offset_base;
+        vec2 side_units = cell_offset / view.xy;
+        float center_unit = (height - point.z) / view.z;
+        float min_side_unit = min(side_units.x, side_units.y);
+
+        if (center_unit < min_side_unit) {
+            if (lod == 0U) {
+                break;
+            }
+            point += center_unit * view;
+            lod--;
+        } else {
+            // figure out if we hit the higher LOD bound and switch to it
+            //TODO: revise `mod(point.xy / cell_size, 2.0` part
+            vec2 affinities = view.xy * (mod(point.xy / cell_size, 2.0) - 1.0);
+            float affinity = mix(affinities.x, affinities.y, side_units.y < side_units.x);
+            if (lod < u_Params.x && affinity > 0.0) {
+                lod++;
+            }
+            // advance the point
+            //TODO: make sure the next sample is taken from the proper cell
+            point += min_side_unit * view;
+        }
+    }
+
     /*
     CastPoint pt = cast_ray_to_map(near_plane, view);
 
@@ -180,9 +227,10 @@ void main() {
         }
     }*/
 
-    vec3 point = cast_ray_to_plane(0.0, near_plane, view);
+    //vec3 point = cast_ray_to_plane(0.0, near_plane, view);
     Surface surface = get_surface(point.xy);
-    Target0 = evaluate_color(surface.high_type, surface.tex_coord, point.z / u_TextureScale.z, 1.0);;
+    Target0 = evaluate_color(surface.high_type, surface.tex_coord, point.z / u_TextureScale.z, 1.0);
+    //Target0 = vec4(iter_coeff, 0.0, 0.0, 1.0);
 
     vec4 target_ndc = u_ViewProj * vec4(point, 1.0);
     gl_FragDepth = target_ndc.z / target_ndc.w * 0.5 + 0.5;

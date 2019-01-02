@@ -32,6 +32,15 @@ uint get_delta(uint meta) {
     return (meta >> c_DeltaShift) & ((1U << c_DeltaBits) - 1U);
 }
 
+float get_lod_height(vec2 pos, int lod) {
+    ivec3 tc;
+    tc.x = int(mod(pos.x, u_TextureScale.x)) >> lod;
+    tc.y = int(mod(pos.y, u_TextureScale.y)) >> lod;
+    tc.z = int(mod(pos.y / u_TextureScale.y, u_TextureScale.w));
+    float alt = texelFetch(t_Height, tc, lod).x;
+    return alt * u_TextureScale.z;
+}
+
 Surface get_surface(vec2 pos) {
     Surface suf;
 
