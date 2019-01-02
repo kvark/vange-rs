@@ -26,10 +26,6 @@ uniform c_Locals {
     vec4 u_ScreenSize;      // XY = size
 };
 
-const float
-    c_ReflectionVariance = 0.5,
-    c_ReflectionPower = 0.2;
-
 #define TERRAIN_WATER   0U
 
 out vec4 Target0;
@@ -39,7 +35,7 @@ vec3 cast_ray_to_plane(float level, vec3 base, vec3 dir) {
     float t = (level - base.z) / dir.z;
     return t * dir + base;
 }
-
+/*
 Surface cast_ray_impl(
     inout vec3 a, inout vec3 b,
     bool high, int num_forward, int num_binary
@@ -126,6 +122,8 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
 vec4 color_point(CastPoint pt, float lit_factor) {
     return evaluate_color(pt.type, pt.tex_coord, pt.pos.z / u_TextureScale.z, lit_factor);
 }
+*/
+
 
 void main() {
     vec4 sp_ndc = vec4(
@@ -140,6 +138,7 @@ void main() {
         u_ViewProj[2][3] == 0.0 ? sp_zero.xyz/sp_zero.w : near_plane;
     vec3 view = normalize(view_base - u_CameraPos.xyz);
 
+    /*
     CastPoint pt = cast_ray_to_map(near_plane, view);
 
     float lit_factor;
@@ -179,10 +178,13 @@ void main() {
             vec4 ref_color = color_point(other, 0.8);
             frag_color += c_ReflectionPower * ref_color;
         }
-    }
-    Target0 = frag_color;
+    }*/
 
-    vec4 target_ndc = u_ViewProj * vec4(pt.pos, 1.0);
+    vec3 point = cast_ray_to_plane(0.0, near_plane, view);
+    Surface surface = get_surface(point.xy);
+    Target0 = evaluate_color(surface.high_type, surface.tex_coord, point.z / u_TextureScale.z, 1.0);;
+
+    vec4 target_ndc = u_ViewProj * vec4(point, 1.0);
     gl_FragDepth = target_ndc.z / target_ndc.w * 0.5 + 0.5;
 }
 #endif //FS

@@ -52,7 +52,7 @@ serde_scan = "0.1"
 # binaries
 env_logger = "0.4"
 getopts = "0.2"
-gfx_device_gl = "0.15"
+gfx_device_gl = "0.15.5"
 gfx_window_glutin = "0.28"
 glutin = "0.19"
 obj = "0.9"

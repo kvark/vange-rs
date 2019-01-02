@@ -493,7 +493,9 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     let tex_height = mem::Typed::new(tex_height_raw);
     let height = factory
         .view_texture_as_shader_resource::<HeightFormat>(
-            &tex_height, (0, 0), gfx::format::Swizzle::new()
+            &tex_height,
+            (0, num_height_mipmaps as tex::Level - 1),
+            gfx::format::Swizzle::new(),
         )
         .unwrap();
 
