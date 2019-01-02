@@ -285,13 +285,15 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         num_layers as tex::Size,
         tex::AaMode::Single,
     );
-    let height_chunks: Vec<_> = level
-        .height
+    let height_chunks: Vec<_> = level.height
         .chunks((level.size.0 * real_height) as usize)
         .collect();
-    let meta_chunks: Vec<_> = level
-        .meta
+    let meta_chunks: Vec<_> = level.meta
         .chunks((level.size.0 * real_height) as usize)
+        .collect();
+    let flood_height = real_height >> level.flood_section_power;
+    let flood_chunks: Vec<_> = level.flood_map
+        .chunks(flood_height as usize)
         .collect();
 
     let (_, height) = factory
@@ -302,9 +304,9 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         .unwrap();
     let (_, flood) = factory
         .create_texture_immutable::<(format::R8, format::Unorm)>(
-            tex::Kind::D1(level.size.1 as _),
+            tex::Kind::D1Array(flood_height as _, num_layers as _),
             tex::Mipmap::Provided,
-            &[&level.flood_map],
+            &flood_chunks,
         ).unwrap();
     let (_, table) = factory
         .create_texture_immutable::<(format::R8_G8_B8_A8, format::Uint)>(
