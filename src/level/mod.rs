@@ -25,6 +25,7 @@ pub const HEIGHT_SCALE: u32 = 255;
 pub struct Level {
     pub size: (i32, i32),
     pub flood_map: Vec<u8>,
+    pub flood_section_power: usize,
     pub height: Vec<u8>,
     pub meta: Vec<u8>,
     pub palette: [[u8; 4]; 0x100],
@@ -84,6 +85,7 @@ impl Level {
         Level {
             size: (2, 1),
             flood_map: vec![0],
+            flood_section_power: 0,
             height: vec![0, 0],
             meta: vec![0, 0],
             palette: [[0xFF; 4]; 0x100],
@@ -495,6 +497,7 @@ pub fn load(config: &LevelConfig) -> Level {
     Level {
         size,
         flood_map,
+        flood_section_power: config.section.as_power() as usize,
         height,
         meta,
         palette: read_palette(palette, Some(&config.terrains)),
