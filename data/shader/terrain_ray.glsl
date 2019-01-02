@@ -161,27 +161,26 @@ void main() {
         float cell_size = float(1 << lod);
         vec2 cell_offset_base = mod(point.xy, cell_size);
         vec2 cell_offset = cell_size * step(0.0, view.xy) - cell_offset_base;
-        vec2 side_units = cell_offset / view.xy;
-        float center_unit = (height - point.z) / view.z;
-        float min_side_unit = min(side_units.x, side_units.y);
+        vec3 units = vec3(cell_offset, height - point.z) / view;
+        float min_side_unit = min(units.x, units.y);
 
-        if (center_unit < min_side_unit) {
+        vec2 old_pos = point.xy;
+        // advance the point
+        point += min(units.z, min_side_unit) * view;
+
+        if (units.z < min_side_unit) {
             if (lod == 0U) {
                 break;
             }
-            point += center_unit * view;
             lod--;
         } else {
             // figure out if we hit the higher LOD bound and switch to it
             //TODO: revise `mod(point.xy / cell_size, 2.0` part
-            vec2 affinities = view.xy * (mod(point.xy / cell_size, 2.0) - 1.0);
-            float affinity = mix(affinities.x, affinities.y, side_units.y < side_units.x);
+            vec2 affinities = view.xy * (mod(old_pos / cell_size, 2.0) - 1.0);
+            float affinity = mix(affinities.x, affinities.y, units.y < units.x);
             if (lod < u_Params.x && affinity > 0.0) {
                 lod++;
             }
-            // advance the point
-            //TODO: make sure the next sample is taken from the proper cell
-            point += min_side_unit * view;
         }
     }
 
