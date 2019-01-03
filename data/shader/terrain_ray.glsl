@@ -139,14 +139,13 @@ void main() {
         u_ViewProj[2][3] == 0.0 ? sp_zero.xyz/sp_zero.w : near_plane;
     vec3 view = normalize(view_base - u_CameraPos.xyz);
 
-    float iter_coeff = 0.0;
-
     uint lod = u_Params.x;
     vec3 point = view_base;
-    for(uint iter=0U; iter<u_Params.y; ++iter) {
-        iter_coeff = float(iter) / float(u_Params.y);
+    ivec2 ipos = ivec2(floor(point.xy)); // integer coordinate of the cell
+    uint iter = 0U;
+    while (iter < u_Params.y) {
         // step 1: get the LOD height and early out
-        float height = get_lod_height(point.xy, int(lod));
+        float height = get_lod_height(ipos, int(lod));
         if (point.z < height) {
             if (lod == 0U) {
                 break;
@@ -158,15 +157,16 @@ void main() {
 
         // step 2: figure out the closest intersection with the cell
         // it can be X axis, Y axis, or the depth
-        float cell_size = float(1 << lod);
-        vec2 cell_offset_base = mod(point.xy, cell_size);
-        vec2 cell_offset = cell_size * step(0.0, view.xy) - cell_offset_base;
+        vec2 cell_id = floor(vec2(ipos) / float(1 << lod)); // careful!
+        ivec2 cell_tl = ivec2(cell_id) << lod;
+        vec2 cell_offset = float(1 << lod) * step(0.0, view.xy) - point.xy + vec2(cell_tl);
         vec3 units = vec3(cell_offset, height - point.z) / view;
         float min_side_unit = min(units.x, units.y);
 
-        vec2 old_pos = point.xy;
         // advance the point
         point += min(units.z, min_side_unit) * view;
+        ipos = ivec2(floor(point.xy));
+        iter++;
 
         if (units.z < min_side_unit) {
             if (lod == 0U) {
@@ -174,10 +174,18 @@ void main() {
             }
             lod--;
         } else {
+            // adjust the integer position on cell boundary
             // figure out if we hit the higher LOD bound and switch to it
-            //TODO: revise `mod(point.xy / cell_size, 2.0` part
-            vec2 affinities = view.xy * (mod(old_pos / cell_size, 2.0) - 1.0);
-            float affinity = mix(affinities.x, affinities.y, units.y < units.x);
+            float affinity;
+            vec2 proximity = mod(cell_id, 2.0) - 0.5;
+            if (units.x <= units.y) {
+                ipos.x = cell_tl.x + (view.x < 0.0 ? -1 : 1 << lod);
+                affinity = view.x * proximity.x;
+            }
+            if (units.y <= units.x) {
+                ipos.y = cell_tl.y + (view.y < 0.0 ? -1 : 1 << lod);
+                affinity = view.y * proximity.y;
+            }
             if (lod < u_Params.x && affinity > 0.0) {
                 lod++;
             }
@@ -229,7 +237,7 @@ void main() {
     //vec3 point = cast_ray_to_plane(0.0, near_plane, view);
     Surface surface = get_surface(point.xy);
     Target0 = evaluate_color(surface.high_type, surface.tex_coord, point.z / u_TextureScale.z, 1.0);
-    //Target0 = vec4(iter_coeff, 0.0, 0.0, 1.0);
+    //Target0 = vec4(iter == u_Params.y ? 1.0 : 0.0, float(iter) / float(u_Params.y), 0.0, 1.0);
 
     vec4 target_ndc = u_ViewProj * vec4(point, 1.0);
     gl_FragDepth = target_ndc.z / target_ndc.w * 0.5 + 0.5;

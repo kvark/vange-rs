@@ -32,11 +32,18 @@ uint get_delta(uint meta) {
     return (meta >> c_DeltaShift) & ((1U << c_DeltaBits) - 1U);
 }
 
-float get_lod_height(vec2 pos, int lod) {
-    ivec3 tc;
-    tc.x = int(mod(pos.x, u_TextureScale.x)) >> lod;
-    tc.y = int(mod(pos.y, u_TextureScale.y)) >> lod;
-    tc.z = int(mod(pos.y / u_TextureScale.y, u_TextureScale.w));
+int modulo(int a, int b) {
+    int c = a % b;
+    return c < 0 ? c + b : c;
+}
+
+float get_lod_height(ivec2 ipos, int lod) {
+    int x = modulo(ipos.x, int(u_TextureScale.x));
+    int y = modulo(ipos.y, int(u_TextureScale.y));
+    ivec3 tc = ivec3(
+        x >> lod, y >> lod,
+        modulo((ipos.y - y) / int(u_TextureScale.y), int(u_TextureScale.w))
+    );
     float alt = texelFetch(t_Height, tc, lod).x;
     return alt * u_TextureScale.z;
 }
