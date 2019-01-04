@@ -31,7 +31,7 @@
 		),
 		//example: Tessellated( screen_space: true ),
 		terrain: RayTraced(
-			mip_count: 1,
+			mip_count: 10,
 		),
 		debug: (
 			max_vertices: 512,

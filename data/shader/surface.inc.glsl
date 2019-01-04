@@ -48,6 +48,14 @@ float get_lod_height(ivec2 ipos, int lod) {
     return alt * u_TextureScale.z;
 }
 
+//TODO: make this alternative path work!
+float get_lod_height_alt(ivec2 ipos, int lod) {
+    vec2 xy = (vec2(ipos.xy) + 0.5) / u_TextureScale.xy;
+    float z = trunc(mod(float(ipos.y) / u_TextureScale.y, u_TextureScale.w));
+    float alt = textureLod(t_Height, vec3(xy, z), float(lod)).x;
+    return alt * u_TextureScale.z;
+}
+
 Surface get_surface(vec2 pos) {
     Surface suf;
 
