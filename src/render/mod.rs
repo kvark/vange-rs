@@ -135,6 +135,7 @@ enum Terrain<R: gfx::Resources> {
     Ray {
         pso: gfx::PipelineState<R, terrain::Meta>,
         mipper: MaxMipper<R>,
+        max_iterations: usize,
     },
     Tess {
         pso_low: gfx::PipelineState<R, terrain::Meta>,
@@ -304,7 +305,6 @@ pub struct Render<R: gfx::Resources> {
     terrain_data: terrain::Data<R>,
     terrain_slice: gfx::Slice<R>,
     terrain_scale: [f32; 4],
-    terrain_mip_count: usize,
     terrain_dirty_rects: Vec<gfx::Rect>,
     object_pso: gfx::PipelineState<R, object::Meta>,
     object_data: object::Data<R>,
@@ -456,7 +456,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     );
 
     let terrain_mip_count = match settings.terrain {
-        settings::Terrain::RayTraced { mip_count } => mip_count,
+        settings::Terrain::RayTraced { mip_count, .. } => mip_count,
         settings::Terrain::Tessellated { .. } => 1,
     };
     let zero = vec![0; (level.size.0 * real_height) as usize / 4];
@@ -539,7 +539,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
 
     let (terrain, terrain_slice, terrain_data) = {
         let (terrain, vbuf, slice) = match settings.terrain {
-            settings::Terrain::RayTraced { .. } => {
+            settings::Terrain::RayTraced { iterations, .. } => {
                 let pso = Render::create_terrain_ray_pso(factory);
                 let vertices = [
                     TerrainVertex { pos: [0., 0., 0., 1.] },
@@ -553,6 +553,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
                 let terr = Terrain::Ray {
                     pso,
                     mipper: MaxMipper::new(factory, &tex_height),
+                    max_iterations: iterations,
                 };
                 (terr, vbuf, slice)
             }
@@ -596,7 +597,6 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             level::HEIGHT_SCALE as f32,
             num_layers as f32,
         ],
-        terrain_mip_count,
         terrain_dirty_rects: vec![gfx::Rect {
             x: 0,
             y: 0,
@@ -741,10 +741,15 @@ impl<R: gfx::Resources> Render<R> {
             tex_scale: self.terrain_scale,
         };
         encoder.update_constant_buffer(&self.terrain_data.suf_constants, &suf_constants);
-        let max_iterations = 40;
+        let params = match self.terrain {
+            Terrain::Ray { ref mipper, max_iterations, .. } => {
+                [mipper.mips[0].len() as u32 - 1, max_iterations as u32, 0, 0]
+            }
+            Terrain::Tess { .. } => [0, 0, 0, 0],
+        };
         let terr_constants = TerrainConstants {
             scr_size: [wid as f32, het as f32, 0.0, 0.0],
-            params: [self.terrain_mip_count as u32 - 1, max_iterations, 0, 0],
+            params,
         };
         encoder.update_constant_buffer(&self.terrain_data.terr_constants, &terr_constants);
         match self.terrain {
@@ -885,7 +890,7 @@ impl<R: gfx::Resources> Render<R> {
     ) {
         info!("Reloading shaders");
         match self.terrain {
-            Terrain::Ray { ref mut pso, ref mut mipper }=> {
+            Terrain::Ray { ref mut pso, ref mut mipper, .. }=> {
                 *pso = Render::create_terrain_ray_pso(factory);
                 mipper.pso = MaxMipper::create_pso(factory);
             }

@@ -57,6 +57,7 @@ pub struct Light {
 pub enum Terrain {
     RayTraced {
         mip_count: usize,
+        iterations: usize,
     },
     Tessellated {
         screen_space: bool,
