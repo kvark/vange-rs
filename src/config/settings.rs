@@ -55,6 +55,7 @@ pub struct Light {
 
 #[derive(Clone, Deserialize)]
 pub enum Terrain {
+    RayTracedOld,
     RayTraced {
         mip_count: usize,
         max_jumps: usize,

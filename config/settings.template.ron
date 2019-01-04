@@ -16,9 +16,9 @@
 	),
 	car: (
 		id: "OxidizeMonk",
-		//example: "IronShadow"
+		//id: "IronShadow",
 		slots: [],
-		//example: ["HeavyLaser", "LightMissile", "LightFireBall"]
+		//slots: ["HeavyLaser", "LightMissile", "LightFireBall"],
 	),
 	window: (
 		title: "Rusty Road",
@@ -30,6 +30,7 @@
 			color: (1, 1, 1, 1),
 		),
 		//example: Tessellated( screen_space: true ),
+		//example: RayTracedOld,
 		terrain: RayTraced(
 			mip_count: 10,
 			max_jumps: 25,

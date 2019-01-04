@@ -132,6 +132,9 @@ gfx_defines!{
 }
 
 enum Terrain<R: gfx::Resources> {
+    RayOld {
+        pso: gfx::PipelineState<R, terrain::Meta>,
+    },
     Ray {
         pso: gfx::PipelineState<R, terrain::Meta>,
         mipper: MaxMipper<R>,
@@ -456,8 +459,9 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     );
 
     let terrain_mip_count = match settings.terrain {
-        settings::Terrain::RayTraced { mip_count, .. } => mip_count,
+        settings::Terrain::RayTracedOld |
         settings::Terrain::Tessellated { .. } => 1,
+        settings::Terrain::RayTraced { mip_count, .. } => mip_count,
     };
     let zero = vec![0; (level.size.0 * real_height) as usize / 4];
     let mut height_data = Vec::new();
@@ -535,8 +539,22 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
 
     let (terrain, terrain_slice, terrain_data) = {
         let (terrain, vbuf, slice) = match settings.terrain {
+            settings::Terrain::RayTracedOld => {
+                let pso = Render::create_terrain_ray_pso(factory, "terrain_ray_old");
+                let vertices = [
+                    TerrainVertex { pos: [0., 0., 0., 1.] },
+                    TerrainVertex { pos: [-1., 0., 0., 0.] },
+                    TerrainVertex { pos: [0., -1., 0., 0.] },
+                    TerrainVertex { pos: [1., 0., 0., 0.] },
+                    TerrainVertex { pos: [0., 1., 0., 0.] },
+                ];
+                let indices: &[u16] = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
+                let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
+                let terr = Terrain::RayOld { pso };
+                (terr, vbuf, slice)
+            }
             settings::Terrain::RayTraced { mip_count, max_jumps, max_steps, debug } => {
-                let pso = Render::create_terrain_ray_pso(factory);
+                let pso = Render::create_terrain_ray_pso(factory, "terrain_ray");
                 let vertices = [
                     TerrainVertex { pos: [0., 0., 0., 1.] },
                     TerrainVertex { pos: [-1., 0., 0., 0.] },
@@ -745,12 +763,14 @@ impl<R: gfx::Resources> Render<R> {
         let terr_constants = TerrainConstants {
             scr_size: [wid as f32, het as f32, 0.0, 0.0],
             params: match self.terrain {
+                Terrain::RayOld { .. } |
+                Terrain::Tess { .. } => [0; 4],
                 Terrain::Ray { params, .. } => params,
-                Terrain::Tess { .. } => [0, 0, 0, 0],
             },
         };
         encoder.update_constant_buffer(&self.terrain_data.terr_constants, &terr_constants);
         match self.terrain {
+            Terrain::RayOld { ref pso } |
             Terrain::Ray { ref pso, .. } => {
                 encoder.draw(&self.terrain_slice, pso, &self.terrain_data);
             }
@@ -814,9 +834,9 @@ impl<R: gfx::Resources> Render<R> {
     }
 
     fn create_terrain_ray_pso<F: gfx::Factory<R>>(
-        factory: &mut F,
+        factory: &mut F, name: &str,
     ) -> gfx::PipelineState<R, terrain::Meta> {
-        let shaders = read_shaders("terrain_ray", false, &[])
+        let shaders = read_shaders(name, false, &[])
             .unwrap();
         let program = factory
             .link_program(&shaders.vs, &shaders.fs)
@@ -888,8 +908,11 @@ impl<R: gfx::Resources> Render<R> {
     ) {
         info!("Reloading shaders");
         match self.terrain {
-            Terrain::Ray { ref mut pso, ref mut mipper, .. }=> {
-                *pso = Render::create_terrain_ray_pso(factory);
+            Terrain::RayOld { ref mut pso } => {
+                *pso = Render::create_terrain_ray_pso(factory, "terrain_ray_old");
+            }
+            Terrain::Ray { ref mut pso, ref mut mipper, .. } => {
+                *pso = Render::create_terrain_ray_pso(factory, "terrain_ray");
                 mipper.pso = MaxMipper::create_pso(factory);
             }
             Terrain::Tess { ref mut pso_low, ref mut pso_high, screen_space } => {
