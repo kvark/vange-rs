@@ -61,8 +61,7 @@ Controls:
   - `Alt` + `WSAD`: rotate the camera
   - `Esc`: exit
 
-<img alt="level view (ray)" src="etc/shots/Road12-ray-trace.png" width="25%">
-<img alt="level view (tess)" src="etc/shots/Road13-tessellate.png" width="25%">
+<img alt="level view" src="etc/shots/Road16-raymax.png" width="50%">
 
 ### Converter
 `convert` binary is a command line utility for converting the game data into formats that are more interoperable. Basically you provide 2 arguments as fully-qualified file names (can be relative, but relative to the current directory - the settings paths are not used here), and the converter figures out the way to convert one into another. Note that only part after "--" makes sense when running a standalone binary.

@@ -42,12 +42,23 @@ vec3 cast_ray(vec3 point, vec3 dir) {
     ivec2 ipos = ivec2(floor(point.xy)); // integer coordinate of the cell
     uint iter = 0U;
     while (iter < u_Params.y) {
+        // step 0: at lowest LOD, just advance
+        if (lod == 0U) {
+            Surface surface = get_surface(point.xy);
+            if (point.z < surface.low_alt || (point.z < surface.high_alt && point.z >= surface.low_alt + surface.delta)) {
+                break;
+            }
+            if (surface.low_alt == surface.high_alt) {
+                lod++; //try to escape the low level and LOD
+            }
+            point += 0.8 * dir;
+            ipos = ivec2(floor(point.xy));
+            continue;
+        }
+
         // step 1: get the LOD height and early out
         float height = get_lod_height(ipos, int(lod));
         if (point.z < height) {
-            if (lod == 0U) {
-                break;
-            }
             lod--;
             continue;
         }
@@ -90,7 +101,8 @@ vec3 cast_ray(vec3 point, vec3 dir) {
         }
     }
 
-    //Target0 = vec4(iter == u_Params.y ? 1.0 : 0.0, float(iter) / float(u_Params.y), 0.0, 1.0);
+    // debug output here
+    Target0 = vec4(iter == u_Params.y ? 1.0 : 0.0, float(iter) / float(u_Params.y), 0.0, 1.0);
     return point;
 }
 
@@ -112,7 +124,8 @@ void main() {
 
     //vec3 point = cast_ray_to_plane(0.0, near_plane, view);
     Surface surface = get_surface(point.xy);
-    Target0 = evaluate_color(surface.high_type, surface.tex_coord, point.z / u_TextureScale.z, 1.0);
+    uint type = point.z <= surface.low_alt ? surface.low_type : surface.high_type;
+    Target0 = evaluate_color(type, surface.tex_coord, point.z / u_TextureScale.z, 1.0);
 
     vec4 target_ndc = u_ViewProj * vec4(point, 1.0);
     gl_FragDepth = target_ndc.z / target_ndc.w * 0.5 + 0.5;
