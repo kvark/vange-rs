@@ -48,7 +48,8 @@ float get_lod_height(ivec2 ipos, int lod) {
     return alt * u_TextureScale.z;
 }
 
-//TODO: make this alternative path work!
+// The alternative version of this routine that doesn't use
+// integer operations or `texelFetch`.
 float get_lod_height_alt(ivec2 ipos, int lod) {
     vec2 xy = (vec2(ipos.xy) + 0.5) / u_TextureScale.xy;
     float z = trunc(mod(float(ipos.y) / u_TextureScale.y, u_TextureScale.w));

@@ -518,7 +518,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         ).unwrap();
 
     let sm_height = factory.create_sampler(tex::SamplerInfo::new(
-        tex::FilterMethod::Scale,
+        if terrain_mip_count > 1 { tex::FilterMethod::Mipmap } else { tex::FilterMethod::Scale },
         tex::WrapMode::Tile,
     ));
     let sm_meta = factory.create_sampler(tex::SamplerInfo::new(
