@@ -59,6 +59,7 @@ const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
 
 pub type ColorFormat = gfx::format::Rgba8; //should be Srgba8
 pub type DepthFormat = gfx::format::DepthStencil;
+type HeightFormat = (gfx::format::R8, gfx::format::Unorm);
 pub type ShapeVertex = [f32; 4];
 
 gfx_defines!{
@@ -69,7 +70,7 @@ gfx_defines!{
     }
 
     vertex TerrainVertex {
-        pos: [i8; 4] = "a_Pos",
+        pos: [f32; 4] = "a_Pos",
     }
 
     constant SurfaceConstants {
@@ -78,6 +79,7 @@ gfx_defines!{
 
     constant TerrainConstants {
         scr_size: [f32; 4] = "u_ScreenSize",
+        params: [u32; 4] = "u_Params",
     }
 
     constant Globals {
@@ -121,22 +123,192 @@ gfx_defines!{
         out_color: gfx::RenderTarget<ColorFormat> = "Target0",
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
     }
+
+    pipeline terrain_mip {
+        vbuf: gfx::VertexBuffer<TerrainVertex> = (),
+        height: gfx::TextureSampler<f32> = "t_Height",
+        out_color: gfx::RenderTarget<HeightFormat> = "Target0",
+    }
 }
 
 enum Terrain<R: gfx::Resources> {
-    Ray(gfx::PipelineState<R, terrain::Meta>),
+    RayOld {
+        pso: gfx::PipelineState<R, terrain::Meta>,
+    },
+    Ray {
+        pso: gfx::PipelineState<R, terrain::Meta>,
+        mipper: MaxMipper<R>,
+        params: [u32; 4],
+    },
     Tess {
-        low: gfx::PipelineState<R, terrain::Meta>,
-        high: gfx::PipelineState<R, terrain::Meta>,
+        pso_low: gfx::PipelineState<R, terrain::Meta>,
+        pso_high: gfx::PipelineState<R, terrain::Meta>,
         screen_space: bool,
     },
 }
+
+
+struct TerrainMip<R: gfx::Resources> {
+    target: gfx::handle::RenderTargetView<R, HeightFormat>,
+    resource: (gfx::handle::ShaderResourceView<R, f32>, gfx::handle::Sampler<R>),
+}
+
+struct MaxMipper<R: gfx::Resources> {
+    slice_size: (gfx::texture::Size, gfx::texture::Size),
+    pso: gfx::PipelineState<R, terrain_mip::Meta>,
+    mips: Vec<Vec<TerrainMip<R>>>,
+    vertex_buf: gfx::handle::Buffer<R, TerrainVertex>,
+    vertex_capacity: usize,
+}
+
+impl<R: gfx::Resources> MaxMipper<R> {
+    fn create_pso<F: gfx::Factory<R>>(
+        factory: &mut F
+    ) -> gfx::PipelineState<R, terrain_mip::Meta> {
+         let shaders = read_shaders("terrain_mip", false, &[])
+            .unwrap();
+        let program = factory
+            .link_program(&shaders.vs, &shaders.fs)
+            .unwrap();
+        factory
+            .create_pipeline_from_program(
+                &program,
+                gfx::Primitive::TriangleList,
+                gfx::state::Rasterizer::new_fill(),
+                terrain_mip::new(),
+            )
+            .unwrap()
+    }
+
+    fn new<F: gfx::Factory<R>>(
+        factory: &mut F, texture: &gfx::handle::Texture<R, gfx::format::R8>
+    ) -> Self {
+        use gfx::{memory as mem, texture as tex};
+
+        let info = texture.get_info();
+        let num_slices = info.kind.get_num_slices().unwrap_or(1);
+        let mut mips = Vec::new();
+        for slice in 0 .. num_slices {
+            let mut slice_mips = Vec::with_capacity(info.levels as usize);
+            for level in 0 .. info.levels {
+                //Note: gfx pre-ll doesn't actually respect the SRV level ranges...
+                // so we pair it with a sampler
+                let srv = factory
+                    .view_texture_as_shader_resource::<HeightFormat>(
+                        texture, (level, level), gfx::format::Swizzle::new()
+                    )
+                    .unwrap();
+                let lod = tex::Lod::from(level as f32);
+                let sampler = factory.create_sampler(tex::SamplerInfo {
+                    lod_range: (lod, lod),
+                    .. tex::SamplerInfo::new(
+                        tex::FilterMethod::Scale,
+                        tex::WrapMode::Tile,
+                    )
+                });
+                slice_mips.push(TerrainMip {
+                    target: factory
+                        .view_texture_as_render_target(texture, level, Some(slice))
+                        .unwrap(),
+                    resource: (srv, sampler.clone()),
+                });
+            }
+            mips.push(slice_mips);
+        }
+
+        let vertex_capacity = 256;
+        let (wid, het, _, _) = info.kind.get_dimensions();
+
+        MaxMipper {
+            slice_size: (wid, het),
+            pso: Self::create_pso(factory),
+            mips,
+            vertex_buf: factory
+                .create_buffer(
+                    vertex_capacity,
+                    gfx::buffer::Role::Vertex,
+                    mem::Usage::Dynamic,
+                    mem::Bind::TRANSFER_DST,
+                )
+                .unwrap(),
+            vertex_capacity,
+        }
+    }
+
+    fn update<C: gfx::CommandBuffer<R>>(
+        &self,
+        encoder: &mut gfx::Encoder<R, C>,
+        base_rects: &[gfx::Rect],
+    ) {
+        let mut slice_rects = vec![Vec::new(); self.mips.len()];
+        for r in base_rects {
+            let mut base_slice = r.y / self.slice_size.1;
+            while (r.y + r.h) > base_slice * self.slice_size.1 {
+                let cut_bot = r.y.max(base_slice * self.slice_size.1);
+                let cut_top = (r.y + r.h).min((base_slice + 1) * self.slice_size.1);
+                slice_rects[base_slice as usize].push(gfx::Rect {
+                    y: cut_bot - base_slice * self.slice_size.1,
+                    h: cut_top - cut_bot,
+                    .. *r
+                });
+                base_slice += 1;
+            }
+        }
+
+        let mut vertices = Vec::with_capacity(base_rects.len() * 6);
+        for ((slice_id, slice_mips), rects) in self.mips.iter().enumerate().zip(slice_rects) {
+            if rects.is_empty() {
+                continue
+            }
+
+            vertices.clear();
+
+            for r in rects {
+                let v_abs = [
+                    (r.x, r.y),
+                    (r.x + r.w, r.y),
+                    (r.x, r.y + r.h),
+                    (r.x, r.y + r.h),
+                    (r.x + r.w, r.y),
+                    (r.x + r.w, r.y + r.h),
+                ];
+                for &(x, y) in &v_abs {
+                    vertices.push(TerrainVertex {
+                        pos: [
+                            x as f32 / self.slice_size.0 as f32,
+                            y as f32 / self.slice_size.1 as f32,
+                            slice_id as f32,
+                            1.0,
+                        ],
+                    });
+                }
+            }
+
+            assert!(vertices.len() <= self.vertex_capacity);
+            encoder.update_buffer(&self.vertex_buf, &vertices, 0).unwrap();
+            let slice = gfx::Slice {
+                end: vertices.len() as gfx::VertexCount,
+                .. gfx::Slice::new_match_vertex_buffer(&self.vertex_buf)
+            };
+
+            for mip in 1 .. slice_mips.len() {
+                encoder.draw(&slice, &self.pso, &terrain_mip::Data {
+                    vbuf: self.vertex_buf.clone(),
+                    height: slice_mips[mip - 1].resource.clone(),
+                    out_color: slice_mips[mip].target.clone(),
+                });
+            }
+        }
+    }
+}
+
 
 pub struct Render<R: gfx::Resources> {
     terrain: Terrain<R>,
     terrain_data: terrain::Data<R>,
     terrain_slice: gfx::Slice<R>,
     terrain_scale: [f32; 4],
+    terrain_dirty_rects: Vec<gfx::Rect>,
     object_pso: gfx::PipelineState<R, object::Meta>,
     object_data: object::Data<R>,
     pub light_config: settings::Light,
@@ -260,7 +432,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     object_palette: &[[u8; 4]],
     settings: &settings::Render,
 ) -> Render<R> {
-    use gfx::{format, texture as tex};
+    use gfx::{memory as mem, texture as tex};
 
     let terrrain_table = level.terrains
         .iter()
@@ -285,31 +457,61 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
         num_layers as tex::Size,
         tex::AaMode::Single,
     );
-    let height_chunks: Vec<_> = level.height
+
+    let terrain_mip_count = match settings.terrain {
+        settings::Terrain::RayTracedOld |
+        settings::Terrain::Tessellated { .. } => 1,
+        settings::Terrain::RayTraced { mip_count, .. } => mip_count,
+    };
+    let zero = vec![0; (level.size.0 * real_height) as usize / 4];
+    let mut height_data = Vec::new();
+    for chunk in level.height.chunks((level.size.0 * real_height) as usize) {
+        height_data.push(chunk);
+        for mip in 1 .. terrain_mip_count {
+            let w = level.size.0 as usize >> mip;
+            let h = real_height as usize >> mip;
+            height_data.push(&zero[.. w * h]);
+        }
+    }
+
+    let meta_data: Vec<_> = level
+        .meta
         .chunks((level.size.0 * real_height) as usize)
-        .collect();
-    let meta_chunks: Vec<_> = level.meta
-        .chunks((level.size.0 * real_height) as usize)
-        .collect();
-    let flood_height = real_height >> level.flood_section_power;
-    let flood_chunks: Vec<_> = level.flood_map
-        .chunks(flood_height as usize)
         .collect();
 
-    let (_, height) = factory
-        .create_texture_immutable::<(format::R8, format::Unorm)>(kind, tex::Mipmap::Provided, &height_chunks)
+    let tex_height_raw = factory
+        .create_texture_raw(
+            tex::Info {
+                kind,
+                levels: terrain_mip_count as tex::Level,
+                format: gfx::format::SurfaceType::R8,
+                bind: mem::Bind::SHADER_RESOURCE | mem::Bind::RENDER_TARGET,
+                usage: mem::Usage::Data,
+            },
+            Some(gfx::format::ChannelType::Unorm),
+            Some((&height_data, tex::Mipmap::Provided)),
+        )
         .unwrap();
+    let tex_height = mem::Typed::new(tex_height_raw);
+    let height = factory
+        .view_texture_as_shader_resource::<HeightFormat>(
+            &tex_height,
+            (0, terrain_mip_count as tex::Level - 1),
+            gfx::format::Swizzle::new(),
+        )
+        .unwrap();
+
     let (_, meta) = factory
-        .create_texture_immutable::<(format::R8, format::Uint)>(kind, tex::Mipmap::Provided, &meta_chunks)
+        .create_texture_immutable::<(gfx::format::R8, gfx::format::Uint)>(kind, tex::Mipmap::Provided, &meta_data)
         .unwrap();
     let (_, flood) = factory
-        .create_texture_immutable::<(format::R8, format::Unorm)>(
-            tex::Kind::D1Array(flood_height as _, num_layers as _),
+        .create_texture_immutable::<(gfx::format::R8, gfx::format::Unorm)>(
+            tex::Kind::D1((level.size.1 >> level.flood_section_power) as _),
             tex::Mipmap::Provided,
-            &flood_chunks,
+            &[&level.flood_map],
         ).unwrap();
     let (_, table) = factory
-        .create_texture_immutable::<(format::R8_G8_B8_A8, format::Uint)>(
+        .create_texture_immutable::<(gfx::format::R8_G8_B8_A8, gfx::format::Uint)>(
             tex::Kind::D1(level::NUM_TERRAINS as _),
             tex::Mipmap::Provided,
             &[&terrrain_table],
@@ -336,31 +538,57 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     let globals = factory.create_constant_buffer(1);
 
     let (terrain, terrain_slice, terrain_data) = {
-        let (terrain, vbuf, slice) = if let Some(ref tessellation) = settings.terrain.tessellate {
-            let screen_space = tessellation.screen_space;
-            let (low, high) = Render::create_terrain_tess_psos(factory, screen_space);
-            let vertices = [
-                TerrainVertex { pos: [0, 0, 0, 1] },
-                TerrainVertex { pos: [1, 0, 0, 1] },
-                TerrainVertex { pos: [1, 1, 0, 1] },
-                TerrainVertex { pos: [0, 1, 0, 1] },
-            ];
-            let (vbuf, mut slice) = factory.create_vertex_buffer_with_slice(&vertices, ());
-            let num_instances = if screen_space { 16 * 12 } else { 256 };
-            slice.instances = Some((num_instances, 0));
-            (Terrain::Tess { low, high, screen_space }, vbuf, slice)
-        } else {
-            let pso = Render::create_terrain_ray_pso(factory);
-            let vertices = [
-                TerrainVertex { pos: [0, 0, 0, 1] },
-                TerrainVertex { pos: [-1, 0, 0, 0] },
-                TerrainVertex { pos: [0, -1, 0, 0] },
-                TerrainVertex { pos: [1, 0, 0, 0] },
-                TerrainVertex { pos: [0, 1, 0, 0] },
-            ];
-            let indices: &[u16] = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
-            let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
-            (Terrain::Ray(pso), vbuf, slice)
+        let (terrain, vbuf, slice) = match settings.terrain {
+            settings::Terrain::RayTracedOld => {
+                let pso = Render::create_terrain_ray_pso(factory, "terrain_ray_old");
+                let vertices = [
+                    TerrainVertex { pos: [0., 0., 0., 1.] },
+                    TerrainVertex { pos: [-1., 0., 0., 0.] },
+                    TerrainVertex { pos: [0., -1., 0., 0.] },
+                    TerrainVertex { pos: [1., 0., 0., 0.] },
+                    TerrainVertex { pos: [0., 1., 0., 0.] },
+                ];
+                let indices: &[u16] = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
+                let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
+                let terr = Terrain::RayOld { pso };
+                (terr, vbuf, slice)
+            }
+            settings::Terrain::RayTraced { mip_count, max_jumps, max_steps, debug } => {
+                let pso = Render::create_terrain_ray_pso(factory, "terrain_ray");
+                let vertices = [
+                    TerrainVertex { pos: [0., 0., 0., 1.] },
+                    TerrainVertex { pos: [-1., 0., 0., 0.] },
+                    TerrainVertex { pos: [0., -1., 0., 0.] },
+                    TerrainVertex { pos: [1., 0., 0., 0.] },
+                    TerrainVertex { pos: [0., 1., 0., 0.] },
+                ];
+                let indices: &[u16] = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
+                let (vbuf, slice) = factory.create_vertex_buffer_with_slice(&vertices, indices);
+                let terr = Terrain::Ray {
+                    pso,
+                    mipper: MaxMipper::new(factory, &tex_height),
+                    params: [
+                        mip_count as u32 - 1,
+                        max_jumps as u32,
+                        max_steps as u32,
+                        if debug { 1 } else { 0 },
+                    ],
+                };
+                (terr, vbuf, slice)
+            }
+            settings::Terrain::Tessellated { screen_space } => {
+                let (pso_low, pso_high) = Render::create_terrain_tess_psos(factory, screen_space);
+                let vertices = [
+                    TerrainVertex { pos: [0., 0., 0., 1.] },
+                    TerrainVertex { pos: [1., 0., 0., 1.] },
+                    TerrainVertex { pos: [1., 1., 0., 1.] },
+                    TerrainVertex { pos: [0., 1., 0., 1.] },
+                ];
+                let (vbuf, mut slice) = factory.create_vertex_buffer_with_slice(&vertices, ());
+                let num_instances = if screen_space { 16 * 12 } else { 256 };
+                slice.instances = Some((num_instances, 0));
+                (Terrain::Tess { pso_low, pso_high, screen_space }, vbuf, slice)
+            }
         };
         let data = terrain::Data {
             vbuf,
@@ -388,6 +616,12 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
             level::HEIGHT_SCALE as f32,
             num_layers as f32,
         ],
+        terrain_dirty_rects: vec![gfx::Rect {
+            x: 0,
+            y: 0,
+            w: level.size.0 as u16,
+            h: level.size.1 as u16,
+        }],
         object_pso: Render::create_object_pso(factory),
         object_data: object::Data {
             vbuf: factory.create_vertex_buffer(&[]), //dummy
@@ -501,6 +735,14 @@ impl<R: gfx::Resources> Render<R> {
     ) where
         C: gfx::CommandBuffer<R>,
     {
+        // prepare the data
+        if !self.terrain_dirty_rects.is_empty() {
+            if let Terrain::Ray { ref mipper, .. } = self.terrain {
+                mipper.update(encoder, &self.terrain_dirty_rects);
+            }
+            self.terrain_dirty_rects.clear();
+        }
+
         let mx_vp = Self::set_globals(
             encoder,
             cam,
@@ -520,15 +762,21 @@ impl<R: gfx::Resources> Render<R> {
         encoder.update_constant_buffer(&self.terrain_data.suf_constants, &suf_constants);
         let terr_constants = TerrainConstants {
             scr_size: [wid as f32, het as f32, 0.0, 0.0],
+            params: match self.terrain {
+                Terrain::RayOld { .. } |
+                Terrain::Tess { .. } => [0; 4],
+                Terrain::Ray { params, .. } => params,
+            },
         };
         encoder.update_constant_buffer(&self.terrain_data.terr_constants, &terr_constants);
         match self.terrain {
-            Terrain::Ray(ref pso) => {
+            Terrain::RayOld { ref pso } |
+            Terrain::Ray { ref pso, .. } => {
                 encoder.draw(&self.terrain_slice, pso, &self.terrain_data);
             }
-            Terrain::Tess { ref low, ref high, .. } => {
-                encoder.draw(&self.terrain_slice, low, &self.terrain_data);
-                encoder.draw(&self.terrain_slice, high, &self.terrain_data);
+            Terrain::Tess { ref pso_low, ref pso_high, .. } => {
+                encoder.draw(&self.terrain_slice, pso_low, &self.terrain_data);
+                encoder.draw(&self.terrain_slice, pso_high, &self.terrain_data);
             }
         }
 
@@ -586,9 +834,9 @@ impl<R: gfx::Resources> Render<R> {
     }
 
     fn create_terrain_ray_pso<F: gfx::Factory<R>>(
-        factory: &mut F,
+        factory: &mut F, name: &str,
     ) -> gfx::PipelineState<R, terrain::Meta> {
-        let shaders = read_shaders("terrain_ray", false, &[])
+        let shaders = read_shaders(name, false, &[])
             .unwrap();
         let program = factory
             .link_program(&shaders.vs, &shaders.fs)
@@ -660,13 +908,17 @@ impl<R: gfx::Resources> Render<R> {
     ) {
         info!("Reloading shaders");
         match self.terrain {
-            Terrain::Ray(ref mut pso) => {
-                *pso = Render::create_terrain_ray_pso(factory);
+            Terrain::RayOld { ref mut pso } => {
+                *pso = Render::create_terrain_ray_pso(factory, "terrain_ray_old");
             }
-            Terrain::Tess { ref mut low, ref mut high, screen_space } => {
+            Terrain::Ray { ref mut pso, ref mut mipper, .. } => {
+                *pso = Render::create_terrain_ray_pso(factory, "terrain_ray");
+                mipper.pso = MaxMipper::create_pso(factory);
+            }
+            Terrain::Tess { ref mut pso_low, ref mut pso_high, screen_space } => {
                 let (lo, hi) = Render::create_terrain_tess_psos(factory, screen_space);
-                *low = lo;
-                *high = hi;
+                *pso_low = lo;
+                *pso_high = hi;
             }
         }
         self.object_pso = Render::create_object_pso(factory);

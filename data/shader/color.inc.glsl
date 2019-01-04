@@ -6,7 +6,7 @@ uniform usampler1D t_Table;
 // corresponds to SDL palette
 uniform sampler1D t_Palette;
 // Flood map has the water level per Y.
-uniform sampler1DArray t_Flood;
+uniform sampler1D t_Flood;
 
 const float c_HorFactor = 0.5; //H_CORRECTION
 const float c_DiffuseScale = 8.0;
@@ -28,8 +28,7 @@ float evaluate_palette(uint type, float value, float ycoord) {
     vec4 terr = vec4(texelFetch(t_Table, int(type), 0));
     if (type == 0U && value > 0.0) { // water
         //TODO: apparently, the flood map data isn't correct...
-        //float flood = texture(t_Flood, ycoord).x;
-        float flood = texelFetch(t_Flood, ivec2(0, 0), 0).x;
+        float flood = texture(t_Flood, 0.0*ycoord).x;
         float d = c_HorFactor * (1.0 - flood);
         value = clamp(value * 1.25 / (1.0 - d) - 0.25, 0.0, 1.0);
     }
