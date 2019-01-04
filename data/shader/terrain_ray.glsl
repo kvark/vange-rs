@@ -31,17 +31,20 @@ uniform c_Locals {
 
 out vec4 Target0;
 
+const float c_Step = 0.6;
 
 vec3 cast_ray_to_plane(float level, vec3 base, vec3 dir) {
     float t = (level - base.z) / dir.z;
     return t * dir + base;
 }
 
+// Algorithm is based on "http://www.tevs.eu/project_i3d08.html"
+//"Maximum Mipmaps for Fast, Accurate, and Scalable Dynamic Height Field Rendering"
 vec3 cast_ray(vec3 point, vec3 dir) {
     uint lod = u_Params.x;
     ivec2 ipos = ivec2(floor(point.xy)); // integer coordinate of the cell
-    uint iter = 0U;
-    while (iter < u_Params.y) {
+    uint num_jumps = u_Params.y, num_steps = u_Params.z;
+    while (num_jumps != 0U && num_steps != 0U) {
         // step 0: at lowest LOD, just advance
         if (lod == 0U) {
             Surface surface = get_surface(point.xy);
@@ -51,8 +54,9 @@ vec3 cast_ray(vec3 point, vec3 dir) {
             if (surface.low_alt == surface.high_alt) {
                 lod++; //try to escape the low level and LOD
             }
-            point += 0.8 * dir;
+            point += c_Step * dir;
             ipos = ivec2(floor(point.xy));
+            num_steps--;
             continue;
         }
 
@@ -75,12 +79,9 @@ vec3 cast_ray(vec3 point, vec3 dir) {
         // advance the point
         point += min(units.z, min_side_unit) * dir;
         ipos = ivec2(floor(point.xy));
-        iter++;
+        num_jumps--;
 
         if (units.z < min_side_unit) {
-            if (lod == 0U) {
-                break;
-            }
             lod--;
         } else {
             // adjust the integer position on cell boundary
@@ -102,7 +103,13 @@ vec3 cast_ray(vec3 point, vec3 dir) {
     }
 
     // debug output here
-    Target0 = vec4(iter == u_Params.y ? 1.0 : 0.0, float(iter) / float(u_Params.y), 0.0, 1.0);
+    if (u_Params.w != 0U) {
+        Target0 = vec4(
+            (num_jumps == 0U ? 0.5 : 0.0) + (num_steps == 0U ? 0.5 : 0.0),
+            1.0 - float(num_jumps) / float(u_Params.y),
+            1.0 - float(num_steps) / float(u_Params.z),
+            1.0);
+    }
     return point;
 }
 
@@ -121,11 +128,14 @@ void main() {
     vec3 view = normalize(view_base - u_CameraPos.xyz);
 
     vec3 point = cast_ray(view_base, view);
-
     //vec3 point = cast_ray_to_plane(0.0, near_plane, view);
-    Surface surface = get_surface(point.xy);
-    uint type = point.z <= surface.low_alt ? surface.low_type : surface.high_type;
-    Target0 = evaluate_color(type, surface.tex_coord, point.z / u_TextureScale.z, 1.0);
+
+    if (u_Params.w == 0U) {
+        Surface surface = get_surface(point.xy);
+        uint type = point.z <= surface.low_alt ? surface.low_type : surface.high_type;
+        float lit_factor = point.z <= surface.low_alt && surface.delta != 0.0 ? 0.25 : 1.0;
+        Target0 = evaluate_color(type, surface.tex_coord, point.z / u_TextureScale.z, lit_factor);
+    }
 
     vec4 target_ndc = u_ViewProj * vec4(point, 1.0);
     gl_FragDepth = target_ndc.z / target_ndc.w * 0.5 + 0.5;

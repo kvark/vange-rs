@@ -135,7 +135,7 @@ enum Terrain<R: gfx::Resources> {
     Ray {
         pso: gfx::PipelineState<R, terrain::Meta>,
         mipper: MaxMipper<R>,
-        max_iterations: usize,
+        params: [u32; 4],
     },
     Tess {
         pso_low: gfx::PipelineState<R, terrain::Meta>,
@@ -535,7 +535,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
 
     let (terrain, terrain_slice, terrain_data) = {
         let (terrain, vbuf, slice) = match settings.terrain {
-            settings::Terrain::RayTraced { iterations, .. } => {
+            settings::Terrain::RayTraced { mip_count, max_jumps, max_steps, debug } => {
                 let pso = Render::create_terrain_ray_pso(factory);
                 let vertices = [
                     TerrainVertex { pos: [0., 0., 0., 1.] },
@@ -549,7 +549,12 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
                 let terr = Terrain::Ray {
                     pso,
                     mipper: MaxMipper::new(factory, &tex_height),
-                    max_iterations: iterations,
+                    params: [
+                        mip_count as u32 - 1,
+                        max_jumps as u32,
+                        max_steps as u32,
+                        if debug { 1 } else { 0 },
+                    ],
                 };
                 (terr, vbuf, slice)
             }
@@ -737,15 +742,12 @@ impl<R: gfx::Resources> Render<R> {
             tex_scale: self.terrain_scale,
         };
         encoder.update_constant_buffer(&self.terrain_data.suf_constants, &suf_constants);
-        let params = match self.terrain {
-            Terrain::Ray { ref mipper, max_iterations, .. } => {
-                [mipper.mips[0].len() as u32 - 1, max_iterations as u32, 0, 0]
-            }
-            Terrain::Tess { .. } => [0, 0, 0, 0],
-        };
         let terr_constants = TerrainConstants {
             scr_size: [wid as f32, het as f32, 0.0, 0.0],
-            params,
+            params: match self.terrain {
+                Terrain::Ray { params, .. } => params,
+                Terrain::Tess { .. } => [0, 0, 0, 0],
+            },
         };
         encoder.update_constant_buffer(&self.terrain_data.terr_constants, &terr_constants);
         match self.terrain {

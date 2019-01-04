@@ -32,7 +32,9 @@
 		//example: Tessellated( screen_space: true ),
 		terrain: RayTraced(
 			mip_count: 10,
-			iterations: 25,
+			max_jumps: 25,
+			max_steps: 100,
+			debug: false,
 		),
 		debug: (
 			max_vertices: 512,
