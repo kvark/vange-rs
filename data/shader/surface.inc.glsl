@@ -87,14 +87,14 @@ Surface get_surface(vec2 pos) {
         }
 
         suf.low_alt =
-            textureOffset(t_Height, suf.tex_coord, ivec2(-1, 0)).x
+            textureLodOffset(t_Height, suf.tex_coord, 0.0, ivec2(-1, 0)).x
             * u_TextureScale.z;
-        suf.high_alt = texture(t_Height, suf.tex_coord).x * u_TextureScale.z;
+        suf.high_alt = textureLod(t_Height, suf.tex_coord, 0.0).x * u_TextureScale.z;
         suf.delta = float(delta) * c_DeltaScale * u_TextureScale.z;
     } else {
         suf.high_type = suf.low_type;
 
-        suf.low_alt = texture(t_Height, tc).x * u_TextureScale.z;
+        suf.low_alt = textureLod(t_Height, tc, 0.0).x * u_TextureScale.z;
         suf.high_alt = suf.low_alt;
         suf.delta = 0.0;
     }

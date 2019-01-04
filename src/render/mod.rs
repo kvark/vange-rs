@@ -126,6 +126,7 @@ gfx_defines!{
 
     pipeline terrain_mip {
         vbuf: gfx::VertexBuffer<TerrainVertex> = (),
+        suf_constants: gfx::ConstantBuffer<SurfaceConstants> = "c_Surface",
         height: gfx::TextureSampler<f32> = "t_Height",
         out_color: gfx::RenderTarget<HeightFormat> = "Target0",
     }
@@ -150,14 +151,13 @@ enum Terrain<R: gfx::Resources> {
 
 struct TerrainMip<R: gfx::Resources> {
     target: gfx::handle::RenderTargetView<R, HeightFormat>,
-    resource: (gfx::handle::ShaderResourceView<R, f32>, gfx::handle::Sampler<R>),
 }
 
 struct MaxMipper<R: gfx::Resources> {
     slice_size: (gfx::texture::Size, gfx::texture::Size),
     pso: gfx::PipelineState<R, terrain_mip::Meta>,
+    data: terrain_mip::Data<R>,
     mips: Vec<Vec<TerrainMip<R>>>,
-    vertex_buf: gfx::handle::Buffer<R, TerrainVertex>,
     vertex_capacity: usize,
 }
 
@@ -191,30 +191,25 @@ impl<R: gfx::Resources> MaxMipper<R> {
         for slice in 0 .. num_slices {
             let mut slice_mips = Vec::with_capacity(info.levels as usize);
             for level in 0 .. info.levels {
-                //Note: gfx pre-ll doesn't actually respect the SRV level ranges...
-                // so we pair it with a sampler
-                let srv = factory
-                    .view_texture_as_shader_resource::<HeightFormat>(
-                        texture, (level, level), gfx::format::Swizzle::new()
-                    )
-                    .unwrap();
-                let lod = tex::Lod::from(level as f32);
-                let sampler = factory.create_sampler(tex::SamplerInfo {
-                    lod_range: (lod, lod),
-                    .. tex::SamplerInfo::new(
-                        tex::FilterMethod::Scale,
-                        tex::WrapMode::Tile,
-                    )
-                });
                 slice_mips.push(TerrainMip {
                     target: factory
                         .view_texture_as_render_target(texture, level, Some(slice))
                         .unwrap(),
-                    resource: (srv, sampler.clone()),
                 });
             }
             mips.push(slice_mips);
         }
+
+        let srv = factory
+            .view_texture_as_shader_resource::<HeightFormat>(
+                texture, (0, info.levels - 1), gfx::format::Swizzle::new()
+            )
+            .unwrap();
+        let sampler = factory
+            .create_sampler(tex::SamplerInfo::new(
+                tex::FilterMethod::Mipmap,
+                tex::WrapMode::Tile,
+            ));
 
         let vertex_capacity = 256;
         let (wid, het, _, _) = info.kind.get_dimensions();
@@ -222,15 +217,20 @@ impl<R: gfx::Resources> MaxMipper<R> {
         MaxMipper {
             slice_size: (wid, het),
             pso: Self::create_pso(factory),
+            data: terrain_mip::Data {
+                vbuf: factory
+                    .create_buffer(
+                        vertex_capacity,
+                        gfx::buffer::Role::Vertex,
+                        mem::Usage::Dynamic,
+                        mem::Bind::TRANSFER_DST,
+                    )
+                    .unwrap(),
+                suf_constants: factory.create_constant_buffer(1),
+                height: (srv, sampler),
+                out_color: mips[0][0].target.clone(),
+            },
             mips,
-            vertex_buf: factory
-                .create_buffer(
-                    vertex_capacity,
-                    gfx::buffer::Role::Vertex,
-                    mem::Usage::Dynamic,
-                    mem::Bind::TRANSFER_DST,
-                )
-                .unwrap(),
             vertex_capacity,
         }
     }
@@ -261,8 +261,6 @@ impl<R: gfx::Resources> MaxMipper<R> {
                 continue
             }
 
-            vertices.clear();
-
             for r in rects {
                 let v_abs = [
                     (r.x, r.y),
@@ -285,17 +283,28 @@ impl<R: gfx::Resources> MaxMipper<R> {
             }
 
             assert!(vertices.len() <= self.vertex_capacity);
-            encoder.update_buffer(&self.vertex_buf, &vertices, 0).unwrap();
+            encoder.update_buffer(&self.data.vbuf, &vertices, 0).unwrap();
             let slice = gfx::Slice {
                 end: vertices.len() as gfx::VertexCount,
-                .. gfx::Slice::new_match_vertex_buffer(&self.vertex_buf)
+                .. gfx::Slice::new_match_vertex_buffer(&self.data.vbuf)
             };
 
-            for mip in 1 .. slice_mips.len() {
+            for mip in 0 .. slice_mips.len() - 1 {
+                vertices.clear();
+
+                let suf_constants = SurfaceConstants {
+                    tex_scale: [
+                        (self.slice_size.0 >> mip) as f32,
+                        (self.slice_size.1 >> mip) as f32,
+                        mip as f32,
+                        1.0,
+                    ],
+                };
+                encoder.update_constant_buffer(&self.data.suf_constants, &suf_constants);
+
                 encoder.draw(&slice, &self.pso, &terrain_mip::Data {
-                    vbuf: self.vertex_buf.clone(),
-                    height: slice_mips[mip - 1].resource.clone(),
-                    out_color: slice_mips[mip].target.clone(),
+                    out_color: slice_mips[mip + 1].target.clone(),
+                    .. self.data.clone()
                 });
             }
         }
