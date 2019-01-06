@@ -1,4 +1,5 @@
 //!include fs:surface.inc fs:color.inc
+//!specialization MATERIAL_FILTER
 
 uniform c_Globals {
     vec4 u_CameraPos;
@@ -131,10 +132,36 @@ void main() {
     //vec3 point = cast_ray_to_plane(0.0, near_plane, view);
 
     if (u_Params.w == 0U) {
-        Surface surface = get_surface(point.xy);
-        uint type = point.z <= surface.low_alt ? surface.low_type : surface.high_type;
-        float lit_factor = point.z <= surface.low_alt && surface.delta != 0.0 ? 0.25 : 1.0;
-        Target0 = evaluate_color(type, surface.tex_coord, point.z / u_TextureScale.z, lit_factor);
+        if (MATERIAL_FILTER != 0) {
+            vec2 p_tl = floor(point.xy - 0.5) + 0.5;
+
+            Surface s0 = get_surface(p_tl);
+            Surface s1 = get_surface(floor(point.xy + vec2(0.5, -0.5)) + 0.5);
+            Surface s2 = get_surface(floor(point.xy + vec2(0.5, 0.5)) + 0.5);
+            Surface s3 = get_surface(floor(point.xy + vec2(-0.5, 0.5)) + 0.5);
+
+            uvec4 low_types = uvec4(s0.low_type, s1.low_type, s2.low_type, s3.low_type);
+            uvec4 high_types = uvec4(s0.high_type, s1.high_type, s2.high_type, s3.high_type);
+            vec4 low_alts = vec4(s0.low_alt, s1.low_alt, s2.low_alt, s3.low_alt);
+            vec4 deltas = vec4(s0.delta, s1.delta, s2.delta, s3.delta);
+            uvec4 types = uvec4(
+                point.z <= low_alts.x ? low_types.x : high_types.x,
+                point.z <= low_alts.y ? low_types.y : high_types.y,
+                point.z <= low_alts.z ? low_types.z : high_types.z,
+                point.z <= low_alts.w ? low_types.w : high_types.w
+            );
+            vec4 lit_factors = mix(vec4(0.25), vec4(1.0), greaterThan(point.zzzz, low_alts) || equal(deltas, vec4(0.0)));
+
+            mat4 colors = evaluate_color4(types, s0.tex_coord, point.z / u_TextureScale.z, lit_factors);
+            vec4 color_top = mix(colors[0], colors[1], point.x - p_tl.x);
+            vec4 color_bot = mix(colors[3], colors[2], point.x - p_tl.x);
+            Target0 = mix(color_top, color_bot, point.y - p_tl.y);
+        } else {
+            Surface surface = get_surface(point.xy);
+            uint type = point.z <= surface.low_alt ? surface.low_type : surface.high_type;
+            float lit_factor = point.z <= surface.low_alt && surface.delta != 0.0 ? 0.25 : 1.0;
+            Target0 = evaluate_color(type, surface.tex_coord, point.z / u_TextureScale.z, lit_factor);
+        }
     }
 
     vec4 target_ndc = u_ViewProj * vec4(point, 1.0);

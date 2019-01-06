@@ -549,7 +549,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
     let (terrain, terrain_slice, terrain_data) = {
         let (terrain, vbuf, slice) = match settings.terrain {
             settings::Terrain::RayTracedOld => {
-                let pso = Render::create_terrain_ray_pso(factory, "terrain_ray_old");
+                let pso = Render::create_terrain_ray_pso(factory, "terrain_ray_old", &[]);
                 let vertices = [
                     TerrainVertex { pos: [0., 0., 0., 1.] },
                     TerrainVertex { pos: [-1., 0., 0., 0.] },
@@ -563,7 +563,7 @@ pub fn init<R: gfx::Resources, F: gfx::Factory<R>>(
                 (terr, vbuf, slice)
             }
             settings::Terrain::RayTraced { mip_count, max_jumps, max_steps, debug } => {
-                let pso = Render::create_terrain_ray_pso(factory, "terrain_ray");
+                let pso = Render::create_terrain_ray_pso(factory, "terrain_ray", &[]);
                 let vertices = [
                     TerrainVertex { pos: [0., 0., 0., 1.] },
                     TerrainVertex { pos: [-1., 0., 0., 0.] },
@@ -843,9 +843,9 @@ impl<R: gfx::Resources> Render<R> {
     }
 
     fn create_terrain_ray_pso<F: gfx::Factory<R>>(
-        factory: &mut F, name: &str,
+        factory: &mut F, name: &str, specialization: &[&str]
     ) -> gfx::PipelineState<R, terrain::Meta> {
-        let shaders = read_shaders(name, false, &[])
+        let shaders = read_shaders(name, false, specialization)
             .unwrap();
         let program = factory
             .link_program(&shaders.vs, &shaders.fs)
@@ -918,10 +918,10 @@ impl<R: gfx::Resources> Render<R> {
         info!("Reloading shaders");
         match self.terrain {
             Terrain::RayOld { ref mut pso } => {
-                *pso = Render::create_terrain_ray_pso(factory, "terrain_ray_old");
+                *pso = Render::create_terrain_ray_pso(factory, "terrain_ray_old", &[]);
             }
             Terrain::Ray { ref mut pso, ref mut mipper, .. } => {
-                *pso = Render::create_terrain_ray_pso(factory, "terrain_ray");
+                *pso = Render::create_terrain_ray_pso(factory, "terrain_ray", &[]);
                 mipper.pso = MaxMipper::create_pso(factory);
             }
             Terrain::Tess { ref mut pso_low, ref mut pso_high, screen_space } => {
