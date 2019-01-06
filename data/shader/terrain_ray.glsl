@@ -89,11 +89,11 @@ vec3 cast_ray(vec3 point, vec3 dir) {
             float affinity;
             vec2 proximity = mod(cell_id, 2.0) - 0.5;
             if (units.x <= units.y) {
-                ipos.x = cell_tl.x + (dir.x < 0.0 ? -1 : 1 << lod);
+                ipos.x = dir.x < 0.0 ? cell_tl.x - 1 : cell_tl.x + (1 << lod);
                 affinity = dir.x * proximity.x;
             }
             if (units.y <= units.x) {
-                ipos.y = cell_tl.y + (dir.y < 0.0 ? -1 : 1 << lod);
+                ipos.y = dir.y < 0.0 ? cell_tl.y - 1 : cell_tl.y + (1 << lod);
                 affinity = dir.y * proximity.y;
             }
             if (lod < u_Params.x && affinity > 0.0) {
