@@ -16,7 +16,7 @@ Note: leaving the `level=""` empty in the config would load a flat boring debug 
 git clone https://github.com/kvark/vange-rs
 cd vange-rs
 cp config/settings.template.ron config/settings.ron
-vi config/settings.toml # set the game path
+vi config/settings.ron # set the game path
 cargo run --bin road
 ```
 Controls:
@@ -83,7 +83,7 @@ cargo run --bin convert -- my_dir/model.ron game/resource/m3d/items/i21-new.m3d
 
 #### Level(INI+VMC/VMP) <-> PNG+RON
 ```bash
-cargo run --bin convert --release -- game/thechain/fostral/world.ini my_dir/fostral.ron
+cargo run --bin convert -- game/thechain/fostral/world.ini my_dir/fostral.ron
 ```
 
 The RON file contains the size and names of two images: heights and materials. The former conains the following data:
@@ -97,7 +97,7 @@ The materials image only uses two channels:
 
 You can change the images in a photo editor, and then we can import it as a non-compressed level:
 ```bash
-cargo run --bin convert --release -- my_dir/fostral.ron game/thechain/fostral/output.vmp
+cargo run --bin convert -- my_dir/fostral.ron game/thechain/fostral/output.vmp
 ```
 
 <img alt="modified level" src="etc/shots/Road15-import-level.png" width="50%">
