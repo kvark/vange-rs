@@ -1,7 +1,3 @@
-#if GL_ARB_texture_gather
-#extension GL_ARB_texture_gather : enable
-#endif
-
 varying vec3 v_TexCoord;
 
 #ifdef SHADER_VS
@@ -19,22 +15,22 @@ void main() {
 
 uniform sampler2DArray t_Height;
 
+uniform c_Surface {
+    vec4 u_TextureScale;    // XY = source size, Z = source mipmap level, W = 1
+};
+
+
 out float Target0;
 
 void main() {
-    #if GL_ARB_texture_gather
-    vec4 heights = textureGather(t_Height, v_TexCoord);
-    #else
-    // we are at a pixel center, so a slight offset guarantees
-    // a sample from a particular neighbor in 2x2 grid around the center
-    float delta = 0.00001;
+    ivec3 tc = ivec3(u_TextureScale.xyw * v_TexCoord);
+    int lod = int(u_TextureScale.z);
     vec4 heights = vec4(
-        texture(t_Height, v_TexCoord + vec3(-delta, -delta, 0.0)).r,
-        texture(t_Height, v_TexCoord + vec3(delta, -delta, 0.0)).r,
-        texture(t_Height, v_TexCoord + vec3(delta, delta, 0.0)).r,
-        texture(t_Height, v_TexCoord + vec3(-delta, delta, 0.0)).r
+        texelFetch(t_Height, tc - ivec3(0, 0, 0), lod).x,
+        texelFetch(t_Height, tc - ivec3(0, 1, 0), lod).x,
+        texelFetch(t_Height, tc - ivec3(1, 0, 0), lod).x,
+        texelFetch(t_Height, tc - ivec3(1, 1, 0), lod).x
     );
-    #endif
     Target0 = max(max(heights.x, heights.y), max(heights.z, heights.w));
 }
 #endif //FS

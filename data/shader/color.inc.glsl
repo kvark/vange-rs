@@ -37,8 +37,8 @@ float evaluate_palette(uint type, float value, float ycoord) {
 
 vec4 evaluate_color(uint type, vec3 tex_coord, float height_normalized, float lit_factor) {
     float diff =
-        textureOffset(t_Height, tex_coord, ivec2(1, 0)).x -
-        textureOffset(t_Height, tex_coord, ivec2(-1, 0)).x;
+        textureLodOffset(t_Height, tex_coord, 0.0, ivec2(1, 0)).x -
+        textureLodOffset(t_Height, tex_coord, 0.0, ivec2(-1, 0)).x;
     vec3 mat = type == 0U ? vec3(5.0, 1.25, 0.5) : vec3(1.0);
     float light_clr = evaluate_light(mat, diff);
     float tmp = light_clr - c_HorFactor * (1.0 - height_normalized);
