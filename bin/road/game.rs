@@ -5,8 +5,9 @@ use rand;
 use std::collections::HashMap;
 
 use boilerplate::{Application, KeyboardInput};
+use m3d::Mesh;
 use physics;
-use vangers::{config, level, render, space};
+use vangers::{config, level, model, render, space};
 
 
 #[derive(Eq, PartialEq)]
@@ -114,7 +115,7 @@ struct DataBase<R: gfx::Resources> {
     cars: HashMap<String, config::car::CarInfo<R>>,
     common: config::common::Common,
     _escaves: Vec<config::escaves::Escave>,
-    _game: config::game::Registry,
+    game: config::game::Registry,
 }
 
 pub struct Game<R: gfx::Resources> {
@@ -149,7 +150,7 @@ impl<R: gfx::Resources> Game<R> {
                 cars: config::car::load_registry(settings, &game, factory),
                 common: config::common::load(settings.open_relative("common.prm")),
                 _escaves: config::escaves::load(settings.open_relative("escaves.prm")),
-                _game: game,
+                game,
             }
         };
         let (level, coords) = if settings.game.level.is_empty() {
@@ -175,7 +176,7 @@ impl<R: gfx::Resources> Game<R> {
 
         let (width, height, _, _) = targets.color.get_dimensions();
         let depth = 10f32 .. 10000f32;
-        let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
+        let pal_data = level::read_palette(settings.open_palette(), None);
         let render = render::init(factory, targets, &level, &pal_data, &settings.render);
         let collider = render::GpuCollider::new(
             factory,
@@ -191,13 +192,20 @@ impl<R: gfx::Resources> Game<R> {
             &level,
         );
         player_agent.spirit = Spirit::Player;
+        for (ms, sid) in player_agent.car.model.slots.iter_mut().zip(settings.car.slots.iter()) {
+            let info = &db.game.model_infos[sid];
+            let raw = Mesh::load(&mut settings.open_relative(&info.path));
+            ms.mesh = Some(model::load_c3d(raw, factory));
+            ms.scale = info.scale;
+        }
+
         let mut agents = vec![player_agent];
         let mut rng = rand::thread_rng();
         let car_names = db.cars.keys().cloned().collect::<Vec<_>>();
         // populate with random agents
         for i in 0 .. settings.game.other.count {
-            use rand::Rng;
-            let car_id = rng.choose(&car_names).unwrap();
+            use rand::{Rng, prelude::SliceRandom};
+            let car_id = car_names.choose(&mut rng).unwrap();
             let x = rng.gen_range(0, level.size.0);
             let y = rng.gen_range(0, level.size.1);
             let mut agent = Agent::spawn(

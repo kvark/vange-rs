@@ -34,7 +34,7 @@ impl Registry {
                 key,
                 ModelInfo {
                     path: name,
-                    scale: size as f32 * 256.0 / max_size as f32,
+                    scale: size as f32 / max_size as f32,
                 },
             );
         }
