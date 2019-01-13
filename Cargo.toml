@@ -57,3 +57,7 @@ gfx_window_glutin = "0.28"
 glutin = "0.19"
 obj = "0.9"
 png = "0.13"
+
+[dev-dependencies]
+speculate = "0.1"
+
