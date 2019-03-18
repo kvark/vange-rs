@@ -353,9 +353,9 @@ pub fn read_shaders(name: &str, tessellate: bool, specialization: &[&str]) -> Re
 
     let prelude = format!("#version 150 core\n// shader: {}\n", name);
     let mut buf_vs = Vec::new();
-    write!(buf_vs, "{}", prelude)?;
+    write!(buf_vs, "{}#define SHADER_VS\n", prelude)?;
     let mut buf_fs = Vec::new();
-    write!(buf_fs, "{}", prelude)?;
+    write!(buf_fs, "{}#define SHADER_FS\n", prelude)?;
 
     let mut buf_tec = Vec::new();
     let mut buf_tev = Vec::new();
@@ -408,11 +408,11 @@ pub fn read_shaders(name: &str, tessellate: bool, specialization: &[&str]) -> Re
         }
     }
 
-    write!(buf_vs, "\n#define SHADER_VS\n{}", code
+    write!(buf_vs, "\n{}", code
         .replace("attribute", "in")
         .replace("varying", "out")
     )?;
-    write!(buf_fs, "\n#define SHADER_FS\n{}", code
+    write!(buf_fs, "\n{}", code
         .replace("varying", "in")
     )?;
 

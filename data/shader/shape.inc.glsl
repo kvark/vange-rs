@@ -1,10 +1,12 @@
 // Common VS routines for fetching the collision shape data.
 
+#ifdef SHADER_VS
+
 uniform samplerBuffer t_Position;
 
-attribute uvec4 a_Indices;
-attribute vec4 a_Normal;
-attribute vec4 a_OriginSquare;
+in uvec4 a_Indices;
+in vec4 a_Normal;
+in vec4 a_OriginSquare;
 
 struct Polygon {
 	vec4 vertex;
@@ -23,3 +25,5 @@ Polygon get_shape_polygon() {
 	);
 	return poly;
 }
+
+#endif
