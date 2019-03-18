@@ -62,7 +62,7 @@ const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
 ];
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::D24UnormS8Uint;
+pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::D32Float;
 pub type ShapeVertex = [f32; 4];
 
 #[derive(Clone, Copy)]
@@ -187,8 +187,8 @@ pub fn read_shaders(
         panic!("Shader not found: {:?}", path);
     }
 
-    let mut buf_vs = Vec::new();
-    let mut buf_fs = Vec::new();
+    let mut buf_vs = b"#version 450\n#define SHADER_VS\n".to_vec();
+    let mut buf_fs = b"#version 450\n#define SHADER_FS\n".to_vec();
 
     let mut code = String::new();
     BufReader::new(File::open(&path)?)
@@ -240,11 +240,23 @@ pub fn read_shaders(
     debug!("vs:\n{}", str_vs);
     debug!("fs:\n{}", str_fs);
 
-    let mut output_vs = glsl_to_spirv::compile(&str_vs, glsl_to_spirv::ShaderType::Vertex).unwrap();
+    let mut output_vs = match glsl_to_spirv::compile(&str_vs, glsl_to_spirv::ShaderType::Vertex) {
+        Ok(file) => file,
+        Err(e) => {
+            println!("Generated VS shader:\n{}", str_vs);
+            panic!("\nUnable to compile '{}': {:?}", name, e);
+        }
+    };
     let mut spv_vs = Vec::new();
     output_vs.read_to_end(&mut spv_vs).unwrap();
 
-    let mut output_fs = glsl_to_spirv::compile(&str_fs, glsl_to_spirv::ShaderType::Fragment).unwrap();
+    let mut output_fs = match glsl_to_spirv::compile(&str_fs, glsl_to_spirv::ShaderType::Fragment) {
+        Ok(file) => file,
+        Err(e) => {
+            println!("Generated FS shader:\n{}", str_fs);
+            panic!("\nUnable to compile '{}': {:?}", name, e);
+        }
+    };
     let mut spv_fs = Vec::new();
     output_fs.read_to_end(&mut spv_fs).unwrap();
 
@@ -381,7 +393,7 @@ pub fn init(
         wgpu::BufferCopyView {
             buffer: &table_staging,
             offset: 0,
-            row_pitch: table_extent.width,
+            row_pitch: table_extent.width * 4,
             image_height: 1,
         },
         wgpu::TextureCopyView {
@@ -560,10 +572,7 @@ pub fn init(
     });
 
     let surface_uni_buf = device
-        .create_buffer_mapped(
-            mem::size_of::<SurfaceConstants>(),
-            wgpu::BufferUsageFlags::UNIFORM,
-        )
+        .create_buffer_mapped(1, wgpu::BufferUsageFlags::UNIFORM)
         .fill_from_slice(&[SurfaceConstants {
             _tex_scale: [
                 level.size.0 as f32,

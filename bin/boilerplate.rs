@@ -1,6 +1,6 @@
 use vangers::{
     config,
-    render::ScreenTargets,
+    render::{ScreenTargets, DEPTH_FORMAT},
 };
 
 use env_logger;
@@ -8,8 +8,7 @@ use log::info;
 use wgpu;
 use wgpu::winit;
 
-pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
-pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::D32Float;
+const SWAP_CHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
 pub trait Application {
     fn on_key(&mut self, input: winit::KeyboardInput) -> bool;
@@ -75,7 +74,7 @@ impl Harness {
         let surface = instance.create_surface(&window);
         let sc_desc = wgpu::SwapChainDescriptor {
             usage: wgpu::TextureUsageFlags::OUTPUT_ATTACHMENT,
-            format: COLOR_FORMAT,
+            format: SWAP_CHAIN_FORMAT,
             width: extent.width,
             height: extent.height,
         };
@@ -160,7 +159,7 @@ impl Harness {
                 self.extent = extent;
                 let sc_desc = wgpu::SwapChainDescriptor {
                     usage: wgpu::TextureUsageFlags::OUTPUT_ATTACHMENT,
-                    format: COLOR_FORMAT,
+                    format: SWAP_CHAIN_FORMAT,
                     width: extent.width,
                     height: extent.height,
                 };

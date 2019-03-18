@@ -1,6 +1,6 @@
 //!include fs:surface.inc fs:color.inc
 
-uniform c_Globals {
+layout(set = 0, binding = 0) uniform Globals {
     vec4 u_CameraPos;
     mat4 u_ViewProj;
     mat4 u_InvViewProj;
@@ -8,10 +8,9 @@ uniform c_Globals {
     vec4 u_LightColor;
 };
 
-
 #ifdef SHADER_VS
 
-attribute vec4 a_Pos;
+layout(location = 0) attribute ivec4 a_Pos;
 
 void main() {
     gl_Position = u_ViewProj * a_Pos;
@@ -22,16 +21,14 @@ void main() {
 #ifdef SHADER_FS
 //imported: Surface, u_TextureScale, get_lod_height, get_surface, evaluate_color
 
-uniform c_Locals {
+layout(set = 1, binding = 1) uniform Locals {
     vec4 u_ScreenSize;      // XY = size
     uvec4 u_Params; // X = max mipmap level, Y = max iterations
 };
 
 #define TERRAIN_WATER   0U
 
-out vec4 Target0;
-
-const float c_Step = 0.6;
+layout(location = 0) out vec4 o_Color;
 
 vec3 cast_ray_to_plane(float level, vec3 base, vec3 dir) {
     float t = (level - base.z) / dir.z;
@@ -66,23 +63,38 @@ vec3 cast_ray(vec3 point, vec3 dir) {
             lod--;
             continue;
         }
-        // assumption: point.z >= height
+    }
 
-        // step 2: figure out the closest intersection with the cell
-        // it can be X axis, Y axis, or the depth
-        vec2 cell_id = floor(vec2(ipos) / float(1 << lod)); // careful!
-        ivec2 cell_tl = ivec2(cell_id) << lod;
-        vec2 cell_offset = float(1 << lod) * step(0.0, dir.xy) - point.xy + vec2(cell_tl);
-        vec3 units = vec3(cell_offset, height - point.z) / dir;
-        float min_side_unit = min(units.x, units.y);
+    return result;
+}
 
-        // advance the point
-        point += min(units.z, min_side_unit) * dir;
-        ipos = ivec2(floor(point.xy));
-        num_jumps--;
+struct CastPoint {
+    vec3 pos;
+    uint type;
+    vec2 tex_coord;
+    bool is_underground;
+    //bool is_shadowed;
+};
 
-        if (units.z < min_side_unit) {
-            lod--;
+CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
+    CastPoint result;
+
+    vec3 a = base.z <= u_TextureScale.z ? base :
+        cast_ray_to_plane(u_TextureScale.z, base, dir);
+    vec3 c = cast_ray_to_plane(0.0, base, dir);
+    vec3 b = c;
+
+    Surface suf = cast_ray_impl(a, b, true, 8, 4);
+    result.type = suf.high_type;
+    result.is_underground = false;
+
+    if (suf.delta != 0.0 && b.z < suf.low_alt + suf.delta) {
+        // continue the cast underground, but reserve
+        // the right to re-appear above the surface.
+        a = b; b = c;
+        suf = cast_ray_impl(a, b, false, 6, 3);
+        if (b.z >= suf.low_alt + suf.delta) {
+            result.type = suf.high_type;
         } else {
             // adjust the integer position on cell boundary
             // figure out if we hit the higher LOD bound and switch to it
@@ -136,6 +148,7 @@ void main() {
         float lit_factor = point.z <= surface.low_alt && surface.delta != 0.0 ? 0.25 : 1.0;
         Target0 = evaluate_color(type, surface.tex_coord, point.z / u_TextureScale.z, lit_factor);
     }
+    o_Color = frag_color;
 
     vec4 target_ndc = u_ViewProj * vec4(point, 1.0);
     gl_FragDepth = target_ndc.z / target_ndc.w * 0.5 + 0.5;
