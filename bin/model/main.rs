@@ -1,10 +1,3 @@
-extern crate cgmath;
-extern crate getopts;
-extern crate gfx;
-#[macro_use]
-extern crate log;
-extern crate vangers;
-
 mod app;
 #[path = "../boilerplate.rs"]
 mod boilerplate;
@@ -12,7 +5,7 @@ mod boilerplate;
 fn main() {
     use std::env;
 
-    let (mut harness, settings, main_targets) = boilerplate::Harness::init();
+    let (mut harness, settings) = boilerplate::Harness::init();
 
     let args: Vec<_> = env::args().collect();
     let mut options = getopts::Options::new();

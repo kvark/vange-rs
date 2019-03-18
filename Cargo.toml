@@ -15,6 +15,10 @@ members = [
 
 [features]
 default = []
+gfx-vulkan = ["wgpu/vulkan"]
+gfx-dx12 = ["wgpu/dx12"]
+gfx-dx11 = ["wgpu/dx11"]
+gfx-metal = ["wgpu/metal"]
 
 [[bin]]
 name = "road"

@@ -1,8 +1,11 @@
 use cgmath;
-use gfx;
+use log::info;
+use wgpu;
+use wgpu::winit;
 
-use boilerplate::{Application, KeyboardInput, MouseScrollDelta, MouseButton, ElementState};
+use crate::boilerplate::Application;
 use vangers::{config, level, render, space};
+
 
 #[derive(Debug)]
 enum Input {
@@ -15,8 +18,8 @@ enum Input {
     Empty,
 }
 
-pub struct LevelView<R: gfx::Resources> {
-    render: render::Render<R>,
+pub struct LevelView {
+    render: render::Render,
     _level: level::Level,
     cam: space::Camera,
     input: Input,
@@ -26,11 +29,10 @@ pub struct LevelView<R: gfx::Resources> {
     mouse_button_pressed: bool,
 }
 
-impl<R: gfx::Resources> LevelView<R> {
-    pub fn new<F: gfx::Factory<R>>(
+impl LevelView {
+    pub fn new(
         settings: &config::settings::Settings,
-        targets: render::MainTargets<R>,
-        factory: &mut F,
+        device: &mut wgpu::Device,
     ) -> Self {
         let level = if settings.game.level.is_empty() {
             info!("Using test level");
@@ -85,9 +87,8 @@ impl<R: gfx::Resources> LevelView<R> {
         };
 
         let objects_palette = level::read_palette(settings.open_palette(), None);
-        let (width, height, _, _) = targets.color.get_dimensions();
         let depth = 10f32 .. 10000f32;
-        let render = render::init(factory, targets, &level, &objects_palette, &settings.render);
+        let render = render::init(device, &level, &objects_palette, &settings.render);
 
         LevelView {
             render,
@@ -99,14 +100,18 @@ impl<R: gfx::Resources> LevelView<R> {
                     config::settings::View::Perspective => {
                         let pf = cgmath::PerspectiveFov {
                             fovy: cgmath::Deg(45.0).into(),
-                            aspect: width as f32 / height as f32,
+                            aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
                             near: depth.start,
                             far: depth.end,
                         };
                         space::Projection::Perspective(pf)
                     }
                     config::settings::View::Flat => {
-                        space::Projection::ortho(width, height, depth)
+                        space::Projection::ortho(
+                            settings.window.size[0] as u16,
+                            settings.window.size[1] as u16,
+                            depth,
+                        )
                     }
                 },
             },
@@ -118,7 +123,7 @@ impl<R: gfx::Resources> LevelView<R> {
     }
 }
 
-impl<R: gfx::Resources> Application<R> for LevelView<R> {
+impl Application for LevelView {
     fn on_cursor_move(&mut self, position: (f64, f64)){
         if !self.mouse_button_pressed {
             return;
@@ -139,9 +144,9 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
         self.last_mouse_pos = position_vec;
     }
 
-    fn on_mouse_wheel(&mut self, delta: MouseScrollDelta) {
+    fn on_mouse_wheel(&mut self, delta: winit::MouseScrollDelta) {
         match delta {
-            MouseScrollDelta::LineDelta(_, y) => {
+            winit::MouseScrollDelta::LineDelta(_, y) => {
                 self.input = Input::DepQuant(y);
             }
             _ => {}
@@ -149,15 +154,15 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
 
     }
 
-    fn on_mouse_button(&mut self, state: ElementState, button: MouseButton) {
-        if button == MouseButton::Left {
-            self.mouse_button_pressed = state == ElementState::Pressed;
+    fn on_mouse_button(&mut self, state: winit::ElementState, button: winit::MouseButton) {
+        if button == winit::MouseButton::Left {
+            self.mouse_button_pressed = state == winit::ElementState::Pressed;
             self.last_mouse_pos = cgmath::vec2(-1.0, -1.0);
         }
     }
 
-    fn on_key(&mut self, input: KeyboardInput) -> bool {
-        use boilerplate::{ElementState, Key, ModifiersState};
+    fn on_key(&mut self, input: winit::KeyboardInput) -> bool {
+        use wgpu::winit::{ElementState, KeyboardInput, ModifiersState, VirtualKeyCode as Key};
 
         let i = &mut self.input;
         match input {
@@ -263,26 +268,24 @@ impl<R: gfx::Resources> Application<R> for LevelView<R> {
         }
     }
 
-    fn draw<C: gfx::CommandBuffer<R>>(
-        &mut self,
-        enc: &mut gfx::Encoder<R, C>,
-    ) {
-        self.render
-            .draw_world(enc, &[], &self.cam);
+    fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
+        self.cam.proj.update(extent.width as u16, extent.height as u16);
     }
 
-    fn gpu_update<F: gfx::Factory<R>>(
-        &mut self, factory: &mut F,
-        resized_targets: Option<render::MainTargets<R>>,
-        reload_shaders: bool,
-    ) {
-        if let Some(targets) = resized_targets {
-            let (w, h, _, _) = targets.color.get_dimensions();
-            self.cam.proj.update(w, h);
-            self.render.resize(targets);
-        }
-        if reload_shaders {
-            self.render.reload(factory);
-        }
+    fn reload(&mut self, device: &wgpu::Device) {
+        self.render.reload(device);
+    }
+
+    fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        targets: render::ScreenTargets,
+    ) -> Vec<wgpu::CommandBuffer> {
+        self.render.draw_world(
+            &[],
+            &self.cam,
+            targets,
+            device,
+        )
     }
 }

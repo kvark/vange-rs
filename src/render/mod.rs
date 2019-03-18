@@ -21,6 +21,12 @@ mod debug;
 pub use self::debug::{DebugPos, DebugRender, LineBuffer};
 
 
+pub struct ScreenTargets<'a> {
+    pub extent: wgpu::Extent3d,
+    pub color: &'a wgpu::TextureView,
+    pub depth: &'a wgpu::TextureView,
+}
+
 pub struct SurfaceData {
     pub constants: wgpu::Buffer,
     pub height: (wgpu::TextureView, wgpu::Sampler),
@@ -815,9 +821,7 @@ impl Render {
         &mut self,
         render_models: &[RenderModel<'a>],
         cam: &Camera,
-        screen_extent: wgpu::Extent3d,
-        color_target: &wgpu::TextureView,
-        depth_target: &wgpu::TextureView, 
+        targets: ScreenTargets,
         device: &wgpu::Device,
     ) -> Vec<wgpu::CommandBuffer> {
         let dummy_desc = wgpu::CommandEncoderDescriptor { todo: 0 };
@@ -836,14 +840,14 @@ impl Render {
         );
 
         updater.update(&self.terrain_uni_buf, &[TerrainConstants {
-            _scr_size: [screen_extent.width as f32, screen_extent.height as f32, 0.0, 0.0],
+            _scr_size: [targets.extent.width as f32, targets.extent.height as f32, 0.0, 0.0],
         }]);
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[
                     wgpu::RenderPassColorAttachmentDescriptor {
-                        attachment: color_target,
+                        attachment: targets.color,
                         load_op: wgpu::LoadOp::Clear,
                         store_op: wgpu::StoreOp::Store,
                         clear_color: wgpu::Color {
@@ -852,7 +856,7 @@ impl Render {
                     },
                 ],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
-                    attachment: depth_target,
+                    attachment: targets.depth,
                     depth_load_op: wgpu::LoadOp::Clear,
                     depth_store_op: wgpu::StoreOp::Store,
                     clear_depth: 1.0,

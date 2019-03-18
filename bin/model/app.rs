@@ -1,5 +1,5 @@
 use cgmath;
-use gfx;
+use wgpu;
 
 use boilerplate::{Application, KeyboardInput};
 use vangers::{config, level, model, render, space};
