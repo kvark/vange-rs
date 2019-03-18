@@ -1,9 +1,14 @@
-use config::Settings;
-use config::text::Reader;
-use gfx;
-use model;
+use crate::{
+    config::Settings,
+    config::text::Reader,
+    model,
+};
+
+use wgpu;
+
 use std::collections::HashMap;
 use std::fs::File;
+
 
 pub type BoxSize = u8;
 pub type Price = u32;
@@ -144,19 +149,19 @@ impl CarPhysics {
 }
 
 #[derive(Clone)]
-pub struct CarInfo<R: gfx::Resources> {
+pub struct CarInfo {
     pub kind: Kind,
     pub stats: CarStats,
     pub physics: CarPhysics,
-    pub model: model::RenderModel<R>,
+    pub model: model::RenderModel,
     pub scale: f32,
 }
 
-pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
+pub fn load_registry(
     settings: &Settings,
     reg: &super::game::Registry,
-    factory: &mut F,
-) -> HashMap<String, CarInfo<R>> {
+    device: &wgpu::Device,
+) -> HashMap<String, CarInfo> {
     let mut map = HashMap::new();
     let mut fi = Reader::new(settings.open_relative("car.prm"));
     fi.advance();
@@ -198,7 +203,7 @@ pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
                 },
                 stats: CarStats::new(&data),
                 physics,
-                model: model::load_m3d(file, factory),
+                model: model::load_m3d(file, device),
                 scale,
             },
         );

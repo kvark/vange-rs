@@ -1,18 +1,15 @@
-use std::collections::HashMap;
+use crate::{
+    config::settings,
+    model,
+    //render::{read_shaders, ShapePolygon},
+};
 
 use cgmath;
-use gfx;
-pub use gfx::pso::buffer::{InstanceRate, VertexBufferCommon};
-use gfx::traits::FactoryExt; // reduce the line width at use site
+use wgpu;
 
-use super::{
-    read_shaders,
-    ColorFormat, DepthFormat, MainTargets, ShapePolygon,
-};
-use config::settings;
-use model;
+//use std::collections::HashMap;
 
-
+/*
 const BLEND_FRONT: gfx::state::Blend = gfx::state::Blend {
     color: gfx::state::BlendChannel {
         equation: gfx::state::Equation::Add,
@@ -43,7 +40,9 @@ const DEPTH_BEHIND: gfx::state::Depth = gfx::state::Depth {
     fun: gfx::state::Comparison::Greater,
     write: false,
 };
+*/
 
+/*
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum Visibility {
     Front,
@@ -55,8 +54,18 @@ enum ColorRate {
     Instance,
 }
 type Selector = (Visibility, ColorRate);
+*/
 
-gfx_defines! {
+#[derive(Clone, Copy)]
+pub struct DebugPos {
+    pub pos: [f32; 4],
+}
+#[derive(Clone, Copy)]
+pub struct DebugColor {
+    pub color: [f32; 4],
+}
+
+/*gfx_defines! {
     vertex DebugPos {
         pos: [f32; 4] = "a_Pos",
     }
@@ -86,7 +95,7 @@ gfx_defines! {
         out_color: gfx::BlendTarget<ColorFormat> = ("Target0", gfx::state::ColorMask::all(), gfx::preset::blend::ALPHA),
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_TEST,
     }
-}
+}*/
 
 pub struct LineBuffer {
     vertices: Vec<DebugPos>,
@@ -131,7 +140,8 @@ impl LineBuffer {
     }
 }
 
-pub struct DebugRender<R: gfx::Resources> {
+pub struct DebugRender {
+    /*
     settings: settings::DebugRender,
     buf_pos: gfx::handle::Buffer<R, DebugPos>,
     buf_col: gfx::handle::Buffer<R, DebugColor>,
@@ -139,14 +149,15 @@ pub struct DebugRender<R: gfx::Resources> {
     psos_line: HashMap<Selector, gfx::PipelineState<R, debug::Meta>>,
     pso_face: Option<gfx::PipelineState<R, shape::Meta>>,
     pso_edge: Option<gfx::PipelineState<R, shape::Meta>>,
+    */
 }
 
-impl<R: gfx::Resources> DebugRender<R> {
-    pub fn new<F: gfx::Factory<R>>(
-        factory: &mut F,
-        targets: MainTargets<R>,
-        settings: &settings::DebugRender,
+impl DebugRender {
+    pub fn new(
+        _device: &wgpu::Device,
+        _settings: &settings::DebugRender,
     ) -> Self {
+        /* TODO
         let data = debug::Data {
             buf_pos: factory
                 .create_buffer(
@@ -179,13 +190,12 @@ impl<R: gfx::Resources> DebugRender<R> {
             pso_edge: None,
         };
         result.reload(factory);
-        result
+        result*/
+        DebugRender {}
     }
 
-    pub fn reload<F: gfx::Factory<R>>(
-        &mut self,
-        factory: &mut F,
-    ) {
+    pub fn reload(&mut self, _device: &wgpu::Device) {
+        /* TODO
         let raster = gfx::state::Rasterizer::new_fill();
 
         if self.settings.collision_shapes {
@@ -252,22 +262,16 @@ impl<R: gfx::Resources> DebugRender<R> {
                     self.psos_line.insert((visibility, color_rate), pso);
                 }
             }
-        }
+        }*/
     }
 
-    pub fn resize(&mut self, targets: MainTargets<R>) {
-        self.data.out_color = targets.color;
-        self.data.out_depth = targets.depth;
-    }
-
-    fn draw_liner<C>(
+    fn _draw_liner(
         &mut self,
-        buf: gfx::handle::Buffer<R, DebugPos>,
-        num_verts: Option<usize>,
-        encoder: &mut gfx::Encoder<R, C>,
-    ) where
-        C: gfx::CommandBuffer<R>,
-    {
+        _buf: &wgpu::Buffer,
+        _num_verts: Option<usize>,
+        _pass: &mut wgpu::RenderPass,
+    ) {
+        /* TODO
         let (color_rate, slice) = match num_verts {
             Some(num) => (
                 ColorRate::Vertex,
@@ -286,17 +290,16 @@ impl<R: gfx::Resources> DebugRender<R> {
             if let Some(ref pso) = self.psos_line.get(&(vis, color_rate)) {
                 encoder.draw(&slice, pso, &self.data);
             }
-        }
+        }*/
     }
 
-    pub fn draw_shape<C>(
+    pub fn draw_shape(
         &mut self,
-        shape: &model::Shape<R>,
-        transform: cgmath::Matrix4<f32>,
-        encoder: &mut gfx::Encoder<R, C>,
-    ) where
-        C: gfx::CommandBuffer<R>,
-    {
+        _pass: &mut wgpu::RenderPass,
+        _shape: &model::Shape,
+        _transform: cgmath::Matrix4<f32>,
+    ) {
+        /* TODO
         let mut locals = DebugLocals {
             m_mvp: transform.into(),
             color: [0.0, 1.0, 0.0, 0.1],
@@ -340,17 +343,16 @@ impl<R: gfx::Resources> DebugRender<R> {
                 )
                 .unwrap();
             self.draw_liner(samples.clone(), None, encoder);
-        }
+        }*/
     }
 
-    pub fn draw_lines<C>(
+    pub fn draw_lines(
         &mut self,
-        linebuf: &LineBuffer,
-        transform: cgmath::Matrix4<f32>,
-        encoder: &mut gfx::Encoder<R, C>,
-    ) where
-        C: gfx::CommandBuffer<R>,
-    {
+        _linebuf: &LineBuffer,
+        _transform: cgmath::Matrix4<f32>,
+        _encoder: &mut wgpu::CommandEncoder,
+    ){
+        /* TODO
         let mut vertices = linebuf.vertices.as_slice();
         let mut colors = linebuf.colors.as_slice();
         if vertices.len() > self.settings.max_vertices {
@@ -386,5 +388,6 @@ impl<R: gfx::Resources> DebugRender<R> {
         encoder.update_buffer(&self.buf_col, colors, 0).unwrap();
         let buf = self.buf_pos.clone();
         self.draw_liner(buf, Some(vertices.len()), encoder);
+        */
     }
 }

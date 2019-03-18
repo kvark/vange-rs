@@ -130,7 +130,7 @@ impl Level {
             let base_y = (y * self.size.0) as usize * 4;
             for x in 0 .. self.size.0 {
                 let base_x = base_y + x as usize * 4;
-                let mut color = &mut data[base_x .. base_x + 4];
+                let color = &mut data[base_x .. base_x + 4];
                 match self.get((x, y)) {
                     Texel::Single(Point(alt, ty)) => {
                         color[0] = alt;

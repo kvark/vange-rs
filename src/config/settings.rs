@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::path::PathBuf;
 
+
 #[derive(Deserialize)]
 pub struct Car {
     pub id: String,

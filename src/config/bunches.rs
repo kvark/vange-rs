@@ -1,7 +1,9 @@
-use config::text::Reader;
+use crate::config::text::Reader;
+
 use serde_scan;
 
 use std::fs::File;
+
 
 #[derive(Debug, Deserialize)]
 pub struct Cycle {
