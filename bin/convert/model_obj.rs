@@ -6,9 +6,11 @@ use m3d::{NORMALIZER, NUM_COLOR_IDS,
 use obj::{IndexTuple, Obj, SimplePolygon};
 use ron;
 
-use std::fs::File;
-use std::io::{Result as IoResult, Write};
-use std::path::PathBuf;
+use std::{
+    fs::File,
+    io::{Result as IoResult, Write},
+    path::PathBuf,
+};
 
 type RefModel = Model<Mesh<String>, Mesh<String>>;
 

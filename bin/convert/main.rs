@@ -1,21 +1,12 @@
-extern crate env_logger;
-extern crate getopts;
-extern crate m3d;
-extern crate obj;
-extern crate png;
-extern crate ron;
-#[macro_use]
-extern crate serde;
-extern crate tiff;
-extern crate vangers;
-
 mod level_png;
 mod model_obj;
 
 
-use std::io::BufWriter;
-use std::fs::{File, read as fs_read};
-use std::path::PathBuf;
+use std::{
+    io::BufWriter,
+    fs::{File, read as fs_read},
+    path::PathBuf,
+};
 
 pub fn save_tiff(path: &PathBuf, layers: vangers::level::LevelLayers) {
     let images = [
@@ -65,8 +56,6 @@ fn main() {
     use png::Parameter;
     use std::env;
     use std::io::Write;
-
-    env_logger::init().unwrap();
 
     let args: Vec<_> = env::args().collect();
     let mut options = getopts::Options::new();

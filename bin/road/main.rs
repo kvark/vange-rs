@@ -1,12 +1,4 @@
-extern crate cgmath;
-extern crate getopts;
-extern crate gfx;
-#[macro_use]
-extern crate log;
-extern crate rand;
-
-extern crate m3d;
-extern crate vangers;
+use log::info;
 
 mod game;
 mod physics;
@@ -16,7 +8,7 @@ mod boilerplate;
 fn main() {
     use std::env;
 
-    let (mut harness, settings, main_targets) = boilerplate::Harness::init();
+    let (mut harness, settings) = boilerplate::Harness::init("road");
 
     info!("Parsing command line");
     let args: Vec<_> = env::args().collect();
@@ -33,7 +25,7 @@ fn main() {
         return;
     }
 
-    let game = game::Game::new(&settings, main_targets, &mut harness.factory);
+    let game = game::Game::new(&settings, &mut harness.device);
 
     harness.main_loop(game);
 }

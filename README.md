@@ -17,7 +17,7 @@ git clone https://github.com/kvark/vange-rs
 cd vange-rs
 cp config/settings.template.ron config/settings.ron
 vi config/settings.ron # set the game path
-cargo run --bin road
+cargo run --bin road --features wgpu/<BACKEND> # where <BACKEND> is one of "vulkan", "metal", "dx12", or "dx11"
 ```
 Controls:
   - `WSAD`: movement in the game, rotating the camera around the car during the pause
@@ -117,6 +117,6 @@ cargo run --bin convert -- my_dir/harmony.png my_dir/harmony-new.pal
 
 ## Technonolgy
 
-The game uses [gfx-rs pre-LL](https://github.com/gfx-rs/gfx/tree/pre-ll) for graphics and [glutin](https://github.com/tomaka/glutin) for context creation.
+The game uses [wgpu-rs](https://github.com/gfx-rs/wgpu) for graphics and [winit](https://github.com/tomaka/winit) for windowing.
 
-The level is drawn in a single full-screen draw call with a bit of ray tracing magic. There is also an experimental tessellation-based renderer, but neither produce results of sufficient quality.
+The level is drawn in a single full-screen draw call with a bit of ray tracing magic. There is also an experimental tessellation-based renderer, but neither produce results of sufficient quality. See the [dedicated wiki page](https://github.com/kvark/vange-rs/wiki/Rendering-Techniques) for our rendering technologies.

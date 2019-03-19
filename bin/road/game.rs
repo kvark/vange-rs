@@ -1,13 +1,18 @@
-use cgmath;
-use cgmath::{Angle, Rotation3, Zero};
-use gfx;
+use cgmath::{
+    self,
+    Angle, Rotation3, Zero,
+};
+use log::info;
 use rand;
+use wgpu;
+
 use std::collections::HashMap;
 
-use boilerplate::{Application, KeyboardInput};
-use m3d::Mesh;
-use physics;
-use vangers::{config, level, model, render, space};
+use crate::{
+    boilerplate::Application,
+    physics,
+};
+use vangers::{config, level, render, space};
 
 
 #[derive(Eq, PartialEq)]
@@ -24,29 +29,30 @@ struct Control {
     turbo: bool,
 }
 
+
 enum GpuMomentum {
-    Pending(render::ShapeId),
-    Computed(usize),
-    Ready {
+    //Pending(render::ShapeId),
+    //Computed(usize),
+    /*Ready {
         ground_force: f32,
         angular_force: cgmath::Vector2<f32>,
-    },
+    },*/
 }
 
-pub struct Agent<R: gfx::Resources> {
+pub struct Agent {
     _name: String,
     spirit: Spirit,
     pub transform: space::Transform,
-    pub car: config::car::CarInfo<R>,
+    pub car: config::car::CarInfo,
     dynamo: physics::Dynamo,
     control: Control,
     gpu_momentum: Option<GpuMomentum>,
 }
 
-impl<R: gfx::Resources> Agent<R> {
+impl Agent {
     fn spawn(
         name: String,
-        car: &config::car::CarInfo<R>,
+        car: &config::car::CarInfo,
         coords: (i32, i32),
         orientation: cgmath::Rad<f32>,
         level: &level::Level,
@@ -101,8 +107,8 @@ impl<R: gfx::Resources> Agent<R> {
             if self.control.turbo { common.global.k_traction_turbo } else { 1.0 },
             if self.control.brake { common.global.f_brake_max } else { 0.0 },
             match self.gpu_momentum {
-                Some(GpuMomentum::Ready { ground_force, angular_force }) =>
-                    Some((ground_force, angular_force)),
+                //Some(GpuMomentum::Ready { ground_force, angular_force }) =>
+                //    Some((ground_force, angular_force)),
                 _ => None,
             },
             line_buffer,
@@ -110,23 +116,23 @@ impl<R: gfx::Resources> Agent<R> {
     }
 }
 
-struct DataBase<R: gfx::Resources> {
+struct DataBase {
     _bunches: Vec<config::bunches::Bunch>,
-    cars: HashMap<String, config::car::CarInfo<R>>,
+    cars: HashMap<String, config::car::CarInfo>,
     common: config::common::Common,
     _escaves: Vec<config::escaves::Escave>,
     game: config::game::Registry,
 }
 
-pub struct Game<R: gfx::Resources> {
-    db: DataBase<R>,
-    render: render::Render<R>,
-    collider: render::GpuCollider<R>,
-    compute_gpu_collision: bool,
-    debug_collision_map: bool,
+pub struct Game {
+    db: DataBase,
+    render: render::Render,
+    //collider: render::GpuCollider,
+    //compute_gpu_collision: bool,
+    //debug_collision_map: bool,
     line_buffer: render::LineBuffer,
     level: level::Level,
-    agents: Vec<Agent<R>>,
+    agents: Vec<Agent>,
     cam: space::Camera,
     max_quant: f32,
     spin_hor: f32,
@@ -136,18 +142,17 @@ pub struct Game<R: gfx::Resources> {
 }
 
 
-impl<R: gfx::Resources> Game<R> {
-    pub fn new<F: gfx::Factory<R>>(
+impl Game {
+    pub fn new(
         settings: &config::Settings,
-        targets: render::MainTargets<R>,
-        factory: &mut F,
+        device: &mut wgpu::Device,
     ) -> Self {
         info!("Loading world parameters");
         let db = {
             let game = config::game::Registry::load(settings);
             DataBase {
                 _bunches: config::bunches::load(settings.open_relative("bunches.prm")),
-                cars: config::car::load_registry(settings, &game, factory),
+                cars: config::car::load_registry(settings, &game, device),
                 common: config::common::load(settings.open_relative("common.prm")),
                 _escaves: config::escaves::load(settings.open_relative("escaves.prm")),
                 game,
@@ -174,15 +179,15 @@ impl<R: gfx::Resources> Game<R> {
             (level, coordinates)
         };
 
-        let (width, height, _, _) = targets.color.get_dimensions();
         let depth = 10f32 .. 10000f32;
-        let pal_data = level::read_palette(settings.open_palette(), None);
-        let render = render::init(factory, targets, &level, &pal_data, &settings.render);
+        let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
+        let render = render::init(device, &level, &pal_data, &settings.render);
+        /*
         let collider = render::GpuCollider::new(
             factory,
             (256, 256), 400,
             render.surface_data(),
-        );
+        );*/
 
         let mut player_agent = Agent::spawn(
             "Player".to_string(),
@@ -222,7 +227,7 @@ impl<R: gfx::Resources> Game<R> {
         Game {
             db,
             render,
-            collider,
+            //collider,
             line_buffer: render::LineBuffer::new(),
             level,
             agents,
@@ -233,20 +238,24 @@ impl<R: gfx::Resources> Game<R> {
                     config::settings::View::Perspective => {
                         let pf = cgmath::PerspectiveFov {
                             fovy: cgmath::Deg(45.0).into(),
-                            aspect: width as f32 / height as f32,
+                            aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
                             near: depth.start,
                             far: depth.end,
                         };
                         space::Projection::Perspective(pf)
                     }
                     config::settings::View::Flat => {
-                        space::Projection::ortho(width, height, depth)
+                        space::Projection::ortho(
+                            settings.window.size[0] as u16,
+                            settings.window.size[1] as u16,
+                            depth,
+                        )
                     }
                 },
             },
             max_quant: settings.game.physics.max_quant,
-            compute_gpu_collision: settings.game.physics.gpu_collision,
-            debug_collision_map: settings.render.debug.collision_map,
+            //compute_gpu_collision: settings.game.physics.gpu_collision,
+            //debug_collision_map: settings.render.debug.collision_map,
             spin_hor: 0.0,
             spin_ver: 0.0,
             is_paused: false,
@@ -265,9 +274,9 @@ impl<R: gfx::Resources> Game<R> {
     }
 }
 
-impl<R: gfx::Resources> Application<R> for Game<R> {
-    fn on_key(&mut self, input: KeyboardInput) -> bool {
-        use boilerplate::{ElementState, Key};
+impl Application for Game {
+    fn on_key(&mut self, input: wgpu::winit::KeyboardInput) -> bool {
+        use wgpu::winit::{ElementState, KeyboardInput, VirtualKeyCode as Key};
 
         let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
             Some(agent) => agent,
@@ -432,31 +441,61 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
         }
     }
 
-    fn draw<C: gfx::CommandBuffer<R>>(
-        &mut self, encoder: &mut gfx::Encoder<R, C>
-    ) {
-        {
-            let models = self.agents
-                .iter()
-                .map(|a| render::RenderModel {
-                    model: &a.car.model,
-                    transform: a.transform.clone(),
-                    debug_shape_scale: match a.spirit {
-                        Spirit::Player => Some(a.car.physics.scale_bound),
-                        Spirit::Other => None,
-                    },
-                })
-                .collect::<Vec<_>>();
+    fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
+        self.cam.proj.update(extent.width as u16, extent.height as u16);
+    }
 
-            self.render.draw_world(encoder, &models, &self.cam);
-        }
+    fn reload(&mut self, device: &wgpu::Device) {
+        self.render.reload(device);
+        //self.collider.reload(device);
+    }
 
+    fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        targets: render::ScreenTargets,
+    ) -> Vec<wgpu::CommandBuffer> {
+        /*
+        if self.compute_gpu_collision {
+            let mapping = factory
+                .read_mapping(self.collider.readback())
+                .unwrap();
+            for agent in &mut self.agents {
+                if let Some(GpuMomentum::Computed(index)) = agent.gpu_momentum.take() {
+                    let v = mapping[index];
+                    agent.gpu_momentum = Some(GpuMomentum::Ready {
+                        ground_force: v[2],
+                        angular_force: cgmath::vec2(v[0], v[1]),
+                    });
+                }
+            }
+        }*/
+        let models = self.agents
+            .iter()
+            .map(|a| render::RenderModel {
+                model: &a.car.model,
+                transform: a.transform.clone(),
+                debug_shape_scale: match a.spirit {
+                    Spirit::Player => Some(a.car.physics.scale_bound),
+                    Spirit::Other => None,
+                },
+            })
+            .collect::<Vec<_>>();
+        let command_buffers = self.render.draw_world(
+            &models,
+            &self.cam,
+            targets,
+            device,
+        );
+
+        /*
         self.render.debug.draw_lines(
             &self.line_buffer,
             self.cam.get_view_proj().into(),
             encoder,
-        );
+        );*/
 
+        /*
         if self.compute_gpu_collision {
             let mut collider = self.collider.start(encoder, &self.db.common);
             for agent in &mut self.agents {
@@ -491,37 +530,8 @@ impl<R: gfx::Resources> Application<R> for Game<R> {
                     agent.gpu_momentum = Some(GpuMomentum::Computed(rect.x as usize));
                 }
             }
-        }
-    }
+        }*/
 
-    fn gpu_update<F: gfx::Factory<R>>(
-        &mut self, factory: &mut F,
-        resized_targets: Option<render::MainTargets<R>>,
-        reload_shaders: bool,
-    ) {
-        if let Some(targets) = resized_targets {
-            let (w, h, _, _) = targets.color.get_dimensions();
-            self.cam.proj.update(w, h);
-            self.render.resize(targets);
-        }
-        if reload_shaders {
-            self.render.reload(factory);
-            self.collider.reload(factory);
-        }
-
-        if self.compute_gpu_collision {
-            let mapping = factory
-                .read_mapping(self.collider.readback())
-                .unwrap();
-            for agent in &mut self.agents {
-                if let Some(GpuMomentum::Computed(index)) = agent.gpu_momentum.take() {
-                    let v = mapping[index];
-                    agent.gpu_momentum = Some(GpuMomentum::Ready {
-                        ground_force: v[2],
-                        angular_force: cgmath::vec2(v[0], v[1]),
-                    });
-                }
-            }
-        }
+        command_buffers
     }
 }

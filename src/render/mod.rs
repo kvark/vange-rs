@@ -61,10 +61,11 @@ const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
     [224, 4], // rotten item
 ];
 
-pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::D32Float;
 pub type ShapeVertex = [f32; 4];
 
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ObjectVertex {
     pub pos: [i8; 4],
@@ -77,6 +78,7 @@ struct ObjectLocals {
     _matrix: [[f32; 4]; 4],
 }
 
+#[repr(C)]
 #[derive(Clone, Copy)]
 struct TerrainVertex {
     _pos: [i8; 4],
@@ -100,12 +102,27 @@ struct TerrainConstants {
 }
 
 #[derive(Clone, Copy)]
-struct Globals {
+pub struct GlobalConstants {
     _camera_pos: [f32; 4],
     _m_vp: [[f32; 4]; 4],
     _m_inv_vp: [[f32; 4]; 4],
     _light_pos: [f32; 4],
     _light_color: [f32; 4],
+}
+
+impl GlobalConstants {
+    pub fn new(cam: &Camera, light: &settings::Light) -> Self {
+        use cgmath::SquareMatrix;
+
+        let mx_vp = cam.get_view_proj();
+        GlobalConstants {
+            _camera_pos: cam.loc.extend(1.0).into(),
+            _m_vp: mx_vp.into(),
+            _m_inv_vp: mx_vp.invert().unwrap().into(),
+            _light_pos: light.pos,
+            _light_color: light.color,
+        }
+    }
 }
 
 enum Terrain {
@@ -128,6 +145,15 @@ pub struct Updater<'a> {
 }
 
 impl<'a> Updater<'a> {
+    pub fn new(device: &'a wgpu::Device) -> Self {
+        Updater {
+            command_encoder: device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                todo: 0,
+            }),
+            device,
+        }
+    }
+
     pub fn update<T: 'static + Copy>(&mut self, buffer: &wgpu::Buffer, data: &[T]) {
         let staging = self.device
             .create_buffer_mapped(data.len(), wgpu::BufferUsageFlags::TRANSFER_SRC)
@@ -140,19 +166,305 @@ impl<'a> Updater<'a> {
             mem::size_of::<T>() as u32,
         );
     }
+
+    pub fn finish(self) -> wgpu::CommandBuffer {
+        self.command_encoder.finish()
+    }
 }
 
+pub struct GlobalContext {
+    pub uniform_buf: wgpu::Buffer,
+    pub palette_sampler: wgpu::Sampler,
+    pub bind_group: wgpu::BindGroup,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+}
+
+impl GlobalContext {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            bindings: &[
+                wgpu::BindGroupLayoutBinding {
+                    binding: 0,
+                    visibility: wgpu::ShaderStageFlags::VERTEX | wgpu::ShaderStageFlags::FRAGMENT,
+                    ty: wgpu::BindingType::UniformBuffer,
+                },
+                wgpu::BindGroupLayoutBinding { // palette sampler
+                    binding: 1,
+                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler,
+                },
+            ],
+        });
+        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            size: mem::size_of::<GlobalConstants>() as u32,
+            usage: wgpu::BufferUsageFlags::UNIFORM | wgpu::BufferUsageFlags::TRANSFER_DST,
+        });
+        let palette_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            r_address_mode: wgpu::AddressMode::ClampToEdge,
+            s_address_mode: wgpu::AddressMode::ClampToEdge,
+            t_address_mode: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 0.0,
+            max_anisotropy: 0,
+            compare_function: wgpu::CompareFunction::Always,
+            border_color: wgpu::BorderColor::TransparentBlack,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bind_group_layout,
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &uniform_buf,
+                        range: 0 .. mem::size_of::<GlobalConstants>() as u32,
+                    },
+                },
+                wgpu::Binding {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&palette_sampler),
+                },
+            ],
+        });
+
+        GlobalContext {
+            uniform_buf,
+            palette_sampler,
+            bind_group_layout,
+            bind_group,
+        }
+    }
+}
+
+pub struct ObjectContext {
+    pub uniform_buf: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+    pub pipeline_layout: wgpu::PipelineLayout,
+    pub pipeline: wgpu::RenderPipeline,
+}
+
+impl ObjectContext {
+    fn create_pipeline(
+        layout: &wgpu::PipelineLayout,
+        device: &wgpu::Device,
+    ) -> wgpu::RenderPipeline {
+        let shaders = read_shaders("object", &[], device)
+            .unwrap();
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            layout,
+            vertex_stage: wgpu::PipelineStageDescriptor {
+                module: &shaders.vs,
+                entry_point: "main",
+            },
+            fragment_stage: wgpu::PipelineStageDescriptor {
+                module: &shaders.fs,
+                entry_point: "main",
+            },
+            rasterization_state: wgpu::RasterizationStateDescriptor {
+                front_face: wgpu::FrontFace::Ccw,
+                // original was not drawn with rasterizer, used no culling
+                cull_mode: wgpu::CullMode::None,
+                depth_bias: 0,
+                depth_bias_slope_scale: 0.0,
+                depth_bias_clamp: 0.0,
+            },
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            color_states: &[
+                wgpu::ColorStateDescriptor {
+                    format: COLOR_FORMAT,
+                    alpha: wgpu::BlendDescriptor::REPLACE,
+                    color: wgpu::BlendDescriptor::REPLACE,
+                    write_mask: wgpu::ColorWriteFlags::all(),
+                },
+            ],
+            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_read_mask: !0,
+                stencil_write_mask: !0,
+            }),
+            index_format: wgpu::IndexFormat::Uint16,
+            vertex_buffers: &[
+                wgpu::VertexBufferDescriptor {
+                    stride: mem::size_of::<ObjectVertex>() as u32,
+                    step_mode: wgpu::InputStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttributeDescriptor {
+                            offset: 0,
+                            format: wgpu::VertexFormat::Char4,
+                            attribute_index: 0,
+                        },
+                        wgpu::VertexAttributeDescriptor {
+                            offset: 4,
+                            format: wgpu::VertexFormat::Uint,
+                            attribute_index: 1,
+                        },
+                        wgpu::VertexAttributeDescriptor {
+                            offset: 8,
+                            format: wgpu::VertexFormat::Uchar4Norm,
+                            attribute_index: 2,
+                        },
+                    ],
+                },
+            ],
+            sample_count: 1,
+        })
+    }
+
+    fn create_color_table(
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device
+    ) -> (wgpu::TextureView, wgpu::Sampler) {
+        let extent = wgpu::Extent3d {
+            width: NUM_COLOR_IDS as u32,
+            height: 1,
+            depth: 1,
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            size: extent,
+            array_size: 1,
+            dimension: wgpu::TextureDimension::D1,
+            format: wgpu::TextureFormat::Rg8Uint,
+            usage: wgpu::TextureUsageFlags::SAMPLED | wgpu::TextureUsageFlags::TRANSFER_DST,
+        });
+
+        let staging = device
+            .create_buffer_mapped(NUM_COLOR_IDS as usize, wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .fill_from_slice(&COLOR_TABLE);
+        encoder.copy_buffer_to_texture(
+            wgpu::BufferCopyView {
+                buffer: &staging,
+                offset: 0,
+                row_pitch: NUM_COLOR_IDS as u32 * 2,
+                image_height: 1,
+            },
+            wgpu::TextureCopyView {
+                texture: &texture,
+                level: 0,
+                slice: 0,
+                origin: wgpu::Origin3d {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+            },
+            extent,
+        );
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            r_address_mode: wgpu::AddressMode::ClampToEdge,
+            s_address_mode: wgpu::AddressMode::ClampToEdge,
+            t_address_mode: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 0.0,
+            max_anisotropy: 0,
+            compare_function: wgpu::CompareFunction::Always,
+            border_color: wgpu::BorderColor::TransparentBlack,
+        });
+        (texture.create_default_view(), sampler)
+    }
+
+    pub fn new(
+        init_encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+        palette: &[[u8; 4]],
+        global: &GlobalContext,
+    ) -> Self {
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            bindings: &[
+                wgpu::BindGroupLayoutBinding { // object locals
+                    binding: 0,
+                    visibility: wgpu::ShaderStageFlags::VERTEX,
+                    ty: wgpu::BindingType::UniformBuffer,
+                },
+                wgpu::BindGroupLayoutBinding { // color map
+                    binding: 1,
+                    visibility: wgpu::ShaderStageFlags::VERTEX,
+                    ty: wgpu::BindingType::SampledTexture,
+                },
+                wgpu::BindGroupLayoutBinding { // palette map
+                    binding: 2,
+                    visibility: wgpu::ShaderStageFlags::VERTEX,
+                    ty: wgpu::BindingType::SampledTexture,
+                },
+                wgpu::BindGroupLayoutBinding { // main sampler
+                    binding: 3,
+                    visibility: wgpu::ShaderStageFlags::VERTEX,
+                    ty: wgpu::BindingType::Sampler,
+                },
+            ],
+        });
+        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            size: mem::size_of::<ObjectLocals>() as u32,
+            usage: wgpu::BufferUsageFlags::UNIFORM | wgpu::BufferUsageFlags::TRANSFER_DST,
+        });
+        let palette_view = Render::create_palette(
+            init_encoder, palette, device
+        );
+        let (color_table_view, color_table_sampler) = Self::create_color_table(
+            init_encoder, device
+        );
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bind_group_layout,
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &uniform_buf,
+                        range: 0 .. mem::size_of::<ObjectLocals>() as u32,
+                    },
+                },
+                wgpu::Binding {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&color_table_view),
+                },
+                wgpu::Binding {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&palette_view),
+                },
+                wgpu::Binding {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&color_table_sampler),
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &[
+                &global.bind_group_layout,
+                &bind_group_layout,
+            ],
+        });
+        let pipeline = Self::create_pipeline(&pipeline_layout, device);
+
+        ObjectContext {
+            uniform_buf,
+            bind_group,
+            pipeline_layout,
+            pipeline,
+        }
+    }
+
+    pub fn reload(&mut self, device: &wgpu::Device) {
+        self.pipeline = Self::create_pipeline(&self.pipeline_layout, device);
+    }
+}
+
+
 pub struct Render {
-    global_bg: wgpu::BindGroup,
-    global_uni_buf: wgpu::Buffer,
+    global: GlobalContext,
+    object: ObjectContext,
     terrain_bg: wgpu::BindGroup,
     terrain_uni_buf: wgpu::Buffer,
     terrain_pipeline_layout: wgpu::PipelineLayout,
     terrain: Terrain,
-    object_bg: wgpu::BindGroup,
-    object_uni_buf: wgpu::Buffer,
-    object_pipeline_layout: wgpu::PipelineLayout,
-    object_pipeline: wgpu::RenderPipeline,
     pub light_config: settings::Light,
     pub debug: debug::DebugRender,
 }
@@ -404,15 +716,13 @@ pub fn init(
         },
         table_extent,
     );
-    let (level_palette_view, palette_sampler) = Render::create_palette(
+    let level_palette_view = Render::create_palette(
         &mut init_encoder, &level.palette, device
     );
-    let (object_palette_view, _) = Render::create_palette(
-        &mut init_encoder, object_palette, device
-    );
-    let (color_table_view, color_table_sampler) = Render::create_color_table(
-        &mut init_encoder, device
-    );
+
+    let global = GlobalContext::new(device);
+    let object = ObjectContext::new(&mut init_encoder, device, object_palette, &global);
+
     device.get_queue().submit(&[
         init_encoder.finish(),
     ]);
@@ -457,20 +767,6 @@ pub fn init(
         border_color: wgpu::BorderColor::TransparentBlack,
     });
 
-    let global_bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        bindings: &[
-            wgpu::BindGroupLayoutBinding {
-                binding: 0,
-                visibility: wgpu::ShaderStageFlags::VERTEX | wgpu::ShaderStageFlags::FRAGMENT,
-                ty: wgpu::BindingType::UniformBuffer,
-            },
-            wgpu::BindGroupLayoutBinding { // palette sampler
-                binding: 1,
-                visibility: wgpu::ShaderStageFlags::FRAGMENT,
-                ty: wgpu::BindingType::Sampler,
-            },
-        ],
-    });
     let terrain_bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         bindings: &[
             wgpu::BindGroupLayoutBinding { // surface uniforms
@@ -522,51 +818,6 @@ pub fn init(
                 binding: 9,
                 visibility: wgpu::ShaderStageFlags::FRAGMENT,
                 ty: wgpu::BindingType::Sampler,
-            },
-        ],
-    });
-    let object_bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        bindings: &[
-            wgpu::BindGroupLayoutBinding { // object locals
-                binding: 0,
-                visibility: wgpu::ShaderStageFlags::VERTEX,
-                ty: wgpu::BindingType::UniformBuffer,
-            },
-            wgpu::BindGroupLayoutBinding { // color map
-                binding: 1,
-                visibility: wgpu::ShaderStageFlags::FRAGMENT,
-                ty: wgpu::BindingType::SampledTexture,
-            },
-            wgpu::BindGroupLayoutBinding { // palette map
-                binding: 2,
-                visibility: wgpu::ShaderStageFlags::FRAGMENT,
-                ty: wgpu::BindingType::SampledTexture,
-            },
-            wgpu::BindGroupLayoutBinding { // main sampler
-                binding: 3,
-                visibility: wgpu::ShaderStageFlags::FRAGMENT,
-                ty: wgpu::BindingType::Sampler,
-            },
-        ],
-    });
-
-    let global_uni_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        size: mem::size_of::<Globals>() as u32,
-        usage: wgpu::BufferUsageFlags::UNIFORM | wgpu::BufferUsageFlags::TRANSFER_DST,
-    });
-    let global_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: &global_bg_layout,
-        bindings: &[
-            wgpu::Binding {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &global_uni_buf,
-                    range: 0 .. mem::size_of::<Globals>() as u32,
-                },
-            },
-            wgpu::Binding {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&palette_sampler),
             },
         ],
     });
@@ -646,45 +897,10 @@ pub fn init(
         ],
     });
 
-    let object_uni_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        size: mem::size_of::<ObjectLocals>() as u32,
-        usage: wgpu::BufferUsageFlags::UNIFORM | wgpu::BufferUsageFlags::TRANSFER_DST,
-    });
-    let object_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: &object_bg_layout,
-        bindings: &[
-            wgpu::Binding {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &object_uni_buf,
-                    range: 0 .. mem::size_of::<ObjectLocals>() as u32,
-                },
-            },
-            wgpu::Binding {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(&color_table_view),
-            },
-            wgpu::Binding {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&object_palette_view),
-            },
-            wgpu::Binding {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&color_table_sampler),
-            },
-        ],
-    });
-
     let terrain_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         bind_group_layouts: &[
-            &global_bg_layout,
+            &global.bind_group_layout,
             &terrain_bg_layout,
-        ],
-    });
-    let object_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        bind_group_layouts: &[
-            &global_bg_layout,
-            &object_bg_layout,
         ],
     });
 
@@ -705,11 +921,10 @@ pub fn init(
         .fill_from_slice(&indices);
 
     let terrain_pipeline = Render::create_terrain_ray_pipeline(&terrain_pipeline_layout, device);
-    let object_pipeline = Render::create_object_pipeline(&object_pipeline_layout, device);
 
     Render {
-        global_bg,
-        global_uni_buf,
+        global,
+        object,
         terrain_bg,
         terrain_uni_buf,
         terrain_pipeline_layout,
@@ -719,63 +934,23 @@ pub fn init(
             index_buf: terrain_index_buf,
             num_indices: indices.len(),
         },
-        object_bg,
-        object_uni_buf,
-        object_pipeline_layout,
-        object_pipeline,
         light_config: settings.light.clone(),
         debug: DebugRender::new(device, &settings.debug),
     }
 }
 
 impl Render {
-    pub fn update_globals(
-        encoder: &mut wgpu::CommandEncoder,
-        cam: &Camera,
-        light: &settings::Light,
-        buffer: &wgpu::Buffer,
-        device: &wgpu::Device,
-    ) -> Matrix4<f32> {
-        use cgmath::SquareMatrix;
-
-        let mx_vp = cam.get_view_proj();
-
-        let globals = Globals {
-            _camera_pos: cam.loc.extend(1.0).into(),
-            _m_vp: mx_vp.into(),
-            _m_inv_vp: mx_vp.invert().unwrap().into(),
-            _light_pos: light.pos,
-            _light_color: light.color,
-        };
-
-        let staging = device
-            .create_buffer_mapped(1, wgpu::BufferUsageFlags::TRANSFER_SRC)
-            .fill_from_slice(&[globals]);
-
-        encoder.copy_buffer_to_buffer(
-            &staging,
-            0,
-            buffer,
-            0,
-            mem::size_of::<Globals>() as u32,
-        );
-
-        mx_vp
-    }
-
     pub fn draw_mesh(
         pass: &mut wgpu::RenderPass,
         updater: &mut Updater,
         mesh: &model::Mesh,
         model2world: Transform,
         locals_buf: &wgpu::Buffer,
-        pipeline: &wgpu::RenderPipeline,
     ) {
         let mx_world = Matrix4::from(model2world);
         updater.update(locals_buf, &[ObjectLocals {
             _matrix: mx_world.into(),
         }]);
-        pass.set_pipeline(pipeline);
         pass.set_vertex_buffers(&[(&mesh.vertex_buf, 0)]);
         pass.draw(0 .. mesh.num_vertices as u32, 0 .. 1);
     }
@@ -786,13 +961,12 @@ impl Render {
         model: &model::RenderModel,
         model2world: Transform,
         locals_buf: &wgpu::Buffer,
-        pipeline: &wgpu::RenderPipeline,
         debug_context: Option<(&mut DebugRender, f32, &Matrix4<f32>)>,
     ) {
         use cgmath::{Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
 
         // body
-        Render::draw_mesh(pass, updater, &model.body, model2world.clone(), locals_buf, pipeline);
+        Render::draw_mesh(pass, updater, &model.body, model2world.clone(), locals_buf);
         // debug render
         if let Some((debug, scale, world2screen)) = debug_context {
             let mut mx_shape =  model2world.clone();
@@ -808,7 +982,7 @@ impl Render {
                     rot: Quaternion::one(),
                     scale: 1.0,
                 });
-                Render::draw_mesh(pass, updater, mesh, transform, locals_buf, pipeline);
+                Render::draw_mesh(pass, updater, mesh, transform, locals_buf);
             }
         }
         // slots
@@ -821,7 +995,7 @@ impl Render {
                 };
                 local.disp -= local.transform_vector(Vector3::from(mesh.offset));
                 let transform = model2world.concat(&local);
-                Render::draw_mesh(pass, updater, mesh, transform, locals_buf, pipeline);
+                Render::draw_mesh(pass, updater, mesh, transform, locals_buf);
             }
         }
     }
@@ -833,25 +1007,19 @@ impl Render {
         targets: ScreenTargets,
         device: &wgpu::Device,
     ) -> Vec<wgpu::CommandBuffer> {
-        let dummy_desc = wgpu::CommandEncoderDescriptor { todo: 0 };
-        let mut encoder = device.create_command_encoder(&dummy_desc);
-        let mut updater = Updater {
-            device,
-            command_encoder: device.create_command_encoder(&dummy_desc),
-        };
+        let mx_vp = cam.get_view_proj();
 
-        let mx_vp = Self::update_globals(
-            &mut encoder,
-            cam,
-            &self.light_config,
-            &self.global_uni_buf,
-            device,
-        );
-
+        let mut updater = Updater::new(device);
+        updater.update(&self.global.uniform_buf, &[
+            GlobalConstants::new(cam, &self.light_config),
+        ]);
         updater.update(&self.terrain_uni_buf, &[TerrainConstants {
             _scr_size: [targets.extent.width as f32, targets.extent.height as f32, 0.0, 0.0],
         }]);
 
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            todo: 0,
+        });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[
@@ -875,7 +1043,7 @@ impl Render {
                 }),
             });
 
-            pass.set_bind_group(0, &self.global_bg);
+            pass.set_bind_group(0, &self.global.bind_group);
             pass.set_bind_group(1, &self.terrain_bg);
             // draw terrain
             match self.terrain {
@@ -892,16 +1060,16 @@ impl Render {
                 }*/
             }
 
+            pass.set_pipeline(&self.object.pipeline);
+            pass.set_bind_group(1, &self.object.bind_group);
             // draw vehicle models
-            pass.set_bind_group(1, &self.object_bg);
             for rm in render_models {
                 Render::draw_model(
                     &mut pass,
                     &mut updater,
                     &rm.model,
                     rm.transform,
-                    &self.object_uni_buf,
-                    &self.object_pipeline,
+                    &self.object.uniform_buf,
                     //&mut self.object_data,
                     match rm.debug_shape_scale {
                         Some(scale) => Some((&mut self.debug, scale, &mx_vp)),
@@ -912,7 +1080,7 @@ impl Render {
         }
 
         vec![
-            updater.command_encoder.finish(),
+            updater.finish(),
             encoder.finish(),
         ]
     }
@@ -921,7 +1089,7 @@ impl Render {
         encoder: &mut wgpu::CommandEncoder,
         data: &[[u8; 4]],
         device: &wgpu::Device,
-    ) -> (wgpu::TextureView, wgpu::Sampler) {
+    ) -> wgpu::TextureView {
         let extent = wgpu::Extent3d {
             width: 0x100,
             height: 1,
@@ -931,7 +1099,7 @@ impl Render {
             size: extent,
             array_size: 1,
             dimension: wgpu::TextureDimension::D1,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsageFlags::SAMPLED | wgpu::TextureUsageFlags::TRANSFER_DST,
         });
 
@@ -958,76 +1126,7 @@ impl Render {
             extent,
         );
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            r_address_mode: wgpu::AddressMode::ClampToEdge,
-            s_address_mode: wgpu::AddressMode::ClampToEdge,
-            t_address_mode: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: 0.0,
-            lod_max_clamp: 0.0,
-            max_anisotropy: 0,
-            compare_function: wgpu::CompareFunction::Always,
-            border_color: wgpu::BorderColor::TransparentBlack,
-        });
-        (texture.create_default_view(), sampler)
-    }
-
-    pub fn create_color_table(
-        encoder: &mut wgpu::CommandEncoder,
-        device: &wgpu::Device
-    ) -> (wgpu::TextureView, wgpu::Sampler) {
-        let extent = wgpu::Extent3d {
-            width: NUM_COLOR_IDS as u32,
-            height: 1,
-            depth: 1,
-        };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            size: extent,
-            array_size: 1,
-            dimension: wgpu::TextureDimension::D1,
-            format: wgpu::TextureFormat::Rg8Uint,
-            usage: wgpu::TextureUsageFlags::SAMPLED | wgpu::TextureUsageFlags::TRANSFER_DST,
-        });
-
-        let staging = device
-            .create_buffer_mapped(NUM_COLOR_IDS as usize, wgpu::BufferUsageFlags::TRANSFER_SRC)
-            .fill_from_slice(&COLOR_TABLE);
-        encoder.copy_buffer_to_texture(
-            wgpu::BufferCopyView {
-                buffer: &staging,
-                offset: 0,
-                row_pitch: NUM_COLOR_IDS as u32 * 2,
-                image_height: 1,
-            },
-            wgpu::TextureCopyView {
-                texture: &texture,
-                level: 0,
-                slice: 0,
-                origin: wgpu::Origin3d {
-                    x: 0.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
-            },
-            extent,
-        );
-
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            r_address_mode: wgpu::AddressMode::ClampToEdge,
-            s_address_mode: wgpu::AddressMode::ClampToEdge,
-            t_address_mode: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: 0.0,
-            lod_max_clamp: 0.0,
-            max_anisotropy: 0,
-            compare_function: wgpu::CompareFunction::Always,
-            border_color: wgpu::BorderColor::TransparentBlack,
-        });
-        (texture.create_default_view(), sampler)
+        texture.create_default_view()
     }
 
     fn create_terrain_ray_pipeline(
@@ -1089,76 +1188,6 @@ impl Render {
         })
     }
 
-    pub fn create_object_pipeline(
-        layout: &wgpu::PipelineLayout,
-        device: &wgpu::Device,
-    ) -> wgpu::RenderPipeline {
-        let shaders = read_shaders("object", &[], device)
-            .unwrap();
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout,
-            vertex_stage: wgpu::PipelineStageDescriptor {
-                module: &shaders.vs,
-                entry_point: "main",
-            },
-            fragment_stage: wgpu::PipelineStageDescriptor {
-                module: &shaders.fs,
-                entry_point: "main",
-            },
-            rasterization_state: wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
-                // original was not drawn with rasterizer, used no culling
-                cull_mode: wgpu::CullMode::None,
-                depth_bias: 0,
-                depth_bias_slope_scale: 0.0,
-                depth_bias_clamp: 0.0,
-            },
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[
-                wgpu::ColorStateDescriptor {
-                    format: COLOR_FORMAT,
-                    alpha: wgpu::BlendDescriptor::REPLACE,
-                    color: wgpu::BlendDescriptor::REPLACE,
-                    write_mask: wgpu::ColorWriteFlags::all(),
-                },
-            ],
-            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_read_mask: !0,
-                stencil_write_mask: !0,
-            }),
-            index_format: wgpu::IndexFormat::Uint16,
-            vertex_buffers: &[
-                wgpu::VertexBufferDescriptor {
-                    stride: mem::size_of::<ObjectVertex>() as u32,
-                    step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttributeDescriptor {
-                            offset: 0,
-                            format: wgpu::VertexFormat::Char4,
-                            attribute_index: 0,
-                        },
-                        wgpu::VertexAttributeDescriptor {
-                            offset: 4,
-                            format: wgpu::VertexFormat::Uint,
-                            attribute_index: 1,
-                        },
-                        wgpu::VertexAttributeDescriptor {
-                            offset: 8,
-                            format: wgpu::VertexFormat::Uchar4Norm,
-                            attribute_index: 2,
-                        },
-                    ],
-                },
-            ],
-            sample_count: 1,
-        })
-    }
-
     pub fn reload(&mut self, device: &wgpu::Device) {
         info!("Reloading shaders");
         match self.terrain {
@@ -1175,10 +1204,7 @@ impl Render {
                 *high = hi;
             }*/
         }
-        self.object_pipeline = Render::create_object_pipeline(
-            &self.object_pipeline_layout,
-            device,
-        );
+        self.object.reload(device);
     }
 
     /*

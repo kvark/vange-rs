@@ -56,10 +56,13 @@ enum ColorRate {
 type Selector = (Visibility, ColorRate);
 */
 
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct DebugPos {
     pub pos: [f32; 4],
 }
+
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct DebugColor {
     pub color: [f32; 4],

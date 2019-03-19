@@ -128,8 +128,8 @@ pub fn load_c3d(
         num_vertices,
         wgpu::BufferUsageFlags::VERTEX,
     );
-    for (i, tri) in raw.geometry.polygons.iter().enumerate() {
-        for (vo, v) in mapping.data[i*3 .. i*3 + 3].iter_mut().zip(&tri.vertices) {
+    for (chunk, tri) in mapping.data.chunks_mut(3).zip(&raw.geometry.polygons) {
+        for (vo, v) in chunk.iter_mut().zip(&tri.vertices) {
             let p = raw.geometry.positions[v.pos as usize];
             let n = raw.geometry.normals[v.normal as usize];
             *vo = ObjectVertex {

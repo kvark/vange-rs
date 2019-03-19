@@ -1,9 +1,12 @@
 use vangers::level::LevelLayers;
 
 use ron;
+use serde::{Serialize, Deserialize};
 
-use std::fs::File;
-use std::path::PathBuf;
+use std::{
+    fs::File,
+    path::PathBuf,
+};
 
 
 #[derive(Serialize, Deserialize)]
