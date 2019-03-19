@@ -1,10 +1,11 @@
+use crate::boilerplate::Application;
+use m3d::Mesh;
+use vangers::{config, level, model, render, space};
+
 use cgmath;
 use log::info;
 use wgpu;
 
-use crate::boilerplate::Application;
-use m3d::Mesh;
-use vangers::{config, level, model, render, space};
 
 pub struct CarView {
     model: model::RenderModel,

@@ -1,6 +1,5 @@
 use crate::render::{
-    Render,
-    read_shaders,
+    Palette, Shaders,
     COLOR_FORMAT, DEPTH_FORMAT,
     GlobalContext,
 };
@@ -64,7 +63,7 @@ impl Context {
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
     ) -> wgpu::RenderPipeline {
-        let shaders = read_shaders("object", &[], device)
+        let shaders = Shaders::new("object", &[], device)
             .unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
@@ -189,7 +188,7 @@ impl Context {
     pub fn new(
         init_encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
-        palette: &[[u8; 4]],
+        palette_data: &[[u8; 4]],
         global: &GlobalContext,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -220,9 +219,7 @@ impl Context {
             size: mem::size_of::<Locals>() as u32,
             usage: wgpu::BufferUsageFlags::UNIFORM | wgpu::BufferUsageFlags::TRANSFER_DST,
         });
-        let palette_view = Render::create_palette(
-            init_encoder, palette, device
-        );
+        let palette = Palette::new(init_encoder, device, palette_data);
         let (color_table_view, color_table_sampler) = Self::create_color_table(
             init_encoder, device
         );
@@ -242,7 +239,7 @@ impl Context {
                 },
                 wgpu::Binding {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&palette_view),
+                    resource: wgpu::BindingResource::TextureView(&palette.view),
                 },
                 wgpu::Binding {
                     binding: 3,

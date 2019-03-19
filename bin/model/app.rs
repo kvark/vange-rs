@@ -1,9 +1,10 @@
+use crate::boilerplate::Application;
+use vangers::{config, level, model, render, space};
+
 use cgmath;
 use log::info;
 use wgpu;
 
-use crate::boilerplate::Application;
-use vangers::{config, level, model, render, space};
 
 pub struct ResourceView {
     model: model::RenderModel,

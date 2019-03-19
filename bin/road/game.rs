@@ -1,3 +1,14 @@
+use crate::{
+    boilerplate::Application,
+    physics,
+};
+use vangers::{
+    config, level, space,
+    render::{
+        LineBuffer, Render, RenderModel, ScreenTargets,
+    },
+};
+
 use cgmath::{
     self,
     Angle, Rotation3, Zero,
@@ -7,12 +18,6 @@ use rand;
 use wgpu;
 
 use std::collections::HashMap;
-
-use crate::{
-    boilerplate::Application,
-    physics,
-};
-use vangers::{config, level, render, space};
 
 
 #[derive(Eq, PartialEq)]
@@ -95,7 +100,7 @@ impl Agent {
         dt: f32,
         level: &level::Level,
         common: &config::common::Common,
-        line_buffer: Option<&mut render::LineBuffer>,
+        line_buffer: Option<&mut LineBuffer>,
     ) {
         physics::step(
             &mut self.dynamo,
@@ -126,11 +131,11 @@ struct DataBase {
 
 pub struct Game {
     db: DataBase,
-    render: render::Render,
+    render: Render,
     //collider: render::GpuCollider,
     //compute_gpu_collision: bool,
     //debug_collision_map: bool,
-    line_buffer: render::LineBuffer,
+    line_buffer: LineBuffer,
     level: level::Level,
     agents: Vec<Agent>,
     cam: space::Camera,
@@ -181,7 +186,7 @@ impl Game {
 
         let depth = 10f32 .. 10000f32;
         let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
-        let render = render::init(device, &level, &pal_data, &settings.render);
+        let render = Render::new(device, &level, &pal_data, &settings.render);
         /*
         let collider = render::GpuCollider::new(
             factory,
@@ -228,7 +233,7 @@ impl Game {
             db,
             render,
             //collider,
-            line_buffer: render::LineBuffer::new(),
+            line_buffer: LineBuffer::new(),
             level,
             agents,
             cam: space::Camera {
@@ -453,7 +458,7 @@ impl Application for Game {
     fn draw(
         &mut self,
         device: &wgpu::Device,
-        targets: render::ScreenTargets,
+        targets: ScreenTargets,
     ) -> Vec<wgpu::CommandBuffer> {
         /*
         if self.compute_gpu_collision {
@@ -472,7 +477,7 @@ impl Application for Game {
         }*/
         let models = self.agents
             .iter()
-            .map(|a| render::RenderModel {
+            .map(|a| RenderModel {
                 model: &a.car.model,
                 transform: a.transform.clone(),
                 debug_shape_scale: match a.spirit {

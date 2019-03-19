@@ -1,14 +1,15 @@
+use vangers::{
+    config, level, model, space,
+    render::LineBuffer,
+};
+
 use cgmath::{
     self,
     prelude::*,
 };
 use log::debug;
-use std::f32::EPSILON;
 
-use vangers::{
-    config, level, model, space,
-    render::LineBuffer,
-};
+use std::f32::EPSILON;
 
 
 const MAX_TRACTION: config::common::Traction = 4.0;

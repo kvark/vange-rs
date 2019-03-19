@@ -1,10 +1,15 @@
+use crate::boilerplate::Application;
+use vangers::{
+    config, level, space,
+    render::{
+        Render, ScreenTargets,
+    },
+};
+
 use cgmath;
 use log::info;
 use wgpu;
 use wgpu::winit;
-
-use crate::boilerplate::Application;
-use vangers::{config, level, render, space};
 
 
 #[derive(Debug)]
@@ -19,7 +24,7 @@ enum Input {
 }
 
 pub struct LevelView {
-    render: render::Render,
+    render: Render,
     _level: level::Level,
     cam: space::Camera,
     input: Input,
@@ -88,7 +93,7 @@ impl LevelView {
 
         let objects_palette = level::read_palette(settings.open_palette(), None);
         let depth = 10f32 .. 10000f32;
-        let render = render::init(device, &level, &objects_palette, &settings.render);
+        let render = Render::new(device, &level, &objects_palette, &settings.render);
 
         LevelView {
             render,
@@ -279,7 +284,7 @@ impl Application for LevelView {
     fn draw(
         &mut self,
         device: &wgpu::Device,
-        targets: render::ScreenTargets,
+        targets: ScreenTargets,
     ) -> Vec<wgpu::CommandBuffer> {
         self.render.draw_world(
             &[],
