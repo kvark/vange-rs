@@ -30,6 +30,8 @@ layout(set = 1, binding = 1) uniform Locals {
 
 #define TERRAIN_WATER   0U
 
+const float c_Step = 0.6;
+
 layout(location = 0) out vec4 o_Color;
 
 vec3 cast_ray_to_plane(float level, vec3 base, vec3 dir) {

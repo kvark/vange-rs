@@ -62,7 +62,7 @@ impl Context {
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
     ) -> wgpu::RenderPipeline {
-        let shaders = Shaders::new("terrain_ray", &[], device)
+        let shaders = Shaders::new("terrain_ray_old", &[], device)
             .unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
