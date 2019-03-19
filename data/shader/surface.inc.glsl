@@ -58,8 +58,9 @@ Surface get_surface(vec2 pos) {
     Surface suf;
 
     vec2 tc = suf.tex_coord = pos / u_TextureScale.xy;
+    ivec2 tci = ivec2(mod(pos + 0.5, u_TextureScale.xy));
 
-    uint meta = texture(usampler2D(t_Meta, s_MainSampler), tc).x;
+    uint meta = texelFetch(usampler2D(t_Meta, s_MainSampler), tci, 0).x;
     suf.is_shadowed = (meta & c_ShadowMask) != 0U;
     suf.low_type = get_terrain_type(meta);
 
@@ -68,13 +69,13 @@ Surface get_surface(vec2 pos) {
         // so this can be more efficient with a boolean param
         uint delta;
         if (mod(pos.x, 2.0) >= 1.0) {
-            uint meta_low = textureOffset(usampler2D(t_Meta, s_MainSampler), tc, ivec2(-1, 0)).x;
+            uint meta_low = texelFetch(usampler2D(t_Meta, s_MainSampler), tci + ivec2(-1, 0), 0).x;
             suf.high_type = suf.low_type;
             suf.low_type = get_terrain_type(meta_low);
 
             delta = (get_delta(meta_low) << c_DeltaBits) + get_delta(meta);
         } else {
-            uint meta_high = textureOffset(usampler2D(t_Meta, s_MainSampler), tc, ivec2(1, 0)).x;
+            uint meta_high = texelFetch(usampler2D(t_Meta, s_MainSampler), tci + ivec2(1, 0), 0).x;
             suf.tex_coord.x += 1.0 / u_TextureScale.x;
             suf.high_type = get_terrain_type(meta_high);
 
