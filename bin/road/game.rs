@@ -2,8 +2,9 @@ use crate::{
     boilerplate::Application,
     physics,
 };
+use m3d::Mesh;
 use vangers::{
-    config, level, space,
+    config, level, model, space,
     render::{
         LineBuffer, Render, RenderModel, ScreenTargets,
     },
@@ -205,7 +206,7 @@ impl Game {
         for (ms, sid) in player_agent.car.model.slots.iter_mut().zip(settings.car.slots.iter()) {
             let info = &db.game.model_infos[sid];
             let raw = Mesh::load(&mut settings.open_relative(&info.path));
-            ms.mesh = Some(model::load_c3d(raw, factory));
+            ms.mesh = Some(model::load_c3d(raw, device));
             ms.scale = info.scale;
         }
 

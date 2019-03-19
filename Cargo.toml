@@ -15,10 +15,6 @@ members = [
 
 [features]
 default = []
-gfx-vulkan = ["wgpu/vulkan"]
-gfx-dx12 = ["wgpu/dx12"]
-gfx-dx11 = ["wgpu/dx11"]
-gfx-metal = ["wgpu/metal"]
 
 [[bin]]
 name = "road"
@@ -58,6 +54,7 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.1"
 #wgpu = { github = "https://github.com/gfx-rs/wgpu", features = ["local"] }
+#wgpu = { path = "../wgpu/wgpu-rs" }
 wgpu = { version = "0.2" }
 # binaries
 env_logger = "0.5"
