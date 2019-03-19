@@ -12,7 +12,7 @@ pub struct CarView {
     physics: config::car::CarPhysics,
     debug_render: render::DebugRender,
     global: render::GlobalContext,
-    object: render::ObjectContext,
+    object: render::object::Context,
     cam: space::Camera,
     rotation: (cgmath::Rad<f32>, cgmath::Rad<f32>),
     light_config: config::settings::Light,
@@ -46,7 +46,7 @@ impl CarView {
             todo: 0,
         });
         let global = render::GlobalContext::new(device);
-        let object = render::ObjectContext::new(&mut init_encoder, device, &pal_data, &global);
+        let object = render::object::Context::new(&mut init_encoder, device, &pal_data, &global);
         device.get_queue().submit(&[
             init_encoder.finish(),
         ]);

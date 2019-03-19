@@ -2,7 +2,8 @@ use wgpu;
 
 use m3d;
 use crate::render::{
-    DebugPos, ObjectVertex, ShapePolygon,
+    DebugPos, ShapePolygon,
+    object::Vertex as ObjectVertex,
 };
 
 use std::fs::File;

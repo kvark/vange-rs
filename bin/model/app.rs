@@ -8,7 +8,7 @@ use vangers::{config, level, model, render, space};
 pub struct ResourceView {
     model: model::RenderModel,
     global: render::GlobalContext,
-    object: render::ObjectContext,
+    object: render::object::Context,
     transform: space::Transform,
     cam: space::Camera,
     rotation: cgmath::Rad<f32>,
@@ -30,7 +30,7 @@ impl ResourceView {
             todo: 0,
         });
         let global = render::GlobalContext::new(device);
-        let object = render::ObjectContext::new(&mut init_encoder, device, &pal_data, &global);
+        let object = render::object::Context::new(&mut init_encoder, device, &pal_data, &global);
         device.get_queue().submit(&[
             init_encoder.finish(),
         ]);
