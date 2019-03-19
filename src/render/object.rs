@@ -1,7 +1,7 @@
 use crate::render::{
     Palette, Shaders,
     COLOR_FORMAT, DEPTH_FORMAT,
-    GlobalContext,
+    global::Context as GlobalContext,
 };
 use m3d::NUM_COLOR_IDS;
 

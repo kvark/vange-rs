@@ -12,7 +12,7 @@ pub struct CarView {
     transform: space::Transform,
     physics: config::car::CarPhysics,
     debug_render: render::DebugRender,
-    global: render::GlobalContext,
+    global: render::global::Context,
     object: render::object::Context,
     cam: space::Camera,
     rotation: (cgmath::Rad<f32>, cgmath::Rad<f32>),
@@ -46,7 +46,7 @@ impl CarView {
         let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
-        let global = render::GlobalContext::new(device);
+        let global = render::global::Context::new(device);
         let object = render::object::Context::new(&mut init_encoder, device, &pal_data, &global);
         device.get_queue().submit(&[
             init_encoder.finish(),
@@ -171,7 +171,7 @@ impl Application for CarView {
 
         let mut updater = render::Updater::new(device);
         updater.update(&self.global.uniform_buf, &[
-            render::GlobalConstants::new(&self.cam, &self.light_config),
+            render::global::Constants::new(&self.cam, &self.light_config),
         ]);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

@@ -1,8 +1,9 @@
 use crate::{
     level,
     render::{
-        GlobalContext, Palette, Shaders,
+        Palette, Shaders,
         COLOR_FORMAT, DEPTH_FORMAT,
+        global::Context as GlobalContext,
     },
 };
 
