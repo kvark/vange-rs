@@ -1044,7 +1044,7 @@ dependencies = [
  "serde_scan 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "splay 0.1.0",
  "tiff 0.1.0",
- "wgpu 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wgpu 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -1123,16 +1123,16 @@ dependencies = [
 
 [[package]]
 name = "wgpu"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "arrayvec 0.4.10 (registry+https://github.com/rust-lang/crates.io-index)",
- "wgpu-native 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wgpu-native 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "wgpu-native"
-version = "0.2.2"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "arrayvec 0.4.10 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1357,8 +1357,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum wayland-protocols 0.21.11 (registry+https://github.com/rust-lang/crates.io-index)" = "fd94211387fa8ff50df1e4ff7a5529b5a9aebe68ba88acc48e5b7f5fd98f6eef"
 "checksum wayland-scanner 0.21.11 (registry+https://github.com/rust-lang/crates.io-index)" = "3611f231e675e15c2feb7623103e6449edc6f10b0598cafb3e16e590a0561355"
 "checksum wayland-sys 0.21.11 (registry+https://github.com/rust-lang/crates.io-index)" = "2a69d729a1747a5bf40ae05b94c7904b64fbf2381e365c046d872ce4a34aa826"
-"checksum wgpu 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "faeef261f3ccc3d6524283299937489ab5f6906e01cfcf6fe5b6124af5e718b2"
-"checksum wgpu-native 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "e17b66dac851097c5b27d05c9a77dd29b17d3a0f346fff8a471531f86b7c9d85"
+"checksum wgpu 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "cf01cc350ab760949d04e88d188ae8942fbe5eb9c6059cd029d8708e335838f3"
+"checksum wgpu-native 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)" = "fcb7813e0e5dd1360829f35819be7c46f3a3a0cb34f30f1915b35c74eb93e312"
 "checksum winapi 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)" = "92c1eb33641e276cfa214a0522acad57be5c56b10cb348b3c5117db75f3ac4b0"
 "checksum winapi-i686-pc-windows-gnu 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
 "checksum winapi-util 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7168bab6e1daee33b4557efd0e95d5ca70a03706d39fa5f3fe7a236f584b03c9"

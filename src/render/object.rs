@@ -52,6 +52,7 @@ pub struct Vertex {
 #[derive(Clone, Copy)]
 pub struct Locals {
     _matrix: [[f32; 4]; 4],
+    _pad: [u8; 192], //HACK: pad to 256
 }
 
 impl Locals {
@@ -59,6 +60,7 @@ impl Locals {
         use cgmath::Matrix4;
         Locals {
             _matrix: Matrix4::from(transform).into(),
+            _pad: [0; 192],
         }
     }
 }
