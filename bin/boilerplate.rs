@@ -21,7 +21,7 @@ pub trait Application {
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
-    ) -> Vec<wgpu::CommandBuffer>;
+    ) -> wgpu::CommandBuffer;
 }
 
 pub struct Harness {
@@ -192,10 +192,10 @@ impl Harness {
                     color: &frame.view,
                     depth: &self.depth_target,
                 };
-                let command_buffers = app.draw(&self.device, targets);
+                let command_buffer = app.draw(&self.device, targets);
                 self.device
                     .get_queue()
-                    .submit(&command_buffers);
+                    .submit(&[ command_buffer ]);
             }
         }
     }

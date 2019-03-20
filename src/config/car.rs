@@ -6,8 +6,11 @@ use crate::{
 
 use wgpu;
 
-use std::collections::HashMap;
-use std::fs::File;
+use std::{
+    collections::HashMap,
+    fs::File,
+    sync::Arc,
+};
 
 
 pub type BoxSize = u8;
@@ -153,7 +156,8 @@ pub struct CarInfo {
     pub kind: Kind,
     pub stats: CarStats,
     pub physics: CarPhysics,
-    pub model: model::RenderModel,
+    pub model: model::VisualModel,
+    pub locals_buf: Arc<wgpu::Buffer>,
     pub scale: f32,
 }
 
@@ -161,6 +165,7 @@ pub fn load_registry(
     settings: &Settings,
     reg: &super::game::Registry,
     device: &wgpu::Device,
+    locals_layout: &wgpu::BindGroupLayout,
 ) -> HashMap<String, CarInfo> {
     let mut map = HashMap::new();
     let mut fi = Reader::new(settings.open_relative("car.prm"));
@@ -191,6 +196,7 @@ pub fn load_registry(
             physics.scale_size
         };
         let file = settings.open_relative(&mi.path);
+        let (model, locals_buf) = model::load_m3d(file, device, locals_layout);
         map.insert(
             name.to_owned(),
             CarInfo {
@@ -203,7 +209,8 @@ pub fn load_registry(
                 },
                 stats: CarStats::new(&data),
                 physics,
-                model: model::load_m3d(file, device),
+                model,
+                locals_buf: Arc::new(locals_buf),
                 scale,
             },
         );

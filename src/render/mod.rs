@@ -5,7 +5,7 @@ use crate::{
     space::{Camera, Transform},
 };
 
-use cgmath::{Decomposed, Matrix4};
+use cgmath::Decomposed;
 use wgpu;
 
 use std::io::Error as IoError;
@@ -45,40 +45,6 @@ pub struct ShapePolygon {
     pub normal: [i8; 4],
     pub origin_square: [f32; 4],
 }
-
-pub struct Updater<'a> {
-    command_encoder: wgpu::CommandEncoder,
-    device: &'a wgpu::Device,
-}
-
-impl<'a> Updater<'a> {
-    pub fn new(device: &'a wgpu::Device) -> Self {
-        Updater {
-            command_encoder: device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                todo: 0,
-            }),
-            device,
-        }
-    }
-
-    pub fn update<T: 'static + Copy>(&mut self, buffer: &wgpu::Buffer, data: &[T]) {
-        let staging = self.device
-            .create_buffer_mapped(data.len(), wgpu::BufferUsageFlags::TRANSFER_SRC)
-            .fill_from_slice(data);
-        self.command_encoder.copy_buffer_to_buffer(
-            &staging,
-            0,
-            buffer,
-            0,
-            mem::size_of::<T>() as u32,
-        );
-    }
-
-    pub fn finish(self) -> wgpu::CommandBuffer {
-        self.command_encoder.finish()
-    }
-}
-
 
 pub struct Shaders {
     vs: wgpu::ShaderModule,
@@ -238,18 +204,66 @@ impl Palette {
 }
 
 
+pub struct RenderModel<'a> {
+    pub model: &'a model::VisualModel,
+    pub locals_buf: &'a wgpu::Buffer,
+    pub transform: Transform,
+    pub debug_shape_scale: Option<f32>,
+}
+
+impl<'a> RenderModel<'a> {
+    pub fn prepare(&self, encoder: &mut wgpu::CommandEncoder, device: &wgpu::Device) {
+        use cgmath::{Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
+
+        let count = self.model.mesh_count();
+        let mapping = device.create_buffer_mapped(
+            count,
+            wgpu::BufferUsageFlags::TRANSFER_SRC,
+        ); 
+
+        // body
+        mapping.data[0] = object::Locals::new(self.transform);
+        // wheels
+        for w in self.model.wheels.iter() {
+            if let Some(ref mesh) = w.mesh {
+                let transform = self.transform.concat(&Decomposed {
+                    disp: mesh.offset.into(),
+                    rot: Quaternion::one(),
+                    scale: 1.0,
+                });
+                mapping.data[mesh.locals_id] = object::Locals::new(transform);
+            }
+        }
+        // slots
+        for s in self.model.slots.iter() {
+            if let Some(ref mesh) = s.mesh {
+                let mut local = Decomposed {
+                    disp: Vector3::new(s.pos[0] as f32, s.pos[1] as f32, s.pos[2] as f32),
+                    rot: Quaternion::from_angle_y(Rad::from(Deg(s.angle as f32))),
+                    scale: s.scale / self.transform.scale,
+                };
+                local.disp -= local.transform_vector(Vector3::from(mesh.offset));
+                let transform = self.transform.concat(&local);
+                mapping.data[mesh.locals_id] = object::Locals::new(transform);
+            }
+        }
+
+        encoder.copy_buffer_to_buffer(
+            &mapping.finish(),
+            0,
+            &self.locals_buf,
+            0,
+            (count * mem::size_of::<object::Locals>()) as u32,
+        );
+    }
+}
+
 pub struct Render {
     global: global::Context,
     object: object::Context,
     terrain: terrain::Context,
     pub light_config: settings::Light,
     pub debug: debug::DebugRender,
-}
-
-pub struct RenderModel<'a> {
-    pub model: &'a model::RenderModel,
-    pub transform: Transform,
-    pub debug_shape_scale: Option<f32>,
 }
 
 impl Render {
@@ -278,62 +292,44 @@ impl Render {
         }
     }
 
+    pub fn locals_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.object.part_bind_group_layout
+    }
+
     pub fn draw_mesh(
         pass: &mut wgpu::RenderPass,
-        updater: &mut Updater,
         mesh: &model::Mesh,
-        model2world: Transform,
-        locals_buf: &wgpu::Buffer,
     ) {
-        let mx_world = Matrix4::from(model2world);
-        updater.update(locals_buf, &[object::Locals {
-            matrix: mx_world.into(),
-        }]);
+        pass.set_bind_group(2, &mesh.bind_group);
         pass.set_vertex_buffers(&[(&mesh.vertex_buf, 0)]);
         pass.draw(0 .. mesh.num_vertices as u32, 0 .. 1);
     }
 
     pub fn draw_model(
         pass: &mut wgpu::RenderPass,
-        updater: &mut Updater,
-        model: &model::RenderModel,
-        model2world: Transform,
-        locals_buf: &wgpu::Buffer,
-        debug_context: Option<(&mut DebugRender, f32, &Matrix4<f32>)>,
+        model: &model::VisualModel,
+        //debug_context: Option<(&mut DebugRender, f32, &Matrix4<f32>)>,
     ) {
-        use cgmath::{Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
-
         // body
-        Render::draw_mesh(pass, updater, &model.body, model2world.clone(), locals_buf);
+        Render::draw_mesh(pass, &model.body);
         // debug render
+        /*
         if let Some((debug, scale, world2screen)) = debug_context {
             let mut mx_shape =  model2world.clone();
             mx_shape.scale *= scale;
             let transform = world2screen * Matrix4::from(mx_shape);
             debug.draw_shape(pass, &model.shape, transform);
-        }
+        }*/
         // wheels
         for w in model.wheels.iter() {
             if let Some(ref mesh) = w.mesh {
-                let transform = model2world.concat(&Decomposed {
-                    disp: mesh.offset.into(),
-                    rot: Quaternion::one(),
-                    scale: 1.0,
-                });
-                Render::draw_mesh(pass, updater, mesh, transform, locals_buf);
+                Render::draw_mesh(pass, mesh);
             }
         }
         // slots
         for s in model.slots.iter() {
             if let Some(ref mesh) = s.mesh {
-                let mut local = Decomposed {
-                    disp: Vector3::new(s.pos[0] as f32, s.pos[1] as f32, s.pos[2] as f32),
-                    rot: Quaternion::from_angle_y(Rad::from(Deg(s.angle as f32))),
-                    scale: s.scale / model2world.scale,
-                };
-                local.disp -= local.transform_vector(Vector3::from(mesh.offset));
-                let transform = model2world.concat(&local);
-                Render::draw_mesh(pass, updater, mesh, transform, locals_buf);
+                Render::draw_mesh(pass, mesh);
             }
         }
     }
@@ -344,20 +340,42 @@ impl Render {
         cam: &Camera,
         targets: ScreenTargets,
         device: &wgpu::Device,
-    ) -> Vec<wgpu::CommandBuffer> {
-        let mx_vp = cam.get_view_proj();
-
-        let mut updater = Updater::new(device);
-        updater.update(&self.global.uniform_buf, &[
-            global::Constants::new(cam, &self.light_config),
-        ]);
-        updater.update(&self.terrain.uniform_buf, &[
-            terrain::Constants::new(&targets.extent)
-        ]);
-
+    ) -> wgpu::CommandBuffer {
+        //let mx_vp = cam.get_view_proj();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
+
+        let global_staging = device
+            .create_buffer_mapped(1, wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .fill_from_slice(&[
+                global::Constants::new(cam, &self.light_config),
+            ]);
+        encoder.copy_buffer_to_buffer(
+            &global_staging,
+            0,
+            &self.global.uniform_buf,
+            0,
+            mem::size_of::<global::Constants>() as u32,
+        );
+
+        let terrain_staging = device
+            .create_buffer_mapped(1, wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .fill_from_slice(&[
+                terrain::Constants::new(&targets.extent)
+            ]);
+        encoder.copy_buffer_to_buffer(
+            &terrain_staging,
+            0,
+            &self.terrain.uniform_buf,
+            0,
+            mem::size_of::<terrain::Constants>() as u32,
+        );
+
+        for rm in render_models {
+            rm.prepare(&mut encoder, device);
+        }
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[
@@ -404,23 +422,17 @@ impl Render {
             for rm in render_models {
                 Render::draw_model(
                     &mut pass,
-                    &mut updater,
                     &rm.model,
-                    rm.transform,
-                    &self.object.uniform_buf,
-                    //&mut self.object_data,
+                    /*
                     match rm.debug_shape_scale {
                         Some(scale) => Some((&mut self.debug, scale, &mx_vp)),
                         None => None,
-                    },
+                    },*/
                 );
             }
         }
 
-        vec![
-            updater.finish(),
-            encoder.finish(),
-        ]
+        encoder.finish()
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {

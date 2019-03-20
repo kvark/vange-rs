@@ -1,7 +1,10 @@
-use crate::render::{
-    Palette, Shaders,
-    COLOR_FORMAT, DEPTH_FORMAT,
-    global::Context as GlobalContext,
+use crate::{
+    render::{
+        Palette, Shaders,
+        COLOR_FORMAT, DEPTH_FORMAT,
+        global::Context as GlobalContext,
+    },
+    space::Transform,
 };
 use m3d::NUM_COLOR_IDS;
 
@@ -48,12 +51,21 @@ pub struct Vertex {
 
 #[derive(Clone, Copy)]
 pub struct Locals {
-    pub matrix: [[f32; 4]; 4],
+    _matrix: [[f32; 4]; 4],
+}
+
+impl Locals {
+    pub fn new(transform: Transform) -> Self {
+        use cgmath::Matrix4;
+        Locals {
+            _matrix: Matrix4::from(transform).into(),
+        }
+    }
 }
 
 pub struct Context {
-    pub uniform_buf: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
+    pub part_bind_group_layout: wgpu::BindGroupLayout,
     pub pipeline_layout: wgpu::PipelineLayout,
     pub pipeline: wgpu::RenderPipeline,
 }
@@ -193,31 +205,31 @@ impl Context {
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             bindings: &[
-                wgpu::BindGroupLayoutBinding { // object locals
-                    binding: 0,
-                    visibility: wgpu::ShaderStageFlags::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer,
-                },
                 wgpu::BindGroupLayoutBinding { // color map
-                    binding: 1,
+                    binding: 0,
                     visibility: wgpu::ShaderStageFlags::VERTEX,
                     ty: wgpu::BindingType::SampledTexture,
                 },
                 wgpu::BindGroupLayoutBinding { // palette map
-                    binding: 2,
+                    binding: 1,
                     visibility: wgpu::ShaderStageFlags::VERTEX,
                     ty: wgpu::BindingType::SampledTexture,
                 },
-                wgpu::BindGroupLayoutBinding { // main sampler
-                    binding: 3,
+                wgpu::BindGroupLayoutBinding { // color table sampler
+                    binding: 2,
                     visibility: wgpu::ShaderStageFlags::VERTEX,
                     ty: wgpu::BindingType::Sampler,
                 },
             ],
         });
-        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            size: mem::size_of::<Locals>() as u32,
-            usage: wgpu::BufferUsageFlags::UNIFORM | wgpu::BufferUsageFlags::TRANSFER_DST,
+        let part_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            bindings: &[
+                wgpu::BindGroupLayoutBinding { // part locals
+                    binding: 0,
+                    visibility: wgpu::ShaderStageFlags::VERTEX,
+                    ty: wgpu::BindingType::UniformBuffer,
+                },
+            ],
         });
         let palette = Palette::new(init_encoder, device, palette_data);
         let (color_table_view, color_table_sampler) = Self::create_color_table(
@@ -228,21 +240,14 @@ impl Context {
             bindings: &[
                 wgpu::Binding {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &uniform_buf,
-                        range: 0 .. mem::size_of::<Locals>() as u32,
-                    },
-                },
-                wgpu::Binding {
-                    binding: 1,
                     resource: wgpu::BindingResource::TextureView(&color_table_view),
                 },
                 wgpu::Binding {
-                    binding: 2,
+                    binding: 1,
                     resource: wgpu::BindingResource::TextureView(&palette.view),
                 },
                 wgpu::Binding {
-                    binding: 3,
+                    binding: 2,
                     resource: wgpu::BindingResource::Sampler(&color_table_sampler),
                 },
             ],
@@ -251,13 +256,14 @@ impl Context {
             bind_group_layouts: &[
                 &global.bind_group_layout,
                 &bind_group_layout,
+                &part_bind_group_layout,
             ],
         });
         let pipeline = Self::create_pipeline(&pipeline_layout, device);
 
         Context {
-            uniform_buf,
             bind_group,
+            part_bind_group_layout,
             pipeline_layout,
             pipeline,
         }

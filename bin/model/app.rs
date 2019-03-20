@@ -5,9 +5,12 @@ use cgmath;
 use log::info;
 use wgpu;
 
+use std::mem;
+
 
 pub struct ResourceView {
-    model: model::RenderModel,
+    model: model::VisualModel,
+    locals_buf: wgpu::Buffer,
     global: render::global::Context,
     object: render::object::Context,
     transform: space::Transform,
@@ -22,11 +25,8 @@ impl ResourceView {
         settings: &config::settings::Settings,
         device: &mut wgpu::Device,
     ) -> Self {
-        info!("Loading model {}", path);
-        let file = settings.open_relative(path);
-        let model = model::load_m3d(file, device);
+        info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
-
         let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
@@ -36,9 +36,13 @@ impl ResourceView {
             init_encoder.finish(),
         ]);
 
+        info!("Loading model {}", path);
+        let file = settings.open_relative(path);
+        let (model, locals_buf) = model::load_m3d(file, device, &object.part_bind_group_layout);
 
         ResourceView {
             model,
+            locals_buf,
             global,
             object,
             transform: cgmath::Decomposed {
@@ -123,15 +127,29 @@ impl Application for ResourceView {
         &mut self,
         device: &wgpu::Device,
         targets: render::ScreenTargets,
-    ) -> Vec<wgpu::CommandBuffer> {
-        let mut updater = render::Updater::new(device);
-        updater.update(&self.global.uniform_buf, &[
-            render::global::Constants::new(&self.cam, &self.light_config),
-        ]);
-
+    ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
+        let global_staging = device
+            .create_buffer_mapped(1, wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .fill_from_slice(&[
+                render::global::Constants::new(&self.cam, &self.light_config),
+            ]);
+        encoder.copy_buffer_to_buffer(
+            &global_staging,
+            0,
+            &self.global.uniform_buf,
+            0,
+            mem::size_of::<render::global::Constants>() as u32,
+        );
+        render::RenderModel {
+            model: &self.model,
+            locals_buf: &self.locals_buf,
+            transform: self.transform,
+            debug_shape_scale: None,
+        }.prepare(&mut encoder, device);
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[
@@ -160,17 +178,10 @@ impl Application for ResourceView {
             pass.set_bind_group(1, &self.object.bind_group);
             render::Render::draw_model(
                 &mut pass,
-                &mut updater,
                 &self.model,
-                self.transform,
-                &self.object.uniform_buf,
-                None,
             );
         }
 
-        vec![
-            updater.finish(),
-            encoder.finish(),
-        ]
+        encoder.finish()
     }
 }

@@ -285,7 +285,7 @@ impl Application for LevelView {
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> wgpu::CommandBuffer {
         self.render.draw_world(
             &[],
             &self.cam,

@@ -154,16 +154,6 @@ impl Game {
         device: &mut wgpu::Device,
     ) -> Self {
         info!("Loading world parameters");
-        let db = {
-            let game = config::game::Registry::load(settings);
-            DataBase {
-                _bunches: config::bunches::load(settings.open_relative("bunches.prm")),
-                cars: config::car::load_registry(settings, &game, device),
-                common: config::common::load(settings.open_relative("common.prm")),
-                _escaves: config::escaves::load(settings.open_relative("escaves.prm")),
-                game,
-            }
-        };
         let (level, coords) = if settings.game.level.is_empty() {
             info!("Using test level");
             (level::Level::new_test(), (0, 0))
@@ -185,9 +175,23 @@ impl Game {
             (level, coordinates)
         };
 
+        info!("Initializing the render");
         let depth = 10f32 .. 10000f32;
         let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
         let render = Render::new(device, &level, &pal_data, &settings.render);
+
+        info!("Loading world database");
+        let db = {
+            let game = config::game::Registry::load(settings);
+            DataBase {
+                _bunches: config::bunches::load(settings.open_relative("bunches.prm")),
+                cars: config::car::load_registry(settings, &game, device, render.locals_layout()),
+                common: config::common::load(settings.open_relative("common.prm")),
+                _escaves: config::escaves::load(settings.open_relative("escaves.prm")),
+                game,
+            }
+        };
+
         /*
         let collider = render::GpuCollider::new(
             factory,
@@ -203,10 +207,21 @@ impl Game {
             &level,
         );
         player_agent.spirit = Spirit::Player;
-        for (ms, sid) in player_agent.car.model.slots.iter_mut().zip(settings.car.slots.iter()) {
+        let slot_locals_id = player_agent.car.model.mesh_count() - player_agent.car.model.slots.len();
+        for (i, (ms, sid)) in player_agent.car.model.slots
+            .iter_mut()
+            .zip(settings.car.slots.iter())
+            .enumerate()
+        {
             let info = &db.game.model_infos[sid];
             let raw = Mesh::load(&mut settings.open_relative(&info.path));
-            ms.mesh = Some(model::load_c3d(raw, device));
+            ms.mesh = Some(model::load_c3d(
+                raw,
+                device,
+                render.locals_layout(),
+                &player_agent.car.locals_buf,
+                slot_locals_id + i,
+            ));
             ms.scale = info.scale;
         }
 
@@ -460,7 +475,7 @@ impl Application for Game {
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> wgpu::CommandBuffer {
         /*
         if self.compute_gpu_collision {
             let mapping = factory
@@ -480,6 +495,7 @@ impl Application for Game {
             .iter()
             .map(|a| RenderModel {
                 model: &a.car.model,
+                locals_buf: &a.car.locals_buf,
                 transform: a.transform.clone(),
                 debug_shape_scale: match a.spirit {
                     Spirit::Player => Some(a.car.physics.scale_bound),
@@ -487,7 +503,7 @@ impl Application for Game {
                 },
             })
             .collect::<Vec<_>>();
-        let command_buffers = self.render.draw_world(
+        let command_buffer = self.render.draw_world(
             &models,
             &self.cam,
             targets,
@@ -538,6 +554,6 @@ impl Application for Game {
             }
         }*/
 
-        command_buffers
+        command_buffer
     }
 }

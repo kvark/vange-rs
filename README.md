@@ -7,6 +7,12 @@ The idea of this project is to replicate the old look and behavior, but with nat
 
 You need the **original game** in order to try out `vange-rs`. The path to resources needs to be set in `config/settings.ron`.
 
+## Technonolgy
+
+The game uses [wgpu-rs](https://github.com/gfx-rs/wgpu) for graphics and [winit](https://github.com/tomaka/winit) for windowing.
+
+The level is drawn in a single full-screen draw call with a bit of ray tracing magic. There is also an experimental tessellation-based renderer, but neither produce results of sufficient quality. See the [dedicated wiki page](https://github.com/kvark/vange-rs/wiki/Rendering-Techniques) for our rendering technologies.
+
 ## Instructions
 
 The project is structured to provide multiple binaries. `road` binary is for the main game, which includes mechouses, items, and the level.
@@ -114,9 +120,3 @@ The image can be edited and then converted back to a palette:
 ```bash
 cargo run --bin convert -- my_dir/harmony.png my_dir/harmony-new.pal
 ```
-
-## Technonolgy
-
-The game uses [wgpu-rs](https://github.com/gfx-rs/wgpu) for graphics and [winit](https://github.com/tomaka/winit) for windowing.
-
-The level is drawn in a single full-screen draw call with a bit of ray tracing magic. There is also an experimental tessellation-based renderer, but neither produce results of sufficient quality. See the [dedicated wiki page](https://github.com/kvark/vange-rs/wiki/Rendering-Techniques) for our rendering technologies.

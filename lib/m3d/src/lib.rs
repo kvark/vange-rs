@@ -175,6 +175,11 @@ pub struct Model<M, S> {
     pub slots: [Slot<M>; MAX_SLOTS],
 }
 
+impl<M, S> Model<M, S> {
+    pub fn mesh_count(&self) -> usize {
+        1 + self.wheels.len() + self.debris.len() + MAX_SLOTS
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Bounds {

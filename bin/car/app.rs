@@ -6,12 +6,18 @@ use cgmath;
 use log::info;
 use wgpu;
 
+use std::{
+    mem,
+    sync::Arc,
+};
+
 
 pub struct CarView {
-    model: model::RenderModel,
+    model: model::VisualModel,
+    locals_buf: Arc<wgpu::Buffer>,
     transform: space::Transform,
-    physics: config::car::CarPhysics,
-    debug_render: render::DebugRender,
+    //physics: config::car::CarPhysics,
+    //debug_render: render::DebugRender,
     global: render::global::Context,
     object: render::object::Context,
     cam: space::Camera,
@@ -24,24 +30,7 @@ impl CarView {
         settings: &config::Settings,
         device: &mut wgpu::Device,
     ) -> Self {
-        info!("Loading car registry");
-        let game_reg = config::game::Registry::load(settings);
-        let car_reg = config::car::load_registry(settings, &game_reg, device);
-        let cinfo = match car_reg.get(&settings.car.id) {
-            Some(ci) => ci,
-            None => {
-                let names = car_reg.keys().collect::<Vec<_>>();
-                panic!("Unable to find `{}` in {:?}", settings.car.id, names);
-            }
-        };
-        let mut model = cinfo.model.clone();
-        for (ms, sid) in model.slots.iter_mut().zip(settings.car.slots.iter()) {
-            let info = &game_reg.model_infos[sid];
-            let raw = Mesh::load(&mut settings.open_relative(&info.path));
-            ms.mesh = Some(model::load_c3d(raw, device));
-            ms.scale = info.scale;
-        }
-
+        info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
         let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
@@ -52,15 +41,50 @@ impl CarView {
             init_encoder.finish(),
         ]);
 
+        info!("Loading car registry");
+        let game_reg = config::game::Registry::load(settings);
+        let car_reg = config::car::load_registry(
+            settings,
+            &game_reg,
+            device,
+            &object.part_bind_group_layout,
+        );
+        let cinfo = match car_reg.get(&settings.car.id) {
+            Some(ci) => ci,
+            None => {
+                let names = car_reg.keys().collect::<Vec<_>>();
+                panic!("Unable to find `{}` in {:?}", settings.car.id, names);
+            }
+        };
+        let mut model = cinfo.model.clone();
+        let slot_locals_id = model.mesh_count() - model.slots.len();
+        for (i, (ms, sid)) in model.slots
+            .iter_mut()
+            .zip(settings.car.slots.iter())
+            .enumerate()
+        {
+            let info = &game_reg.model_infos[sid];
+            let raw = Mesh::load(&mut settings.open_relative(&info.path));
+            ms.mesh = Some(model::load_c3d(
+                raw,
+                device,
+                &object.part_bind_group_layout,
+                &cinfo.locals_buf,
+                slot_locals_id + i,
+            ));
+            ms.scale = info.scale;
+        }
+
         CarView {
             model,
+            locals_buf: Arc::clone(&cinfo.locals_buf),
             transform: cgmath::Decomposed {
                 scale: cinfo.scale,
                 disp: cgmath::Vector3::unit_z(),
                 rot: cgmath::One::one(),
             },
-            physics: cinfo.physics.clone(),
-            debug_render: render::DebugRender::new(device, &settings.render.debug),
+            //physics: cinfo.physics.clone(),
+            //debug_render: render::DebugRender::new(device, &settings.render.debug),
             global,
             object,
             cam: space::Camera {
@@ -166,17 +190,30 @@ impl Application for CarView {
         &mut self,
         device: &wgpu::Device,
         targets: render::ScreenTargets,
-    ) -> Vec<wgpu::CommandBuffer> {
-        let mx_vp = self.cam.get_view_proj();
-
-        let mut updater = render::Updater::new(device);
-        updater.update(&self.global.uniform_buf, &[
-            render::global::Constants::new(&self.cam, &self.light_config),
-        ]);
-
+    ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
+        let global_staging = device
+            .create_buffer_mapped(1, wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .fill_from_slice(&[
+                render::global::Constants::new(&self.cam, &self.light_config),
+            ]);
+        encoder.copy_buffer_to_buffer(
+            &global_staging,
+            0,
+            &self.global.uniform_buf,
+            0,
+            mem::size_of::<render::global::Constants>() as u32,
+        );
+
+        render::RenderModel {
+            model: &self.model,
+            locals_buf: &self.locals_buf,
+            transform: self.transform,
+            debug_shape_scale: None,
+        }.prepare(&mut encoder, device);
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[
@@ -205,17 +242,10 @@ impl Application for CarView {
             pass.set_bind_group(1, &self.object.bind_group);
             render::Render::draw_model(
                 &mut pass,
-                &mut updater,
                 &self.model,
-                self.transform,
-                &self.object.uniform_buf,
-                Some((&mut self.debug_render, self.physics.scale_bound, &mx_vp)),
             );
         }
 
-        vec![
-            updater.finish(),
-            encoder.finish(),
-        ]
+        encoder.finish()
     }
 }

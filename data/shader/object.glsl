@@ -13,13 +13,13 @@ layout(location = 2) varying vec3 v_Light;
 
 #ifdef SHADER_VS
 
-layout(set = 1, binding = 0) uniform c_Locals {
+layout(set = 2, binding = 0) uniform c_Locals {
     mat4 u_Model;
 };
 
-layout(set = 1, binding = 1) uniform utexture1D t_ColorTable;
-layout(set = 1, binding = 2) uniform texture1D t_Palette;
-layout(set = 1, binding = 3) uniform sampler s_ColorTableSampler;
+layout(set = 1, binding = 0) uniform utexture1D t_ColorTable;
+layout(set = 1, binding = 1) uniform texture1D t_Palette;
+layout(set = 1, binding = 2) uniform sampler s_ColorTableSampler;
 
 layout(set = 0, binding = 1) uniform sampler s_PaletteSampler;
 
