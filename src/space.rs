@@ -80,7 +80,19 @@ impl Camera {
             disp: self.loc,
         };
         let view_mx = Matrix4::from(view.inverse_transform().unwrap());
-        self.proj.to_matrix() * view_mx
+        let mut mvp = self.proj.to_matrix() * view_mx;
+        // convert from GL to wgpu/gfx-rs
+        // 1) depth conversion from [-1,1] to [0,1]
+        mvp.x.z = 0.5*(mvp.x.z + mvp.x.w);
+        mvp.y.z = 0.5*(mvp.y.z + mvp.y.w);
+        mvp.z.z = 0.5*(mvp.z.z + mvp.z.w);
+        mvp.w.z = 0.5*(mvp.w.z + mvp.w.w);
+        // 2) invert Y
+        mvp.x.y *= -1.0;
+        mvp.y.y *= -1.0;
+        mvp.z.y *= -1.0;
+        mvp.w.y *= -1.0;
+        mvp
     }
 
     pub fn follow(

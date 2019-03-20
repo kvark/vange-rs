@@ -14,8 +14,6 @@ layout(location = 0) attribute ivec4 a_Pos;
 
 void main() {
     gl_Position = u_ViewProj * vec4(a_Pos);
-    // convert from -1,1 Z to 0,1
-    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);
 }
 #endif //VS
 
@@ -132,7 +130,7 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
 
 void main() {
     vec4 sp_ndc = vec4(
-        (gl_FragCoord.xy / u_ScreenSize.xy) * vec2(2.0, -2.0) + vec2(-1.0, 1.0),
+        gl_FragCoord.xy / u_ScreenSize.xy * 2.0 - 1.0,
         -1.0,
         1.0
     );
@@ -155,6 +153,6 @@ void main() {
     o_Color = frag_color;
 
     vec4 target_ndc = u_ViewProj * vec4(point, 1.0);
-    gl_FragDepth = target_ndc.z / target_ndc.w * 0.5 + 0.5;
+    gl_FragDepth = target_ndc.z / target_ndc.w;
 }
 #endif //FS

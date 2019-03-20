@@ -30,8 +30,6 @@ layout(location = 2) attribute vec4 a_Normal;
 void main() {
     vec4 world = u_Model * a_Pos;
     gl_Position = u_ViewProj * world;
-    // convert from -1,1 Z to 0,1
-    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);
 
     uvec2 color_params = texelFetch(usampler1D(t_ColorTable, s_ColorTableSampler), int(a_ColorIndex), 0).xy;
     v_Color = texelFetch(sampler1D(t_Palette, s_PaletteSampler), int(color_params[0]), 0);
