@@ -2,6 +2,7 @@
 name = "vangers"
 version = "0.1.0"
 authors = ["kvark"]
+edition = "2018"
 
 [workspace]
 members = [
@@ -11,6 +12,9 @@ members = [
 ]
 
 [lib]
+
+[features]
+default = []
 
 [[bin]]
 name = "road"
@@ -39,8 +43,8 @@ splay = { path = "lib/splay" }
 tiff = { path = "lib/tiff" }
 # library
 byteorder = "1.0"
-cgmath = "0.15"
-gfx = "0.17"
+cgmath = "0.17"
+glsl-to-spirv = "0.1"
 log = "0.4"
 rand = "0.6"
 rayon = "0.9"
@@ -49,11 +53,11 @@ rust-ini = "0.10"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.1"
+#wgpu = { github = "https://github.com/gfx-rs/wgpu", features = ["local"] }
+#wgpu = { path = "../wgpu/wgpu-rs" }
+wgpu = { version = "0.2" }
 # binaries
-env_logger = "0.4"
+env_logger = "0.5"
 getopts = "0.2"
-gfx_device_gl = "0.15.5"
-gfx_window_glutin = "0.28"
-glutin = "0.19"
 obj = "0.9"
 png = "0.13"

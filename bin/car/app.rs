@@ -1,33 +1,54 @@
-use cgmath;
-use gfx;
-
-use boilerplate::{Application, KeyboardInput};
+use crate::boilerplate::Application;
 use m3d::Mesh;
 use vangers::{config, level, model, render, space};
 
-pub struct CarView<R: gfx::Resources> {
-    model: model::RenderModel<R>,
+use cgmath;
+use log::info;
+use wgpu;
+
+use std::{
+    mem,
+    sync::Arc,
+};
+
+
+pub struct CarView {
+    model: model::VisualModel,
+    locals_buf: Arc<wgpu::Buffer>,
     transform: space::Transform,
-    pso: gfx::PipelineState<R, render::object::Meta>,
-    debug_render: render::DebugRender<R>,
-    physics: config::car::CarPhysics,
-    data: render::object::Data<R>,
+    //physics: config::car::CarPhysics,
+    //debug_render: render::DebugRender,
+    global: render::global::Context,
+    object: render::object::Context,
     cam: space::Camera,
     rotation: (cgmath::Rad<f32>, cgmath::Rad<f32>),
     light_config: config::settings::Light,
 }
 
-impl<R: gfx::Resources> CarView<R> {
-    pub fn new<F: gfx::Factory<R>>(
+impl CarView {
+    pub fn new(
         settings: &config::Settings,
-        targets: render::MainTargets<R>,
-        factory: &mut F,
+        device: &mut wgpu::Device,
     ) -> Self {
-        use gfx::traits::FactoryExt;
+        info!("Initializing the render");
+        let pal_data = level::read_palette(settings.open_palette(), None);
+        let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            todo: 0,
+        });
+        let global = render::global::Context::new(device);
+        let object = render::object::Context::new(&mut init_encoder, device, &pal_data, &global);
+        device.get_queue().submit(&[
+            init_encoder.finish(),
+        ]);
 
         info!("Loading car registry");
         let game_reg = config::game::Registry::load(settings);
-        let car_reg = config::car::load_registry(settings, &game_reg, factory);
+        let car_reg = config::car::load_registry(
+            settings,
+            &game_reg,
+            device,
+            &object.part_bind_group_layout,
+        );
         let cinfo = match car_reg.get(&settings.car.id) {
             Some(ci) => ci,
             None => {
@@ -36,36 +57,36 @@ impl<R: gfx::Resources> CarView<R> {
             }
         };
         let mut model = cinfo.model.clone();
-        for (ms, sid) in model.slots.iter_mut().zip(settings.car.slots.iter()) {
+        let slot_locals_id = model.mesh_count() - model.slots.len();
+        for (i, (ms, sid)) in model.slots
+            .iter_mut()
+            .zip(settings.car.slots.iter())
+            .enumerate()
+        {
             let info = &game_reg.model_infos[sid];
             let raw = Mesh::load(&mut settings.open_relative(&info.path));
-            ms.mesh = Some(model::load_c3d(raw, factory));
+            ms.mesh = Some(model::load_c3d(
+                raw,
+                device,
+                &object.part_bind_group_layout,
+                &cinfo.locals_buf,
+                slot_locals_id + i,
+            ));
             ms.scale = info.scale;
         }
 
-        let pal_data = level::read_palette(settings.open_palette(), None);
-        let (width, height, _, _) = targets.color.get_dimensions();
-        let data = render::object::Data {
-            vbuf: model.body.buffer.clone(),
-            globals: factory.create_constant_buffer(1),
-            locals: factory.create_constant_buffer(1),
-            ctable: render::Render::create_color_table(factory),
-            palette: render::Render::create_palette(&pal_data, factory),
-            out_color: targets.color.clone(),
-            out_depth: targets.depth.clone(),
-        };
-
         CarView {
             model,
+            locals_buf: Arc::clone(&cinfo.locals_buf),
             transform: cgmath::Decomposed {
                 scale: cinfo.scale,
                 disp: cgmath::Vector3::unit_z(),
                 rot: cgmath::One::one(),
             },
-            pso: render::Render::create_object_pso(factory),
-            debug_render: render::DebugRender::new(factory, targets, &settings.render.debug),
-            physics: cinfo.physics.clone(),
-            data,
+            //physics: cinfo.physics.clone(),
+            //debug_render: render::DebugRender::new(device, &settings.render.debug),
+            global,
+            object,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, -64.0, 32.0),
                 rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(
@@ -73,7 +94,7 @@ impl<R: gfx::Resources> CarView<R> {
                 ),
                 proj: space::Projection::Perspective(cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
-                    aspect: width as f32 / height as f32,
+                    aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
                     near: 1.0,
                     far: 100.0,
                 }),
@@ -110,9 +131,9 @@ impl<R: gfx::Resources> CarView<R> {
     }
 }
 
-impl<R: gfx::Resources> Application<R> for CarView<R> {
-    fn on_key(&mut self, input: KeyboardInput) -> bool {
-        use boilerplate::{ElementState, Key};
+impl Application for CarView {
+    fn on_key(&mut self, input: wgpu::winit::KeyboardInput) -> bool {
+        use wgpu::winit::{ElementState, KeyboardInput, VirtualKeyCode as Key};
 
         let angle = cgmath::Rad(2.0);
         match input {
@@ -157,44 +178,74 @@ impl<R: gfx::Resources> Application<R> for CarView<R> {
         }
     }
 
-    fn draw<C: gfx::CommandBuffer<R>>(
-        &mut self,
-        enc: &mut gfx::Encoder<R, C>,
-    ) {
-        enc.clear(&self.data.out_color, [0.1, 0.2, 0.3, 1.0]);
-        enc.clear_depth(&self.data.out_depth, 1.0);
-
-        let mx_vp = render::Render::set_globals(
-            enc,
-            &self.cam,
-            &self.light_config,
-            &self.data.globals,
-        );
-
-        render::Render::draw_model(
-            enc,
-            &self.model,
-            self.transform,
-            &self.pso,
-            &mut self.data,
-            Some((&mut self.debug_render, self.physics.scale_bound, &mx_vp)),
-        );
+    fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
+        self.cam.proj.update(extent.width as u16, extent.height as u16);
     }
 
-    fn gpu_update<F: gfx::Factory<R>>(
-        &mut self, factory: &mut F,
-        resized_targets: Option<render::MainTargets<R>>,
-        reload_shaders: bool,
-    ) {
-        if let Some(targets) = resized_targets {
-            let (w, h, _, _) = targets.color.get_dimensions();
-            self.cam.proj.update(w, h);
-            self.data.out_color = targets.color.clone();
-            self.data.out_depth = targets.depth.clone();
-            self.debug_render.resize(targets);
+    fn reload(&mut self, device: &wgpu::Device) {
+        self.object.reload(device);
+    }
+
+    fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        targets: render::ScreenTargets,
+    ) -> wgpu::CommandBuffer {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            todo: 0,
+        });
+        let global_staging = device
+            .create_buffer_mapped(1, wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .fill_from_slice(&[
+                render::global::Constants::new(&self.cam, &self.light_config),
+            ]);
+        encoder.copy_buffer_to_buffer(
+            &global_staging,
+            0,
+            &self.global.uniform_buf,
+            0,
+            mem::size_of::<render::global::Constants>() as u32,
+        );
+
+        render::RenderModel {
+            model: &self.model,
+            locals_buf: &self.locals_buf,
+            transform: self.transform,
+            debug_shape_scale: None,
+        }.prepare(&mut encoder, device);
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[
+                    wgpu::RenderPassColorAttachmentDescriptor {
+                        attachment: targets.color,
+                        load_op: wgpu::LoadOp::Clear,
+                        store_op: wgpu::StoreOp::Store,
+                        clear_color: wgpu::Color {
+                            r: 0.1, g: 0.2, b: 0.3, a: 1.0,
+                        },
+                    },
+                ],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                    attachment: targets.depth,
+                    depth_load_op: wgpu::LoadOp::Clear,
+                    depth_store_op: wgpu::StoreOp::Store,
+                    clear_depth: 1.0,
+                    stencil_load_op: wgpu::LoadOp::Clear,
+                    stencil_store_op: wgpu::StoreOp::Store,
+                    clear_stencil: 0,
+                }),
+            });
+
+            pass.set_pipeline(&self.object.pipeline);
+            pass.set_bind_group(0, &self.global.bind_group);
+            pass.set_bind_group(1, &self.object.bind_group);
+            render::Render::draw_model(
+                &mut pass,
+                &self.model,
+            );
         }
-        if reload_shaders {
-            self.pso = render::Render::create_object_pso(factory);
-        }
+
+        encoder.finish()
     }
 }

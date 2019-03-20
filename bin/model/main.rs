@@ -1,10 +1,3 @@
-extern crate cgmath;
-extern crate getopts;
-extern crate gfx;
-#[macro_use]
-extern crate log;
-extern crate vangers;
-
 mod app;
 #[path = "../boilerplate.rs"]
 mod boilerplate;
@@ -12,7 +5,7 @@ mod boilerplate;
 fn main() {
     use std::env;
 
-    let (mut harness, settings, main_targets) = boilerplate::Harness::init();
+    let (mut harness, settings) = boilerplate::Harness::init("model");
 
     let args: Vec<_> = env::args().collect();
     let mut options = getopts::Options::new();
@@ -29,7 +22,7 @@ fn main() {
     }
 
     let path = &matches.free[0];
-    let app = app::ResourceView::new(path, &settings, main_targets, &mut harness.factory);
+    let app = app::ResourceView::new(path, &settings, &mut harness.device);
 
     harness.main_loop(app);
 }

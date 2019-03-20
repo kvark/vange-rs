@@ -1,6 +1,6 @@
 //!include fs:surface.inc fs:color.inc
 
-uniform c_Globals {
+layout(set = 0, binding = 0) uniform c_Globals {
     vec4 u_CameraPos;
     mat4 u_ViewProj;
     mat4 u_InvViewProj;
@@ -11,10 +11,10 @@ uniform c_Globals {
 
 #ifdef SHADER_VS
 
-attribute vec4 a_Pos;
+layout(location = 0) attribute ivec4 a_Pos;
 
 void main() {
-    gl_Position = u_ViewProj * a_Pos;
+    gl_Position = u_ViewProj * vec4(a_Pos);
 }
 #endif //VS
 
@@ -22,7 +22,7 @@ void main() {
 #ifdef SHADER_FS
 //imported: Surface, u_TextureScale, get_surface, evaluate_color
 
-uniform c_Locals {
+layout(set = 1, binding = 1) uniform c_Locals {
     vec4 u_ScreenSize;      // XY = size
 };
 
@@ -32,7 +32,7 @@ const float
 
 #define TERRAIN_WATER   0U
 
-out vec4 Target0;
+layout(location = 0) out vec4 o_Color;
 
 
 vec3 cast_ray_to_plane(float level, vec3 base, vec3 dir) {
@@ -85,7 +85,7 @@ Surface cast_ray_impl(
 struct CastPoint {
     vec3 pos;
     uint type;
-    vec3 tex_coord;
+    vec2 tex_coord;
     bool is_underground;
     //bool is_shadowed;
 };
@@ -180,9 +180,9 @@ void main() {
             frag_color += c_ReflectionPower * ref_color;
         }
     }
-    Target0 = frag_color;
+    o_Color = frag_color;
 
     vec4 target_ndc = u_ViewProj * vec4(pt.pos, 1.0);
-    gl_FragDepth = target_ndc.z / target_ndc.w * 0.5 + 0.5;
+    gl_FragDepth = target_ndc.z / target_ndc.w;
 }
 #endif //FS

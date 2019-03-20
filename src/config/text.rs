@@ -5,6 +5,7 @@ use std::fmt::Debug;
 use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
 
+
 pub struct Reader<I> {
     input: BufReader<I>,
     line: String,

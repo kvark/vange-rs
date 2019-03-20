@@ -1,19 +1,24 @@
-use gfx;
-use gfx::format::I8Norm;
-
+use crate::render::{
+    DebugPos, ShapePolygon,
+    object::{Locals as ObjectLocals, Vertex as ObjectVertex},
+};
 use m3d;
-use render::{
-    DebugPos, ObjectVertex, ShapeVertex, ShapePolygon,
+
+use wgpu;
+
+use std::{
+    mem,
+    fs::File,
+    ops::Range,
+    sync::Arc,
 };
 
-use std::fs::File;
-use std::ops::Range;
 
-
-#[derive(Clone)]
-pub struct Mesh<R: gfx::Resources> {
-    pub slice: gfx::Slice<R>,
-    pub buffer: gfx::handle::Buffer<R, ObjectVertex>,
+pub struct Mesh {
+    pub locals_id: usize,
+    pub bind_group: wgpu::BindGroup,
+    pub num_vertices: usize,
+    pub vertex_buf: wgpu::Buffer,
     pub offset: [f32; 3],
     pub bbox: ([f32; 3], [f32; 3], f32),
     pub physics: m3d::Physics,
@@ -26,27 +31,14 @@ pub struct Polygon {
     pub samples: Range<usize>,
 }
 
-#[derive(Clone, Debug)]
-pub struct Shape<R: gfx::Resources> {
+pub struct Shape {
     pub polygons: Vec<Polygon>,
     pub samples: Vec<RawVertex>,
-    pub vertex_buf: gfx::handle::Buffer<R, ShapeVertex>,
-    pub vertex_view: gfx::handle::ShaderResourceView<R, [f32; 4]>,
-    pub polygon_buf: gfx::handle::Buffer<R, ShapePolygon>,
-    pub sample_buf: Option<gfx::handle::Buffer<R, DebugPos>>,
+    pub vertex_buf: wgpu::Buffer,
+    //pub vertex_view: Arc<wgpu::TextureView>,
+    pub polygon_buf: wgpu::Buffer,
+    pub sample_buf: Option<wgpu::Buffer>,
     pub bounds: m3d::Bounds,
-}
-
-impl<R: gfx::Resources> Shape<R> {
-    pub fn make_draw_slice(&self) -> gfx::Slice<R> {
-        gfx::Slice {
-            start: 0,
-            end: 4,
-            base_vertex: 0,
-            instances: Some((self.polygons.len() as _, 0)),
-            buffer: gfx::IndexBuffer::Auto,
-        }
-    }
 }
 
 pub type RawVertex = [i8; 3];
@@ -130,37 +122,51 @@ fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
     [v[0] as f32, v[1] as f32, v[2] as f32]
 }
 
-pub fn load_c3d<R, F>(
+pub fn load_c3d(
     raw: m3d::Mesh<m3d::Geometry<m3d::DrawTriangle>>,
-    factory: &mut F,
-) -> Mesh<R>
-where
-    R: gfx::Resources,
-    F: gfx::traits::FactoryExt<R>,
-{
-    let positions = &raw.geometry.positions;
-    let normals = &raw.geometry.normals;
-    let vertices = raw.geometry.polygons
-        .iter()
-        .flat_map(|tri| {
-            tri.vertices.into_iter().map(move |v| {
-                let p = positions[v.pos as usize];
-                let n = normals[v.normal as usize];
-                ObjectVertex {
-                    pos: [p[0], p[1], p[2], 1],
-                    color: tri.material[0],
-                    normal: [I8Norm(n[0]), I8Norm(n[1]), I8Norm(n[2]), I8Norm(0)],
-                }
-            })
-        })
-        .collect::<Vec<_>>();
+    device: &wgpu::Device,
+    locals_layout: &wgpu::BindGroupLayout,
+    locals_buf: &wgpu::Buffer,
+    locals_id: usize,
+) -> Arc<Mesh> {
+    let locals_size = mem::size_of::<ObjectLocals>() as u32;
+    let locals_base = locals_id as u32 * locals_size;
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: locals_layout,
+        bindings: &[
+            wgpu::Binding {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer {
+                    buffer: locals_buf,
+                    range: locals_base .. locals_base + locals_size,
+                },
+            },
+        ],
+    });
 
-    let (buffer, slice) = factory.create_vertex_buffer_with_slice(&vertices, ());
+    let num_vertices = raw.geometry.polygons.len() * 3;
+    debug!("\tGot {} GPU vertices...", num_vertices);
+    let mapping = device.create_buffer_mapped::<ObjectVertex>(
+        num_vertices,
+        wgpu::BufferUsageFlags::VERTEX,
+    );
+    for (chunk, tri) in mapping.data.chunks_mut(3).zip(&raw.geometry.polygons) {
+        for (vo, v) in chunk.iter_mut().zip(&tri.vertices) {
+            let p = raw.geometry.positions[v.pos as usize];
+            let n = raw.geometry.normals[v.normal as usize];
+            *vo = ObjectVertex {
+                pos: [p[0], p[1], p[2], 1],
+                color: tri.material[0],
+                normal: [n[0], n[1], n[2], 0],
+            };
+        }
+    }
 
-    debug!("\tGot {} GPU vertices...", vertices.len());
-    Mesh {
-        slice,
-        buffer,
+    Arc::new(Mesh {
+        bind_group,
+        locals_id,
+        num_vertices,
+        vertex_buf: mapping.finish(),
         offset: vec_i2f(raw.parent_off),
         bbox: (
             vec_i2f(raw.bounds.coord_min),
@@ -168,18 +174,14 @@ where
             raw.max_radius as f32,
         ),
         physics: raw.physics,
-    }
+    })
 }
 
-pub fn load_c3d_shape<R, F>(
+pub fn load_c3d_shape(
     raw: m3d::Mesh<m3d::Geometry<m3d::CollisionQuad>>,
-    factory: &mut F,
+    device: &wgpu::Device,
     with_sample_buf: bool,
-) -> Shape<R>
-where
-    R: gfx::Resources,
-    F: gfx::traits::FactoryExt<R>,
-{
+) -> Arc<Shape> {
     debug!("\tTessellating polygons...");
     let mut polygons = Vec::new();
     let mut polygon_data = Vec::with_capacity(raw.geometry.polygons.len());
@@ -203,10 +205,10 @@ where
         polygon_data.push(ShapePolygon {
             indices: quad.vertices,
             normal: [
-                I8Norm(quad.flat_normal[0]),
-                I8Norm(quad.flat_normal[1]),
-                I8Norm(quad.flat_normal[2]),
-                I8Norm(0),
+                quad.flat_normal[0],
+                quad.flat_normal[1],
+                quad.flat_normal[2],
+                0,
             ],
             origin_square: [ middle[0], middle[1], middle[2], square ],
         });
@@ -254,65 +256,78 @@ where
         samples.extend(cur_samples);
     }
 
-    let vertices = raw.geometry.positions
-        .into_iter()
-        .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32, 1.0])
-        .collect::<Vec<_>>();
-    let vertex_buf = factory
-        .create_buffer_immutable(
-            &vertices,
-            gfx::buffer::Role::Vertex,
-            gfx::memory::Bind::SHADER_RESOURCE,
-        )
-        .unwrap();
+    let vertex_buf = {
+        let mapping = device.create_buffer_mapped(
+            raw.geometry.positions.len(),
+            wgpu::BufferUsageFlags::VERTEX, //| wgpu::BufferUsageFlags::SAMPLED,
+        );
+        for (vo, p) in mapping.data.iter_mut().zip(raw.geometry.positions) {
+            *vo = [p[0] as f32, p[1] as f32, p[2] as f32, 1.0];
+        }
+        mapping.finish()
+    };
 
-    Shape {
+    Arc::new(Shape {
         polygons,
         samples,
-        vertex_view: factory
-            .view_buffer_as_shader_resource(&vertex_buf)
-            .unwrap(),
+        //vertex_view: factory
+        //    .view_buffer_as_shader_resource(&vertex_buf)
+        //    .unwrap(),
         vertex_buf,
-        polygon_buf: factory.create_vertex_buffer(&polygon_data),
+        polygon_buf: device
+            .create_buffer_mapped(polygon_data.len(), wgpu::BufferUsageFlags::VERTEX)
+            .fill_from_slice(&polygon_data),
         sample_buf: if with_sample_buf {
-            Some(factory.create_vertex_buffer(&sample_data))
+            Some(device
+                .create_buffer_mapped(sample_data.len(), wgpu::BufferUsageFlags::VERTEX)
+                .fill_from_slice(&sample_data)
+            )
         } else {
             None
         },
         bounds: raw.bounds,
-    }
+    })
 }
 
-pub type RenderModel<R> = m3d::Model<Mesh<R>, Shape<R>>;
+pub type VisualModel = m3d::Model<Arc<Mesh>, Arc<Shape>>;
 
-pub fn load_m3d<R, F>(
-    file: File, factory: &mut F
-) -> RenderModel<R>
-where
-    R: gfx::Resources,
-    F: gfx::traits::FactoryExt<R>,
-{
+pub fn load_m3d(
+    file: File,
+    device: &wgpu::Device,
+    locals_layout: &wgpu::BindGroupLayout,
+) -> (VisualModel, wgpu::Buffer) {
     let raw = m3d::FullModel::load(file);
+    let wheel_offset = 1;
+    let debrie_offset = wheel_offset + raw.wheels.len();
+    let locals_num = debrie_offset + raw.debris.len() + raw.slots.len();
+    let locals_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        size: (locals_num * mem::size_of::<ObjectLocals>()) as u32,
+        usage: wgpu::BufferUsageFlags::UNIFORM | wgpu::BufferUsageFlags::TRANSFER_DST,
+    });
 
-    RenderModel {
-        body: load_c3d(raw.body, factory),
-        shape: load_c3d_shape(raw.shape, factory, true),
+    let model = VisualModel {
+        body: load_c3d(raw.body, device, locals_layout, &locals_buf, 0),
+        shape: load_c3d_shape(raw.shape, device, true),
         dimensions: raw.dimensions,
         max_radius: raw.max_radius,
         color: raw.color,
         wheels: raw.wheels
             .into_iter()
-            .map(|wheel| wheel.map(|mesh| {
-                load_c3d(mesh, factory)
+            .enumerate()
+            .map(|(i, wheel)| wheel.map(|mesh| {
+                load_c3d(mesh, device, locals_layout, &locals_buf, wheel_offset + i)
             }))
             .collect(),
         debris: raw.debris
             .into_iter()
-            .map(|debrie| m3d::Debrie {
-                mesh: load_c3d(debrie.mesh, factory),
-                shape: load_c3d_shape(debrie.shape, factory, false),
+            .enumerate()
+            .map(|(i, debrie)| m3d::Debrie {
+                mesh: load_c3d(debrie.mesh, device, locals_layout, &locals_buf, debrie_offset + i),
+                shape: load_c3d_shape(debrie.shape, device, false),
             })
             .collect(),
         slots: m3d::Slot::map_all(raw.slots, |_, _| unreachable!()),
-    }
+    };
+
+    (model, locals_buf)
 }

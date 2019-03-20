@@ -1,10 +1,15 @@
-use cgmath;
-use cgmath::prelude::*;
-use gfx;
-use std::f32::EPSILON;
+use vangers::{
+    config, level, model, space,
+    render::LineBuffer,
+};
 
-use vangers::{config, level, model, space};
-use vangers::render::LineBuffer;
+use cgmath::{
+    self,
+    prelude::*,
+};
+use log::debug;
+
+use std::f32::EPSILON;
 
 
 const MAX_TRACTION: config::common::Traction = 4.0;
@@ -121,7 +126,7 @@ fn collide_low(
 ) -> CollisionData {
     let (mut soft, mut hard) = (Accumulator::new(), Accumulator::new());
     for s in samples[poly.samples.clone()].iter() {
-        let sp = cgmath::Point3::from(*s).cast::<f32>();
+        let sp = cgmath::Point3::from(*s).cast::<f32>().unwrap();
         let pos = transform.transform_point(sp * scale).to_vec();
         let texel = level.get((pos.x as i32, pos.y as i32));
         let height = match texel {
@@ -188,11 +193,11 @@ fn calc_collision_matrix_inv(
 }
 
 
-pub fn step<R: gfx::Resources>(
+pub fn step(
     dynamo: &mut Dynamo,
     transform: &mut space::Transform,
     dt: f32,
-    car: &config::car::CarInfo<R>,
+    car: &config::car::CarInfo,
     level: &level::Level,
     common: &config::common::Common,
     f_turbo: f32,

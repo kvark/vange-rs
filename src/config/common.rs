@@ -1,5 +1,7 @@
-use config::text::Reader;
+use crate::config::text::Reader;
+
 use std::fs::File;
+
 
 // see `src/runtime.h` for original defines
 pub const MAIN_LOOP_TIME: f32 = 0.05;

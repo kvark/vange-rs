@@ -1,11 +1,12 @@
 // Common routines for fetching the level surface data.
 
-uniform c_Surface {
+layout(set = 1, binding = 0) uniform c_Surface {
     vec4 u_TextureScale;    // XY = size, Z = height scale, w = number of layers
 };
 
-uniform sampler2DArray t_Height;
-uniform usampler2DArray t_Meta;
+layout(set = 1, binding = 2) uniform texture2D t_Height;
+layout(set = 1, binding = 3) uniform utexture2D t_Meta;
+layout(set = 1, binding = 7) uniform sampler s_MainSampler;
 
 const uint
     c_DoubleLevelMask = 1U<<6,
@@ -21,7 +22,7 @@ const float c_DeltaScale = 8.0 / 255.0;
 struct Surface {
     float low_alt, high_alt, delta;
     uint low_type, high_type;
-    vec3 tex_coord;
+    vec2 tex_coord;
     bool is_shadowed;
 };
 
@@ -40,11 +41,8 @@ int modulo(int a, int b) {
 float get_lod_height(ivec2 ipos, int lod) {
     int x = modulo(ipos.x, int(u_TextureScale.x));
     int y = modulo(ipos.y, int(u_TextureScale.y));
-    ivec3 tc = ivec3(
-        x >> lod, y >> lod,
-        modulo((ipos.y - y) / int(u_TextureScale.y), int(u_TextureScale.w))
-    );
-    float alt = texelFetch(t_Height, tc, lod).x;
+    ivec2 tc = ivec2(x, y) >> lod;
+    float alt = texelFetch(sampler2D(t_Height, s_MainSampler), tc, lod).x;
     return alt * u_TextureScale.z;
 }
 
@@ -52,19 +50,17 @@ float get_lod_height(ivec2 ipos, int lod) {
 // integer operations or `texelFetch`.
 float get_lod_height_alt(ivec2 ipos, int lod) {
     vec2 xy = (vec2(ipos.xy) + 0.5) / u_TextureScale.xy;
-    float z = trunc(mod(float(ipos.y) / u_TextureScale.y, u_TextureScale.w));
-    float alt = textureLod(t_Height, vec3(xy, z), float(lod)).x;
+    float alt = textureLod(sampler2D(t_Height, s_MainSampler), xy, float(lod)).x;
     return alt * u_TextureScale.z;
 }
 
 Surface get_surface(vec2 pos) {
     Surface suf;
 
-    vec3 tc = vec3(pos / u_TextureScale.xy, 0.0);
-    tc.z = trunc(mod(tc.y, u_TextureScale.w));
-    suf.tex_coord = tc;
+    vec2 tc = suf.tex_coord = pos / u_TextureScale.xy;
+    ivec2 tci = ivec2(mod(pos + 0.5, u_TextureScale.xy));
 
-    uint meta = texture(t_Meta, tc).x;
+    uint meta = texelFetch(usampler2D(t_Meta, s_MainSampler), tci, 0).x;
     suf.is_shadowed = (meta & c_ShadowMask) != 0U;
     suf.low_type = get_terrain_type(meta);
 
@@ -73,13 +69,13 @@ Surface get_surface(vec2 pos) {
         // so this can be more efficient with a boolean param
         uint delta;
         if (mod(pos.x, 2.0) >= 1.0) {
-            uint meta_low = textureOffset(t_Meta, tc, ivec2(-1, 0)).x;
+            uint meta_low = texelFetch(usampler2D(t_Meta, s_MainSampler), tci + ivec2(-1, 0), 0).x;
             suf.high_type = suf.low_type;
             suf.low_type = get_terrain_type(meta_low);
 
             delta = (get_delta(meta_low) << c_DeltaBits) + get_delta(meta);
         } else {
-            uint meta_high = textureOffset(t_Meta, tc, ivec2(1, 0)).x;
+            uint meta_high = texelFetch(usampler2D(t_Meta, s_MainSampler), tci + ivec2(1, 0), 0).x;
             suf.tex_coord.x += 1.0 / u_TextureScale.x;
             suf.high_type = get_terrain_type(meta_high);
 
@@ -87,14 +83,14 @@ Surface get_surface(vec2 pos) {
         }
 
         suf.low_alt =
-            textureLodOffset(t_Height, suf.tex_coord, 0.0, ivec2(-1, 0)).x
+            textureLodOffset(sampler2D(t_Height, s_MainSampler), suf.tex_coord, 0.0, ivec2(-1, 0)).x
             * u_TextureScale.z;
-        suf.high_alt = textureLod(t_Height, suf.tex_coord, 0.0).x * u_TextureScale.z;
+        suf.high_alt = textureLod(sampler2D(t_Height, s_MainSampler), suf.tex_coord, 0.0).x * u_TextureScale.z;
         suf.delta = float(delta) * c_DeltaScale * u_TextureScale.z;
     } else {
         suf.high_type = suf.low_type;
 
-        suf.low_alt = textureLod(t_Height, tc, 0.0).x * u_TextureScale.z;
+        suf.low_alt = textureLod(sampler2D(t_Height, s_MainSampler), tc, 0.0).x * u_TextureScale.z;
         suf.high_alt = suf.low_alt;
         suf.delta = 0.0;
     }

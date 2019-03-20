@@ -1,9 +1,17 @@
-use config::Settings;
-use config::text::Reader;
-use gfx;
-use model;
-use std::collections::HashMap;
-use std::fs::File;
+use crate::{
+    config::Settings,
+    config::text::Reader,
+    model,
+};
+
+use wgpu;
+
+use std::{
+    collections::HashMap,
+    fs::File,
+    sync::Arc,
+};
+
 
 pub type BoxSize = u8;
 pub type Price = u32;
@@ -144,19 +152,21 @@ impl CarPhysics {
 }
 
 #[derive(Clone)]
-pub struct CarInfo<R: gfx::Resources> {
+pub struct CarInfo {
     pub kind: Kind,
     pub stats: CarStats,
     pub physics: CarPhysics,
-    pub model: model::RenderModel<R>,
+    pub model: model::VisualModel,
+    pub locals_buf: Arc<wgpu::Buffer>,
     pub scale: f32,
 }
 
-pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
+pub fn load_registry(
     settings: &Settings,
     reg: &super::game::Registry,
-    factory: &mut F,
-) -> HashMap<String, CarInfo<R>> {
+    device: &wgpu::Device,
+    locals_layout: &wgpu::BindGroupLayout,
+) -> HashMap<String, CarInfo> {
     let mut map = HashMap::new();
     let mut fi = Reader::new(settings.open_relative("car.prm"));
     fi.advance();
@@ -186,6 +196,7 @@ pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
             physics.scale_size
         };
         let file = settings.open_relative(&mi.path);
+        let (model, locals_buf) = model::load_m3d(file, device, locals_layout);
         map.insert(
             name.to_owned(),
             CarInfo {
@@ -198,7 +209,8 @@ pub fn load_registry<R: gfx::Resources, F: gfx::Factory<R>>(
                 },
                 stats: CarStats::new(&data),
                 physics,
-                model: model::load_m3d(file, factory),
+                model,
+                locals_buf: Arc::new(locals_buf),
                 scale,
             },
         );
