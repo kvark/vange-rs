@@ -1,108 +1,59 @@
 use crate::{
     config::settings,
     model,
-    //render::{read_shaders, ShapePolygon},
+    render::{
+        Shaders,
+        COLOR_FORMAT, DEPTH_FORMAT,
+        global::Context as GlobalContext,
+    },
 };
 
 use cgmath;
 use wgpu;
 
-//use std::collections::HashMap;
-
-/*
-const BLEND_FRONT: gfx::state::Blend = gfx::state::Blend {
-    color: gfx::state::BlendChannel {
-        equation: gfx::state::Equation::Add,
-        source: gfx::state::Factor::One,
-        destination: gfx::state::Factor::Zero,
-    },
-    alpha: gfx::state::BlendChannel {
-        equation: gfx::state::Equation::Add,
-        source: gfx::state::Factor::One,
-        destination: gfx::state::Factor::Zero,
-    },
+use std::{
+    mem,
+    collections::HashMap,
 };
 
-const BLEND_BEHIND: gfx::state::Blend = gfx::state::Blend {
-    color: gfx::state::BlendChannel {
-        equation: gfx::state::Equation::Add,
-        source: gfx::state::Factor::ZeroPlus(gfx::state::BlendValue::ConstAlpha),
-        destination: gfx::state::Factor::OneMinus(gfx::state::BlendValue::ConstAlpha),
-    },
-    alpha: gfx::state::BlendChannel {
-        equation: gfx::state::Equation::Add,
-        source: gfx::state::Factor::ZeroPlus(gfx::state::BlendValue::ConstAlpha),
-        destination: gfx::state::Factor::OneMinus(gfx::state::BlendValue::ConstAlpha),
-    },
+
+const BLEND_FRONT: wgpu::BlendDescriptor = wgpu::BlendDescriptor::REPLACE;
+const BLEND_BEHIND: wgpu::BlendDescriptor = wgpu::BlendDescriptor {
+    src_factor: wgpu::BlendFactor::BlendColor,
+    dst_factor: wgpu::BlendFactor::OneMinusBlendColor,
+    operation: wgpu::BlendOperation::Add,
 };
 
-const DEPTH_BEHIND: gfx::state::Depth = gfx::state::Depth {
-    fun: gfx::state::Comparison::Greater,
-    write: false,
-};
-*/
-
-/*
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum Visibility {
     Front,
     Behind,
 }
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum ColorRate {
-    Vertex,
-    Instance,
-}
-type Selector = (Visibility, ColorRate);
-*/
+type Selector = (Visibility, wgpu::InputStepMode);
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct DebugPos {
+pub struct Position {
     pub pos: [f32; 4],
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct DebugColor {
+pub struct Color {
     pub color: [f32; 4],
 }
 
-/*gfx_defines! {
-    vertex DebugPos {
-        pos: [f32; 4] = "a_Pos",
-    }
-
-    vertex DebugColor {
-        color: [f32; 4] = "a_Color",
-    }
-
+/*
+gfx_defines! {
     constant DebugLocals {
         m_mvp: [[f32; 4]; 4] = "u_ModelViewProj",
         color: [f32; 4] = "u_Color",
     }
-
-    pipeline debug {
-        buf_pos: gfx::VertexBuffer<DebugPos> = (),
-        buf_col: VertexBufferCommon<DebugColor, InstanceRate> = 1,
-        locals: gfx::ConstantBuffer<DebugLocals> = "c_Locals",
-        out_color: gfx::BlendTarget<ColorFormat> = ("Target0", gfx::state::ColorMask::all(), gfx::preset::blend::ALPHA),
-        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_TEST,
-        blend_ref: gfx::BlendRef = (),
-    }
-
-    pipeline shape {
-        vertices: gfx::ShaderResource<[f32; 4]> = "t_Position",
-        polygons: gfx::InstanceBuffer<ShapePolygon> = (),
-        locals: gfx::ConstantBuffer<DebugLocals> = "c_Locals",
-        out_color: gfx::BlendTarget<ColorFormat> = ("Target0", gfx::state::ColorMask::all(), gfx::preset::blend::ALPHA),
-        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_TEST,
-    }
 }*/
 
 pub struct LineBuffer {
-    vertices: Vec<DebugPos>,
-    colors: Vec<DebugColor>,
+    vertices: Vec<Position>,
+    colors: Vec<Color>,
 }
 
 impl LineBuffer {
@@ -124,13 +75,13 @@ impl LineBuffer {
         to: [f32; 3],
         c: u32,
     ) {
-        self.vertices.push(DebugPos {
+        self.vertices.push(Position {
             pos: [from[0], from[1], from[2], 1.0],
         });
-        self.vertices.push(DebugPos {
+        self.vertices.push(Position {
             pos: [to[0], to[1], to[2], 1.0],
         });
-        let color = DebugColor {
+        let color = Color {
             color: [
                 ((c >> 24) & 0xFF) as f32 / 255.0,
                 ((c >> 16) & 0xFF) as f32 / 255.0,
@@ -143,129 +94,189 @@ impl LineBuffer {
     }
 }
 
-pub struct DebugRender {
-    /*
+pub struct Context {
     settings: settings::DebugRender,
-    buf_pos: gfx::handle::Buffer<R, DebugPos>,
-    buf_col: gfx::handle::Buffer<R, DebugColor>,
-    data: debug::Data<R>,
-    psos_line: HashMap<Selector, gfx::PipelineState<R, debug::Meta>>,
-    pso_face: Option<gfx::PipelineState<R, shape::Meta>>,
-    pso_edge: Option<gfx::PipelineState<R, shape::Meta>>,
-    */
+    pipeline_layout: wgpu::PipelineLayout,
+    pipelines_line: HashMap<Selector, wgpu::RenderPipeline>,
+    pipeline_face: Option<wgpu::RenderPipeline>,
+    pipeline_edge: Option<wgpu::RenderPipeline>,
 }
 
-impl DebugRender {
+impl Context {
     pub fn new(
-        _device: &wgpu::Device,
-        _settings: &settings::DebugRender,
+        device: &wgpu::Device,
+        settings: &settings::DebugRender,
+        global: &GlobalContext,
     ) -> Self {
-        /* TODO
-        let data = debug::Data {
-            buf_pos: factory
-                .create_buffer(
-                    settings.max_vertices,
-                    gfx::buffer::Role::Vertex,
-                    gfx::memory::Usage::Dynamic,
-                    gfx::memory::Bind::empty(),
-                )
-                .unwrap(),
-            buf_col: factory
-                .create_buffer(
-                    settings.max_vertices,
-                    gfx::buffer::Role::Vertex,
-                    gfx::memory::Usage::Dynamic,
-                    gfx::memory::Bind::empty(),
-                )
-                .unwrap(),
-            locals: factory.create_constant_buffer(1),
-            out_color: targets.color,
-            out_depth: targets.depth,
-            blend_ref: [0.0, 0.0, 0.0, 0.5],
-        };
-        let mut result = DebugRender {
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            bindings: &[
+                wgpu::BindGroupLayoutBinding { // locals
+                    binding: 0,
+                    visibility: wgpu::ShaderStageFlags::VERTEX,
+                    ty: wgpu::BindingType::UniformBuffer,
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &[
+                &global.bind_group_layout,
+                &bind_group_layout,
+            ],
+        });
+        let mut result = Context {
             settings: settings.clone(),
-            buf_pos: data.buf_pos.clone(),
-            buf_col: data.buf_col.clone(),
-            data,
-            psos_line: HashMap::new(),
-            pso_face: None,
-            pso_edge: None,
+            pipeline_layout,
+            pipelines_line: HashMap::new(),
+            pipeline_face: None,
+            pipeline_edge: None,
         };
-        result.reload(factory);
-        result*/
-        DebugRender {}
+        result.reload(device);
+        result
     }
 
-    pub fn reload(&mut self, _device: &wgpu::Device) {
-        /* TODO
-        let raster = gfx::state::Rasterizer::new_fill();
+    pub fn reload(&mut self, device: &wgpu::Device) {
+        let rasterization_state = wgpu::RasterizationStateDescriptor {
+            front_face: wgpu::FrontFace::Ccw,
+            // original was not drawn with rasterizer, used no culling
+            cull_mode: wgpu::CullMode::None,
+            depth_bias: 0,
+            depth_bias_slope_scale: 0.0,
+            depth_bias_clamp: 0.0,
+        };
 
         if self.settings.collision_shapes {
-            let shaders = read_shaders("debug_shape", false, &[])
+            let shaders = Shaders::new("debug_shape", &[], device)
                 .unwrap();
-            let program = factory
-                .link_program(&shaders.vs, &shaders.fs)
-                .unwrap();
-            self.pso_face = Some(
-                factory
-                    .create_pipeline_from_program(
-                        &program,
-                        gfx::Primitive::TriangleStrip,
-                        raster,
-                        shape::new(),
-                    )
-                    .unwrap(),
-            );
-            self.pso_edge = Some(
-                factory
-                    .create_pipeline_from_program(
-                        &program,
-                        gfx::Primitive::TriangleStrip,
-                        gfx::state::Rasterizer {
-                            method: gfx::state::RasterMethod::Line(1),
-                            .. raster
-                        },
-                        shape::new(),
-                    )
-                    .unwrap(),
-            );
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                layout: &self.pipeline_layout,
+                vertex_stage: wgpu::PipelineStageDescriptor {
+                    module: &shaders.vs,
+                    entry_point: "main",
+                },
+                fragment_stage: wgpu::PipelineStageDescriptor {
+                    module: &shaders.fs,
+                    entry_point: "main",
+                },
+                rasterization_state: rasterization_state.clone(),
+                primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
+                color_states: &[
+                    wgpu::ColorStateDescriptor {
+                        format: COLOR_FORMAT,
+                        alpha: wgpu::BlendDescriptor::REPLACE,
+                        color: wgpu::BlendDescriptor::REPLACE,
+                        write_mask: wgpu::ColorWriteFlags::all(),
+                    },
+                ],
+                depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+                    stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+                    stencil_read_mask: !0,
+                    stencil_write_mask: !0,
+                }),
+                index_format: wgpu::IndexFormat::Uint16,
+                vertex_buffers: &[
+                    wgpu::VertexBufferDescriptor {
+                        stride: mem::size_of::<Position>() as u32,
+                        step_mode: wgpu::InputStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttributeDescriptor {
+                                offset: 0,
+                                format: wgpu::VertexFormat::Float4,
+                                attribute_index: 0,
+                            },
+                        ],
+                    },
+                    wgpu::VertexBufferDescriptor {
+                        stride: mem::size_of::<Color>() as u32,
+                        step_mode: wgpu::InputStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttributeDescriptor {
+                                offset: 0,
+                                format: wgpu::VertexFormat::Float4,
+                                attribute_index: 0,
+                            },
+                        ],
+                    },
+                ],
+                sample_count: 1,
+            });
+            self.pipeline_face = Some(pipeline);
+            self.pipeline_edge = None; //TODO: line raster
         }
 
-        self.psos_line.clear();
+        self.pipelines_line.clear();
         if self.settings.impulses {
-            let shaders = read_shaders("debug", false, &[])
-                .unwrap();
-            let program = factory
-                .link_program(&shaders.vs, &shaders.fs)
+            let shaders = Shaders::new("debug_shape", &[], device)
                 .unwrap();
             for &visibility in &[Visibility::Front, Visibility::Behind] {
-                for &color_rate in &[ColorRate::Vertex, ColorRate::Instance] {
-                    let (blend, depth) = match visibility {
-                        Visibility::Front => (BLEND_FRONT, gfx::preset::depth::LESS_EQUAL_WRITE),
-                        Visibility::Behind => (BLEND_BEHIND, DEPTH_BEHIND),
-                    };
-                    let rate = match color_rate {
-                        ColorRate::Vertex => 0,
-                        ColorRate::Instance => 1,
-                    };
-                    let pso = factory
-                        .create_pipeline_from_program(
-                            &program,
-                            gfx::Primitive::LineList,
-                            raster,
-                            debug::Init {
-                                out_color: ("Target0", gfx::state::ColorMask::all(), blend),
-                                out_depth: depth,
-                                buf_col: rate,
-                                ..debug::new()
+                let (blend, depth_write_enabled, depth_compare) = match visibility {
+                    Visibility::Front => (&BLEND_FRONT, true, wgpu::CompareFunction::LessEqual),
+                    Visibility::Behind => (&BLEND_BEHIND, false, wgpu::CompareFunction::Greater),
+                };
+                for &color_rate in &[wgpu::InputStepMode::Vertex, wgpu::InputStepMode::Instance] {
+                    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        layout: &self.pipeline_layout,
+                        vertex_stage: wgpu::PipelineStageDescriptor {
+                            module: &shaders.vs,
+                            entry_point: "main",
+                        },
+                        fragment_stage: wgpu::PipelineStageDescriptor {
+                            module: &shaders.fs,
+                            entry_point: "main",
+                        },
+                        rasterization_state: rasterization_state.clone(),
+                        primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
+                        color_states: &[
+                            wgpu::ColorStateDescriptor {
+                                format: COLOR_FORMAT,
+                                alpha: blend.clone(),
+                                color: blend.clone(),
+                                write_mask: wgpu::ColorWriteFlags::all(),
                             },
-                        )
-                        .unwrap();
-                    self.psos_line.insert((visibility, color_rate), pso);
+                        ],
+                        depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                            format: DEPTH_FORMAT,
+                            depth_write_enabled,
+                            depth_compare,
+                            stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+                            stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+                            stencil_read_mask: !0,
+                            stencil_write_mask: !0,
+                        }),
+                        index_format: wgpu::IndexFormat::Uint16,
+                        vertex_buffers: &[
+                            wgpu::VertexBufferDescriptor {
+                                stride: mem::size_of::<Position>() as u32,
+                                step_mode: wgpu::InputStepMode::Vertex,
+                                attributes: &[
+                                    wgpu::VertexAttributeDescriptor {
+                                        offset: 0,
+                                        format: wgpu::VertexFormat::Float4,
+                                        attribute_index: 0,
+                                    },
+                                ],
+                            },
+                            wgpu::VertexBufferDescriptor {
+                                stride: mem::size_of::<Color>() as u32,
+                                step_mode: color_rate,
+                                attributes: &[
+                                    wgpu::VertexAttributeDescriptor {
+                                        offset: 0,
+                                        format: wgpu::VertexFormat::Float4,
+                                        attribute_index: 0,
+                                    },
+                                ],
+                            },
+                        ],
+                        sample_count: 1,
+                    });
+                    self.pipelines_line.insert((visibility, color_rate), pipeline);
                 }
             }
-        }*/
+        }
     }
 
     fn _draw_liner(

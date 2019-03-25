@@ -1,5 +1,6 @@
 use crate::render::{
-    DebugPos, ShapePolygon,
+    ShapePolygon,
+    debug::Position as DebugPos,
     object::{Locals as ObjectLocals, Vertex as ObjectVertex},
 };
 use m3d;

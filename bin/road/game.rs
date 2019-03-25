@@ -6,7 +6,8 @@ use m3d::Mesh;
 use vangers::{
     config, level, model, space,
     render::{
-        LineBuffer, Render, RenderModel, ScreenTargets,
+        Render, RenderModel, ScreenTargets,
+        debug::LineBuffer,
     },
 };
 

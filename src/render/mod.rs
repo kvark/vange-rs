@@ -13,13 +13,12 @@ use std::mem;
 
 
 //mod collision; ../TODO
-mod debug;
+pub mod debug;
 pub mod global;
 pub mod object;
 pub mod terrain;
 
 //pub use self::collision::{DebugBlit, GpuCollider, ShapeId};
-pub use self::debug::{DebugPos, DebugRender, LineBuffer};
 
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
@@ -219,7 +218,7 @@ impl<'a> RenderModel<'a> {
         let mapping = device.create_buffer_mapped(
             count,
             wgpu::BufferUsageFlags::TRANSFER_SRC,
-        ); 
+        );
 
         // body
         mapping.data[0] = object::Locals::new(self.transform);
@@ -262,8 +261,8 @@ pub struct Render {
     global: global::Context,
     object: object::Context,
     terrain: terrain::Context,
+    pub debug: debug::Context,
     pub light_config: settings::Light,
-    pub debug: debug::DebugRender,
 }
 
 impl Render {
@@ -279,6 +278,7 @@ impl Render {
         let global = global::Context::new(device);
         let object = object::Context::new(&mut init_encoder, device, object_palette, &global);
         let terrain = terrain::Context::new(&mut init_encoder, device, level, &global);
+        let debug = debug::Context::new(device, &settings.debug, &global);
         device.get_queue().submit(&[
             init_encoder.finish(),
         ]);
@@ -287,8 +287,8 @@ impl Render {
             global,
             object,
             terrain,
+            debug,
             light_config: settings.light.clone(),
-            debug: DebugRender::new(device, &settings.debug),
         }
     }
 

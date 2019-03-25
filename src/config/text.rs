@@ -20,7 +20,7 @@ impl<I: Read> Reader<I> {
     }
 
     pub fn cur(&self) -> &str {
-        self.line.trim_right()
+        self.line.trim_end()
     }
 
     pub fn advance(&mut self) -> bool {
