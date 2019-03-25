@@ -119,8 +119,8 @@ impl Harness {
                             let physical = size.to_physical(win.get_hidpi_factor());
                             info!("Resizing to {:?}", physical);
                             resized_extent = Some(wgpu::Extent3d {
-                                width: physical.width as u32,
-                                height: physical.height as u32,
+                                width: physical.width.round() as u32,
+                                height: physical.height.round() as u32,
                                 depth: 1,
                             });
                         }
