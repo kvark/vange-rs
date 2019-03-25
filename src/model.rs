@@ -38,7 +38,7 @@ pub struct Shape {
     pub vertex_buf: wgpu::Buffer,
     //pub vertex_view: Arc<wgpu::TextureView>,
     pub polygon_buf: wgpu::Buffer,
-    pub sample_buf: Option<wgpu::Buffer>,
+    pub sample_buf: Option<(wgpu::Buffer, usize)>,
     pub bounds: m3d::Bounds,
 }
 
@@ -279,10 +279,10 @@ pub fn load_c3d_shape(
             .create_buffer_mapped(polygon_data.len(), wgpu::BufferUsageFlags::VERTEX)
             .fill_from_slice(&polygon_data),
         sample_buf: if with_sample_buf {
-            Some(device
+            let buffer = device
                 .create_buffer_mapped(sample_data.len(), wgpu::BufferUsageFlags::VERTEX)
-                .fill_from_slice(&sample_data)
-            )
+                .fill_from_slice(&sample_data);
+            Some((buffer, sample_data.len()))
         } else {
             None
         },

@@ -32,24 +32,23 @@ enum Visibility {
 type Selector = (Visibility, wgpu::InputStepMode);
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Position {
     pub pos: [f32; 4],
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Color {
-    pub color: [f32; 4],
+    pub color: u32,
 }
 
-/*
-gfx_defines! {
-    constant DebugLocals {
-        m_mvp: [[f32; 4]; 4] = "u_ModelViewProj",
-        color: [f32; 4] = "u_Color",
-    }
-}*/
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct Locals {
+    color: [f32; 4],
+}
+
 
 pub struct LineBuffer {
     vertices: Vec<Position>,
@@ -73,7 +72,7 @@ impl LineBuffer {
         &mut self,
         from: [f32; 3],
         to: [f32; 3],
-        c: u32,
+        color: u32,
     ) {
         self.vertices.push(Position {
             pos: [from[0], from[1], from[2], 1.0],
@@ -82,12 +81,7 @@ impl LineBuffer {
             pos: [to[0], to[1], to[2], 1.0],
         });
         let color = Color {
-            color: [
-                ((c >> 24) & 0xFF) as f32 / 255.0,
-                ((c >> 16) & 0xFF) as f32 / 255.0,
-                ((c >> 8) & 0xFF) as f32 / 255.0,
-                (c & 0xFF) as f32 / 255.0,
-            ],
+            color,
         };
         self.colors.push(color);
         self.colors.push(color);
@@ -100,6 +94,10 @@ pub struct Context {
     pipelines_line: HashMap<Selector, wgpu::RenderPipeline>,
     pipeline_face: Option<wgpu::RenderPipeline>,
     pipeline_edge: Option<wgpu::RenderPipeline>,
+    line_color_buf: wgpu::Buffer,
+    bind_group_line: wgpu::BindGroup,
+    bind_group_face: wgpu::BindGroup,
+    bind_group_edge: wgpu::BindGroup,
 }
 
 impl Context {
@@ -112,7 +110,7 @@ impl Context {
             bindings: &[
                 wgpu::BindGroupLayoutBinding { // locals
                     binding: 0,
-                    visibility: wgpu::ShaderStageFlags::VERTEX,
+                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
                     ty: wgpu::BindingType::UniformBuffer,
                 },
             ],
@@ -123,12 +121,68 @@ impl Context {
                 &bind_group_layout,
             ],
         });
+
+        let line_color_buf = device
+            .create_buffer_mapped(1, wgpu::BufferUsageFlags::VERTEX)
+            .fill_from_slice(&[
+                Color { color: 0xFF000080 }, // line
+            ]);
+
+        let locals_buf = device
+            .create_buffer_mapped(3, wgpu::BufferUsageFlags::UNIFORM)
+            .fill_from_slice(&[
+                Locals { color: [1.0; 4] }, // line
+                Locals { color: [0.0, 1.0, 0.0, 0.1] }, // face
+                Locals { color: [1.0, 1.0, 0.0, 0.1] }, // edge
+            ]);
+        let locals_size = mem::size_of::<Locals>() as u32;
+        let bind_group_line = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bind_group_layout,
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &locals_buf,
+                        range: 0*locals_size .. 1*locals_size,
+                    },
+                },
+            ],
+        });
+        let bind_group_face = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bind_group_layout,
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &locals_buf,
+                        range: 1*locals_size .. 2*locals_size,
+                    },
+                },
+            ],
+        });
+        let bind_group_edge = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bind_group_layout,
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &locals_buf,
+                        range: 2*locals_size .. 3*locals_size,
+                    },
+                },
+            ],
+        });
+
         let mut result = Context {
             settings: settings.clone(),
             pipeline_layout,
             pipelines_line: HashMap::new(),
             pipeline_face: None,
             pipeline_edge: None,
+            line_color_buf,
+            bind_group_line,
+            bind_group_face,
+            bind_group_edge,
         };
         result.reload(device);
         result
@@ -180,17 +234,6 @@ impl Context {
                 vertex_buffers: &[
                     wgpu::VertexBufferDescriptor {
                         stride: mem::size_of::<Position>() as u32,
-                        step_mode: wgpu::InputStepMode::Vertex,
-                        attributes: &[
-                            wgpu::VertexAttributeDescriptor {
-                                offset: 0,
-                                format: wgpu::VertexFormat::Float4,
-                                attribute_index: 0,
-                            },
-                        ],
-                    },
-                    wgpu::VertexBufferDescriptor {
-                        stride: mem::size_of::<Color>() as u32,
                         step_mode: wgpu::InputStepMode::Vertex,
                         attributes: &[
                             wgpu::VertexAttributeDescriptor {
@@ -279,85 +322,55 @@ impl Context {
         }
     }
 
-    fn _draw_liner(
-        &mut self,
-        _buf: &wgpu::Buffer,
-        _num_verts: Option<usize>,
-        _pass: &mut wgpu::RenderPass,
+    fn draw_liner(
+        &self,
+        pass: &mut wgpu::RenderPass,
+        vertex_buf: &wgpu::Buffer,
+        color_buf: &wgpu::Buffer,
+        color_rate: wgpu::InputStepMode,
+        num_vert: usize,
     ) {
-        /* TODO
-        let (color_rate, slice) = match num_verts {
-            Some(num) => (
-                ColorRate::Vertex,
-                gfx::Slice {
-                    end: num as gfx::VertexCount,
-                    ..gfx::Slice::new_match_vertex_buffer(&buf)
-                },
-            ),
-            None => (
-                ColorRate::Instance,
-                gfx::Slice::new_match_vertex_buffer(&buf),
-            ),
-        };
-        self.data.buf_pos = buf;
+        pass.set_vertex_buffers(&[
+            (vertex_buf, 0),
+            (color_buf, 0),
+        ]);
         for &vis in &[Visibility::Front, Visibility::Behind] {
-            if let Some(ref pso) = self.psos_line.get(&(vis, color_rate)) {
-                encoder.draw(&slice, pso, &self.data);
+            if let Some(ref pipeline) = self.pipelines_line.get(&(vis, color_rate)) {
+                pass.set_pipeline(pipeline);
+                pass.draw(0 .. num_vert as u32, 0 .. 1);
             }
-        }*/
+        }
     }
 
     pub fn draw_shape(
         &mut self,
-        _pass: &mut wgpu::RenderPass,
-        _shape: &model::Shape,
-        _transform: cgmath::Matrix4<f32>,
+        pass: &mut wgpu::RenderPass,
+        shape: &model::Shape,
     ) {
-        /* TODO
-        let mut locals = DebugLocals {
-            m_mvp: transform.into(),
-            color: [0.0, 1.0, 0.0, 0.1],
-        };
-        let slice = shape.make_draw_slice();
-
-        let data = shape::Data {
-            vertices: shape.vertex_view.clone(),
-            polygons: shape.polygon_buf.clone(),
-            locals: self.data.locals.clone(),
-            out_color: self.data.out_color.clone(),
-            out_depth: self.data.out_depth.clone(),
-        };
-
         // draw collision polygon faces
-        if let Some(ref pso) = self.pso_face {
-            locals.color = [0.0, 1.0, 0.0, 0.1];
-            encoder.update_constant_buffer(&self.data.locals, &locals);
-            encoder.draw(&slice, pso, &data);
+        if let Some(ref pipeline) = self.pipeline_face {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(1, &self.bind_group_face);
+            //pass.draw(); TODO
         }
-
         // draw collision polygon edges
-        if let Some(ref pso) = self.pso_edge {
-            locals.color = [1.0, 1.0, 0.0, 0.1];
-            encoder.update_constant_buffer(&self.data.locals, &locals);
-            encoder.draw(&slice, pso, &data);
+        if let Some(ref pipeline) = self.pipeline_edge {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(1, &self.bind_group_edge);
+            //pass.draw(); TODO
         }
 
         // draw sample normals
-        if let Some(ref samples) = shape.sample_buf {
-            encoder.update_constant_buffer(&self.data.locals, &locals);
-            encoder
-                .update_buffer(
-                    &self.buf_col,
-                    &[
-                        DebugColor {
-                            color: [1.0, 0.0, 0.0, 0.5],
-                        },
-                    ],
-                    0,
-                )
-                .unwrap();
-            self.draw_liner(samples.clone(), None, encoder);
-        }*/
+        if let Some((ref sample_buf, num_vert)) = shape.sample_buf {
+            pass.set_bind_group(1, &self.bind_group_line);
+            self.draw_liner(
+                pass,
+                sample_buf,
+                &self.line_color_buf,
+                wgpu::InputStepMode::Instance,
+                num_vert,
+            );
+        }
     }
 
     pub fn draw_lines(
