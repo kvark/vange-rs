@@ -308,18 +308,9 @@ impl Render {
     pub fn draw_model(
         pass: &mut wgpu::RenderPass,
         model: &model::VisualModel,
-        //debug_context: Option<(&mut DebugRender, f32, &Matrix4<f32>)>,
     ) {
         // body
         Render::draw_mesh(pass, &model.body);
-        // debug render
-        /*
-        if let Some((debug, scale, world2screen)) = debug_context {
-            let mut mx_shape =  model2world.clone();
-            mx_shape.scale *= scale;
-            let transform = world2screen * Matrix4::from(mx_shape);
-            debug.draw_shape(pass, &model.shape, transform);
-        }*/
         // wheels
         for w in model.wheels.iter() {
             if let Some(ref mesh) = w.mesh {
@@ -341,7 +332,6 @@ impl Render {
         targets: ScreenTargets,
         device: &wgpu::Device,
     ) -> wgpu::CommandBuffer {
-        //let mx_vp = cam.get_view_proj();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
@@ -416,19 +406,16 @@ impl Render {
                 }*/
             }
 
+            // draw vehicle models
             pass.set_pipeline(&self.object.pipeline);
             pass.set_bind_group(1, &self.object.bind_group);
-            // draw vehicle models
             for rm in render_models {
-                Render::draw_model(
-                    &mut pass,
-                    &rm.model,
-                    /*
-                    match rm.debug_shape_scale {
-                        Some(scale) => Some((&mut self.debug, scale, &mx_vp)),
-                        None => None,
-                    },*/
-                );
+                Render::draw_model(&mut pass, &rm.model);
+            }
+            for rm in render_models {
+                if let Some(_scale) = rm.debug_shape_scale {
+                    self.debug.draw_shape(&mut pass, &rm.model.shape);
+                }
             }
         }
 

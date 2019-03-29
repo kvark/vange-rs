@@ -2,13 +2,12 @@ use crate::{
     config::settings,
     model,
     render::{
-        Shaders,
+        Shaders, ShapePolygon,
         COLOR_FORMAT, DEPTH_FORMAT,
         global::Context as GlobalContext,
     },
 };
 
-use cgmath;
 use wgpu;
 
 use std::{
@@ -44,9 +43,19 @@ pub struct Color {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 struct Locals {
     color: [f32; 4],
+    _pad: [f32; 60],
+}
+
+impl Locals {
+    fn new(color: [f32; 4]) -> Self {
+        Locals {
+            color,
+            _pad: [0.0; 60],
+        }
+    }
 }
 
 
@@ -131,9 +140,9 @@ impl Context {
         let locals_buf = device
             .create_buffer_mapped(3, wgpu::BufferUsageFlags::UNIFORM)
             .fill_from_slice(&[
-                Locals { color: [1.0; 4] }, // line
-                Locals { color: [0.0, 1.0, 0.0, 0.1] }, // face
-                Locals { color: [1.0, 1.0, 0.0, 0.1] }, // edge
+                Locals::new([1.0; 4]), // line
+                Locals::new([0.0, 1.0, 0.0, 0.1]), // face
+                Locals::new([1.0, 1.0, 0.0, 0.1]), // edge
             ]);
         let locals_size = mem::size_of::<Locals>() as u32;
         let bind_group_line = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -233,13 +242,23 @@ impl Context {
                 index_format: wgpu::IndexFormat::Uint16,
                 vertex_buffers: &[
                     wgpu::VertexBufferDescriptor {
-                        stride: mem::size_of::<Position>() as u32,
-                        step_mode: wgpu::InputStepMode::Vertex,
+                        stride: mem::size_of::<ShapePolygon>() as u32,
+                        step_mode: wgpu::InputStepMode::Instance,
                         attributes: &[
-                            wgpu::VertexAttributeDescriptor {
+                            wgpu::VertexAttributeDescriptor { // indices
                                 offset: 0,
-                                format: wgpu::VertexFormat::Float4,
+                                format: wgpu::VertexFormat::Ushort4,
                                 attribute_index: 0,
+                            },
+                            wgpu::VertexAttributeDescriptor { // normal
+                                offset: 8,
+                                format: wgpu::VertexFormat::Uchar4Norm,
+                                attribute_index: 1,
+                            },
+                            wgpu::VertexAttributeDescriptor { // origin square
+                                offset: 12,
+                                format: wgpu::VertexFormat::Float4,
+                                attribute_index: 2,
                             },
                         ],
                     },
@@ -252,7 +271,7 @@ impl Context {
 
         self.pipelines_line.clear();
         if self.settings.impulses {
-            let shaders = Shaders::new("debug_shape", &[], device)
+            let shaders = Shaders::new("debug", &[], device)
                 .unwrap();
             for &visibility in &[Visibility::Front, Visibility::Behind] {
                 let (blend, depth_write_enabled, depth_compare) = match visibility {
@@ -309,7 +328,7 @@ impl Context {
                                     wgpu::VertexAttributeDescriptor {
                                         offset: 0,
                                         format: wgpu::VertexFormat::Float4,
-                                        attribute_index: 0,
+                                        attribute_index: 1,
                                     },
                                 ],
                             },
@@ -330,6 +349,7 @@ impl Context {
         color_rate: wgpu::InputStepMode,
         num_vert: usize,
     ) {
+        pass.set_blend_color(wgpu::Color::WHITE);
         pass.set_vertex_buffers(&[
             (vertex_buf, 0),
             (color_buf, 0),
@@ -343,7 +363,7 @@ impl Context {
     }
 
     pub fn draw_shape(
-        &mut self,
+        &self,
         pass: &mut wgpu::RenderPass,
         shape: &model::Shape,
     ) {
@@ -351,12 +371,14 @@ impl Context {
         if let Some(ref pipeline) = self.pipeline_face {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, &self.bind_group_face);
+            pass.set_vertex_buffers(&[(&shape.polygon_buf, 0)]);
             //pass.draw(); TODO
         }
         // draw collision polygon edges
         if let Some(ref pipeline) = self.pipeline_edge {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, &self.bind_group_edge);
+            pass.set_vertex_buffers(&[(&shape.polygon_buf, 0)]);
             //pass.draw(); TODO
         }
 
@@ -374,47 +396,25 @@ impl Context {
     }
 
     pub fn draw_lines(
-        &mut self,
-        _linebuf: &LineBuffer,
-        _transform: cgmath::Matrix4<f32>,
-        _encoder: &mut wgpu::CommandEncoder,
+        &self,
+        pass: &mut wgpu::RenderPass,
+        device: &wgpu::Device,
+        linebuf: &LineBuffer,
     ){
-        /* TODO
-        let mut vertices = linebuf.vertices.as_slice();
-        let mut colors = linebuf.colors.as_slice();
-        if vertices.len() > self.settings.max_vertices {
-            error!(
-                "Exceeded the maximum vertex capacity: {} > {}",
-                vertices.len(),
-                self.settings.max_vertices
-            );
-            vertices = &vertices[.. self.settings.max_vertices];
-        }
-        if vertices.len() != colors.len() {
-            error!(
-                "Lengths of debug vertices {} != colors {}",
-                vertices.len(),
-                colors.len()
-            );
-            if vertices.len() > colors.len() {
-                vertices = &vertices[.. colors.len()];
-            } else {
-                colors = &colors[.. vertices.len()];
-            }
-        }
+        let vertex_buf = device
+            .create_buffer_mapped(linebuf.vertices.len(), wgpu::BufferUsageFlags::VERTEX)
+            .fill_from_slice(&linebuf.vertices);
+        let color_buf = device
+            .create_buffer_mapped(linebuf.colors.len(), wgpu::BufferUsageFlags::VERTEX)
+            .fill_from_slice(&linebuf.colors);
+        assert_eq!(linebuf.vertices.len(), linebuf.colors.len());
 
-        encoder.update_constant_buffer(
-            &self.data.locals,
-            &DebugLocals {
-                m_mvp: transform.into(),
-                color: [0.0; 4],
-            },
+        self.draw_liner(
+            pass,
+            &vertex_buf,
+            &color_buf,
+            wgpu::InputStepMode::Vertex,
+            linebuf.vertices.len(),
         );
-
-        encoder.update_buffer(&self.buf_pos, vertices, 0).unwrap();
-        encoder.update_buffer(&self.buf_col, colors, 0).unwrap();
-        let buf = self.buf_pos.clone();
-        self.draw_liner(buf, Some(vertices.len()), encoder);
-        */
     }
 }
