@@ -1,6 +1,6 @@
 use vangers::{
     config, level, model, space,
-    render::LineBuffer,
+    render::debug::LineBuffer,
 };
 
 use cgmath::{

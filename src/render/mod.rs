@@ -13,13 +13,12 @@ use std::mem;
 
 
 //mod collision; ../TODO
-mod debug;
+pub mod debug;
 pub mod global;
 pub mod object;
 pub mod terrain;
 
 //pub use self::collision::{DebugBlit, GpuCollider, ShapeId};
-pub use self::debug::{DebugPos, DebugRender, LineBuffer};
 
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
@@ -219,7 +218,7 @@ impl<'a> RenderModel<'a> {
         let mapping = device.create_buffer_mapped(
             count,
             wgpu::BufferUsageFlags::TRANSFER_SRC,
-        ); 
+        );
 
         // body
         mapping.data[0] = object::Locals::new(self.transform);
@@ -262,8 +261,8 @@ pub struct Render {
     global: global::Context,
     object: object::Context,
     terrain: terrain::Context,
+    pub debug: debug::Context,
     pub light_config: settings::Light,
-    pub debug: debug::DebugRender,
 }
 
 impl Render {
@@ -279,6 +278,7 @@ impl Render {
         let global = global::Context::new(device);
         let object = object::Context::new(&mut init_encoder, device, object_palette, &global);
         let terrain = terrain::Context::new(&mut init_encoder, device, level, &global);
+        let debug = debug::Context::new(device, &settings.debug, &global);
         device.get_queue().submit(&[
             init_encoder.finish(),
         ]);
@@ -287,8 +287,8 @@ impl Render {
             global,
             object,
             terrain,
+            debug,
             light_config: settings.light.clone(),
-            debug: DebugRender::new(device, &settings.debug),
         }
     }
 
@@ -308,18 +308,9 @@ impl Render {
     pub fn draw_model(
         pass: &mut wgpu::RenderPass,
         model: &model::VisualModel,
-        //debug_context: Option<(&mut DebugRender, f32, &Matrix4<f32>)>,
     ) {
         // body
         Render::draw_mesh(pass, &model.body);
-        // debug render
-        /*
-        if let Some((debug, scale, world2screen)) = debug_context {
-            let mut mx_shape =  model2world.clone();
-            mx_shape.scale *= scale;
-            let transform = world2screen * Matrix4::from(mx_shape);
-            debug.draw_shape(pass, &model.shape, transform);
-        }*/
         // wheels
         for w in model.wheels.iter() {
             if let Some(ref mesh) = w.mesh {
@@ -341,7 +332,6 @@ impl Render {
         targets: ScreenTargets,
         device: &wgpu::Device,
     ) -> wgpu::CommandBuffer {
-        //let mx_vp = cam.get_view_proj();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
@@ -416,19 +406,16 @@ impl Render {
                 }*/
             }
 
+            // draw vehicle models
             pass.set_pipeline(&self.object.pipeline);
             pass.set_bind_group(1, &self.object.bind_group);
-            // draw vehicle models
             for rm in render_models {
-                Render::draw_model(
-                    &mut pass,
-                    &rm.model,
-                    /*
-                    match rm.debug_shape_scale {
-                        Some(scale) => Some((&mut self.debug, scale, &mx_vp)),
-                        None => None,
-                    },*/
-                );
+                Render::draw_model(&mut pass, &rm.model);
+            }
+            for rm in render_models {
+                if let Some(_scale) = rm.debug_shape_scale {
+                    self.debug.draw_shape(&mut pass, &rm.model.shape);
+                }
             }
         }
 

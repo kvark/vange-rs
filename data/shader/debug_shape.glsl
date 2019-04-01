@@ -1,28 +1,32 @@
 //!include vs:shape.inc
 
-varying vec4 v_Color;
-
-uniform c_Locals {
-    mat4 u_ModelViewProj;
-    vec4 u_Color;
+layout(set = 0, binding = 0) uniform c_Globals {
+    vec4 u_CameraPos;
+    mat4 u_ViewProj;
+    mat4 u_InvViewProj;
+    vec4 u_LightPos;
+    vec4 u_LightColor;
 };
-
 
 #ifdef SHADER_VS
 //imported: Polygon, get_shape_polygon
 
 void main() {
 	Polygon poly = get_shape_polygon();
-    gl_Position = u_ModelViewProj * poly.vertex;
+    gl_Position = u_ViewProj * poly.vertex;
 }
 #endif //VS
 
 
 #ifdef SHADER_FS
 
-out vec4 Target0;
+layout(set = 1, binding = 0) uniform c_Debug {
+    vec4 u_Color;
+};
+
+layout(location = 0) out vec4 o_Color;
 
 void main() {
-    Target0 = u_Color;
+    o_Color = u_Color;
 }
 #endif //FS
