@@ -30,7 +30,7 @@ pub struct Harness {
     pub device: wgpu::Device,
     surface: wgpu::Surface,
     swap_chain: wgpu::SwapChain,
-    extent: wgpu::Extent3d,
+    pub extent: wgpu::Extent3d,
     depth_target: wgpu::TextureView,
 }
 

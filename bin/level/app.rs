@@ -37,6 +37,7 @@ pub struct LevelView {
 impl LevelView {
     pub fn new(
         settings: &config::settings::Settings,
+        screen_extent: wgpu::Extent3d,
         device: &mut wgpu::Device,
     ) -> Self {
         let level = if settings.game.level.is_empty() {
@@ -93,7 +94,7 @@ impl LevelView {
 
         let objects_palette = level::read_palette(settings.open_palette(), None);
         let depth = 10f32 .. 10000f32;
-        let render = Render::new(device, &level, &objects_palette, &settings.render);
+        let render = Render::new(device, &level, &objects_palette, &settings.render, screen_extent);
 
         LevelView {
             render,
@@ -273,8 +274,9 @@ impl Application for LevelView {
         }
     }
 
-    fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
+    fn resize(&mut self, device: &wgpu::Device, extent: wgpu::Extent3d) {
         self.cam.proj.update(extent.width as u16, extent.height as u16);
+        self.render.resize(extent, device);
     }
 
     fn reload(&mut self, device: &wgpu::Device) {

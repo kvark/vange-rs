@@ -44,12 +44,12 @@ impl Context {
             bindings: &[
                 wgpu::BindGroupLayoutBinding {
                     binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStage::all(),
                     ty: wgpu::BindingType::UniformBuffer,
                 },
                 wgpu::BindGroupLayoutBinding { // palette sampler
                     binding: 1,
-                    visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStage::all(),
                     ty: wgpu::BindingType::Sampler,
                 },
             ],
