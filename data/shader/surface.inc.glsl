@@ -58,7 +58,7 @@ Surface get_surface(vec2 pos) {
     Surface suf;
 
     vec2 tc = suf.tex_coord = pos / u_TextureScale.xy;
-    ivec2 tci = ivec2(mod(pos + 0.5, u_TextureScale.xy));
+    ivec2 tci = ivec2(mod(pos, u_TextureScale.xy));
 
     uint meta = texelFetch(usampler2D(t_Meta, s_MainSampler), tci, 0).x;
     suf.is_shadowed = (meta & c_ShadowMask) != 0U;

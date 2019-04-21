@@ -61,10 +61,8 @@ impl Shaders {
         use std::io::{BufReader, Read, Write};
         use std::path::PathBuf;
 
-        let path = PathBuf::from("data")
-            .join("shader")
-            .join(name)
-            .with_extension("glsl");
+        let base_path = PathBuf::from("data").join("shader");
+        let path = base_path.join(name).with_extension("glsl");
         if !path.is_file() {
             panic!("Shader not found: {:?}", path);
         }
@@ -88,8 +86,8 @@ impl Shaders {
                         other => panic!("Unknown target: {}", other),
                     };
                     let include = temp.next().unwrap();
-                    let inc_path = path
-                        .with_file_name(include)
+                    let inc_path = base_path
+                        .join(include)
                         .with_extension("inc.glsl");
                     BufReader::new(File::open(inc_path)?)
                         .read_to_end(target)?;
@@ -277,7 +275,7 @@ impl Render {
         });
         let global = global::Context::new(device);
         let object = object::Context::new(&mut init_encoder, device, object_palette, &global);
-        let terrain = terrain::Context::new(&mut init_encoder, device, level, &global);
+        let terrain = terrain::Context::new(&mut init_encoder, device, level, &global, &settings.terrain);
         let debug = debug::Context::new(device, &settings.debug, &global);
         device.get_queue().submit(&[
             init_encoder.finish(),
@@ -390,21 +388,7 @@ impl Render {
             });
 
             pass.set_bind_group(0, &self.global.bind_group);
-            pass.set_bind_group(1, &self.terrain.bind_group);
-            // draw terrain
-            match self.terrain.kind {
-                terrain::Kind::Ray { ref pipeline, ref index_buf, ref vertex_buf, num_indices } => {
-                    pass.set_pipeline(pipeline);
-                    pass.set_index_buffer(index_buf, 0);
-                    pass.set_vertex_buffers(&[(vertex_buf, 0)]);
-                    pass.draw_indexed(0 .. num_indices as u32, 0, 0 .. 1);
-                }
-                /*
-                Terrain::Tess { ref low, ref high, .. } => {
-                    encoder.draw(&self.terrain_slice, low, &self.terrain_data);
-                    encoder.draw(&self.terrain_slice, high, &self.terrain_data);
-                }*/
-            }
+            self.terrain.draw(&mut pass);
 
             // draw vehicle models
             pass.set_pipeline(&self.object.pipeline);

@@ -66,6 +66,7 @@ pub enum Terrain {
     Tessellated {
         screen_space: bool,
     },
+    Sliced,
 }
 
 #[derive(Deserialize)]
