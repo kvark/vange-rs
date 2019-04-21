@@ -1,4 +1,5 @@
 use crate::{
+    config::settings::Terrain as TerrainSettings,
     level,
     render::{
         Palette, Shaders,
@@ -48,12 +49,12 @@ pub enum Kind {
         high: gfx::PipelineState<R, terrain::Meta>,
         screen_space: bool,
     },*/
-    /*Slice {
+    Slice {
         pipeline: wgpu::RenderPipeline,
         vertex_buf: wgpu::Buffer,
         index_buf: wgpu::Buffer,
         num_indices: usize,
-    },*/
+    },
 }
 
 pub struct Context {
@@ -123,11 +124,71 @@ impl Context {
         })
     }
 
+    fn create_slice_pipeline(
+        layout: &wgpu::PipelineLayout,
+        device: &wgpu::Device,
+    ) -> wgpu::RenderPipeline {
+        let shaders = Shaders::new("terrain/slice", &[], device)
+            .unwrap();
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            layout,
+            vertex_stage: wgpu::PipelineStageDescriptor {
+                module: &shaders.vs,
+                entry_point: "main",
+            },
+            fragment_stage: wgpu::PipelineStageDescriptor {
+                module: &shaders.fs,
+                entry_point: "main",
+            },
+            rasterization_state: wgpu::RasterizationStateDescriptor {
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: wgpu::CullMode::None,
+                depth_bias: 0,
+                depth_bias_slope_scale: 0.0,
+                depth_bias_clamp: 0.0,
+            },
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            color_states: &[
+                wgpu::ColorStateDescriptor {
+                    format: COLOR_FORMAT,
+                    alpha: wgpu::BlendDescriptor::REPLACE,
+                    color: wgpu::BlendDescriptor::REPLACE,
+                    write_mask: wgpu::ColorWriteFlags::all(),
+                },
+            ],
+            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_read_mask: !0,
+                stencil_write_mask: !0,
+            }),
+            index_format: wgpu::IndexFormat::Uint16,
+            vertex_buffers: &[
+                wgpu::VertexBufferDescriptor {
+                    stride: mem::size_of::<Vertex>() as u32,
+                    step_mode: wgpu::InputStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttributeDescriptor {
+                            offset: 0,
+                            format: wgpu::VertexFormat::Char4,
+                            attribute_index: 0,
+                        },
+                    ],
+                },
+            ],
+            sample_count: 1,
+        })
+    }
+
     pub fn new(
         init_encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
         level: &level::Level,
         global: &GlobalContext,
+        config: &TerrainSettings,
     ) -> Self {
         let origin = wgpu::Origin3d { x: 0.0, y: 0.0, z: 0.0 };
         let extent = wgpu::Extent3d {
@@ -304,7 +365,7 @@ impl Context {
             bindings: &[
                 wgpu::BindGroupLayoutBinding { // surface uniforms
                     binding: 0,
-                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
+                    visibility: wgpu::ShaderStageFlags::VERTEX | wgpu::ShaderStageFlags::FRAGMENT,
                     ty: wgpu::BindingType::UniformBuffer,
                 },
                 wgpu::BindGroupLayoutBinding { // terrain locals
@@ -437,34 +498,65 @@ impl Context {
             ],
         });
 
-        let vertices = [
-            Vertex { _pos: [0, 0, 0, 1] },
-            Vertex { _pos: [-1, 0, 0, 0] },
-            Vertex { _pos: [0, -1, 0, 0] },
-            Vertex { _pos: [1, 0, 0, 0] },
-            Vertex { _pos: [0, 1, 0, 0] },
-        ];
-        let indices = [0u16, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
+        let kind = match config {
+            TerrainSettings::RayTracedOld => {
+                let vertices = [
+                    Vertex { _pos: [0, 0, 0, 1] },
+                    Vertex { _pos: [-1, 0, 0, 0] },
+                    Vertex { _pos: [0, -1, 0, 0] },
+                    Vertex { _pos: [1, 0, 0, 0] },
+                    Vertex { _pos: [0, 1, 0, 0] },
+                ];
+                let indices = [0u16, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
 
-        let vertex_buf = device
-            .create_buffer_mapped(vertices.len(), wgpu::BufferUsageFlags::VERTEX)
-            .fill_from_slice(&vertices);
-        let index_buf = device
-            .create_buffer_mapped(indices.len(), wgpu::BufferUsageFlags::INDEX)
-            .fill_from_slice(&indices);
+                let vertex_buf = device
+                    .create_buffer_mapped(vertices.len(), wgpu::BufferUsageFlags::VERTEX)
+                    .fill_from_slice(&vertices);
+                let index_buf = device
+                    .create_buffer_mapped(indices.len(), wgpu::BufferUsageFlags::INDEX)
+                    .fill_from_slice(&indices);
 
-        let pipeline = Self::create_ray_pipeline(&pipeline_layout, device);
+                let pipeline = Self::create_ray_pipeline(&pipeline_layout, device);
+                Kind::Ray {
+                    pipeline,
+                    vertex_buf,
+                    index_buf,
+                    num_indices: indices.len(),
+                }
+            }
+            TerrainSettings::RayTraced { .. } => unimplemented!(),
+            TerrainSettings::Tessellated { .. } => unimplemented!(),
+            TerrainSettings::Sliced => {
+                let vertices = [
+                    Vertex { _pos: [-1, -1, 0, 1] },
+                    Vertex { _pos: [1, -1, 0, 1] },
+                    Vertex { _pos: [1, 1, 0, 1] },
+                    Vertex { _pos: [-1, 1, 0, 1] },
+                ];
+                let indices = [0u16, 1, 2, 0, 2, 3];
+
+                let vertex_buf = device
+                    .create_buffer_mapped(vertices.len(), wgpu::BufferUsageFlags::VERTEX)
+                    .fill_from_slice(&vertices);
+                let index_buf = device
+                    .create_buffer_mapped(indices.len(), wgpu::BufferUsageFlags::INDEX)
+                    .fill_from_slice(&indices);
+
+                let pipeline = Self::create_slice_pipeline(&pipeline_layout, device);
+                Kind::Slice {
+                    pipeline,
+                    vertex_buf,
+                    index_buf,
+                    num_indices: indices.len(),
+                }
+            }
+        };
 
         Context {
             uniform_buf,
             bind_group,
             pipeline_layout,
-            kind: Kind::Ray {
-                pipeline,
-                vertex_buf,
-                index_buf,
-                num_indices: indices.len(),
-            },
+            kind,
         }
     }
 
@@ -482,6 +574,36 @@ impl Context {
                 *low = lo;
                 *high = hi;
             }*/
+            Kind::Slice { ref mut pipeline, .. } => {
+                *pipeline = Self::create_slice_pipeline(
+                    &self.pipeline_layout,
+                    device,
+                );
+            }
+        }
+    }
+
+    pub fn draw(&self, pass: &mut wgpu::RenderPass) {
+        pass.set_bind_group(1, &self.bind_group);
+        // draw terrain
+        match self.kind {
+            Kind::Ray { ref pipeline, ref index_buf, ref vertex_buf, num_indices } => {
+                pass.set_pipeline(pipeline);
+                pass.set_index_buffer(index_buf, 0);
+                pass.set_vertex_buffers(&[(vertex_buf, 0)]);
+                pass.draw_indexed(0 .. num_indices as u32, 0, 0 .. 1);
+            }
+            /*
+            Kind::Tess { ref low, ref high, .. } => {
+                encoder.draw(&self.terrain_slice, low, &self.terrain_data);
+                encoder.draw(&self.terrain_slice, high, &self.terrain_data);
+            }*/
+            Kind::Slice { ref pipeline, ref index_buf, ref vertex_buf, num_indices } => {
+                pass.set_pipeline(pipeline);
+                pass.set_index_buffer(index_buf, 0);
+                pass.set_vertex_buffers(&[(vertex_buf, 0)]);
+                pass.draw_indexed(0 .. num_indices as u32, 0, 0 .. 0x100);
+            }
         }
     }
 }
