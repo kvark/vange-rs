@@ -195,7 +195,7 @@ impl Application for CarView {
             todo: 0,
         });
         let global_staging = device
-            .create_buffer_mapped(1, wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
             .fill_from_slice(&[
                 render::global::Constants::new(&self.cam, &self.light_config),
             ]);
@@ -204,7 +204,7 @@ impl Application for CarView {
             0,
             &self.global.uniform_buf,
             0,
-            mem::size_of::<render::global::Constants>() as u32,
+            mem::size_of::<render::global::Constants>() as wgpu::BufferAddress,
         );
 
         render::RenderModel {
@@ -219,6 +219,7 @@ impl Application for CarView {
                 color_attachments: &[
                     wgpu::RenderPassColorAttachmentDescriptor {
                         attachment: targets.color,
+                        resolve_target: None,
                         load_op: wgpu::LoadOp::Clear,
                         store_op: wgpu::StoreOp::Store,
                         clear_color: wgpu::Color {
@@ -238,8 +239,8 @@ impl Application for CarView {
             });
 
             pass.set_pipeline(&self.object.pipeline);
-            pass.set_bind_group(0, &self.global.bind_group);
-            pass.set_bind_group(1, &self.object.bind_group);
+            pass.set_bind_group(0, &self.global.bind_group, &[]);
+            pass.set_bind_group(1, &self.object.bind_group, &[]);
             render::Render::draw_model(
                 &mut pass,
                 &self.model,

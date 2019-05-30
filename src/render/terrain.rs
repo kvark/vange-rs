@@ -77,10 +77,10 @@ impl Context {
                 module: &shaders.vs,
                 entry_point: "main",
             },
-            fragment_stage: wgpu::PipelineStageDescriptor {
+            fragment_stage: Some(wgpu::PipelineStageDescriptor {
                 module: &shaders.fs,
                 entry_point: "main",
-            },
+            }),
             rasterization_state: wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: wgpu::CullMode::None,
@@ -92,9 +92,9 @@ impl Context {
             color_states: &[
                 wgpu::ColorStateDescriptor {
                     format: COLOR_FORMAT,
-                    alpha: wgpu::BlendDescriptor::REPLACE,
-                    color: wgpu::BlendDescriptor::REPLACE,
-                    write_mask: wgpu::ColorWriteFlags::all(),
+                    alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                    color_blend: wgpu::BlendDescriptor::REPLACE,
+                    write_mask: wgpu::ColorWrite::all(),
                 },
             ],
             depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
@@ -109,13 +109,13 @@ impl Context {
             index_format: wgpu::IndexFormat::Uint16,
             vertex_buffers: &[
                 wgpu::VertexBufferDescriptor {
-                    stride: mem::size_of::<Vertex>() as u32,
+                    stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::InputStepMode::Vertex,
                     attributes: &[
                         wgpu::VertexAttributeDescriptor {
                             offset: 0,
                             format: wgpu::VertexFormat::Char4,
-                            attribute_index: 0,
+                            shader_location: 0,
                         },
                     ],
                 },
@@ -136,10 +136,10 @@ impl Context {
                 module: &shaders.vs,
                 entry_point: "main",
             },
-            fragment_stage: wgpu::PipelineStageDescriptor {
+            fragment_stage: Some(wgpu::PipelineStageDescriptor {
                 module: &shaders.fs,
                 entry_point: "main",
-            },
+            }),
             rasterization_state: wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: wgpu::CullMode::None,
@@ -151,9 +151,9 @@ impl Context {
             color_states: &[
                 wgpu::ColorStateDescriptor {
                     format: COLOR_FORMAT,
-                    alpha: wgpu::BlendDescriptor::REPLACE,
-                    color: wgpu::BlendDescriptor::REPLACE,
-                    write_mask: wgpu::ColorWriteFlags::all(),
+                    alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                    color_blend: wgpu::BlendDescriptor::REPLACE,
+                    write_mask: wgpu::ColorWrite::all(),
                 },
             ],
             depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
@@ -168,13 +168,13 @@ impl Context {
             index_format: wgpu::IndexFormat::Uint16,
             vertex_buffers: &[
                 wgpu::VertexBufferDescriptor {
-                    stride: mem::size_of::<Vertex>() as u32,
+                    stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::InputStepMode::Vertex,
                     attributes: &[
                         wgpu::VertexAttributeDescriptor {
                             offset: 0,
                             format: wgpu::VertexFormat::Char4,
-                            attribute_index: 0,
+                            shader_location: 0,
                         },
                     ],
                 },
@@ -219,44 +219,52 @@ impl Context {
 
         let height_texture = device.create_texture(&wgpu::TextureDescriptor {
             size: extent,
-            array_size: 1,
+            array_layer_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsageFlags::SAMPLED | wgpu::TextureUsageFlags::TRANSFER_DST,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
         });
         let meta_texture = device.create_texture(&wgpu::TextureDescriptor {
             size: extent,
-            array_size: 1,
+            array_layer_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R8Uint,
-            usage: wgpu::TextureUsageFlags::SAMPLED | wgpu::TextureUsageFlags::TRANSFER_DST,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
         });
         let flood_texture = device.create_texture(&wgpu::TextureDescriptor {
             size: flood_extent,
-            array_size: 1,
+            array_layer_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsageFlags::SAMPLED | wgpu::TextureUsageFlags::TRANSFER_DST,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
         });
         let table_texture = device.create_texture(&wgpu::TextureDescriptor {
             size: table_extent,
-            array_size: 1,
+            array_layer_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::Rgba8Uint,
-            usage: wgpu::TextureUsageFlags::SAMPLED | wgpu::TextureUsageFlags::TRANSFER_DST,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
         });
 
         let height_staging = device
-            .create_buffer_mapped(level.height.len(), wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .create_buffer_mapped(level.height.len(), wgpu::BufferUsage::TRANSFER_SRC)
             .fill_from_slice(&level.height);
         let meta_staging = device
-            .create_buffer_mapped(level.meta.len(), wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .create_buffer_mapped(level.meta.len(), wgpu::BufferUsage::TRANSFER_SRC)
             .fill_from_slice(&level.meta);
         let flood_staging = device
-            .create_buffer_mapped(level.flood_map.len(), wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .create_buffer_mapped(level.flood_map.len(), wgpu::BufferUsage::TRANSFER_SRC)
             .fill_from_slice(&level.flood_map);
         let table_staging = device
-            .create_buffer_mapped(terrrain_table.len(), wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .create_buffer_mapped(terrrain_table.len(), wgpu::BufferUsage::TRANSFER_SRC)
             .fill_from_slice(&terrrain_table);
 
         init_encoder.copy_buffer_to_texture(
@@ -268,8 +276,8 @@ impl Context {
             },
             wgpu::TextureCopyView {
                 texture: &height_texture,
-                level: 0,
-                slice: 0,
+                mip_level: 0,
+                array_layer: 0,
                 origin,
             },
             extent,
@@ -283,8 +291,8 @@ impl Context {
             },
             wgpu::TextureCopyView {
                 texture: &meta_texture,
-                level: 0,
-                slice: 0,
+                mip_level: 0,
+                array_layer: 0,
                 origin,
             },
             extent,
@@ -298,8 +306,8 @@ impl Context {
             },
             wgpu::TextureCopyView {
                 texture: &flood_texture,
-                level: 0,
-                slice: 0,
+                mip_level: 0,
+                array_layer: 0,
                 origin,
             },
             flood_extent,
@@ -313,8 +321,8 @@ impl Context {
             },
             wgpu::TextureCopyView {
                 texture: &table_texture,
-                level: 0,
-                slice: 0,
+                mip_level: 0,
+                array_layer: 0,
                 origin,
             },
             table_extent,
@@ -322,102 +330,96 @@ impl Context {
         let palette = Palette::new(init_encoder, device, &level.palette);
 
         let repeat_nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            r_address_mode: wgpu::AddressMode::Repeat,
-            s_address_mode: wgpu::AddressMode::Repeat,
-            t_address_mode: wgpu::AddressMode::Repeat,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: 0.0,
             lod_max_clamp: 0.0,
-            max_anisotropy: 0,
             compare_function: wgpu::CompareFunction::Always,
-            border_color: wgpu::BorderColor::TransparentBlack,
         });
         let flood_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            r_address_mode: wgpu::AddressMode::Repeat,
-            s_address_mode: wgpu::AddressMode::ClampToEdge,
-            t_address_mode: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: 0.0,
             lod_max_clamp: 0.0,
-            max_anisotropy: 0,
             compare_function: wgpu::CompareFunction::Always,
-            border_color: wgpu::BorderColor::TransparentBlack,
         });
         let table_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            r_address_mode: wgpu::AddressMode::ClampToEdge,
-            s_address_mode: wgpu::AddressMode::ClampToEdge,
-            t_address_mode: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: 0.0,
             lod_max_clamp: 0.0,
-            max_anisotropy: 0,
             compare_function: wgpu::CompareFunction::Always,
-            border_color: wgpu::BorderColor::TransparentBlack,
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             bindings: &[
                 wgpu::BindGroupLayoutBinding { // surface uniforms
                     binding: 0,
-                    visibility: wgpu::ShaderStageFlags::VERTEX | wgpu::ShaderStageFlags::FRAGMENT,
+                    visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::UniformBuffer,
                 },
                 wgpu::BindGroupLayoutBinding { // terrain locals
                     binding: 1,
-                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::UniformBuffer,
                 },
                 wgpu::BindGroupLayoutBinding { // height map
                     binding: 2,
-                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::SampledTexture,
                 },
                 wgpu::BindGroupLayoutBinding { // meta map
                     binding: 3,
-                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::SampledTexture,
                 },
                 wgpu::BindGroupLayoutBinding { // flood map
                     binding: 4,
-                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::SampledTexture,
                 },
                 wgpu::BindGroupLayoutBinding { // table map
                     binding: 5,
-                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::SampledTexture,
                 },
                 wgpu::BindGroupLayoutBinding { // palette map
                     binding: 6,
-                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::SampledTexture,
                 },
                 wgpu::BindGroupLayoutBinding { // main sampler
                     binding: 7,
-                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::Sampler,
                 },
                 wgpu::BindGroupLayoutBinding { // flood sampler
                     binding: 8,
-                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::Sampler,
                 },
                 wgpu::BindGroupLayoutBinding { // table sampler
                     binding: 9,
-                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::Sampler,
                 },
             ],
         });
 
         let surface_uni_buf = device
-            .create_buffer_mapped(1, wgpu::BufferUsageFlags::UNIFORM)
+            .create_buffer_mapped(1, wgpu::BufferUsage::UNIFORM)
             .fill_from_slice(&[SurfaceConstants {
                 _tex_scale: [
                     level.size.0 as f32,
@@ -427,8 +429,8 @@ impl Context {
                 ],
             }]);
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            size: mem::size_of::<Constants>() as u32,
-            usage: wgpu::BufferUsageFlags::UNIFORM | wgpu::BufferUsageFlags::TRANSFER_DST,
+            size: mem::size_of::<Constants>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::TRANSFER_DST,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -438,14 +440,14 @@ impl Context {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer {
                         buffer: &surface_uni_buf,
-                        range: 0 .. mem::size_of::<SurfaceConstants>() as u32,
+                        range: 0 .. mem::size_of::<SurfaceConstants>() as wgpu::BufferAddress,
                     },
                 },
                 wgpu::Binding {
                     binding: 1,
                     resource: wgpu::BindingResource::Buffer {
                         buffer: &uniform_buf,
-                        range: 0 .. mem::size_of::<Constants>() as u32,
+                        range: 0 .. mem::size_of::<Constants>() as wgpu::BufferAddress,
                     },
                 },
                 wgpu::Binding {
@@ -510,10 +512,10 @@ impl Context {
                 let indices = [0u16, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
 
                 let vertex_buf = device
-                    .create_buffer_mapped(vertices.len(), wgpu::BufferUsageFlags::VERTEX)
+                    .create_buffer_mapped(vertices.len(), wgpu::BufferUsage::VERTEX)
                     .fill_from_slice(&vertices);
                 let index_buf = device
-                    .create_buffer_mapped(indices.len(), wgpu::BufferUsageFlags::INDEX)
+                    .create_buffer_mapped(indices.len(), wgpu::BufferUsage::INDEX)
                     .fill_from_slice(&indices);
 
                 let pipeline = Self::create_ray_pipeline(&pipeline_layout, device);
@@ -536,10 +538,10 @@ impl Context {
                 let indices = [0u16, 1, 2, 0, 2, 3];
 
                 let vertex_buf = device
-                    .create_buffer_mapped(vertices.len(), wgpu::BufferUsageFlags::VERTEX)
+                    .create_buffer_mapped(vertices.len(), wgpu::BufferUsage::VERTEX)
                     .fill_from_slice(&vertices);
                 let index_buf = device
-                    .create_buffer_mapped(indices.len(), wgpu::BufferUsageFlags::INDEX)
+                    .create_buffer_mapped(indices.len(), wgpu::BufferUsage::INDEX)
                     .fill_from_slice(&indices);
 
                 let pipeline = Self::create_slice_pipeline(&pipeline_layout, device);
@@ -584,7 +586,7 @@ impl Context {
     }
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass) {
-        pass.set_bind_group(1, &self.bind_group);
+        pass.set_bind_group(1, &self.bind_group, &[]);
         // draw terrain
         match self.kind {
             Kind::Ray { ref pipeline, ref index_buf, ref vertex_buf, num_indices } => {

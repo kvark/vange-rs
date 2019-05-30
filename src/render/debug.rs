@@ -119,7 +119,7 @@ impl Context {
             bindings: &[
                 wgpu::BindGroupLayoutBinding { // locals
                     binding: 0,
-                    visibility: wgpu::ShaderStageFlags::FRAGMENT,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::UniformBuffer,
                 },
             ],
@@ -132,19 +132,19 @@ impl Context {
         });
 
         let line_color_buf = device
-            .create_buffer_mapped(1, wgpu::BufferUsageFlags::VERTEX)
+            .create_buffer_mapped(1, wgpu::BufferUsage::VERTEX)
             .fill_from_slice(&[
                 Color { color: 0xFF000080 }, // line
             ]);
 
         let locals_buf = device
-            .create_buffer_mapped(3, wgpu::BufferUsageFlags::UNIFORM)
+            .create_buffer_mapped(3, wgpu::BufferUsage::UNIFORM)
             .fill_from_slice(&[
                 Locals::new([1.0; 4]), // line
                 Locals::new([0.0, 1.0, 0.0, 0.1]), // face
                 Locals::new([1.0, 1.0, 0.0, 0.1]), // edge
             ]);
-        let locals_size = mem::size_of::<Locals>() as u32;
+        let locals_size = mem::size_of::<Locals>() as wgpu::BufferAddress;
         let bind_group_line = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
             bindings: &[
@@ -216,18 +216,18 @@ impl Context {
                     module: &shaders.vs,
                     entry_point: "main",
                 },
-                fragment_stage: wgpu::PipelineStageDescriptor {
+                fragment_stage: Some(wgpu::PipelineStageDescriptor {
                     module: &shaders.fs,
                     entry_point: "main",
-                },
+                }),
                 rasterization_state: rasterization_state.clone(),
                 primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
                 color_states: &[
                     wgpu::ColorStateDescriptor {
                         format: COLOR_FORMAT,
-                        alpha: wgpu::BlendDescriptor::REPLACE,
-                        color: wgpu::BlendDescriptor::REPLACE,
-                        write_mask: wgpu::ColorWriteFlags::all(),
+                        alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                        color_blend: wgpu::BlendDescriptor::REPLACE,
+                        write_mask: wgpu::ColorWrite::all(),
                     },
                 ],
                 depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
@@ -242,23 +242,23 @@ impl Context {
                 index_format: wgpu::IndexFormat::Uint16,
                 vertex_buffers: &[
                     wgpu::VertexBufferDescriptor {
-                        stride: mem::size_of::<ShapePolygon>() as u32,
+                        stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
                         step_mode: wgpu::InputStepMode::Instance,
                         attributes: &[
                             wgpu::VertexAttributeDescriptor { // indices
                                 offset: 0,
                                 format: wgpu::VertexFormat::Ushort4,
-                                attribute_index: 0,
+                                shader_location: 0,
                             },
                             wgpu::VertexAttributeDescriptor { // normal
                                 offset: 8,
                                 format: wgpu::VertexFormat::Uchar4Norm,
-                                attribute_index: 1,
+                                shader_location: 1,
                             },
                             wgpu::VertexAttributeDescriptor { // origin square
                                 offset: 12,
                                 format: wgpu::VertexFormat::Float4,
-                                attribute_index: 2,
+                                shader_location: 2,
                             },
                         ],
                     },
@@ -285,18 +285,18 @@ impl Context {
                             module: &shaders.vs,
                             entry_point: "main",
                         },
-                        fragment_stage: wgpu::PipelineStageDescriptor {
+                        fragment_stage: Some(wgpu::PipelineStageDescriptor {
                             module: &shaders.fs,
                             entry_point: "main",
-                        },
+                        }),
                         rasterization_state: rasterization_state.clone(),
                         primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
                         color_states: &[
                             wgpu::ColorStateDescriptor {
                                 format: COLOR_FORMAT,
-                                alpha: blend.clone(),
-                                color: blend.clone(),
-                                write_mask: wgpu::ColorWriteFlags::all(),
+                                alpha_blend: blend.clone(),
+                                color_blend: blend.clone(),
+                                write_mask: wgpu::ColorWrite::all(),
                             },
                         ],
                         depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
@@ -311,24 +311,24 @@ impl Context {
                         index_format: wgpu::IndexFormat::Uint16,
                         vertex_buffers: &[
                             wgpu::VertexBufferDescriptor {
-                                stride: mem::size_of::<Position>() as u32,
+                                stride: mem::size_of::<Position>() as wgpu::BufferAddress,
                                 step_mode: wgpu::InputStepMode::Vertex,
                                 attributes: &[
                                     wgpu::VertexAttributeDescriptor {
                                         offset: 0,
                                         format: wgpu::VertexFormat::Float4,
-                                        attribute_index: 0,
+                                        shader_location: 0,
                                     },
                                 ],
                             },
                             wgpu::VertexBufferDescriptor {
-                                stride: mem::size_of::<Color>() as u32,
+                                stride: mem::size_of::<Color>() as wgpu::BufferAddress,
                                 step_mode: color_rate,
                                 attributes: &[
                                     wgpu::VertexAttributeDescriptor {
                                         offset: 0,
                                         format: wgpu::VertexFormat::Float4,
-                                        attribute_index: 1,
+                                        shader_location: 1,
                                     },
                                 ],
                             },
@@ -370,21 +370,21 @@ impl Context {
         // draw collision polygon faces
         if let Some(ref pipeline) = self.pipeline_face {
             pass.set_pipeline(pipeline);
-            pass.set_bind_group(1, &self.bind_group_face);
+            pass.set_bind_group(1, &self.bind_group_face, &[]);
             pass.set_vertex_buffers(&[(&shape.polygon_buf, 0)]);
             //pass.draw(); TODO
         }
         // draw collision polygon edges
         if let Some(ref pipeline) = self.pipeline_edge {
             pass.set_pipeline(pipeline);
-            pass.set_bind_group(1, &self.bind_group_edge);
+            pass.set_bind_group(1, &self.bind_group_edge, &[]);
             pass.set_vertex_buffers(&[(&shape.polygon_buf, 0)]);
             //pass.draw(); TODO
         }
 
         // draw sample normals
         if let Some((ref sample_buf, num_vert)) = shape.sample_buf {
-            pass.set_bind_group(1, &self.bind_group_line);
+            pass.set_bind_group(1, &self.bind_group_line, &[]);
             self.draw_liner(
                 pass,
                 sample_buf,
@@ -402,10 +402,10 @@ impl Context {
         linebuf: &LineBuffer,
     ){
         let vertex_buf = device
-            .create_buffer_mapped(linebuf.vertices.len(), wgpu::BufferUsageFlags::VERTEX)
+            .create_buffer_mapped(linebuf.vertices.len(), wgpu::BufferUsage::VERTEX)
             .fill_from_slice(&linebuf.vertices);
         let color_buf = device
-            .create_buffer_mapped(linebuf.colors.len(), wgpu::BufferUsageFlags::VERTEX)
+            .create_buffer_mapped(linebuf.colors.len(), wgpu::BufferUsage::VERTEX)
             .fill_from_slice(&linebuf.colors);
         assert_eq!(linebuf.vertices.len(), linebuf.colors.len());
 

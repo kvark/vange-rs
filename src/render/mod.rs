@@ -165,14 +165,16 @@ impl Palette {
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             size: extent,
-            array_size: 1,
+            array_layer_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsageFlags::SAMPLED | wgpu::TextureUsageFlags::TRANSFER_DST,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
         });
 
         let staging = device
-            .create_buffer_mapped(data.len(), wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .create_buffer_mapped(data.len(), wgpu::BufferUsage::TRANSFER_SRC)
             .fill_from_slice(data);
         encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
@@ -183,8 +185,8 @@ impl Palette {
             },
             wgpu::TextureCopyView {
                 texture: &texture,
-                level: 0,
-                slice: 0,
+                mip_level: 0,
+                array_layer: 0,
                 origin: wgpu::Origin3d {
                     x: 0.0,
                     y: 0.0,
@@ -215,7 +217,7 @@ impl<'a> RenderModel<'a> {
         let count = self.model.mesh_count();
         let mapping = device.create_buffer_mapped(
             count,
-            wgpu::BufferUsageFlags::TRANSFER_SRC,
+            wgpu::BufferUsage::TRANSFER_SRC,
         );
 
         // body
@@ -250,7 +252,7 @@ impl<'a> RenderModel<'a> {
             0,
             &self.locals_buf,
             0,
-            (count * mem::size_of::<object::Locals>()) as u32,
+            (count * mem::size_of::<object::Locals>()) as wgpu::BufferAddress,
         );
     }
 }
@@ -298,7 +300,7 @@ impl Render {
         pass: &mut wgpu::RenderPass,
         mesh: &model::Mesh,
     ) {
-        pass.set_bind_group(2, &mesh.bind_group);
+        pass.set_bind_group(2, &mesh.bind_group, &[]);
         pass.set_vertex_buffers(&[(&mesh.vertex_buf, 0)]);
         pass.draw(0 .. mesh.num_vertices as u32, 0 .. 1);
     }
@@ -335,7 +337,7 @@ impl Render {
         });
 
         let global_staging = device
-            .create_buffer_mapped(1, wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
             .fill_from_slice(&[
                 global::Constants::new(cam, &self.light_config),
             ]);
@@ -344,11 +346,11 @@ impl Render {
             0,
             &self.global.uniform_buf,
             0,
-            mem::size_of::<global::Constants>() as u32,
+            mem::size_of::<global::Constants>() as wgpu::BufferAddress,
         );
 
         let terrain_staging = device
-            .create_buffer_mapped(1, wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
             .fill_from_slice(&[
                 terrain::Constants::new(&targets.extent)
             ]);
@@ -357,7 +359,7 @@ impl Render {
             0,
             &self.terrain.uniform_buf,
             0,
-            mem::size_of::<terrain::Constants>() as u32,
+            mem::size_of::<terrain::Constants>() as wgpu::BufferAddress,
         );
 
         for rm in render_models {
@@ -369,6 +371,7 @@ impl Render {
                 color_attachments: &[
                     wgpu::RenderPassColorAttachmentDescriptor {
                         attachment: targets.color,
+                        resolve_target: None,
                         load_op: wgpu::LoadOp::Clear,
                         store_op: wgpu::StoreOp::Store,
                         clear_color: wgpu::Color {
@@ -387,12 +390,12 @@ impl Render {
                 }),
             });
 
-            pass.set_bind_group(0, &self.global.bind_group);
+            pass.set_bind_group(0, &self.global.bind_group, &[]);
             self.terrain.draw(&mut pass);
 
             // draw vehicle models
             pass.set_pipeline(&self.object.pipeline);
-            pass.set_bind_group(1, &self.object.bind_group);
+            pass.set_bind_group(1, &self.object.bind_group, &[]);
             for rm in render_models {
                 Render::draw_model(&mut pass, &rm.model);
             }
