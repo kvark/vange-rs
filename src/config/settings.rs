@@ -89,7 +89,6 @@ pub struct Settings {
 impl Settings {
     pub fn load(path: &str) -> Self {
         use std::io::Read;
-        use ron;
 
         let mut string = String::new();
         File::open(path)

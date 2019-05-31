@@ -10,12 +10,13 @@ layout(set = 0, binding = 0) uniform Globals {
     vec4 u_LightPos;
     vec4 u_LightColor;
 };
-
 layout(set = 1, binding = 1) uniform c_Locals {
     uvec4 u_ScreenSize;      // XY = size
 };
-
-layout(set = 2, binding = 0, r32ui) uniform uimage2D i_Output;
+layout(set = 2, binding = 0, std430) buffer Storage
+{
+    uint w_Data[];
+};
 layout(set = 2, binding = 1) uniform c_Scatter {
     vec4 u_TerrainOffsetScale;
 };
@@ -34,8 +35,8 @@ void add_voxel(vec2 pos, float altitude, uint type, float lit_factor) {
     float color_id = evaluate_color_id(type, pos / u_TextureScale.xy, altitude / u_TextureScale.z, lit_factor);
     float depth = clamp(ndc.z, 0.0, 1.0);
     uint value = (uint(depth * float(0xFFFFFF)) << 8U) | uint(color_id * float(0xFF));
-    ivec2 tc = min(ivec2(u_ScreenSize.xy) - 1, ivec2(round((ndc.xy * 0.5 + 0.5) * vec2(u_ScreenSize.xy))));
-    imageAtomicMin(i_Output, tc, value);
+    uvec2 tc = min(u_ScreenSize.xy - 1U, uvec2(round((ndc.xy * 0.5 + 0.5) * vec2(u_ScreenSize.xy))));
+    atomicMin(w_Data[tc.y * u_ScreenSize.x + tc.x], value);
 }
 
 void main() {
@@ -46,6 +47,11 @@ void main() {
     }
     if (suf.delta != 0.0) {
         add_voxel(pos, suf.low_alt, suf.low_type, 0.25);
+        float mid = mix(suf.low_alt + suf.delta, suf.high_alt, 0.5);
+        add_voxel(pos, mid, suf.high_type, 1.0);
+    } else {
+        add_voxel(pos, 0.4 * suf.high_alt, suf.high_type, 1.0);
+        add_voxel(pos, 0.8 * suf.high_alt, suf.high_type, 1.0);
     }
 }
 #endif //CS

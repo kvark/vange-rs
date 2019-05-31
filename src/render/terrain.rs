@@ -36,52 +36,48 @@ struct ScatterConstants {
     _scale_offset: [f32; 4],
 }
 
-impl ScatterConstants {
-    fn new(cam: &Camera, group_dim_count: u32) -> Self {
-        use cgmath::{EuclideanSpace, Point3, SquareMatrix, Transform, Vector3};
+fn compute_camera_footprint(cam: &Camera, group_dim_count: u32) -> [f32; 4] {
+    use cgmath::{EuclideanSpace, Point3, SquareMatrix, Transform, Vector3};
 
-        fn intersect(base: &Vector3<f32>, target: Point3<f32>, height: u32) -> Vector3<i32> {
-            let dir = target.to_vec() - *base;
-            let t = if dir.z == 0.0 {
-                0.0
-            } else {
-                (height as f32 - base.z)/dir.z
-            };
-            let end = base + dir * t.max(0.0);
-            end.cast::<i32>().unwrap()
-        }
-
-        let mx_invp = cam.get_view_proj().invert().unwrap();
-        let center = mx_invp
-            .transform_point(Point3::new(0.0, 0.0, 0.0));
-        let center_base = intersect(&cam.loc, center, 0);
-        let (mut pmin, mut pmax) = (center_base, center_base);
-        let local_positions = [
-            Point3::new(1.0, 1.0, 0.0),
-            Point3::new(-1.0, 1.0, 0.0),
-            Point3::new(1.0, -1.0, 0.0),
-            Point3::new(-1.0, -1.0, 0.0),
-        ];
-
-        for &lp in &local_positions {
-            let wp = mx_invp.transform_point(lp);
-            let pa = intersect(&cam.loc, wp, 0);
-            let pb = intersect(&cam.loc, wp, level::HEIGHT_SCALE);
-            pmin.x = pmin.x.min(pa.x.min(pb.x));
-            pmin.y = pmin.y.min(pa.y.min(pb.y));
-            pmax.x = pmax.x.max(pa.x.max(pb.x));
-            pmax.y = pmax.y.max(pa.y.max(pb.y));
-        }
-
-        ScatterConstants {
-            _scale_offset: [
-                (pmax.x - pmin.x) as f32 / (group_dim_count * SCATTER_GROUP_SIZE[0]) as f32,
-                (pmax.y - pmin.y) as f32 / (group_dim_count * SCATTER_GROUP_SIZE[1]) as f32,
-                pmin.x as f32,
-                pmin.y as f32,
-            ],
-        }
+    fn intersect(base: &Vector3<f32>, target: Point3<f32>, height: u32) -> Vector3<i32> {
+        let dir = target.to_vec() - *base;
+        let t = if dir.z == 0.0 {
+            0.0
+        } else {
+            (height as f32 - base.z)/dir.z
+        };
+        let end = base + dir * t.max(0.0);
+        end.cast::<i32>().unwrap()
     }
+
+    let mx_invp = cam.get_view_proj().invert().unwrap();
+    let center = mx_invp
+        .transform_point(Point3::new(0.0, 0.0, 0.0));
+    let center_base = intersect(&cam.loc, center, 0);
+    let (mut pmin, mut pmax) = (center_base, center_base);
+    let local_positions = [
+        Point3::new(1.0, 1.0, 0.0),
+        Point3::new(-1.0, 1.0, 0.0),
+        Point3::new(1.0, -1.0, 0.0),
+        Point3::new(-1.0, -1.0, 0.0),
+    ];
+
+    for &lp in &local_positions {
+        let wp = mx_invp.transform_point(lp);
+        let pa = intersect(&cam.loc, wp, 0);
+        let pb = intersect(&cam.loc, wp, level::HEIGHT_SCALE);
+        pmin.x = pmin.x.min(pa.x.min(pb.x));
+        pmin.y = pmin.y.min(pa.y.min(pb.y));
+        pmax.x = pmax.x.max(pa.x.max(pb.x));
+        pmax.y = pmax.y.max(pa.y.max(pb.y));
+    }
+
+    [
+        (pmax.x - pmin.x) as f32 / (group_dim_count * SCATTER_GROUP_SIZE[0]) as f32,
+        (pmax.y - pmin.y) as f32 / (group_dim_count * SCATTER_GROUP_SIZE[1]) as f32,
+        pmin.x as f32,
+        pmin.y as f32,
+    ]
 }
 
 pub enum Kind {
@@ -315,23 +311,21 @@ impl Context {
         layout: &wgpu::BindGroupLayout,
         device: &wgpu::Device,
     ) -> (wgpu::BindGroup, [u32; 3]) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            size: extent,
-            array_layer_count: 1,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R32Uint,
-            usage: wgpu::TextureUsage::STORAGE,
+        let size = 4 * (extent.width * extent.height) as wgpu::BufferAddress;
+        let storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            size,
+            usage: wgpu::BufferUsage::STORAGE,
         });
-        let view = texture.create_default_view();
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout,
             bindings: &[
                 wgpu::Binding {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &storage_buffer,
+                        range: 0 .. size,
+                    },
                 },
                 wgpu::Binding {
                     binding: 1,
@@ -727,7 +721,7 @@ impl Context {
                         wgpu::BindGroupLayoutBinding { // output map
                             binding: 0,
                             visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                            ty: wgpu::BindingType::StorageTexture,
+                            ty: wgpu::BindingType::StorageBuffer,
                         },
                         wgpu::BindGroupLayoutBinding { // constants
                             binding: 1,
@@ -865,8 +859,10 @@ impl Context {
             compute_groups,
             ..
         } = self.kind {
-            let group_count = 100; //TODO: figure out based on the angle
-            let scatter_constants = ScatterConstants::new(cam, group_count);
+            let group_count = 128; //TODO: figure out based on the angle
+            let scatter_constants = ScatterConstants {
+                _scale_offset: compute_camera_footprint(cam, group_count),
+            };
             let staging = device
                 .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
                 .fill_from_slice(&[
