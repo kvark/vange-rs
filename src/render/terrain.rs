@@ -6,6 +6,7 @@ use crate::{
         COLOR_FORMAT, DEPTH_FORMAT,
         global::Context as GlobalContext,
     },
+    space::Camera,
 };
 
 use wgpu;
@@ -26,14 +27,59 @@ struct SurfaceConstants {
 }
 
 #[derive(Clone, Copy)]
-pub struct Constants {
+struct Constants {
     _scr_size: [u32; 4],
 }
 
-impl Constants {
-    pub fn new(extent: &wgpu::Extent3d) -> Self {
-        Constants {
-            _scr_size: [extent.width, extent.height, 0, 0],
+#[derive(Clone, Copy)]
+struct ScatterConstants {
+    _scale_offset: [f32; 4],
+}
+
+impl ScatterConstants {
+    fn new(cam: &Camera, group_dim_count: u32) -> Self {
+        use cgmath::{EuclideanSpace, Point3, SquareMatrix, Transform, Vector3};
+
+        fn intersect(base: &Vector3<f32>, target: Point3<f32>, height: u32) -> Vector3<i32> {
+            let dir = target.to_vec() - *base;
+            let t = if dir.z == 0.0 {
+                0.0
+            } else {
+                (height as f32 - base.z)/dir.z
+            };
+            let end = base + dir * t.max(0.0);
+            end.cast::<i32>().unwrap()
+        }
+
+        let mx_invp = cam.get_view_proj().invert().unwrap();
+        let center = mx_invp
+            .transform_point(Point3::new(0.0, 0.0, 0.0));
+        let center_base = intersect(&cam.loc, center, 0);
+        let (mut pmin, mut pmax) = (center_base, center_base);
+        let local_positions = [
+            Point3::new(1.0, 1.0, 0.0),
+            Point3::new(-1.0, 1.0, 0.0),
+            Point3::new(1.0, -1.0, 0.0),
+            Point3::new(-1.0, -1.0, 0.0),
+        ];
+
+        for &lp in &local_positions {
+            let wp = mx_invp.transform_point(lp);
+            let pa = intersect(&cam.loc, wp, 0);
+            let pb = intersect(&cam.loc, wp, level::HEIGHT_SCALE);
+            pmin.x = pmin.x.min(pa.x.min(pb.x));
+            pmin.y = pmin.y.min(pa.y.min(pb.y));
+            pmax.x = pmax.x.max(pa.x.max(pb.x));
+            pmax.y = pmax.y.max(pa.y.max(pb.y));
+        }
+
+        ScatterConstants {
+            _scale_offset: [
+                (pmax.x - pmin.x) as f32 / (group_dim_count * SCATTER_GROUP_SIZE[0]) as f32,
+                (pmax.y - pmin.y) as f32 / (group_dim_count * SCATTER_GROUP_SIZE[1]) as f32,
+                pmin.x as f32,
+                pmin.y as f32,
+            ],
         }
     }
 }
@@ -63,6 +109,7 @@ pub enum Kind {
         clear_pipeline: wgpu::ComputePipeline,
         copy_pipeline: wgpu::RenderPipeline,
         bind_group: wgpu::BindGroup,
+        constant_buf: wgpu::Buffer,
         compute_groups: [u32; 3],
     },
 }
@@ -72,6 +119,7 @@ pub struct Context {
     pub bind_group: wgpu::BindGroup,
     pipeline_layout: wgpu::PipelineLayout,
     pub kind: Kind,
+    pending_resize: Option<wgpu::Extent3d>,
 }
 
 impl Context {
@@ -263,6 +311,7 @@ impl Context {
 
     fn create_scatter_resources(
         extent: wgpu::Extent3d,
+        constant_buf: &wgpu::Buffer,
         layout: &wgpu::BindGroupLayout,
         device: &wgpu::Device,
     ) -> (wgpu::BindGroup, [u32; 3]) {
@@ -283,6 +332,13 @@ impl Context {
                 wgpu::Binding {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::Binding {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: constant_buf,
+                        range: 0 .. mem::size_of::<ScatterConstants>() as wgpu::BufferAddress,
+                    },
                 },
             ],
         });
@@ -485,7 +541,7 @@ impl Context {
                 },
                 wgpu::BindGroupLayoutBinding { // terrain locals
                     binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
                     ty: wgpu::BindingType::UniformBuffer,
                 },
                 wgpu::BindGroupLayoutBinding { // height map
@@ -673,6 +729,11 @@ impl Context {
                             visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
                             ty: wgpu::BindingType::StorageTexture,
                         },
+                        wgpu::BindGroupLayoutBinding { // constants
+                            binding: 1,
+                            visibility: wgpu::ShaderStage::COMPUTE,
+                            ty: wgpu::BindingType::UniformBuffer,
+                        },
                     ],
                 });
                 let local_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -685,7 +746,16 @@ impl Context {
 
                 let (scatter_pipeline, clear_pipeline, copy_pipeline) =
                     Self::create_scatter_pipelines(&local_pipeline_layout, device);
-                let (local_bg, compute_groups) = Self::create_scatter_resources(screen_extent, &local_bg_layout, device);
+                let constant_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    size: mem::size_of::<ScatterConstants>() as wgpu::BufferAddress,
+                    usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::TRANSFER_DST,
+                });
+                let (local_bg, compute_groups) = Self::create_scatter_resources(
+                    screen_extent,
+                    &constant_buf,
+                    &local_bg_layout,
+                    device,
+                );
                 Kind::Scatter {
                     pipeline_layout: local_pipeline_layout,
                     bg_layout: local_bg_layout,
@@ -693,6 +763,7 @@ impl Context {
                     clear_pipeline,
                     copy_pipeline,
                     bind_group: local_bg,
+                    constant_buf,
                     compute_groups,
                 }
             }
@@ -703,6 +774,7 @@ impl Context {
             bind_group,
             pipeline_layout,
             kind,
+            pending_resize: Some(screen_extent),
         }
     }
 
@@ -741,27 +813,73 @@ impl Context {
         }
     }
 
-    pub fn resize(&mut self, extent: wgpu::Extent3d, device: &wgpu::Device) {
+    pub fn resize(
+        &mut self,
+        extent: wgpu::Extent3d,
+        device: &wgpu::Device,
+    ) {
+        self.pending_resize = Some(extent);
+
         if let Kind::Scatter {
             ref bg_layout,
             ref mut bind_group,
+            ref constant_buf,
             ref mut compute_groups,
             ..
         } = self.kind {
-            let (bg, gs) = Self::create_scatter_resources(extent, bg_layout, device);
+            let (bg, gs) = Self::create_scatter_resources(extent, constant_buf, bg_layout, device);
             *bind_group = bg;
             *compute_groups = gs;
         }
     }
 
-    pub fn prepare(&self, encoder: &mut wgpu::CommandEncoder, global: &GlobalContext) {
+    pub fn prepare(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+        global: &GlobalContext,
+        cam: &Camera,
+    ) {
+        if let Some(size) = self.pending_resize {
+            let staging = device
+                .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
+                .fill_from_slice(&[
+                    Constants {
+                        _scr_size: [size.width, size.height, 0, 0],
+                    },
+                ]);
+            encoder.copy_buffer_to_buffer(
+                &staging,
+                0,
+                &self.uniform_buf,
+                0,
+                mem::size_of::<Constants>() as wgpu::BufferAddress,
+            );
+        }
+
         if let Kind::Scatter {
             ref clear_pipeline,
             ref scatter_pipeline,
             ref bind_group,
+            ref constant_buf,
             compute_groups,
             ..
         } = self.kind {
+            let group_count = 100; //TODO: figure out based on the angle
+            let scatter_constants = ScatterConstants::new(cam, group_count);
+            let staging = device
+                .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
+                .fill_from_slice(&[
+                    scatter_constants,
+                ]);
+            encoder.copy_buffer_to_buffer(
+                &staging,
+                0,
+                constant_buf,
+                0,
+                mem::size_of::<ScatterConstants>() as wgpu::BufferAddress,
+            );
+
             let mut pass = encoder.begin_compute_pass();
             pass.set_bind_group(0, &global.bind_group, &[]);
             pass.set_bind_group(1, &self.bind_group, &[]);
@@ -769,8 +887,10 @@ impl Context {
             pass.set_pipeline(clear_pipeline);
             pass.dispatch(compute_groups[0], compute_groups[1], compute_groups[2]);
             pass.set_pipeline(scatter_pipeline);
-            pass.dispatch(100, 100, 1); //TODO
+            pass.dispatch(group_count, group_count, 1);
         }
+
+        self.pending_resize = None;
     }
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass) {

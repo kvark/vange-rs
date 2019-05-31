@@ -419,24 +419,11 @@ impl Render {
             mem::size_of::<global::Constants>() as wgpu::BufferAddress,
         );
 
-        let terrain_staging = device
-            .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
-            .fill_from_slice(&[
-                terrain::Constants::new(&targets.extent)
-            ]);
-        encoder.copy_buffer_to_buffer(
-            &terrain_staging,
-            0,
-            &self.terrain.uniform_buf,
-            0,
-            mem::size_of::<terrain::Constants>() as wgpu::BufferAddress,
-        );
-
         for rm in render_models {
             rm.prepare(&mut encoder, device);
         }
 
-        self.terrain.prepare(&mut encoder, &self.global);
+        self.terrain.prepare(&mut encoder, device, &self.global, cam);
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

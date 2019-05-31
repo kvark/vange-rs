@@ -16,6 +16,9 @@ layout(set = 1, binding = 1) uniform c_Locals {
 };
 
 layout(set = 2, binding = 0, r32ui) uniform uimage2D i_Output;
+layout(set = 2, binding = 1) uniform c_Scatter {
+    vec4 u_TerrainOffsetScale;
+};
 
 
 bool is_visible(vec4 p) {
@@ -36,7 +39,7 @@ void add_voxel(vec2 pos, float altitude, uint type, float lit_factor) {
 }
 
 void main() {
-    vec2 pos = vec2(gl_GlobalInvocationID.xy);
+    vec2 pos = vec2(gl_GlobalInvocationID.xy) * u_TerrainOffsetScale.xy + u_TerrainOffsetScale.zw;
     Surface suf = get_surface(pos);
     if (true) {
         add_voxel(pos, suf.high_alt, suf.high_type, 1.0);
