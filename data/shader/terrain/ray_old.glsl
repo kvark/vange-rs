@@ -23,7 +23,7 @@ void main() {
 //imported: Surface, u_TextureScale, get_surface, evaluate_color
 
 layout(set = 1, binding = 1) uniform c_Locals {
-    vec4 u_ScreenSize;      // XY = size
+    uvec4 u_ScreenSize;      // XY = size
 };
 
 const float
@@ -129,7 +129,7 @@ vec4 color_point(CastPoint pt, float lit_factor) {
 
 void main() {
     vec4 sp_ndc = vec4(
-        (gl_FragCoord.xy / u_ScreenSize.xy) * 2.0 - 1.0,
+        (gl_FragCoord.xy / vec2(u_ScreenSize.xy)) * 2.0 - 1.0,
         -1.0,
         1.0
     );

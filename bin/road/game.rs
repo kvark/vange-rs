@@ -152,6 +152,7 @@ pub struct Game {
 impl Game {
     pub fn new(
         settings: &config::Settings,
+        screen_extent: wgpu::Extent3d,
         device: &mut wgpu::Device,
     ) -> Self {
         info!("Loading world parameters");
@@ -179,7 +180,7 @@ impl Game {
         info!("Initializing the render");
         let depth = 10f32 .. 10000f32;
         let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
-        let render = Render::new(device, &level, &pal_data, &settings.render);
+        let render = Render::new(device, &level, &pal_data, &settings.render, screen_extent);
 
         info!("Loading world database");
         let db = {
@@ -463,8 +464,9 @@ impl Application for Game {
         }
     }
 
-    fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
+    fn resize(&mut self, device: &wgpu::Device, extent: wgpu::Extent3d) {
         self.cam.proj.update(extent.width as u16, extent.height as u16);
+        self.render.resize(extent, device);
     }
 
     fn reload(&mut self, device: &wgpu::Device) {

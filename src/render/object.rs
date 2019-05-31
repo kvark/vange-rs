@@ -85,10 +85,10 @@ impl Context {
                 module: &shaders.vs,
                 entry_point: "main",
             },
-            fragment_stage: wgpu::PipelineStageDescriptor {
+            fragment_stage: Some(wgpu::PipelineStageDescriptor {
                 module: &shaders.fs,
                 entry_point: "main",
-            },
+            }),
             rasterization_state: wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
                 // original was not drawn with rasterizer, used no culling
@@ -101,9 +101,9 @@ impl Context {
             color_states: &[
                 wgpu::ColorStateDescriptor {
                     format: COLOR_FORMAT,
-                    alpha: wgpu::BlendDescriptor::REPLACE,
-                    color: wgpu::BlendDescriptor::REPLACE,
-                    write_mask: wgpu::ColorWriteFlags::all(),
+                    alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                    color_blend: wgpu::BlendDescriptor::REPLACE,
+                    write_mask: wgpu::ColorWrite::all(),
                 },
             ],
             depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
@@ -118,23 +118,23 @@ impl Context {
             index_format: wgpu::IndexFormat::Uint16,
             vertex_buffers: &[
                 wgpu::VertexBufferDescriptor {
-                    stride: mem::size_of::<Vertex>() as u32,
+                    stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::InputStepMode::Vertex,
                     attributes: &[
                         wgpu::VertexAttributeDescriptor {
                             offset: 0,
                             format: wgpu::VertexFormat::Char4,
-                            attribute_index: 0,
+                            shader_location: 0,
                         },
                         wgpu::VertexAttributeDescriptor {
                             offset: 4,
                             format: wgpu::VertexFormat::Uint,
-                            attribute_index: 1,
+                            shader_location: 1,
                         },
                         wgpu::VertexAttributeDescriptor {
                             offset: 8,
                             format: wgpu::VertexFormat::Uchar4Norm,
-                            attribute_index: 2,
+                            shader_location: 2,
                         },
                     ],
                 },
@@ -154,14 +154,16 @@ impl Context {
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             size: extent,
-            array_size: 1,
+            array_layer_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::Rg8Uint,
-            usage: wgpu::TextureUsageFlags::SAMPLED | wgpu::TextureUsageFlags::TRANSFER_DST,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
         });
 
         let staging = device
-            .create_buffer_mapped(NUM_COLOR_IDS as usize, wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .create_buffer_mapped(NUM_COLOR_IDS as usize, wgpu::BufferUsage::TRANSFER_SRC)
             .fill_from_slice(&COLOR_TABLE);
         encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
@@ -172,8 +174,8 @@ impl Context {
             },
             wgpu::TextureCopyView {
                 texture: &texture,
-                level: 0,
-                slice: 0,
+                mip_level: 0,
+                array_layer: 0,
                 origin: wgpu::Origin3d {
                     x: 0.0,
                     y: 0.0,
@@ -184,17 +186,15 @@ impl Context {
         );
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            r_address_mode: wgpu::AddressMode::ClampToEdge,
-            s_address_mode: wgpu::AddressMode::ClampToEdge,
-            t_address_mode: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: 0.0,
             lod_max_clamp: 0.0,
-            max_anisotropy: 0,
             compare_function: wgpu::CompareFunction::Always,
-            border_color: wgpu::BorderColor::TransparentBlack,
         });
         (texture.create_default_view(), sampler)
     }
@@ -209,17 +209,17 @@ impl Context {
             bindings: &[
                 wgpu::BindGroupLayoutBinding { // color map
                     binding: 0,
-                    visibility: wgpu::ShaderStageFlags::VERTEX,
+                    visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::SampledTexture,
                 },
                 wgpu::BindGroupLayoutBinding { // palette map
                     binding: 1,
-                    visibility: wgpu::ShaderStageFlags::VERTEX,
+                    visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::SampledTexture,
                 },
                 wgpu::BindGroupLayoutBinding { // color table sampler
                     binding: 2,
-                    visibility: wgpu::ShaderStageFlags::VERTEX,
+                    visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::Sampler,
                 },
             ],
@@ -228,7 +228,7 @@ impl Context {
             bindings: &[
                 wgpu::BindGroupLayoutBinding { // part locals
                     binding: 0,
-                    visibility: wgpu::ShaderStageFlags::VERTEX,
+                    visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::UniformBuffer,
                 },
             ],

@@ -53,9 +53,9 @@ rust-ini = "0.10"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.1"
-#wgpu = { github = "https://github.com/gfx-rs/wgpu", features = ["local"] }
-#wgpu = { path = "../wgpu/wgpu-rs" }
-wgpu = { version = "0.2.2" }
+wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
+#wgpu = { path = "../wgpu-rs" }
+#wgpu = { version = "0.2.2" }
 # binaries
 env_logger = "0.5"
 getopts = "0.2"

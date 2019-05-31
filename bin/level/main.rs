@@ -5,7 +5,7 @@ mod boilerplate;
 fn main() {
     let (mut harness, settings) = boilerplate::Harness::init("level");
 
-    let app = app::LevelView::new(&settings, &mut harness.device);
+    let app = app::LevelView::new(&settings, harness.extent, &mut harness.device);
 
     harness.main_loop(app);
 }

@@ -37,13 +37,17 @@ float evaluate_palette(uint type, float value, float ycoord) {
     return (mix(terr.z, terr.w, value) + 0.5) / 256.0;
 }
 
-vec4 evaluate_color(uint type, vec2 tex_coord, float height_normalized, float lit_factor) {
+float evaluate_color_id(uint type, vec2 tex_coord, float height_normalized, float lit_factor) {
     float diff =
         textureLodOffset(sampler2D(t_Height, s_MainSampler), tex_coord, 0.0, ivec2(1, 0)).x -
         textureLodOffset(sampler2D(t_Height, s_MainSampler), tex_coord, 0.0, ivec2(-1, 0)).x;
     vec3 mat = type == 0U ? vec3(5.0, 1.25, 0.5) : vec3(1.0);
     float light_clr = evaluate_light(mat, diff);
     float tmp = light_clr - c_HorFactor * (1.0 - height_normalized);
-    float color_id = evaluate_palette(type, lit_factor * tmp, tex_coord.y);
+    return evaluate_palette(type, lit_factor * tmp, tex_coord.y);
+}
+
+vec4 evaluate_color(uint type, vec2 tex_coord, float height_normalized, float lit_factor) {
+    float color_id = evaluate_color_id(type, tex_coord, height_normalized, lit_factor);
     return texture(sampler1D(t_Palette, s_PaletteSampler), color_id);
 }

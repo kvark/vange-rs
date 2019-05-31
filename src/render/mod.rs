@@ -5,12 +5,16 @@ use crate::{
     space::{Camera, Transform},
 };
 
+use glsl_to_spirv;
 use cgmath::Decomposed;
 use wgpu;
 
-use std::io::Error as IoError;
-use std::mem;
-
+use std::{
+    io::{BufReader, Read, Write, Error as IoError},
+    fs::File,
+    mem,
+    path::PathBuf,
+};
 
 //mod collision; ../TODO
 pub mod debug;
@@ -56,11 +60,6 @@ impl Shaders {
         specialization: &[&str],
         device: &wgpu::Device,
     ) -> Result<Self, IoError> {
-        use glsl_to_spirv;
-        use std::fs::File;
-        use std::io::{BufReader, Read, Write};
-        use std::path::PathBuf;
-
         let base_path = PathBuf::from("data").join("shader");
         let path = base_path.join(name).with_extension("glsl");
         if !path.is_file() {
@@ -145,6 +144,76 @@ impl Shaders {
             fs: device.create_shader_module(&spv_fs),
         })
     }
+
+    pub fn new_compute(
+        name: &str,
+        group_size: [u32; 3],
+        specialization: &[&str],
+        device: &wgpu::Device,
+    ) -> Result<wgpu::ShaderModule, IoError> {
+        let base_path = PathBuf::from("data").join("shader");
+        let path = base_path.join(name).with_extension("glsl");
+        if !path.is_file() {
+            panic!("Shader not found: {:?}", path);
+        }
+
+        let mut buf = b"#version 450\n".to_vec();
+        write!(buf, "layout(local_size_x = {}, local_size_y = {}, local_size_z = {}) in;\n",
+            group_size[0], group_size[1], group_size[2])?;
+        write!(buf, "#define SHADER_CS\n")?;
+
+        let mut code = String::new();
+        BufReader::new(File::open(&path)?)
+            .read_to_string(&mut code)?;
+        // parse meta-data
+        {
+            let mut lines = code.lines();
+            let first = lines.next().unwrap();
+            if first.starts_with("//!include") {
+                for include_pair in first.split_whitespace().skip(1) {
+                    let mut temp = include_pair.split(':');
+                    let target = match temp.next().unwrap() {
+                        "cs" => &mut buf,
+                        other => panic!("Unknown target: {}", other),
+                    };
+                    let include = temp.next().unwrap();
+                    let inc_path = base_path
+                        .join(include)
+                        .with_extension("inc.glsl");
+                    BufReader::new(File::open(inc_path)?)
+                        .read_to_end(target)?;
+                }
+            }
+            let second = lines.next().unwrap();
+            if second.starts_with("//!specialization") {
+                for define in second.split_whitespace().skip(1) {
+                    let value = if specialization.contains(&define) {
+                        1
+                    } else {
+                        0
+                    };
+                    write!(buf, "#define {} {}\n", define, value)?;
+                }
+            }
+        }
+
+        write!(buf, "\n{}", code)?;
+        let str_cs = String::from_utf8_lossy(&buf);
+        debug!("cs:\n{}", str_cs);
+
+        let mut output = match glsl_to_spirv::compile(&str_cs, glsl_to_spirv::ShaderType::Compute) {
+            Ok(file) => file,
+            Err(e) => {
+                println!("Generated CS shader:\n{}", str_cs);
+                panic!("\nUnable to compile '{}': {:?}", name, e);
+            }
+        };
+        let mut spv = Vec::new();
+        output.read_to_end(&mut spv).unwrap();
+
+        Ok(device.create_shader_module(&spv))
+
+    }
 }
 
 
@@ -165,14 +234,16 @@ impl Palette {
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             size: extent,
-            array_size: 1,
+            array_layer_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsageFlags::SAMPLED | wgpu::TextureUsageFlags::TRANSFER_DST,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
         });
 
         let staging = device
-            .create_buffer_mapped(data.len(), wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .create_buffer_mapped(data.len(), wgpu::BufferUsage::TRANSFER_SRC)
             .fill_from_slice(data);
         encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
@@ -183,8 +254,8 @@ impl Palette {
             },
             wgpu::TextureCopyView {
                 texture: &texture,
-                level: 0,
-                slice: 0,
+                mip_level: 0,
+                array_layer: 0,
                 origin: wgpu::Origin3d {
                     x: 0.0,
                     y: 0.0,
@@ -215,7 +286,7 @@ impl<'a> RenderModel<'a> {
         let count = self.model.mesh_count();
         let mapping = device.create_buffer_mapped(
             count,
-            wgpu::BufferUsageFlags::TRANSFER_SRC,
+            wgpu::BufferUsage::TRANSFER_SRC,
         );
 
         // body
@@ -250,7 +321,7 @@ impl<'a> RenderModel<'a> {
             0,
             &self.locals_buf,
             0,
-            (count * mem::size_of::<object::Locals>()) as u32,
+            (count * mem::size_of::<object::Locals>()) as wgpu::BufferAddress,
         );
     }
 }
@@ -269,13 +340,14 @@ impl Render {
         level: &level::Level,
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
+        screen_extent: wgpu::Extent3d,
     ) -> Self {
         let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
         let global = global::Context::new(device);
         let object = object::Context::new(&mut init_encoder, device, object_palette, &global);
-        let terrain = terrain::Context::new(&mut init_encoder, device, level, &global, &settings.terrain);
+        let terrain = terrain::Context::new(&mut init_encoder, device, level, &global, &settings.terrain, screen_extent);
         let debug = debug::Context::new(device, &settings.debug, &global);
         device.get_queue().submit(&[
             init_encoder.finish(),
@@ -298,7 +370,7 @@ impl Render {
         pass: &mut wgpu::RenderPass,
         mesh: &model::Mesh,
     ) {
-        pass.set_bind_group(2, &mesh.bind_group);
+        pass.set_bind_group(2, &mesh.bind_group, &[]);
         pass.set_vertex_buffers(&[(&mesh.vertex_buf, 0)]);
         pass.draw(0 .. mesh.num_vertices as u32, 0 .. 1);
     }
@@ -335,7 +407,7 @@ impl Render {
         });
 
         let global_staging = device
-            .create_buffer_mapped(1, wgpu::BufferUsageFlags::TRANSFER_SRC)
+            .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
             .fill_from_slice(&[
                 global::Constants::new(cam, &self.light_config),
             ]);
@@ -344,31 +416,21 @@ impl Render {
             0,
             &self.global.uniform_buf,
             0,
-            mem::size_of::<global::Constants>() as u32,
-        );
-
-        let terrain_staging = device
-            .create_buffer_mapped(1, wgpu::BufferUsageFlags::TRANSFER_SRC)
-            .fill_from_slice(&[
-                terrain::Constants::new(&targets.extent)
-            ]);
-        encoder.copy_buffer_to_buffer(
-            &terrain_staging,
-            0,
-            &self.terrain.uniform_buf,
-            0,
-            mem::size_of::<terrain::Constants>() as u32,
+            mem::size_of::<global::Constants>() as wgpu::BufferAddress,
         );
 
         for rm in render_models {
             rm.prepare(&mut encoder, device);
         }
 
+        self.terrain.prepare(&mut encoder, device, &self.global, cam);
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[
                     wgpu::RenderPassColorAttachmentDescriptor {
                         attachment: targets.color,
+                        resolve_target: None,
                         load_op: wgpu::LoadOp::Clear,
                         store_op: wgpu::StoreOp::Store,
                         clear_color: wgpu::Color {
@@ -387,12 +449,12 @@ impl Render {
                 }),
             });
 
-            pass.set_bind_group(0, &self.global.bind_group);
+            pass.set_bind_group(0, &self.global.bind_group, &[]);
             self.terrain.draw(&mut pass);
 
             // draw vehicle models
             pass.set_pipeline(&self.object.pipeline);
-            pass.set_bind_group(1, &self.object.bind_group);
+            pass.set_bind_group(1, &self.object.bind_group, &[]);
             for rm in render_models {
                 Render::draw_model(&mut pass, &rm.model);
             }
@@ -410,6 +472,10 @@ impl Render {
         info!("Reloading shaders");
         self.object.reload(device);
         self.terrain.reload(device);
+    }
+
+    pub fn resize(&mut self, extent: wgpu::Extent3d, device: &wgpu::Device) {
+        self.terrain.resize(extent, device);
     }
 
     /*

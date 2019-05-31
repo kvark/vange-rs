@@ -67,6 +67,7 @@ pub enum Terrain {
         screen_space: bool,
     },
     Sliced,
+    Scattered,
 }
 
 #[derive(Deserialize)]

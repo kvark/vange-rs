@@ -130,8 +130,8 @@ pub fn load_c3d(
     locals_buf: &wgpu::Buffer,
     locals_id: usize,
 ) -> Arc<Mesh> {
-    let locals_size = mem::size_of::<ObjectLocals>() as u32;
-    let locals_base = locals_id as u32 * locals_size;
+    let locals_size = mem::size_of::<ObjectLocals>() as wgpu::BufferAddress;
+    let locals_base = locals_id as wgpu::BufferAddress * locals_size;
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: locals_layout,
         bindings: &[
@@ -149,7 +149,7 @@ pub fn load_c3d(
     debug!("\tGot {} GPU vertices...", num_vertices);
     let mapping = device.create_buffer_mapped::<ObjectVertex>(
         num_vertices,
-        wgpu::BufferUsageFlags::VERTEX,
+        wgpu::BufferUsage::VERTEX,
     );
     for (chunk, tri) in mapping.data.chunks_mut(3).zip(&raw.geometry.polygons) {
         for (vo, v) in chunk.iter_mut().zip(&tri.vertices) {
@@ -260,7 +260,7 @@ pub fn load_c3d_shape(
     let vertex_buf = {
         let mapping = device.create_buffer_mapped(
             raw.geometry.positions.len(),
-            wgpu::BufferUsageFlags::VERTEX, //| wgpu::BufferUsageFlags::SAMPLED,
+            wgpu::BufferUsage::VERTEX, //| wgpu::BufferUsage::SAMPLED,
         );
         for (vo, p) in mapping.data.iter_mut().zip(raw.geometry.positions) {
             *vo = [p[0] as f32, p[1] as f32, p[2] as f32, 1.0];
@@ -276,11 +276,11 @@ pub fn load_c3d_shape(
         //    .unwrap(),
         vertex_buf,
         polygon_buf: device
-            .create_buffer_mapped(polygon_data.len(), wgpu::BufferUsageFlags::VERTEX)
+            .create_buffer_mapped(polygon_data.len(), wgpu::BufferUsage::VERTEX)
             .fill_from_slice(&polygon_data),
         sample_buf: if with_sample_buf {
             let buffer = device
-                .create_buffer_mapped(sample_data.len(), wgpu::BufferUsageFlags::VERTEX)
+                .create_buffer_mapped(sample_data.len(), wgpu::BufferUsage::VERTEX)
                 .fill_from_slice(&sample_data);
             Some((buffer, sample_data.len()))
         } else {
@@ -302,8 +302,8 @@ pub fn load_m3d(
     let debrie_offset = wheel_offset + raw.wheels.len();
     let locals_num = debrie_offset + raw.debris.len() + raw.slots.len();
     let locals_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        size: (locals_num * mem::size_of::<ObjectLocals>()) as u32,
-        usage: wgpu::BufferUsageFlags::UNIFORM | wgpu::BufferUsageFlags::TRANSFER_DST,
+        size: (locals_num * mem::size_of::<ObjectLocals>()) as wgpu::BufferAddress,
+        usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::TRANSFER_DST,
     });
 
     let model = VisualModel {

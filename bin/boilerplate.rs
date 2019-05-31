@@ -30,7 +30,7 @@ pub struct Harness {
     pub device: wgpu::Device,
     surface: wgpu::Surface,
     swap_chain: wgpu::SwapChain,
-    extent: wgpu::Extent3d,
+    pub extent: wgpu::Extent3d,
     depth_target: wgpu::TextureView,
 }
 
@@ -43,10 +43,11 @@ impl Harness {
         let adapter = instance.get_adapter(&wgpu::AdapterDescriptor {
             power_preference: wgpu::PowerPreference::LowPower,
         });
-        let device = adapter.create_device(&wgpu::DeviceDescriptor {
+        let device = adapter.request_device(&wgpu::DeviceDescriptor {
             extensions: wgpu::Extensions {
                 anisotropic_filtering: false,
             },
+            limits: wgpu::Limits::default(),
         });
 
         info!("Loading the settings");
@@ -73,7 +74,7 @@ impl Harness {
 
         let surface = instance.create_surface(&window);
         let sc_desc = wgpu::SwapChainDescriptor {
-            usage: wgpu::TextureUsageFlags::OUTPUT_ATTACHMENT,
+            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
             format: COLOR_FORMAT,
             width: extent.width,
             height: extent.height,
@@ -82,10 +83,12 @@ impl Harness {
         let depth_target = device
             .create_texture(&wgpu::TextureDescriptor {
                 size: extent,
-                array_size: 1,
+                array_layer_count: 1,
+                mip_level_count: 1,
+                sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: DEPTH_FORMAT,
-                usage: wgpu::TextureUsageFlags::OUTPUT_ATTACHMENT,
+                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
             })
             .create_default_view();
 
@@ -158,7 +161,7 @@ impl Harness {
             if let Some(extent) = resized_extent {
                 self.extent = extent;
                 let sc_desc = wgpu::SwapChainDescriptor {
-                    usage: wgpu::TextureUsageFlags::OUTPUT_ATTACHMENT,
+                    usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
                     format: COLOR_FORMAT,
                     width: extent.width,
                     height: extent.height,
@@ -167,10 +170,12 @@ impl Harness {
                 self.depth_target = self.device
                     .create_texture(&wgpu::TextureDescriptor {
                         size: extent,
-                        array_size: 1,
+                        array_layer_count: 1,
+                        mip_level_count: 1,
+                        sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: DEPTH_FORMAT,
-                        usage: wgpu::TextureUsageFlags::OUTPUT_ATTACHMENT,
+                        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
                     })
                     .create_default_view();
                 app.resize(&self.device, extent);
