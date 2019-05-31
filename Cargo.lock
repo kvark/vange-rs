@@ -1241,16 +1241,16 @@ dependencies = [
 [[package]]
 name = "wgpu"
 version = "0.2.2"
-source = "git+https://github.com/gfx-rs/wgpu-rs#5a1c5c269ab5d0cebaaddff933d6c75d5e566d2d"
+source = "git+https://github.com/gfx-rs/wgpu-rs#44ce0875f1cb339c802f9233e10e4ba42ee97bd1"
 dependencies = [
  "arrayvec 0.4.10 (registry+https://github.com/rust-lang/crates.io-index)",
- "wgpu-native 0.2.6 (git+https://github.com/gfx-rs/wgpu?rev=9276cd51c0cc0b3b5bd2e7ce9c7a09aeca313227)",
+ "wgpu-native 0.2.6 (git+https://github.com/gfx-rs/wgpu?rev=803c607794c64feeab66d066d5f748f49005d0b4)",
 ]
 
 [[package]]
 name = "wgpu-native"
 version = "0.2.6"
-source = "git+https://github.com/gfx-rs/wgpu?rev=9276cd51c0cc0b3b5bd2e7ce9c7a09aeca313227#9276cd51c0cc0b3b5bd2e7ce9c7a09aeca313227"
+source = "git+https://github.com/gfx-rs/wgpu?rev=803c607794c64feeab66d066d5f748f49005d0b4#803c607794c64feeab66d066d5f748f49005d0b4"
 dependencies = [
  "arrayvec 0.4.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitflags 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1492,7 +1492,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum wayland-scanner 0.21.11 (registry+https://github.com/rust-lang/crates.io-index)" = "3611f231e675e15c2feb7623103e6449edc6f10b0598cafb3e16e590a0561355"
 "checksum wayland-sys 0.21.11 (registry+https://github.com/rust-lang/crates.io-index)" = "2a69d729a1747a5bf40ae05b94c7904b64fbf2381e365c046d872ce4a34aa826"
 "checksum wgpu 0.2.2 (git+https://github.com/gfx-rs/wgpu-rs)" = "<none>"
-"checksum wgpu-native 0.2.6 (git+https://github.com/gfx-rs/wgpu?rev=9276cd51c0cc0b3b5bd2e7ce9c7a09aeca313227)" = "<none>"
+"checksum wgpu-native 0.2.6 (git+https://github.com/gfx-rs/wgpu?rev=803c607794c64feeab66d066d5f748f49005d0b4)" = "<none>"
 "checksum winapi 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)" = "92c1eb33641e276cfa214a0522acad57be5c56b10cb348b3c5117db75f3ac4b0"
 "checksum winapi-i686-pc-windows-gnu 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
 "checksum winapi-util 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7168bab6e1daee33b4557efd0e95d5ca70a03706d39fa5f3fe7a236f584b03c9"
