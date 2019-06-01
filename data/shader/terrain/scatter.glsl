@@ -18,9 +18,32 @@ layout(set = 2, binding = 0, std430) buffer Storage
     uint w_Data[];
 };
 layout(set = 2, binding = 1) uniform c_Scatter {
-    vec4 u_TerrainOffsetScale;
+    vec2 u_CamOrigin;
+    vec2 u_CamDir;
+    vec2 u_RangeY;
+    vec2 u_RangeX;
 };
 
+
+const uint WORK_GROUP_SIZE = 16;
+
+vec2 generate_pos() {
+    float y_sqrt = mix(
+        sqrt(abs(u_RangeY.x)) * sign(u_RangeY.x),
+        sqrt(abs(u_RangeY.y)) * sign(u_RangeY.y),
+        float(gl_GlobalInvocationID.y) / float(gl_NumWorkGroups.y * WORK_GROUP_SIZE - 1)
+    );
+    float y = y_sqrt * y_sqrt * sign(y_sqrt);
+    float x_limit = mix(
+        u_RangeX.x, u_RangeX.y,
+        (y - u_RangeY.x) / (u_RangeY.y - u_RangeY.x)
+    );
+    float x = mix(
+        -x_limit, x_limit,
+        float(gl_GlobalInvocationID.x) / float(gl_NumWorkGroups.x * WORK_GROUP_SIZE - 1)
+    );
+    return u_CamOrigin + u_CamDir * y + vec2(u_CamDir.y, -u_CamDir.x) * x;
+}
 
 bool is_visible(vec4 p) {
     return p.w > 0.0 && p.z > 0.0 && p.x >= -p.w && p.x <= p.w && p.y >= -p.w && p.y < p.w;
@@ -40,7 +63,7 @@ void add_voxel(vec2 pos, float altitude, uint type, float lit_factor) {
 }
 
 void main() {
-    vec2 pos = vec2(gl_GlobalInvocationID.xy) * u_TerrainOffsetScale.xy + u_TerrainOffsetScale.zw;
+    vec2 pos = generate_pos();
     Surface suf = get_surface(pos);
     if (true) {
         add_voxel(pos, suf.high_alt, suf.high_type, 1.0);

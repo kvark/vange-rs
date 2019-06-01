@@ -29,8 +29,8 @@
 			pos: (1, 2, 4, 0), // w=0 for directional, w=1 for point light
 			color: (1, 1, 1, 1),
 		),
-		//example: Tessellated( screen_space: true ),
 		//example: RayTracedOld,
+		//example: Scattered( density: 2 ),
 		terrain: RayTracedOld,
 		debug: (
 			max_vertices: 512,

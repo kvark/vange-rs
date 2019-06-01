@@ -31,15 +31,30 @@ struct Constants {
     _scr_size: [u32; 4],
 }
 
-#[derive(Clone, Copy)]
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug)]
 struct ScatterConstants {
-    _scale_offset: [f32; 4],
+    origin: [f32; 2],
+    dir: [f32; 2],
+    y_range: [f32; 2],
+    x_range: [f32; 2],
 }
 
-fn compute_camera_footprint(cam: &Camera, group_dim_count: u32) -> [f32; 4] {
-    use cgmath::{EuclideanSpace, Point3, SquareMatrix, Transform, Vector3};
+fn compute_scatter_constants(cam: &Camera) -> ScatterConstants {
+    use cgmath::{prelude::*, Point2, Point3, Vector2, Vector3};
 
-    fn intersect(base: &Vector3<f32>, target: Point3<f32>, height: u32) -> Vector3<i32> {
+    let cam_origin = Point2::new(cam.loc.x, cam.loc.y);
+    let cam_dir = {
+        let vec = cam.rot.rotate_vector(Vector3::unit_z());
+        let v2 = Vector2::new(vec.x, vec.y);
+        if v2.magnitude2() > 0.0 {
+            v2.normalize()
+        } else {
+            Vector2::new(0.0, 1.0)
+        }
+    };
+
+    fn intersect(base: &Vector3<f32>, target: Point3<f32>, height: u32) -> Point2<f32> {
         let dir = target.to_vec() - *base;
         let t = if dir.z == 0.0 {
             0.0
@@ -47,14 +62,20 @@ fn compute_camera_footprint(cam: &Camera, group_dim_count: u32) -> [f32; 4] {
             (height as f32 - base.z)/dir.z
         };
         let end = base + dir * t.max(0.0);
-        end.cast::<i32>().unwrap()
+        Point2::new(end.x, end.y)
     }
 
     let mx_invp = cam.get_view_proj().invert().unwrap();
-    let center = mx_invp
-        .transform_point(Point3::new(0.0, 0.0, 0.0));
-    let center_base = intersect(&cam.loc, center, 0);
-    let (mut pmin, mut pmax) = (center_base, center_base);
+    let y_center = {
+        let center = mx_invp
+            .transform_point(Point3::new(0.0, 0.0, 0.0));
+        let center_base = intersect(&cam.loc, center, 0);
+        (center_base - cam_origin).dot(cam_dir)
+    };
+    let mut y_range = y_center .. y_center;
+    let mut x0 = 0f32 .. 0.0;
+    let mut x1 = 0f32 .. 0.0;
+
     let local_positions = [
         Point3::new(1.0, 1.0, 0.0),
         Point3::new(-1.0, 1.0, 0.0),
@@ -66,18 +87,24 @@ fn compute_camera_footprint(cam: &Camera, group_dim_count: u32) -> [f32; 4] {
         let wp = mx_invp.transform_point(lp);
         let pa = intersect(&cam.loc, wp, 0);
         let pb = intersect(&cam.loc, wp, level::HEIGHT_SCALE);
-        pmin.x = pmin.x.min(pa.x.min(pb.x));
-        pmin.y = pmin.y.min(pa.y.min(pb.y));
-        pmax.x = pmax.x.max(pa.x.max(pb.x));
-        pmax.y = pmax.y.max(pa.y.max(pb.y));
+        for p in &[pa, pb] {
+            let dir = *p - cam_origin;
+            let y = dir.dot(cam_dir);
+            y_range.start = y_range.start.min(y);
+            y_range.end = y_range.end.max(y);
+            let x = dir.x * cam_dir.y - dir.y * cam_dir.x;
+            let range = if y > y_center { &mut x1 } else { &mut x0 };
+            range.start = range.start.min(x);
+            range.end = range.end.max(x);
+        }
     }
 
-    [
-        (pmax.x - pmin.x) as f32 / (group_dim_count * SCATTER_GROUP_SIZE[0]) as f32,
-        (pmax.y - pmin.y) as f32 / (group_dim_count * SCATTER_GROUP_SIZE[1]) as f32,
-        pmin.x as f32,
-        pmin.y as f32,
-    ]
+    ScatterConstants {
+        origin: cam_origin.into(),
+        dir: cam_dir.into(),
+        y_range: [y_range.start, y_range.end],
+        x_range: [x0.end.max(-x0.start), x1.end.max(-x1.start)],
+    }
 }
 
 pub enum Kind {
@@ -107,6 +134,7 @@ pub enum Kind {
         bind_group: wgpu::BindGroup,
         constant_buf: wgpu::Buffer,
         compute_groups: [u32; 3],
+        density: u32,
     },
 }
 
@@ -663,7 +691,7 @@ impl Context {
             ],
         });
 
-        let kind = match config {
+        let kind = match *config {
             TerrainSettings::RayTracedOld => {
                 let vertices = [
                     Vertex { _pos: [0, 0, 0, 1] },
@@ -715,7 +743,7 @@ impl Context {
                     num_indices: indices.len(),
                 }
             }
-            TerrainSettings::Scattered => {
+            TerrainSettings::Scattered { density } => {
                 let local_bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     bindings: &[
                         wgpu::BindGroupLayoutBinding { // output map
@@ -759,6 +787,7 @@ impl Context {
                     bind_group: local_bg,
                     constant_buf,
                     compute_groups,
+                    density,
                 }
             }
         };
@@ -857,12 +886,10 @@ impl Context {
             ref bind_group,
             ref constant_buf,
             compute_groups,
+            density,
             ..
         } = self.kind {
-            let group_count = 128; //TODO: figure out based on the angle
-            let scatter_constants = ScatterConstants {
-                _scale_offset: compute_camera_footprint(cam, group_count),
-            };
+            let scatter_constants = compute_scatter_constants(cam);
             let staging = device
                 .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
                 .fill_from_slice(&[
@@ -883,7 +910,7 @@ impl Context {
             pass.set_pipeline(clear_pipeline);
             pass.dispatch(compute_groups[0], compute_groups[1], compute_groups[2]);
             pass.set_pipeline(scatter_pipeline);
-            pass.dispatch(group_count, group_count, 1);
+            pass.dispatch(compute_groups[0] * density, compute_groups[1] * density, 1);
         }
 
         self.pending_resize = None;
