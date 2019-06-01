@@ -82,8 +82,9 @@ Surface get_surface(vec2 pos) {
             delta = (get_delta(meta) << c_DeltaBits) + get_delta(meta_high);
         }
 
-        suf.low_alt =
-            textureLodOffset(sampler2D(t_Height, s_MainSampler), suf.tex_coord, 0.0, ivec2(-1, 0)).x
+        suf.low_alt = //TODO: the `LodOffset` doesn't appear to work in Metal compute
+            //textureLodOffset(sampler2D(t_Height, s_MainSampler), suf.tex_coord, 0.0, ivec2(-1, 0)).x
+            textureLod(sampler2D(t_Height, s_MainSampler), suf.tex_coord - vec2(1.0 / u_TextureScale.x, 0.0), 0.0).x
             * u_TextureScale.z;
         suf.high_alt = textureLod(sampler2D(t_Height, s_MainSampler), suf.tex_coord, 0.0).x * u_TextureScale.z;
         suf.delta = float(delta) * c_DeltaScale * u_TextureScale.z;

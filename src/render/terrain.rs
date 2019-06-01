@@ -134,7 +134,7 @@ pub enum Kind {
         bind_group: wgpu::BindGroup,
         constant_buf: wgpu::Buffer,
         compute_groups: [u32; 3],
-        density: u32,
+        density: [u32; 3],
     },
 }
 
@@ -910,7 +910,7 @@ impl Context {
             pass.set_pipeline(clear_pipeline);
             pass.dispatch(compute_groups[0], compute_groups[1], compute_groups[2]);
             pass.set_pipeline(scatter_pipeline);
-            pass.dispatch(compute_groups[0] * density, compute_groups[1] * density, 1);
+            pass.dispatch(compute_groups[0] * density[0], compute_groups[1] * density[1], density[2]);
         }
 
         self.pending_resize = None;
