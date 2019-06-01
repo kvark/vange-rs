@@ -68,7 +68,7 @@ pub enum Terrain {
     },
     Sliced,
     Scattered {
-        density: u32,
+        density: [u32; 3],
     },
 }
 

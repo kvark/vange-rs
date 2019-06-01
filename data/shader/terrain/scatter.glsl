@@ -25,13 +25,11 @@ layout(set = 2, binding = 1) uniform c_Scatter {
 };
 
 
-const uint WORK_GROUP_SIZE = 16;
-
 vec2 generate_pos() {
     float y_sqrt = mix(
         sqrt(abs(u_RangeY.x)) * sign(u_RangeY.x),
         sqrt(abs(u_RangeY.y)) * sign(u_RangeY.y),
-        float(gl_GlobalInvocationID.y) / float(gl_NumWorkGroups.y * WORK_GROUP_SIZE - 1)
+        float(gl_GlobalInvocationID.y) / float(gl_NumWorkGroups.y * gl_WorkGroupSize.y - 1)
     );
     float y = y_sqrt * y_sqrt * sign(y_sqrt);
     float x_limit = mix(
@@ -40,7 +38,7 @@ vec2 generate_pos() {
     );
     float x = mix(
         -x_limit, x_limit,
-        float(gl_GlobalInvocationID.x) / float(gl_NumWorkGroups.x * WORK_GROUP_SIZE - 1)
+        float(gl_GlobalInvocationID.x) / float(gl_NumWorkGroups.x * gl_WorkGroupSize.x - 1)
     );
     return u_CamOrigin + u_CamDir * y + vec2(u_CamDir.y, -u_CamDir.x) * x;
 }
@@ -65,16 +63,17 @@ void add_voxel(vec2 pos, float altitude, uint type, float lit_factor) {
 void main() {
     vec2 pos = generate_pos();
     Surface suf = get_surface(pos);
-    if (true) {
-        add_voxel(pos, suf.high_alt, suf.high_type, 1.0);
-    }
+    float base = 0.0;
+    float t = float(gl_GlobalInvocationID.z) / float(gl_NumWorkGroups.z * gl_WorkGroupSize.z);
+
     if (suf.delta != 0.0) {
-        add_voxel(pos, suf.low_alt, suf.low_type, 0.25);
-        float mid = mix(suf.low_alt + suf.delta, suf.high_alt, 0.5);
-        add_voxel(pos, mid, suf.high_type, 1.0);
-    } else {
-        add_voxel(pos, 0.4 * suf.high_alt, suf.high_type, 1.0);
-        add_voxel(pos, 0.8 * suf.high_alt, suf.high_type, 1.0);
+        float alt = mix(suf.low_alt, 0.0, t);
+        add_voxel(pos, alt, suf.low_type, 0.25);
+        base = suf.low_alt + suf.delta;
+    }
+    if (true) {
+        float alt = mix(suf.high_alt, base, t);
+        add_voxel(pos, alt, suf.high_type, 1.0);
     }
 }
 #endif //CS
