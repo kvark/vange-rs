@@ -1,36 +1,28 @@
-varying vec3 v_TexCoord;
-
 #ifdef SHADER_VS
 
-attribute vec4 a_Pos;
+layout(location = 0) in vec2 a_Pos;
 
 void main() {
-    v_TexCoord = a_Pos.xyz;
-    gl_Position = vec4(a_Pos.xy * 2.0 - 1.0, 0.0, 1.0);
+    gl_Position = vec4(2.0 * a_Pos - 1.0, 0.0, 1.0);
 }
 #endif //VS
 
 
 #ifdef SHADER_FS
 
-uniform sampler2DArray t_Height;
+layout(set = 0, binding = 0) uniform sampler s_Height;
+layout(set = 0, binding = 1) uniform texture2D t_Height;
 
-uniform c_Surface {
-    vec4 u_TextureScale;    // XY = source size, Z = source mipmap level, W = 1
-};
-
-
-out float Target0;
+layout(location = 0) out float o_Height;
 
 void main() {
-    ivec3 tc = ivec3(u_TextureScale.xyw * v_TexCoord);
-    int lod = int(u_TextureScale.z);
+    ivec2 tc = ivec2(gl_FragCoord.xy * 2.0);
     vec4 heights = vec4(
-        texelFetch(t_Height, tc - ivec3(0, 0, 0), lod).x,
-        texelFetch(t_Height, tc - ivec3(0, 1, 0), lod).x,
-        texelFetch(t_Height, tc - ivec3(1, 0, 0), lod).x,
-        texelFetch(t_Height, tc - ivec3(1, 1, 0), lod).x
+        texelFetch(sampler2D(t_Height, s_Height), tc - ivec2(0, 0), 0).x,
+        texelFetch(sampler2D(t_Height, s_Height), tc - ivec2(0, 1), 0).x,
+        texelFetch(sampler2D(t_Height, s_Height), tc - ivec2(1, 0), 0).x,
+        texelFetch(sampler2D(t_Height, s_Height), tc - ivec2(1, 1), 0).x
     );
-    Target0 = max(max(heights.x, heights.y), max(heights.z, heights.w));
+    o_Height = max(max(heights.x, heights.y), max(heights.z, heights.w));
 }
 #endif //FS

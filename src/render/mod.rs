@@ -19,6 +19,7 @@ use std::{
 //mod collision; ../TODO
 pub mod debug;
 pub mod global;
+pub mod mipmap;
 pub mod object;
 pub mod terrain;
 

@@ -56,11 +56,11 @@ pub struct Light {
 
 #[derive(Clone, Deserialize)]
 pub enum Terrain {
-    RayTracedOld,
-    RayTraced {
-        mip_count: usize,
-        max_jumps: usize,
-        max_steps: usize,
+    RayTraced,
+    RayMipTraced {
+        mip_count: u32,
+        max_jumps: u32,
+        max_steps: u32,
         debug: bool,
     },
     Tessellated {
