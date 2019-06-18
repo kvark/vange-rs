@@ -29,9 +29,11 @@
 			pos: (1, 2, 4, 0), // w=0 for directional, w=1 for point light
 			color: (1, 1, 1, 1),
 		),
-		//example: RayTracedOld,
+		//example: RayTraced,
+		//example: RayMipTraced (mip_count: 10, max_jumps: 25, max_steps: 100, debug: false),
 		//example: Scattered( density: (2, 2, 2) ),
-		terrain: RayTracedOld,
+		//example: Sliced,
+		terrain: RayTraced,
 		debug: (
 			max_vertices: 512,
 			collision_shapes: false,

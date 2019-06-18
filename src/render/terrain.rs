@@ -5,6 +5,7 @@ use crate::{
         Palette, Shaders,
         COLOR_FORMAT, DEPTH_FORMAT,
         global::Context as GlobalContext,
+        mipmap::MaxMipper,
     },
     space::Camera,
 };
@@ -13,6 +14,7 @@ use wgpu;
 
 use std::mem;
 
+pub const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const SCATTER_GROUP_SIZE: [u32; 3] = [16, 16, 1];
 
 #[repr(C)]
@@ -29,6 +31,7 @@ struct SurfaceConstants {
 #[derive(Clone, Copy)]
 struct Constants {
     _scr_size: [u32; 4],
+    _params: [u32; 4],
 }
 
 #[allow(dead_code)]
@@ -107,12 +110,36 @@ fn compute_scatter_constants(cam: &Camera) -> ScatterConstants {
     }
 }
 
-pub enum Kind {
+struct Geometry {
+    vertex_buf: wgpu::Buffer,
+    index_buf: wgpu::Buffer,
+    num_indices: usize,
+}
+
+impl Geometry {
+    fn new(vertices: &[Vertex], indices: &[u16], device: &wgpu::Device) -> Self {
+        Geometry {
+            vertex_buf: device
+                .create_buffer_mapped(vertices.len(), wgpu::BufferUsage::VERTEX)
+                .fill_from_slice(&vertices),
+            index_buf: device
+                .create_buffer_mapped(indices.len(), wgpu::BufferUsage::INDEX)
+                .fill_from_slice(&indices),
+            num_indices: indices.len(),
+        }
+    }
+}
+
+enum Kind {
     Ray {
         pipeline: wgpu::RenderPipeline,
-        vertex_buf: wgpu::Buffer,
-        index_buf: wgpu::Buffer,
-        num_indices: usize,
+        geo: Geometry,
+    },
+    RayMip {
+        pipeline: wgpu::RenderPipeline,
+        geo: Geometry,
+        mipper: MaxMipper,
+        params: [u32; 4],
     },
     /*Tess {
         low: gfx::PipelineState<R, terrain::Meta>,
@@ -121,9 +148,7 @@ pub enum Kind {
     },*/
     Slice {
         pipeline: wgpu::RenderPipeline,
-        vertex_buf: wgpu::Buffer,
-        index_buf: wgpu::Buffer,
-        num_indices: usize,
+        geo: Geometry,
     },
     Scatter {
         pipeline_layout: wgpu::PipelineLayout,
@@ -138,11 +163,19 @@ pub enum Kind {
     },
 }
 
+pub struct Rect {
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+}
+
 pub struct Context {
     pub uniform_buf: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
     pipeline_layout: wgpu::PipelineLayout,
-    pub kind: Kind,
+    kind: Kind,
+    dirty_rects: Vec<Rect>,
     pending_resize: Option<wgpu::Extent3d>,
 }
 
@@ -150,8 +183,9 @@ impl Context {
     fn create_ray_pipeline(
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
+        name: &str,
     ) -> wgpu::RenderPipeline {
-        let shaders = Shaders::new("terrain/ray_old", &[], device)
+        let shaders = Shaders::new(name, &[], device)
             .unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
@@ -397,6 +431,11 @@ impl Context {
             height: 1,
             depth: 1,
         };
+        let (terrain_mip_count, terrain_extra_usage) = match *config {
+            TerrainSettings::RayMipTraced { mip_count, .. } =>
+                (mip_count, wgpu::TextureUsage::OUTPUT_ATTACHMENT),
+            _ => (1, wgpu::TextureUsage::empty()),
+        };
 
         let terrrain_table = level.terrains
             .iter()
@@ -411,11 +450,11 @@ impl Context {
         let height_texture = device.create_texture(&wgpu::TextureDescriptor {
             size: extent,
             array_layer_count: 1,
-            mip_level_count: 1,
+            mip_level_count: terrain_mip_count as u32,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
+            format: HEIGHT_FORMAT,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST | terrain_extra_usage,
         });
         let meta_texture = device.create_texture(&wgpu::TextureDescriptor {
             size: extent,
@@ -692,55 +731,79 @@ impl Context {
         });
 
         let kind = match *config {
-            TerrainSettings::RayTracedOld => {
-                let vertices = [
-                    Vertex { _pos: [0, 0, 0, 1] },
-                    Vertex { _pos: [-1, 0, 0, 0] },
-                    Vertex { _pos: [0, -1, 0, 0] },
-                    Vertex { _pos: [1, 0, 0, 0] },
-                    Vertex { _pos: [0, 1, 0, 0] },
-                ];
-                let indices = [0u16, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
+            TerrainSettings::RayTraced => {
+                let geo = Geometry::new(
+                    &[
+                        Vertex { _pos: [0, 0, 0, 1] },
+                        Vertex { _pos: [-1, 0, 0, 0] },
+                        Vertex { _pos: [0, -1, 0, 0] },
+                        Vertex { _pos: [1, 0, 0, 0] },
+                        Vertex { _pos: [0, 1, 0, 0] },
+                    ],
+                    &[0u16, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1],
+                    device,
+                );
 
-                let vertex_buf = device
-                    .create_buffer_mapped(vertices.len(), wgpu::BufferUsage::VERTEX)
-                    .fill_from_slice(&vertices);
-                let index_buf = device
-                    .create_buffer_mapped(indices.len(), wgpu::BufferUsage::INDEX)
-                    .fill_from_slice(&indices);
-
-                let pipeline = Self::create_ray_pipeline(&pipeline_layout, device);
+                let pipeline = Self::create_ray_pipeline(
+                    &pipeline_layout,
+                    device,
+                    "terrain/ray",
+                );
                 Kind::Ray {
                     pipeline,
-                    vertex_buf,
-                    index_buf,
-                    num_indices: indices.len(),
+                    geo,
                 }
             }
-            TerrainSettings::RayTraced { .. } => unimplemented!(),
+            TerrainSettings::RayMipTraced { mip_count, max_jumps, max_steps, debug } => {
+                let geo = Geometry::new(
+                    &[
+                        Vertex { _pos: [0, 0, 0, 1] },
+                        Vertex { _pos: [-1, 0, 0, 0] },
+                        Vertex { _pos: [0, -1, 0, 0] },
+                        Vertex { _pos: [1, 0, 0, 0] },
+                        Vertex { _pos: [0, 1, 0, 0] },
+                    ],
+                    &[0u16, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1],
+                    device,
+                );
+
+                let pipeline = Self::create_ray_pipeline(
+                    &pipeline_layout,
+                    device,
+                    "terrain/ray_mip",
+                );
+                let mipper = MaxMipper::new(&height_texture, extent, mip_count, device);
+
+                Kind::RayMip {
+                    pipeline,
+                    geo,
+                    mipper,
+                    params: [
+                        mip_count - 1,
+                        max_jumps,
+                        max_steps,
+                        if debug { 1 } else { 0 },
+                    ],
+                }
+            }
             TerrainSettings::Tessellated { .. } => unimplemented!(),
             TerrainSettings::Sliced => {
-                let vertices = [
-                    Vertex { _pos: [-1, -1, 0, 1] },
-                    Vertex { _pos: [1, -1, 0, 1] },
-                    Vertex { _pos: [1, 1, 0, 1] },
-                    Vertex { _pos: [-1, 1, 0, 1] },
-                ];
-                let indices = [0u16, 1, 2, 0, 2, 3];
-
-                let vertex_buf = device
-                    .create_buffer_mapped(vertices.len(), wgpu::BufferUsage::VERTEX)
-                    .fill_from_slice(&vertices);
-                let index_buf = device
-                    .create_buffer_mapped(indices.len(), wgpu::BufferUsage::INDEX)
-                    .fill_from_slice(&indices);
+                let geo = Geometry::new(
+                    &[
+                        Vertex { _pos: [-1, -1, 0, 1] },
+                        Vertex { _pos: [1, -1, 0, 1] },
+                        Vertex { _pos: [1, 1, 0, 1] },
+                        Vertex { _pos: [-1, 1, 0, 1] },
+                    ],
+                    &[0u16, 1, 2, 0, 2, 3],
+                    device,
+                );
 
                 let pipeline = Self::create_slice_pipeline(&pipeline_layout, device);
+
                 Kind::Slice {
                     pipeline,
-                    vertex_buf,
-                    index_buf,
-                    num_indices: indices.len(),
+                    geo,
                 }
             }
             TerrainSettings::Scattered { density } => {
@@ -797,6 +860,14 @@ impl Context {
             bind_group,
             pipeline_layout,
             kind,
+            dirty_rects: vec![
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: level.size.0 as u16,
+                    h: level.size.1 as u16,
+                },
+            ],
             pending_resize: Some(screen_extent),
         }
     }
@@ -807,7 +878,16 @@ impl Context {
                 *pipeline = Self::create_ray_pipeline(
                     &self.pipeline_layout,
                     device,
+                    "terrain/ray",
                 );
+            }
+            Kind::RayMip { ref mut pipeline, ref mut mipper, .. } => {
+                *pipeline = Self::create_ray_pipeline(
+                    &self.pipeline_layout,
+                    device,
+                    "terrain/ray_mip",
+                );
+                mipper.reload(device);
             }
             /*
             Terrain::Tess { ref mut low, ref mut high, screen_space } => {
@@ -863,12 +943,25 @@ impl Context {
         global: &GlobalContext,
         cam: &Camera,
     ) {
+        if !self.dirty_rects.is_empty() {
+            if let Kind::RayMip { ref mipper, .. } = self.kind {
+                mipper.update(&self.dirty_rects, encoder, device);
+            }
+            self.dirty_rects.clear();
+        }
+
+        let mut _params = match self.kind {
+            Kind::RayMip { params, .. } => params,
+            _ => [0; 4],
+        };
+
         if let Some(size) = self.pending_resize {
             let staging = device
                 .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
                 .fill_from_slice(&[
                     Constants {
                         _scr_size: [size.width, size.height, 0, 0],
+                        _params,
                     },
                 ]);
             encoder.copy_buffer_to_buffer(
@@ -920,22 +1013,23 @@ impl Context {
         pass.set_bind_group(1, &self.bind_group, &[]);
         // draw terrain
         match self.kind {
-            Kind::Ray { ref pipeline, ref index_buf, ref vertex_buf, num_indices } => {
+            Kind::Ray { ref pipeline, ref geo } |
+            Kind::RayMip { ref pipeline, ref geo, .. } => {
                 pass.set_pipeline(pipeline);
-                pass.set_index_buffer(index_buf, 0);
-                pass.set_vertex_buffers(&[(vertex_buf, 0)]);
-                pass.draw_indexed(0 .. num_indices as u32, 0, 0 .. 1);
+                pass.set_index_buffer(&geo.index_buf, 0);
+                pass.set_vertex_buffers(&[(&geo.vertex_buf, 0)]);
+                pass.draw_indexed(0 .. geo.num_indices as u32, 0, 0 .. 1);
             }
             /*
             Kind::Tess { ref low, ref high, .. } => {
                 encoder.draw(&self.terrain_slice, low, &self.terrain_data);
                 encoder.draw(&self.terrain_slice, high, &self.terrain_data);
             }*/
-            Kind::Slice { ref pipeline, ref index_buf, ref vertex_buf, num_indices } => {
+            Kind::Slice { ref pipeline, ref geo } => {
                 pass.set_pipeline(pipeline);
-                pass.set_index_buffer(index_buf, 0);
-                pass.set_vertex_buffers(&[(vertex_buf, 0)]);
-                pass.draw_indexed(0 .. num_indices as u32, 0, 0 .. 0x100);
+                pass.set_index_buffer(&geo.index_buf, 0);
+                pass.set_vertex_buffers(&[(&geo.vertex_buf, 0)]);
+                pass.draw_indexed(0 .. geo.num_indices as u32, 0, 0 .. 1);
             }
             Kind::Scatter { ref copy_pipeline, ref bind_group, .. } => {
                 pass.set_pipeline(copy_pipeline);
