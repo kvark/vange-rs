@@ -288,12 +288,17 @@ impl Application for LevelView {
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
-    ) -> wgpu::CommandBuffer {
+    ) -> Vec<wgpu::CommandBuffer> {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            todo: 0,
+        });
         self.render.draw_world(
+            &mut encoder,
             &[],
             &self.cam,
             targets,
             device,
-        )
+        );
+        vec![encoder.finish()]
     }
 }

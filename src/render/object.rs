@@ -8,8 +8,6 @@ use crate::{
 };
 use m3d::NUM_COLOR_IDS;
 
-use wgpu;
-
 use std::mem;
 
 
@@ -42,14 +40,15 @@ const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
 ];
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 pub struct Vertex {
     pub pos: [i8; 4],
     pub color: u32,
     pub normal: [i8; 4],
 }
 
-#[derive(Clone, Copy)]
+#[repr(C)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 pub struct Locals {
     _matrix: [[f32; 4]; 4],
     _pad: [u8; 192], //HACK: pad to 256
@@ -68,6 +67,7 @@ impl Locals {
 pub struct Context {
     pub bind_group: wgpu::BindGroup,
     pub part_bind_group_layout: wgpu::BindGroupLayout,
+    pub shape_bind_group_layout: wgpu::BindGroupLayout,
     pub pipeline_layout: wgpu::PipelineLayout,
     pub pipeline: wgpu::RenderPipeline,
 }
@@ -241,6 +241,16 @@ impl Context {
                 },
             ],
         });
+        let shape_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            bindings: &[
+                wgpu::BindGroupLayoutBinding { // shape locals
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::VERTEX,
+                    ty: wgpu::BindingType::StorageBuffer { dynamic: false, readonly: true },
+                },
+            ],
+        });
+
         let palette = Palette::new(init_encoder, device, palette_data);
         let (color_table_view, color_table_sampler) = Self::create_color_table(
             init_encoder, device
@@ -274,6 +284,7 @@ impl Context {
         Context {
             bind_group,
             part_bind_group_layout,
+            shape_bind_group_layout,
             pipeline_layout,
             pipeline,
         }

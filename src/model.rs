@@ -1,11 +1,13 @@
 use crate::render::{
     ShapePolygon,
     debug::Position as DebugPos,
-    object::{Locals as ObjectLocals, Vertex as ObjectVertex},
+    object::{
+        Context as ObjectContext,
+        Locals as ObjectLocals,
+        Vertex as ObjectVertex,
+    },
 };
 use m3d;
-
-use wgpu;
 
 use std::{
     mem,
@@ -36,13 +38,14 @@ pub struct Shape {
     pub polygons: Vec<Polygon>,
     pub samples: Vec<RawVertex>,
     pub vertex_buf: wgpu::Buffer,
-    //pub vertex_view: Arc<wgpu::TextureView>,
     pub polygon_buf: wgpu::Buffer,
     pub sample_buf: Option<(wgpu::Buffer, usize)>,
+    pub bind_group: wgpu::BindGroup,
     pub bounds: m3d::Bounds,
 }
 
 pub type RawVertex = [i8; 3];
+pub type ShapeVertex = [i8; 4];
 
 struct Tessellator {
     samples: Vec<RawVertex>,
@@ -126,14 +129,14 @@ fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
 pub fn load_c3d(
     raw: m3d::Mesh<m3d::Geometry<m3d::DrawTriangle>>,
     device: &wgpu::Device,
-    locals_layout: &wgpu::BindGroupLayout,
     locals_buf: &wgpu::Buffer,
     locals_id: usize,
+    object: &ObjectContext,
 ) -> Arc<Mesh> {
     let locals_size = mem::size_of::<ObjectLocals>() as wgpu::BufferAddress;
     let locals_base = locals_id as wgpu::BufferAddress * locals_size;
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: locals_layout,
+        layout: &object.part_bind_group_layout,
         bindings: &[
             wgpu::Binding {
                 binding: 0,
@@ -182,6 +185,7 @@ pub fn load_c3d_shape(
     raw: m3d::Mesh<m3d::Geometry<m3d::CollisionQuad>>,
     device: &wgpu::Device,
     with_sample_buf: bool,
+    object: &ObjectContext,
 ) -> Arc<Shape> {
     debug!("\tTessellating polygons...");
     let mut polygons = Vec::new();
@@ -260,21 +264,31 @@ pub fn load_c3d_shape(
     let vertex_buf = {
         let mapping = device.create_buffer_mapped(
             raw.geometry.positions.len(),
-            wgpu::BufferUsage::VERTEX, //| wgpu::BufferUsage::SAMPLED,
+            wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::STORAGE_READ,
         );
-        for (vo, p) in mapping.data.iter_mut().zip(raw.geometry.positions) {
-            *vo = [p[0] as f32, p[1] as f32, p[2] as f32, 1.0];
+        for (vo, p) in mapping.data.iter_mut().zip(&raw.geometry.positions) {
+            *vo = [p[0], p[1], p[2], 1];
         }
         mapping.finish()
     };
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &object.shape_bind_group_layout,
+        bindings: &[
+            wgpu::Binding {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer {
+                    buffer: &vertex_buf,
+                    range: 0 .. (raw.geometry.positions.len() * 4) as wgpu::BufferAddress,
+                },
+            },
+        ],
+    });
 
     Arc::new(Shape {
         polygons,
         samples,
-        //vertex_view: factory
-        //    .view_buffer_as_shader_resource(&vertex_buf)
-        //    .unwrap(),
         vertex_buf,
+        bind_group,
         polygon_buf: device
             .create_buffer_mapped(polygon_data.len(), wgpu::BufferUsage::VERTEX)
             .fill_from_slice(&polygon_data),
@@ -295,7 +309,7 @@ pub type VisualModel = m3d::Model<Arc<Mesh>, Arc<Shape>>;
 pub fn load_m3d(
     file: File,
     device: &wgpu::Device,
-    locals_layout: &wgpu::BindGroupLayout,
+    object: &ObjectContext,
 ) -> (VisualModel, wgpu::Buffer) {
     let raw = m3d::FullModel::load(file);
     let wheel_offset = 1;
@@ -307,8 +321,8 @@ pub fn load_m3d(
     });
 
     let model = VisualModel {
-        body: load_c3d(raw.body, device, locals_layout, &locals_buf, 0),
-        shape: load_c3d_shape(raw.shape, device, true),
+        body: load_c3d(raw.body, device, &locals_buf, 0, object),
+        shape: load_c3d_shape(raw.shape, device, true, object),
         dimensions: raw.dimensions,
         max_radius: raw.max_radius,
         color: raw.color,
@@ -316,15 +330,15 @@ pub fn load_m3d(
             .into_iter()
             .enumerate()
             .map(|(i, wheel)| wheel.map(|mesh| {
-                load_c3d(mesh, device, locals_layout, &locals_buf, wheel_offset + i)
+                load_c3d(mesh, device, &locals_buf, wheel_offset + i, object)
             }))
             .collect(),
         debris: raw.debris
             .into_iter()
             .enumerate()
             .map(|(i, debrie)| m3d::Debrie {
-                mesh: load_c3d(debrie.mesh, device, locals_layout, &locals_buf, debrie_offset + i),
-                shape: load_c3d_shape(debrie.shape, device, false),
+                mesh: load_c3d(debrie.mesh, device, &locals_buf, debrie_offset + i, object),
+                shape: load_c3d_shape(debrie.shape, device, false, object),
             })
             .collect(),
         slots: m3d::Slot::map_all(raw.slots, |_, _| unreachable!()),

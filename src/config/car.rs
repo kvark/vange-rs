@@ -2,6 +2,7 @@ use crate::{
     config::Settings,
     config::text::Reader,
     model,
+    render::object::Context as ObjectContext,
 };
 
 use wgpu;
@@ -165,7 +166,7 @@ pub fn load_registry(
     settings: &Settings,
     reg: &super::game::Registry,
     device: &wgpu::Device,
-    locals_layout: &wgpu::BindGroupLayout,
+    object: &ObjectContext,
 ) -> HashMap<String, CarInfo> {
     let mut map = HashMap::new();
     let mut fi = Reader::new(settings.open_relative("car.prm"));
@@ -196,7 +197,7 @@ pub fn load_registry(
             physics.scale_size
         };
         let file = settings.open_relative(&mi.path);
-        let (model, locals_buf) = model::load_m3d(file, device, locals_layout);
+        let (model, locals_buf) = model::load_m3d(file, device, object);
         map.insert(
             name.to_owned(),
             CarInfo {

@@ -1,3 +1,376 @@
+use crate::{
+    config::{common::Common, settings},
+    model::{Shape},
+    space::Transform,
+    render::{
+        SHAPE_POLYGON_BUFFER,
+        Shaders,
+        object::Context as ObjectContext,
+        terrain::{Context as TerrainContext},
+    },
+};
+
+use std::{mem, ops::Range, sync::{Arc, Mutex}};
+
+
+#[repr(C)]
+#[derive(Clone, Copy, zerocopy::FromBytes)]
+pub struct PolygonData {
+    pub force: [i32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
+struct Locals {
+    model: [[f32; 4]; 4],
+    scale: [f32; 4],
+    index_offset: [u32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
+struct Globals {
+    target: [f32; 4],
+    penetration: [f32; 4],
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Epoch(usize);
+
+#[must_use]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapeId(Range<usize>, Epoch);
+
+struct PendingResult {
+    buffer: wgpu::Buffer,
+    count: usize,
+    epoch: Epoch,
+}
+
+pub struct GpuCollider {
+    pipeline_layout: wgpu::PipelineLayout,
+    pipeline: wgpu::RenderPipeline,
+    buffer: wgpu::Buffer,
+    uniform_buf: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    dynamic_bind_group: wgpu::BindGroup,
+    //TODO: remove it when WebGPU permits this
+    dummy_target: wgpu::TextureView,
+    locals_size: usize,
+    epoch: Epoch,
+    pending_result: Option<PendingResult>,
+    latest: Arc<Mutex<(Vec<PolygonData>, Epoch)>>,
+}
+
+pub struct GpuSession<'this, 'pass> {
+    pass: wgpu::RenderPass<'pass>,
+    buffer: &'this wgpu::Buffer,
+    uniform_buf: &'this wgpu::Buffer,
+    dynamic_bind_group: &'this wgpu::BindGroup,
+    locals_size: usize,
+    object_locals: Vec<Locals>,
+    polygon_id: usize,
+    epoch: Epoch,
+    pending_result: &'this mut Option<PendingResult>,
+}
+
+const DUMMY_TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+
+impl GpuCollider {
+    fn create_pipeline(
+        layout: &wgpu::PipelineLayout,
+        device: &wgpu::Device,
+    ) -> wgpu::RenderPipeline {
+        let shaders = Shaders::new("collision", &[], device)
+            .unwrap();
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            layout,
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
+                module: &shaders.vs,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                module: &shaders.fs,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: wgpu::CullMode::Back,
+                depth_bias: 0,
+                depth_bias_slope_scale: 0.0,
+                depth_bias_clamp: 0.0,
+            }),
+            primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
+            color_states: &[
+                wgpu::ColorStateDescriptor {
+                    format: DUMMY_TARGET_FORMAT,
+                    color_blend: wgpu::BlendDescriptor::REPLACE,
+                    alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                    write_mask: wgpu::ColorWrite::empty(),
+                },
+            ],
+            depth_stencil_state: None,
+            index_format: wgpu::IndexFormat::Uint16,
+            vertex_buffers: &[
+                SHAPE_POLYGON_BUFFER.clone(),
+            ],
+            sample_count: 1,
+            alpha_to_coverage_enabled: false,
+            sample_mask: !0,
+        })
+    }
+
+    pub fn new(
+        device: &wgpu::Device,
+        settings: &settings::GpuCollision,
+        common: &Common,
+        object: &ObjectContext,
+        terrain: &TerrainContext,
+    ) -> Self {
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            bindings: &[
+                wgpu::BindGroupLayoutBinding {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::UniformBuffer {
+                        dynamic: false,
+                    },
+                },
+                wgpu::BindGroupLayoutBinding {
+                    binding: 1,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::StorageBuffer {
+                        dynamic: false,
+                        readonly: false,
+                    },
+                },
+            ],
+        });
+        let dynamic_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            bindings: &[
+                wgpu::BindGroupLayoutBinding {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::VERTEX,
+                    ty: wgpu::BindingType::UniformBuffer {
+                        dynamic: true,
+                    },
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &[
+                &bind_group_layout,
+                &terrain.bind_group_layout,
+                &object.shape_bind_group_layout,
+                &dynamic_bind_group_layout,
+            ],
+        });
+        let pipeline = Self::create_pipeline(&pipeline_layout, device);
+        let buf_size = (settings.max_polygons_total * mem::size_of::<PolygonData>()) as wgpu::BufferAddress;
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            size: buf_size,
+            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_SRC,
+        });
+
+        let global_uniforms = device
+            .create_buffer_mapped(1, wgpu::BufferUsage::UNIFORM)
+            .fill_from_slice(&[Globals {
+                target: [
+                    2.0 / settings.max_raster_size.0 as f32,
+                    2.0 / settings.max_raster_size.1 as f32,
+                    0.0,
+                    0.0,
+                ],
+                penetration: [
+                    common.contact.k_elastic_spring,
+                    common.impulse.elastic_restriction,
+                    0.0,
+                    0.0,
+                ],
+            }]);
+        let locals_size = mem::size_of::<Locals>().max(256); //TODO: use constant from wgpu-rs
+        let locals_total_size = (settings.max_objects * locals_size) as wgpu::BufferAddress;
+        let local_uniforms = device.create_buffer(&wgpu::BufferDescriptor {
+            size: locals_total_size,
+            usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::UNIFORM,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bind_group_layout,
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &global_uniforms,
+                        range: 0 .. mem::size_of::<Globals>() as wgpu::BufferAddress,
+                    },
+                },
+                wgpu::Binding {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &buffer,
+                        range: 0 .. buf_size,
+                    },
+                },
+            ],
+        });
+        let dynamic_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &dynamic_bind_group_layout,
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &local_uniforms,
+                        range: 0 .. locals_total_size,
+                    },
+                },
+            ],
+        });
+
+        let dummy_target = device
+            .create_texture(&wgpu::TextureDescriptor {
+                size: wgpu::Extent3d {
+                    width: settings.max_raster_size.0,
+                    height: settings.max_raster_size.1,
+                    depth: 1,
+                },
+                array_layer_count: 1,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: DUMMY_TARGET_FORMAT,
+                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            })
+            .create_default_view();
+
+        GpuCollider {
+            pipeline_layout,
+            pipeline,
+            buffer,
+            uniform_buf: local_uniforms,
+            bind_group,
+            dynamic_bind_group,
+            dummy_target,
+            locals_size,
+            epoch: Epoch(0),
+            pending_result: None,
+            latest: Arc::new(Mutex::new((Vec::new(), Epoch(0)))),
+        }
+    }
+
+    pub fn reload(
+        &mut self, device: &wgpu::Device,
+    ) {
+        self.pipeline = Self::create_pipeline(&self.pipeline_layout, device);
+    }
+
+    pub fn begin<'this, 'pass, 'dev>(
+        &'this mut self,
+        encoder: &'pass mut wgpu::CommandEncoder,
+        terrain: &TerrainContext,
+    ) -> GpuSession<'this, 'pass> {
+        if let Some(pr) = self.pending_result.take() {
+            let latest = Arc::clone(&self.latest);
+            let epoch = pr.epoch;
+            pr.buffer.map_read_async(0, pr.count, move |result| {
+                let mut storage = latest.lock().unwrap();
+                storage.1 = epoch;
+                storage.0.clear();
+                storage.0.extend_from_slice(&result.unwrap().data);
+            });
+        }
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            color_attachments: &[
+                wgpu::RenderPassColorAttachmentDescriptor {
+                    attachment: &self.dummy_target,
+                    resolve_target: None,
+                    load_op: wgpu::LoadOp::Clear,
+                    store_op: wgpu::StoreOp::Clear,
+                    clear_color: wgpu::Color::BLACK,
+                },
+            ],
+            depth_stencil_attachment: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_bind_group(1, &terrain.bind_group, &[]);
+
+        GpuSession {
+            pass,
+            buffer: &self.buffer,
+            uniform_buf: &self.uniform_buf,
+            dynamic_bind_group: &self.dynamic_bind_group,
+            locals_size: self.locals_size,
+            object_locals: Vec::new(),
+            polygon_id: 0,
+            epoch: self.epoch.clone(),
+            pending_result: &mut self.pending_result,
+        }
+    }
+}
+
+impl GpuSession<'_, '_> {
+    pub fn add(&mut self, shape: &Shape, transform: Transform) -> ShapeId {
+        let locals = Locals {
+            model: cgmath::Matrix4::from(transform).into(),
+            scale: [transform.scale; 4],
+            index_offset: [self.polygon_id as u32, 0, 0, 0],
+        };
+        let offset = (self.object_locals.len() * self.locals_size) as wgpu::BufferAddress;
+
+        self.pass.set_bind_group(2, &shape.bind_group, &[]);
+        self.pass.set_bind_group(3, self.dynamic_bind_group, &[offset]);
+        self.pass.set_vertex_buffers(0, &[(&shape.polygon_buf, 0)]);
+        self.pass.draw(0 .. 4, 0 .. shape.polygons.len() as u32);
+
+        let range = self.polygon_id .. self.polygon_id + shape.polygons.len();
+        self.polygon_id = range.end;
+        self.object_locals.push(locals);
+        ShapeId(range, self.epoch.clone())
+    }
+
+    pub fn finish(self, device: &wgpu::Device) -> (wgpu::CommandBuffer, wgpu::CommandBuffer) {
+        let GpuSession { buffer, epoch, polygon_id, pending_result, locals_size, object_locals, .. } = self;
+
+        let prepare_comb = {
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                todo: 0,
+            });
+            let temp = device
+                .create_buffer_mapped(object_locals.len(), wgpu::BufferUsage::COPY_SRC)
+                .fill_from_slice(&object_locals);
+            for i in 0 .. object_locals.len() {
+                encoder.copy_buffer_to_buffer(
+                    &temp, (mem::size_of::<Locals>() * i) as wgpu::BufferAddress,
+                    self.uniform_buf, (locals_size * i) as wgpu::BufferAddress,
+                    mem::size_of::<Locals>() as wgpu::BufferAddress,
+                );
+            }
+            encoder.finish()
+        };
+        let post_comb = {
+            let size = (polygon_id * mem::size_of::<PolygonData>()) as wgpu::BufferAddress;
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                todo: 0,
+            });
+            let temp = device.create_buffer(&wgpu::BufferDescriptor {
+                size,
+                usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::MAP_READ,
+            });
+            encoder.copy_buffer_to_buffer(buffer, 0, &temp, 0, size);
+            *pending_result = Some(PendingResult {
+                buffer: temp,
+                count: polygon_id,
+                epoch,
+            });
+            encoder.finish()
+        };
+
+        (prepare_comb, post_comb)
+    }
+}
+
+/*
 use config::common::Common;
 use model::Shape;
 use render::{read_shaders,
@@ -297,13 +670,6 @@ impl<R: gfx::Resources> Downsampler<R> {
 }
 
 
-#[derive(Clone, Debug, PartialEq)]
-struct Epoch(usize);
-
-#[must_use]
-#[derive(Clone, Debug, PartialEq)]
-pub struct ShapeId(usize, Epoch);
-
 #[must_use]
 pub struct CollisionResults<R: gfx::Resources> {
     results: Vec<Rect>,
@@ -545,3 +911,4 @@ impl<R: gfx::Resources> GpuCollider<R> {
         &self.read_buffer
     }
 }
+*/

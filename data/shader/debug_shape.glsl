@@ -12,7 +12,7 @@ layout(set = 0, binding = 0) uniform c_Globals {
 //imported: Polygon, get_shape_polygon
 
 void main() {
-	Polygon poly = get_shape_polygon();
+    Polygon poly = get_shape_polygon();
     gl_Position = u_ViewProj * poly.vertex;
 }
 #endif //VS

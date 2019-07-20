@@ -48,7 +48,7 @@ impl CarView {
             settings,
             &game_reg,
             device,
-            &object.part_bind_group_layout,
+            &object,
         );
         let cinfo = match car_reg.get(&settings.car.id) {
             Some(ci) => ci,
@@ -69,9 +69,9 @@ impl CarView {
             ms.mesh = Some(model::load_c3d(
                 raw,
                 device,
-                &object.part_bind_group_layout,
                 &cinfo.locals_buf,
                 slot_locals_id + i,
+                &object,
             ));
             ms.scale = info.scale;
         }
@@ -191,7 +191,7 @@ impl Application for CarView {
         &mut self,
         device: &wgpu::Device,
         targets: render::ScreenTargets,
-    ) -> wgpu::CommandBuffer {
+    ) -> Vec<wgpu::CommandBuffer> {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
@@ -248,6 +248,6 @@ impl Application for CarView {
             );
         }
 
-        encoder.finish()
+        vec![encoder.finish()]
     }
 }

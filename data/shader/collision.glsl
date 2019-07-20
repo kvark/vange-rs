@@ -1,9 +1,14 @@
 //!include vs:shape.inc fs:surface.inc
 
-flat varying vec3 v_Vector;
-varying vec3 v_World;
-flat varying vec3 v_PolyNormal;
+layout(location = 0) flat varying vec3 v_Vector;
+layout(location = 1) varying vec3 v_World;
+layout(location = 2) flat varying vec3 v_PolyNormal;
+layout(location = 3) flat varying int v_TargetIndex;
 
+layout(set = 0, binding = 0) uniform c_Globals {
+    vec4 u_TargetScale;
+    vec4 u_Penetration; // X=scale, Y=limit
+};
 
 #ifdef SHADER_VS
 //imported: Polygon, get_shape_polygon
@@ -12,10 +17,10 @@ flat varying vec3 v_PolyNormal;
 // of the input polygon.
 const float EXACT_VECTOR = 0.0;
 
-uniform c_Locals {
+layout(set = 3, binding = 0) uniform c_Locals {
     mat4 u_Model;
     vec4 u_ModelScale;
-    vec4 u_TargetCenterScale;
+    uvec4 u_IndexOffset;
 };
 
 void main() {
@@ -24,10 +29,10 @@ void main() {
 
     v_Vector = mix(mat3(u_Model) * poly.origin, v_World - u_Model[3].xyz, EXACT_VECTOR);
     v_PolyNormal = poly.normal;
+    v_TargetIndex = int(u_IndexOffset.x) + gl_InstanceIndex;
 
-    vec2 local_pos = poly.vertex.xy * u_ModelScale.xy;
-    vec2 out_pos = (local_pos + u_TargetCenterScale.xy) * u_TargetCenterScale.zw - vec2(1.0);
-    gl_Position = vec4(out_pos, 0.0, 1.0);
+    vec2 pos = poly.vertex.xy * u_ModelScale.xy * u_TargetScale.xy;
+    gl_Position = vec4(pos, 0.0, 1.0);
 }
 #endif //VS
 
@@ -41,11 +46,11 @@ void main() {
 // original game is encoded in this constant.
 const float SCALE = 0.01;
 
-uniform c_Globals {
-    vec4 u_Penetration; // X=scale, Y=limit
+layout(set = 0, binding = 1, std430) buffer Storage {
+    //Note: using `ivec4` here fails to compile on Metal:
+    //> error: address of vector element requested
+    int s_Data[];
 };
-
-out vec4 Target0;
 
 void main() {
     Surface suf = get_surface(v_World.xy);
@@ -63,6 +68,12 @@ void main() {
     }
 
     float depth = SCALE * min(u_Penetration.y, u_Penetration.x * depth_raw);
-    Target0 = depth * vec4(v_Vector.y, -v_Vector.x, 1.0, 0.0);
+    vec3 collision_vec = depth * vec3(v_Vector.y, -v_Vector.x, 1.0);
+
+    ivec3 quantized = ivec3(collision_vec * 65536.0);
+    atomicAdd(s_Data[4 * v_TargetIndex + 0], quantized.x);
+    atomicAdd(s_Data[4 * v_TargetIndex + 1], quantized.y);
+    atomicAdd(s_Data[4 * v_TargetIndex + 2], quantized.z);
+    atomicAdd(s_Data[4 * v_TargetIndex + 3], 1);
 }
 #endif //FS

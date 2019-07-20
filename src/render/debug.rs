@@ -8,8 +8,6 @@ use crate::{
     },
 };
 
-use wgpu;
-
 use std::{
     mem,
     collections::HashMap,
@@ -31,19 +29,19 @@ enum Visibility {
 type Selector = (Visibility, wgpu::InputStepMode);
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, zerocopy::AsBytes, zerocopy::FromBytes)]
 pub struct Position {
     pub pos: [f32; 4],
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, zerocopy::AsBytes, zerocopy::FromBytes)]
 pub struct Color {
     pub color: u32,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct Locals {
     color: [f32; 4],
     _pad: [f32; 60],

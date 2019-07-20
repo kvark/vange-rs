@@ -2,12 +2,12 @@ use crate::{
     config::settings,
     space::Camera,
 };
-use wgpu;
 
 use std::mem;
 
 
-#[derive(Clone, Copy)]
+#[repr(C)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 pub struct Constants {
     _camera_pos: [f32; 4],
     _m_vp: [[f32; 4]; 4],

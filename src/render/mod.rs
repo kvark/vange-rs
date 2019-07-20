@@ -7,7 +7,6 @@ use crate::{
 
 use glsl_to_spirv;
 use cgmath::Decomposed;
-use wgpu;
 
 use std::{
     io::{BufReader, Read, Write, Error as IoError},
@@ -16,14 +15,12 @@ use std::{
     path::PathBuf,
 };
 
-//mod collision; ../TODO
+pub mod collision;
 pub mod debug;
 pub mod global;
 pub mod mipmap;
 pub mod object;
 pub mod terrain;
-
-//pub use self::collision::{DebugBlit, GpuCollider, ShapeId};
 
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
@@ -43,12 +40,35 @@ pub struct SurfaceData {
 
 pub type ShapeVertex = [f32; 4];
 
-#[derive(Clone, Copy)]
+#[repr(C)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 pub struct ShapePolygon {
     pub indices: [u16; 4],
     pub normal: [i8; 4],
     pub origin_square: [f32; 4],
 }
+
+pub const SHAPE_POLYGON_BUFFER: wgpu::VertexBufferDescriptor  = wgpu::VertexBufferDescriptor {
+    stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
+    step_mode: wgpu::InputStepMode::Instance,
+    attributes: &[
+        wgpu::VertexAttributeDescriptor {
+            offset: 0,
+            format: wgpu::VertexFormat::Ushort4,
+            shader_location: 0,
+        },
+        wgpu::VertexAttributeDescriptor {
+            offset: 8,
+            format: wgpu::VertexFormat::Char4,
+            shader_location: 1,
+        },
+        wgpu::VertexAttributeDescriptor {
+            offset: 12,
+            format: wgpu::VertexFormat::Float4,
+            shader_location: 2,
+        },
+    ],
+};
 
 pub struct Shaders {
     vs: wgpu::ShaderModule,
@@ -322,8 +342,8 @@ impl<'a> RenderModel<'a> {
 
 pub struct Render {
     global: global::Context,
-    object: object::Context,
-    terrain: terrain::Context,
+    pub object: object::Context,
+    pub terrain: terrain::Context,
     pub debug: debug::Context,
     pub light_config: settings::Light,
 }
@@ -357,10 +377,6 @@ impl Render {
         }
     }
 
-    pub fn locals_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.object.part_bind_group_layout
-    }
-
     pub fn draw_mesh(
         pass: &mut wgpu::RenderPass,
         mesh: &model::Mesh,
@@ -392,15 +408,12 @@ impl Render {
 
     pub fn draw_world<'a>(
         &mut self,
+        encoder: &mut wgpu::CommandEncoder,
         render_models: &[RenderModel<'a>],
         cam: &Camera,
         targets: ScreenTargets,
         device: &wgpu::Device,
-    ) -> wgpu::CommandBuffer {
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            todo: 0,
-        });
-
+    ) {
         let global_staging = device
             .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
             .fill_from_slice(&[
@@ -415,52 +428,48 @@ impl Render {
         );
 
         for rm in render_models {
-            rm.prepare(&mut encoder, device);
+            rm.prepare(encoder, device);
         }
 
-        self.terrain.prepare(&mut encoder, device, &self.global, cam);
+        self.terrain.prepare(encoder, device, &self.global, cam);
 
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                color_attachments: &[
-                    wgpu::RenderPassColorAttachmentDescriptor {
-                        attachment: targets.color,
-                        resolve_target: None,
-                        load_op: wgpu::LoadOp::Clear,
-                        store_op: wgpu::StoreOp::Store,
-                        clear_color: wgpu::Color {
-                            r: 0.1, g: 0.2, b: 0.3, a: 1.0,
-                        },
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            color_attachments: &[
+                wgpu::RenderPassColorAttachmentDescriptor {
+                    attachment: targets.color,
+                    resolve_target: None,
+                    load_op: wgpu::LoadOp::Clear,
+                    store_op: wgpu::StoreOp::Store,
+                    clear_color: wgpu::Color {
+                        r: 0.1, g: 0.2, b: 0.3, a: 1.0,
                     },
-                ],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
-                    attachment: targets.depth,
-                    depth_load_op: wgpu::LoadOp::Clear,
-                    depth_store_op: wgpu::StoreOp::Store,
-                    clear_depth: 1.0,
-                    stencil_load_op: wgpu::LoadOp::Clear,
-                    stencil_store_op: wgpu::StoreOp::Store,
-                    clear_stencil: 0,
-                }),
-            });
+                },
+            ],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                attachment: targets.depth,
+                depth_load_op: wgpu::LoadOp::Clear,
+                depth_store_op: wgpu::StoreOp::Store,
+                clear_depth: 1.0,
+                stencil_load_op: wgpu::LoadOp::Clear,
+                stencil_store_op: wgpu::StoreOp::Store,
+                clear_stencil: 0,
+            }),
+        });
 
-            pass.set_bind_group(0, &self.global.bind_group, &[]);
-            self.terrain.draw(&mut pass);
+        pass.set_bind_group(0, &self.global.bind_group, &[]);
+        self.terrain.draw(&mut pass);
 
-            // draw vehicle models
-            pass.set_pipeline(&self.object.pipeline);
-            pass.set_bind_group(1, &self.object.bind_group, &[]);
-            for rm in render_models {
-                Render::draw_model(&mut pass, &rm.model);
-            }
-            for rm in render_models {
-                if let Some(_scale) = rm.debug_shape_scale {
-                    self.debug.draw_shape(&mut pass, &rm.model.shape);
-                }
+        // draw vehicle models
+        pass.set_pipeline(&self.object.pipeline);
+        pass.set_bind_group(1, &self.object.bind_group, &[]);
+        for rm in render_models {
+            Render::draw_model(&mut pass, &rm.model);
+        }
+        for rm in render_models {
+            if let Some(_scale) = rm.debug_shape_scale {
+                self.debug.draw_shape(&mut pass, &rm.model.shape);
             }
         }
-
-        encoder.finish()
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {

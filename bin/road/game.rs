@@ -7,6 +7,7 @@ use vangers::{
     config, level, model, space,
     render::{
         Render, RenderModel, ScreenTargets,
+        collision::GpuCollider,
         debug::LineBuffer,
     },
 };
@@ -15,9 +16,6 @@ use cgmath::{
     self,
     Angle, Rotation3, Zero,
 };
-use log::info;
-use rand;
-use wgpu;
 
 use std::collections::HashMap;
 
@@ -134,8 +132,7 @@ struct DataBase {
 pub struct Game {
     db: DataBase,
     render: Render,
-    //collider: render::GpuCollider,
-    //compute_gpu_collision: bool,
+    collider: Option<GpuCollider>,
     //debug_collision_map: bool,
     line_buffer: LineBuffer,
     level: level::Level,
@@ -156,9 +153,9 @@ impl Game {
         device: &wgpu::Device,
         queue: &mut wgpu::Queue,
     ) -> Self {
-        info!("Loading world parameters");
+        log::info!("Loading world parameters");
         let (level, coords) = if settings.game.level.is_empty() {
-            info!("Using test level");
+            log::info!("Using test level");
             (level::Level::new_test(), (0, 0))
         } else {
             let escaves = config::escaves::load(settings.open_relative("escaves.prm"));
@@ -170,7 +167,7 @@ impl Game {
             let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
             let ini_name = &worlds[&settings.game.level];
             let ini_path = settings.data_path.join(ini_name);
-            info!("Using level {}", ini_name);
+            log::info!("Using level {}", ini_name);
 
             let config = level::LevelConfig::load(&ini_path);
             let level = level::load(&config);
@@ -178,29 +175,26 @@ impl Game {
             (level, coordinates)
         };
 
-        info!("Initializing the render");
+        log::info!("Initializing the render");
         let depth = 10f32 .. 10000f32;
         let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
         let render = Render::new(device, queue, &level, &pal_data, &settings.render, screen_extent);
 
-        info!("Loading world database");
+        log::info!("Loading world database");
         let db = {
             let game = config::game::Registry::load(settings);
             DataBase {
                 _bunches: config::bunches::load(settings.open_relative("bunches.prm")),
-                cars: config::car::load_registry(settings, &game, device, render.locals_layout()),
+                cars: config::car::load_registry(settings, &game, device, &render.object),
                 common: config::common::load(settings.open_relative("common.prm")),
                 _escaves: config::escaves::load(settings.open_relative("escaves.prm")),
                 game,
             }
         };
 
-        /*
-        let collider = render::GpuCollider::new(
-            factory,
-            (256, 256), 400,
-            render.surface_data(),
-        );*/
+        let collider = settings.game.physics.gpu_collision.as_ref().map(|gc| {
+            GpuCollider::new(device, gc, &db.common, &render.object, &render.terrain)
+        });
 
         let mut player_agent = Agent::spawn(
             "Player".to_string(),
@@ -221,9 +215,9 @@ impl Game {
             ms.mesh = Some(model::load_c3d(
                 raw,
                 device,
-                render.locals_layout(),
                 &player_agent.car.locals_buf,
                 slot_locals_id + i,
+                &render.object,
             ));
             ms.scale = info.scale;
         }
@@ -251,7 +245,7 @@ impl Game {
         Game {
             db,
             render,
-            //collider,
+            collider,
             line_buffer: LineBuffer::new(),
             level,
             agents,
@@ -278,7 +272,6 @@ impl Game {
                 },
             },
             max_quant: settings.game.physics.max_quant,
-            //compute_gpu_collision: settings.game.physics.gpu_collision,
             //debug_collision_map: settings.render.debug.collision_map,
             spin_hor: 0.0,
             spin_ver: 0.0,
@@ -472,14 +465,36 @@ impl Application for Game {
 
     fn reload(&mut self, device: &wgpu::Device) {
         self.render.reload(device);
-        //self.collider.reload(device);
+        if let Some(ref mut collider) = self.collider {
+            collider.reload(device);
+        }
     }
 
     fn draw(
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
-    ) -> wgpu::CommandBuffer {
+    ) -> Vec<wgpu::CommandBuffer> {
+        let mut combs = Vec::new();
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            todo: 0,
+        });
+
+        let post_comb = match self.collider {
+            Some(ref mut collider) => {
+                let mut session = collider.begin(&mut encoder, &self.render.terrain);
+                for agent in &mut self.agents {
+                    let mut transform = agent.transform.clone();
+                    transform.scale *= agent.car.physics.scale_bound;
+                    let _shape_id = session.add(&agent.car.model.shape, transform);
+                    //agent.gpu_momentum = Some(GpuMomentum::Pending(shape_id));
+                }
+                let (pre, post) = session.finish(device);
+                combs.push(pre);
+                Some(post)
+            }
+            None => None,
+        };
         /*
         if self.compute_gpu_collision {
             let mapping = factory
@@ -507,12 +522,14 @@ impl Application for Game {
                 },
             })
             .collect::<Vec<_>>();
-        let command_buffer = self.render.draw_world(
+        self.render.draw_world(
+            &mut encoder,
             &models,
             &self.cam,
             targets,
             device,
         );
+        combs.push(encoder.finish());
 
         /*
         self.render.debug.draw_lines(
@@ -558,6 +575,7 @@ impl Application for Game {
             }
         }*/
 
-        command_buffer
+        combs.extend(post_comb);
+        combs
     }
 }

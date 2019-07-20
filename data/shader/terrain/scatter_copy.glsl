@@ -21,8 +21,7 @@ layout(set = 1, binding = 1) uniform c_Locals {
     uvec4 u_ScreenSize;      // XY = size
 };
 layout(set = 1, binding = 6) uniform texture1D t_Palette;
-layout(set = 2, binding = 0, std430) buffer Storage
-{
+layout(set = 2, binding = 0, std430) buffer Storage {
     uint w_Data[];
 };
 
