@@ -53,11 +53,14 @@ rust-ini = "0.10"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.1"
-wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
+#wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
 #wgpu = { path = "../wgpu-rs" }
-#wgpu = { version = "0.2.2" }
+wgpu = { version = "0.3" }
 # binaries
 env_logger = "0.5"
 getopts = "0.2"
 obj = "0.9"
 png = "0.13"
+raw-window-handle = "0.1"
+winit = "0.20.0-alpha3"
+

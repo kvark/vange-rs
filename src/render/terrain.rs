@@ -189,21 +189,21 @@ impl Context {
             .unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
-            vertex_stage: wgpu::PipelineStageDescriptor {
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &shaders.vs,
                 entry_point: "main",
             },
-            fragment_stage: Some(wgpu::PipelineStageDescriptor {
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
                 module: &shaders.fs,
                 entry_point: "main",
             }),
-            rasterization_state: wgpu::RasterizationStateDescriptor {
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: wgpu::CullMode::None,
                 depth_bias: 0,
                 depth_bias_slope_scale: 0.0,
                 depth_bias_clamp: 0.0,
-            },
+            }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[
                 wgpu::ColorStateDescriptor {
@@ -237,6 +237,8 @@ impl Context {
                 },
             ],
             sample_count: 1,
+            alpha_to_coverage_enabled: false,
+            sample_mask: !0,
         })
     }
 
@@ -248,21 +250,21 @@ impl Context {
             .unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
-            vertex_stage: wgpu::PipelineStageDescriptor {
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &shaders.vs,
                 entry_point: "main",
             },
-            fragment_stage: Some(wgpu::PipelineStageDescriptor {
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
                 module: &shaders.fs,
                 entry_point: "main",
             }),
-            rasterization_state: wgpu::RasterizationStateDescriptor {
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: wgpu::CullMode::None,
                 depth_bias: 0,
                 depth_bias_slope_scale: 0.0,
                 depth_bias_clamp: 0.0,
-            },
+            }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[
                 wgpu::ColorStateDescriptor {
@@ -296,6 +298,8 @@ impl Context {
                 },
             ],
             sample_count: 1,
+            alpha_to_coverage_enabled: false,
+            sample_mask: !0,
         })
     }
 
@@ -307,7 +311,7 @@ impl Context {
             .unwrap();
         let scatter_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             layout,
-            compute_stage: wgpu::PipelineStageDescriptor {
+            compute_stage: wgpu::ProgrammableStageDescriptor {
                 module: &scatter_shader,
                 entry_point: "main",
             },
@@ -316,7 +320,7 @@ impl Context {
             .unwrap();
         let clear_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             layout,
-            compute_stage: wgpu::PipelineStageDescriptor {
+            compute_stage: wgpu::ProgrammableStageDescriptor {
                 module: &clear_shader,
                 entry_point: "main",
             },
@@ -326,21 +330,21 @@ impl Context {
             .unwrap();
         let copy_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
-            vertex_stage: wgpu::PipelineStageDescriptor {
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &copy_shaders.vs,
                 entry_point: "main",
             },
-            fragment_stage: Some(wgpu::PipelineStageDescriptor {
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
                 module: &copy_shaders.fs,
                 entry_point: "main",
             }),
-            rasterization_state: wgpu::RasterizationStateDescriptor {
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: wgpu::CullMode::None,
                 depth_bias: 0,
                 depth_bias_slope_scale: 0.0,
                 depth_bias_clamp: 0.0,
-            },
+            }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
             color_states: &[
                 wgpu::ColorStateDescriptor {
@@ -362,6 +366,8 @@ impl Context {
             index_format: wgpu::IndexFormat::Uint16,
             vertex_buffers: &[],
             sample_count: 1,
+            alpha_to_coverage_enabled: false,
+            sample_mask: !0,
         });
 
         (scatter_pipeline, clear_pipeline, copy_pipeline)
@@ -454,7 +460,7 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HEIGHT_FORMAT,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST | terrain_extra_usage,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST | terrain_extra_usage,
         });
         let meta_texture = device.create_texture(&wgpu::TextureDescriptor {
             size: extent,
@@ -463,7 +469,7 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R8Uint,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
         let flood_texture = device.create_texture(&wgpu::TextureDescriptor {
             size: flood_extent,
@@ -472,7 +478,7 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
         let table_texture = device.create_texture(&wgpu::TextureDescriptor {
             size: table_extent,
@@ -481,20 +487,20 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::Rgba8Uint,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
 
         let height_staging = device
-            .create_buffer_mapped(level.height.len(), wgpu::BufferUsage::TRANSFER_SRC)
+            .create_buffer_mapped(level.height.len(), wgpu::BufferUsage::COPY_SRC)
             .fill_from_slice(&level.height);
         let meta_staging = device
-            .create_buffer_mapped(level.meta.len(), wgpu::BufferUsage::TRANSFER_SRC)
+            .create_buffer_mapped(level.meta.len(), wgpu::BufferUsage::COPY_SRC)
             .fill_from_slice(&level.meta);
         let flood_staging = device
-            .create_buffer_mapped(level.flood_map.len(), wgpu::BufferUsage::TRANSFER_SRC)
+            .create_buffer_mapped(level.flood_map.len(), wgpu::BufferUsage::COPY_SRC)
             .fill_from_slice(&level.flood_map);
         let table_staging = device
-            .create_buffer_mapped(terrrain_table.len(), wgpu::BufferUsage::TRANSFER_SRC)
+            .create_buffer_mapped(terrrain_table.len(), wgpu::BufferUsage::COPY_SRC)
             .fill_from_slice(&terrrain_table);
 
         init_encoder.copy_buffer_to_texture(
@@ -598,37 +604,52 @@ impl Context {
                 wgpu::BindGroupLayoutBinding { // surface uniforms
                     binding: 0,
                     visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::UniformBuffer,
+                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
                 },
                 wgpu::BindGroupLayoutBinding { // terrain locals
                     binding: 1,
                     visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::UniformBuffer,
+                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
                 },
                 wgpu::BindGroupLayoutBinding { // height map
                     binding: 2,
                     visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::SampledTexture,
+                    ty: wgpu::BindingType::SampledTexture {
+                        dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                 },
                 wgpu::BindGroupLayoutBinding { // meta map
                     binding: 3,
                     visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::SampledTexture,
+                    ty: wgpu::BindingType::SampledTexture {
+                        dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                 },
                 wgpu::BindGroupLayoutBinding { // flood map
                     binding: 4,
                     visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::SampledTexture,
+                    ty: wgpu::BindingType::SampledTexture {
+                        dimension: wgpu::TextureViewDimension::D1,
+                        multisampled: false,
+                    },
                 },
                 wgpu::BindGroupLayoutBinding { // table map
                     binding: 5,
                     visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::SampledTexture,
+                    ty: wgpu::BindingType::SampledTexture {
+                        dimension: wgpu::TextureViewDimension::D1,
+                        multisampled: false,
+                    },
                 },
                 wgpu::BindGroupLayoutBinding { // palette map
                     binding: 6,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture,
+                    ty: wgpu::BindingType::SampledTexture {
+                        dimension: wgpu::TextureViewDimension::D1,
+                        multisampled: false,
+                    },
                 },
                 wgpu::BindGroupLayoutBinding { // main sampler
                     binding: 7,
@@ -660,7 +681,7 @@ impl Context {
             }]);
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::TRANSFER_DST,
+            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -812,12 +833,17 @@ impl Context {
                         wgpu::BindGroupLayoutBinding { // output map
                             binding: 0,
                             visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                            ty: wgpu::BindingType::StorageBuffer,
+                            ty: wgpu::BindingType::StorageBuffer {
+                                dynamic: false,
+                                readonly: false,
+                            },
                         },
                         wgpu::BindGroupLayoutBinding { // constants
                             binding: 1,
                             visibility: wgpu::ShaderStage::COMPUTE,
-                            ty: wgpu::BindingType::UniformBuffer,
+                            ty: wgpu::BindingType::UniformBuffer {
+                                dynamic: false,
+                            },
                         },
                     ],
                 });
@@ -833,7 +859,7 @@ impl Context {
                     Self::create_scatter_pipelines(&local_pipeline_layout, device);
                 let constant_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     size: mem::size_of::<ScatterConstants>() as wgpu::BufferAddress,
-                    usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::TRANSFER_DST,
+                    usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
                 });
                 let (local_bg, compute_groups) = Self::create_scatter_resources(
                     screen_extent,
@@ -957,7 +983,7 @@ impl Context {
 
         if let Some(size) = self.pending_resize {
             let staging = device
-                .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
+                .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
                 .fill_from_slice(&[
                     Constants {
                         _scr_size: [size.width, size.height, 0, 0],
@@ -984,7 +1010,7 @@ impl Context {
         } = self.kind {
             let scatter_constants = compute_scatter_constants(cam);
             let staging = device
-                .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
+                .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
                 .fill_from_slice(&[
                     scatter_constants,
                 ]);
@@ -1017,7 +1043,7 @@ impl Context {
             Kind::RayMip { ref pipeline, ref geo, .. } => {
                 pass.set_pipeline(pipeline);
                 pass.set_index_buffer(&geo.index_buf, 0);
-                pass.set_vertex_buffers(&[(&geo.vertex_buf, 0)]);
+                pass.set_vertex_buffers(0, &[(&geo.vertex_buf, 0)]);
                 pass.draw_indexed(0 .. geo.num_indices as u32, 0, 0 .. 1);
             }
             /*
@@ -1028,7 +1054,7 @@ impl Context {
             Kind::Slice { ref pipeline, ref geo } => {
                 pass.set_pipeline(pipeline);
                 pass.set_index_buffer(&geo.index_buf, 0);
-                pass.set_vertex_buffers(&[(&geo.vertex_buf, 0)]);
+                pass.set_vertex_buffers(0, &[(&geo.vertex_buf, 0)]);
                 pass.draw_indexed(0 .. geo.num_indices as u32, 0, 0 .. 1);
             }
             Kind::Scatter { ref copy_pipeline, ref bind_group, .. } => {

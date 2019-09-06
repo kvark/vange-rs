@@ -120,7 +120,7 @@ impl Context {
                 wgpu::BindGroupLayoutBinding { // locals
                     binding: 0,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::UniformBuffer,
+                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
                 },
             ],
         });
@@ -212,15 +212,15 @@ impl Context {
                 .unwrap();
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 layout: &self.pipeline_layout,
-                vertex_stage: wgpu::PipelineStageDescriptor {
+                vertex_stage: wgpu::ProgrammableStageDescriptor {
                     module: &shaders.vs,
                     entry_point: "main",
                 },
-                fragment_stage: Some(wgpu::PipelineStageDescriptor {
+                fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
                     module: &shaders.fs,
                     entry_point: "main",
                 }),
-                rasterization_state: rasterization_state.clone(),
+                rasterization_state: Some(rasterization_state.clone()),
                 primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
                 color_states: &[
                     wgpu::ColorStateDescriptor {
@@ -264,6 +264,8 @@ impl Context {
                     },
                 ],
                 sample_count: 1,
+                alpha_to_coverage_enabled: false,
+                sample_mask: !0,
             });
             self.pipeline_face = Some(pipeline);
             self.pipeline_edge = None; //TODO: line raster
@@ -281,15 +283,15 @@ impl Context {
                 for &color_rate in &[wgpu::InputStepMode::Vertex, wgpu::InputStepMode::Instance] {
                     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                         layout: &self.pipeline_layout,
-                        vertex_stage: wgpu::PipelineStageDescriptor {
+                        vertex_stage: wgpu::ProgrammableStageDescriptor {
                             module: &shaders.vs,
                             entry_point: "main",
                         },
-                        fragment_stage: Some(wgpu::PipelineStageDescriptor {
+                        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
                             module: &shaders.fs,
                             entry_point: "main",
                         }),
-                        rasterization_state: rasterization_state.clone(),
+                        rasterization_state: Some(rasterization_state.clone()),
                         primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
                         color_states: &[
                             wgpu::ColorStateDescriptor {
@@ -334,6 +336,8 @@ impl Context {
                             },
                         ],
                         sample_count: 1,
+                        alpha_to_coverage_enabled: false,
+                        sample_mask: !0,
                     });
                     self.pipelines_line.insert((visibility, color_rate), pipeline);
                 }
@@ -350,7 +354,7 @@ impl Context {
         num_vert: usize,
     ) {
         pass.set_blend_color(wgpu::Color::WHITE);
-        pass.set_vertex_buffers(&[
+        pass.set_vertex_buffers(0, &[
             (vertex_buf, 0),
             (color_buf, 0),
         ]);
@@ -371,14 +375,14 @@ impl Context {
         if let Some(ref pipeline) = self.pipeline_face {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, &self.bind_group_face, &[]);
-            pass.set_vertex_buffers(&[(&shape.polygon_buf, 0)]);
+            pass.set_vertex_buffers(0, &[(&shape.polygon_buf, 0)]);
             //pass.draw(); TODO
         }
         // draw collision polygon edges
         if let Some(ref pipeline) = self.pipeline_edge {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, &self.bind_group_edge, &[]);
-            pass.set_vertex_buffers(&[(&shape.polygon_buf, 0)]);
+            pass.set_vertex_buffers(0, &[(&shape.polygon_buf, 0)]);
             //pass.draw(); TODO
         }
 

@@ -298,8 +298,8 @@ impl Game {
 }
 
 impl Application for Game {
-    fn on_key(&mut self, input: wgpu::winit::KeyboardInput) -> bool {
-        use wgpu::winit::{ElementState, KeyboardInput, VirtualKeyCode as Key};
+    fn on_key(&mut self, input: winit::event::KeyboardInput) -> bool {
+        use winit::event::{ElementState, KeyboardInput, VirtualKeyCode as Key};
 
         let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
             Some(agent) => agent,

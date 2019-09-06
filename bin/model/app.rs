@@ -69,8 +69,8 @@ impl ResourceView {
 }
 
 impl Application for ResourceView {
-    fn on_key(&mut self, input: wgpu::winit::KeyboardInput) -> bool {
-        use wgpu::winit::{ElementState, KeyboardInput, VirtualKeyCode as Key};
+    fn on_key(&mut self, input: winit::event::KeyboardInput) -> bool {
+        use winit::event::{ElementState, KeyboardInput, VirtualKeyCode as Key};
 
         let angle = cgmath::Rad(2.0);
         match input {
@@ -132,7 +132,7 @@ impl Application for ResourceView {
             todo: 0,
         });
         let global_staging = device
-            .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
+            .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
             .fill_from_slice(&[
                 render::global::Constants::new(&self.cam, &self.light_config),
             ]);
