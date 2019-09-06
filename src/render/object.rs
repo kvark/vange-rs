@@ -81,22 +81,22 @@ impl Context {
             .unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
-            vertex_stage: wgpu::PipelineStageDescriptor {
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &shaders.vs,
                 entry_point: "main",
             },
-            fragment_stage: Some(wgpu::PipelineStageDescriptor {
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
                 module: &shaders.fs,
                 entry_point: "main",
             }),
-            rasterization_state: wgpu::RasterizationStateDescriptor {
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
                 // original was not drawn with rasterizer, used no culling
                 cull_mode: wgpu::CullMode::None,
                 depth_bias: 0,
                 depth_bias_slope_scale: 0.0,
                 depth_bias_clamp: 0.0,
-            },
+            }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[
                 wgpu::ColorStateDescriptor {
@@ -140,6 +140,8 @@ impl Context {
                 },
             ],
             sample_count: 1,
+            alpha_to_coverage_enabled: false,
+            sample_mask: !0,
         })
     }
 
@@ -159,11 +161,11 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::Rg8Uint,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
 
         let staging = device
-            .create_buffer_mapped(NUM_COLOR_IDS as usize, wgpu::BufferUsage::TRANSFER_SRC)
+            .create_buffer_mapped(NUM_COLOR_IDS as usize, wgpu::BufferUsage::COPY_SRC)
             .fill_from_slice(&COLOR_TABLE);
         encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
@@ -210,12 +212,18 @@ impl Context {
                 wgpu::BindGroupLayoutBinding { // color map
                     binding: 0,
                     visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::SampledTexture,
+                    ty: wgpu::BindingType::SampledTexture {
+                        dimension: wgpu::TextureViewDimension::D1,
+                        multisampled: false,
+                    },
                 },
                 wgpu::BindGroupLayoutBinding { // palette map
                     binding: 1,
                     visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::SampledTexture,
+                    ty: wgpu::BindingType::SampledTexture {
+                        dimension: wgpu::TextureViewDimension::D1,
+                        multisampled: false,
+                    },
                 },
                 wgpu::BindGroupLayoutBinding { // color table sampler
                     binding: 2,
@@ -229,7 +237,7 @@ impl Context {
                 wgpu::BindGroupLayoutBinding { // part locals
                     binding: 0,
                     visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer,
+                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
                 },
             ],
         });

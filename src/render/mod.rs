@@ -27,7 +27,7 @@ pub mod terrain;
 
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
-pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::D32Float;
+pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 pub struct ScreenTargets<'a> {
     pub extent: wgpu::Extent3d,
@@ -120,25 +120,20 @@ impl Shaders {
         debug!("vs:\n{}", str_vs);
         debug!("fs:\n{}", str_fs);
 
-        let mut output_vs = match glsl_to_spirv::compile(&str_vs, glsl_to_spirv::ShaderType::Vertex) {
-            Ok(file) => file,
+        let spv_vs = match glsl_to_spirv::compile(&str_vs, glsl_to_spirv::ShaderType::Vertex) {
+            Ok(file) => wgpu::read_spirv(file).unwrap(),
             Err(e) => {
                 println!("Generated VS shader:\n{}", str_vs);
                 panic!("\nUnable to compile '{}': {:?}", name, e);
             }
         };
-        let mut spv_vs = Vec::new();
-        output_vs.read_to_end(&mut spv_vs).unwrap();
-
-        let mut output_fs = match glsl_to_spirv::compile(&str_fs, glsl_to_spirv::ShaderType::Fragment) {
-            Ok(file) => file,
+        let spv_fs = match glsl_to_spirv::compile(&str_fs, glsl_to_spirv::ShaderType::Fragment) {
+            Ok(file) => wgpu::read_spirv(file).unwrap(),
             Err(e) => {
                 println!("Generated FS shader:\n{}", str_fs);
                 panic!("\nUnable to compile '{}': {:?}", name, e);
             }
         };
-        let mut spv_fs = Vec::new();
-        output_fs.read_to_end(&mut spv_fs).unwrap();
 
         Ok(Shaders {
             vs: device.create_shader_module(&spv_vs),
@@ -202,15 +197,13 @@ impl Shaders {
         let str_cs = String::from_utf8_lossy(&buf);
         debug!("cs:\n{}", str_cs);
 
-        let mut output = match glsl_to_spirv::compile(&str_cs, glsl_to_spirv::ShaderType::Compute) {
-            Ok(file) => file,
+        let spv = match glsl_to_spirv::compile(&str_cs, glsl_to_spirv::ShaderType::Compute) {
+            Ok(file) => wgpu::read_spirv(file).unwrap(),
             Err(e) => {
                 println!("Generated CS shader:\n{}", str_cs);
                 panic!("\nUnable to compile '{}': {:?}", name, e);
             }
         };
-        let mut spv = Vec::new();
-        output.read_to_end(&mut spv).unwrap();
 
         Ok(device.create_shader_module(&spv))
 
@@ -240,11 +233,11 @@ impl Palette {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::TRANSFER_DST,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
 
         let staging = device
-            .create_buffer_mapped(data.len(), wgpu::BufferUsage::TRANSFER_SRC)
+            .create_buffer_mapped(data.len(), wgpu::BufferUsage::COPY_SRC)
             .fill_from_slice(data);
         encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
@@ -287,7 +280,7 @@ impl<'a> RenderModel<'a> {
         let count = self.model.mesh_count();
         let mapping = device.create_buffer_mapped(
             count,
-            wgpu::BufferUsage::TRANSFER_SRC,
+            wgpu::BufferUsage::COPY_SRC,
         );
 
         // body
@@ -372,7 +365,7 @@ impl Render {
         mesh: &model::Mesh,
     ) {
         pass.set_bind_group(2, &mesh.bind_group, &[]);
-        pass.set_vertex_buffers(&[(&mesh.vertex_buf, 0)]);
+        pass.set_vertex_buffers(0, &[(&mesh.vertex_buf, 0)]);
         pass.draw(0 .. mesh.num_vertices as u32, 0 .. 1);
     }
 
@@ -408,7 +401,7 @@ impl Render {
         });
 
         let global_staging = device
-            .create_buffer_mapped(1, wgpu::BufferUsage::TRANSFER_SRC)
+            .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
             .fill_from_slice(&[
                 global::Constants::new(cam, &self.light_config),
             ]);

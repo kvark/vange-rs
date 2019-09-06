@@ -9,7 +9,7 @@ use vangers::{
 use cgmath;
 use log::info;
 use wgpu;
-use wgpu::winit;
+use winit::event;
 
 
 #[derive(Debug)]
@@ -150,9 +150,9 @@ impl Application for LevelView {
         self.last_mouse_pos = position_vec;
     }
 
-    fn on_mouse_wheel(&mut self, delta: winit::MouseScrollDelta) {
+    fn on_mouse_wheel(&mut self, delta: event::MouseScrollDelta) {
         match delta {
-            winit::MouseScrollDelta::LineDelta(_, y) => {
+            event::MouseScrollDelta::LineDelta(_, y) => {
                 self.input = Input::DepQuant(y);
             }
             _ => {}
@@ -160,15 +160,15 @@ impl Application for LevelView {
 
     }
 
-    fn on_mouse_button(&mut self, state: winit::ElementState, button: winit::MouseButton) {
-        if button == winit::MouseButton::Left {
-            self.mouse_button_pressed = state == winit::ElementState::Pressed;
+    fn on_mouse_button(&mut self, state: event::ElementState, button: event::MouseButton) {
+        if button == event::MouseButton::Left {
+            self.mouse_button_pressed = state == event::ElementState::Pressed;
             self.last_mouse_pos = cgmath::vec2(-1.0, -1.0);
         }
     }
 
-    fn on_key(&mut self, input: winit::KeyboardInput) -> bool {
-        use wgpu::winit::{ElementState, KeyboardInput, ModifiersState, VirtualKeyCode as Key};
+    fn on_key(&mut self, input: event::KeyboardInput) -> bool {
+        use winit::event::{ElementState, KeyboardInput, ModifiersState, VirtualKeyCode as Key};
 
         let i = &mut self.input;
         match input {

@@ -6,14 +6,19 @@ use vangers::{
 use env_logger;
 use log::info;
 use wgpu;
-use wgpu::winit;
+use winit::{
+    self,
+    event,
+    event_loop::{ControlFlow, EventLoop},
+    window::{Window, WindowBuilder},
+};
 
 
 pub trait Application {
-    fn on_key(&mut self, input: winit::KeyboardInput) -> bool;
-    fn on_mouse_wheel(&mut self, _delta: winit::MouseScrollDelta) {}
+    fn on_key(&mut self, input: event::KeyboardInput) -> bool;
+    fn on_mouse_wheel(&mut self, _delta: event::MouseScrollDelta) {}
     fn on_cursor_move(&mut self, _position: (f64, f64)) {}
-    fn on_mouse_button(&mut self, _state: winit::ElementState, _button: winit::MouseButton) {}
+    fn on_mouse_button(&mut self, _state: event::ElementState, _button: event::MouseButton) {}
     fn resize(&mut self, _device: &wgpu::Device, _extent: wgpu::Extent3d) {}
     fn reload(&mut self, _device: &wgpu::Device);
     fn update(&mut self, delta: f32);
@@ -25,8 +30,8 @@ pub trait Application {
 }
 
 pub struct Harness {
-    events_loop: winit::EventsLoop,
-    window: winit::Window,
+    event_loop: EventLoop<()>,
+    window: Window,
     pub device: wgpu::Device,
     surface: wgpu::Surface,
     swap_chain: wgpu::SwapChain,
@@ -40,8 +45,8 @@ impl Harness {
         env_logger::init();
 
         let instance = wgpu::Instance::new();
-        let adapter = instance.get_adapter(&wgpu::AdapterDescriptor {
-            power_preference: wgpu::PowerPreference::LowPower,
+        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::Default,
         });
         let device = adapter.request_device(&wgpu::DeviceDescriptor {
             extensions: wgpu::Extensions {
@@ -59,25 +64,28 @@ impl Harness {
         };
 
         info!("Initializing the window...");
-        let events_loop = winit::EventsLoop::new();
-        let dpi = events_loop
-            .get_primary_monitor()
-            .get_hidpi_factor();
-        let window = winit::WindowBuilder::new()
+        let event_loop = EventLoop::new();
+        let dpi = event_loop
+            .primary_monitor()
+            .hidpi_factor();
+        let window = WindowBuilder::new()
             .with_title(title)
-            .with_dimensions(
+            .with_inner_size(
                 winit::dpi::LogicalSize::from_physical((extent.width, extent.height), dpi),
             )
             .with_resizable(true)
-            .build(&events_loop)
+            .build(&event_loop)
             .unwrap();
 
-        let surface = instance.create_surface(&window);
+        let surface = instance.create_surface(
+            raw_window_handle::HasRawWindowHandle::raw_window_handle(&window)
+        );
         let sc_desc = wgpu::SwapChainDescriptor {
             usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
             format: COLOR_FORMAT,
             width: extent.width,
             height: extent.height,
+            present_mode: wgpu::PresentMode::Vsync,
         };
         let swap_chain = device.create_swap_chain(&surface, &sc_desc);
         let depth_target = device
@@ -93,7 +101,7 @@ impl Harness {
             .create_default_view();
 
         let harness = Harness {
-            events_loop,
+            event_loop,
             window,
             device,
             surface,
@@ -105,103 +113,100 @@ impl Harness {
         (harness, settings)
     }
 
-    pub fn main_loop<A: Application>(&mut self, mut app: A) {
+    pub fn main_loop<A: 'static + Application>(self, mut app: A) {
         use std::time;
-        use wgpu::winit::{Event, WindowEvent};
 
         let mut last_time = time::Instant::now();
-        loop {
-            let win = &self.window;
-            let mut running = true;
-            let mut resized_extent = None;
-            let mut reload_shaders = false;
-            self.events_loop.poll_events(|event| match event {
-                Event::WindowEvent { window_id, ref event } if window_id == win.id() => {
-                    match *event {
-                        WindowEvent::Resized(size) => {
-                            let physical = size.to_physical(win.get_hidpi_factor());
-                            info!("Resizing to {:?}", physical);
-                            resized_extent = Some(wgpu::Extent3d {
-                                width: physical.width.round() as u32,
-                                height: physical.height.round() as u32,
-                                depth: 1,
-                            });
-                        }
-                        WindowEvent::Focused(true) => {
-                            info!("Reloading shaders");
-                            reload_shaders = true;
-                        }
-                        WindowEvent::CloseRequested => {
-                            running = false;
-                        }
-                        WindowEvent::KeyboardInput { input, .. } => {
-                            if !app.on_key(input) {
-                                running = false;
-                            }
-                        }
-                        WindowEvent::MouseWheel {delta, ..} => {
-                            app.on_mouse_wheel(delta)
-                        }
-                        WindowEvent::CursorMoved {position, ..} => {
-                            let physical = position.to_physical(win.get_hidpi_factor());
-                            app.on_cursor_move(physical.into())
-                        }
-                        WindowEvent::MouseInput {state, button, ..} => {
-                            app.on_mouse_button(state, button)
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
-            });
+        let Harness {
+            event_loop,
+            window,
+            mut device,
+            surface,
+            mut swap_chain,
+            mut extent,
+            mut depth_target,
+        } = self;
 
-            if !running {
-                break;
-            }
-            if let Some(extent) = resized_extent {
-                self.extent = extent;
-                let sc_desc = wgpu::SwapChainDescriptor {
-                    usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-                    format: COLOR_FORMAT,
-                    width: extent.width,
-                    height: extent.height,
-                };
-                self.swap_chain = self.device.create_swap_chain(&self.surface, &sc_desc);
-                self.depth_target = self.device
-                    .create_texture(&wgpu::TextureDescriptor {
-                        size: extent,
-                        array_layer_count: 1,
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: DEPTH_FORMAT,
+        event_loop.run(move |event, _, control_flow| {
+            *control_flow = ControlFlow::Poll;
+            match event {
+                event::Event::WindowEvent {
+                    event: event::WindowEvent::Resized(size),
+                    ..
+                } => {
+                    let physical = size.to_physical(window.hidpi_factor());
+                    info!("Resizing to {:?}", physical);
+                    extent = wgpu::Extent3d {
+                        width: physical.width.round() as u32,
+                        height: physical.height.round() as u32,
+                        depth: 1,
+                    };
+                    let sc_desc = wgpu::SwapChainDescriptor {
                         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-                    })
-                    .create_default_view();
-                app.resize(&self.device, extent);
-            }
-            if reload_shaders {
-                app.reload(&self.device);
-            }
+                        format: COLOR_FORMAT,
+                        width: extent.width,
+                        height: extent.height,
+                        present_mode: wgpu::PresentMode::Vsync,
+                    };
+                    swap_chain = device.create_swap_chain(&surface, &sc_desc);
+                    depth_target = device
+                        .create_texture(&wgpu::TextureDescriptor {
+                            size: extent,
+                            array_layer_count: 1,
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: DEPTH_FORMAT,
+                            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+                        })
+                        .create_default_view();
+                    app.resize(&device, extent);
+                }
+                event::Event::WindowEvent { event, .. } => match event {
+                    event::WindowEvent::Focused(true) => {
+                        info!("Reloading shaders");
+                        app.reload(&device);
+                    }
+                    event::WindowEvent::CloseRequested => {
+                        *control_flow = ControlFlow::Exit;
+                    }
+                    event::WindowEvent::KeyboardInput { input, .. } => {
+                        if !app.on_key(input) {
+                            *control_flow = ControlFlow::Exit;
+                        }
+                    }
+                    event::WindowEvent::MouseWheel {delta, ..} => {
+                        app.on_mouse_wheel(delta)
+                    }
+                    event::WindowEvent::CursorMoved {position, ..} => {
+                        let physical = position.to_physical(window.hidpi_factor());
+                        app.on_cursor_move(physical.into())
+                    }
+                    event::WindowEvent::MouseInput {state, button, ..} => {
+                        app.on_mouse_button(state, button)
+                    }
+                    _ => {}
+                },
+                event::Event::EventsCleared => {
+                    let duration = time::Instant::now() - last_time;
+                    last_time += duration;
+                    let delta = duration.as_secs() as f32 +
+                        duration.subsec_nanos() as f32 * 1.0e-9;
 
-            let duration = time::Instant::now() - last_time;
-            last_time += duration;
-            let delta = duration.as_secs() as f32 +
-                duration.subsec_nanos() as f32 * 1.0e-9;
-
-            app.update(delta);
-            {
-                let frame = self.swap_chain.get_next_texture();
-                let targets = ScreenTargets {
-                    extent: self.extent,
-                    color: &frame.view,
-                    depth: &self.depth_target,
-                };
-                let command_buffer = app.draw(&self.device, targets);
-                self.device
-                    .get_queue()
-                    .submit(&[ command_buffer ]);
+                    app.update(delta);
+                    let frame = swap_chain.get_next_texture();
+                    let targets = ScreenTargets {
+                        extent,
+                        color: &frame.view,
+                        depth: &depth_target,
+                    };
+                    let command_buffer = app.draw(&device, targets);
+                    device
+                        .get_queue()
+                        .submit(&[ command_buffer ]);
+                }
+                _ => (),
             }
-        }
+        });
     }
 }

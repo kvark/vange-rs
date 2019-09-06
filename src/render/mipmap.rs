@@ -32,21 +32,21 @@ impl MaxMipper {
             .unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
-            vertex_stage: wgpu::PipelineStageDescriptor {
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &shaders.vs,
                 entry_point: "main",
             },
-            fragment_stage: Some(wgpu::PipelineStageDescriptor {
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
                 module: &shaders.fs,
                 entry_point: "main",
             }),
-            rasterization_state: wgpu::RasterizationStateDescriptor {
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: wgpu::CullMode::None,
                 depth_bias: 0,
                 depth_bias_slope_scale: 0.0,
                 depth_bias_clamp: 0.0,
-            },
+            }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[
                 wgpu::ColorStateDescriptor {
@@ -72,6 +72,8 @@ impl MaxMipper {
                 },
             ],
             sample_count: 1,
+            alpha_to_coverage_enabled: false,
+            sample_mask: !0,
         })
     }
 
@@ -91,7 +93,10 @@ impl MaxMipper {
                 wgpu::BindGroupLayoutBinding { // texture
                     binding: 1,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture,
+                    ty: wgpu::BindingType::SampledTexture {
+                        dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                 },
             ],
         });
@@ -117,11 +122,11 @@ impl MaxMipper {
             let view = texture.create_view(&wgpu::TextureViewDescriptor {
                 format: HEIGHT_FORMAT,
                 dimension: wgpu::TextureViewDimension::D2,
-                aspect: wgpu::TextureAspectFlags::COLOR,
+                aspect: wgpu::TextureAspect::All,
                 base_mip_level: level,
                 level_count: 1,
                 base_array_layer: 0,
-                array_count: 1,
+                array_layer_count: 1,
             });
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -201,7 +206,7 @@ impl MaxMipper {
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.mips[mip].bind_group, &[]);
-            pass.set_vertex_buffers(&[(&vertex_buf, 0)]);
+            pass.set_vertex_buffers(0, &[(&vertex_buf, 0)]);
             pass.draw(0 .. rects.len() as u32 * 6, 0 .. 1);
         }
     }

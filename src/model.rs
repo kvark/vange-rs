@@ -303,7 +303,7 @@ pub fn load_m3d(
     let locals_num = debrie_offset + raw.debris.len() + raw.slots.len();
     let locals_buf = device.create_buffer(&wgpu::BufferDescriptor {
         size: (locals_num * mem::size_of::<ObjectLocals>()) as wgpu::BufferAddress,
-        usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::TRANSFER_DST,
+        usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
     });
 
     let model = VisualModel {
