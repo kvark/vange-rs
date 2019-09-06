@@ -1,0 +1,44 @@
+name: Build
+# This workflow is triggered on pushes to the repository.
+on:
+  pull_request:
+    branches:
+    - master
+
+jobs:
+  test_Linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Prepare
+        run: rustc --version
+      - name: Build
+        run: cargo check
+      - name: Test
+        run: cargo test
+  test_macOS:
+    runs-on: macOS-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Prepare
+        run: |
+          brew install rustup
+          rustup-init -y --default-toolchain stable
+      - name: Build
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo check
+      - name: Test
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo test
+  test_Windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Prepare
+        run: rustc --version
+      - name: Build
+        run: cargo check
+      - name: Test
+        run: cargo test
