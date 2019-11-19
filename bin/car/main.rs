@@ -24,7 +24,7 @@ fn main() {
         return;
     }
 
-    let app = app::CarView::new(&settings, &mut harness.device);
+    let app = app::CarView::new(&settings, &harness.device, &mut harness.queue);
 
     harness.main_loop(app);
 }

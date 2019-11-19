@@ -330,7 +330,8 @@ pub struct Render {
 
 impl Render {
     pub fn new(
-        device: &mut wgpu::Device,
+        device: &wgpu::Device,
+        queue: &mut wgpu::Queue,
         level: &level::Level,
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
@@ -343,7 +344,7 @@ impl Render {
         let object = object::Context::new(&mut init_encoder, device, object_palette, &global);
         let terrain = terrain::Context::new(&mut init_encoder, device, level, &global, &settings.terrain, screen_extent);
         let debug = debug::Context::new(device, &settings.debug, &global);
-        device.get_queue().submit(&[
+        queue.submit(&[
             init_encoder.finish(),
         ]);
 

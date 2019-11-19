@@ -38,7 +38,8 @@ impl LevelView {
     pub fn new(
         settings: &config::settings::Settings,
         screen_extent: wgpu::Extent3d,
-        device: &mut wgpu::Device,
+        device: &wgpu::Device,
+        queue: &mut wgpu::Queue,
     ) -> Self {
         let level = if settings.game.level.is_empty() {
             info!("Using test level");
@@ -94,7 +95,7 @@ impl LevelView {
 
         let objects_palette = level::read_palette(settings.open_palette(), None);
         let depth = 10f32 .. 10000f32;
-        let render = Render::new(device, &level, &objects_palette, &settings.render, screen_extent);
+        let render = Render::new(device, queue, &level, &objects_palette, &settings.render, screen_extent);
 
         LevelView {
             render,

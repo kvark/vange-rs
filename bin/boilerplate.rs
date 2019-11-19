@@ -33,6 +33,7 @@ pub struct Harness {
     event_loop: EventLoop<()>,
     window: Window,
     pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
     surface: wgpu::Surface,
     swap_chain: wgpu::SwapChain,
     pub extent: wgpu::Extent3d,
@@ -44,11 +45,13 @@ impl Harness {
         info!("Initializing the device");
         env_logger::init();
 
-        let instance = wgpu::Instance::new();
-        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::Default,
-        });
-        let device = adapter.request_device(&wgpu::DeviceDescriptor {
+        let adapter = wgpu::Adapter::request(
+            &wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::Default,
+                backends: wgpu::BackendBit::PRIMARY,
+            },
+        ).unwrap();
+        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
             extensions: wgpu::Extensions {
                 anisotropic_filtering: false,
             },
@@ -77,9 +80,7 @@ impl Harness {
             .build(&event_loop)
             .unwrap();
 
-        let surface = instance.create_surface(
-            raw_window_handle::HasRawWindowHandle::raw_window_handle(&window)
-        );
+        let surface = wgpu::Surface::create(&window);
         let sc_desc = wgpu::SwapChainDescriptor {
             usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
             format: COLOR_FORMAT,
@@ -104,6 +105,7 @@ impl Harness {
             event_loop,
             window,
             device,
+            queue,
             surface,
             swap_chain,
             extent,
@@ -120,7 +122,8 @@ impl Harness {
         let Harness {
             event_loop,
             window,
-            mut device,
+            device,
+            mut queue,
             surface,
             mut swap_chain,
             mut extent,
@@ -201,9 +204,7 @@ impl Harness {
                         depth: &depth_target,
                     };
                     let command_buffer = app.draw(&device, targets);
-                    device
-                        .get_queue()
-                        .submit(&[ command_buffer ]);
+                    queue.submit(&[ command_buffer ]);
                 }
                 _ => (),
             }
