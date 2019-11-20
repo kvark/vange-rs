@@ -55,12 +55,11 @@ serde_derive = "1.0"
 serde_scan = "0.1"
 #wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
 #wgpu = { path = "../wgpu-rs" }
-wgpu = { version = "0.3" }
+wgpu = { version = "0.4" }
 # binaries
 env_logger = "0.5"
 getopts = "0.2"
 obj = "0.9"
 png = "0.13"
-raw-window-handle = "0.1"
-winit = "0.20.0-alpha3"
+winit = "0.20.0-alpha4"
 

@@ -25,7 +25,7 @@ fn main() {
         return;
     }
 
-    let game = game::Game::new(&settings, harness.extent, &mut harness.device);
+    let game = game::Game::new(&settings, harness.extent, &harness.device, &mut harness.queue);
 
     harness.main_loop(game);
 }

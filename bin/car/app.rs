@@ -28,7 +28,8 @@ pub struct CarView {
 impl CarView {
     pub fn new(
         settings: &config::Settings,
-        device: &mut wgpu::Device,
+        device: &wgpu::Device,
+        queue: &mut wgpu::Queue,
     ) -> Self {
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
@@ -37,7 +38,7 @@ impl CarView {
         });
         let global = render::global::Context::new(device);
         let object = render::object::Context::new(&mut init_encoder, device, &pal_data, &global);
-        device.get_queue().submit(&[
+        queue.submit(&[
             init_encoder.finish(),
         ]);
 

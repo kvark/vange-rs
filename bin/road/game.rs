@@ -153,7 +153,8 @@ impl Game {
     pub fn new(
         settings: &config::Settings,
         screen_extent: wgpu::Extent3d,
-        device: &mut wgpu::Device,
+        device: &wgpu::Device,
+        queue: &mut wgpu::Queue,
     ) -> Self {
         info!("Loading world parameters");
         let (level, coords) = if settings.game.level.is_empty() {
@@ -180,7 +181,7 @@ impl Game {
         info!("Initializing the render");
         let depth = 10f32 .. 10000f32;
         let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
-        let render = Render::new(device, &level, &pal_data, &settings.render, screen_extent);
+        let render = Render::new(device, queue, &level, &pal_data, &settings.render, screen_extent);
 
         info!("Loading world database");
         let db = {

@@ -22,7 +22,7 @@ fn main() {
     }
 
     let path = &matches.free[0];
-    let app = app::ResourceView::new(path, &settings, &mut harness.device);
+    let app = app::ResourceView::new(path, &settings, &harness.device, &mut harness.queue);
 
     harness.main_loop(app);
 }
