@@ -12,11 +12,22 @@ use crate::{
 
 use std::{mem, ops::Range, sync::{Arc, Mutex}};
 
-
 #[repr(C)]
 #[derive(Clone, Copy, zerocopy::FromBytes)]
 pub struct PolygonData {
-    pub force: [i32; 4],
+    raw: u32,
+}
+
+impl PolygonData {
+    pub fn average(&self) -> f32 {
+        const DEPTH_BITS: usize = 20; // has to match the shader!
+        let count = self.raw >> DEPTH_BITS;
+        if count == 0 {
+            0.0
+        } else {
+            (self.raw & ((1<<DEPTH_BITS) - 1)) as f32 / (count as f32)
+        }
+    }
 }
 
 #[repr(C)]
@@ -34,6 +45,12 @@ struct Globals {
     penetration: [f32; 4],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
+struct ClearLocals {
+    count: [u32; 4],
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct Epoch(usize);
 
@@ -49,7 +66,9 @@ struct PendingResult {
 
 pub struct GpuCollider {
     pipeline_layout: wgpu::PipelineLayout,
+    clear_pipeline_layout: wgpu::PipelineLayout,
     pipeline: wgpu::RenderPipeline,
+    clear_pipeline: wgpu::ComputePipeline,
     buffer: wgpu::Buffer,
     uniform_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -57,9 +76,10 @@ pub struct GpuCollider {
     //TODO: remove it when WebGPU permits this
     dummy_target: wgpu::TextureView,
     locals_size: usize,
+    dirty_group_count: u32,
     epoch: Epoch,
     pending_result: Option<PendingResult>,
-    latest: Arc<Mutex<(Vec<PolygonData>, Epoch)>>,
+    latest: Arc<Mutex<(Vec<f32>, Epoch)>>,
 }
 
 pub struct GpuSession<'this, 'pass> {
@@ -75,15 +95,17 @@ pub struct GpuSession<'this, 'pass> {
 }
 
 const DUMMY_TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+const CLEAR_WORK_GROUP_WIDTH: u32 = 64;
 
 impl GpuCollider {
-    fn create_pipeline(
+    fn create_pipelines(
         layout: &wgpu::PipelineLayout,
+        clear_layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
-    ) -> wgpu::RenderPipeline {
-        let shaders = Shaders::new("collision", &[], device)
+    ) -> (wgpu::RenderPipeline, wgpu::ComputePipeline) {
+        let shaders = Shaders::new("physics/collision_add", &[], device)
             .unwrap();
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
             vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &shaders.vs,
@@ -117,7 +139,23 @@ impl GpuCollider {
             sample_count: 1,
             alpha_to_coverage_enabled: false,
             sample_mask: !0,
-        })
+        });
+
+        let clear_shader = Shaders::new_compute(
+            "physics/collision_clear",
+            [CLEAR_WORK_GROUP_WIDTH, 1, 1],
+            &[],
+            device,
+        ).unwrap();
+        let clear_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            layout: clear_layout,
+            compute_stage: wgpu::ProgrammableStageDescriptor {
+                module: &clear_shader,
+                entry_point: "main",
+            },
+        });
+
+        (pipeline, clear_pipeline)
     }
 
     pub fn new(
@@ -138,7 +176,7 @@ impl GpuCollider {
                 },
                 wgpu::BindGroupLayoutBinding {
                     binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
                     ty: wgpu::BindingType::StorageBuffer {
                         dynamic: false,
                         readonly: false,
@@ -165,8 +203,21 @@ impl GpuCollider {
                 &dynamic_bind_group_layout,
             ],
         });
-        let pipeline = Self::create_pipeline(&pipeline_layout, device);
-        let buf_size = (settings.max_polygons_total * mem::size_of::<PolygonData>()) as wgpu::BufferAddress;
+
+        let clear_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &[
+                &bind_group_layout,
+            ],
+        });
+        let (pipeline, clear_pipeline) = Self::create_pipelines(
+            &pipeline_layout,
+            &clear_pipeline_layout,
+            device,
+        );
+
+        // ensure the total size fits complete number of workgroups
+        let max_polygons_total = settings.max_polygons_total | (CLEAR_WORK_GROUP_WIDTH - 1) as usize + 1;
+        let buf_size = (max_polygons_total * mem::size_of::<PolygonData>()) as wgpu::BufferAddress;
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             size: buf_size,
             usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_SRC,
@@ -244,12 +295,15 @@ impl GpuCollider {
 
         GpuCollider {
             pipeline_layout,
+            clear_pipeline_layout,
             pipeline,
+            clear_pipeline,
             buffer,
             uniform_buf: local_uniforms,
             bind_group,
             dynamic_bind_group,
             dummy_target,
+            dirty_group_count: max_polygons_total as u32 / CLEAR_WORK_GROUP_WIDTH,
             locals_size,
             epoch: Epoch(0),
             pending_result: None,
@@ -260,10 +314,16 @@ impl GpuCollider {
     pub fn reload(
         &mut self, device: &wgpu::Device,
     ) {
-        self.pipeline = Self::create_pipeline(&self.pipeline_layout, device);
+        let (pipeline, clear_pipeline) = Self::create_pipelines(
+            &self.pipeline_layout,
+            &self.clear_pipeline_layout,
+            device,
+        );
+        self.pipeline = pipeline;
+        self.clear_pipeline = clear_pipeline;
     }
 
-    pub fn begin<'this, 'pass, 'dev>(
+    pub fn begin<'this, 'pass>(
         &'this mut self,
         encoder: &'pass mut wgpu::CommandEncoder,
         terrain: &TerrainContext,
@@ -271,12 +331,27 @@ impl GpuCollider {
         if let Some(pr) = self.pending_result.take() {
             let latest = Arc::clone(&self.latest);
             let epoch = pr.epoch;
+            self.dirty_group_count = pr.count as u32 / CLEAR_WORK_GROUP_WIDTH;
+            if self.dirty_group_count * CLEAR_WORK_GROUP_WIDTH < pr.count as u32 {
+                self.dirty_group_count += 1;
+            }
             pr.buffer.map_read_async(0, pr.count, move |result| {
+                let averages = result
+                    .unwrap()
+                    .data.iter()
+                    .map(PolygonData::average);
                 let mut storage = latest.lock().unwrap();
                 storage.1 = epoch;
                 storage.0.clear();
-                storage.0.extend_from_slice(&result.unwrap().data);
+                storage.0.extend(averages);
             });
+        }
+        if self.dirty_group_count != 0 {
+            let mut pass = encoder.begin_compute_pass();
+            pass.set_pipeline(&self.clear_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.dispatch(self.dirty_group_count, 1, 1);
+            self.dirty_group_count = 0;
         }
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
