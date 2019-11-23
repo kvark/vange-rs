@@ -8,7 +8,6 @@ layout(location = 3) flat varying int v_TargetIndex;
 layout(set = 0, binding = 0) uniform c_Globals {
     vec4 u_TargetScale;
     vec4 u_Penetration; // X=scale, Y=limit
-    uvec4 u_Capacity;
 };
 
 #ifdef SHADER_VS
@@ -64,9 +63,8 @@ void main() {
         }
     }
 
-    uint depth = uint(min(u_Penetration.y, u_Penetration.x * depth_raw));
-    if (depth != 0U) {
-        atomicAdd(s_Data[v_TargetIndex], depth + (1U<<DEPTH_BITS));
+    if (depth_raw != 0.0) {
+        atomicAdd(s_Data[v_TargetIndex], uint(depth_raw) + (1U<<DEPTH_BITS));
     }
     /*
     vec3 collision_vec = depth * vec3(v_Vector.y, -v_Vector.x, 1.0);

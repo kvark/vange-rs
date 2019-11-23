@@ -7,7 +7,7 @@ use vangers::{
     config, level, model, space,
     render::{
         Render, RenderModel, ScreenTargets,
-        collision::GpuCollider,
+        collision::{GpuCollider, GpuResult},
         debug::LineBuffer,
     },
 };
@@ -17,7 +17,10 @@ use cgmath::{
     Angle, Rotation3, Zero,
 };
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::MutexGuard,
+};
 
 
 #[derive(Eq, PartialEq)]
@@ -34,16 +37,6 @@ struct Control {
     turbo: bool,
 }
 
-
-enum GpuMomentum {
-    //Pending(render::ShapeId),
-    //Computed(usize),
-    /*Ready {
-        ground_force: f32,
-        angular_force: cgmath::Vector2<f32>,
-    },*/
-}
-
 pub struct Agent {
     _name: String,
     spirit: Spirit,
@@ -51,7 +44,7 @@ pub struct Agent {
     pub car: config::car::CarInfo,
     dynamo: physics::Dynamo,
     control: Control,
-    gpu_momentum: Option<GpuMomentum>,
+    gpu_physics: physics::GpuLink,
 }
 
 impl Agent {
@@ -74,7 +67,7 @@ impl Agent {
             car: car.clone(),
             dynamo: physics::Dynamo::default(),
             control: Control::default(),
-            gpu_momentum: None,
+            gpu_physics: physics::GpuLink::default(),
         }
     }
 
@@ -100,6 +93,7 @@ impl Agent {
         dt: f32,
         level: &level::Level,
         common: &config::common::Common,
+        gpu_latest: Option<&MutexGuard<GpuResult>>,
         line_buffer: Option<&mut LineBuffer>,
     ) {
         physics::step(
@@ -111,11 +105,8 @@ impl Agent {
             common,
             if self.control.turbo { common.global.k_traction_turbo } else { 1.0 },
             if self.control.brake { common.global.f_brake_max } else { 0.0 },
-            match self.gpu_momentum {
-                //Some(GpuMomentum::Ready { ground_force, angular_force }) =>
-                //    Some((ground_force, angular_force)),
-                _ => None,
-            },
+            &mut self.gpu_physics,
+            gpu_latest,
             line_buffer,
         )
     }
@@ -374,6 +365,7 @@ impl Application for Game {
                     tick * self.max_quant,
                     &self.level,
                     &self.db.common,
+                    None,
                     Some(&mut self.line_buffer),
                 );
             }
@@ -422,8 +414,6 @@ impl Application for Game {
                 fps * n.time_delta0 * n.num_calls_analysis as f32
             };
 
-            self.line_buffer.clear();
-
             for a in self.agents.iter_mut() {
                 a.apply_control(
                     input_factor,
@@ -431,17 +421,26 @@ impl Application for Game {
                 );
             }
 
-            while physics_dt > self.max_quant {
-                for a in self.agents.iter_mut() {
-                    a.step(
-                        self.max_quant,
-                        &self.level,
-                        &self.db.common,
-                        None,
-                    );
+            // don't quantify if going through GPU, for now
+            if self.collider.is_none() {
+                while physics_dt > self.max_quant {
+                    for a in self.agents.iter_mut() {
+                        a.step(
+                            self.max_quant,
+                            &self.level,
+                            &self.db.common,
+                            None,
+                            None,
+                        );
+                    }
+                    physics_dt -= self.max_quant;
                 }
-                physics_dt -= self.max_quant;
             }
+
+            self.line_buffer.clear();
+            let gpu_result = self.collider
+                .as_ref()
+                .map(GpuCollider::result);
 
             for a in self.agents.iter_mut() {
                 let lbuf = match a.spirit {
@@ -452,6 +451,7 @@ impl Application for Game {
                     physics_dt,
                     &self.level,
                     &self.db.common,
+                    gpu_result.as_ref(),
                     lbuf,
                 );
             }
@@ -486,8 +486,9 @@ impl Application for Game {
                 for agent in &mut self.agents {
                     let mut transform = agent.transform.clone();
                     transform.scale *= agent.car.physics.scale_bound;
-                    let _shape_id = session.add(&agent.car.model.shape, transform);
-                    //agent.gpu_momentum = Some(GpuMomentum::Pending(shape_id));
+                    let start_index = session.add(&agent.car.model.shape, transform);
+                    let old = agent.gpu_physics.insert(session.epoch, start_index);
+                    assert_eq!(old, None);
                 }
                 let (pre, post) = session.finish(device);
                 combs.push(pre);
@@ -495,21 +496,7 @@ impl Application for Game {
             }
             None => None,
         };
-        /*
-        if self.compute_gpu_collision {
-            let mapping = factory
-                .read_mapping(self.collider.readback())
-                .unwrap();
-            for agent in &mut self.agents {
-                if let Some(GpuMomentum::Computed(index)) = agent.gpu_momentum.take() {
-                    let v = mapping[index];
-                    agent.gpu_momentum = Some(GpuMomentum::Ready {
-                        ground_force: v[2],
-                        angular_force: cgmath::vec2(v[0], v[1]),
-                    });
-                }
-            }
-        }*/
+
         let models = self.agents
             .iter()
             .map(|a| RenderModel {

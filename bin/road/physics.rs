@@ -1,16 +1,23 @@
 use vangers::{
     config, level, model, space,
-    render::debug::LineBuffer,
+    render::{
+        collision::{GpuEpoch, GpuResult},
+        debug::LineBuffer,
+    },
 };
 
 use cgmath::{
     self,
     prelude::*,
 };
-use log::debug;
 
-use std::f32::EPSILON;
+use std::{
+    collections::HashMap,
+    f32::EPSILON,
+    sync::MutexGuard,
+};
 
+pub type GpuLink = HashMap<GpuEpoch, usize>;
 
 const MAX_TRACTION: config::common::Traction = 4.0;
 
@@ -39,7 +46,7 @@ struct Accumulator {
 }
 
 impl Accumulator {
-    fn new() -> Accumulator {
+    fn new() -> Self {
         Accumulator {
             pos: cgmath::vec3(0.0, 0.0, 0.0),
             depth: 0.0,
@@ -150,12 +157,12 @@ fn collide_low(
             }
         };
         let dz = height - pos.z;
-        //debug!("\t\t\tSample h={:?} at {:?}, dz={}", height, pos, dz);
+        //log::debug!("\t\t\tSample h={:?} at {:?}, dz={}", height, pos, dz);
         if dz > terraconf.min_wall_delta {
-            //debug!("\t\t\tHard touch of {} at {:?}", dz, pos);
+            //log::debug!("\t\t\tHard touch of {} at {:?}", dz, pos);
             hard.add(pos, dz);
         } else if dz > 0.0 {
-            //debug!("\t\t\tSoft touch of {} at {:?}", dz, pos);
+            //log::debug!("\t\t\tSoft touch of {} at {:?}", dz, pos);
             soft.add(pos, dz);
         }
     }
@@ -202,16 +209,26 @@ pub fn step(
     common: &config::common::Common,
     f_turbo: f32,
     f_brake: f32,
-    gpu_momentum: Option<(f32, cgmath::Vector2<f32>)>,
+    gpu_link: &mut GpuLink,
+    gpu_latest: Option<&MutexGuard<GpuResult>>,
     mut line_buffer: Option<&mut LineBuffer>,
 ) {
+    let gpu_depths = gpu_latest.and_then(move |res| {
+        // clean old links
+        gpu_link.retain(|&epoch, _| epoch >= res.epoch);
+        // return current range
+        gpu_link
+            .get(&res.epoch)
+            .map(|&start_index| &res.depths[start_index..])
+    });
+
     let speed_correction_factor = dt / common.nature.time_delta0;
     let acc_global = AccelerationVectors {
         f: cgmath::vec3(0.0, 0.0, -common.nature.gravity),
         k: cgmath::vec3(0.0, 0.0, 0.0),
     };
     let rot_inv = transform.rot.invert();
-    debug!("dt {}, num {}", dt, common.nature.num_calls_analysis);
+    log::debug!("dt {}, num {}", dt, common.nature.num_calls_analysis);
     let flood_level = level.flood_map[0] as f32;
     // Z axis in the local coordinate space
     let z_axis = rot_inv * cgmath::Vector3::unit_z();
@@ -249,25 +266,12 @@ pub fn step(
     let mut sum_rg0 = cgmath::Vector3::zero();
     let mut sum_df = 0.;
 
-    let empty_polys = [];
-    let soft_polys = match gpu_momentum {
-        Some((ground_force, angular_force)) => {
-            if ground_force != 0.0 {
-                wheels_touch += 1;
-            }
-            acc_springs.f.z += ground_force;
-            acc_springs.k += angular_force.extend(0.0);
-            &empty_polys[..]
-        },
-        None => &car.model.shape.polygons,
-    };
-
-    for (bound_poly_id, poly) in soft_polys.iter().enumerate() {
+    for (bound_poly_id, poly) in car.model.shape.polygons.iter().enumerate() {
         let r = cgmath::Vector3::from(poly.middle)
             * (transform.scale * car.physics.scale_bound);
         let rg0 = transform.rot * r;
         let rglob = rg0 + transform.disp;
-        debug!(
+        log::debug!(
             "\t\tpoly[{}]: normal={:?} scale={} mid={:?} r={:?}",
             bound_poly_id,
             poly.normal,
@@ -290,15 +294,45 @@ pub fn step(
         };
         let poly_norm = cgmath::Vector3::from(poly.normal).normalize();
         if z_axis.dot(poly_norm) < 0.0 {
-            let cdata = collide_low(
-                poly,
-                &car.model.shape.samples,
-                car.physics.scale_bound,
-                &transform,
-                level,
-                &common.terrain,
-            );
-            debug!("\t\tcollide_low = {:?}", cdata);
+            let cdata = match gpu_depths {
+                Some(depths) => {
+                    let depth = depths[bound_poly_id];
+                    {
+                        let original = collide_low(
+                            poly,
+                            &car.model.shape.samples,
+                            car.physics.scale_bound,
+                            &transform,
+                            level,
+                            &common.terrain,
+                        );
+                        if let Some(cp) = original.soft {
+                            println!("P[{}] has {} CPU depth and {} GPU depth", bound_poly_id, cp.depth, depth);
+                        }
+                    }
+                    CollisionData {
+                        soft: if depth != 0.0 {
+                            Some(CollisionPoint {
+                                pos: cgmath::Vector3::zero(), //TODO?
+                                depth,
+                            })
+                        } else { None },
+                        hard: None,
+                    }
+                }
+                None => {
+                    collide_low(
+                        poly,
+                        &car.model.shape.samples,
+                        car.physics.scale_bound,
+                        &transform,
+                        level,
+                        &common.terrain,
+                    )
+                }
+            };
+
+            log::debug!("\t\tcollide_low = {:?}", cdata);
             terrain_immersion += match cdata.soft {
                 Some(ref cp) => cp.depth.abs(),
                 None => 0.0,
@@ -323,7 +357,7 @@ pub fn step(
                     if dot > 0.0 {
                         let pulse = (calc_collision_matrix_inv(r1, &j_inv) * normal) *
                             (-common.impulse.factors[0] * modulation * dot);
-                        debug!("\t\tCollision speed {:?} pulse {:?}", v_vel, pulse);
+                        log::debug!("\t\tCollision speed {:?} pulse {:?}", v_vel, pulse);
                         v_vel += pulse;
                         w_vel += j_inv * r1.cross(pulse);
                     }
@@ -332,7 +366,7 @@ pub fn step(
                     let r1 = rot_inv * cgmath::vec3(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
                     //TODO: let r1 = rot_inv * (cp.pos - origin);
                     let mut u0 = v_vel + w_vel.cross(r1);
-                    debug!("\t\tContact {:?}\n\t\t\torigin={:?}\n\t\t\tu0 = {:?}", cp, origin, u0);
+                    log::debug!("\t\tContact {:?}\n\t\t\torigin={:?}\n\t\t\tu0 = {:?}", cp, origin, u0);
                     if u0.dot(z_axis) < 0.0 {
                         if stand_on_wheels { // ignore XY
                             u0.x = 0.0;
@@ -343,7 +377,7 @@ pub fn step(
                         }
                         let cmi = calc_collision_matrix_inv(r, &j_inv);
                         let pulse = (cmi * u0) * (-common.impulse.factors[1] * modulation);
-                        debug!("\t\tCollision momentum {:?}\n\t\t\tmatrix {:?}\n\t\t\tsample {:?}\n\t\t\tspeed {:?}\n\t\t\tpulse {:?}",
+                        log::debug!("\t\tCollision momentum {:?}\n\t\t\tmatrix {:?}\n\t\t\tsample {:?}\n\t\t\tspeed {:?}\n\t\t\tpulse {:?}",
                             u0, cmi, r, v_vel, pulse);
                         v_vel += pulse;
                         w_vel += j_inv * r.cross(pulse);
@@ -354,7 +388,7 @@ pub fn step(
             if let Some(ref cp) = cdata.soft {
                 let df0 = common.contact.k_elastic_spring * cp.depth * modulation;
                 let df = df0.min(common.impulse.elastic_restriction);
-                debug!("\t\tbound[{}] dF.z = {}, rg0={:?}", bound_poly_id, df, rg0);
+                log::debug!("\t\tbound[{}] dF.z = {}, rg0={:?}", bound_poly_id, df, rg0);
                 acc_springs.f.z += df;
                 acc_springs.k.x += rg0.y * df;
                 acc_springs.k.y -= rg0.x * df;
@@ -391,11 +425,11 @@ pub fn step(
 
     if sum_count != 0 {
         let kf = 1.0 / sum_count as f32;
-        debug!("Avg df {} rg0 {:?}", sum_df * kf, sum_rg0 * kf);
+        log::debug!("Avg df {} rg0 {:?}", sum_df * kf, sum_rg0 * kf);
     }
 
     if wheels_touch + spring_touch != 0 {
-        debug!("\tsprings total {:?}", acc_springs);
+        log::debug!("\tsprings total {:?}", acc_springs);
         acc_cur.f += rot_inv * acc_springs.f;
         acc_cur.k += rot_inv * acc_springs.k;
     }
@@ -469,11 +503,11 @@ pub fn step(
         }
     }
 
-    debug!("\tcur acc {:?}", acc_cur);
+    log::debug!("\tcur acc {:?}", acc_cur);
     v_vel += acc_cur.f * dt;
     w_vel += (j_inv * acc_cur.k) * dt;
-    //debug!("J_inv {:?}, handedness {}", j_inv.transpose(), j_inv.x.cross(j_inv.y).dot(j_inv.z));
-    debug!("\tresulting v={:?} w={:?}", v_vel, w_vel);
+    //log::debug!("J_inv {:?}, handedness {}", j_inv.transpose(), j_inv.x.cross(j_inv.y).dot(j_inv.z));
+    log::debug!("\tresulting v={:?} w={:?}", v_vel, w_vel);
     if spring_touch != 0 {
         v_drag *= common.drag.spring.v;
         w_drag *= common.drag.spring.w;
@@ -499,12 +533,12 @@ pub fn step(
         transform.rot = transform.rot * vel_rot_inv.invert();
         v_vel = vel_rot_inv * v_vel;
         w_vel = vel_rot_inv * w_vel;
-        debug!(
+        log::debug!(
             "\tvs={:?} {:?}\n\t\tdisp {:?} scale {}",
             vs, transform.rot, transform.disp, transform.scale
         );
     }
-    //debug!("\tdrag v={} w={}", v_drag, w_drag);
+    //log::debug!("\tdrag v={} w={}", v_drag, w_drag);
     v_vel *= v_drag.powf(speed_correction_factor);
     w_vel *= w_drag.powf(speed_correction_factor);
 
