@@ -20,9 +20,16 @@ pub struct Other {
 }
 
 #[derive(Deserialize)]
+pub struct GpuCollision {
+    pub max_objects: usize,
+    pub max_polygons_total: usize,
+    pub max_raster_size: (u32, u32),
+}
+
+#[derive(Deserialize)]
 pub struct Physics {
     pub max_quant: f32,
-    pub gpu_collision: bool,
+    pub gpu_collision: Option<GpuCollision>,
 }
 
 #[derive(Deserialize)]

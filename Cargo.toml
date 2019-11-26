@@ -3,6 +3,7 @@ name = "vangers"
 version = "0.1.0"
 authors = ["kvark"]
 edition = "2018"
+default-run = "road"
 
 [workspace]
 members = [
@@ -53,9 +54,10 @@ rust-ini = "0.10"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.1"
-#wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
+wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
 #wgpu = { path = "../wgpu-rs" }
-wgpu = { version = "0.4" }
+#wgpu = "0.4"
+zerocopy = "0.2"
 # binaries
 env_logger = "0.5"
 getopts = "0.2"

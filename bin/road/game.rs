@@ -7,6 +7,7 @@ use vangers::{
     config, level, model, space,
     render::{
         Render, RenderModel, ScreenTargets,
+        collision::{GpuCollider, GpuResult},
         debug::LineBuffer,
     },
 };
@@ -15,11 +16,11 @@ use cgmath::{
     self,
     Angle, Rotation3, Zero,
 };
-use log::info;
-use rand;
-use wgpu;
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::MutexGuard,
+};
 
 
 #[derive(Eq, PartialEq)]
@@ -36,16 +37,6 @@ struct Control {
     turbo: bool,
 }
 
-
-enum GpuMomentum {
-    //Pending(render::ShapeId),
-    //Computed(usize),
-    /*Ready {
-        ground_force: f32,
-        angular_force: cgmath::Vector2<f32>,
-    },*/
-}
-
 pub struct Agent {
     _name: String,
     spirit: Spirit,
@@ -53,7 +44,7 @@ pub struct Agent {
     pub car: config::car::CarInfo,
     dynamo: physics::Dynamo,
     control: Control,
-    gpu_momentum: Option<GpuMomentum>,
+    gpu_physics: physics::GpuLink,
 }
 
 impl Agent {
@@ -76,7 +67,7 @@ impl Agent {
             car: car.clone(),
             dynamo: physics::Dynamo::default(),
             control: Control::default(),
-            gpu_momentum: None,
+            gpu_physics: physics::GpuLink::default(),
         }
     }
 
@@ -102,6 +93,7 @@ impl Agent {
         dt: f32,
         level: &level::Level,
         common: &config::common::Common,
+        gpu_latest: Option<&MutexGuard<GpuResult>>,
         line_buffer: Option<&mut LineBuffer>,
     ) {
         physics::step(
@@ -113,11 +105,8 @@ impl Agent {
             common,
             if self.control.turbo { common.global.k_traction_turbo } else { 1.0 },
             if self.control.brake { common.global.f_brake_max } else { 0.0 },
-            match self.gpu_momentum {
-                //Some(GpuMomentum::Ready { ground_force, angular_force }) =>
-                //    Some((ground_force, angular_force)),
-                _ => None,
-            },
+            &mut self.gpu_physics,
+            gpu_latest,
             line_buffer,
         )
     }
@@ -134,8 +123,7 @@ struct DataBase {
 pub struct Game {
     db: DataBase,
     render: Render,
-    //collider: render::GpuCollider,
-    //compute_gpu_collision: bool,
+    collider: Option<GpuCollider>,
     //debug_collision_map: bool,
     line_buffer: LineBuffer,
     level: level::Level,
@@ -156,9 +144,9 @@ impl Game {
         device: &wgpu::Device,
         queue: &mut wgpu::Queue,
     ) -> Self {
-        info!("Loading world parameters");
+        log::info!("Loading world parameters");
         let (level, coords) = if settings.game.level.is_empty() {
-            info!("Using test level");
+            log::info!("Using test level");
             (level::Level::new_test(), (0, 0))
         } else {
             let escaves = config::escaves::load(settings.open_relative("escaves.prm"));
@@ -170,7 +158,7 @@ impl Game {
             let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
             let ini_name = &worlds[&settings.game.level];
             let ini_path = settings.data_path.join(ini_name);
-            info!("Using level {}", ini_name);
+            log::info!("Using level {}", ini_name);
 
             let config = level::LevelConfig::load(&ini_path);
             let level = level::load(&config);
@@ -178,29 +166,26 @@ impl Game {
             (level, coordinates)
         };
 
-        info!("Initializing the render");
+        log::info!("Initializing the render");
         let depth = 10f32 .. 10000f32;
         let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
         let render = Render::new(device, queue, &level, &pal_data, &settings.render, screen_extent);
 
-        info!("Loading world database");
+        log::info!("Loading world database");
         let db = {
             let game = config::game::Registry::load(settings);
             DataBase {
                 _bunches: config::bunches::load(settings.open_relative("bunches.prm")),
-                cars: config::car::load_registry(settings, &game, device, render.locals_layout()),
+                cars: config::car::load_registry(settings, &game, device, &render.object),
                 common: config::common::load(settings.open_relative("common.prm")),
                 _escaves: config::escaves::load(settings.open_relative("escaves.prm")),
                 game,
             }
         };
 
-        /*
-        let collider = render::GpuCollider::new(
-            factory,
-            (256, 256), 400,
-            render.surface_data(),
-        );*/
+        let collider = settings.game.physics.gpu_collision.as_ref().map(|gc| {
+            GpuCollider::new(device, gc, &db.common, &render.object, &render.terrain)
+        });
 
         let mut player_agent = Agent::spawn(
             "Player".to_string(),
@@ -221,9 +206,9 @@ impl Game {
             ms.mesh = Some(model::load_c3d(
                 raw,
                 device,
-                render.locals_layout(),
                 &player_agent.car.locals_buf,
                 slot_locals_id + i,
+                &render.object,
             ));
             ms.scale = info.scale;
         }
@@ -251,7 +236,7 @@ impl Game {
         Game {
             db,
             render,
-            //collider,
+            collider,
             line_buffer: LineBuffer::new(),
             level,
             agents,
@@ -278,7 +263,6 @@ impl Game {
                 },
             },
             max_quant: settings.game.physics.max_quant,
-            //compute_gpu_collision: settings.game.physics.gpu_collision,
             //debug_collision_map: settings.render.debug.collision_map,
             spin_hor: 0.0,
             spin_ver: 0.0,
@@ -381,6 +365,7 @@ impl Application for Game {
                     tick * self.max_quant,
                     &self.level,
                     &self.db.common,
+                    None,
                     Some(&mut self.line_buffer),
                 );
             }
@@ -429,8 +414,6 @@ impl Application for Game {
                 fps * n.time_delta0 * n.num_calls_analysis as f32
             };
 
-            self.line_buffer.clear();
-
             for a in self.agents.iter_mut() {
                 a.apply_control(
                     input_factor,
@@ -438,17 +421,26 @@ impl Application for Game {
                 );
             }
 
-            while physics_dt > self.max_quant {
-                for a in self.agents.iter_mut() {
-                    a.step(
-                        self.max_quant,
-                        &self.level,
-                        &self.db.common,
-                        None,
-                    );
+            // don't quantify if going through GPU, for now
+            if self.collider.is_none() {
+                while physics_dt > self.max_quant {
+                    for a in self.agents.iter_mut() {
+                        a.step(
+                            self.max_quant,
+                            &self.level,
+                            &self.db.common,
+                            None,
+                            None,
+                        );
+                    }
+                    physics_dt -= self.max_quant;
                 }
-                physics_dt -= self.max_quant;
             }
+
+            self.line_buffer.clear();
+            let gpu_result = self.collider
+                .as_ref()
+                .map(GpuCollider::result);
 
             for a in self.agents.iter_mut() {
                 let lbuf = match a.spirit {
@@ -459,6 +451,7 @@ impl Application for Game {
                     physics_dt,
                     &self.level,
                     &self.db.common,
+                    gpu_result.as_ref(),
                     lbuf,
                 );
             }
@@ -472,29 +465,38 @@ impl Application for Game {
 
     fn reload(&mut self, device: &wgpu::Device) {
         self.render.reload(device);
-        //self.collider.reload(device);
+        if let Some(ref mut collider) = self.collider {
+            collider.reload(device);
+        }
     }
 
     fn draw(
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
-    ) -> wgpu::CommandBuffer {
-        /*
-        if self.compute_gpu_collision {
-            let mapping = factory
-                .read_mapping(self.collider.readback())
-                .unwrap();
-            for agent in &mut self.agents {
-                if let Some(GpuMomentum::Computed(index)) = agent.gpu_momentum.take() {
-                    let v = mapping[index];
-                    agent.gpu_momentum = Some(GpuMomentum::Ready {
-                        ground_force: v[2],
-                        angular_force: cgmath::vec2(v[0], v[1]),
-                    });
+    ) -> Vec<wgpu::CommandBuffer> {
+        let mut combs = Vec::new();
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            todo: 0,
+        });
+
+        let post_comb = match self.collider {
+            Some(ref mut collider) => {
+                let mut session = collider.begin(&mut encoder, &self.render.terrain);
+                for agent in &mut self.agents {
+                    let mut transform = agent.transform.clone();
+                    transform.scale *= agent.car.physics.scale_bound;
+                    let start_index = session.add(&agent.car.model.shape, transform);
+                    let old = agent.gpu_physics.insert(session.epoch, start_index);
+                    assert_eq!(old, None);
                 }
+                let (pre, post) = session.finish(device);
+                combs.push(pre);
+                Some(post)
             }
-        }*/
+            None => None,
+        };
+
         let models = self.agents
             .iter()
             .map(|a| RenderModel {
@@ -507,12 +509,14 @@ impl Application for Game {
                 },
             })
             .collect::<Vec<_>>();
-        let command_buffer = self.render.draw_world(
+        self.render.draw_world(
+            &mut encoder,
             &models,
             &self.cam,
             targets,
             device,
         );
+        combs.push(encoder.finish());
 
         /*
         self.render.debug.draw_lines(
@@ -558,6 +562,7 @@ impl Application for Game {
             }
         }*/
 
-        command_buffer
+        combs.extend(post_comb);
+        combs
     }
 }

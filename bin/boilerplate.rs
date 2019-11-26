@@ -26,7 +26,7 @@ pub trait Application {
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
-    ) -> wgpu::CommandBuffer;
+    ) -> Vec<wgpu::CommandBuffer>;
 }
 
 pub struct Harness {
@@ -48,8 +48,8 @@ impl Harness {
         let adapter = wgpu::Adapter::request(
             &wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::Default,
-                backends: wgpu::BackendBit::PRIMARY,
             },
+            wgpu::BackendBit::PRIMARY,
         ).unwrap();
         let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
             extensions: wgpu::Extensions {
@@ -197,14 +197,14 @@ impl Harness {
                         duration.subsec_nanos() as f32 * 1.0e-9;
 
                     app.update(delta);
-                    let frame = swap_chain.get_next_texture();
+                    let frame = swap_chain.get_next_texture().unwrap();
                     let targets = ScreenTargets {
                         extent,
                         color: &frame.view,
                         depth: &depth_target,
                     };
-                    let command_buffer = app.draw(&device, targets);
-                    queue.submit(&[ command_buffer ]);
+                    let command_buffers = app.draw(&device, targets);
+                    queue.submit(&command_buffers);
                 }
                 _ => (),
             }

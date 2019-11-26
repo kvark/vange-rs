@@ -5,7 +5,8 @@ use crate::render::{
 use std::mem;
 
 
-#[derive(Clone, Copy)]
+#[repr(C)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct Vertex {
     _pos: [f32; 2],
 }

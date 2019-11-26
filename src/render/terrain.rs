@@ -10,32 +10,34 @@ use crate::{
     space::Camera,
 };
 
-use wgpu;
-
 use std::mem;
+
 
 pub const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const SCATTER_GROUP_SIZE: [u32; 3] = [16, 16, 1];
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct Vertex {
     _pos: [i8; 4],
 }
 
-#[derive(Clone, Copy)]
+#[repr(C)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct SurfaceConstants {
     _tex_scale: [f32; 4],
 }
 
-#[derive(Clone, Copy)]
+#[repr(C)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct Constants {
     _scr_size: [u32; 4],
     _params: [u32; 4],
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct ScatterConstants {
     origin: [f32; 2],
     dir: [f32; 2],
@@ -171,8 +173,10 @@ pub struct Rect {
 }
 
 pub struct Context {
+    pub surface_uni_buf: wgpu::Buffer,
     pub uniform_buf: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
+    pub bind_group_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
     kind: Kind,
     dirty_rects: Vec<Rect>,
@@ -882,8 +886,10 @@ impl Context {
         };
 
         Context {
+            surface_uni_buf,
             uniform_buf,
             bind_group,
+            bind_group_layout,
             pipeline_layout,
             kind,
             dirty_rects: vec![

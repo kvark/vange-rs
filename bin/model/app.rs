@@ -39,7 +39,7 @@ impl ResourceView {
 
         info!("Loading model {}", path);
         let file = settings.open_relative(path);
-        let (model, locals_buf) = model::load_m3d(file, device, &object.part_bind_group_layout);
+        let (model, locals_buf) = model::load_m3d(file, device, &object);
 
         ResourceView {
             model,
@@ -128,7 +128,7 @@ impl Application for ResourceView {
         &mut self,
         device: &wgpu::Device,
         targets: render::ScreenTargets,
-    ) -> wgpu::CommandBuffer {
+    ) -> Vec<wgpu::CommandBuffer> {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
@@ -184,6 +184,6 @@ impl Application for ResourceView {
             );
         }
 
-        encoder.finish()
+        vec![encoder.finish()]
     }
 }

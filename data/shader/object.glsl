@@ -15,6 +15,7 @@ layout(location = 2) varying vec3 v_Light;
 
 layout(set = 2, binding = 0) uniform c_Locals {
     mat4 u_Model;
+    vec4 u_ShapeScale;
 };
 
 layout(set = 1, binding = 0) uniform utexture1D t_ColorTable;
