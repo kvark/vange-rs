@@ -2,9 +2,9 @@ use crate::boilerplate::Application;
 use m3d::Mesh;
 use vangers::{config, level, model, render, space};
 
-use cgmath;
+use futures::executor::LocalSpawner;
 use log::info;
-use wgpu;
+use zerocopy::AsBytes as _;
 
 use std::{
     mem,
@@ -196,15 +196,16 @@ impl Application for CarView {
         &mut self,
         device: &wgpu::Device,
         targets: render::ScreenTargets,
+        _spawner: &LocalSpawner,
     ) -> Vec<wgpu::CommandBuffer> {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
-        let global_staging = device
-            .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
-            .fill_from_slice(&[
-                render::global::Constants::new(&self.cam, &self.light_config),
-            ]);
+        let global_data = render::global::Constants::new(&self.cam, &self.light_config);
+        let global_staging = device.create_buffer_with_data(
+            &[global_data].as_bytes(),
+            wgpu::BufferUsage::COPY_SRC,
+        );
         encoder.copy_buffer_to_buffer(
             &global_staging,
             0,

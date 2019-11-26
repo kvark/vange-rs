@@ -9,10 +9,13 @@ use crate::render::{
 };
 use m3d;
 
+use zerocopy::AsBytes as _;
+
 use std::{
     mem,
     fs::File,
     ops::Range,
+    slice,
     sync::Arc,
 };
 
@@ -150,12 +153,19 @@ pub fn load_c3d(
 
     let num_vertices = raw.geometry.polygons.len() * 3;
     debug!("\tGot {} GPU vertices...", num_vertices);
-    let mapping = device.create_buffer_mapped::<ObjectVertex>(
-        num_vertices,
+    let vertex_size = mem::size_of::<ObjectVertex>();
+    let mapping = device.create_buffer_mapped(
+        num_vertices * vertex_size,
         wgpu::BufferUsage::VERTEX,
     );
-    for (chunk, tri) in mapping.data.chunks_mut(3).zip(&raw.geometry.polygons) {
-        for (vo, v) in chunk.iter_mut().zip(&tri.vertices) {
+    for (chunk, tri) in mapping.data
+        .chunks_mut(3 * vertex_size)
+        .zip(&raw.geometry.polygons)
+    {
+        let out_vertices = unsafe {
+            slice::from_raw_parts_mut(chunk.as_mut_ptr() as *mut ObjectVertex, 3)
+        };
+        for (vo, v) in out_vertices.iter_mut().zip(&tri.vertices) {
             let p = raw.geometry.positions[v.pos as usize];
             let n = raw.geometry.normals[v.normal as usize];
             *vo = ObjectVertex {
@@ -263,11 +273,14 @@ pub fn load_c3d_shape(
 
     let vertex_buf = {
         let mapping = device.create_buffer_mapped(
-            raw.geometry.positions.len(),
+            raw.geometry.positions.len() * mem::size_of::<ShapeVertex>(),
             wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::STORAGE_READ,
         );
-        for (vo, p) in mapping.data.iter_mut().zip(&raw.geometry.positions) {
-            *vo = [p[0], p[1], p[2], 1];
+        for (vo, p) in mapping.data.chunks_mut(4).zip(&raw.geometry.positions) {
+            vo[..3].copy_from_slice(unsafe {
+                slice::from_raw_parts(p.as_ptr() as *const u8, 3)
+            });
+            vo[3] = 1;
         }
         mapping.finish()
     };
@@ -290,12 +303,15 @@ pub fn load_c3d_shape(
         vertex_buf,
         bind_group,
         polygon_buf: device
-            .create_buffer_mapped(polygon_data.len(), wgpu::BufferUsage::VERTEX)
-            .fill_from_slice(&polygon_data),
+            .create_buffer_with_data(
+                polygon_data.as_bytes(),
+                wgpu::BufferUsage::VERTEX,
+            ),
         sample_buf: if with_sample_buf {
-            let buffer = device
-                .create_buffer_mapped(sample_data.len(), wgpu::BufferUsage::VERTEX)
-                .fill_from_slice(&sample_data);
+            let buffer = device.create_buffer_with_data(
+                sample_data.as_bytes(),
+                wgpu::BufferUsage::VERTEX,
+            );
             Some((buffer, sample_data.len()))
         } else {
             None

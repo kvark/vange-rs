@@ -2,7 +2,7 @@ use crate::render::{
     Shaders,
     terrain::{HEIGHT_FORMAT, Rect},
 };
-use std::mem;
+use std::{mem, slice};
 
 
 #[repr(C)]
@@ -166,12 +166,15 @@ impl MaxMipper {
         encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
     ) {
-        let vertex_buf = {
-            let mapped = device.create_buffer_mapped::<Vertex>(
-                rects.len() * 6,
-                wgpu::BufferUsage::VERTEX,
-            );
-            for (r, data) in rects.iter().zip(mapped.data.chunks_mut(6)) {
+        let mapped = device.create_buffer_mapped(
+            rects.len() * 6 * mem::size_of::<Vertex>(),
+            wgpu::BufferUsage::VERTEX,
+        );
+        {
+            let vertices = unsafe {
+                slice::from_raw_parts_mut(mapped.data.as_mut_ptr() as *mut Vertex, rects.len() * 6)
+            };
+            for (r, data) in rects.iter().zip(vertices.chunks_mut(6)) {
                 let v_abs = [
                     (r.x, r.y),
                     (r.x + r.w, r.y),
@@ -189,8 +192,8 @@ impl MaxMipper {
                     };
                 }
             }
-            mapped.finish()
-        };
+        }
+        let vertex_buf = mapped.finish();
 
         for mip in 0 .. self.mips.len() - 1 {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

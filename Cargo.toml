@@ -45,6 +45,7 @@ tiff = { path = "lib/tiff" }
 # library
 byteorder = "1.0"
 cgmath = "0.17"
+futures = "0.3"
 glsl-to-spirv = "0.1"
 log = "0.4"
 rand = "0.6"

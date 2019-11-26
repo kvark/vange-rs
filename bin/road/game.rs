@@ -16,6 +16,7 @@ use cgmath::{
     self,
     Angle, Rotation3, Zero,
 };
+use futures::executor::LocalSpawner;
 
 use std::{
     collections::HashMap,
@@ -474,6 +475,7 @@ impl Application for Game {
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
+        spawner: &LocalSpawner,
     ) -> Vec<wgpu::CommandBuffer> {
         let mut combs = Vec::new();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -482,7 +484,7 @@ impl Application for Game {
 
         let post_comb = match self.collider {
             Some(ref mut collider) => {
-                let mut session = collider.begin(&mut encoder, &self.render.terrain);
+                let mut session = collider.begin(&mut encoder, &self.render.terrain, spawner);
                 for agent in &mut self.agents {
                     let mut transform = agent.transform.clone();
                     transform.scale *= agent.car.physics.scale_bound;

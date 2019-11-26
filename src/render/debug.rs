@@ -9,6 +9,8 @@ use crate::{
     },
 };
 
+use zerocopy::AsBytes as _;
+
 use std::{
     mem,
     collections::HashMap,
@@ -133,19 +135,20 @@ impl Context {
             ],
         });
 
-        let line_color_buf = device
-            .create_buffer_mapped(1, wgpu::BufferUsage::VERTEX)
-            .fill_from_slice(&[
+        let line_color_buf = device.create_buffer_with_data(
+            [
                 Color { color: 0xFF000080 }, // line
-            ]);
-
-        let locals_buf = device
-            .create_buffer_mapped(3, wgpu::BufferUsage::UNIFORM)
-            .fill_from_slice(&[
+            ].as_bytes(),
+            wgpu::BufferUsage::VERTEX,
+        );
+        let locals_buf = device.create_buffer_with_data(
+            [
                 Locals::new([1.0; 4]), // line
                 Locals::new([0.0, 1.0, 0.0, 0.2]), // face
                 Locals::new([1.0, 1.0, 0.0, 0.2]), // edge
-            ]);
+            ].as_bytes(),
+            wgpu::BufferUsage::UNIFORM,
+        );
         let locals_size = mem::size_of::<Locals>() as wgpu::BufferAddress;
         let bind_group_line = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
@@ -401,12 +404,14 @@ impl Context {
         device: &wgpu::Device,
         linebuf: &LineBuffer,
     ){
-        let vertex_buf = device
-            .create_buffer_mapped(linebuf.vertices.len(), wgpu::BufferUsage::VERTEX)
-            .fill_from_slice(&linebuf.vertices);
-        let color_buf = device
-            .create_buffer_mapped(linebuf.colors.len(), wgpu::BufferUsage::VERTEX)
-            .fill_from_slice(&linebuf.colors);
+        let vertex_buf = device.create_buffer_with_data(
+            linebuf.vertices.as_bytes(),
+            wgpu::BufferUsage::VERTEX,
+        );
+        let color_buf = device.create_buffer_with_data(
+            linebuf.colors.as_bytes(),
+            wgpu::BufferUsage::VERTEX,
+        );
         assert_eq!(linebuf.vertices.len(), linebuf.colors.len());
 
         self.draw_liner(

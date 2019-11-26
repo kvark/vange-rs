@@ -4,8 +4,8 @@ use vangers::{
 };
 
 use env_logger;
+use futures::executor::{LocalPool, LocalSpawner};
 use log::info;
-use wgpu;
 use winit::{
     self,
     event,
@@ -26,6 +26,7 @@ pub trait Application {
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
+        spawner: &LocalSpawner,
     ) -> Vec<wgpu::CommandBuffer>;
 }
 
@@ -119,6 +120,7 @@ impl Harness {
         use std::time;
 
         let mut last_time = time::Instant::now();
+        let mut task_pool = LocalPool::new();
         let Harness {
             event_loop,
             window,
@@ -132,6 +134,8 @@ impl Harness {
 
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
+            task_pool.run_until_stalled();
+
             match event {
                 event::Event::WindowEvent {
                     event: event::WindowEvent::Resized(size),
@@ -197,13 +201,15 @@ impl Harness {
                         duration.subsec_nanos() as f32 * 1.0e-9;
 
                     app.update(delta);
+
+                    let spawner = task_pool.spawner();
                     let frame = swap_chain.get_next_texture().unwrap();
                     let targets = ScreenTargets {
                         extent,
                         color: &frame.view,
                         depth: &depth_target,
                     };
-                    let command_buffers = app.draw(&device, targets);
+                    let command_buffers = app.draw(&device, targets, &spawner);
                     queue.submit(&command_buffers);
                 }
                 _ => (),

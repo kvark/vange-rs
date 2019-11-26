@@ -5,14 +5,16 @@ use crate::{
     space::{Camera, Transform},
 };
 
-use glsl_to_spirv;
 use cgmath::Decomposed;
+use glsl_to_spirv;
+use zerocopy::AsBytes as _;
 
 use std::{
     io::{BufReader, Read, Write, Error as IoError},
     fs::File,
     mem,
     path::PathBuf,
+    slice,
 };
 
 pub mod collision;
@@ -256,9 +258,10 @@ impl Palette {
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
 
-        let staging = device
-            .create_buffer_mapped(data.len(), wgpu::BufferUsage::COPY_SRC)
-            .fill_from_slice(data);
+        let staging = device.create_buffer_with_data(
+            data.as_bytes(),
+            wgpu::BufferUsage::COPY_SRC,
+        );
         encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
                 buffer: &staging,
@@ -299,37 +302,42 @@ impl RenderModel<'_> {
 
         let count = self.model.mesh_count();
         let mapping = device.create_buffer_mapped(
-            count,
+            count * mem::size_of::<object::Locals>(),
             wgpu::BufferUsage::COPY_SRC,
         );
+        {
+            let data = unsafe {
+                slice::from_raw_parts_mut(mapping.data.as_mut_ptr() as *mut object::Locals, count)
+            };
 
-        // body
-        mapping.data[0] = object::Locals::new(
-            self.transform,
-            self.debug_shape_scale.unwrap_or_default(),
-        );
-        // wheels
-        for w in self.model.wheels.iter() {
-            if let Some(ref mesh) = w.mesh {
-                let transform = self.transform.concat(&Decomposed {
-                    disp: mesh.offset.into(),
-                    rot: Quaternion::one(),
-                    scale: 1.0,
-                });
-                mapping.data[mesh.locals_id] = object::Locals::new(transform, 0.0);
+            // body
+            data[0] = object::Locals::new(
+                self.transform,
+                self.debug_shape_scale.unwrap_or_default(),
+            );
+            // wheels
+            for w in self.model.wheels.iter() {
+                if let Some(ref mesh) = w.mesh {
+                    let transform = self.transform.concat(&Decomposed {
+                        disp: mesh.offset.into(),
+                        rot: Quaternion::one(),
+                        scale: 1.0,
+                    });
+                    data[mesh.locals_id] = object::Locals::new(transform, 0.0);
+                }
             }
-        }
-        // slots
-        for s in self.model.slots.iter() {
-            if let Some(ref mesh) = s.mesh {
-                let mut local = Decomposed {
-                    disp: Vector3::new(s.pos[0] as f32, s.pos[1] as f32, s.pos[2] as f32),
-                    rot: Quaternion::from_angle_y(Rad::from(Deg(s.angle as f32))),
-                    scale: s.scale / self.transform.scale,
-                };
-                local.disp -= local.transform_vector(Vector3::from(mesh.offset));
-                let transform = self.transform.concat(&local);
-                mapping.data[mesh.locals_id] = object::Locals::new(transform, 0.0);
+            // slots
+            for s in self.model.slots.iter() {
+                if let Some(ref mesh) = s.mesh {
+                    let mut local = Decomposed {
+                        disp: Vector3::new(s.pos[0] as f32, s.pos[1] as f32, s.pos[2] as f32),
+                        rot: Quaternion::from_angle_y(Rad::from(Deg(s.angle as f32))),
+                        scale: s.scale / self.transform.scale,
+                    };
+                    local.disp -= local.transform_vector(Vector3::from(mesh.offset));
+                    let transform = self.transform.concat(&local);
+                    data[mesh.locals_id] = object::Locals::new(transform, 0.0);
+                }
             }
         }
 
@@ -422,11 +430,12 @@ impl Render {
         targets: ScreenTargets,
         device: &wgpu::Device,
     ) {
-        let global_staging = device
-            .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
-            .fill_from_slice(&[
+        let global_staging = device.create_buffer_with_data(
+            [
                 global::Constants::new(cam, &self.light_config),
-            ]);
+            ].as_bytes(),
+            wgpu::BufferUsage::COPY_SRC,
+        );
         encoder.copy_buffer_to_buffer(
             &global_staging,
             0,
