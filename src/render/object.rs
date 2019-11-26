@@ -8,7 +8,7 @@ use crate::{
 };
 use m3d::NUM_COLOR_IDS;
 
-use std::mem;
+use std::{mem, slice};
 
 
 const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
@@ -164,9 +164,12 @@ impl Context {
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
 
-        let staging = device
-            .create_buffer_mapped(NUM_COLOR_IDS as usize, wgpu::BufferUsage::COPY_SRC)
-            .fill_from_slice(&COLOR_TABLE);
+        let staging = device.create_buffer_with_data(
+            unsafe {
+                slice::from_raw_parts(COLOR_TABLE[0].as_ptr(), NUM_COLOR_IDS as usize * 2)
+            },
+            wgpu::BufferUsage::COPY_SRC,
+        );
         encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
                 buffer: &staging,

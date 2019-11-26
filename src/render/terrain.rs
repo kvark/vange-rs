@@ -10,6 +10,8 @@ use crate::{
     space::Camera,
 };
 
+use zerocopy::AsBytes as _;
+
 use std::mem;
 
 
@@ -121,12 +123,14 @@ struct Geometry {
 impl Geometry {
     fn new(vertices: &[Vertex], indices: &[u16], device: &wgpu::Device) -> Self {
         Geometry {
-            vertex_buf: device
-                .create_buffer_mapped(vertices.len(), wgpu::BufferUsage::VERTEX)
-                .fill_from_slice(&vertices),
-            index_buf: device
-                .create_buffer_mapped(indices.len(), wgpu::BufferUsage::INDEX)
-                .fill_from_slice(&indices),
+            vertex_buf: device.create_buffer_with_data(
+                vertices.as_bytes(),
+                wgpu::BufferUsage::VERTEX,
+            ),
+            index_buf: device.create_buffer_with_data(
+                indices.as_bytes(),
+                wgpu::BufferUsage::INDEX,
+            ),
             num_indices: indices.len(),
         }
     }
@@ -494,18 +498,22 @@ impl Context {
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
 
-        let height_staging = device
-            .create_buffer_mapped(level.height.len(), wgpu::BufferUsage::COPY_SRC)
-            .fill_from_slice(&level.height);
-        let meta_staging = device
-            .create_buffer_mapped(level.meta.len(), wgpu::BufferUsage::COPY_SRC)
-            .fill_from_slice(&level.meta);
-        let flood_staging = device
-            .create_buffer_mapped(level.flood_map.len(), wgpu::BufferUsage::COPY_SRC)
-            .fill_from_slice(&level.flood_map);
-        let table_staging = device
-            .create_buffer_mapped(terrrain_table.len(), wgpu::BufferUsage::COPY_SRC)
-            .fill_from_slice(&terrrain_table);
+        let height_staging = device.create_buffer_with_data(
+            level.height.as_bytes(),
+            wgpu::BufferUsage::COPY_SRC,
+        );
+        let meta_staging = device.create_buffer_with_data(
+            level.meta.as_bytes(),
+            wgpu::BufferUsage::COPY_SRC,
+        );
+        let flood_staging = device.create_buffer_with_data(
+            level.flood_map.as_bytes(),
+            wgpu::BufferUsage::COPY_SRC,
+        );
+        let table_staging = device.create_buffer_with_data(
+            terrrain_table.as_bytes(),
+            wgpu::BufferUsage::COPY_SRC,
+        );
 
         init_encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
@@ -673,16 +681,17 @@ impl Context {
             ],
         });
 
-        let surface_uni_buf = device
-            .create_buffer_mapped(1, wgpu::BufferUsage::UNIFORM)
-            .fill_from_slice(&[SurfaceConstants {
+        let surface_uni_buf = device.create_buffer_with_data(
+            [SurfaceConstants {
                 _tex_scale: [
                     level.size.0 as f32,
                     level.size.1 as f32,
                     level::HEIGHT_SCALE as f32,
                     0.0,
                 ],
-            }]);
+            }].as_bytes(),
+            wgpu::BufferUsage::UNIFORM,
+        );
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
@@ -988,14 +997,13 @@ impl Context {
         };
 
         if let Some(size) = self.pending_resize {
-            let staging = device
-                .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
-                .fill_from_slice(&[
-                    Constants {
-                        _scr_size: [size.width, size.height, 0, 0],
-                        _params,
-                    },
-                ]);
+            let staging = device.create_buffer_with_data(
+                [Constants {
+                    _scr_size: [size.width, size.height, 0, 0],
+                    _params,
+                }].as_bytes(),
+                wgpu::BufferUsage::COPY_SRC,
+            );
             encoder.copy_buffer_to_buffer(
                 &staging,
                 0,
@@ -1015,11 +1023,10 @@ impl Context {
             ..
         } = self.kind {
             let scatter_constants = compute_scatter_constants(cam);
-            let staging = device
-                .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
-                .fill_from_slice(&[
-                    scatter_constants,
-                ]);
+            let staging = device.create_buffer_with_data(
+                [scatter_constants].as_bytes(),
+                wgpu::BufferUsage::COPY_SRC,
+            );
             encoder.copy_buffer_to_buffer(
                 &staging,
                 0,

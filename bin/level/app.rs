@@ -6,9 +6,8 @@ use vangers::{
     },
 };
 
-use cgmath;
+use futures::executor::LocalSpawner;
 use log::info;
-use wgpu;
 use winit::event;
 
 
@@ -288,6 +287,7 @@ impl Application for LevelView {
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
+        _spawner: &LocalSpawner,
     ) -> Vec<wgpu::CommandBuffer> {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,

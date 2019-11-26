@@ -10,10 +10,15 @@ use crate::{
     },
 };
 
+use futures::{executor::LocalSpawner, task::LocalSpawn as _, FutureExt};
+use zerocopy::AsBytes as _;
+
 use std::{
     mem,
+    slice,
     sync::{Arc, Mutex, MutexGuard},
 };
+
 
 #[repr(C)]
 #[derive(Clone, Copy, zerocopy::FromBytes)]
@@ -228,22 +233,24 @@ impl GpuCollider {
             usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_SRC,
         });
 
-        let global_uniforms = device
-            .create_buffer_mapped(1, wgpu::BufferUsage::UNIFORM)
-            .fill_from_slice(&[Globals {
-                target: [
-                    2.0 / settings.max_raster_size.0 as f32,
-                    2.0 / settings.max_raster_size.1 as f32,
-                    1.0 / 256.0,
-                    0.0,
-                ],
-                penetration: [
-                    common.contact.k_elastic_spring,
-                    common.impulse.elastic_restriction,
-                    0.0,
-                    0.0,
-                ],
-            }]);
+        let globals = Globals {
+            target: [
+                2.0 / settings.max_raster_size.0 as f32,
+                2.0 / settings.max_raster_size.1 as f32,
+                1.0 / 256.0,
+                0.0,
+            ],
+            penetration: [
+                common.contact.k_elastic_spring,
+                common.impulse.elastic_restriction,
+                0.0,
+                0.0,
+            ],
+        };
+        let global_uniforms = device.create_buffer_with_data(
+            [globals].as_bytes(),
+            wgpu::BufferUsage::UNIFORM,
+        );
         let locals_size = mem::size_of::<Locals>().max(256); //TODO: use constant from wgpu-rs
         let locals_total_size = (settings.max_objects * locals_size) as wgpu::BufferAddress;
         let local_uniforms = device.create_buffer(&wgpu::BufferDescriptor {
@@ -276,7 +283,7 @@ impl GpuCollider {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer {
                         buffer: &local_uniforms,
-                        range: 0 .. locals_total_size,
+                        range: 0 .. mem::size_of::<Locals>() as wgpu::BufferAddress,
                     },
                 },
             ],
@@ -332,6 +339,7 @@ impl GpuCollider {
         &'this mut self,
         encoder: &'pass mut wgpu::CommandEncoder,
         terrain: &TerrainContext,
+        spawner: &LocalSpawner,
     ) -> GpuSession<'this, 'pass> {
         if let Some(pr) = self.pending_result.take() {
             let latest = Arc::clone(&self.latest);
@@ -340,16 +348,25 @@ impl GpuCollider {
             if self.dirty_group_count * CLEAR_WORK_GROUP_WIDTH < pr.count as u32 {
                 self.dirty_group_count += 1;
             }
-            pr.buffer.map_read_async(0, pr.count, move |result| {
-                let averages = result
-                    .unwrap()
-                    .data.iter()
-                    .map(PolygonData::average);
-                let mut storage = latest.lock().unwrap();
-                storage.epoch = epoch;
-                storage.depths.clear();
-                storage.depths.extend(averages);
-            });
+            let data_size = mem::size_of::<PolygonData>();
+            let future = pr.buffer
+                .map_read(0, (pr.count * data_size) as wgpu::BufferAddress)
+                .map(move |mapping| {
+                    let data = unsafe {
+                        slice::from_raw_parts(
+                            mapping.unwrap().as_slice().as_ptr() as *const PolygonData,
+                            pr.count,
+                        )
+                    };
+                    let averages = data
+                        .iter()
+                        .map(PolygonData::average);
+                    let mut storage = latest.lock().unwrap();
+                    storage.epoch = epoch;
+                    storage.depths.clear();
+                    storage.depths.extend(averages);
+                });
+            spawner.spawn_local_obj(Box::new(future).into()).unwrap();
         }
         if self.dirty_group_count != 0 {
             let mut pass = encoder.begin_compute_pass();
@@ -421,9 +438,10 @@ impl GpuSession<'_, '_> {
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 todo: 0,
             });
-            let temp = device
-                .create_buffer_mapped(object_locals.len(), wgpu::BufferUsage::COPY_SRC)
-                .fill_from_slice(&object_locals);
+            let temp = device.create_buffer_with_data(
+                object_locals.as_bytes(),
+                wgpu::BufferUsage::COPY_SRC,
+            );
             for i in 0 .. object_locals.len() {
                 encoder.copy_buffer_to_buffer(
                     &temp, (mem::size_of::<Locals>() * i) as wgpu::BufferAddress,
