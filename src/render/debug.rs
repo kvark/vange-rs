@@ -2,9 +2,10 @@ use crate::{
     config::settings,
     model,
     render::{
-        Shaders, ShapePolygon,
-        COLOR_FORMAT, DEPTH_FORMAT,
+        Shaders,
+        COLOR_FORMAT, DEPTH_FORMAT, SHAPE_POLYGON_BUFFER,
         global::Context as GlobalContext,
+        object::Context as ObjectContext,
     },
 };
 
@@ -112,6 +113,7 @@ impl Context {
         device: &wgpu::Device,
         settings: &settings::DebugRender,
         global: &GlobalContext,
+        object: &ObjectContext,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             bindings: &[
@@ -126,6 +128,8 @@ impl Context {
             bind_group_layouts: &[
                 &global.bind_group_layout,
                 &bind_group_layout,
+                &object.shape_bind_group_layout,
+                &object.part_bind_group_layout,
             ],
         });
 
@@ -139,8 +143,8 @@ impl Context {
             .create_buffer_mapped(3, wgpu::BufferUsage::UNIFORM)
             .fill_from_slice(&[
                 Locals::new([1.0; 4]), // line
-                Locals::new([0.0, 1.0, 0.0, 0.1]), // face
-                Locals::new([1.0, 1.0, 0.0, 0.1]), // edge
+                Locals::new([0.0, 1.0, 0.0, 0.2]), // face
+                Locals::new([1.0, 1.0, 0.0, 0.2]), // edge
             ]);
         let locals_size = mem::size_of::<Locals>() as wgpu::BufferAddress;
         let bind_group_line = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -223,8 +227,16 @@ impl Context {
                 color_states: &[
                     wgpu::ColorStateDescriptor {
                         format: COLOR_FORMAT,
-                        alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                        color_blend: wgpu::BlendDescriptor::REPLACE,
+                        alpha_blend: wgpu::BlendDescriptor {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        color_blend: wgpu::BlendDescriptor {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
                         write_mask: wgpu::ColorWrite::all(),
                     },
                 ],
@@ -238,29 +250,7 @@ impl Context {
                     stencil_write_mask: !0,
                 }),
                 index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[
-                    wgpu::VertexBufferDescriptor {
-                        stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
-                        step_mode: wgpu::InputStepMode::Instance,
-                        attributes: &[
-                            wgpu::VertexAttributeDescriptor { // indices
-                                offset: 0,
-                                format: wgpu::VertexFormat::Ushort4,
-                                shader_location: 0,
-                            },
-                            wgpu::VertexAttributeDescriptor { // normal
-                                offset: 8,
-                                format: wgpu::VertexFormat::Uchar4Norm,
-                                shader_location: 1,
-                            },
-                            wgpu::VertexAttributeDescriptor { // origin square
-                                offset: 12,
-                                format: wgpu::VertexFormat::Float4,
-                                shader_location: 2,
-                            },
-                        ],
-                    },
-                ],
+                vertex_buffers: &[ SHAPE_POLYGON_BUFFER ],
                 sample_count: 1,
                 alpha_to_coverage_enabled: false,
                 sample_mask: !0,
@@ -368,20 +358,28 @@ impl Context {
         &self,
         pass: &mut wgpu::RenderPass,
         shape: &model::Shape,
+        part_bind_group: &wgpu::BindGroup,
     ) {
+        if !self.settings.collision_shapes {
+            return
+        }
+
+        pass.set_bind_group(2, &shape.bind_group, &[]);
+        pass.set_bind_group(3, &part_bind_group, &[]);
+
         // draw collision polygon faces
         if let Some(ref pipeline) = self.pipeline_face {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, &self.bind_group_face, &[]);
             pass.set_vertex_buffers(0, &[(&shape.polygon_buf, 0)]);
-            //pass.draw(); TODO
+            pass.draw(0 .. 4, 0 .. shape.polygons.len() as u32);
         }
         // draw collision polygon edges
         if let Some(ref pipeline) = self.pipeline_edge {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, &self.bind_group_edge, &[]);
             pass.set_vertex_buffers(0, &[(&shape.polygon_buf, 0)]);
-            //pass.draw(); TODO
+            pass.draw(0 .. 4, 0 .. shape.polygons.len() as u32);
         }
 
         // draw sample normals

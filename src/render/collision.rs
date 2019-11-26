@@ -121,7 +121,7 @@ impl GpuCollider {
                 entry_point: "main",
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
+                front_face: wgpu::FrontFace::Cw,
                 cull_mode: wgpu::CullMode::Back,
                 depth_bias: 0,
                 depth_bias_slope_scale: 0.0,
@@ -234,7 +234,7 @@ impl GpuCollider {
                 target: [
                     2.0 / settings.max_raster_size.0 as f32,
                     2.0 / settings.max_raster_size.1 as f32,
-                    0.0,
+                    1.0 / 256.0,
                     0.0,
                 ],
                 penetration: [

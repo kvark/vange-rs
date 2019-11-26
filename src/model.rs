@@ -133,8 +133,8 @@ pub fn load_c3d(
     locals_id: usize,
     object: &ObjectContext,
 ) -> Arc<Mesh> {
-    let locals_size = mem::size_of::<ObjectLocals>() as wgpu::BufferAddress;
-    let locals_base = locals_id as wgpu::BufferAddress * locals_size;
+    let locals_size = mem::size_of::<ObjectLocals>().max(256) as wgpu::BufferAddress; //TODO: use constant
+    let locals_base = (locals_id as wgpu::BufferAddress) * locals_size;
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: &object.part_bind_group_layout,
         bindings: &[
@@ -315,8 +315,9 @@ pub fn load_m3d(
     let wheel_offset = 1;
     let debrie_offset = wheel_offset + raw.wheels.len();
     let locals_num = debrie_offset + raw.debris.len() + raw.slots.len();
+    let locals_size = mem::size_of::<ObjectLocals>().max(256); //TODO: use alignment constant
     let locals_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        size: (locals_num * mem::size_of::<ObjectLocals>()) as wgpu::BufferAddress,
+        size: (locals_num * locals_size) as wgpu::BufferAddress,
         usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
     });
 

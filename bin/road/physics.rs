@@ -297,7 +297,7 @@ pub fn step(
             let cdata = match gpu_depths {
                 Some(depths) => {
                     let depth = depths[bound_poly_id];
-                    {
+                    if false {
                         let original = collide_low(
                             poly,
                             &car.model.shape.samples,

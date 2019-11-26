@@ -59,7 +59,7 @@ pub const SHAPE_POLYGON_BUFFER: wgpu::VertexBufferDescriptor  = wgpu::VertexBuff
         },
         wgpu::VertexAttributeDescriptor {
             offset: 8,
-            format: wgpu::VertexFormat::Char4,
+            format: wgpu::VertexFormat::Char4Norm,
             shader_location: 1,
         },
         wgpu::VertexAttributeDescriptor {
@@ -293,7 +293,7 @@ pub struct RenderModel<'a> {
     pub debug_shape_scale: Option<f32>,
 }
 
-impl<'a> RenderModel<'a> {
+impl RenderModel<'_> {
     pub fn prepare(&self, encoder: &mut wgpu::CommandEncoder, device: &wgpu::Device) {
         use cgmath::{Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
 
@@ -304,7 +304,10 @@ impl<'a> RenderModel<'a> {
         );
 
         // body
-        mapping.data[0] = object::Locals::new(self.transform);
+        mapping.data[0] = object::Locals::new(
+            self.transform,
+            self.debug_shape_scale.unwrap_or_default(),
+        );
         // wheels
         for w in self.model.wheels.iter() {
             if let Some(ref mesh) = w.mesh {
@@ -313,7 +316,7 @@ impl<'a> RenderModel<'a> {
                     rot: Quaternion::one(),
                     scale: 1.0,
                 });
-                mapping.data[mesh.locals_id] = object::Locals::new(transform);
+                mapping.data[mesh.locals_id] = object::Locals::new(transform, 0.0);
             }
         }
         // slots
@@ -326,17 +329,22 @@ impl<'a> RenderModel<'a> {
                 };
                 local.disp -= local.transform_vector(Vector3::from(mesh.offset));
                 let transform = self.transform.concat(&local);
-                mapping.data[mesh.locals_id] = object::Locals::new(transform);
+                mapping.data[mesh.locals_id] = object::Locals::new(transform, 0.0);
             }
         }
 
-        encoder.copy_buffer_to_buffer(
-            &mapping.finish(),
-            0,
-            &self.locals_buf,
-            0,
-            (count * mem::size_of::<object::Locals>()) as wgpu::BufferAddress,
-        );
+        let temp = mapping.finish();
+        let locals_alignment = mem::size_of::<object::Locals>().max(256); //TODO: use constant
+        // copy each chunk separately, given different alignment
+        for i in 0 .. count {
+            encoder.copy_buffer_to_buffer(
+                &temp,
+                (i * mem::size_of::<object::Locals>()) as wgpu::BufferAddress,
+                &self.locals_buf,
+                (i * locals_alignment) as wgpu::BufferAddress,
+                mem::size_of::<object::Locals>() as wgpu::BufferAddress,
+            );
+        }
     }
 }
 
@@ -363,7 +371,7 @@ impl Render {
         let global = global::Context::new(device);
         let object = object::Context::new(&mut init_encoder, device, object_palette, &global);
         let terrain = terrain::Context::new(&mut init_encoder, device, level, &global, &settings.terrain, screen_extent);
-        let debug = debug::Context::new(device, &settings.debug, &global);
+        let debug = debug::Context::new(device, &settings.debug, &global, &object);
         queue.submit(&[
             init_encoder.finish(),
         ]);
@@ -465,10 +473,14 @@ impl Render {
         for rm in render_models {
             Render::draw_model(&mut pass, &rm.model);
         }
+
+        // draw debug shapes
         for rm in render_models {
-            if let Some(_scale) = rm.debug_shape_scale {
-                self.debug.draw_shape(&mut pass, &rm.model.shape);
-            }
+            self.debug.draw_shape(
+                &mut pass,
+                &rm.model.shape,
+                &rm.model.body.bind_group,
+            );
         }
     }
 

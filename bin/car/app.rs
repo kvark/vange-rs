@@ -16,8 +16,8 @@ pub struct CarView {
     model: model::VisualModel,
     locals_buf: Arc<wgpu::Buffer>,
     transform: space::Transform,
-    //physics: config::car::CarPhysics,
-    //debug_render: render::DebugRender,
+    physics: config::car::CarPhysics,
+    debug_render: render::debug::Context,
     global: render::global::Context,
     object: render::object::Context,
     cam: space::Camera,
@@ -84,8 +84,13 @@ impl CarView {
                 disp: cgmath::Vector3::unit_z(),
                 rot: cgmath::One::one(),
             },
-            //physics: cinfo.physics.clone(),
-            //debug_render: render::DebugRender::new(device, &settings.render.debug),
+            physics: cinfo.physics.clone(),
+            debug_render: render::debug::Context::new(
+                device,
+                &settings.render.debug,
+                &global,
+                &object,
+            ),
             global,
             object,
             cam: space::Camera {
@@ -212,7 +217,7 @@ impl Application for CarView {
             model: &self.model,
             locals_buf: &self.locals_buf,
             transform: self.transform,
-            debug_shape_scale: None,
+            debug_shape_scale: Some(self.physics.scale_bound),
         }.prepare(&mut encoder, device);
 
         {
@@ -245,6 +250,12 @@ impl Application for CarView {
             render::Render::draw_model(
                 &mut pass,
                 &self.model,
+            );
+
+            self.debug_render.draw_shape(
+                &mut pass,
+                &self.model.shape,
+                &self.model.body.bind_group,
             );
         }
 

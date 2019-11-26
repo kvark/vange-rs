@@ -31,8 +31,10 @@ void main() {
     //v_PolyNormal = poly.normal;
     v_TargetIndex = int(u_IndexOffset.x) + gl_InstanceIndex;
 
-    vec2 pos = poly.vertex.xy * u_ModelScale.xy * u_TargetScale.xy;
-    gl_Position = vec4(pos, 0.0, 1.0);
+    //vec2 pos = poly.vertex.xy * u_ModelScale.xy * u_TargetScale.xy;
+    vec3 pos = mat3(u_Model) * poly.vertex.xyz * u_TargetScale.xyz;
+    pos.z = pos.z * 0.5 + 0.5; // convert Z into [0, 1]:
+    gl_Position = vec4(pos, 1.0);
 }
 #endif //VS
 
@@ -46,6 +48,7 @@ layout(set = 0, binding = 1, std430) buffer Storage {
     uint s_Data[];
 };
 
+const uint MAX_DEPTH = 255;
 const uint DEPTH_BITS = 20;
 
 void main() {
@@ -63,15 +66,13 @@ void main() {
         }
     }
 
+    //HACK: convince Metal driver that we are actually using the buffer...
+    // the atomic operations appear to be ignored otherwise
+    s_Data[0] += 1;
+
     if (depth_raw != 0.0) {
-        atomicAdd(s_Data[v_TargetIndex], uint(depth_raw) + (1U<<DEPTH_BITS));
+        uint effective_depth = min(uint(depth_raw), MAX_DEPTH);
+        atomicAdd(s_Data[v_TargetIndex], effective_depth + (1U<<DEPTH_BITS));
     }
-    /*
-    vec3 collision_vec = depth * vec3(v_Vector.y, -v_Vector.x, 1.0);
-    ivec3 quantized = ivec3(collision_vec * 65536.0);
-    atomicAdd(s_Data[4 * v_TargetIndex + 0], quantized.x);
-    atomicAdd(s_Data[4 * v_TargetIndex + 1], quantized.y);
-    atomicAdd(s_Data[4 * v_TargetIndex + 2], quantized.z);
-    atomicAdd(s_Data[4 * v_TargetIndex + 3], 1);*/
 }
 #endif //FS

@@ -51,15 +51,15 @@ pub struct Vertex {
 #[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 pub struct Locals {
     _matrix: [[f32; 4]; 4],
-    _pad: [u8; 192], //HACK: pad to 256
+    _shape_scale: [f32; 4],
 }
 
 impl Locals {
-    pub fn new(transform: Transform) -> Self {
+    pub fn new(transform: Transform, shape_scale: f32) -> Self {
         use cgmath::Matrix4;
         Locals {
             _matrix: Matrix4::from(transform).into(),
-            _pad: [0; 192],
+            _shape_scale: [shape_scale, 0.0, 0.0, 0.0],
         }
     }
 }

@@ -8,7 +8,7 @@ layout(location = 0) in uvec4 a_Indices;
 layout(location = 1) in vec4 a_Normal;
 layout(location = 2) in vec4 a_OriginSquare;
 
-layout(set = 2, binding = 0, std430) buffer Positions
+layout(set = 2, binding = 0, std430) readonly buffer Positions
 {
     uint r_Positions[];
 };
@@ -23,9 +23,13 @@ struct Polygon {
 Polygon get_shape_polygon() {
     uint index = a_Indices.xywz[gl_VertexIndex];
     uint pos = r_Positions[int(index)];
-    uvec3 pos_vec = (uvec3(pos) >> uvec3(0, 8, 16)) & uvec3(0xFFU);
+    // extran X Y Z coordinates
+    uvec3 pos_vec_u = (uvec3(pos) >> uvec3(0, 8, 16)) & uvec3(0xFFU);
+    // convert from u8 to i8
+    vec3 pos_vec = vec3(pos_vec_u) - step(vec3(128.0), vec3(pos_vec_u)) * 256.0;
+    // done
     Polygon poly = Polygon(
-        vec4(vec3(pos_vec) - 128.0, 1.0),
+        vec4(pos_vec, 1.0),
         a_OriginSquare.xyz,
         normalize(a_Normal.xyz),
         a_OriginSquare.w

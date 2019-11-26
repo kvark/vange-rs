@@ -1,5 +1,8 @@
 //!include vs:shape.inc
 
+#ifdef SHADER_VS
+//imported: Polygon, get_shape_polygon
+
 layout(set = 0, binding = 0) uniform c_Globals {
     vec4 u_CameraPos;
     mat4 u_ViewProj;
@@ -8,12 +11,15 @@ layout(set = 0, binding = 0) uniform c_Globals {
     vec4 u_LightColor;
 };
 
-#ifdef SHADER_VS
-//imported: Polygon, get_shape_polygon
+layout(set = 3, binding = 0) uniform c_Locals {
+    mat4 u_Model;
+    vec4 u_ShapeScale;
+};
 
 void main() {
     Polygon poly = get_shape_polygon();
-    gl_Position = u_ViewProj * poly.vertex;
+    vec4 pos = vec4(u_ShapeScale.xxx, 1.0) * (u_Model * poly.vertex);
+    gl_Position = u_ViewProj * pos;
 }
 #endif //VS
 
