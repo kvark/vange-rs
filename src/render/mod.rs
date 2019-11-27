@@ -343,7 +343,8 @@ impl RenderModel<'_> {
         }
 
         let temp = mapping.finish();
-        let locals_alignment = mem::size_of::<object::Locals>().max(256); //TODO: use constant
+        let locals_alignment = mem::size_of::<object::Locals>()
+            .max(wgpu::BIND_BUFFER_ALIGNMENT as usize);
         // copy each chunk separately, given different alignment
         for i in 0 .. count {
             encoder.copy_buffer_to_buffer(

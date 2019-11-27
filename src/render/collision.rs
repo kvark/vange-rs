@@ -251,7 +251,8 @@ impl GpuCollider {
             [globals].as_bytes(),
             wgpu::BufferUsage::UNIFORM,
         );
-        let locals_size = mem::size_of::<Locals>().max(256); //TODO: use constant from wgpu-rs
+        let locals_size = mem::size_of::<Locals>()
+            .max(wgpu::BIND_BUFFER_ALIGNMENT as usize);
         let locals_total_size = (settings.max_objects * locals_size) as wgpu::BufferAddress;
         let local_uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             size: locals_total_size,
