@@ -1,15 +1,8 @@
-//!include cs:surface.inc cs:color.inc
+//!include cs:globals.inc cs:surface.inc cs:color.inc
 
 #ifdef SHADER_CS
 //imported: Surface, get_surface, evaluate_color_id
 
-layout(set = 0, binding = 0) uniform Globals {
-    vec4 u_CameraPos;
-    mat4 u_ViewProj;
-    mat4 u_InvViewProj;
-    vec4 u_LightPos;
-    vec4 u_LightColor;
-};
 layout(set = 1, binding = 1) uniform c_Locals {
     uvec4 u_ScreenSize;      // XY = size
 };

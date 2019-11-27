@@ -1,15 +1,7 @@
-//!include vs:shape.inc
+//!include vs:globals.inc vs:shape.inc
 
 #ifdef SHADER_VS
 //imported: Polygon, get_shape_polygon
-
-layout(set = 0, binding = 0) uniform c_Globals {
-    vec4 u_CameraPos;
-    mat4 u_ViewProj;
-    mat4 u_InvViewProj;
-    vec4 u_LightPos;
-    vec4 u_LightColor;
-};
 
 layout(set = 3, binding = 0) uniform c_Locals {
     mat4 u_Model;

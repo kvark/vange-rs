@@ -1,12 +1,4 @@
-//!include fs:surface.inc fs:color.inc
-
-layout(set = 0, binding = 0) uniform c_Globals {
-    vec4 u_CameraPos;
-    mat4 u_ViewProj;
-    mat4 u_InvViewProj;
-    vec4 u_LightPos;
-    vec4 u_LightColor;
-};
+//!include vs:globals.inc fs:globals.inc fs:surface.inc fs:color.inc
 
 #ifdef SHADER_VS
 
