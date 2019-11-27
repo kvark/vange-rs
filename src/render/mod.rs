@@ -17,6 +17,7 @@ use std::{
     slice,
 };
 
+pub mod body;
 pub mod collision;
 pub mod debug;
 pub mod global;
