@@ -209,7 +209,7 @@ impl Application for LevelView {
         true
     }
 
-    fn update(&mut self, delta: f32) {
+    fn update(&mut self, _device: &wgpu::Device, delta: f32) -> Option<wgpu::CommandBuffer> {
         use cgmath::{InnerSpace, Rotation3, Zero};
         let move_speed = match self.cam.proj {
             space::Projection::Perspective(_) => 100.0,
@@ -272,6 +272,8 @@ impl Application for LevelView {
             }
             _ => {}
         }
+
+        None
     }
 
     fn resize(&mut self, device: &wgpu::Device, extent: wgpu::Extent3d) {

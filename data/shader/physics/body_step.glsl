@@ -7,28 +7,23 @@ void main() {
         gl_GlobalInvocationID.z * gl_WorkGroupSize.x * gl_NumWorkGroups.x * gl_WorkGroupSize.y * gl_NumWorkGroups.y +
         gl_GlobalInvocationID.y * gl_WorkGroupSize.x * gl_NumWorkGroups.x +
         gl_GlobalInvocationID.x;
+    Data data = s_Data[index];
 
-    float delta = 0.1;
-    vec3 collision = vec3(0.0);
-
-    vec4 pos_scale = sData[index].pos_scale;
-    vec4 rot = sData[index].rot;
-
-    vec4 irot = qinv(rot);
+    vec4 irot = qinv(data.orientation);
     vec3 z_axis = qrot(irot, vec3(0.0, 0.0, 1.0));
-    vec3 vac = qrot(irot, u_GlobalForce.xyz + vec3(0.0, 0.0, collision.z));
-    vec3 wac = qrot(irot, vec3(collision.xy, 0.0));
+    vec3 vac = qrot(irot, u_GlobalForce.xyz + vec3(0.0, 0.0, data.collision.z));
+    vec3 wac = qrot(irot, vec3(data.collision.xy, 0.0));
 
-    Car car = s_Cars[sData[index].car_id.x];
-    vec3 tmp = vec3(0.0, 0.0, car.zomc.x * pos_scale.w);
+    vec3 tmp = vec3(0.0, 0.0, data.volume_zero_zomc.z * data.pos_scale.w);
     wac += u_GlobalForce.z * cross(tmp, z_axis);
 
-    vel += delta * vac;
-    wel += delta * (car.jacobian_inv * wac);
+    vec3 vel = data.linear.xyz + u_Delta.x * vac;
+    vec3 wel = data.angular.xyz + u_Delta.x * (mat3(data.jacobian_inv) * wac);
 
-    sData[index].pos_scale.xyz = pos_scale.xyz + delta * vel;
-    sData[index].rot = normalize(rot + vec4(delta * wel, 0.0));
-    sData[index].v_linear = vec4(vel, 0.0);
-    sData[index].v_angular = vec4(wel, 0.0);
+    s_Data[index].pos_scale.xyz = data.pos_scale.xyz + u_Delta.x * vel;
+    s_Data[index].orientation = normalize(data.orientation + vec4(u_Delta.x * wel, 0.0));
+    s_Data[index].linear.xyz = vel;
+    s_Data[index].angular.xyz = wel;
+    s_Data[index].collision.xyz = vec3(0.0);
 }
 #endif //CS

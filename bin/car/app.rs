@@ -170,10 +170,7 @@ impl Application for CarView {
         true
     }
 
-    fn update(
-        &mut self,
-        delta: f32,
-    ) {
+    fn update(&mut self, _device: &wgpu::Device, delta: f32) -> Option<wgpu::CommandBuffer> {
         if self.rotation.0 != cgmath::Rad(0.) {
             let rot = self.rotation.0 * delta;
             self.rotate_z(rot);
@@ -182,6 +179,7 @@ impl Application for CarView {
             let rot = self.rotation.1 * delta;
             self.rotate_x(rot);
         }
+        None
     }
 
     fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {

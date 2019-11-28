@@ -20,8 +20,8 @@ pub trait Application {
     fn on_cursor_move(&mut self, _position: (f64, f64)) {}
     fn on_mouse_button(&mut self, _state: event::ElementState, _button: event::MouseButton) {}
     fn resize(&mut self, _device: &wgpu::Device, _extent: wgpu::Extent3d) {}
-    fn reload(&mut self, _device: &wgpu::Device);
-    fn update(&mut self, delta: f32);
+    fn reload(&mut self, device: &wgpu::Device);
+    fn update(&mut self, device: &wgpu::Device, delta: f32) -> Option<wgpu::CommandBuffer>;
     fn draw(
         &mut self,
         device: &wgpu::Device,
@@ -200,7 +200,9 @@ impl Harness {
                     let delta = duration.as_secs() as f32 +
                         duration.subsec_nanos() as f32 * 1.0e-9;
 
-                    app.update(delta);
+                    if let Some(command_buffer) = app.update(&device, delta) {
+                        queue.submit(&[command_buffer]);
+                    }
 
                     let spawner = task_pool.spawner();
                     let frame = swap_chain.get_next_texture().unwrap();

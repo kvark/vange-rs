@@ -7,6 +7,7 @@ use vangers::{
     config, level, model, space,
     render::{
         Render, RenderModel, ScreenTargets,
+        body::Store as GpuStore,
         collision::{GpuCollider, GpuResult},
         debug::LineBuffer,
     },
@@ -124,7 +125,7 @@ struct DataBase {
 pub struct Game {
     db: DataBase,
     render: Render,
-    collider: Option<GpuCollider>,
+    gpu: Option<(GpuStore, GpuCollider)>,
     //debug_collision_map: bool,
     line_buffer: LineBuffer,
     level: level::Level,
@@ -184,8 +185,10 @@ impl Game {
             }
         };
 
-        let collider = settings.game.physics.gpu_collision.as_ref().map(|gc| {
-            GpuCollider::new(device, gc, &db.common, &render.object, &render.terrain)
+        let gpu = settings.game.physics.gpu_collision.as_ref().map(|gc| {
+            let store = GpuStore::new(device, gc, &db.common);
+            let collider = GpuCollider::new(device, gc, &db.common, &render.object, &render.terrain);
+            (store, collider)
         });
 
         let mut player_agent = Agent::spawn(
@@ -237,7 +240,7 @@ impl Game {
         Game {
             db,
             render,
-            collider,
+            gpu,
             line_buffer: LineBuffer::new(),
             level,
             agents,
@@ -352,7 +355,7 @@ impl Application for Game {
         true
     }
 
-    fn update(&mut self, delta: f32) {
+    fn update(&mut self, device: &wgpu::Device, delta: f32) -> Option<wgpu::CommandBuffer> {
         let pid = self.agents
             .iter()
             .position(|a| a.spirit == Spirit::Player)
@@ -370,11 +373,14 @@ impl Application for Game {
                     Some(&mut self.line_buffer),
                 );
             }
+
             self.cam.rotate_focus(
                 &player.transform,
                 cgmath::Rad(2.0 * delta * self.spin_hor),
                 cgmath::Rad(delta * self.spin_ver),
             );
+
+            None
         } else {
             self.agents[pid].control.rudder = self.spin_hor;
             self.agents[pid].control.motor = 1.0 * self.spin_ver;
@@ -422,39 +428,46 @@ impl Application for Game {
                 );
             }
 
-            // don't quantify if going through GPU, for now
-            if self.collider.is_none() {
-                while physics_dt > self.max_quant {
+            match self.gpu {
+                Some((ref store, _)) => {
+                    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        todo: 0,
+                    });
+                    store.step(device, &mut encoder, physics_dt);
+                    Some(encoder.finish())
+                }
+                None => {
+                    while physics_dt > self.max_quant {
+                        for a in self.agents.iter_mut() {
+                            a.step(
+                                self.max_quant,
+                                &self.level,
+                                &self.db.common,
+                                None,
+                                None,
+                            );
+                        }
+                        physics_dt -= self.max_quant;
+                    }
+
+                    self.line_buffer.clear();
+
                     for a in self.agents.iter_mut() {
+                        let lbuf = match a.spirit {
+                            Spirit::Player => Some(&mut self.line_buffer),
+                            Spirit::Other => None,
+                        };
                         a.step(
-                            self.max_quant,
+                            physics_dt,
                             &self.level,
                             &self.db.common,
                             None,
-                            None,
+                            lbuf,
                         );
                     }
-                    physics_dt -= self.max_quant;
+
+                    None
                 }
-            }
-
-            self.line_buffer.clear();
-            let gpu_result = self.collider
-                .as_ref()
-                .map(GpuCollider::result);
-
-            for a in self.agents.iter_mut() {
-                let lbuf = match a.spirit {
-                    Spirit::Player => Some(&mut self.line_buffer),
-                    Spirit::Other => None,
-                };
-                a.step(
-                    physics_dt,
-                    &self.level,
-                    &self.db.common,
-                    gpu_result.as_ref(),
-                    lbuf,
-                );
             }
         }
     }
@@ -466,7 +479,8 @@ impl Application for Game {
 
     fn reload(&mut self, device: &wgpu::Device) {
         self.render.reload(device);
-        if let Some(ref mut collider) = self.collider {
+        if let Some((ref mut store, ref mut collider)) = self.gpu {
+            store.reload(device);
             collider.reload(device);
         }
     }
@@ -482,8 +496,8 @@ impl Application for Game {
             todo: 0,
         });
 
-        let post_comb = match self.collider {
-            Some(ref mut collider) => {
+        let post_comb = match self.gpu {
+            Some((_, ref mut collider)) => {
                 let mut session = collider.begin(&mut encoder, &self.render.terrain, spawner);
                 for agent in &mut self.agents {
                     let mut transform = agent.transform.clone();

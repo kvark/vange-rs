@@ -99,10 +99,7 @@ impl Application for ResourceView {
         true
     }
 
-    fn update(
-        &mut self,
-        delta: f32,
-    ) {
+    fn update(&mut self, _device: &wgpu::Device, delta: f32) -> Option<wgpu::CommandBuffer> {
         use cgmath::Transform;
 
         if self.rotation != cgmath::Rad(0.) {
@@ -114,6 +111,8 @@ impl Application for ResourceView {
             };
             self.transform = other.concat(&self.transform);
         }
+
+        None
     }
 
     fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {

@@ -79,6 +79,15 @@ pub struct Shaders {
 }
 
 impl Shaders {
+    fn fail(name: &str, source: &str, log: &str) -> ! {
+        println!("Generated shader:");
+        for (i, line) in source.lines().enumerate() {
+            println!("{:3}| {}", i+1, line);
+        }
+        let msg = log.replace("\\n", "\n");
+        panic!("\nUnable to compile '{}': {}", name, msg);
+    }
+
     pub fn new(
         name: &str,
         specialization: &[&str],
@@ -145,16 +154,14 @@ impl Shaders {
 
         let spv_vs = match glsl_to_spirv::compile(&str_vs, glsl_to_spirv::ShaderType::Vertex) {
             Ok(file) => wgpu::read_spirv(file).unwrap(),
-            Err(e) => {
-                println!("Generated VS shader:\n{}", str_vs);
-                panic!("\nUnable to compile '{}': {:?}", name, e);
+            Err(ref e) => {
+                Self::fail(name, &str_vs, e);
             }
         };
         let spv_fs = match glsl_to_spirv::compile(&str_fs, glsl_to_spirv::ShaderType::Fragment) {
             Ok(file) => wgpu::read_spirv(file).unwrap(),
-            Err(e) => {
-                println!("Generated FS shader:\n{}", str_fs);
-                panic!("\nUnable to compile '{}': {:?}", name, e);
+            Err(ref e) => {
+                Self::fail(name, &str_fs, e);
             }
         };
 
@@ -222,9 +229,8 @@ impl Shaders {
 
         let spv = match glsl_to_spirv::compile(&str_cs, glsl_to_spirv::ShaderType::Compute) {
             Ok(file) => wgpu::read_spirv(file).unwrap(),
-            Err(e) => {
-                println!("Generated CS shader:\n{}", str_cs);
-                panic!("\nUnable to compile '{}': {:?}", name, e);
+            Err(ref e) => {
+                Self::fail(name, &str_cs, e);
             }
         };
 
