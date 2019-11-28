@@ -1,4 +1,4 @@
-//!include vs:globals.inc vs:shape.inc
+//!include vs:globals.inc vs:encode.inc vs:shape.inc
 
 #ifdef SHADER_VS
 //imported: Polygon, get_shape_polygon

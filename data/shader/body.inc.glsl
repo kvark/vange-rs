@@ -3,7 +3,7 @@ struct Data {
     vec4 orientation;
     vec4 linear;
     vec4 angular;
-    vec4 collision;
+    vec4 springs;
     vec4 volume_zero_zomc; // X=volume, Y=0, Z = Z offset of mass center
     mat4 jacobian_inv;
 };

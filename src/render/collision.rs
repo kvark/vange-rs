@@ -230,7 +230,7 @@ impl GpuCollider {
         let buf_size = (max_polygons_total * mem::size_of::<PolygonData>()) as wgpu::BufferAddress;
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             size: buf_size,
-            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_SRC,
+            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::STORAGE_READ | wgpu::BufferUsage::COPY_SRC,
         });
 
         let globals = Globals {
@@ -409,6 +409,10 @@ impl GpuCollider {
 
     pub fn result(&self) -> MutexGuard<GpuResult> {
         self.latest.lock().unwrap()
+    }
+
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        &self.buffer
     }
 }
 

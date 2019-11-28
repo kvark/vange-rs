@@ -7,7 +7,7 @@ use vangers::{
     config, level, model, space,
     render::{
         Render, RenderModel, ScreenTargets,
-        body::Store as GpuStore,
+        body::GpuStore,
         collision::{GpuCollider, GpuResult},
         debug::LineBuffer,
     },
@@ -186,8 +186,8 @@ impl Game {
         };
 
         let gpu = settings.game.physics.gpu_collision.as_ref().map(|gc| {
-            let store = GpuStore::new(device, gc, &db.common);
             let collider = GpuCollider::new(device, gc, &db.common, &render.object, &render.terrain);
+            let store = GpuStore::new(device, gc, &db.common, collider.buffer());
             (store, collider)
         });
 
@@ -433,7 +433,7 @@ impl Application for Game {
                     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                         todo: 0,
                     });
-                    store.step(device, &mut encoder, physics_dt);
+                    store.step(device, &mut encoder, physics_dt, &[]);
                     Some(encoder.finish())
                 }
                 None => {

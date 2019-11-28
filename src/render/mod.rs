@@ -121,8 +121,11 @@ impl Shaders {
                     let inc_path = base_path
                         .join(include)
                         .with_extension("inc.glsl");
-                    BufReader::new(File::open(inc_path)?)
-                        .read_to_end(target)?;
+                    match File::open(&inc_path) {
+                        Ok(include) => BufReader::new(include)
+                            .read_to_end(target)?,
+                        Err(e) => panic!("Unable to include {:?}: {:?}", inc_path, e),
+                    };
                 }
             }
             let second = lines.next().unwrap();

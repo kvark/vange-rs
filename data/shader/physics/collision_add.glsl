@@ -1,13 +1,23 @@
-//!include vs:shape.inc fs:surface.inc
+//!include vs:encode.inc vs:shape.inc fs:surface.inc
 
 //layout(location = 0) flat varying vec3 v_Vector;
 layout(location = 1) varying vec3 v_World;
 //layout(location = 2) flat varying vec3 v_PolyNormal;
 layout(location = 3) flat varying int v_TargetIndex;
+layout(location = 4) flat varying uint v_EncodedOrigin;
 
 layout(set = 0, binding = 0) uniform c_Globals {
     vec4 u_TargetScale;
     vec4 u_Penetration; // X=scale, Y=limit
+};
+
+struct CollisionPolygon {
+    uint middle;
+    uint depth;
+};
+
+layout(set = 0, binding = 1, std430) buffer Collision {
+    CollisionPolygon s_Collisions[];
 };
 
 #ifdef SHADER_VS
@@ -30,6 +40,7 @@ void main() {
     //v_Vector = mix(mat3(u_Model) * poly.origin, v_World - u_Model[3].xyz, EXACT_VECTOR);
     //v_PolyNormal = poly.normal;
     v_TargetIndex = int(u_IndexOffset.x) + gl_InstanceIndex;
+    v_EncodedOrigin = encode_pos(poly.origin);
 
     //vec2 pos = poly.vertex.xy * u_ModelScale.xy * u_TargetScale.xy;
     vec3 pos = mat3(u_Model) * poly.vertex.xyz * u_TargetScale.xyz;
@@ -41,12 +52,6 @@ void main() {
 
 #ifdef SHADER_FS
 //imported: Surface, get_surface
-
-layout(set = 0, binding = 1, std430) buffer Storage {
-    //Note: using `uvec2` here fails to compile on Metal:
-    //> error: address of vector element requested
-    uint s_Data[];
-};
 
 const uint MAX_DEPTH = 255;
 const uint DEPTH_BITS = 20;
@@ -66,13 +71,16 @@ void main() {
         }
     }
 
+    //TODO: avoid doing this on every FS invocation
+    s_Collisions[v_TargetIndex].middle = v_EncodedOrigin;
+
     //HACK: convince Metal driver that we are actually using the buffer...
     // the atomic operations appear to be ignored otherwise
-    s_Data[0] += 1;
+    s_Collisions[0].depth += 1;
 
     if (depth_raw != 0.0) {
         uint effective_depth = min(uint(depth_raw), MAX_DEPTH);
-        atomicAdd(s_Data[v_TargetIndex], effective_depth + (1U<<DEPTH_BITS));
+        atomicAdd(s_Collisions[v_TargetIndex].depth, effective_depth + (1U<<DEPTH_BITS));
     }
 }
 #endif //FS

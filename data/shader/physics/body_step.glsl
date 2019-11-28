@@ -11,8 +11,8 @@ void main() {
 
     vec4 irot = qinv(data.orientation);
     vec3 z_axis = qrot(irot, vec3(0.0, 0.0, 1.0));
-    vec3 vac = qrot(irot, u_GlobalForce.xyz + vec3(0.0, 0.0, data.collision.z));
-    vec3 wac = qrot(irot, vec3(data.collision.xy, 0.0));
+    vec3 vac = qrot(irot, u_GlobalForce.xyz + vec3(0.0, 0.0, data.springs.z));
+    vec3 wac = qrot(irot, vec3(data.springs.xy, 0.0));
 
     vec3 tmp = vec3(0.0, 0.0, data.volume_zero_zomc.z * data.pos_scale.w);
     wac += u_GlobalForce.z * cross(tmp, z_axis);
@@ -24,6 +24,6 @@ void main() {
     s_Data[index].orientation = normalize(data.orientation + vec4(u_Delta.x * wel, 0.0));
     s_Data[index].linear.xyz = vel;
     s_Data[index].angular.xyz = wel;
-    s_Data[index].collision.xyz = vec3(0.0);
+    s_Data[index].springs.xyz = vec3(0.0);
 }
 #endif //CS
