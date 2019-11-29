@@ -429,7 +429,7 @@ impl Application for Game {
             }
 
             match self.gpu {
-                Some((ref store, _)) => {
+                Some((ref mut store, _)) => {
                     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                         todo: 0,
                     });

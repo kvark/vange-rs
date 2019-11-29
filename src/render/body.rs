@@ -1,11 +1,18 @@
 use crate::{
-    config::{common::Common, settings},
+    config::{
+        car::CarPhysics,
+        common::Common,
+        settings,
+    },
+    freelist::{self, FreeList},
     render::{
         collision::PolygonData,
         Shaders,
     },
+    space::Transform,
 };
 
+use cgmath::SquareMatrix as _;
 use zerocopy::AsBytes as _;
 
 use std::mem;
@@ -13,14 +20,16 @@ use std::mem;
 
 const WORK_GROUP_WIDTH: u32 = 64;
 
+#[repr(C)]
+#[derive(zerocopy::AsBytes)]
 pub struct Data {
-    _pos_scale: [f32; 4],
-    _rot: [f32; 4],
-    _linear: [f32; 4],
-    _angular: [f32; 4],
-    _collision: [f32; 4],
-    _volume_zero_zomc: [f32; 4],
-    _jacobian_inv: [[f32; 4]; 4],
+    pos_scale: [f32; 4],
+    rot: [f32; 4],
+    linear: [f32; 4],
+    angular: [f32; 4],
+    collision: [f32; 4],
+    volume_zero_zomc: [f32; 4],
+    jacobian_inv: [[f32; 4]; 4],
 }
 
 #[repr(C)]
@@ -30,7 +39,8 @@ struct Uniforms {
     delta: [f32; 4],
 }
 
-#[allow(dead_code)]
+pub type GpuBody = freelist::Id<Data>;
+
 struct Pipelines {
     step: wgpu::ComputePipeline,
     gather: wgpu::ComputePipeline,
@@ -71,7 +81,6 @@ impl Pipelines {
     }
 }
 
-#[allow(dead_code)]
 pub struct GpuStore {
     pipeline_layout_step: wgpu::PipelineLayout,
     pipeline_layout_gather: wgpu::PipelineLayout,
@@ -83,6 +92,8 @@ pub struct GpuStore {
     bind_group: wgpu::BindGroup,
     bind_group_gather: wgpu::BindGroup,
     gravity: f32,
+    free_list: FreeList<Data>,
+    pending_additions: Vec<(usize, Data)>,
 }
 
 impl GpuStore {
@@ -215,6 +226,8 @@ impl GpuStore {
             bind_group,
             bind_group_gather,
             gravity: common.nature.gravity,
+            free_list: FreeList::new(),
+            pending_additions: Vec::new(),
         }
     }
 
@@ -226,14 +239,54 @@ impl GpuStore {
         );
     }
 
+    pub fn alloc(
+        &mut self,
+        model_physics: &m3d::Physics,
+        car_physics: &CarPhysics,
+        transform: Transform,
+    ) -> GpuBody {
+        let id = self.free_list.alloc();
+        let matrix = cgmath::Matrix3::from(model_physics.jacobi).invert().unwrap();
+        let data = Data {
+            pos_scale: [transform.disp.x, transform.disp.y, transform.disp.z, transform.scale],
+            rot: transform.rot.into(),
+            linear: [0.0; 4],
+            angular: [0.0; 4],
+            collision: [0.0; 4],
+            volume_zero_zomc: [model_physics.volume, 0.0, car_physics.z_offset_of_mass_center, 0.0],
+            jacobian_inv: cgmath::Matrix4::from(matrix).into(),
+        };
+        self.pending_additions.push((id.index(), data));
+        id
+    }
+
+    pub fn free(&mut self, id: GpuBody) {
+        self.free_list.free(id);
+    }
+
     pub fn step(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         delta: f32,
         ranges: &[u32],
     ) {
         let num_groups = 1;
+
+        for (index, data) in self.pending_additions.drain(..) {
+            let temp = device.create_buffer_with_data(
+                [data].as_bytes(),
+                wgpu::BufferUsage::COPY_SRC,
+            );
+            let size = mem::size_of::<Data>() as wgpu::BufferAddress;
+            encoder.copy_buffer_to_buffer(
+                &temp, 0,
+                &self.buf_data,
+                index as wgpu::BufferAddress * size,
+                size,
+            );
+        }
+
         if !ranges.is_empty() {
             let temp = device.create_buffer_with_data(
                 ranges.as_bytes(),
