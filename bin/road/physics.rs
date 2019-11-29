@@ -1,6 +1,7 @@
 use vangers::{
     config, level, model, space,
     render::{
+        body::GpuBody,
         collision::{GpuEpoch, GpuResult},
         debug::LineBuffer,
     },
@@ -17,7 +18,10 @@ use std::{
     sync::MutexGuard,
 };
 
-pub type GpuLink = HashMap<GpuEpoch, usize>;
+pub struct GpuLink {
+    pub body: GpuBody,
+    pub collision_epochs: HashMap<GpuEpoch, usize>,
+}
 
 const MAX_TRACTION: config::common::Traction = 4.0;
 
@@ -209,17 +213,16 @@ pub fn step(
     common: &config::common::Common,
     f_turbo: f32,
     f_brake: f32,
-    gpu_link: &mut GpuLink,
-    gpu_latest: Option<&MutexGuard<GpuResult>>,
+    gpu_info: Option<(&mut GpuLink, &MutexGuard<GpuResult>)>,
     mut line_buffer: Option<&mut LineBuffer>,
 ) {
-    let gpu_depths = gpu_latest.and_then(move |res| {
+    let gpu_depths = gpu_info.and_then(move |(link, latest)| {
         // clean old links
-        gpu_link.retain(|&epoch, _| epoch >= res.epoch);
+        link.collision_epochs.retain(|&epoch, _| epoch >= latest.epoch);
         // return current range
-        gpu_link
-            .get(&res.epoch)
-            .map(|&start_index| &res.depths[start_index..])
+        link.collision_epochs
+            .get(&latest.epoch)
+            .map(|&start_index| &latest.depths[start_index..])
     });
 
     let speed_correction_factor = dt / common.nature.time_delta0;

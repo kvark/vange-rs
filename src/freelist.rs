@@ -45,4 +45,8 @@ impl<T> FreeList<T> {
         self.epochs[id.0 as usize] += 1;
         self.free.push(id.0);
     }
+
+    pub fn length(&self) -> usize {
+        self.epochs.len()
+    }
 }

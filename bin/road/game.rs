@@ -7,7 +7,7 @@ use vangers::{
     config, level, model, space,
     render::{
         Render, RenderModel, ScreenTargets,
-        body::GpuStore,
+        body::{GpuRangeMap, GpuStore, encode_gpu_range},
         collision::{GpuCollider, GpuResult},
         debug::LineBuffer,
     },
@@ -46,7 +46,7 @@ pub struct Agent {
     pub car: config::car::CarInfo,
     dynamo: physics::Dynamo,
     control: Control,
-    gpu_physics: physics::GpuLink,
+    gpu_physics: Option<physics::GpuLink>,
 }
 
 impl Agent {
@@ -56,20 +56,26 @@ impl Agent {
         coords: (i32, i32),
         orientation: cgmath::Rad<f32>,
         level: &level::Level,
+        gpu_store: Option<&mut GpuStore>,
     ) -> Self {
         let height = physics::get_height(level.get(coords).top()) + 5.; //center offset
+        let transform = cgmath::Decomposed {
+            scale: car.scale,
+            disp: cgmath::vec3(coords.0 as f32, coords.1 as f32, height),
+            rot: cgmath::Quaternion::from_angle_z(orientation),
+        };
+        let gpu_physics = gpu_store.map(|store| physics::GpuLink {
+            body: store.alloc(&transform, &car.model.body.physics, &car.physics),
+            collision_epochs: HashMap::default(),
+        });
         Agent {
             _name: name,
             spirit: Spirit::Other,
-            transform: cgmath::Decomposed {
-                scale: car.scale,
-                disp: cgmath::vec3(coords.0 as f32, coords.1 as f32, height),
-                rot: cgmath::Quaternion::from_angle_z(orientation),
-            },
+            transform,
             car: car.clone(),
             dynamo: physics::Dynamo::default(),
             control: Control::default(),
-            gpu_physics: physics::GpuLink::default(),
+            gpu_physics,
         }
     }
 
@@ -107,8 +113,10 @@ impl Agent {
             common,
             if self.control.turbo { common.global.k_traction_turbo } else { 1.0 },
             if self.control.brake { common.global.f_brake_max } else { 0.0 },
-            &mut self.gpu_physics,
-            gpu_latest,
+            match (gpu_latest, self.gpu_physics.as_mut()) {
+                (Some(latest), Some(link)) => Some((link, latest)),
+                _ => None,
+            },
             line_buffer,
         )
     }
@@ -122,10 +130,16 @@ struct DataBase {
     game: config::game::Registry,
 }
 
+struct Gpu {
+    store: GpuStore,
+    collider: GpuCollider,
+    range_map: GpuRangeMap,
+}
+
 pub struct Game {
     db: DataBase,
     render: Render,
-    gpu: Option<(GpuStore, GpuCollider)>,
+    gpu: Option<Gpu>,
     //debug_collision_map: bool,
     line_buffer: LineBuffer,
     level: level::Level,
@@ -185,10 +199,14 @@ impl Game {
             }
         };
 
-        let gpu = settings.game.physics.gpu_collision.as_ref().map(|gc| {
+        let mut gpu = settings.game.physics.gpu_collision.as_ref().map(|gc| {
             let collider = GpuCollider::new(device, gc, &db.common, &render.object, &render.terrain);
             let store = GpuStore::new(device, gc, &db.common, collider.buffer());
-            (store, collider)
+            Gpu {
+                store,
+                collider,
+                range_map: HashMap::default(),
+            }
         });
 
         let mut player_agent = Agent::spawn(
@@ -197,6 +215,7 @@ impl Game {
             coords,
             cgmath::Rad::turn_div_2(),
             &level,
+            gpu.as_mut().map(|Gpu { ref mut store, .. }| store),
         );
         player_agent.spirit = Spirit::Player;
         let slot_locals_id = player_agent.car.model.mesh_count() - player_agent.car.model.slots.len();
@@ -232,6 +251,7 @@ impl Game {
                 (x, y),
                 cgmath::Rad(rng.gen()),
                 &level,
+                gpu.as_mut().map(|Gpu { ref mut store, .. }| store),
             );
             agent.control.motor = 1.0; //full on
             agents.push(agent);
@@ -429,11 +449,11 @@ impl Application for Game {
             }
 
             match self.gpu {
-                Some((ref mut store, _)) => {
+                Some(Gpu { ref mut store, ref range_map, .. }) => {
                     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                         todo: 0,
                     });
-                    store.step(device, &mut encoder, physics_dt, &[]);
+                    store.step(device, &mut encoder, physics_dt, range_map);
                     Some(encoder.finish())
                 }
                 None => {
@@ -479,7 +499,7 @@ impl Application for Game {
 
     fn reload(&mut self, device: &wgpu::Device) {
         self.render.reload(device);
-        if let Some((ref mut store, ref mut collider)) = self.gpu {
+        if let Some(Gpu{ ref mut store, ref mut collider, .. }) = self.gpu {
             store.reload(device);
             collider.reload(device);
         }
@@ -497,14 +517,19 @@ impl Application for Game {
         });
 
         let post_comb = match self.gpu {
-            Some((_, ref mut collider)) => {
+            Some(Gpu { ref mut collider, ref mut range_map, .. }) => {
+                range_map.clear();
                 let mut session = collider.begin(&mut encoder, &self.render.terrain, spawner);
                 for agent in &mut self.agents {
-                    let mut transform = agent.transform.clone();
-                    transform.scale *= agent.car.physics.scale_bound;
-                    let start_index = session.add(&agent.car.model.shape, transform);
-                    let old = agent.gpu_physics.insert(session.epoch, start_index);
-                    assert_eq!(old, None);
+                    if let Some(ref mut link) = agent.gpu_physics {
+                        let mut transform = agent.transform.clone();
+                        transform.scale *= agent.car.physics.scale_bound;
+                        let start_index = session.add(&agent.car.model.shape, transform);
+                        let range = encode_gpu_range(start_index .. start_index + agent.car.model.shape.polygons.len());
+                        range_map.insert(link.body.index(), range);
+                        let old = link.collision_epochs.insert(session.epoch, start_index);
+                        assert_eq!(old, None);
+                    }
                 }
                 let (pre, post) = session.finish(device);
                 combs.push(pre);

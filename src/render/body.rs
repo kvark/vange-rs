@@ -15,7 +15,7 @@ use crate::{
 use cgmath::SquareMatrix as _;
 use zerocopy::AsBytes as _;
 
-use std::mem;
+use std::{collections::HashMap, mem, ops::Range};
 
 
 const WORK_GROUP_WIDTH: u32 = 64;
@@ -40,6 +40,12 @@ struct Uniforms {
 }
 
 pub type GpuBody = freelist::Id<Data>;
+pub type GpuRange = u32;
+pub type GpuRangeMap = HashMap<usize, GpuRange>;
+
+pub fn encode_gpu_range(range: Range<usize>) -> GpuRange {
+    range.start as u32 | (range.end << 16) as u32
+}
 
 struct Pipelines {
     step: wgpu::ComputePipeline,
@@ -88,7 +94,6 @@ pub struct GpuStore {
     buf_data: wgpu::Buffer,
     buf_uniforms: wgpu::Buffer,
     buf_ranges: wgpu::Buffer,
-    buf_empty: wgpu::Buffer, // empty buffer of WORK_GROUP_WIDTH words
     bind_group: wgpu::BindGroup,
     bind_group_gather: wgpu::BindGroup,
     gravity: f32,
@@ -167,14 +172,10 @@ impl GpuStore {
         };
         let buf_uniforms = device.create_buffer(&desc_uniforms);
         let desc_ranges = wgpu::BufferDescriptor {
-            size: (settings.max_objects * 4) as wgpu::BufferAddress,
+            size: (settings.max_objects * mem::size_of::<GpuRange>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::STORAGE_READ | wgpu::BufferUsage::COPY_DST,
         };
         let buf_ranges = device.create_buffer(&desc_ranges);
-        let buf_empty = device.create_buffer_with_data(
-            &[0u8; WORK_GROUP_WIDTH as usize * 4][..],
-            wgpu::BufferUsage::COPY_SRC,
-        );
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
@@ -222,7 +223,6 @@ impl GpuStore {
             buf_data,
             buf_uniforms,
             buf_ranges,
-            buf_empty,
             bind_group,
             bind_group_gather,
             gravity: common.nature.gravity,
@@ -241,9 +241,9 @@ impl GpuStore {
 
     pub fn alloc(
         &mut self,
+        transform: &Transform,
         model_physics: &m3d::Physics,
         car_physics: &CarPhysics,
-        transform: Transform,
     ) -> GpuBody {
         let id = self.free_list.alloc();
         let matrix = cgmath::Matrix3::from(model_physics.jacobi).invert().unwrap();
@@ -269,10 +269,16 @@ impl GpuStore {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         delta: f32,
-        ranges: &[u32],
+        ranges: &GpuRangeMap,
     ) {
-        let num_groups = 1;
+        let num_groups = {
+            let num_objects = self.free_list.length();
+            let reminder = num_objects % WORK_GROUP_WIDTH as usize;
+            let extra = if reminder != 0 { 1 } else { 0 };
+            num_objects as u32 / WORK_GROUP_WIDTH + extra
+        };
 
+        // fill out new data entries
         for (index, data) in self.pending_additions.drain(..) {
             let temp = device.create_buffer_with_data(
                 [data].as_bytes(),
@@ -287,25 +293,24 @@ impl GpuStore {
             );
         }
 
-        if !ranges.is_empty() {
+        // update range buffer
+        {
+            let mut range_data = vec![0; (num_groups * WORK_GROUP_WIDTH) as usize];
+            for (&index, &range) in ranges {
+                range_data[index] = range;
+            }
             let temp = device.create_buffer_with_data(
-                ranges.as_bytes(),
+                range_data.as_bytes(),
                 wgpu::BufferUsage::COPY_SRC,
             );
             encoder.copy_buffer_to_buffer(
                 &temp, 0,
                 &self.buf_ranges, 0,
-                4 * ranges.len() as wgpu::BufferAddress,
+                (range_data.len() * mem::size_of::<GpuRange>()) as wgpu::BufferAddress,
             );
-            let tail = ranges.len() as u32 % WORK_GROUP_WIDTH;
-            if tail != 0 {
-                encoder.copy_buffer_to_buffer(
-                    &self.buf_empty, 0,
-                    &self.buf_ranges, 0,
-                    4 * (WORK_GROUP_WIDTH - tail) as wgpu::BufferAddress,
-                );
-            }
-        };
+        }
+
+        // update global uniforms
         {
             let uniforms = Uniforms {
                 global_force: [0.0, 0.0, self.gravity, 0.0],
@@ -322,6 +327,7 @@ impl GpuStore {
             );
         }
 
+        // compute all the things
         let mut pass = encoder.begin_compute_pass();
         pass.set_pipeline(&self.pipelines.gather);
         pass.set_bind_group(0, &self.bind_group, &[]);
