@@ -170,7 +170,12 @@ impl Application for CarView {
         true
     }
 
-    fn update(&mut self, _device: &wgpu::Device, delta: f32) -> Option<wgpu::CommandBuffer> {
+    fn update(
+        &mut self,
+        _device: &wgpu::Device,
+        delta: f32,
+        _spawner: &LocalSpawner,
+    ) -> Vec<wgpu::CommandBuffer> {
         if self.rotation.0 != cgmath::Rad(0.) {
             let rot = self.rotation.0 * delta;
             self.rotate_z(rot);
@@ -179,7 +184,7 @@ impl Application for CarView {
             let rot = self.rotation.1 * delta;
             self.rotate_x(rot);
         }
-        None
+        Vec::new()
     }
 
     fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -195,7 +200,7 @@ impl Application for CarView {
         device: &wgpu::Device,
         targets: render::ScreenTargets,
         _spawner: &LocalSpawner,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
@@ -258,6 +263,6 @@ impl Application for CarView {
             );
         }
 
-        vec![encoder.finish()]
+        encoder.finish()
     }
 }

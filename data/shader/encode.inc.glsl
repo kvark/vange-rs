@@ -2,7 +2,7 @@
 
 uint encode_pos(vec3 pos) {
     uvec3 pos_u = uvec3(clamp(pos + step(pos, vec3(0.0)) * 256.0, vec3(0.0), vec3(255.0)));
-    return pos_u.x  | (pos_u.y << 8) | (pos_u.z << 16);
+    return pos_u.x | (pos_u.y << 8) | (pos_u.z << 16);
 }
 
 vec3 decode_pos(uint pos_val) {

@@ -6,7 +6,7 @@ use crate::{
     },
     freelist::{self, FreeList},
     render::{
-        collision::PolygonData,
+        collision::{GpuRange, PolygonData},
         Shaders,
     },
     space::Transform,
@@ -15,7 +15,7 @@ use crate::{
 use cgmath::SquareMatrix as _;
 use zerocopy::AsBytes as _;
 
-use std::{collections::HashMap, mem, ops::Range};
+use std::mem;
 
 
 const WORK_GROUP_WIDTH: u32 = 64;
@@ -40,12 +40,6 @@ struct Uniforms {
 }
 
 pub type GpuBody = freelist::Id<Data>;
-pub type GpuRange = u32;
-pub type GpuRangeMap = HashMap<usize, GpuRange>;
-
-pub fn encode_gpu_range(range: Range<usize>) -> GpuRange {
-    range.start as u32 | (range.end << 16) as u32
-}
 
 struct Pipelines {
     step: wgpu::ComputePipeline,
@@ -161,8 +155,16 @@ impl GpuStore {
         });
 
         let pipelines = Pipelines::new(&pipeline_layout_step, &pipeline_layout_gather, device);
+        let rounded_max_objects = {
+            let tail = settings.max_objects as u32 % WORK_GROUP_WIDTH;
+            settings.max_objects + if tail != 0 {
+                (WORK_GROUP_WIDTH - tail) as usize
+            } else {
+                0
+            }
+        };
         let desc_data = wgpu::BufferDescriptor {
-            size: (settings.max_objects * mem::size_of::<Data>()) as wgpu::BufferAddress,
+            size: (rounded_max_objects * mem::size_of::<Data>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
         };
         let buf_data = device.create_buffer(&desc_data);
@@ -172,7 +174,7 @@ impl GpuStore {
         };
         let buf_uniforms = device.create_buffer(&desc_uniforms);
         let desc_ranges = wgpu::BufferDescriptor {
-            size: (settings.max_objects * mem::size_of::<GpuRange>()) as wgpu::BufferAddress,
+            size: (rounded_max_objects * mem::size_of::<GpuRange>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::STORAGE_READ | wgpu::BufferUsage::COPY_DST,
         };
         let buf_ranges = device.create_buffer(&desc_ranges);
@@ -269,7 +271,7 @@ impl GpuStore {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         delta: f32,
-        ranges: &GpuRangeMap,
+        raw_ranges: &[GpuRange],
     ) {
         let num_groups = {
             let num_objects = self.free_list.length();
@@ -295,18 +297,15 @@ impl GpuStore {
 
         // update range buffer
         {
-            let mut range_data = vec![0; (num_groups * WORK_GROUP_WIDTH) as usize];
-            for (&index, &range) in ranges {
-                range_data[index] = range;
-            }
+            let sub_range = &raw_ranges[.. (num_groups * WORK_GROUP_WIDTH) as usize];
             let temp = device.create_buffer_with_data(
-                range_data.as_bytes(),
+                sub_range.as_bytes(),
                 wgpu::BufferUsage::COPY_SRC,
             );
             encoder.copy_buffer_to_buffer(
                 &temp, 0,
                 &self.buf_ranges, 0,
-                (range_data.len() * mem::size_of::<GpuRange>()) as wgpu::BufferAddress,
+                (sub_range.len() * mem::size_of::<GpuRange>()) as wgpu::BufferAddress,
             );
         }
 
@@ -331,7 +330,7 @@ impl GpuStore {
         let mut pass = encoder.begin_compute_pass();
         pass.set_pipeline(&self.pipelines.gather);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_bind_group(0, &self.bind_group_gather, &[]);
+        pass.set_bind_group(1, &self.bind_group_gather, &[]);
         pass.dispatch(num_groups, 1, 1);
         pass.set_pipeline(&self.pipelines.step);
         pass.dispatch(num_groups, 1, 1);

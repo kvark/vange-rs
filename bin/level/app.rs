@@ -209,7 +209,12 @@ impl Application for LevelView {
         true
     }
 
-    fn update(&mut self, _device: &wgpu::Device, delta: f32) -> Option<wgpu::CommandBuffer> {
+    fn update(
+        &mut self,
+        _device: &wgpu::Device,
+        delta: f32,
+        _spawner: &LocalSpawner,
+    ) -> Vec<wgpu::CommandBuffer> {
         use cgmath::{InnerSpace, Rotation3, Zero};
         let move_speed = match self.cam.proj {
             space::Projection::Perspective(_) => 100.0,
@@ -273,7 +278,7 @@ impl Application for LevelView {
             _ => {}
         }
 
-        None
+        Vec::new()
     }
 
     fn resize(&mut self, device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -290,7 +295,7 @@ impl Application for LevelView {
         device: &wgpu::Device,
         targets: ScreenTargets,
         _spawner: &LocalSpawner,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
@@ -301,6 +306,6 @@ impl Application for LevelView {
             targets,
             device,
         );
-        vec![encoder.finish()]
+        encoder.finish()
     }
 }

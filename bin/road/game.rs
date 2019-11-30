@@ -7,7 +7,7 @@ use vangers::{
     config, level, model, space,
     render::{
         Render, RenderModel, ScreenTargets,
-        body::{GpuRangeMap, GpuStore, encode_gpu_range},
+        body::GpuStore,
         collision::{GpuCollider, GpuResult},
         debug::LineBuffer,
     },
@@ -133,7 +133,6 @@ struct DataBase {
 struct Gpu {
     store: GpuStore,
     collider: GpuCollider,
-    range_map: GpuRangeMap,
 }
 
 pub struct Game {
@@ -205,7 +204,6 @@ impl Game {
             Gpu {
                 store,
                 collider,
-                range_map: HashMap::default(),
             }
         });
 
@@ -375,7 +373,13 @@ impl Application for Game {
         true
     }
 
-    fn update(&mut self, device: &wgpu::Device, delta: f32) -> Option<wgpu::CommandBuffer> {
+    fn update(
+        &mut self,
+        device: &wgpu::Device,
+        delta: f32,
+        spawner: &LocalSpawner,
+    ) -> Vec<wgpu::CommandBuffer> {
+        let mut combs = Vec::new();
         let pid = self.agents
             .iter()
             .position(|a| a.spirit == Spirit::Player)
@@ -399,8 +403,6 @@ impl Application for Game {
                 cgmath::Rad(2.0 * delta * self.spin_hor),
                 cgmath::Rad(delta * self.spin_ver),
             );
-
-            None
         } else {
             self.agents[pid].control.rudder = self.spin_hor;
             self.agents[pid].control.motor = 1.0 * self.spin_ver;
@@ -448,48 +450,64 @@ impl Application for Game {
                 );
             }
 
-            match self.gpu {
-                Some(Gpu { ref mut store, ref range_map, .. }) => {
-                    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        todo: 0,
-                    });
-                    store.step(device, &mut encoder, physics_dt, range_map);
-                    Some(encoder.finish())
-                }
-                None => {
-                    while physics_dt > self.max_quant {
-                        for a in self.agents.iter_mut() {
-                            a.step(
-                                self.max_quant,
-                                &self.level,
-                                &self.db.common,
-                                None,
-                                None,
-                            );
-                        }
-                        physics_dt -= self.max_quant;
+            if let Some(ref mut gpu) = self.gpu {
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    todo: 0,
+                });
+                let mut session = gpu.collider.begin(&mut encoder, &self.render.terrain, spawner);
+                for agent in &mut self.agents {
+                    if let Some(ref mut link) = agent.gpu_physics {
+                        let mut transform = agent.transform.clone();
+                        transform.scale *= agent.car.physics.scale_bound;
+                        let start_index = session.add(&agent.car.model.shape, transform, link.body.index());
+                        let old = link.collision_epochs.insert(session.epoch, start_index);
+                        assert_eq!(old, None);
                     }
-
-                    self.line_buffer.clear();
-
-                    for a in self.agents.iter_mut() {
-                        let lbuf = match a.spirit {
-                            Spirit::Player => Some(&mut self.line_buffer),
-                            Spirit::Other => None,
-                        };
-                        a.step(
-                            physics_dt,
-                            &self.level,
-                            &self.db.common,
-                            None,
-                            lbuf,
-                        );
-                    }
-
-                    None
                 }
+                let (pre, post, ranges) = session.finish(device);
+                combs.push(pre);
+                gpu.store.step(device, &mut encoder, physics_dt, ranges);
+                combs.push(encoder.finish());
+                combs.push(post);
+            }
+
+            while physics_dt > self.max_quant {
+                for a in self.agents
+                    .iter_mut()
+                    .filter(|a| a.gpu_physics.is_none())
+                {
+                    a.step(
+                        self.max_quant,
+                        &self.level,
+                        &self.db.common,
+                        None,
+                        None,
+                    );
+                }
+                physics_dt -= self.max_quant;
+            }
+
+            self.line_buffer.clear();
+
+            for a in self.agents
+                .iter_mut()
+                .filter(|a| a.gpu_physics.is_none())
+            {
+                let lbuf = match a.spirit {
+                    Spirit::Player => Some(&mut self.line_buffer),
+                    Spirit::Other => None,
+                };
+                a.step(
+                    physics_dt,
+                    &self.level,
+                    &self.db.common,
+                    None,
+                    lbuf,
+                );
             }
         }
+
+        combs
     }
 
     fn resize(&mut self, device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -509,34 +527,11 @@ impl Application for Game {
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
-        spawner: &LocalSpawner,
-    ) -> Vec<wgpu::CommandBuffer> {
-        let mut combs = Vec::new();
+        _spawner: &LocalSpawner,
+    ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
-
-        let post_comb = match self.gpu {
-            Some(Gpu { ref mut collider, ref mut range_map, .. }) => {
-                range_map.clear();
-                let mut session = collider.begin(&mut encoder, &self.render.terrain, spawner);
-                for agent in &mut self.agents {
-                    if let Some(ref mut link) = agent.gpu_physics {
-                        let mut transform = agent.transform.clone();
-                        transform.scale *= agent.car.physics.scale_bound;
-                        let start_index = session.add(&agent.car.model.shape, transform);
-                        let range = encode_gpu_range(start_index .. start_index + agent.car.model.shape.polygons.len());
-                        range_map.insert(link.body.index(), range);
-                        let old = link.collision_epochs.insert(session.epoch, start_index);
-                        assert_eq!(old, None);
-                    }
-                }
-                let (pre, post) = session.finish(device);
-                combs.push(pre);
-                Some(post)
-            }
-            None => None,
-        };
 
         let models = self.agents
             .iter()
@@ -557,7 +552,6 @@ impl Application for Game {
             targets,
             device,
         );
-        combs.push(encoder.finish());
 
         /*
         self.render.debug.draw_lines(
@@ -603,7 +597,6 @@ impl Application for Game {
             }
         }*/
 
-        combs.extend(post_comb);
-        combs
+        encoder.finish()
     }
 }

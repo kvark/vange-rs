@@ -99,7 +99,12 @@ impl Application for ResourceView {
         true
     }
 
-    fn update(&mut self, _device: &wgpu::Device, delta: f32) -> Option<wgpu::CommandBuffer> {
+    fn update(
+        &mut self,
+        _device: &wgpu::Device,
+        delta: f32,
+        _spawner: &LocalSpawner,
+    ) -> Vec<wgpu::CommandBuffer> {
         use cgmath::Transform;
 
         if self.rotation != cgmath::Rad(0.) {
@@ -112,7 +117,7 @@ impl Application for ResourceView {
             self.transform = other.concat(&self.transform);
         }
 
-        None
+        Vec::new()
     }
 
     fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -128,7 +133,7 @@ impl Application for ResourceView {
         device: &wgpu::Device,
         targets: render::ScreenTargets,
         _spawner: &LocalSpawner,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
@@ -184,6 +189,6 @@ impl Application for ResourceView {
             );
         }
 
-        vec![encoder.finish()]
+        encoder.finish()
     }
 }

@@ -38,6 +38,11 @@ impl PolygonData {
     }
 }
 
+pub type GpuRange = u32;
+fn encode_gpu_range(base: usize, count: usize) -> GpuRange {
+    base as u32 | (((base + count) as u32) << 16)
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct Locals {
@@ -88,6 +93,8 @@ pub struct GpuCollider {
     locals_size: usize,
     dirty_group_count: u32,
     epoch: GpuEpoch,
+    ranges: Vec<GpuRange>,
+    //TODO: remove this entirely
     pending_result: Option<PendingResult>,
     latest: Arc<Mutex<GpuResult>>,
 }
@@ -99,6 +106,7 @@ pub struct GpuSession<'this, 'pass> {
     dynamic_bind_group: &'this wgpu::BindGroup,
     locals_size: usize,
     object_locals: Vec<Locals>,
+    ranges: &'this mut [GpuRange],
     polygon_id: usize,
     pub epoch: GpuEpoch,
     pending_result: &'this mut Option<PendingResult>,
@@ -319,6 +327,7 @@ impl GpuCollider {
             dirty_group_count: max_polygons_total as u32 / CLEAR_WORK_GROUP_WIDTH,
             locals_size,
             epoch: GpuEpoch::default(),
+            ranges: vec![0; settings.max_objects],
             pending_result: None,
             latest: Arc::new(Mutex::new(GpuResult::default())),
         }
@@ -394,6 +403,10 @@ impl GpuCollider {
         pass.set_bind_group(1, &terrain.bind_group, &[]);
 
         self.epoch.0 += 1;
+        for r in self.ranges.iter_mut() {
+            *r = 0;
+        }
+
         GpuSession {
             pass,
             buffer: &self.buffer,
@@ -401,6 +414,7 @@ impl GpuCollider {
             dynamic_bind_group: &self.dynamic_bind_group,
             locals_size: self.locals_size,
             object_locals: Vec::new(),
+            ranges: &mut self.ranges,
             polygon_id: 0,
             epoch: self.epoch,
             pending_result: &mut self.pending_result,
@@ -416,8 +430,8 @@ impl GpuCollider {
     }
 }
 
-impl GpuSession<'_, '_> {
-    pub fn add(&mut self, shape: &Shape, transform: Transform) -> usize {
+impl<'this> GpuSession<'this, '_> {
+    pub fn add(&mut self, shape: &Shape, transform: Transform, range_id: usize) -> usize {
         let locals = Locals {
             model: cgmath::Matrix4::from(transform).into(),
             scale: [transform.scale; 4],
@@ -431,12 +445,13 @@ impl GpuSession<'_, '_> {
         self.pass.draw(0 .. 4, 0 .. shape.polygons.len() as u32);
 
         let offset = self.polygon_id;
+        self.ranges[range_id] = encode_gpu_range(offset, shape.polygons.len());
         self.polygon_id += shape.polygons.len();
         self.object_locals.push(locals);
         offset
     }
 
-    pub fn finish(self, device: &wgpu::Device) -> (wgpu::CommandBuffer, wgpu::CommandBuffer) {
+    pub fn finish(self, device: &wgpu::Device) -> (wgpu::CommandBuffer, wgpu::CommandBuffer, &'this [GpuRange]) {
         let GpuSession { buffer, epoch, polygon_id, pending_result, locals_size, object_locals, .. } = self;
 
         let prepare_comb = {
@@ -474,6 +489,6 @@ impl GpuSession<'_, '_> {
             encoder.finish()
         };
 
-        (prepare_comb, post_comb)
+        (prepare_comb, post_comb, self.ranges)
     }
 }
