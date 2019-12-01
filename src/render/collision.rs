@@ -1,7 +1,6 @@
 use crate::{
     config::{common::Common, settings},
-    model::{Shape},
-    space::Transform,
+    model::Shape,
     render::{
         SHAPE_POLYGON_BUFFER,
         Shaders,
@@ -46,9 +45,7 @@ fn encode_gpu_range(base: usize, count: usize) -> GpuRange {
 #[repr(C)]
 #[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct Locals {
-    model: [[f32; 4]; 4],
-    scale: [f32; 4],
-    index_offset: [u32; 4],
+    indexes: [u32; 2],
 }
 
 #[repr(C)]
@@ -114,6 +111,29 @@ pub struct GpuSession<'this, 'pass> {
 
 const DUMMY_TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const CLEAR_WORK_GROUP_WIDTH: u32 = 64;
+
+pub struct GpuColliderInit {
+    pub buffer: wgpu::Buffer,
+    pub max_polygons_total: usize,
+}
+
+impl GpuColliderInit {
+    pub fn new(
+        device: &wgpu::Device,
+        settings: &settings::GpuCollision,
+    ) -> Self {
+        let max_polygons_total = (settings.max_polygons_total - 1) | (CLEAR_WORK_GROUP_WIDTH - 1) as usize + 1;
+        let buf_size = (max_polygons_total * mem::size_of::<PolygonData>()) as wgpu::BufferAddress;
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            size: buf_size,
+            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::STORAGE_READ | wgpu::BufferUsage::COPY_SRC,
+        });
+        GpuColliderInit {
+            buffer,
+            max_polygons_total,
+        }
+    }
+}
 
 impl GpuCollider {
     fn create_pipelines(
@@ -182,19 +202,29 @@ impl GpuCollider {
         common: &Common,
         object: &ObjectContext,
         terrain: &TerrainContext,
+        init: GpuColliderInit,
+        store_buffer: (&wgpu::Buffer, wgpu::BufferAddress),
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             bindings: &[
-                wgpu::BindGroupLayoutBinding {
+                wgpu::BindGroupLayoutBinding { // global uniforms
                     binding: 0,
                     visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::UniformBuffer {
                         dynamic: false,
                     },
                 },
-                wgpu::BindGroupLayoutBinding {
+                wgpu::BindGroupLayoutBinding { // collisions
                     binding: 1,
                     visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::StorageBuffer {
+                        dynamic: false,
+                        readonly: false,
+                    },
+                },
+                wgpu::BindGroupLayoutBinding { // data
+                    binding: 2,
+                    visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::StorageBuffer {
                         dynamic: false,
                         readonly: false,
@@ -234,12 +264,6 @@ impl GpuCollider {
         );
 
         // ensure the total size fits complete number of workgroups
-        let max_polygons_total = settings.max_polygons_total | (CLEAR_WORK_GROUP_WIDTH - 1) as usize + 1;
-        let buf_size = (max_polygons_total * mem::size_of::<PolygonData>()) as wgpu::BufferAddress;
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            size: buf_size,
-            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::STORAGE_READ | wgpu::BufferUsage::COPY_SRC,
-        });
 
         let globals = Globals {
             target: [
@@ -279,8 +303,15 @@ impl GpuCollider {
                 wgpu::Binding {
                     binding: 1,
                     resource: wgpu::BindingResource::Buffer {
-                        buffer: &buffer,
-                        range: 0 .. buf_size,
+                        buffer: &init.buffer,
+                        range: 0 .. (init.max_polygons_total * mem::size_of::<PolygonData>()) as wgpu::BufferAddress,
+                    },
+                },
+                wgpu::Binding {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: store_buffer.0,
+                        range: 0 .. store_buffer.1,
                     },
                 },
             ],
@@ -319,12 +350,12 @@ impl GpuCollider {
             clear_pipeline_layout,
             pipeline,
             clear_pipeline,
-            buffer,
+            buffer: init.buffer,
             uniform_buf: local_uniforms,
             bind_group,
             dynamic_bind_group,
             dummy_target,
-            dirty_group_count: max_polygons_total as u32 / CLEAR_WORK_GROUP_WIDTH,
+            dirty_group_count: init.max_polygons_total as u32 / CLEAR_WORK_GROUP_WIDTH,
             locals_size,
             epoch: GpuEpoch::default(),
             ranges: vec![0; settings.max_objects],
@@ -424,18 +455,12 @@ impl GpuCollider {
     pub fn result(&self) -> MutexGuard<GpuResult> {
         self.latest.lock().unwrap()
     }
-
-    pub fn buffer(&self) -> &wgpu::Buffer {
-        &self.buffer
-    }
 }
 
 impl<'this> GpuSession<'this, '_> {
-    pub fn add(&mut self, shape: &Shape, transform: Transform, range_id: usize) -> usize {
+    pub fn add(&mut self, shape: &Shape, range_id: usize) -> usize {
         let locals = Locals {
-            model: cgmath::Matrix4::from(transform).into(),
-            scale: [transform.scale; 4],
-            index_offset: [self.polygon_id as u32, 0, 0, 0],
+            indexes: [range_id as u32, self.polygon_id as u32],
         };
         let offset = (self.object_locals.len() * self.locals_size) as wgpu::BufferAddress;
 

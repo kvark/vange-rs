@@ -8,7 +8,7 @@ use vangers::{
     render::{
         Render, RenderModel, ScreenTargets,
         body::GpuStore,
-        collision::{GpuCollider, GpuResult},
+        collision::{GpuCollider, GpuColliderInit, GpuResult},
         debug::LineBuffer,
     },
 };
@@ -199,8 +199,9 @@ impl Game {
         };
 
         let mut gpu = settings.game.physics.gpu_collision.as_ref().map(|gc| {
-            let collider = GpuCollider::new(device, gc, &db.common, &render.object, &render.terrain);
-            let store = GpuStore::new(device, gc, &db.common, collider.buffer());
+            let collider_init = GpuColliderInit::new(device, gc);
+            let store = GpuStore::new(device, gc, &db.common, &collider_init);
+            let collider = GpuCollider::new(device, gc, &db.common, &render.object, &render.terrain, collider_init, store.data_buffer());
             Gpu {
                 store,
                 collider,
@@ -454,18 +455,19 @@ impl Application for Game {
                 let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     todo: 0,
                 });
+                gpu.store.update_entries(device, &mut encoder);
+
                 let mut session = gpu.collider.begin(&mut encoder, &self.render.terrain, spawner);
                 for agent in &mut self.agents {
                     if let Some(ref mut link) = agent.gpu_physics {
-                        let mut transform = agent.transform.clone();
-                        transform.scale *= agent.car.physics.scale_bound;
-                        let start_index = session.add(&agent.car.model.shape, transform, link.body.index());
+                        let start_index = session.add(&agent.car.model.shape, link.body.index());
                         let old = link.collision_epochs.insert(session.epoch, start_index);
                         assert_eq!(old, None);
                     }
                 }
                 let (pre, post, ranges) = session.finish(device);
                 combs.push(pre);
+
                 gpu.store.step(device, &mut encoder, physics_dt, ranges);
                 combs.push(encoder.finish());
                 combs.push(post);

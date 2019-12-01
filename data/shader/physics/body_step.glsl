@@ -2,6 +2,15 @@
 
 #ifdef SHADER_CS
 
+layout(set = 0, binding = 0, std430) buffer Storage {
+    Data s_Data[];
+};
+
+layout(set = 0, binding = 1, std140) uniform Uniforms {
+    vec4 u_GlobalForce;
+    vec4 u_Delta;
+};
+
 void main() {
     uint index =
         gl_GlobalInvocationID.z * gl_WorkGroupSize.x * gl_NumWorkGroups.x * gl_WorkGroupSize.y * gl_NumWorkGroups.y +
@@ -14,7 +23,7 @@ void main() {
     vec3 vac = qrot(irot, u_GlobalForce.xyz + vec3(0.0, 0.0, data.springs.z));
     vec3 wac = qrot(irot, vec3(data.springs.xy, 0.0));
 
-    vec3 tmp = vec3(0.0, 0.0, data.volume_zero_zomc.z * data.pos_scale.w);
+    vec3 tmp = vec3(0.0, 0.0, data.scale_volume_zomc.z * data.pos_scale.w);
     wac += u_GlobalForce.z * cross(tmp, z_axis);
 
     vec3 vel = data.linear.xyz + u_Delta.x * vac;

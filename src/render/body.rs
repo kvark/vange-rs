@@ -6,7 +6,7 @@ use crate::{
     },
     freelist::{self, FreeList},
     render::{
-        collision::{GpuRange, PolygonData},
+        collision::{GpuColliderInit, GpuRange, PolygonData},
         Shaders,
     },
     space::Transform,
@@ -28,7 +28,7 @@ pub struct Data {
     linear: [f32; 4],
     angular: [f32; 4],
     collision: [f32; 4],
-    volume_zero_zomc: [f32; 4],
+    scale_volume_zomc: [f32; 4],
     jacobian_inv: [[f32; 4]; 4],
 }
 
@@ -88,6 +88,7 @@ pub struct GpuStore {
     buf_data: wgpu::Buffer,
     buf_uniforms: wgpu::Buffer,
     buf_ranges: wgpu::Buffer,
+    capacity: usize,
     bind_group: wgpu::BindGroup,
     bind_group_gather: wgpu::BindGroup,
     gravity: f32,
@@ -100,7 +101,7 @@ impl GpuStore {
         device: &wgpu::Device,
         settings: &settings::GpuCollision,
         common: &Common,
-        buf_collisions: &wgpu::Buffer,
+        collider_init: &GpuColliderInit,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             bindings: &[
@@ -204,8 +205,8 @@ impl GpuStore {
                 wgpu::Binding {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer {
-                        buffer: &buf_collisions,
-                        range: 0 .. (settings.max_polygons_total * mem::size_of::<PolygonData>()) as wgpu::BufferAddress,
+                        buffer: &collider_init.buffer,
+                        range: 0 .. (collider_init.max_polygons_total * mem::size_of::<PolygonData>()) as wgpu::BufferAddress,
                     },
                 },
                 wgpu::Binding {
@@ -225,12 +226,17 @@ impl GpuStore {
             buf_data,
             buf_uniforms,
             buf_ranges,
+            capacity: rounded_max_objects,
             bind_group,
             bind_group_gather,
             gravity: common.nature.gravity,
             free_list: FreeList::new(),
             pending_additions: Vec::new(),
         }
+    }
+
+    pub fn data_buffer(&self) -> (&wgpu::Buffer, wgpu::BufferAddress) {
+        (&self.buf_data, (self.capacity * mem::size_of::<Data>()) as wgpu::BufferAddress)
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {
@@ -255,7 +261,7 @@ impl GpuStore {
             linear: [0.0; 4],
             angular: [0.0; 4],
             collision: [0.0; 4],
-            volume_zero_zomc: [model_physics.volume, 0.0, car_physics.z_offset_of_mass_center, 0.0],
+            scale_volume_zomc: [car_physics.scale_bound, model_physics.volume, car_physics.z_offset_of_mass_center, 0.0],
             jacobian_inv: cgmath::Matrix4::from(matrix).into(),
         };
         self.pending_additions.push((id.index(), data));
@@ -266,20 +272,11 @@ impl GpuStore {
         self.free_list.free(id);
     }
 
-    pub fn step(
+    pub fn update_entries(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        delta: f32,
-        raw_ranges: &[GpuRange],
     ) {
-        let num_groups = {
-            let num_objects = self.free_list.length();
-            let reminder = num_objects % WORK_GROUP_WIDTH as usize;
-            let extra = if reminder != 0 { 1 } else { 0 };
-            num_objects as u32 / WORK_GROUP_WIDTH + extra
-        };
-
         // fill out new data entries
         for (index, data) in self.pending_additions.drain(..) {
             let temp = device.create_buffer_with_data(
@@ -294,6 +291,22 @@ impl GpuStore {
                 size,
             );
         }
+    }
+
+    pub fn step(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        delta: f32,
+        raw_ranges: &[GpuRange],
+    ) {
+        assert!(self.pending_additions.is_empty());
+        let num_groups = {
+            let num_objects = self.free_list.length();
+            let reminder = num_objects % WORK_GROUP_WIDTH as usize;
+            let extra = if reminder != 0 { 1 } else { 0 };
+            num_objects as u32 / WORK_GROUP_WIDTH + extra
+        };
 
         // update range buffer
         {
@@ -312,7 +325,7 @@ impl GpuStore {
         // update global uniforms
         {
             let uniforms = Uniforms {
-                global_force: [0.0, 0.0, self.gravity, 0.0],
+                global_force: [0.0, 0.0, -self.gravity, 0.0],
                 delta: [delta, 0.0, 0.0, 0.0],
             };
             let temp = device.create_buffer_with_data(
