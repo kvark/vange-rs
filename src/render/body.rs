@@ -35,8 +35,19 @@ pub struct Data {
 #[repr(C)]
 #[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct Uniforms {
-    global_force: [f32; 4],
     delta: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
+struct Constants {
+    nature: [f32; 4],
+    drag_free: [f32; 2],
+    drag_speed: [f32; 2],
+    drag_spring: [f32; 2],
+    drag_abs_min: [f32; 2],
+    drag_abs_stop: [f32; 2],
+    drag_coll: [f32; 2],
 }
 
 pub type GpuBody = freelist::Id<Data>;
@@ -91,7 +102,6 @@ pub struct GpuStore {
     capacity: usize,
     bind_group: wgpu::BindGroup,
     bind_group_gather: wgpu::BindGroup,
-    gravity: f32,
     free_list: FreeList<Data>,
     pending_additions: Vec<(usize, Data)>,
 }
@@ -115,6 +125,13 @@ impl GpuStore {
                 },
                 wgpu::BindGroupLayoutBinding { // uniforms
                     binding: 1,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::UniformBuffer {
+                        dynamic: false,
+                    },
+                },
+                wgpu::BindGroupLayoutBinding { // constants
+                    binding: 2,
                     visibility: wgpu::ShaderStage::COMPUTE,
                     ty: wgpu::BindingType::UniformBuffer {
                         dynamic: false,
@@ -180,6 +197,20 @@ impl GpuStore {
         };
         let buf_ranges = device.create_buffer(&desc_ranges);
 
+        let constants = Constants {
+            nature: [common.nature.time_delta0, 0.0, common.nature.gravity, 0.0],
+            drag_free: common.drag.free.to_array(),
+            drag_speed: common.drag.speed.to_array(),
+            drag_spring: common.drag.spring.to_array(),
+            drag_abs_min: common.drag.abs_min.to_array(),
+            drag_abs_stop: common.drag.abs_stop.to_array(),
+            drag_coll: common.drag.coll.to_array(),
+        };
+        let buf_constants = device.create_buffer_with_data(
+            [constants].as_bytes(),
+            wgpu::BufferUsage::UNIFORM,
+        );
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
             bindings: &[
@@ -195,6 +226,13 @@ impl GpuStore {
                     resource: wgpu::BindingResource::Buffer {
                         buffer: &buf_uniforms,
                         range: 0 .. desc_uniforms.size,
+                    },
+                },
+                wgpu::Binding {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &buf_constants,
+                        range: 0 .. mem::size_of::<Constants>() as wgpu::BufferAddress,
                     },
                 },
             ],
@@ -229,7 +267,6 @@ impl GpuStore {
             capacity: rounded_max_objects,
             bind_group,
             bind_group_gather,
-            gravity: common.nature.gravity,
             free_list: FreeList::new(),
             pending_additions: Vec::new(),
         }
@@ -325,7 +362,6 @@ impl GpuStore {
         // update global uniforms
         {
             let uniforms = Uniforms {
-                global_force: [0.0, 0.0, -self.gravity, 0.0],
                 delta: [delta, 0.0, 0.0, 0.0],
             };
             let temp = device.create_buffer_with_data(
