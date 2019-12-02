@@ -126,6 +126,7 @@ impl Harness {
 
         let mut last_time = time::Instant::now();
         let mut task_pool = LocalPool::new();
+        let mut needs_reload = false;
         let Harness {
             event_loop,
             window,
@@ -175,9 +176,13 @@ impl Harness {
                     app.resize(&device, extent);
                 }
                 event::Event::WindowEvent { event, .. } => match event {
-                    event::WindowEvent::Focused(true) => {
+                    event::WindowEvent::Focused(false) => {
+                        needs_reload = true;
+                    }
+                    event::WindowEvent::Focused(true) if needs_reload => {
                         info!("Reloading shaders");
                         app.reload(&device);
+                        needs_reload = false;
                     }
                     event::WindowEvent::CloseRequested => {
                         *control_flow = ControlFlow::Exit;

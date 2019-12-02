@@ -203,6 +203,7 @@ impl Game {
         };
 
         let mut gpu = settings.game.physics.gpu_collision.as_ref().map(|gc| {
+            log::info!("Initializing the GPU store and collider");
             let collider = GpuCollider::new(device, gc, &db.common, &render.object, &render.terrain, store_init.resource());
             let store = GpuStore::new(device, &db.common, store_init, collider.collision_buffer());
             Gpu {
@@ -211,6 +212,7 @@ impl Game {
             }
         });
 
+        log::info!("Spawning agents");
         let mut player_agent = Agent::spawn(
             "Player".to_string(),
             &db.cars[&settings.car.id],
