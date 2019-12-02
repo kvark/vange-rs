@@ -6,7 +6,7 @@ use crate::{
     },
     freelist::{self, FreeList},
     render::{
-        collision::{GpuColliderInit, GpuRange, PolygonData},
+        collision::GpuRange,
         Shaders,
     },
     space::Transform,
@@ -30,6 +30,18 @@ pub struct Data {
     collision: [f32; 4],
     scale_volume_zomc: [f32; 4],
     jacobian_inv: [[f32; 4]; 4],
+}
+
+impl Data {
+    const DUMMY: Self = Data {
+        pos_scale: [0.0, 0.0, 0.0, 1.0],
+        rot: [0.0, 0.0, 0.0, 1.0],
+        linear: [0.0; 4],
+        angular: [0.0; 4],
+        collision: [0.0; 4],
+        scale_volume_zomc: [1.0, 1.0, 0.0, 0.0],
+        jacobian_inv: [[0.0; 4]; 4],
+    };
 }
 
 #[repr(C)]
@@ -92,6 +104,56 @@ impl Pipelines {
     }
 }
 
+pub struct GpuStoreInit {
+    buffer: wgpu::Buffer,
+    rounded_max_objects: usize,
+}
+
+impl GpuStoreInit {
+    pub fn new(
+        device: &wgpu::Device,
+        settings: &settings::GpuCollision,
+    ) -> Self {
+        let rounded_max_objects = {
+            let tail = settings.max_objects as u32 % WORK_GROUP_WIDTH;
+            settings.max_objects + if tail != 0 {
+                (WORK_GROUP_WIDTH - tail) as usize
+            } else {
+                0
+            }
+        };
+
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            size: (rounded_max_objects * mem::size_of::<Data>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::STORAGE_READ | wgpu::BufferUsage::COPY_DST,
+        });
+
+        GpuStoreInit {
+            buffer,
+            rounded_max_objects,
+        }
+    }
+
+    pub fn new_dummy(device: &wgpu::Device) -> Self {
+        let buffer = device.create_buffer_with_data(
+            [Data::DUMMY].as_bytes(),
+            wgpu::BufferUsage::STORAGE_READ,
+        );
+
+        GpuStoreInit {
+            buffer,
+            rounded_max_objects: 1,
+        }
+    }
+
+    pub fn resource(&self) -> wgpu::BindingResource {
+        wgpu::BindingResource::Buffer {
+            buffer: &self.buffer,
+            range: 0 .. (self.rounded_max_objects * mem::size_of::<Data>()) as wgpu::BufferAddress,
+        }
+    }
+}
+
 pub struct GpuStore {
     pipeline_layout_step: wgpu::PipelineLayout,
     pipeline_layout_gather: wgpu::PipelineLayout,
@@ -109,9 +171,9 @@ pub struct GpuStore {
 impl GpuStore {
     pub fn new(
         device: &wgpu::Device,
-        settings: &settings::GpuCollision,
         common: &Common,
-        collider_init: &GpuColliderInit,
+        init: GpuStoreInit,
+        collider_buffer: wgpu::BindingResource,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             bindings: &[
@@ -173,26 +235,13 @@ impl GpuStore {
         });
 
         let pipelines = Pipelines::new(&pipeline_layout_step, &pipeline_layout_gather, device);
-        let rounded_max_objects = {
-            let tail = settings.max_objects as u32 % WORK_GROUP_WIDTH;
-            settings.max_objects + if tail != 0 {
-                (WORK_GROUP_WIDTH - tail) as usize
-            } else {
-                0
-            }
-        };
-        let desc_data = wgpu::BufferDescriptor {
-            size: (rounded_max_objects * mem::size_of::<Data>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
-        };
-        let buf_data = device.create_buffer(&desc_data);
         let desc_uniforms = wgpu::BufferDescriptor {
             size: mem::size_of::<Uniforms>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         };
         let buf_uniforms = device.create_buffer(&desc_uniforms);
         let desc_ranges = wgpu::BufferDescriptor {
-            size: (rounded_max_objects * mem::size_of::<GpuRange>()) as wgpu::BufferAddress,
+            size: (init.rounded_max_objects * mem::size_of::<GpuRange>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::STORAGE_READ | wgpu::BufferUsage::COPY_DST,
         };
         let buf_ranges = device.create_buffer(&desc_ranges);
@@ -216,10 +265,7 @@ impl GpuStore {
             bindings: &[
                 wgpu::Binding {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &buf_data,
-                        range: 0 .. desc_data.size,
-                    },
+                    resource: init.resource(),
                 },
                 wgpu::Binding {
                     binding: 1,
@@ -242,10 +288,7 @@ impl GpuStore {
             bindings: &[
                 wgpu::Binding {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &collider_init.buffer,
-                        range: 0 .. (collider_init.max_polygons_total * mem::size_of::<PolygonData>()) as wgpu::BufferAddress,
-                    },
+                    resource: collider_buffer,
                 },
                 wgpu::Binding {
                     binding: 1,
@@ -261,10 +304,10 @@ impl GpuStore {
             pipeline_layout_step,
             pipeline_layout_gather,
             pipelines,
-            buf_data,
+            buf_data: init.buffer,
             buf_uniforms,
             buf_ranges,
-            capacity: rounded_max_objects,
+            capacity: init.rounded_max_objects,
             bind_group,
             bind_group_gather,
             free_list: FreeList::new(),
@@ -272,8 +315,11 @@ impl GpuStore {
         }
     }
 
-    pub fn data_buffer(&self) -> (&wgpu::Buffer, wgpu::BufferAddress) {
-        (&self.buf_data, (self.capacity * mem::size_of::<Data>()) as wgpu::BufferAddress)
+    pub fn data_buffer(&self) -> wgpu::BindingResource {
+        wgpu::BindingResource::Buffer {
+            buffer: &self.buf_data,
+            range: 0 .. (self.capacity * mem::size_of::<Data>()) as wgpu::BufferAddress,
+        }
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {

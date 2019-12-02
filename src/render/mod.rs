@@ -383,11 +383,12 @@ impl Render {
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
         screen_extent: wgpu::Extent3d,
+        store_buffer: wgpu::BindingResource,
     ) -> Self {
         let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
-        let global = global::Context::new(device);
+        let global = global::Context::new(device, store_buffer);
         let object = object::Context::new(&mut init_encoder, device, object_palette, &global);
         let terrain = terrain::Context::new(&mut init_encoder, device, level, &global, &settings.terrain, screen_extent);
         let debug = debug::Context::new(device, &settings.debug, &global, &object);

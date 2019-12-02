@@ -1,4 +1,4 @@
-//!include vs:globals.inc fs:globals.inc
+//!include vs:body.inc vs:globals.inc fs:globals.inc
 
 layout(location = 0) varying vec4 v_Color;
 layout(location = 1) varying vec3 v_Normal;
@@ -17,6 +17,9 @@ layout(set = 1, binding = 1) uniform texture1D t_Palette;
 layout(set = 1, binding = 2) uniform sampler s_ColorTableSampler;
 
 layout(set = 0, binding = 1) uniform sampler s_PaletteSampler;
+layout(set = 0, binding = 2, std430) readonly buffer Storage {
+    Data s_Data[];
+};
 
 layout(location = 0) attribute ivec4 a_Pos;
 layout(location = 1) attribute uint a_ColorIndex;

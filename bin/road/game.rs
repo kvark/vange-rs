@@ -7,8 +7,8 @@ use vangers::{
     config, level, model, space,
     render::{
         Render, RenderModel, ScreenTargets,
-        body::GpuStore,
-        collision::{GpuCollider, GpuColliderInit, GpuResult},
+        body::{GpuStore, GpuStoreInit},
+        collision::{GpuCollider, GpuResult},
         debug::LineBuffer,
     },
 };
@@ -184,7 +184,11 @@ impl Game {
         log::info!("Initializing the render");
         let depth = 10f32 .. 10000f32;
         let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
-        let render = Render::new(device, queue, &level, &pal_data, &settings.render, screen_extent);
+        let store_init = match settings.game.physics.gpu_collision {
+            Some(ref gc) => GpuStoreInit::new(device, gc),
+            None => GpuStoreInit::new_dummy(device),
+        };
+        let render = Render::new(device, queue, &level, &pal_data, &settings.render, screen_extent, store_init.resource());
 
         log::info!("Loading world database");
         let db = {
@@ -199,9 +203,8 @@ impl Game {
         };
 
         let mut gpu = settings.game.physics.gpu_collision.as_ref().map(|gc| {
-            let collider_init = GpuColliderInit::new(device, gc);
-            let store = GpuStore::new(device, gc, &db.common, &collider_init);
-            let collider = GpuCollider::new(device, gc, &db.common, &render.object, &render.terrain, collider_init, store.data_buffer());
+            let collider = GpuCollider::new(device, gc, &db.common, &render.object, &render.terrain, store_init.resource());
+            let store = GpuStore::new(device, &db.common, store_init, collider.collision_buffer());
             Gpu {
                 store,
                 collider,

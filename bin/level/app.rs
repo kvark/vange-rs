@@ -3,6 +3,7 @@ use vangers::{
     config, level, space,
     render::{
         Render, ScreenTargets,
+        body::GpuStoreInit,
     },
 };
 
@@ -94,7 +95,8 @@ impl LevelView {
 
         let objects_palette = level::read_palette(settings.open_palette(), None);
         let depth = 10f32 .. 10000f32;
-        let render = Render::new(device, queue, &level, &objects_palette, &settings.render, screen_extent);
+        let store_init = GpuStoreInit::new_dummy(device);
+        let render = Render::new(device, queue, &level, &objects_palette, &settings.render, screen_extent, store_init.resource());
 
         LevelView {
             render,

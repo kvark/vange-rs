@@ -36,7 +36,8 @@ impl CarView {
         let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
-        let global = render::global::Context::new(device);
+        let store_init = render::body::GpuStoreInit::new_dummy(device);
+        let global = render::global::Context::new(device, store_init.resource());
         let object = render::object::Context::new(&mut init_encoder, device, &pal_data, &global);
         queue.submit(&[
             init_encoder.finish(),
