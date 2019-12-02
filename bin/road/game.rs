@@ -408,7 +408,6 @@ impl Application for Game {
         delta: f32,
         spawner: &LocalSpawner,
     ) -> Vec<wgpu::CommandBuffer> {
-        let mut combs = Vec::new();
         let pid = self.agents
             .iter()
             .position(|a| a.spirit == Spirit::Player)
@@ -432,85 +431,104 @@ impl Application for Game {
                 cgmath::Rad(2.0 * delta * self.spin_hor),
                 cgmath::Rad(delta * self.spin_ver),
             );
+
+            return Vec::new();
+        }
+
+        self.agents[pid].control.rudder = self.spin_hor;
+        self.agents[pid].control.motor = 1.0 * self.spin_ver;
+
+        if true {
+            self.cam.follow(
+                &self.agents[pid].transform,
+                delta,
+                &space::Follow {
+                    transform: cgmath::Decomposed {
+                        disp: cgmath::vec3(0.0, -300.0, 500.0),
+                        rot: cgmath::Quaternion::from_angle_x(cgmath::Rad(0.7)),
+                        scale: 1.0,
+                    },
+                    speed: 100.0,
+                    fix_z: true,
+                },
+            );
         } else {
-            self.agents[pid].control.rudder = self.spin_hor;
-            self.agents[pid].control.motor = 1.0 * self.spin_ver;
+            self.cam.look_by(
+                &self.agents[pid].transform,
+                &space::Direction {
+                    view: cgmath::vec3(0.0, 1.0, -3.0),
+                    height: 200.0,
+                },
+            );
+        }
 
-            if true {
-                self.cam.follow(
-                    &self.agents[pid].transform,
-                    delta,
-                    &space::Follow {
-                        transform: cgmath::Decomposed {
-                            disp: cgmath::vec3(0.0, -300.0, 500.0),
-                            rot: cgmath::Quaternion::from_angle_x(cgmath::Rad(0.7)),
-                            scale: 1.0,
-                        },
-                        speed: 100.0,
-                        fix_z: true,
-                    },
-                );
-            } else {
-                self.cam.look_by(
-                    &self.agents[pid].transform,
-                    &space::Direction {
-                        view: cgmath::vec3(0.0, 1.0, -3.0),
-                        height: 200.0,
-                    },
-                );
-            }
+        const TIME_HACK: f32 = 1.0;
+        // Note: the equations below make the game absolutely match the original
+        // in terms of time scale for both input and physics.
+        // However! the game feels much faster, presumably because of the lack
+        // of collision/drag forces that slow you down.
+        let input_factor = TIME_HACK * delta / config::common::MAIN_LOOP_TIME;
+        let mut physics_dt = TIME_HACK * delta * {
+            let n = &self.db.common.nature;
+            let fps = self.db.common.speed.standard_frame_rate as f32;
+            fps * n.time_delta0 * n.num_calls_analysis as f32
+        };
 
-            const TIME_HACK: f32 = 1.0;
-            // Note: the equations below make the game absolutely match the original
-            // in terms of time scale for both input and physics.
-            // However! the game feels much faster, presumably because of the lack
-            // of collision/drag forces that slow you down.
-            let input_factor = TIME_HACK * delta / config::common::MAIN_LOOP_TIME;
-            let mut physics_dt = TIME_HACK * delta * {
-                let n = &self.db.common.nature;
-                let fps = self.db.common.speed.standard_frame_rate as f32;
-                fps * n.time_delta0 * n.num_calls_analysis as f32
-            };
+        for a in self.agents.iter_mut() {
+            a.apply_control(
+                input_factor,
+                &self.db.common,
+            );
+        }
 
-            for a in self.agents.iter_mut() {
-                a.apply_control(
-                    input_factor,
-                    &self.db.common,
-                );
-            }
+        if let Some(ref mut gpu) = self.gpu {
+            let mut combs = Vec::new();
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                todo: 0,
+            });
 
-            if let Some(ref mut gpu) = self.gpu {
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    todo: 0,
-                });
-
-                // initialize new entries
-                for agent in self.agents.iter_mut() {
-                    if let Some(ref mut link) = agent.gpu_physics {
-                        if !link.is_uniform_initialized {
-                            link.is_uniform_initialized = true;
-                            agent.to_render_model().prepare(&mut encoder, device);
-                        }
+            // initialize new entries
+            for agent in self.agents.iter_mut() {
+                if let Some(ref mut link) = agent.gpu_physics {
+                    if !link.is_uniform_initialized {
+                        link.is_uniform_initialized = true;
+                        agent.to_render_model().prepare(&mut encoder, device);
                     }
                 }
-                gpu.store.update_entries(device, &mut encoder);
+            }
+            gpu.store.update_entries(device, &mut encoder);
 
+            while physics_dt > self.max_quant {
                 let mut session = gpu.collider.begin(&mut encoder, &self.render.terrain, spawner);
                 for agent in &mut self.agents {
                     if let Some(ref mut link) = agent.gpu_physics {
-                        let start_index = session.add(&agent.car.model.shape, link.body.index());
-                        let old = link.collision_epochs.insert(session.epoch, start_index);
-                        assert_eq!(old, None);
+                        session.add(&agent.car.model.shape, link.body.index());
                     }
                 }
-                let (pre, post, ranges) = session.finish(device);
+                let (pre, _post, ranges) = session.finish(device);
                 combs.push(pre);
 
-                gpu.store.step(device, &mut encoder, physics_dt, ranges);
-                combs.push(encoder.finish());
-                combs.push(post);
+                gpu.store.step(device, &mut encoder, self.max_quant, ranges);
+                physics_dt -= self.max_quant;
             }
 
+            let mut session = gpu.collider.begin(&mut encoder, &self.render.terrain, spawner);
+            for agent in &mut self.agents {
+                if let Some(ref mut link) = agent.gpu_physics {
+                    let start_index = session.add(&agent.car.model.shape, link.body.index());
+                    let old = link.collision_epochs.insert(session.epoch, start_index);
+                    assert_eq!(old, None);
+                }
+            }
+            let (pre, post, ranges) = session.finish(device);
+            combs.push(pre);
+
+            gpu.store.step(device, &mut encoder, physics_dt, ranges);
+            combs.push(encoder.finish());
+
+            combs.push(post);
+            combs
+        } else {
             while physics_dt > self.max_quant {
                 for a in self.agents
                     .iter_mut()
@@ -545,9 +563,9 @@ impl Application for Game {
                     lbuf,
                 );
             }
-        }
 
-        combs
+            Vec::new()
+        }
     }
 
     fn resize(&mut self, device: &wgpu::Device, extent: wgpu::Extent3d) {
