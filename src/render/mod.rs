@@ -29,6 +29,20 @@ pub mod terrain;
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+pub struct GpuTransform {
+    pub pos_scale: [f32; 4],
+    pub orientation: [f32; 4],
+}
+
+impl GpuTransform {
+    pub fn new(t: &Transform) -> Self {
+        GpuTransform {
+            pos_scale: [t.disp.x, t.disp.y, t.disp.z, t.scale],
+            orientation: [t.rot.v.x, t.rot.v.y, t.rot.v.z, t.rot.s],
+        }
+    }
+}
+
 pub struct ScreenTargets<'a> {
     pub extent: wgpu::Extent3d,
     pub color: &'a wgpu::TextureView,
@@ -301,12 +315,18 @@ impl Palette {
 
 pub struct RenderModel<'a> {
     pub model: &'a model::VisualModel,
+    pub gpu_body: &'a body::GpuBody,
     pub locals_buf: &'a wgpu::Buffer,
     pub transform: Transform,
     pub debug_shape_scale: Option<f32>,
 }
 
 impl RenderModel<'_> {
+    /// Prepare the `locals_buf` uniform data based on the transformation and
+    /// model structure.
+    ///
+    /// For GPU physics path, needs to only be done once.
+    /// For pure CPU path, needs to be done before every render.
     pub fn prepare(&self, encoder: &mut wgpu::CommandEncoder, device: &wgpu::Device) {
         use cgmath::{Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
 
@@ -322,8 +342,9 @@ impl RenderModel<'_> {
 
             // body
             data[0] = object::Locals::new(
-                self.transform,
+                &self.transform,
                 self.debug_shape_scale.unwrap_or_default(),
+                self.gpu_body,
             );
             // wheels
             for w in self.model.wheels.iter() {
@@ -333,7 +354,7 @@ impl RenderModel<'_> {
                         rot: Quaternion::one(),
                         scale: 1.0,
                     });
-                    data[mesh.locals_id] = object::Locals::new(transform, 0.0);
+                    data[mesh.locals_id] = object::Locals::new(&transform, 0.0, self.gpu_body);
                 }
             }
             // slots
@@ -346,7 +367,7 @@ impl RenderModel<'_> {
                     };
                     local.disp -= local.transform_vector(Vector3::from(mesh.offset));
                     let transform = self.transform.concat(&local);
-                    data[mesh.locals_id] = object::Locals::new(transform, 0.0);
+                    data[mesh.locals_id] = object::Locals::new(&transform, 0.0, self.gpu_body);
                 }
             }
         }

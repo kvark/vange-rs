@@ -7,7 +7,7 @@ use vangers::{
     config, level, model, space,
     render::{
         Render, RenderModel, ScreenTargets,
-        body::{GpuStore, GpuStoreInit},
+        body::{GpuBody, GpuStore, GpuStoreInit},
         collision::{GpuCollider, GpuResult},
         debug::LineBuffer,
     },
@@ -544,6 +544,10 @@ impl Application for Game {
             .iter()
             .map(|a| RenderModel {
                 model: &a.car.model,
+                gpu_body: match a.gpu_physics {
+                    Some(ref link) => &link.body,
+                    None => &GpuBody::ZERO,
+                },
                 locals_buf: &a.car.locals_buf,
                 transform: a.transform.clone(),
                 debug_shape_scale: match a.spirit {
@@ -566,43 +570,6 @@ impl Application for Game {
             self.cam.get_view_proj().into(),
             encoder,
         );*/
-
-        /*
-        if self.compute_gpu_collision {
-            let mut collider = self.collider.start(encoder, &self.db.common);
-            for agent in &mut self.agents {
-                let mut transform = agent.transform.clone();
-                transform.scale *= agent.car.physics.scale_bound;
-                let shape_id = collider.add(&agent.car.model.shape, transform);
-                agent.gpu_momentum = Some(GpuMomentum::Pending(shape_id));
-            }
-
-            let debug_blit = if self.debug_collision_map {
-                let target = self.render.target_color();
-                self.agents
-                    .iter()
-                    .find(|a| a.spirit == Spirit::Player)
-                    .and_then(|a| match a.gpu_momentum {
-                        Some(GpuMomentum::Pending(ref shape)) => Some(render::DebugBlit {
-                            target,
-                            shape: shape.clone(),
-                            scale: 4,
-                        }),
-                        _ => None,
-                    })
-            } else {
-                None
-            };
-
-            let results = collider.finish(debug_blit);
-            for agent in &mut self.agents {
-                if let Some(GpuMomentum::Pending(shape_id)) = agent.gpu_momentum.take() {
-                    let rect = results[shape_id];
-                    assert_eq!((rect.y, rect.w, rect.h), (0, 1, 1));
-                    agent.gpu_momentum = Some(GpuMomentum::Computed(rect.x as usize));
-                }
-            }
-        }*/
 
         encoder.finish()
     }

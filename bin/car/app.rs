@@ -220,6 +220,7 @@ impl Application for CarView {
 
         render::RenderModel {
             model: &self.model,
+            gpu_body: &render::body::GpuBody::ZERO,
             locals_buf: &self.locals_buf,
             transform: self.transform,
             debug_shape_scale: Some(self.physics.scale_bound),

@@ -1,4 +1,4 @@
-//!include vs:body.inc vs:globals.inc fs:globals.inc
+//!include vs:body.inc vs:globals.inc vs:quat.inc fs:globals.inc
 
 layout(location = 0) varying vec4 v_Color;
 layout(location = 1) varying vec3 v_Normal;
@@ -8,8 +8,10 @@ layout(location = 2) varying vec3 v_Light;
 #ifdef SHADER_VS
 
 layout(set = 2, binding = 0) uniform c_Locals {
-    mat4 u_Model;
-    vec4 u_ShapeScale;
+    vec4 u_PosScale;
+    vec4 u_Orientation;
+    float u_ShapeScale;
+    uint u_BodyId;
 };
 
 layout(set = 1, binding = 0) uniform utexture1D t_ColorTable;
@@ -26,15 +28,15 @@ layout(location = 1) attribute uint a_ColorIndex;
 layout(location = 2) attribute vec4 a_Normal;
 
 void main() {
-    vec4 world = u_Model * a_Pos;
-    gl_Position = u_ViewProj * world;
+    vec3 world = qrot(u_Orientation, vec3(a_Pos.xyz)) * u_PosScale.w + u_PosScale.xyz;
+    gl_Position = u_ViewProj * vec4(world, 1.0);
 
     uvec2 color_params = texelFetch(usampler1D(t_ColorTable, s_ColorTableSampler), int(a_ColorIndex), 0).xy;
     v_Color = texelFetch(sampler1D(t_Palette, s_PaletteSampler), int(color_params[0]), 0);
 
     vec3 n = normalize(a_Normal.xyz);
-    v_Normal = mat3(u_Model) * n;
-    v_Light = u_LightPos.xyz - world.xyz * u_LightPos.w;  
+    v_Normal = qrot(u_Orientation, n);
+    v_Light = u_LightPos.xyz - world * u_LightPos.w;
 }
 #endif //VS
 

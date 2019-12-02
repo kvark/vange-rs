@@ -6,6 +6,8 @@ type Epoch = u16;
 pub struct Id<T>(Index, Epoch, PhantomData<T>);
 
 impl<T> Id<T> {
+    pub const ZERO: Self = Id(0, 0, PhantomData);
+
     pub fn index(&self) -> usize {
         self.0 as usize
     }

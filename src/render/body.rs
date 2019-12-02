@@ -7,6 +7,7 @@ use crate::{
     freelist::{self, FreeList},
     render::{
         collision::GpuRange,
+        GpuTransform,
         Shaders,
     },
     space::Transform,
@@ -24,7 +25,7 @@ const WORK_GROUP_WIDTH: u32 = 64;
 #[derive(zerocopy::AsBytes)]
 pub struct Data {
     pos_scale: [f32; 4],
-    rot: [f32; 4],
+    orientation: [f32; 4],
     linear: [f32; 4],
     angular: [f32; 4],
     collision: [f32; 4],
@@ -35,7 +36,7 @@ pub struct Data {
 impl Data {
     const DUMMY: Self = Data {
         pos_scale: [0.0, 0.0, 0.0, 1.0],
-        rot: [0.0, 0.0, 0.0, 1.0],
+        orientation: [0.0, 0.0, 0.0, 1.0],
         linear: [0.0; 4],
         angular: [0.0; 4],
         collision: [0.0; 4],
@@ -338,9 +339,10 @@ impl GpuStore {
     ) -> GpuBody {
         let id = self.free_list.alloc();
         let matrix = cgmath::Matrix3::from(model_physics.jacobi).invert().unwrap();
+        let gt = GpuTransform::new(transform);
         let data = Data {
-            pos_scale: [transform.disp.x, transform.disp.y, transform.disp.z, transform.scale],
-            rot: transform.rot.into(),
+            pos_scale: gt.pos_scale,
+            orientation: gt.orientation,
             linear: [0.0; 4],
             angular: [0.0; 4],
             collision: [0.0; 4],
