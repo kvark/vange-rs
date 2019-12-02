@@ -1,4 +1,4 @@
-struct Data {
+struct Body {
     vec4 pos_scale;
     vec4 orientation;
     vec4 linear;

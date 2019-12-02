@@ -1,7 +1,12 @@
 #ifdef SHADER_CS
 
+struct CollisionPolygon {
+    uint middle;
+    uint depth;
+};
+
 layout(set = 0, binding = 1, std430) buffer Storage {
-    int s_Data[];
+    CollisionPolygon s_Collisions[];
 };
 
 void main() {
@@ -9,7 +14,7 @@ void main() {
         gl_GlobalInvocationID.z * gl_WorkGroupSize.x * gl_NumWorkGroups.x * gl_WorkGroupSize.y * gl_NumWorkGroups.y +
         gl_GlobalInvocationID.y * gl_WorkGroupSize.x * gl_NumWorkGroups.x +
         gl_GlobalInvocationID.x;
-    //Note: this is supposed to clear data for exactly one polygon
-    s_Data[int(index)] = 0;
+    s_Collisions[int(index)].middle = 0;
+    s_Collisions[int(index)].depth = 0;
 }
 #endif //CS

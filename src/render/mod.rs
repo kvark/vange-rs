@@ -477,10 +477,6 @@ impl Render {
             mem::size_of::<global::Constants>() as wgpu::BufferAddress,
         );
 
-        for rm in render_models {
-            rm.prepare(encoder, device);
-        }
-
         self.terrain.prepare(encoder, device, &self.global, cam);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

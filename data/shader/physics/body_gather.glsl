@@ -6,7 +6,7 @@ struct CollisionPolygon {
 };
 
 layout(set = 0, binding = 0, std430) buffer Storage {
-    Data s_Data[];
+    Body s_Bodies[];
 };
 
 layout(set = 1, binding = 0, std430) readonly buffer Collision {
@@ -39,6 +39,6 @@ void main() {
         }
     }
 
-    s_Data[index].springs.xyz += springs;
+    s_Bodies[index].springs.xyz += springs;
 }
 #endif //CS

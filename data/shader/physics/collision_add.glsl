@@ -15,7 +15,7 @@ layout(set = 0, binding = 0) uniform c_Globals {
 };
 
 layout(set = 0, binding = 2, std430) buffer Storage {
-    Data s_Data[];
+    Body s_Bodies[];
 };
 
 // Compute the exact collision vector instead of using the origin
@@ -28,9 +28,9 @@ layout(set = 3, binding = 0) uniform c_Locals {
 
 void main() {
     Polygon poly = get_shape_polygon();
-    vec4 pos_scale = s_Data[u_Indices.x].pos_scale;
-    vec4 orientation = s_Data[u_Indices.x].orientation;
-    float scale = pos_scale.w * s_Data[u_Indices.x].scale_volume_zomc.x;
+    vec4 pos_scale = s_Bodies[u_Indices.x].pos_scale;
+    vec4 orientation = s_Bodies[u_Indices.x].orientation;
+    float scale = pos_scale.w * s_Bodies[u_Indices.x].scale_volume_zomc.x;
     vec3 base_pos = qrot(orientation, poly.vertex.xyz) * scale;
     v_World = base_pos + pos_scale.xyz;
 

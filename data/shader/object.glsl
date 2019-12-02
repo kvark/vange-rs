@@ -20,7 +20,7 @@ layout(set = 1, binding = 2) uniform sampler s_ColorTableSampler;
 
 layout(set = 0, binding = 1) uniform sampler s_PaletteSampler;
 layout(set = 0, binding = 2, std430) readonly buffer Storage {
-    Data s_Data[];
+    Body s_Bodies[];
 };
 
 layout(location = 0) attribute ivec4 a_Pos;
@@ -28,14 +28,18 @@ layout(location = 1) attribute uint a_ColorIndex;
 layout(location = 2) attribute vec4 a_Normal;
 
 void main() {
-    vec3 world = qrot(u_Orientation, vec3(a_Pos.xyz)) * u_PosScale.w + u_PosScale.xyz;
+    vec4 body_pos_scale = s_Bodies[int(u_BodyId)].pos_scale;
+    vec4 body_orientation = s_Bodies[int(u_BodyId)].orientation;
+
+    vec3 local = qrot(u_Orientation, vec3(a_Pos.xyz)) * u_PosScale.w + u_PosScale.xyz;
+    vec3 world = qrot(body_orientation, local) * body_pos_scale.w + body_pos_scale.xyz;
     gl_Position = u_ViewProj * vec4(world, 1.0);
 
     uvec2 color_params = texelFetch(usampler1D(t_ColorTable, s_ColorTableSampler), int(a_ColorIndex), 0).xy;
     v_Color = texelFetch(sampler1D(t_Palette, s_PaletteSampler), int(color_params[0]), 0);
 
     vec3 n = normalize(a_Normal.xyz);
-    v_Normal = qrot(u_Orientation, n);
+    v_Normal = qrot(body_orientation, qrot(u_Orientation, n));
     v_Light = u_LightPos.xyz - world * u_LightPos.w;
 }
 #endif //VS

@@ -14,8 +14,10 @@ use vangers::{
 };
 
 use cgmath::{
-    self,
-    Angle, Rotation3, Zero,
+    Angle as _,
+    Rotation3 as _,
+    Zero as _,
+    Transform as _,
 };
 use futures::executor::LocalSpawner;
 
@@ -67,6 +69,7 @@ impl Agent {
         let gpu_physics = gpu_store.map(|store| physics::GpuLink {
             body: store.alloc(&transform, &car.model.body.physics, &car.physics),
             collision_epochs: HashMap::default(),
+            is_uniform_initialized: false,
         });
         Agent {
             _name: name,
@@ -119,6 +122,26 @@ impl Agent {
             },
             line_buffer,
         )
+    }
+
+    fn to_render_model(&self) -> RenderModel {
+        RenderModel {
+            model: &self.car.model,
+            gpu_body: match self.gpu_physics {
+                Some(ref link) => &link.body,
+                None => &GpuBody::ZERO,
+            },
+            locals_buf: &self.car.locals_buf,
+            transform: if self.gpu_physics.is_some() {
+                space::Transform::one()
+            } else {
+                self.transform.clone()
+            },
+            debug_shape_scale: match self.spirit {
+                Spirit::Player => Some(self.car.physics.scale_bound),
+                Spirit::Other => None,
+            },
+        }
     }
 }
 
@@ -460,6 +483,16 @@ impl Application for Game {
                 let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     todo: 0,
                 });
+
+                // initialize new entries
+                for agent in self.agents.iter_mut() {
+                    if let Some(ref mut link) = agent.gpu_physics {
+                        if !link.is_uniform_initialized {
+                            link.is_uniform_initialized = true;
+                            agent.to_render_model().prepare(&mut encoder, device);
+                        }
+                    }
+                }
                 gpu.store.update_entries(device, &mut encoder);
 
                 let mut session = gpu.collider.begin(&mut encoder, &self.render.terrain, spawner);
@@ -542,20 +575,12 @@ impl Application for Game {
 
         let models = self.agents
             .iter()
-            .map(|a| RenderModel {
-                model: &a.car.model,
-                gpu_body: match a.gpu_physics {
-                    Some(ref link) => &link.body,
-                    None => &GpuBody::ZERO,
-                },
-                locals_buf: &a.car.locals_buf,
-                transform: a.transform.clone(),
-                debug_shape_scale: match a.spirit {
-                    Spirit::Player => Some(a.car.physics.scale_bound),
-                    Spirit::Other => None,
-                },
-            })
+            .map(Agent::to_render_model)
             .collect::<Vec<_>>();
+        for rm in models.iter() {
+            rm.prepare(&mut encoder, device);
+        }
+
         self.render.draw_world(
             &mut encoder,
             &models,

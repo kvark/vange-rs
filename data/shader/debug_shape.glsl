@@ -1,7 +1,11 @@
-//!include vs:globals.inc vs:encode.inc vs:quat.inc vs:shape.inc
+//!include vs:body.inc vs:globals.inc vs:encode.inc vs:quat.inc vs:shape.inc
 
 #ifdef SHADER_VS
 //imported: Polygon, get_shape_polygon
+
+layout(set = 0, binding = 2, std430) readonly buffer Storage {
+    Body s_Bodies[];
+};
 
 layout(set = 3, binding = 0) uniform c_Locals {
     vec4 u_PosScale;
@@ -12,8 +16,14 @@ layout(set = 3, binding = 0) uniform c_Locals {
 
 void main() {
     Polygon poly = get_shape_polygon();
-    vec3 pos = qrot(u_Orientation, vec3(poly.vertex)) * u_PosScale.w * u_ShapeScale + u_PosScale.xyz;
-    gl_Position = u_ViewProj * vec4(pos, 1.0);
+    vec3 vertex = vec3(poly.vertex) * u_ShapeScale;
+    vec3 local = qrot(u_Orientation, vertex) * u_PosScale.w + u_PosScale.xyz;
+
+    vec4 base_pos_scale = s_Bodies[int(u_BodyId)].pos_scale;
+    vec4 base_orientation = s_Bodies[int(u_BodyId)].orientation;
+    vec3 world = qrot(base_orientation, local) * base_pos_scale.w + base_pos_scale.xyz;
+
+    gl_Position = u_ViewProj * vec4(world, 1.0);
 }
 #endif //VS
 

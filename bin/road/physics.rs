@@ -21,6 +21,7 @@ use std::{
 pub struct GpuLink {
     pub body: GpuBody,
     pub collision_epochs: HashMap<GpuEpoch, usize>,
+    pub is_uniform_initialized: bool,
 }
 
 const MAX_TRACTION: config::common::Traction = 4.0;
