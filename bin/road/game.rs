@@ -535,8 +535,8 @@ impl Application for Game {
                         session.add(&agent.car.model.shape, body.index());
                     }
                 }
-                let (pre, _post, ranges) = session.finish(device);
-                combs.push(pre);
+                let (comb, ranges) = session.finish(device);
+                combs.push(comb);
 
                 gpu.store.step(device, &mut encoder, self.max_quant, ranges);
                 physics_dt -= self.max_quant;
@@ -550,13 +550,13 @@ impl Application for Game {
                     assert_eq!(old, None);
                 }
             }
-            let (pre, post, ranges) = session.finish(device);
-            combs.push(pre);
+            let (comb, ranges) = session.finish(device);
+            combs.push(comb);
 
             gpu.store.step(device, &mut encoder, physics_dt, ranges);
+            gpu.store.produce_gpu_results(device, &mut encoder);
             combs.push(encoder.finish());
 
-            combs.push(post);
             combs
         } else {
             for a in self.agents.iter_mut() {
@@ -614,8 +614,13 @@ impl Application for Game {
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
-        _spawner: &LocalSpawner,
+        spawner: &LocalSpawner,
     ) -> wgpu::CommandBuffer {
+        if let Some(ref mut gpu) = self.gpu {
+            //Note: we rely on the fact that updates where submitted separately
+            gpu.store.consume_gpu_results(spawner);
+        }
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });

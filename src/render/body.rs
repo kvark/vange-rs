@@ -7,7 +7,7 @@ use crate::{
     freelist::{self, FreeList},
     model::VisualModel,
     render::{
-        collision::GpuRange,
+        collision::{GpuRange},
         GpuTransform,
         Shaders,
     },
@@ -15,9 +15,10 @@ use crate::{
 };
 
 use cgmath::SquareMatrix as _;
+use futures::{executor::LocalSpawner, task::LocalSpawn as _, FutureExt};
 use zerocopy::AsBytes as _;
 
-use std::mem;
+use std::{mem, slice, sync::{Arc, Mutex}};
 
 
 const WORK_GROUP_WIDTH: u32 = 64;
@@ -137,7 +138,8 @@ impl GpuStoreInit {
 
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             size: (rounded_max_objects * mem::size_of::<Data>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::STORAGE_READ | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::STORAGE_READ |
+                wgpu::BufferUsage::COPY_SRC | wgpu::BufferUsage::COPY_DST,
         });
 
         GpuStoreInit {
@@ -171,6 +173,20 @@ enum Pending {
     SetControl { index: usize },
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, PartialOrd)]
+pub struct GpuEpoch(usize);
+
+struct GpuResult {
+    buffer: wgpu::Buffer,
+    count: usize,
+    epoch: GpuEpoch,
+}
+
+struct CpuResult {
+    transforms: Vec<Transform>,
+    epoch: GpuEpoch,
+}
+
 pub struct GpuStore {
     pipeline_layout_step: wgpu::PipelineLayout,
     pipeline_layout_gather: wgpu::PipelineLayout,
@@ -185,6 +201,9 @@ pub struct GpuStore {
     pending: Vec<(usize, Pending)>,
     pending_data: Vec<Data>,
     pending_control: Vec<GpuControl>,
+    epoch: GpuEpoch,
+    gpu_result: Option<GpuResult>,
+    cpu_result: Arc<Mutex<CpuResult>>,
 }
 
 impl GpuStore {
@@ -339,6 +358,12 @@ impl GpuStore {
             pending: Vec::new(),
             pending_data: Vec::new(),
             pending_control: Vec::new(),
+            epoch: GpuEpoch(0),
+            gpu_result: None,
+            cpu_result: Arc::new(Mutex::new(CpuResult {
+                transforms: Vec::new(),
+                epoch: GpuEpoch(0),
+            })),
         }
     }
 
@@ -462,7 +487,7 @@ impl GpuStore {
     }
 
     pub fn step(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         delta: f32,
@@ -514,5 +539,75 @@ impl GpuStore {
         pass.dispatch(num_groups, 1, 1);
         pass.set_pipeline(&self.pipelines.step);
         pass.dispatch(num_groups, 1, 1);
+    }
+
+    pub fn produce_gpu_results(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        self.epoch.0 += 1;
+
+        let count = self.free_list.length();
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            size: (count * mem::size_of::<GpuTransform>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::MAP_READ,
+        });
+
+        let offset = mem::size_of::<GpuControl>() + mem::size_of::<[f32; 4]>(); // skip control & engine
+        for i in 0 .. count {
+            encoder.copy_buffer_to_buffer(
+                &self.buf_data,
+                (i * mem::size_of::<Data>() + offset) as wgpu::BufferAddress,
+                &buffer,
+                (i * mem::size_of::<GpuTransform>()) as wgpu::BufferAddress,
+                mem::size_of::<GpuTransform>() as wgpu::BufferAddress,
+            );
+        }
+
+        self.gpu_result = Some(GpuResult {
+            buffer,
+            count,
+            epoch: self.epoch,
+        })
+    }
+
+    pub fn consume_gpu_results(&mut self, spawner: &LocalSpawner) {
+        let GpuResult { buffer, count, epoch } = match self.gpu_result.take() {
+            Some(gr) => gr,
+            None => return,
+        };
+
+        let latest = Arc::clone(&self.cpu_result);
+        let future = buffer
+            .map_read(0, (count * mem::size_of::<GpuTransform>()) as wgpu::BufferAddress)
+            .map(move |mapping| {
+                let _ = buffer; //TODO: remove when wgpu upsteam is fixed
+                let data = unsafe {
+                    slice::from_raw_parts(
+                        mapping.unwrap().as_slice().as_ptr() as *const GpuTransform,
+                        count,
+                    )
+                };
+
+                let transforms = data
+                    .iter()
+                    .map(|gt| Transform {
+                        disp: cgmath::vec3(gt.pos_scale[0], gt.pos_scale[1], gt.pos_scale[2]),
+                        rot: cgmath::Quaternion::new(
+                            gt.orientation[3],
+                            gt.orientation[0],
+                            gt.orientation[1],
+                            gt.orientation[2],
+                        ),
+                        scale: gt.pos_scale[3],
+                    });
+
+                let mut storage = latest.lock().unwrap();
+                storage.epoch = epoch;
+                storage.transforms.clear();
+                storage.transforms.extend(transforms);
+            });
+        spawner.spawn_local_obj(Box::new(future).into()).unwrap();
     }
 }

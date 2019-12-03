@@ -99,15 +99,14 @@ pub struct GpuCollider {
 
 pub struct GpuSession<'this, 'pass> {
     pass: wgpu::RenderPass<'pass>,
-    buffer: &'this wgpu::Buffer,
     uniform_buf: &'this wgpu::Buffer,
     dynamic_bind_group: &'this wgpu::BindGroup,
     locals_size: usize,
     object_locals: Vec<Locals>,
     ranges: &'this mut [GpuRange],
     polygon_id: usize,
+    dirty_group_count: &'this mut u32,
     pub epoch: GpuEpoch,
-    pending_result: &'this mut Option<PendingResult>,
 }
 
 const DUMMY_TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -422,15 +421,14 @@ impl GpuCollider {
 
         GpuSession {
             pass,
-            buffer: &self.buffer,
             uniform_buf: &self.uniform_buf,
             dynamic_bind_group: &self.dynamic_bind_group,
             locals_size: self.locals_size,
             object_locals: Vec::new(),
             ranges: &mut self.ranges,
             polygon_id: 0,
+            dirty_group_count: &mut self.dirty_group_count,
             epoch: self.epoch,
-            pending_result: &mut self.pending_result,
         }
     }
 
@@ -465,44 +463,28 @@ impl<'this> GpuSession<'this, '_> {
         offset
     }
 
-    pub fn finish(self, device: &wgpu::Device) -> (wgpu::CommandBuffer, wgpu::CommandBuffer, &'this [GpuRange]) {
-        let GpuSession { buffer, epoch, polygon_id, pending_result, locals_size, object_locals, .. } = self;
+    pub fn finish(self, device: &wgpu::Device) -> (wgpu::CommandBuffer, &'this [GpuRange]) {
+        let mut num_groups = self.polygon_id as u32 / CLEAR_WORK_GROUP_WIDTH;
+        if num_groups * CLEAR_WORK_GROUP_WIDTH < self.polygon_id as u32 {
+            num_groups += 1;
+        }
+        *self.dirty_group_count = (*self.dirty_group_count).max(num_groups);
 
-        let prepare_comb = {
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                todo: 0,
-            });
-            let temp = device.create_buffer_with_data(
-                object_locals.as_bytes(),
-                wgpu::BufferUsage::COPY_SRC,
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            todo: 0,
+        });
+        let temp = device.create_buffer_with_data(
+            self.object_locals.as_bytes(),
+            wgpu::BufferUsage::COPY_SRC,
+        );
+        for i in 0 .. self.object_locals.len() {
+            encoder.copy_buffer_to_buffer(
+                &temp, (mem::size_of::<Locals>() * i) as wgpu::BufferAddress,
+                self.uniform_buf, (self.locals_size * i) as wgpu::BufferAddress,
+                mem::size_of::<Locals>() as wgpu::BufferAddress,
             );
-            for i in 0 .. object_locals.len() {
-                encoder.copy_buffer_to_buffer(
-                    &temp, (mem::size_of::<Locals>() * i) as wgpu::BufferAddress,
-                    self.uniform_buf, (locals_size * i) as wgpu::BufferAddress,
-                    mem::size_of::<Locals>() as wgpu::BufferAddress,
-                );
-            }
-            encoder.finish()
-        };
-        let post_comb = {
-            let size = (polygon_id * mem::size_of::<PolygonData>()) as wgpu::BufferAddress;
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                todo: 0,
-            });
-            let temp = device.create_buffer(&wgpu::BufferDescriptor {
-                size,
-                usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::MAP_READ,
-            });
-            encoder.copy_buffer_to_buffer(buffer, 0, &temp, 0, size);
-            *pending_result = Some(PendingResult {
-                buffer: temp,
-                count: polygon_id,
-                epoch,
-            });
-            encoder.finish()
-        };
+        }
 
-        (prepare_comb, post_comb, self.ranges)
+        (encoder.finish(), self.ranges)
     }
 }
