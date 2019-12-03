@@ -8,7 +8,7 @@ use vangers::{
     render::{
         Render, RenderModel, ScreenTargets,
         body::{GpuBody, GpuStore, GpuStoreInit},
-        collision::{GpuCollider, GpuResult},
+        collision::{GpuCollider, GpuEpoch, GpuResult},
         debug::LineBuffer,
     },
 };
@@ -41,6 +41,19 @@ struct Control {
     turbo: bool,
 }
 
+bitflags::bitflags! {
+    pub struct DirtyBits: u32 {
+        const UNIFORMS_BUF = 0x1;
+        const CONTROL = 0x2;
+    }
+}
+
+pub struct GpuLink {
+    pub body: GpuBody,
+    pub collision_epochs: HashMap<GpuEpoch, usize>,
+    pub dirty: DirtyBits,
+}
+
 pub struct Agent {
     _name: String,
     spirit: Spirit,
@@ -48,7 +61,7 @@ pub struct Agent {
     pub car: config::car::CarInfo,
     dynamo: physics::Dynamo,
     control: Control,
-    gpu_physics: Option<physics::GpuLink>,
+    gpu_physics: Option<GpuLink>,
 }
 
 impl Agent {
@@ -66,10 +79,10 @@ impl Agent {
             disp: cgmath::vec3(coords.0 as f32, coords.1 as f32, height),
             rot: cgmath::Quaternion::from_angle_z(orientation),
         };
-        let gpu_physics = gpu_store.map(|store| physics::GpuLink {
-            body: store.alloc(&transform, &car.model.body.physics, &car.physics),
+        let gpu_physics = gpu_store.map(|store| GpuLink {
+            body: store.alloc(&transform, &car.model, &car.physics),
             collision_epochs: HashMap::default(),
-            is_uniform_initialized: false,
+            dirty: DirtyBits::UNIFORMS_BUF,
         });
         Agent {
             _name: name,
@@ -474,26 +487,28 @@ impl Application for Game {
             fps * n.time_delta0 * n.num_calls_analysis as f32
         };
 
-        for a in self.agents.iter_mut() {
-            a.apply_control(
-                input_factor,
-                &self.db.common,
-            );
-        }
-
         if let Some(ref mut gpu) = self.gpu {
             let mut combs = Vec::new();
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 todo: 0,
             });
 
-            // initialize new entries
+            // initialize new entries, update
             for agent in self.agents.iter_mut() {
-                if let Some(ref mut link) = agent.gpu_physics {
-                    if !link.is_uniform_initialized {
-                        link.is_uniform_initialized = true;
-                        agent.to_render_model().prepare(&mut encoder, device);
+                let needs_prepare = match agent.gpu_physics {
+                    Some(ref mut link) => {
+                        let needs_prepare = link.dirty.contains(DirtyBits::UNIFORMS_BUF);
+                        if link.dirty.contains(DirtyBits::CONTROL) {
+                            let c = [agent.control.motor, agent.control.rudder, 0.0, 0.0];
+                            gpu.store.update_control(&link.body, c);
+                        }
+                        link.dirty = DirtyBits::empty();
+                        needs_prepare
                     }
+                    None => false,
+                };
+                if needs_prepare {
+                    agent.to_render_model().prepare(&mut encoder, device);
                 }
             }
             gpu.store.update_entries(device, &mut encoder);
@@ -529,6 +544,13 @@ impl Application for Game {
             combs.push(post);
             combs
         } else {
+            for a in self.agents.iter_mut() {
+                a.apply_control(
+                    input_factor,
+                    &self.db.common,
+                );
+            }
+
             while physics_dt > self.max_quant {
                 for a in self.agents
                     .iter_mut()

@@ -5,6 +5,7 @@ use crate::{
         settings,
     },
     freelist::{self, FreeList},
+    model::VisualModel,
     render::{
         collision::GpuRange,
         GpuTransform,
@@ -20,10 +21,14 @@ use std::mem;
 
 
 const WORK_GROUP_WIDTH: u32 = 64;
+const MAX_WHEELS: usize = 4;
+
+pub type GpuControl = [f32; 4];
 
 #[repr(C)]
 #[derive(zerocopy::AsBytes)]
 pub struct Data {
+    control: GpuControl,
     pos_scale: [f32; 4],
     orientation: [f32; 4],
     linear: [f32; 4],
@@ -31,10 +36,12 @@ pub struct Data {
     collision: [f32; 4],
     scale_volume_zomc: [f32; 4],
     jacobian_inv: [[f32; 4]; 4],
+    wheels: [[f32; 4]; MAX_WHEELS],
 }
 
 impl Data {
     const DUMMY: Self = Data {
+        control: [0.0; 4],
         pos_scale: [0.0, 0.0, 0.0, 1.0],
         orientation: [0.0, 0.0, 0.0, 1.0],
         linear: [0.0; 4],
@@ -42,6 +49,7 @@ impl Data {
         collision: [0.0; 4],
         scale_volume_zomc: [1.0, 1.0, 0.0, 0.0],
         jacobian_inv: [[0.0; 4]; 4],
+        wheels: [[0.0; 4]; MAX_WHEELS],
     };
 }
 
@@ -155,6 +163,11 @@ impl GpuStoreInit {
     }
 }
 
+enum Pending {
+    InitData { index: usize },
+    SetControl { index: usize },
+}
+
 pub struct GpuStore {
     pipeline_layout_step: wgpu::PipelineLayout,
     pipeline_layout_gather: wgpu::PipelineLayout,
@@ -166,7 +179,9 @@ pub struct GpuStore {
     bind_group: wgpu::BindGroup,
     bind_group_gather: wgpu::BindGroup,
     free_list: FreeList<Data>,
-    pending_additions: Vec<(usize, Data)>,
+    pending: Vec<(usize, Pending)>,
+    pending_data: Vec<Data>,
+    pending_control: Vec<GpuControl>,
 }
 
 impl GpuStore {
@@ -312,15 +327,18 @@ impl GpuStore {
             bind_group,
             bind_group_gather,
             free_list: FreeList::new(),
-            pending_additions: Vec::new(),
+            pending: Vec::new(),
+            pending_data: Vec::new(),
+            pending_control: Vec::new(),
         }
     }
 
-    pub fn data_buffer(&self) -> wgpu::BindingResource {
-        wgpu::BindingResource::Buffer {
-            buffer: &self.buf_data,
-            range: 0 .. (self.capacity * mem::size_of::<Data>()) as wgpu::BufferAddress,
-        }
+    pub fn update_control(&mut self, body: &GpuBody, control: GpuControl) {
+        self.pending.push((
+            body.index(),
+            Pending::SetControl { index: self.pending_control.len() },
+        ));
+        self.pending_control.push(control);
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {
@@ -334,22 +352,46 @@ impl GpuStore {
     pub fn alloc(
         &mut self,
         transform: &Transform,
-        model_physics: &m3d::Physics,
+        model: &VisualModel,
         car_physics: &CarPhysics,
     ) -> GpuBody {
         let id = self.free_list.alloc();
-        let matrix = cgmath::Matrix3::from(model_physics.jacobi).invert().unwrap();
+        assert!(id.index() < self.capacity);
+
+        let matrix = cgmath::Matrix3::from(model.body.physics.jacobi).invert().unwrap();
         let gt = GpuTransform::new(transform);
+        let mut wheels = [[0.0; 4]; MAX_WHEELS];
+        for (wo, wi) in wheels.iter_mut().zip(model.wheels.iter()) {
+            //TODO: take X bounds like the original did?
+            wo[0] = wi.pos[0];
+            wo[1] = wi.pos[1];
+            wo[2] = wi.pos[2];
+            if wi.steer != 0 {
+                wo[3] = 1.0;
+            }
+        }
         let data = Data {
+            control: [0.0; 4],
             pos_scale: gt.pos_scale,
             orientation: gt.orientation,
             linear: [0.0; 4],
             angular: [0.0; 4],
             collision: [0.0; 4],
-            scale_volume_zomc: [car_physics.scale_bound, model_physics.volume, car_physics.z_offset_of_mass_center, 0.0],
+            scale_volume_zomc: [
+                car_physics.scale_bound,
+                model.body.physics.volume,
+                car_physics.z_offset_of_mass_center,
+                0.0,
+            ],
             jacobian_inv: cgmath::Matrix4::from(matrix).into(),
+            wheels,
         };
-        self.pending_additions.push((id.index(), data));
+
+        self.pending.push((
+            id.index(),
+            Pending::InitData { index: self.pending_data.len() }
+        ));
+        self.pending_data.push(data);
         id
     }
 
@@ -362,19 +404,50 @@ impl GpuStore {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        // fill out new data entries
-        for (index, data) in self.pending_additions.drain(..) {
-            let temp = device.create_buffer_with_data(
-                [data].as_bytes(),
+        let buf_init_data = if self.pending_data.is_empty() {
+            None
+        } else {
+            let buf = device.create_buffer_with_data(
+                self.pending_data.as_bytes(),
                 wgpu::BufferUsage::COPY_SRC,
             );
-            let size = mem::size_of::<Data>() as wgpu::BufferAddress;
-            encoder.copy_buffer_to_buffer(
-                &temp, 0,
-                &self.buf_data,
-                index as wgpu::BufferAddress * size,
-                size,
+            self.pending_data.clear();
+            Some(buf)
+        };
+        let buf_set_control = if self.pending_control.is_empty() {
+            None
+        } else {
+            let buf = device.create_buffer_with_data(
+                self.pending_control.as_bytes(),
+                wgpu::BufferUsage::COPY_SRC,
             );
+            self.pending_control.clear();
+            Some(buf)
+        };
+
+        for (body_id, pending) in self.pending.drain(..) {
+            let data_size = mem::size_of::<Data>();
+            match pending {
+                Pending::InitData { index } => {
+                    encoder.copy_buffer_to_buffer(
+                        buf_init_data.as_ref().unwrap(),
+                        (index * data_size) as wgpu::BufferAddress,
+                        &self.buf_data,
+                        (body_id * data_size) as wgpu::BufferAddress,
+                        data_size as wgpu::BufferAddress,
+                    );
+                }
+                Pending::SetControl { index } => {
+                    let size = mem::size_of::<GpuControl>();
+                    encoder.copy_buffer_to_buffer(
+                        buf_set_control.as_ref().unwrap(),
+                        (index * size) as wgpu::BufferAddress,
+                        &self.buf_data,
+                        (body_id * data_size + 0) as wgpu::BufferAddress,
+                        size as wgpu::BufferAddress,
+                    );
+                }
+            }
         }
     }
 
@@ -385,7 +458,7 @@ impl GpuStore {
         delta: f32,
         raw_ranges: &[GpuRange],
     ) {
-        assert!(self.pending_additions.is_empty());
+        assert!(self.pending.is_empty());
         let num_groups = {
             let num_objects = self.free_list.length();
             let reminder = num_objects % WORK_GROUP_WIDTH as usize;

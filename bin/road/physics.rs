@@ -1,8 +1,8 @@
+use crate::game::GpuLink;
 use vangers::{
     config, level, model, space,
     render::{
-        body::GpuBody,
-        collision::{GpuEpoch, GpuResult},
+        collision::GpuResult,
         debug::LineBuffer,
     },
 };
@@ -13,16 +13,9 @@ use cgmath::{
 };
 
 use std::{
-    collections::HashMap,
     f32::EPSILON,
     sync::MutexGuard,
 };
-
-pub struct GpuLink {
-    pub body: GpuBody,
-    pub collision_epochs: HashMap<GpuEpoch, usize>,
-    pub is_uniform_initialized: bool,
-}
 
 const MAX_TRACTION: config::common::Traction = 4.0;
 
