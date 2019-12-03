@@ -18,7 +18,7 @@ use cgmath::SquareMatrix as _;
 use futures::{executor::LocalSpawner, task::LocalSpawn as _, FutureExt};
 use zerocopy::AsBytes as _;
 
-use std::{mem, slice, sync::{Arc, Mutex}};
+use std::{mem, slice, sync::{Arc, Mutex, MutexGuard}};
 
 
 const WORK_GROUP_WIDTH: u32 = 64;
@@ -173,18 +173,19 @@ enum Pending {
     SetControl { index: usize },
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, PartialOrd)]
-pub struct GpuEpoch(usize);
-
 struct GpuResult {
     buffer: wgpu::Buffer,
     count: usize,
-    epoch: GpuEpoch,
 }
 
-struct CpuResult {
+pub struct GpuStoreMirror {
     transforms: Vec<Transform>,
-    epoch: GpuEpoch,
+}
+
+impl GpuStoreMirror {
+    pub fn get(&self, body: &GpuBody) -> Option<&Transform> {
+        self.transforms.get(body.index())
+    }
 }
 
 pub struct GpuStore {
@@ -201,9 +202,8 @@ pub struct GpuStore {
     pending: Vec<(usize, Pending)>,
     pending_data: Vec<Data>,
     pending_control: Vec<GpuControl>,
-    epoch: GpuEpoch,
     gpu_result: Option<GpuResult>,
-    cpu_result: Arc<Mutex<CpuResult>>,
+    cpu_mirror: Arc<Mutex<GpuStoreMirror>>,
 }
 
 impl GpuStore {
@@ -358,11 +358,9 @@ impl GpuStore {
             pending: Vec::new(),
             pending_data: Vec::new(),
             pending_control: Vec::new(),
-            epoch: GpuEpoch(0),
             gpu_result: None,
-            cpu_result: Arc::new(Mutex::new(CpuResult {
+            cpu_mirror: Arc::new(Mutex::new(GpuStoreMirror {
                 transforms: Vec::new(),
-                epoch: GpuEpoch(0),
             })),
         }
     }
@@ -546,8 +544,6 @@ impl GpuStore {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        self.epoch.0 += 1;
-
         let count = self.free_list.length();
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             size: (count * mem::size_of::<GpuTransform>()) as wgpu::BufferAddress,
@@ -568,17 +564,16 @@ impl GpuStore {
         self.gpu_result = Some(GpuResult {
             buffer,
             count,
-            epoch: self.epoch,
         })
     }
 
     pub fn consume_gpu_results(&mut self, spawner: &LocalSpawner) {
-        let GpuResult { buffer, count, epoch } = match self.gpu_result.take() {
+        let GpuResult { buffer, count } = match self.gpu_result.take() {
             Some(gr) => gr,
             None => return,
         };
 
-        let latest = Arc::clone(&self.cpu_result);
+        let latest = Arc::clone(&self.cpu_mirror);
         let future = buffer
             .map_read(0, (count * mem::size_of::<GpuTransform>()) as wgpu::BufferAddress)
             .map(move |mapping| {
@@ -604,10 +599,13 @@ impl GpuStore {
                     });
 
                 let mut storage = latest.lock().unwrap();
-                storage.epoch = epoch;
                 storage.transforms.clear();
                 storage.transforms.extend(transforms);
             });
         spawner.spawn_local_obj(Box::new(future).into()).unwrap();
+    }
+
+    pub fn cpu_mirror(&self) -> MutexGuard<GpuStoreMirror> {
+        self.cpu_mirror.lock().unwrap()
     }
 }

@@ -80,6 +80,7 @@ void main() {
     vel *= drag_corrected.x;
     wel *= drag_corrected.y;
 
+    s_Bodies[index].engine = engine;
     s_Bodies[index].pos_scale.xyz = body.pos_scale.xyz + u_Delta.x * vel;
     s_Bodies[index].orientation = normalize(body.orientation + vec4(u_Delta.x * wel, 0.0));
     s_Bodies[index].linear.xyz = vel;

@@ -370,7 +370,11 @@ impl Application for Game {
                 Key::P => {
                     let center = match player.physics {
                         Physics::Cpu { ref transform, .. } => transform.clone(),
-                        Physics::Gpu { .. } => space::Transform::one(),
+                        Physics::Gpu { ref body, .. } => {
+                            self.gpu.as_ref().unwrap()
+                                .store.cpu_mirror()
+                                .get(body).unwrap().clone()
+                        },
                     };
                     self.tick = None;
                     if self.is_paused {
@@ -439,7 +443,11 @@ impl Application for Game {
                 .unwrap();
             let target = match player.physics {
                 Physics::Cpu { ref transform, .. } => transform.clone(),
-                Physics::Gpu { .. } => space::Transform::one(),
+                Physics::Gpu { ref body, .. } => {
+                    self.gpu.as_ref().unwrap()
+                        .store.cpu_mirror().get(body).cloned()
+                        .unwrap_or(space::Transform::one())
+                },
             };
 
             if self.is_paused {
