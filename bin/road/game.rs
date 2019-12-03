@@ -32,7 +32,7 @@ enum Spirit {
     Other,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 struct Control {
     motor: f32,
     rudder: f32,
@@ -40,14 +40,7 @@ struct Control {
     turbo: bool,
 }
 
-bitflags::bitflags! {
-    pub struct DirtyBits: u32 {
-        const UNIFORMS_BUF = 0x1;
-        const CONTROL = 0x2;
-    }
-}
-
-pub enum Physics {
+enum Physics {
     Cpu {
         transform: space::Transform,
         dynamo: physics::Dynamo,
@@ -55,7 +48,8 @@ pub enum Physics {
     Gpu {
         body: GpuBody,
         collision_epochs: HashMap<GpuEpoch, usize>,
-        dirty: DirtyBits,
+        last_control: Control,
+        are_uniforms_ready: bool,
     },
 }
 
@@ -91,7 +85,8 @@ impl Agent {
                 Some(store) => Physics::Gpu {
                     body: store.alloc(&transform, &car.model, &car.physics),
                     collision_epochs: HashMap::default(),
-                    dirty: DirtyBits::UNIFORMS_BUF,
+                    last_control: Control::default(),
+                    are_uniforms_ready: false,
                 },
                 None => Physics::Cpu {
                     transform,
@@ -519,13 +514,14 @@ impl Application for Game {
             // initialize new entries, update
             for agent in self.agents.iter_mut() {
                 let needs_prepare = match agent.physics {
-                    Physics::Gpu { ref body, ref mut dirty, .. } => {
-                        let needs_prepare = dirty.contains(DirtyBits::UNIFORMS_BUF);
-                        if dirty.contains(DirtyBits::CONTROL) {
+                    Physics::Gpu { ref body, ref mut last_control, ref mut are_uniforms_ready, .. } => {
+                        let needs_prepare = *are_uniforms_ready;
+                        *are_uniforms_ready = true;
+                        if *last_control != agent.control {
+                            *last_control = agent.control.clone();
                             let c = [agent.control.rudder, agent.control.motor, 0.0, 0.0];
                             gpu.store.update_control(body, c);
                         }
-                        *dirty = DirtyBits::empty();
                         needs_prepare
                     }
                     Physics::Cpu { .. } => false,

@@ -60,7 +60,6 @@ wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
 #wgpu = "0.4"
 zerocopy = "0.2"
 # binaries
-bitflags = "1"
 env_logger = "0.5"
 getopts = "0.2"
 obj = "0.9"
