@@ -514,7 +514,7 @@ impl Application for Game {
                     Physics::Gpu { ref body, ref mut dirty, .. } => {
                         let needs_prepare = dirty.contains(DirtyBits::UNIFORMS_BUF);
                         if dirty.contains(DirtyBits::CONTROL) {
-                            let c = [agent.control.motor, agent.control.rudder, 0.0, 0.0];
+                            let c = [agent.control.rudder, agent.control.motor, 0.0, 0.0];
                             gpu.store.update_control(body, c);
                         }
                         *dirty = DirtyBits::empty();

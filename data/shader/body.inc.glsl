@@ -1,7 +1,8 @@
 #define MAX_WHEELS  4
 
 struct Body {
-    vec4 control; // X=rudder, Y=traction, Z=brake
+    vec4 control; // X=steer, Y=motor
+    vec4 engine; // X=rudder, Y=tracktion
     vec4 pos_scale;
     vec4 orientation;
     vec4 linear;

@@ -29,6 +29,7 @@ pub type GpuControl = [f32; 4];
 #[derive(zerocopy::AsBytes)]
 pub struct Data {
     control: GpuControl,
+    engine: [f32; 4],
     pos_scale: [f32; 4],
     orientation: [f32; 4],
     linear: [f32; 4],
@@ -42,6 +43,7 @@ pub struct Data {
 impl Data {
     const DUMMY: Self = Data {
         control: [0.0; 4],
+        engine: [0.0; 4],
         pos_scale: [0.0, 0.0, 0.0, 1.0],
         orientation: [0.0, 0.0, 0.0, 1.0],
         linear: [0.0; 4],
@@ -63,6 +65,7 @@ struct Uniforms {
 #[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct Constants {
     nature: [f32; 4],
+    car: [f32; 4],
     drag_free: [f32; 2],
     drag_speed: [f32; 2],
     drag_spring: [f32; 2],
@@ -264,6 +267,12 @@ impl GpuStore {
 
         let constants = Constants {
             nature: [common.nature.time_delta0, 0.0, common.nature.gravity, 0.0],
+            car: [
+                common.car.rudder_step,
+                common.car.rudder_max,
+                common.car.traction_incr,
+                common.car.traction_decr,
+            ],
             drag_free: common.drag.free.to_array(),
             drag_speed: common.drag.speed.to_array(),
             drag_spring: common.drag.spring.to_array(),
@@ -372,6 +381,7 @@ impl GpuStore {
         }
         let data = Data {
             control: [0.0; 4],
+            engine: [0.0; 4],
             pos_scale: gt.pos_scale,
             orientation: gt.orientation,
             linear: [0.0; 4],

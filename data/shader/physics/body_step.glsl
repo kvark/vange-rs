@@ -12,6 +12,7 @@ layout(set = 0, binding = 1, std140) uniform Uniforms {
 
 layout(set = 0, binding = 2, std140) uniform Constants {
     vec4 u_Nature; // X = time delta0, Z = gravity
+    vec4 u_Car; // X = rudder step, Y = rudder max, Z = tracktion incr, W = tracktion decr
     vec2 u_DragFree;
     vec2 u_DragSpeed;
     vec2 u_DragSpring;
@@ -20,12 +21,36 @@ layout(set = 0, binding = 2, std140) uniform Constants {
     vec2 u_DragColl;
 };
 
+vec4 apply_control(vec4 engine, vec4 control) {
+    const float max_tracktion = 4.0;
+    if (control.x != 0.0) {
+        engine.x = clamp(
+            engine.x + u_Car.x * 2.0 * u_Delta.x * control.x,
+            -u_Car.y,
+            u_Car.y
+        );
+    }
+    if (control.y != 0.0) {
+        engine.y = clamp(
+            engine.y + control.y * u_Delta.x * u_Car.z,
+            -max_tracktion,
+            max_tracktion
+        );
+    }
+    if (control.z != 0.0 && engine.y != 0.0) {
+        engine.y *= exp2(-u_Delta.x);
+    }
+    return engine;
+}
+
 void main() {
     uint index =
         gl_GlobalInvocationID.z * gl_WorkGroupSize.x * gl_NumWorkGroups.x * gl_WorkGroupSize.y * gl_NumWorkGroups.y +
         gl_GlobalInvocationID.y * gl_WorkGroupSize.x * gl_NumWorkGroups.x +
         gl_GlobalInvocationID.x;
     Body body = s_Bodies[index];
+
+    vec4 engine = apply_control(body.engine, body.control);
 
     float speed_correction_factor = u_Delta.x / u_Nature.x;
     vec3 vel = body.linear.xyz;
