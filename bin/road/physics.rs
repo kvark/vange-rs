@@ -1,8 +1,6 @@
-use crate::game::GpuLink;
 use vangers::{
     config, level, model, space,
     render::{
-        collision::GpuResult,
         debug::LineBuffer,
     },
 };
@@ -12,10 +10,7 @@ use cgmath::{
     prelude::*,
 };
 
-use std::{
-    f32::EPSILON,
-    sync::MutexGuard,
-};
+use std::{f32::EPSILON};
 
 const MAX_TRACTION: config::common::Traction = 4.0;
 
@@ -207,18 +202,8 @@ pub fn step(
     common: &config::common::Common,
     f_turbo: f32,
     f_brake: f32,
-    gpu_info: Option<(&mut GpuLink, &MutexGuard<GpuResult>)>,
     mut line_buffer: Option<&mut LineBuffer>,
 ) {
-    let gpu_depths = gpu_info.and_then(move |(link, latest)| {
-        // clean old links
-        link.collision_epochs.retain(|&epoch, _| epoch >= latest.epoch);
-        // return current range
-        link.collision_epochs
-            .get(&latest.epoch)
-            .map(|&start_index| &latest.depths[start_index..])
-    });
-
     let speed_correction_factor = dt / common.nature.time_delta0;
     let acc_global = AccelerationVectors {
         f: cgmath::vec3(0.0, 0.0, -common.nature.gravity),
@@ -291,43 +276,14 @@ pub fn step(
         };
         let poly_norm = cgmath::Vector3::from(poly.normal).normalize();
         if z_axis.dot(poly_norm) < 0.0 {
-            let cdata = match gpu_depths {
-                Some(depths) => {
-                    let depth = depths[bound_poly_id];
-                    if false {
-                        let original = collide_low(
-                            poly,
-                            &car.model.shape.samples,
-                            car.physics.scale_bound,
-                            &transform,
-                            level,
-                            &common.terrain,
-                        );
-                        if let Some(cp) = original.soft {
-                            println!("P[{}] has {} CPU depth and {} GPU depth", bound_poly_id, cp.depth, depth);
-                        }
-                    }
-                    CollisionData {
-                        soft: if depth != 0.0 {
-                            Some(CollisionPoint {
-                                pos: cgmath::Vector3::zero(), //TODO?
-                                depth,
-                            })
-                        } else { None },
-                        hard: None,
-                    }
-                }
-                None => {
-                    collide_low(
-                        poly,
-                        &car.model.shape.samples,
-                        car.physics.scale_bound,
-                        &transform,
-                        level,
-                        &common.terrain,
-                    )
-                }
-            };
+            let cdata = collide_low(
+                poly,
+                &car.model.shape.samples,
+                car.physics.scale_bound,
+                &transform,
+                level,
+                &common.terrain,
+            );
 
             log::debug!("\t\tcollide_low = {:?}", cdata);
             terrain_immersion += match cdata.soft {

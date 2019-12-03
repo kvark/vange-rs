@@ -8,7 +8,7 @@ use vangers::{
     render::{
         Render, RenderModel, ScreenTargets,
         body::{GpuBody, GpuStore, GpuStoreInit},
-        collision::{GpuCollider, GpuEpoch, GpuResult},
+        collision::{GpuCollider, GpuEpoch},
         debug::LineBuffer,
     },
 };
@@ -23,7 +23,6 @@ use futures::executor::LocalSpawner;
 
 use std::{
     collections::HashMap,
-    sync::MutexGuard,
 };
 
 
@@ -48,20 +47,24 @@ bitflags::bitflags! {
     }
 }
 
-pub struct GpuLink {
-    pub body: GpuBody,
-    pub collision_epochs: HashMap<GpuEpoch, usize>,
-    pub dirty: DirtyBits,
+pub enum Physics {
+    Cpu {
+        transform: space::Transform,
+        dynamo: physics::Dynamo,
+    },
+    Gpu {
+        body: GpuBody,
+        collision_epochs: HashMap<GpuEpoch, usize>,
+        dirty: DirtyBits,
+    },
 }
 
 pub struct Agent {
     _name: String,
     spirit: Spirit,
-    pub transform: space::Transform,
     pub car: config::car::CarInfo,
-    dynamo: physics::Dynamo,
     control: Control,
-    gpu_physics: Option<GpuLink>,
+    physics: Physics,
 }
 
 impl Agent {
@@ -79,77 +82,80 @@ impl Agent {
             disp: cgmath::vec3(coords.0 as f32, coords.1 as f32, height),
             rot: cgmath::Quaternion::from_angle_z(orientation),
         };
-        let gpu_physics = gpu_store.map(|store| GpuLink {
-            body: store.alloc(&transform, &car.model, &car.physics),
-            collision_epochs: HashMap::default(),
-            dirty: DirtyBits::UNIFORMS_BUF,
-        });
         Agent {
             _name: name,
             spirit: Spirit::Other,
-            transform,
             car: car.clone(),
-            dynamo: physics::Dynamo::default(),
             control: Control::default(),
-            gpu_physics,
+            physics: match gpu_store {
+                Some(store) => Physics::Gpu {
+                    body: store.alloc(&transform, &car.model, &car.physics),
+                    collision_epochs: HashMap::default(),
+                    dirty: DirtyBits::UNIFORMS_BUF,
+                },
+                None => Physics::Cpu {
+                    transform,
+                    dynamo: physics::Dynamo::default(),
+                },
+            },
         }
     }
 
-    fn apply_control(&mut self, dt: f32, common: &config::common::Common) {
+    fn cpu_apply_control(&mut self, dt: f32, common: &config::common::Common) {
+        let dynamo = match self.physics {
+            Physics::Cpu { ref mut dynamo, .. } => dynamo,
+            Physics::Gpu { .. } => return,
+        };
         if self.control.rudder != 0.0 {
-            let angle = self.dynamo.rudder.0 +
+            let angle = dynamo.rudder.0 +
                 common.car.rudder_step * 2.0 * dt * self.control.rudder;
-            self.dynamo.rudder.0 = angle
+            dynamo.rudder.0 = angle
                 .min(common.car.rudder_max)
                 .max(-common.car.rudder_max);
         }
         if self.control.motor != 0.0 {
-            self.dynamo
+            dynamo
                 .change_traction(self.control.motor * dt * common.car.traction_incr);
         }
-        if self.control.brake && self.dynamo.traction != 0.0 {
-            self.dynamo.traction *= (-dt).exp2();
+        if self.control.brake && dynamo.traction != 0.0 {
+            dynamo.traction *= (-dt).exp2();
         }
     }
 
-    fn step(
+    fn cpu_step(
         &mut self,
         dt: f32,
         level: &level::Level,
         common: &config::common::Common,
-        gpu_latest: Option<&MutexGuard<GpuResult>>,
         line_buffer: Option<&mut LineBuffer>,
     ) {
+        let (dynamo, transform) = match self.physics {
+            Physics::Cpu { ref mut transform, ref mut dynamo } => (dynamo, transform),
+            Physics::Gpu { .. } => return,
+        };
         physics::step(
-            &mut self.dynamo,
-            &mut self.transform,
+            dynamo,
+            transform,
             dt,
             &self.car,
             level,
             common,
             if self.control.turbo { common.global.k_traction_turbo } else { 1.0 },
             if self.control.brake { common.global.f_brake_max } else { 0.0 },
-            match (gpu_latest, self.gpu_physics.as_mut()) {
-                (Some(latest), Some(link)) => Some((link, latest)),
-                _ => None,
-            },
             line_buffer,
         )
     }
 
     fn to_render_model(&self) -> RenderModel {
+        let (gpu_body, transform) = match self.physics {
+            Physics::Cpu { ref transform, .. } => (&GpuBody::ZERO, transform.clone()),
+            Physics::Gpu { ref body, .. } => (body, space::Transform::one()),
+        };
         RenderModel {
             model: &self.car.model,
-            gpu_body: match self.gpu_physics {
-                Some(ref link) => &link.body,
-                None => &GpuBody::ZERO,
-            },
+            gpu_body,
             locals_buf: &self.car.locals_buf,
-            transform: if self.gpu_physics.is_some() {
-                space::Transform::one()
-            } else {
-                self.transform.clone()
-            },
+            transform,
             debug_shape_scale: match self.spirit {
                 Spirit::Player => Some(self.car.physics.scale_bound),
                 Spirit::Other => None,
@@ -362,7 +368,10 @@ impl Application for Game {
             } => match key {
                 Key::Escape => return false,
                 Key::P => {
-                    let center = &player.transform;
+                    let center = match player.physics {
+                        Physics::Cpu { ref transform, .. } => transform.clone(),
+                        Physics::Gpu { .. } => space::Transform::one(),
+                    };
                     self.tick = None;
                     if self.is_paused {
                         self.is_paused = false;
@@ -370,7 +379,7 @@ impl Application for Game {
                         self.cam.rot = cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0);
                     } else {
                         self.is_paused = true;
-                        self.cam.focus_on(center);
+                        self.cam.focus_on(&center);
                     }
                 }
                 Key::Comma => self.tick = Some(-1.0),
@@ -378,9 +387,11 @@ impl Application for Game {
                 Key::W => self.spin_ver = 1.0,
                 Key::S => self.spin_ver = -1.0,
                 Key::R => {
-                    player.transform.rot = cgmath::One::one();
-                    player.dynamo.linear_velocity = cgmath::Vector3::zero();
-                    player.dynamo.angular_velocity = cgmath::Vector3::zero();
+                    if let Physics::Cpu { ref mut transform ,ref mut dynamo } = player.physics {
+                        transform.rot = cgmath::One::one();
+                        dynamo.linear_velocity = cgmath::Vector3::zero();
+                        dynamo.angular_velocity = cgmath::Vector3::zero();
+                    }
                 }
                 Key::A => self.spin_hor = -1.0,
                 Key::D => self.spin_hor = 1.0,
@@ -421,58 +432,62 @@ impl Application for Game {
         delta: f32,
         spawner: &LocalSpawner,
     ) -> Vec<wgpu::CommandBuffer> {
-        let pid = self.agents
-            .iter()
-            .position(|a| a.spirit == Spirit::Player)
-            .unwrap();
+        {
+            let player = self.agents
+                .iter_mut()
+                .find(|a| a.spirit == Spirit::Player)
+                .unwrap();
+            let target = match player.physics {
+                Physics::Cpu { ref transform, .. } => transform.clone(),
+                Physics::Gpu { .. } => space::Transform::one(),
+            };
 
-        if self.is_paused {
-            let player = &mut self.agents[pid];
-            if let Some(tick) = self.tick.take() {
-                self.line_buffer.clear();
-                player.step(
-                    tick * self.max_quant,
-                    &self.level,
-                    &self.db.common,
-                    None,
-                    Some(&mut self.line_buffer),
+            if self.is_paused {
+                if let Some(tick) = self.tick.take() {
+                    self.line_buffer.clear();
+                    player.cpu_step(
+                        tick * self.max_quant,
+                        &self.level,
+                        &self.db.common,
+                        Some(&mut self.line_buffer),
+                    );
+                }
+
+                self.cam.rotate_focus(
+                    &target,
+                    cgmath::Rad(2.0 * delta * self.spin_hor),
+                    cgmath::Rad(delta * self.spin_ver),
                 );
+
+                return Vec::new();
             }
 
-            self.cam.rotate_focus(
-                &player.transform,
-                cgmath::Rad(2.0 * delta * self.spin_hor),
-                cgmath::Rad(delta * self.spin_ver),
-            );
+            player.control.rudder = self.spin_hor;
+            player.control.motor = 1.0 * self.spin_ver;
 
-            return Vec::new();
-        }
-
-        self.agents[pid].control.rudder = self.spin_hor;
-        self.agents[pid].control.motor = 1.0 * self.spin_ver;
-
-        if true {
-            self.cam.follow(
-                &self.agents[pid].transform,
-                delta,
-                &space::Follow {
-                    transform: cgmath::Decomposed {
-                        disp: cgmath::vec3(0.0, -300.0, 500.0),
-                        rot: cgmath::Quaternion::from_angle_x(cgmath::Rad(0.7)),
-                        scale: 1.0,
+            if true {
+                self.cam.follow(
+                    &target,
+                    delta,
+                    &space::Follow {
+                        transform: cgmath::Decomposed {
+                            disp: cgmath::vec3(0.0, -300.0, 500.0),
+                            rot: cgmath::Quaternion::from_angle_x(cgmath::Rad(0.7)),
+                            scale: 1.0,
+                        },
+                        speed: 100.0,
+                        fix_z: true,
                     },
-                    speed: 100.0,
-                    fix_z: true,
-                },
-            );
-        } else {
-            self.cam.look_by(
-                &self.agents[pid].transform,
-                &space::Direction {
-                    view: cgmath::vec3(0.0, 1.0, -3.0),
-                    height: 200.0,
-                },
-            );
+                );
+            } else {
+                self.cam.look_by(
+                    &target,
+                    &space::Direction {
+                        view: cgmath::vec3(0.0, 1.0, -3.0),
+                        height: 200.0,
+                    },
+                );
+            }
         }
 
         const TIME_HACK: f32 = 1.0;
@@ -495,17 +510,17 @@ impl Application for Game {
 
             // initialize new entries, update
             for agent in self.agents.iter_mut() {
-                let needs_prepare = match agent.gpu_physics {
-                    Some(ref mut link) => {
-                        let needs_prepare = link.dirty.contains(DirtyBits::UNIFORMS_BUF);
-                        if link.dirty.contains(DirtyBits::CONTROL) {
+                let needs_prepare = match agent.physics {
+                    Physics::Gpu { ref body, ref mut dirty, .. } => {
+                        let needs_prepare = dirty.contains(DirtyBits::UNIFORMS_BUF);
+                        if dirty.contains(DirtyBits::CONTROL) {
                             let c = [agent.control.motor, agent.control.rudder, 0.0, 0.0];
-                            gpu.store.update_control(&link.body, c);
+                            gpu.store.update_control(body, c);
                         }
-                        link.dirty = DirtyBits::empty();
+                        *dirty = DirtyBits::empty();
                         needs_prepare
                     }
-                    None => false,
+                    Physics::Cpu { .. } => false,
                 };
                 if needs_prepare {
                     agent.to_render_model().prepare(&mut encoder, device);
@@ -516,8 +531,8 @@ impl Application for Game {
             while physics_dt > self.max_quant {
                 let mut session = gpu.collider.begin(&mut encoder, &self.render.terrain, spawner);
                 for agent in &mut self.agents {
-                    if let Some(ref mut link) = agent.gpu_physics {
-                        session.add(&agent.car.model.shape, link.body.index());
+                    if let Physics::Gpu { ref body, .. } = agent.physics {
+                        session.add(&agent.car.model.shape, body.index());
                     }
                 }
                 let (pre, _post, ranges) = session.finish(device);
@@ -529,9 +544,9 @@ impl Application for Game {
 
             let mut session = gpu.collider.begin(&mut encoder, &self.render.terrain, spawner);
             for agent in &mut self.agents {
-                if let Some(ref mut link) = agent.gpu_physics {
-                    let start_index = session.add(&agent.car.model.shape, link.body.index());
-                    let old = link.collision_epochs.insert(session.epoch, start_index);
+                if let Physics::Gpu { ref body, ref mut collision_epochs, .. } = agent.physics {
+                    let start_index = session.add(&agent.car.model.shape, body.index());
+                    let old = collision_epochs.insert(session.epoch, start_index);
                     assert_eq!(old, None);
                 }
             }
@@ -545,22 +560,18 @@ impl Application for Game {
             combs
         } else {
             for a in self.agents.iter_mut() {
-                a.apply_control(
+                a.cpu_apply_control(
                     input_factor,
                     &self.db.common,
                 );
             }
 
             while physics_dt > self.max_quant {
-                for a in self.agents
-                    .iter_mut()
-                    .filter(|a| a.gpu_physics.is_none())
-                {
-                    a.step(
+                for a in self.agents.iter_mut() {
+                    a.cpu_step(
                         self.max_quant,
                         &self.level,
                         &self.db.common,
-                        None,
                         None,
                     );
                 }
@@ -569,19 +580,15 @@ impl Application for Game {
 
             self.line_buffer.clear();
 
-            for a in self.agents
-                .iter_mut()
-                .filter(|a| a.gpu_physics.is_none())
-            {
+            for a in self.agents.iter_mut() {
                 let lbuf = match a.spirit {
                     Spirit::Player => Some(&mut self.line_buffer),
                     Spirit::Other => None,
                 };
-                a.step(
+                a.cpu_step(
                     physics_dt,
                     &self.level,
                     &self.db.common,
-                    None,
                     lbuf,
                 );
             }
@@ -618,7 +625,9 @@ impl Application for Game {
             .map(Agent::to_render_model)
             .collect::<Vec<_>>();
         for rm in models.iter() {
-            rm.prepare(&mut encoder, device);
+            if !rm.gpu_body.is_zero() {
+                rm.prepare(&mut encoder, device);
+            }
         }
 
         self.render.draw_world(

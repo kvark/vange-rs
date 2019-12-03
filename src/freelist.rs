@@ -11,6 +11,10 @@ impl<T> Id<T> {
     pub fn index(&self) -> usize {
         self.0 as usize
     }
+
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0 && self.1 == 0
+    }
 }
 
 pub struct FreeList<T> {
