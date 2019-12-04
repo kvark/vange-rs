@@ -30,9 +30,8 @@ pub type GpuControl = [f32; 4];
 #[derive(zerocopy::AsBytes)]
 struct Physics {
     scale: [f32; 4],
-    mobility: f32,
+    mobility_ship: [f32; 4],
     speed: [f32; 4],
-    //ship
 }
 
 #[repr(C)]
@@ -45,7 +44,7 @@ pub struct Data {
     linear: [f32; 4],
     angular: [f32; 4],
     collision: [f32; 4],
-    model: [f32; 2],
+    model: [f32; 4],
     jacobian_inv: [[f32; 4]; 4],
     physics: Physics,
     wheels: [[f32; 4]; MAX_WHEELS],
@@ -60,11 +59,11 @@ impl Data {
         linear: [0.0; 4],
         angular: [0.0; 4],
         collision: [0.0; 4],
-        model: [0.0; 2],
+        model: [0.0; 4],
         jacobian_inv: [[0.0; 4]; 4],
         physics: Physics {
             scale: [0.0; 4],
-            mobility: 0.0,
+            mobility_ship: [0.0; 4],
             speed: [0.0; 4],
         },
         wheels: [[0.0; 4]; MAX_WHEELS],
@@ -84,7 +83,7 @@ struct Constants {
     global_speed: [f32; 4],
     global_mobility: [f32; 4],
     car: [f32; 4],
-    impulse_elastic: [f32; 2],
+    impulse_elastic: [f32; 4],
     impulse: [f32; 4],
     drag_free: [f32; 2],
     drag_speed: [f32; 2],
@@ -92,7 +91,7 @@ struct Constants {
     drag_abs_min: [f32; 2],
     drag_abs_stop: [f32; 2],
     drag_coll: [f32; 2],
-    drag: [f32; 4],
+    drag: [f32; 2],
 }
 
 pub type GpuBody = freelist::Id<Data>;
@@ -319,8 +318,8 @@ impl GpuStore {
             ],
             global_mobility: [
                 common.global.mobility_factor,
-                common.global.k_traction_turbo,
-                common.global.f_brake_max,
+                0.0,
+                0.0,
                 0.0,
             ],
             car: [
@@ -332,6 +331,8 @@ impl GpuStore {
             impulse_elastic: [
                 common.impulse.elastic_restriction,
                 common.impulse.elastic_time_scale_factor,
+                0.0,
+                0.0,
             ],
             impulse: [
                 common.impulse.rolling_scale,
@@ -346,10 +347,8 @@ impl GpuStore {
             drag_abs_stop: common.drag.abs_stop.to_array(),
             drag_coll: common.drag.coll.to_array(),
             drag: [
-                0.0,
                 common.drag.wheel_speed,
                 common.drag.z,
-                0.0,
             ],
         };
         let buf_constants = device.create_buffer_with_data(
@@ -451,12 +450,10 @@ impl GpuStore {
             wo[0] = wi.pos[0];
             wo[1] = wi.pos[1];
             wo[2] = wi.pos[2];
-            if wi.steer != 0 {
-                wo[3] = 1.0;
-            }
+            wo[3] = if wi.steer != 0 { 1.0 } else { -1.0 };
         }
         let data = Data {
-            control: [0.0; 4],
+            control: [0.0, 0.0, 1.0, 0.0],
             engine: [0.0; 4],
             pos_scale: gt.pos_scale,
             orientation: gt.orientation,
@@ -466,6 +463,8 @@ impl GpuStore {
             model: [
                 model.body.bbox.2,
                 model.body.physics.volume,
+                0.0,
+                0.0,
             ],
             jacobian_inv: cgmath::Matrix4::from(matrix).into(),
             physics: Physics {
@@ -475,7 +474,12 @@ impl GpuStore {
                     car_physics.scale_box,
                     car_physics.z_offset_of_mass_center,
                 ],
-                mobility: car_physics.mobility_factor,
+                mobility_ship: [
+                    car_physics.mobility_factor,
+                    car_physics.k_archimedean,
+                    car_physics.k_water_traction,
+                    car_physics.k_water_rudder,
+                ],
                 speed: [
                     car_physics.speed_factor,
                     car_physics.water_speed_factor,

@@ -519,7 +519,13 @@ impl Application for Game {
                         *are_uniforms_ready = true;
                         if *last_control != agent.control {
                             *last_control = agent.control.clone();
-                            let c = [agent.control.rudder, agent.control.motor, 0.0, 0.0];
+                            let glob = &self.db.common.global;
+                            let c = [
+                                agent.control.rudder,
+                                agent.control.motor,
+                                if agent.control.turbo { glob.k_traction_turbo } else { 1.0 },
+                                if agent.control.brake { glob.f_brake_max } else { 0.0 },
+                            ];
                             gpu.store.update_control(body, c);
                         }
                         needs_prepare
