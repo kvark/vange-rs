@@ -30,7 +30,7 @@ void main() {
     Polygon poly = get_shape_polygon();
     vec4 pos_scale = s_Bodies[u_Indices.x].pos_scale;
     vec4 orientation = s_Bodies[u_Indices.x].orientation;
-    float scale = pos_scale.w * s_Bodies[u_Indices.x].scale_volume_zomc.x;
+    float scale = pos_scale.w * s_Bodies[u_Indices.x].radius_volume_zomc_scale.w;
     vec3 base_pos = qrot(orientation, poly.vertex.xyz) * scale;
     v_World = base_pos + pos_scale.xyz;
 

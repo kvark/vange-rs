@@ -36,7 +36,7 @@ pub struct Data {
     linear: [f32; 4],
     angular: [f32; 4],
     collision: [f32; 4],
-    scale_volume_zomc: [f32; 4],
+    radius_volume_zomc_scale: [f32; 4],
     jacobian_inv: [[f32; 4]; 4],
     wheels: [[f32; 4]; MAX_WHEELS],
 }
@@ -50,7 +50,7 @@ impl Data {
         linear: [0.0; 4],
         angular: [0.0; 4],
         collision: [0.0; 4],
-        scale_volume_zomc: [1.0, 1.0, 0.0, 0.0],
+        radius_volume_zomc_scale: [0.0; 4],
         jacobian_inv: [[0.0; 4]; 4],
         wheels: [[0.0; 4]; MAX_WHEELS],
     };
@@ -67,6 +67,8 @@ struct Uniforms {
 struct Constants {
     nature: [f32; 4],
     car: [f32; 4],
+    impulse_elastic: [f32; 2],
+    impulse: [f32; 4],
     drag_free: [f32; 2],
     drag_speed: [f32; 2],
     drag_spring: [f32; 2],
@@ -292,6 +294,16 @@ impl GpuStore {
                 common.car.traction_incr,
                 common.car.traction_decr,
             ],
+            impulse_elastic: [
+                common.impulse.elastic_restriction,
+                common.impulse.elastic_time_scale_factor,
+            ],
+            impulse: [
+                common.impulse.rolling_scale,
+                common.impulse.normal_threshold,
+                common.impulse.k_wheel,
+                common.impulse.k_friction,
+            ],
             drag_free: common.drag.free.to_array(),
             drag_speed: common.drag.speed.to_array(),
             drag_spring: common.drag.spring.to_array(),
@@ -410,11 +422,11 @@ impl GpuStore {
             linear: [0.0; 4],
             angular: [0.0; 4],
             collision: [0.0; 4],
-            scale_volume_zomc: [
-                car_physics.scale_bound,
+            radius_volume_zomc_scale: [
+                model.body.bbox.2,
                 model.body.physics.volume,
                 car_physics.z_offset_of_mass_center,
-                0.0,
+                car_physics.scale_bound,
             ],
             jacobian_inv: cgmath::Matrix4::from(matrix).into(),
             wheels,

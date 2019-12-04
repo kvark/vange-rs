@@ -8,7 +8,7 @@ struct Body {
     vec4 linear;
     vec4 angular;
     vec4 springs;
-    vec4 scale_volume_zomc; // X=shape scale, Y=volume, Z = Z offset of mass center
+    vec4 radius_volume_zomc_scale; // X = avg radius, Y=volume, Z = Z offset of mass center, W = shape scale
     mat4 jacobian_inv;
     vec4 wheels[MAX_WHEELS]; //XYZ = position, W = steer
 };
