@@ -12,6 +12,8 @@ layout(set = 0, binding = 1, std140) uniform Uniforms {
 
 layout(set = 0, binding = 2, std140) uniform Constants {
     vec4 u_Nature; // X = time delta0, Z = gravity
+    vec4 u_GlobalSpeed; // X = main, Y = water, Z = air, W = underground
+    vec4 u_GlobalMobility; // X = main, Y = turbo, Z = brake max
     vec4 u_Car; // X = rudder step, Y = rudder max, Z = tracktion incr, W = tracktion decr
     vec2 u_ImpulseElastic; // X = restriction, Y = time scale
     vec4 u_Impulse; // X = rolling scale, Y = normal_threshold, Z = K_wheel, W = K_friction
@@ -21,6 +23,7 @@ layout(set = 0, binding = 2, std140) uniform Constants {
     vec2 u_DragAbsMin;
     vec2 u_DragAbsStop;
     vec2 u_DragColl;
+    vec4 u_Drag; // Y = wheel speed, Z = drag Z
 };
 
 vec4 apply_control(vec4 engine, vec4 control) {
@@ -75,8 +78,20 @@ void main() {
     vec3 v_accel = qrot(irot, vec3(0.0, 0.0, body.springs.z - u_Nature.z));
     vec3 w_accel = qrot(irot, vec3(body.springs.xy, 0.0));
 
-    vec3 tmp = vec3(0.0, 0.0, body.radius_volume_zomc_scale.z * body.pos_scale.w);
-    w_accel -= u_Nature.z * cross(tmp, z_axis);
+    if (spring_touch || wheels_touch) {
+        vec3 tmp = vec3(0.0, 0.0, body.physics.scale.w * body.pos_scale.w);
+        w_accel -= u_Nature.z * cross(tmp, z_axis);
+        float vz = dot(z_axis, vel);
+        if (vz < -10.0) {
+            drag.x *= pow(u_Drag.z, -vz);
+        }
+    }
+
+    if (wheels_touch) {
+        float speed = log(u_Drag.y) * body.physics.mobility
+            * u_GlobalSpeed.x / body.physics.speed.x;
+        vel.y *= pow(1.0 + speed, speed_correction_factor);
+    }
 
     vel += u_Delta.x * v_accel;
     wel += u_Delta.x * (mat3(body.jacobian_inv) * w_accel);
@@ -86,7 +101,7 @@ void main() {
     }
 
     if (any(greaterThan(mag * drag, u_DragAbsStop))) {
-        vec3 local_z_scaled = z_axis * (body.radius_volume_zomc_scale.x * u_Impulse.x);
+        vec3 local_z_scaled = (body.model.x * u_Impulse.x) * z_axis;
         float r_diff_sign = 1.0; //TODO: down_minus_up.signum() as f32;
         vec3 vs = vel - r_diff_sign * cross(local_z_scaled, wel);
 

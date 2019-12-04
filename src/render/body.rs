@@ -28,6 +28,15 @@ pub type GpuControl = [f32; 4];
 
 #[repr(C)]
 #[derive(zerocopy::AsBytes)]
+struct Physics {
+    scale: [f32; 4],
+    mobility: f32,
+    speed: [f32; 4],
+    //ship
+}
+
+#[repr(C)]
+#[derive(zerocopy::AsBytes)]
 pub struct Data {
     control: GpuControl,
     engine: [f32; 4],
@@ -36,8 +45,9 @@ pub struct Data {
     linear: [f32; 4],
     angular: [f32; 4],
     collision: [f32; 4],
-    radius_volume_zomc_scale: [f32; 4],
+    model: [f32; 2],
     jacobian_inv: [[f32; 4]; 4],
+    physics: Physics,
     wheels: [[f32; 4]; MAX_WHEELS],
 }
 
@@ -50,8 +60,13 @@ impl Data {
         linear: [0.0; 4],
         angular: [0.0; 4],
         collision: [0.0; 4],
-        radius_volume_zomc_scale: [0.0; 4],
+        model: [0.0; 2],
         jacobian_inv: [[0.0; 4]; 4],
+        physics: Physics {
+            scale: [0.0; 4],
+            mobility: 0.0,
+            speed: [0.0; 4],
+        },
         wheels: [[0.0; 4]; MAX_WHEELS],
     };
 }
@@ -66,6 +81,8 @@ struct Uniforms {
 #[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct Constants {
     nature: [f32; 4],
+    global_speed: [f32; 4],
+    global_mobility: [f32; 4],
     car: [f32; 4],
     impulse_elastic: [f32; 2],
     impulse: [f32; 4],
@@ -75,6 +92,7 @@ struct Constants {
     drag_abs_min: [f32; 2],
     drag_abs_stop: [f32; 2],
     drag_coll: [f32; 2],
+    drag: [f32; 4],
 }
 
 pub type GpuBody = freelist::Id<Data>;
@@ -287,7 +305,24 @@ impl GpuStore {
         let buf_ranges = device.create_buffer(&desc_ranges);
 
         let constants = Constants {
-            nature: [common.nature.time_delta0, 0.0, common.nature.gravity, 0.0],
+            nature: [
+                common.nature.time_delta0,
+                0.0,
+                common.nature.gravity,
+                0.0,
+            ],
+            global_speed: [
+                common.global.speed_factor,
+                common.global.water_speed_factor,
+                common.global.air_speed_factor,
+                common.global.underground_speed_factor,
+            ],
+            global_mobility: [
+                common.global.mobility_factor,
+                common.global.k_traction_turbo,
+                common.global.f_brake_max,
+                0.0,
+            ],
             car: [
                 common.car.rudder_step,
                 common.car.rudder_max,
@@ -310,6 +345,12 @@ impl GpuStore {
             drag_abs_min: common.drag.abs_min.to_array(),
             drag_abs_stop: common.drag.abs_stop.to_array(),
             drag_coll: common.drag.coll.to_array(),
+            drag: [
+                0.0,
+                common.drag.wheel_speed,
+                common.drag.z,
+                0.0,
+            ],
         };
         let buf_constants = device.create_buffer_with_data(
             [constants].as_bytes(),
@@ -422,13 +463,26 @@ impl GpuStore {
             linear: [0.0; 4],
             angular: [0.0; 4],
             collision: [0.0; 4],
-            radius_volume_zomc_scale: [
+            model: [
                 model.body.bbox.2,
                 model.body.physics.volume,
-                car_physics.z_offset_of_mass_center,
-                car_physics.scale_bound,
             ],
             jacobian_inv: cgmath::Matrix4::from(matrix).into(),
+            physics: Physics {
+                scale: [
+                    car_physics.scale_size,
+                    car_physics.scale_bound,
+                    car_physics.scale_box,
+                    car_physics.z_offset_of_mass_center,
+                ],
+                mobility: car_physics.mobility_factor,
+                speed: [
+                    car_physics.speed_factor,
+                    car_physics.water_speed_factor,
+                    car_physics.air_speed_factor,
+                    car_physics.underground_speed_factor,
+                ],
+            },
             wheels,
         };
 
