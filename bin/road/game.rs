@@ -506,7 +506,9 @@ impl Application for Game {
         };
 
         if let Some(ref mut gpu) = self.gpu {
-            let mut combs = Vec::new();
+            let mut prep_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                todo: 0,
+            });
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 todo: 0,
             });
@@ -539,14 +541,17 @@ impl Application for Game {
             gpu.store.update_entries(device, &mut encoder);
 
             while physics_dt > self.max_quant {
-                let mut session = gpu.collider.begin(&mut encoder, &self.render.terrain, spawner);
+                let mut session = gpu.collider.begin(
+                    &mut encoder,
+                    &self.render.terrain,
+                    spawner,
+                );
                 for agent in &mut self.agents {
                     if let Physics::Gpu { ref body, .. } = agent.physics {
                         session.add(&agent.car.model.shape, body.index());
                     }
                 }
-                let (comb, ranges) = session.finish(device);
-                combs.push(comb);
+                let ranges = session.finish(&mut prep_encoder, device);
 
                 gpu.store.step(device, &mut encoder, self.max_quant, ranges);
                 physics_dt -= self.max_quant;
@@ -560,14 +565,11 @@ impl Application for Game {
                     assert_eq!(old, None);
                 }
             }
-            let (comb, ranges) = session.finish(device);
-            combs.push(comb);
-
+            let ranges = session.finish(&mut prep_encoder, device);
             gpu.store.step(device, &mut encoder, physics_dt, ranges);
             gpu.store.produce_gpu_results(device, &mut encoder);
-            combs.push(encoder.finish());
 
-            combs
+            vec![prep_encoder.finish(), encoder.finish()]
         } else {
             for a in self.agents.iter_mut() {
                 a.cpu_apply_control(

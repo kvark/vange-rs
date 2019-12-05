@@ -14,7 +14,7 @@ struct Body {
     vec4 linear;
     vec4 angular;
     vec4 springs;
-    vec4 model; // X = avg radius, Y = volume
+    vec4 model; // X = avg radius
     mat4 jacobian_inv;
     Physics physics;
     vec4 wheels[MAX_WHEELS]; //XYZ = position, W = steer

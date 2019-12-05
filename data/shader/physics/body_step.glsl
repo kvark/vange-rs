@@ -10,24 +10,29 @@ layout(set = 0, binding = 1, std140) uniform Uniforms {
     vec4 u_Delta;
 };
 
+struct DragConstants {
+    vec2 free;
+    vec2 speed;
+    vec2 spring;
+    vec2 abs_min;
+    vec2 abs_stop;
+    vec2 coll;
+    vec2 other; // X = wheel speed, Y = drag Z
+};
+
 layout(set = 0, binding = 2, std140) uniform Constants {
     vec4 u_Nature; // X = time delta0, Z = gravity
     vec4 u_GlobalSpeed; // X = main, Y = water, Z = air, W = underground
     vec4 u_GlobalMobility; // X = mobility
-    vec4 u_Car; // X = rudder step, Y = rudder max, Z = tracktion incr, W = tracktion decr
+    vec4 u_Car; // X = rudder step, Y = rudder max, Z = traction incr, W = traction decr
     vec4 u_ImpulseElastic; // X = restriction, Y = time scale
     vec4 u_Impulse; // X = rolling scale, Y = normal_threshold, Z = K_wheel, W = K_friction
-    vec2 u_DragFree;
-    vec2 u_DragSpeed;
-    vec2 u_DragSpring;
-    vec2 u_DragAbsMin;
-    vec2 u_DragAbsStop;
-    vec2 u_DragColl;
-    vec2 u_Drag; // X = wheel speed, Y = drag Z
+    DragConstants u_Drag;
+    vec4 u_ContactElastic; // X = wheel, Y = spring, Z = xy, W = db collision
 };
 
 vec4 apply_control(vec4 engine, vec4 control) {
-    const float max_tracktion = 4.0;
+    const float max_traction = 4.0;
     if (control.x != 0.0) {
         engine.x = clamp(
             engine.x + u_Car.x * 2.0 * u_Delta.x * control.x,
@@ -38,8 +43,8 @@ vec4 apply_control(vec4 engine, vec4 control) {
     if (control.y != 0.0) {
         engine.y = clamp(
             engine.y + control.y * u_Delta.x * u_Car.z,
-            -max_tracktion,
-            max_tracktion
+            -max_traction,
+            max_traction
         );
     }
     if (control.z != 0.0 && engine.y != 0.0) {
@@ -74,7 +79,7 @@ void main() {
     vec3 wel = body.angular.xyz;
 
     vec2 mag = vec2(length(vel), length(wel));
-    vec2 drag = u_DragFree.xy * pow(u_DragSpeed, vec2(mag.x, mag.y*mag.y));
+    vec2 drag = u_Drag.free.xy * pow(u_Drag.speed, vec2(mag.x, mag.y*mag.y));
 
     vec4 irot = qinv(body.orientation);
     vec3 z_axis = qrot(irot, vec3(0.0, 0.0, 1.0));
@@ -86,9 +91,10 @@ void main() {
 
     vec3 v_accel = qrot(irot, vec3(0.0, 0.0, body.springs.z - u_Nature.z));
     vec3 w_accel = qrot(irot, vec3(body.springs.xy, 0.0));
+    mat3 j_inv = mat3(body.jacobian_inv) / (body.pos_scale.w * body.pos_scale.w);
 
     if (wheels_touch) {
-        float speed = log(u_Drag.x) * body.physics.mobility_ship.x
+        float speed = log(u_Drag.other.x) * body.physics.mobility_ship.x
             * u_GlobalSpeed.x / body.physics.speed.x;
         vel.y *= pow(1.0 + speed, speed_correction_factor);
     }
@@ -97,7 +103,6 @@ void main() {
         v_accel.y += body.physics.mobility_ship.x *
             u_GlobalMobility.x * engine.y * body.control.z;
         vec3 rudder_vec = vec3(cos(engine.x), -sin(engine.x), 0.0);
-        mat3 j_inv = mat3(body.jacobian_inv);
 
         for (int i=0; i<MAX_WHEELS; ++i) {
             if (body.wheels[i].w != 0.0) {
@@ -118,7 +123,7 @@ void main() {
     }
 
     if (spring_touch) {
-        drag *= u_DragSpring;
+        drag *= u_Drag.spring;
     }
 
     if (spring_touch || wheels_touch) {
@@ -126,27 +131,27 @@ void main() {
         w_accel -= u_Nature.z * cross(tmp, z_axis);
         float vz = dot(z_axis, vel);
         if (vz < -10.0) {
-            drag.x *= pow(u_Drag.y, -vz);
+            drag.x *= pow(u_Drag.other.y, -vz);
         }
     }
 
     vel += u_Delta.x * v_accel;
-    wel += u_Delta.x * (mat3(body.jacobian_inv) * w_accel);
+    wel += u_Delta.x * (j_inv * w_accel);
 
-    if (stand_on_wheels && all(lessThan(mag, u_DragAbsMin))) {
-        drag *= pow(u_DragColl, drag / max(mag, vec2(0.01)));
+    if (stand_on_wheels && all(lessThan(mag, u_Drag.abs_min))) {
+        drag *= pow(u_Drag.coll, drag / max(mag, vec2(0.01)));
     }
 
-    if (any(greaterThan(mag * drag, u_DragAbsStop))) {
+    if (any(greaterThan(mag * drag, u_Drag.abs_stop))) {
         vec3 local_z_scaled = (body.model.x * u_Impulse.x) * z_axis;
-        float r_diff_sign = 1.0; //TODO: down_minus_up.signum() as f32;
+        float r_diff_sign = sign(z_axis.z);
         vec3 vs = vel - r_diff_sign * cross(local_z_scaled, wel);
 
         vec4 vel_rot_inv = qmake(wel / max(mag.y, 0.01), -u_Delta.x * mag.y);
         vel = qrot(vel_rot_inv, vel);
         wel = qrot(vel_rot_inv, wel);
         s_Bodies[index].pos_scale.xyz = body.pos_scale.xyz + qrot(body.orientation, vs) * u_Delta.x;
-        s_Bodies[index].orientation = qmul(body.orientation, qinv(vel_rot_inv));
+        s_Bodies[index].orientation = normalize(qmul(body.orientation, qinv(vel_rot_inv)));
     }
 
     vec2 drag_corrected = pow(drag, vec2(speed_correction_factor));

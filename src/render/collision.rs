@@ -22,17 +22,18 @@ use std::{
 #[repr(C)]
 #[derive(Clone, Copy, zerocopy::FromBytes)]
 pub struct PolygonData {
-    raw: u32,
+    middle: u32,
+    depth: u32,
 }
 
 impl PolygonData {
     pub fn average(&self) -> f32 {
         const DEPTH_BITS: usize = 20; // has to match the shader!
-        let count = self.raw >> DEPTH_BITS;
+        let count = self.depth >> DEPTH_BITS;
         if count == 0 {
             0.0
         } else {
-            (self.raw & ((1<<DEPTH_BITS) - 1)) as f32 / (count as f32)
+            (self.depth & ((1<<DEPTH_BITS) - 1)) as f32 / (count as f32)
         }
     }
 }
@@ -463,28 +464,29 @@ impl<'this> GpuSession<'this, '_> {
         offset
     }
 
-    pub fn finish(self, device: &wgpu::Device) -> (wgpu::CommandBuffer, &'this [GpuRange]) {
+    pub fn finish(
+        self,
+        prep_encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+    ) -> &'this [GpuRange] {
         let mut num_groups = self.polygon_id as u32 / CLEAR_WORK_GROUP_WIDTH;
         if num_groups * CLEAR_WORK_GROUP_WIDTH < self.polygon_id as u32 {
             num_groups += 1;
         }
         *self.dirty_group_count = (*self.dirty_group_count).max(num_groups);
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            todo: 0,
-        });
         let temp = device.create_buffer_with_data(
             self.object_locals.as_bytes(),
             wgpu::BufferUsage::COPY_SRC,
         );
         for i in 0 .. self.object_locals.len() {
-            encoder.copy_buffer_to_buffer(
+            prep_encoder.copy_buffer_to_buffer(
                 &temp, (mem::size_of::<Locals>() * i) as wgpu::BufferAddress,
                 self.uniform_buf, (self.locals_size * i) as wgpu::BufferAddress,
                 mem::size_of::<Locals>() as wgpu::BufferAddress,
             );
         }
 
-        (encoder.finish(), self.ranges)
+        self.ranges
     }
 }

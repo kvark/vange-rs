@@ -27,7 +27,7 @@ const MAX_WHEELS: usize = 4;
 pub type GpuControl = [f32; 4];
 
 #[repr(C)]
-#[derive(zerocopy::AsBytes)]
+#[derive(Debug, zerocopy::AsBytes)]
 struct Physics {
     scale: [f32; 4],
     mobility_ship: [f32; 4],
@@ -35,7 +35,7 @@ struct Physics {
 }
 
 #[repr(C)]
-#[derive(zerocopy::AsBytes)]
+#[derive(Debug, zerocopy::AsBytes)]
 pub struct Data {
     control: GpuControl,
     engine: [f32; 4],
@@ -78,6 +78,18 @@ struct Uniforms {
 
 #[repr(C)]
 #[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
+struct DragConstants {
+    free: [f32; 2],
+    speed: [f32; 2],
+    spring: [f32; 2],
+    abs_min: [f32; 2],
+    abs_stop: [f32; 2],
+    coll: [f32; 2],
+    other: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct Constants {
     nature: [f32; 4],
     global_speed: [f32; 4],
@@ -85,13 +97,8 @@ struct Constants {
     car: [f32; 4],
     impulse_elastic: [f32; 4],
     impulse: [f32; 4],
-    drag_free: [f32; 2],
-    drag_speed: [f32; 2],
-    drag_spring: [f32; 2],
-    drag_abs_min: [f32; 2],
-    drag_abs_stop: [f32; 2],
-    drag_coll: [f32; 2],
-    drag: [f32; 2],
+    drag: DragConstants,
+    contact_elastic: [f32; 4],
 }
 
 pub type GpuBody = freelist::Id<Data>;
@@ -340,15 +347,23 @@ impl GpuStore {
                 common.impulse.k_wheel,
                 common.impulse.k_friction,
             ],
-            drag_free: common.drag.free.to_array(),
-            drag_speed: common.drag.speed.to_array(),
-            drag_spring: common.drag.spring.to_array(),
-            drag_abs_min: common.drag.abs_min.to_array(),
-            drag_abs_stop: common.drag.abs_stop.to_array(),
-            drag_coll: common.drag.coll.to_array(),
-            drag: [
-                common.drag.wheel_speed,
-                common.drag.z,
+            drag: DragConstants {
+                free: common.drag.free.to_array(),
+                speed: common.drag.speed.to_array(),
+                spring: common.drag.spring.to_array(),
+                abs_min: common.drag.abs_min.to_array(),
+                abs_stop: common.drag.abs_stop.to_array(),
+                coll: common.drag.coll.to_array(),
+                other: [
+                    common.drag.wheel_speed,
+                    common.drag.z,
+                ],
+            },
+            contact_elastic: [
+                common.contact.k_elastic_wheel,
+                common.contact.k_elastic_spring,
+                common.contact.k_elastic_xy,
+                common.contact.k_elastic_db_coll,
             ],
         };
         let buf_constants = device.create_buffer_with_data(
@@ -442,7 +457,10 @@ impl GpuStore {
         let id = self.free_list.alloc();
         assert!(id.index() < self.capacity);
 
-        let matrix = cgmath::Matrix3::from(model.body.physics.jacobi).invert().unwrap();
+        let matrix = {
+            let jacobi = cgmath::Matrix3::from(model.body.physics.jacobi);
+            (jacobi / model.body.physics.volume).invert().unwrap()
+        };
         let gt = GpuTransform::new(transform);
         let mut wheels = [[0.0; 4]; MAX_WHEELS];
         for (wo, wi) in wheels.iter_mut().zip(model.wheels.iter()) {
@@ -462,7 +480,7 @@ impl GpuStore {
             collision: [0.0; 4],
             model: [
                 model.body.bbox.2,
-                model.body.physics.volume,
+                0.0,
                 0.0,
                 0.0,
             ],
