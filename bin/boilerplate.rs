@@ -43,6 +43,7 @@ pub struct Harness {
     surface: wgpu::Surface,
     swap_chain: wgpu::SwapChain,
     pub extent: wgpu::Extent3d,
+    reload_on_focus: bool,
     depth_target: wgpu::TextureView,
 }
 
@@ -115,6 +116,7 @@ impl Harness {
             surface,
             swap_chain,
             extent,
+            reload_on_focus: settings.window.reload_on_focus,
             depth_target,
         };
 
@@ -135,6 +137,7 @@ impl Harness {
             surface,
             mut swap_chain,
             mut extent,
+            reload_on_focus,
             mut depth_target,
         } = self;
 
@@ -177,7 +180,7 @@ impl Harness {
                 }
                 event::Event::WindowEvent { event, .. } => match event {
                     event::WindowEvent::Focused(false) => {
-                        needs_reload = true;
+                        needs_reload = reload_on_focus;
                     }
                     event::WindowEvent::Focused(true) if needs_reload => {
                         info!("Reloading shaders");

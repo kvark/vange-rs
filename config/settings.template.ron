@@ -23,6 +23,7 @@
 	window: (
 		title: "Rusty Road",
 		size: (1280, 800),
+		reload_on_focus: false,
 	),
 	render: (
 		light: (
