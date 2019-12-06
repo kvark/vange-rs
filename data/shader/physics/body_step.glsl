@@ -79,8 +79,8 @@ void main() {
     vec4 engine = apply_control(body.engine, body.control);
 
     float speed_correction_factor = u_Delta.x / u_Constants.nature.x;
-    vec3 vel = body.linear.xyz;
-    vec3 wel = body.angular.xyz;
+    vec3 vel = body.v_linear.xyz;
+    vec3 wel = body.v_angular.xyz;
 
     vec2 drag = u_Constants.drag.free.xy *
         pow(u_Constants.drag.speed, vec2(length(vel), dot(wel, wel)));
@@ -165,8 +165,8 @@ void main() {
     wel *= drag_corrected.y;
 
     s_Bodies[index].engine = slow_down(engine, vel.y, wheels_touch);
-    s_Bodies[index].linear.xyz = vel;
-    s_Bodies[index].angular.xyz = wel;
+    s_Bodies[index].v_linear.xyz = vel;
+    s_Bodies[index].v_angular.xyz = wel;
     s_Bodies[index].springs.xyz = vec3(0.0);
 }
 #endif //CS

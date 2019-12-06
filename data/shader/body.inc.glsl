@@ -11,8 +11,8 @@ struct Body {
     vec4 engine; // X=rudder, Y=traction
     vec4 pos_scale;
     vec4 orientation;
-    vec4 linear;
-    vec4 angular;
+    vec4 v_linear;
+    vec4 v_angular;
     vec4 springs;
     vec4 model; // X = avg radius
     mat4 jacobian_inv;
