@@ -23,17 +23,18 @@ use std::{
 #[derive(Clone, Copy, zerocopy::FromBytes)]
 pub struct PolygonData {
     middle: u32,
-    depth: u32,
+    depth_soft: u32,
+    depth_hard: u32,
 }
 
 impl PolygonData {
     pub fn average(&self) -> f32 {
         const DEPTH_BITS: usize = 20; // has to match the shader!
-        let count = self.depth >> DEPTH_BITS;
+        let count = self.depth_soft >> DEPTH_BITS;
         if count == 0 {
             0.0
         } else {
-            (self.depth & ((1<<DEPTH_BITS) - 1)) as f32 / (count as f32)
+            (self.depth_soft & ((1<<DEPTH_BITS) - 1)) as f32 / (count as f32)
         }
     }
 }
@@ -250,8 +251,8 @@ impl GpuCollider {
                 0.0,
             ],
             penetration: [
-                common.contact.k_elastic_spring,
-                common.impulse.elastic_restriction,
+                common.terrain.min_wall_delta,
+                0.0,
                 0.0,
                 0.0,
             ],
