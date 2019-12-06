@@ -340,7 +340,10 @@ impl GpuCollider {
             dirty_group_count: max_polygons_total as u32 / CLEAR_WORK_GROUP_WIDTH,
             locals_size,
             epoch: GpuEpoch::default(),
-            ranges: vec![0; settings.max_objects],
+            ranges: {
+                let alignment = 64; // ensure compatibility with `WORK_GROU_WIDTH`
+                vec![0; ((settings.max_objects - 1) | (alignment - 1)) + 1]
+            },
             pending_result: None,
             latest: Arc::new(Mutex::new(GpuResult::default())),
         }

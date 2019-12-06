@@ -146,6 +146,7 @@ impl Pipelines {
 
 pub struct GpuStoreInit {
     buffer: wgpu::Buffer,
+    capacity: usize,
     rounded_max_objects: usize,
 }
 
@@ -171,6 +172,7 @@ impl GpuStoreInit {
 
         GpuStoreInit {
             buffer,
+            capacity: settings.max_objects,
             rounded_max_objects,
         }
     }
@@ -183,6 +185,7 @@ impl GpuStoreInit {
 
         GpuStoreInit {
             buffer,
+            capacity: 0,
             rounded_max_objects: 1,
         }
     }
@@ -425,7 +428,7 @@ impl GpuStore {
             buf_data: init.buffer,
             buf_uniforms,
             buf_ranges,
-            capacity: init.rounded_max_objects,
+            capacity: init.capacity,
             bind_group,
             bind_group_gather,
             free_list: FreeList::new(),
