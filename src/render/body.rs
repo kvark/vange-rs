@@ -21,7 +21,7 @@ use zerocopy::AsBytes as _;
 use std::{mem, slice, sync::{Arc, Mutex, MutexGuard}};
 
 
-const WORK_GROUP_WIDTH: u32 = 64;
+const WORK_GROUP_WIDTH: u32 = 32;
 const MAX_WHEELS: usize = 4;
 
 pub type GpuControl = [f32; 4];
@@ -94,7 +94,8 @@ struct Constants {
     nature: [f32; 4],
     global_speed: [f32; 4],
     global_mobility: [f32; 4],
-    car: [f32; 4],
+    car_rudder: [f32; 4],
+    car_traction: [f32; 4],
     impulse_elastic: [f32; 4],
     impulse: [f32; 4],
     drag: DragConstants,
@@ -329,11 +330,17 @@ impl GpuStore {
                 0.0,
                 0.0,
             ],
-            car: [
+            car_rudder: [
                 common.car.rudder_step,
                 common.car.rudder_max,
+                common.car.rudder_k_decr,
+                0.0,
+            ],
+            car_traction: [
                 common.car.traction_incr,
                 common.car.traction_decr,
+                0.0,
+                0.0,
             ],
             impulse_elastic: [
                 common.impulse.elastic_restriction,

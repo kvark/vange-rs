@@ -10,8 +10,13 @@
 			count: 10, // number of NPC vangers
 		),
 		physics: (
-			max_quant: 0.05,
+			max_quant: 0.1,
 			gpu_collision: None,
+			//gpu_collision: Some((
+			//	max_objects: 100,
+			//	max_polygons_total: 1000,
+			//	max_raster_size: (100, 100),
+			//)),
 		),
 	),
 	car: (

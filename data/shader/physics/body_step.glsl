@@ -2,6 +2,9 @@
 
 #ifdef SHADER_CS
 
+const float EPSILON = 1e-10;
+const float MAX_TRACTION = 4.0;
+
 layout(set = 0, binding = 0, std430) buffer Storage {
     Body s_Bodies[];
 };
@@ -15,23 +18,41 @@ layout(set = 0, binding = 2, std140) uniform Constants {
 };
 
 vec4 apply_control(vec4 engine, vec4 control) {
-    const float max_traction = 4.0;
     if (control.x != 0.0) {
         engine.x = clamp(
-            engine.x + u_Constants.car.x * 2.0 * u_Delta.x * control.x,
-            -u_Constants.car.y,
-            u_Constants.car.y
+            engine.x + control.x * 2.0 * u_Delta.x * u_Constants.car_rudder.x,
+            -u_Constants.car_rudder.y,
+            u_Constants.car_rudder.y
         );
     }
     if (control.y != 0.0) {
         engine.y = clamp(
-            engine.y + control.y * u_Delta.x * u_Constants.car.z,
-            -max_traction,
-            max_traction
+            engine.y + control.y * u_Delta.x * u_Constants.car_traction.x,
+            -MAX_TRACTION,
+            MAX_TRACTION
         );
     }
-    if (control.z != 0.0 && engine.y != 0.0) {
+    if (control.w != 0.0 && engine.y != 0.0) {
         engine.y *= exp2(-u_Delta.x);
+    }
+    return engine;
+}
+
+vec4 slow_down(vec4 engine, float velocity, bool wheels_touch) {
+    // unsteer
+    if (engine.x != 0.0 && wheels_touch) {
+        float change = engine.x * velocity * u_Delta.x * u_Constants.car_rudder.z;
+        engine.x -= sign(engine.x) * abs(change);
+    }
+    // slow traction
+    float old = engine.y;
+    engine.y = clamp(
+        old - sign(old) * u_Delta.x * u_Constants.car_traction.y,
+        -MAX_TRACTION,
+        MAX_TRACTION
+    );
+    if (old * engine.y < 0.0) {
+        engine.y = 0.0;
     }
     return engine;
 }
@@ -61,8 +82,8 @@ void main() {
     vec3 vel = body.linear.xyz;
     vec3 wel = body.angular.xyz;
 
-    vec2 mag = vec2(length(vel), length(wel));
-    vec2 drag = u_Constants.drag.free.xy * pow(u_Constants.drag.speed, vec2(mag.x, mag.y*mag.y));
+    vec2 drag = u_Constants.drag.free.xy *
+        pow(u_Constants.drag.speed, vec2(length(vel), dot(wel, wel)));
 
     vec4 irot = qinv(body.orientation);
     vec3 z_axis = qrot(irot, vec3(0.0, 0.0, 1.0));
@@ -120,9 +141,11 @@ void main() {
 
     vel += u_Delta.x * v_accel;
     wel += u_Delta.x * (j_inv * w_accel);
+    vec2 mag = vec2(length(vel), length(wel));
 
-    if (stand_on_wheels && all(lessThan(mag, u_Constants.drag.abs_min))) {
-        drag *= pow(u_Constants.drag.coll, drag / max(mag, vec2(0.01)));
+    // Static friction
+    if ((wheels_touch || spring_touch) && all(lessThan(mag, u_Constants.drag.abs_min))) {
+        drag *= pow(u_Constants.drag.coll, u_Constants.drag.abs_min / (mag + EPSILON));
     }
 
     if (any(greaterThan(mag * drag, u_Constants.drag.abs_stop))) {
@@ -130,7 +153,7 @@ void main() {
         float r_diff_sign = sign(z_axis.z);
         vec3 vs = vel - r_diff_sign * cross(local_z_scaled, wel);
 
-        vec4 vel_rot_inv = qmake(wel / max(mag.y, 0.01), -u_Delta.x * mag.y);
+        vec4 vel_rot_inv = qmake(wel / (mag.y + EPSILON), -u_Delta.x * mag.y);
         vel = qrot(vel_rot_inv, vel);
         wel = qrot(vel_rot_inv, wel);
         s_Bodies[index].pos_scale.xyz = body.pos_scale.xyz + qrot(body.orientation, vs) * u_Delta.x;
@@ -141,7 +164,7 @@ void main() {
     vel *= drag_corrected.x;
     wel *= drag_corrected.y;
 
-    s_Bodies[index].engine = engine;
+    s_Bodies[index].engine = slow_down(engine, vel.y, wheels_touch);
     s_Bodies[index].linear.xyz = vel;
     s_Bodies[index].angular.xyz = wel;
     s_Bodies[index].springs.xyz = vec3(0.0);

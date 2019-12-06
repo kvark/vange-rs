@@ -642,7 +642,7 @@ impl Application for Game {
             .map(Agent::to_render_model)
             .collect::<Vec<_>>();
         for rm in models.iter() {
-            if !rm.gpu_body.is_zero() {
+            if rm.gpu_body.is_zero() {
                 rm.prepare(&mut encoder, device);
             }
         }

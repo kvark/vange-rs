@@ -34,7 +34,8 @@ struct GlobalConstants {
     vec4 nature; // X = time delta0, Z = gravity
     vec4 global_speed; // X = main, Y = water, Z = air, W = underground
     vec4 global_mobility; // X = mobility
-    vec4 car; // X = rudder step, Y = rudder max, Z = traction incr, W = traction decr
+    vec4 car_rudder; // X = step, Y = max, Z = decr
+    vec4 car_traction; // X = incr, Y = decr
     vec4 impulse_elastic; // X = restriction, Y = time scale
     vec4 impulse; // X = rolling scale, Y = normal_threshold, Z = K_wheel, W = K_friction
     DragConstants drag;
