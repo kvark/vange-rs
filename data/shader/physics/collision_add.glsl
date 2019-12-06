@@ -1,4 +1,4 @@
-//!include vs:body.inc vs:encode.inc vs:quat.inc vs:shape.inc fs:surface.inc
+//!include vs:body.inc vs:encode.inc vs:quat.inc vs:shape.inc fs:physics/collision.inc fs:surface.inc
 
 //layout(location = 0) flat varying vec3 v_Vector;
 layout(location = 1) varying vec3 v_World;
@@ -6,13 +6,13 @@ layout(location = 1) varying vec3 v_World;
 layout(location = 3) flat varying int v_TargetIndex;
 layout(location = 4) flat varying uint v_EncodedOrigin;
 
-#ifdef SHADER_VS
-//imported: Polygon, get_shape_polygon
-
 layout(set = 0, binding = 0) uniform c_Globals {
     vec4 u_TargetScale;
-    vec4 u_Penetration; // X=scale, Y=limit
+    vec4 u_Penetration; // X=hard threshold
 };
+
+#ifdef SHADER_VS
+//imported: Polygon, get_shape_polygon
 
 layout(set = 0, binding = 2, std430) buffer Storage {
     Body s_Bodies[];
@@ -49,17 +49,9 @@ void main() {
 #ifdef SHADER_FS
 //imported: Surface, get_surface
 
-struct CollisionPolygon {
-    uint middle;
-    uint depth;
-};
-
 layout(set = 0, binding = 1, std430) buffer Collision {
     CollisionPolygon s_Collisions[];
 };
-
-const uint MAX_DEPTH = 255;
-const uint DEPTH_BITS = 20;
 
 void main() {
     Surface suf = get_surface(v_World.xy);
@@ -76,16 +68,21 @@ void main() {
         }
     }
 
-    //TODO: avoid doing this on every FS invocation
-    s_Collisions[v_TargetIndex].middle = v_EncodedOrigin;
-
-    //HACK: convince Metal driver that we are actually using the buffer...
-    // the atomic operations appear to be ignored otherwise
-    s_Collisions[0].depth += 1;
-
     if (depth_raw != 0.0) {
-        uint effective_depth = min(uint(depth_raw), MAX_DEPTH);
-        atomicAdd(s_Collisions[v_TargetIndex].depth, effective_depth + (1U<<DEPTH_BITS));
+        //TODO: avoid doing this on every FS invocation
+        s_Collisions[v_TargetIndex].middle = v_EncodedOrigin;
+
+        //HACK: convince Metal driver that we are actually using the buffer...
+        // the atomic operations appear to be ignored otherwise
+        s_Collisions[0].depth_soft += 1;
+        s_Collisions[0].depth_hard += 1;
+
+        uint encoded = encode_depth(depth_raw);
+        if (depth_raw >= u_Penetration.x) {
+            atomicAdd(s_Collisions[v_TargetIndex].depth_hard, encoded);
+        } else {
+            atomicAdd(s_Collisions[v_TargetIndex].depth_soft, encoded);
+        }
     }
 }
 #endif //FS

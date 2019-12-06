@@ -1,9 +1,4 @@
-//!include cs:body.inc cs:encode.inc cs:quat.inc
-
-struct CollisionPolygon {
-    uint middle;
-    uint depth;
-};
+//!include cs:body.inc cs:physics/collision.inc cs:encode.inc cs:quat.inc
 
 layout(set = 0, binding = 0, std430) buffer Storage {
     Body s_Bodies[];
@@ -23,8 +18,6 @@ layout(set = 1, binding = 1, std430) readonly buffer Ranges {
 
 #ifdef SHADER_CS
 
-const uint DEPTH_BITS = 20;
-
 void main() {
     uint index =
         gl_GlobalInvocationID.z * gl_WorkGroupSize.x * gl_NumWorkGroups.x * gl_WorkGroupSize.y * gl_NumWorkGroups.y +
@@ -38,11 +31,10 @@ void main() {
 
     for (uint i=range.x; i<range.y; ++i) {
         CollisionPolygon cp = s_Collisions[i];
-        uint depth_count = cp.depth >> DEPTH_BITS;
-        if (depth_count != 0U) {
+        float depth = resolve_depth(cp.depth_soft);
+        if (depth != 0.0) {
             vec3 origin = decode_pos(cp.middle);
             vec3 rg0 = qrot(orientation, origin) * scale;
-            float depth = (cp.depth & ((1U << DEPTH_BITS) - 1U)) / float(depth_count);
             float df = min(depth * u_Constants.contact_elastic.y, u_Constants.impulse_elastic.x);
             springs += df * vec3(rg0.y, -rg0.x, 1.0);
         }
