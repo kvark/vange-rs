@@ -19,3 +19,24 @@ struct Body {
     Physics physics;
     vec4 wheels[MAX_WHEELS]; //XYZ = position, W = steer
 };
+
+struct DragConstants {
+    vec2 free;
+    vec2 speed;
+    vec2 spring;
+    vec2 abs_min;
+    vec2 abs_stop;
+    vec2 coll;
+    vec2 other; // X = wheel speed, Y = drag Z
+};
+
+struct GlobalConstants {
+    vec4 nature; // X = time delta0, Z = gravity
+    vec4 global_speed; // X = main, Y = water, Z = air, W = underground
+    vec4 global_mobility; // X = mobility
+    vec4 car; // X = rudder step, Y = rudder max, Z = traction incr, W = traction decr
+    vec4 impulse_elastic; // X = restriction, Y = time scale
+    vec4 impulse; // X = rolling scale, Y = normal_threshold, Z = K_wheel, W = K_friction
+    DragConstants drag;
+    vec4 contact_elastic; // X = wheel, Y = spring, Z = xy, W = db collision
+};
