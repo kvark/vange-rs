@@ -9,14 +9,10 @@ use crate::{
     },
 };
 
-use futures::{executor::LocalSpawner, task::LocalSpawn as _, FutureExt};
+use futures::executor::LocalSpawner;
 use zerocopy::AsBytes as _;
 
-use std::{
-    mem,
-    slice,
-    sync::{Arc, Mutex, MutexGuard},
-};
+use std::mem;
 
 
 #[repr(C)]
@@ -25,18 +21,6 @@ pub struct PolygonData {
     middle: u32,
     depth_soft: u32,
     depth_hard: u32,
-}
-
-impl PolygonData {
-    pub fn average(&self) -> f32 {
-        const DEPTH_BITS: usize = 20; // has to match the shader!
-        let count = self.depth_soft >> DEPTH_BITS;
-        if count == 0 {
-            0.0
-        } else {
-            (self.depth_soft & ((1<<DEPTH_BITS) - 1)) as f32 / (count as f32)
-        }
-    }
 }
 
 pub type GpuRange = u32;
@@ -72,12 +56,6 @@ pub struct GpuResult {
     pub epoch: GpuEpoch,
 }
 
-struct PendingResult {
-    buffer: wgpu::Buffer,
-    count: usize,
-    epoch: GpuEpoch,
-}
-
 pub struct GpuCollider {
     pipeline_layout: wgpu::PipelineLayout,
     clear_pipeline_layout: wgpu::PipelineLayout,
@@ -94,9 +72,6 @@ pub struct GpuCollider {
     dirty_group_count: u32,
     epoch: GpuEpoch,
     ranges: Vec<GpuRange>,
-    //TODO: remove this entirely
-    pending_result: Option<PendingResult>,
-    latest: Arc<Mutex<GpuResult>>,
 }
 
 pub struct GpuSession<'this, 'pass> {
@@ -345,8 +320,6 @@ impl GpuCollider {
                 let alignment = 64; // ensure compatibility with `WORK_GROU_WIDTH`
                 vec![0; ((settings.max_objects - 1) | (alignment - 1)) + 1]
             },
-            pending_result: None,
-            latest: Arc::new(Mutex::new(GpuResult::default())),
         }
     }
 
@@ -366,35 +339,8 @@ impl GpuCollider {
         &'this mut self,
         encoder: &'pass mut wgpu::CommandEncoder,
         terrain: &TerrainContext,
-        spawner: &LocalSpawner,
+        _spawner: &LocalSpawner,
     ) -> GpuSession<'this, 'pass> {
-        if let Some(pr) = self.pending_result.take() {
-            let latest = Arc::clone(&self.latest);
-            let epoch = pr.epoch;
-            self.dirty_group_count = pr.count as u32 / CLEAR_WORK_GROUP_WIDTH;
-            if self.dirty_group_count * CLEAR_WORK_GROUP_WIDTH < pr.count as u32 {
-                self.dirty_group_count += 1;
-            }
-            let data_size = mem::size_of::<PolygonData>();
-            let future = pr.buffer
-                .map_read(0, (pr.count * data_size) as wgpu::BufferAddress)
-                .map(move |mapping| {
-                    let data = unsafe {
-                        slice::from_raw_parts(
-                            mapping.unwrap().as_slice().as_ptr() as *const PolygonData,
-                            pr.count,
-                        )
-                    };
-                    let averages = data
-                        .iter()
-                        .map(PolygonData::average);
-                    let mut storage = latest.lock().unwrap();
-                    storage.epoch = epoch;
-                    storage.depths.clear();
-                    storage.depths.extend(averages);
-                });
-            spawner.spawn_local_obj(Box::new(future).into()).unwrap();
-        }
         if self.dirty_group_count != 0 {
             let mut pass = encoder.begin_compute_pass();
             pass.set_pipeline(&self.clear_pipeline);
@@ -435,10 +381,6 @@ impl GpuCollider {
             dirty_group_count: &mut self.dirty_group_count,
             epoch: self.epoch,
         }
-    }
-
-    pub fn result(&self) -> MutexGuard<GpuResult> {
-        self.latest.lock().unwrap()
     }
 
     pub fn collision_buffer(&self) -> wgpu::BindingResource {
