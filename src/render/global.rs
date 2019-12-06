@@ -33,13 +33,12 @@ impl Constants {
 
 pub struct Context {
     pub uniform_buf: wgpu::Buffer,
-    pub palette_sampler: wgpu::Sampler,
     pub bind_group: wgpu::BindGroup,
     pub bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl Context {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(device: &wgpu::Device, store_buffer: wgpu::BindingResource) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             bindings: &[
                 wgpu::BindGroupLayoutBinding {
@@ -51,6 +50,14 @@ impl Context {
                     binding: 1,
                     visibility: wgpu::ShaderStage::all(),
                     ty: wgpu::BindingType::Sampler,
+                },
+                wgpu::BindGroupLayoutBinding { // palette sampler
+                    binding: 2,
+                    visibility: wgpu::ShaderStage::VERTEX,
+                    ty: wgpu::BindingType::StorageBuffer {
+                        dynamic: false,
+                        readonly: true,
+                    },
                 },
             ],
         });
@@ -83,12 +90,15 @@ impl Context {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&palette_sampler),
                 },
+                wgpu::Binding {
+                    binding: 2,
+                    resource: store_buffer,
+                },
             ],
         });
 
         Context {
             uniform_buf,
-            palette_sampler,
             bind_group_layout,
             bind_group,
         }

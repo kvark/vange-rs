@@ -15,6 +15,12 @@ pub struct VelocityPair {
     pub w: f32, //angular
 }
 
+impl VelocityPair {
+    pub fn to_array(&self) -> [f32; 2] {
+        [self.v, self.w]
+    }
+}
+
 pub struct Nature {
     pub gravity: f32,
     pub density: f32,

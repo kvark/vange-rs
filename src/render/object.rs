@@ -1,7 +1,8 @@
 use crate::{
     render::{
-        Palette, Shaders,
+        GpuTransform, Palette, Shaders,
         COLOR_FORMAT, DEPTH_FORMAT,
+        body::GpuBody,
         global::Context as GlobalContext,
     },
     space::Transform,
@@ -50,16 +51,20 @@ pub struct Vertex {
 #[repr(C)]
 #[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 pub struct Locals {
-    _matrix: [[f32; 4]; 4],
-    _shape_scale: [f32; 4],
+    _pos_scale: [f32; 4],
+    _orientation: [f32; 4],
+    _shape_scale: f32,
+    _body_id: u32,
 }
 
 impl Locals {
-    pub fn new(transform: Transform, shape_scale: f32) -> Self {
-        use cgmath::Matrix4;
+    pub fn new(transform: &Transform, shape_scale: f32, body: &GpuBody) -> Self {
+        let gt = GpuTransform::new(transform);
         Locals {
-            _matrix: Matrix4::from(transform).into(),
-            _shape_scale: [shape_scale, 0.0, 0.0, 0.0],
+            _pos_scale: gt.pos_scale,
+            _orientation: gt.orientation,
+            _shape_scale: shape_scale,
+            _body_id: body.index() as u32,
         }
     }
 }

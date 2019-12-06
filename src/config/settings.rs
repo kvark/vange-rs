@@ -45,6 +45,7 @@ pub struct Game {
 pub struct Window {
     pub title: String,
     pub size: [u32; 2],
+    pub reload_on_focus: bool,
 }
 
 #[derive(Clone, Deserialize)]

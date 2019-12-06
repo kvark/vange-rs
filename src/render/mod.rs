@@ -17,6 +17,7 @@ use std::{
     slice,
 };
 
+pub mod body;
 pub mod collision;
 pub mod debug;
 pub mod global;
@@ -27,6 +28,20 @@ pub mod terrain;
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+pub struct GpuTransform {
+    pub pos_scale: [f32; 4],
+    pub orientation: [f32; 4],
+}
+
+impl GpuTransform {
+    pub fn new(t: &Transform) -> Self {
+        GpuTransform {
+            pos_scale: [t.disp.x, t.disp.y, t.disp.z, t.scale],
+            orientation: [t.rot.v.x, t.rot.v.y, t.rot.v.z, t.rot.s],
+        }
+    }
+}
 
 pub struct ScreenTargets<'a> {
     pub extent: wgpu::Extent3d,
@@ -78,6 +93,15 @@ pub struct Shaders {
 }
 
 impl Shaders {
+    fn fail(name: &str, source: &str, log: &str) -> ! {
+        println!("Generated shader:");
+        for (i, line) in source.lines().enumerate() {
+            println!("{:3}| {}", i+1, line);
+        }
+        let msg = log.replace("\\n", "\n");
+        panic!("\nUnable to compile '{}': {}", name, msg);
+    }
+
     pub fn new(
         name: &str,
         specialization: &[&str],
@@ -111,8 +135,11 @@ impl Shaders {
                     let inc_path = base_path
                         .join(include)
                         .with_extension("inc.glsl");
-                    BufReader::new(File::open(inc_path)?)
-                        .read_to_end(target)?;
+                    match File::open(&inc_path) {
+                        Ok(include) => BufReader::new(include)
+                            .read_to_end(target)?,
+                        Err(e) => panic!("Unable to include {:?}: {:?}", inc_path, e),
+                    };
                 }
             }
             let second = lines.next().unwrap();
@@ -144,16 +171,14 @@ impl Shaders {
 
         let spv_vs = match glsl_to_spirv::compile(&str_vs, glsl_to_spirv::ShaderType::Vertex) {
             Ok(file) => wgpu::read_spirv(file).unwrap(),
-            Err(e) => {
-                println!("Generated VS shader:\n{}", str_vs);
-                panic!("\nUnable to compile '{}': {:?}", name, e);
+            Err(ref e) => {
+                Self::fail(name, &str_vs, e);
             }
         };
         let spv_fs = match glsl_to_spirv::compile(&str_fs, glsl_to_spirv::ShaderType::Fragment) {
             Ok(file) => wgpu::read_spirv(file).unwrap(),
-            Err(e) => {
-                println!("Generated FS shader:\n{}", str_fs);
-                panic!("\nUnable to compile '{}': {:?}", name, e);
+            Err(ref e) => {
+                Self::fail(name, &str_fs, e);
             }
         };
 
@@ -221,9 +246,8 @@ impl Shaders {
 
         let spv = match glsl_to_spirv::compile(&str_cs, glsl_to_spirv::ShaderType::Compute) {
             Ok(file) => wgpu::read_spirv(file).unwrap(),
-            Err(e) => {
-                println!("Generated CS shader:\n{}", str_cs);
-                panic!("\nUnable to compile '{}': {:?}", name, e);
+            Err(ref e) => {
+                Self::fail(name, &str_cs, e);
             }
         };
 
@@ -291,12 +315,18 @@ impl Palette {
 
 pub struct RenderModel<'a> {
     pub model: &'a model::VisualModel,
+    pub gpu_body: &'a body::GpuBody,
     pub locals_buf: &'a wgpu::Buffer,
     pub transform: Transform,
     pub debug_shape_scale: Option<f32>,
 }
 
 impl RenderModel<'_> {
+    /// Prepare the `locals_buf` uniform data based on the transformation and
+    /// model structure.
+    ///
+    /// For GPU physics path, needs to only be done once.
+    /// For pure CPU path, needs to be done before every render.
     pub fn prepare(&self, encoder: &mut wgpu::CommandEncoder, device: &wgpu::Device) {
         use cgmath::{Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
 
@@ -312,8 +342,9 @@ impl RenderModel<'_> {
 
             // body
             data[0] = object::Locals::new(
-                self.transform,
+                &self.transform,
                 self.debug_shape_scale.unwrap_or_default(),
+                self.gpu_body,
             );
             // wheels
             for w in self.model.wheels.iter() {
@@ -323,7 +354,7 @@ impl RenderModel<'_> {
                         rot: Quaternion::one(),
                         scale: 1.0,
                     });
-                    data[mesh.locals_id] = object::Locals::new(transform, 0.0);
+                    data[mesh.locals_id] = object::Locals::new(&transform, 0.0, self.gpu_body);
                 }
             }
             // slots
@@ -336,13 +367,14 @@ impl RenderModel<'_> {
                     };
                     local.disp -= local.transform_vector(Vector3::from(mesh.offset));
                     let transform = self.transform.concat(&local);
-                    data[mesh.locals_id] = object::Locals::new(transform, 0.0);
+                    data[mesh.locals_id] = object::Locals::new(&transform, 0.0, self.gpu_body);
                 }
             }
         }
 
         let temp = mapping.finish();
-        let locals_alignment = mem::size_of::<object::Locals>().max(256); //TODO: use constant
+        let locals_alignment = mem::size_of::<object::Locals>()
+            .max(wgpu::BIND_BUFFER_ALIGNMENT as usize);
         // copy each chunk separately, given different alignment
         for i in 0 .. count {
             encoder.copy_buffer_to_buffer(
@@ -372,11 +404,12 @@ impl Render {
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
         screen_extent: wgpu::Extent3d,
+        store_buffer: wgpu::BindingResource,
     ) -> Self {
         let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
-        let global = global::Context::new(device);
+        let global = global::Context::new(device, store_buffer);
         let object = object::Context::new(&mut init_encoder, device, object_palette, &global);
         let terrain = terrain::Context::new(&mut init_encoder, device, level, &global, &settings.terrain, screen_extent);
         let debug = debug::Context::new(device, &settings.debug, &global, &object);
@@ -443,10 +476,6 @@ impl Render {
             0,
             mem::size_of::<global::Constants>() as wgpu::BufferAddress,
         );
-
-        for rm in render_models {
-            rm.prepare(encoder, device);
-        }
 
         self.terrain.prepare(encoder, device, &self.global, cam);
 

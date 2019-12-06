@@ -36,7 +36,8 @@ impl CarView {
         let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
-        let global = render::global::Context::new(device);
+        let store_init = render::body::GpuStoreInit::new_dummy(device);
+        let global = render::global::Context::new(device, store_init.resource());
         let object = render::object::Context::new(&mut init_encoder, device, &pal_data, &global);
         queue.submit(&[
             init_encoder.finish(),
@@ -172,8 +173,10 @@ impl Application for CarView {
 
     fn update(
         &mut self,
+        _device: &wgpu::Device,
         delta: f32,
-    ) {
+        _spawner: &LocalSpawner,
+    ) -> Vec<wgpu::CommandBuffer> {
         if self.rotation.0 != cgmath::Rad(0.) {
             let rot = self.rotation.0 * delta;
             self.rotate_z(rot);
@@ -182,6 +185,7 @@ impl Application for CarView {
             let rot = self.rotation.1 * delta;
             self.rotate_x(rot);
         }
+        Vec::new()
     }
 
     fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -197,7 +201,7 @@ impl Application for CarView {
         device: &wgpu::Device,
         targets: render::ScreenTargets,
         _spawner: &LocalSpawner,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
@@ -216,6 +220,7 @@ impl Application for CarView {
 
         render::RenderModel {
             model: &self.model,
+            gpu_body: &render::body::GpuBody::ZERO,
             locals_buf: &self.locals_buf,
             transform: self.transform,
             debug_shape_scale: Some(self.physics.scale_bound),
@@ -260,6 +265,6 @@ impl Application for CarView {
             );
         }
 
-        vec![encoder.finish()]
+        encoder.finish()
     }
 }

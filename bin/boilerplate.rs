@@ -20,14 +20,19 @@ pub trait Application {
     fn on_cursor_move(&mut self, _position: (f64, f64)) {}
     fn on_mouse_button(&mut self, _state: event::ElementState, _button: event::MouseButton) {}
     fn resize(&mut self, _device: &wgpu::Device, _extent: wgpu::Extent3d) {}
-    fn reload(&mut self, _device: &wgpu::Device);
-    fn update(&mut self, delta: f32);
+    fn reload(&mut self, device: &wgpu::Device);
+    fn update(
+        &mut self,
+        device: &wgpu::Device,
+        delta: f32,
+        spawner: &LocalSpawner,
+    ) -> Vec<wgpu::CommandBuffer>;
     fn draw(
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
         spawner: &LocalSpawner,
-    ) -> Vec<wgpu::CommandBuffer>;
+    ) -> wgpu::CommandBuffer;
 }
 
 pub struct Harness {
@@ -38,6 +43,7 @@ pub struct Harness {
     surface: wgpu::Surface,
     swap_chain: wgpu::SwapChain,
     pub extent: wgpu::Extent3d,
+    reload_on_focus: bool,
     depth_target: wgpu::TextureView,
 }
 
@@ -110,6 +116,7 @@ impl Harness {
             surface,
             swap_chain,
             extent,
+            reload_on_focus: settings.window.reload_on_focus,
             depth_target,
         };
 
@@ -121,6 +128,7 @@ impl Harness {
 
         let mut last_time = time::Instant::now();
         let mut task_pool = LocalPool::new();
+        let mut needs_reload = false;
         let Harness {
             event_loop,
             window,
@@ -129,6 +137,7 @@ impl Harness {
             surface,
             mut swap_chain,
             mut extent,
+            reload_on_focus,
             mut depth_target,
         } = self;
 
@@ -170,9 +179,13 @@ impl Harness {
                     app.resize(&device, extent);
                 }
                 event::Event::WindowEvent { event, .. } => match event {
-                    event::WindowEvent::Focused(true) => {
+                    event::WindowEvent::Focused(false) => {
+                        needs_reload = reload_on_focus;
+                    }
+                    event::WindowEvent::Focused(true) if needs_reload => {
                         info!("Reloading shaders");
                         app.reload(&device);
+                        needs_reload = false;
                     }
                     event::WindowEvent::CloseRequested => {
                         *control_flow = ControlFlow::Exit;
@@ -195,22 +208,25 @@ impl Harness {
                     _ => {}
                 },
                 event::Event::EventsCleared => {
+                    let spawner = task_pool.spawner();
                     let duration = time::Instant::now() - last_time;
                     last_time += duration;
                     let delta = duration.as_secs() as f32 +
                         duration.subsec_nanos() as f32 * 1.0e-9;
 
-                    app.update(delta);
+                    let update_command_buffers = app.update(&device, delta, &spawner);
+                    if !update_command_buffers.is_empty() {
+                        queue.submit(&update_command_buffers);
+                    }
 
-                    let spawner = task_pool.spawner();
                     let frame = swap_chain.get_next_texture().unwrap();
                     let targets = ScreenTargets {
                         extent,
                         color: &frame.view,
                         depth: &depth_target,
                     };
-                    let command_buffers = app.draw(&device, targets, &spawner);
-                    queue.submit(&command_buffers);
+                    let render_commane_buffer = app.draw(&device, targets, &spawner);
+                    queue.submit(&[render_commane_buffer]);
                 }
                 _ => (),
             }

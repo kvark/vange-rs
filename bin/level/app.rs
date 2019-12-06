@@ -3,6 +3,7 @@ use vangers::{
     config, level, space,
     render::{
         Render, ScreenTargets,
+        body::GpuStoreInit,
     },
 };
 
@@ -94,7 +95,8 @@ impl LevelView {
 
         let objects_palette = level::read_palette(settings.open_palette(), None);
         let depth = 10f32 .. 10000f32;
-        let render = Render::new(device, queue, &level, &objects_palette, &settings.render, screen_extent);
+        let store_init = GpuStoreInit::new_dummy(device);
+        let render = Render::new(device, queue, &level, &objects_palette, &settings.render, screen_extent, store_init.resource());
 
         LevelView {
             render,
@@ -209,7 +211,12 @@ impl Application for LevelView {
         true
     }
 
-    fn update(&mut self, delta: f32) {
+    fn update(
+        &mut self,
+        _device: &wgpu::Device,
+        delta: f32,
+        _spawner: &LocalSpawner,
+    ) -> Vec<wgpu::CommandBuffer> {
         use cgmath::{InnerSpace, Rotation3, Zero};
         let move_speed = match self.cam.proj {
             space::Projection::Perspective(_) => 100.0,
@@ -272,6 +279,8 @@ impl Application for LevelView {
             }
             _ => {}
         }
+
+        Vec::new()
     }
 
     fn resize(&mut self, device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -288,7 +297,7 @@ impl Application for LevelView {
         device: &wgpu::Device,
         targets: ScreenTargets,
         _spawner: &LocalSpawner,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
@@ -299,6 +308,6 @@ impl Application for LevelView {
             targets,
             device,
         );
-        vec![encoder.finish()]
+        encoder.finish()
     }
 }
