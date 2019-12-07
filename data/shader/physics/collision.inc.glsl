@@ -4,6 +4,7 @@ struct CollisionPolygon {
     uint middle;
     uint depth_soft;
     uint depth_hard;
+    //vec2 normal;
 };
 
 const uint DEPTH_MAX = 255;
@@ -12,6 +13,7 @@ const uint DEPTH_BITS = 20;
 CollisionPolygon empty_collision() {
     CollisionPolygon cp;
     cp.middle = 0;
+    //cp.normal = vec2(0.0);
     cp.depth_soft = 0;
     cp.depth_hard = 0;
     return cp;

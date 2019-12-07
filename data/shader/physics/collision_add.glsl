@@ -5,6 +5,7 @@ layout(location = 1) varying vec3 v_World;
 //layout(location = 2) flat varying vec3 v_PolyNormal;
 layout(location = 3) flat varying int v_TargetIndex;
 layout(location = 4) flat varying uint v_EncodedOrigin;
+layout(location = 5) flat varying vec2 v_Normal;
 
 layout(set = 0, binding = 0) uniform c_Globals {
     vec4 u_TargetScale;
@@ -38,6 +39,7 @@ void main() {
     //v_PolyNormal = poly.normal;
     v_TargetIndex = int(u_Indices.y) + gl_InstanceIndex;
     v_EncodedOrigin = encode_pos(poly.origin);
+    v_Normal = poly.normal.xy;
 
     vec3 pos = base_pos * u_TargetScale.xyz;
     pos.z = pos.z * 0.5 + 0.5; // convert Z into [0, 1]:
@@ -71,6 +73,7 @@ void main() {
     if (depth_raw != 0.0) {
         //TODO: avoid doing this on every FS invocation
         s_Collisions[v_TargetIndex].middle = v_EncodedOrigin;
+        //s_Collisions[v_TargetIndex].normal = v_Normal;
 
         //HACK: convince Metal driver that we are actually using the buffer...
         // the atomic operations appear to be ignored otherwise

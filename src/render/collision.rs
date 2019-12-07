@@ -21,6 +21,7 @@ pub struct PolygonData {
     middle: u32,
     depth_soft: u32,
     depth_hard: u32,
+    //normal: [f32; 2],
 }
 
 pub type GpuRange = u32;

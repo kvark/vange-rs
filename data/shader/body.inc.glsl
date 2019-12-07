@@ -37,6 +37,7 @@ struct GlobalConstants {
     vec4 car_rudder; // X = step, Y = max, Z = decr
     vec4 car_traction; // X = incr, Y = decr
     vec4 impulse_elastic; // X = restriction, Y = time scale
+    vec4 impulse_factors;
     vec4 impulse; // X = rolling scale, Y = normal_threshold, Z = K_wheel, W = K_friction
     DragConstants drag;
     vec4 contact_elastic; // X = wheel, Y = spring, Z = xy, W = db collision
