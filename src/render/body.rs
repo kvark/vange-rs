@@ -97,6 +97,7 @@ struct Constants {
     car_rudder: [f32; 4],
     car_traction: [f32; 4],
     impulse_elastic: [f32; 4],
+    impulse_factors: [f32; 4],
     impulse: [f32; 4],
     drag: DragConstants,
     contact_elastic: [f32; 4],
@@ -348,6 +349,12 @@ impl GpuStore {
             impulse_elastic: [
                 common.impulse.elastic_restriction,
                 common.impulse.elastic_time_scale_factor,
+                0.0,
+                0.0,
+            ],
+            impulse_factors: [
+                common.impulse.factors[0],
+                common.impulse.factors[1],
                 0.0,
                 0.0,
             ],
