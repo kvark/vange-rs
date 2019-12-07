@@ -184,6 +184,7 @@ pub struct Game {
     max_quant: f32,
     spin_hor: f32,
     spin_ver: f32,
+    turbo: bool,
     is_paused: bool,
     tick: Option<f32>,
 }
@@ -331,6 +332,7 @@ impl Game {
             //debug_collision_map: settings.render.debug.collision_map,
             spin_hor: 0.0,
             spin_ver: 0.0,
+            turbo: false,
             is_paused: false,
             tick: None,
         }
@@ -383,6 +385,7 @@ impl Application for Game {
                 }
                 Key::Comma => self.tick = Some(-1.0),
                 Key::Period => self.tick = Some(1.0),
+                Key::LShift => self.turbo = true,
                 Key::W => self.spin_ver = 1.0,
                 Key::S => self.spin_ver = -1.0,
                 Key::R => {
@@ -403,6 +406,7 @@ impl Application for Game {
             } => match key {
                 Key::W | Key::S => self.spin_ver = 0.0,
                 Key::A | Key::D => self.spin_hor = 0.0,
+                Key::LShift => self.turbo = false,
                 _ => (),
             }
             /*
@@ -467,6 +471,7 @@ impl Application for Game {
 
             player.control.rudder = self.spin_hor;
             player.control.motor = 1.0 * self.spin_ver;
+            player.control.turbo = self.turbo;
 
             if true {
                 self.cam.follow(
