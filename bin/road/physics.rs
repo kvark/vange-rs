@@ -294,14 +294,18 @@ pub fn step(
                 Some(ref cp) => cp.depth.abs(),
                 None => 0.0,
             };
-            /*
-            let origin = self.transform.disp;
+
+            let origin = transform.disp;
+            let mostly_horisontal = {
+                let tmp = v_vel + w_vel.cross(r);
+                tmp.z * tmp.z < tmp.x * tmp.x + tmp.y * tmp.y
+            };
             match cdata {
                 CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
                     let r1 = rot_inv * cgmath::vec3(
                         cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0); // ignore vertical
                     let normal = {
-                        let bm = self.car.model.body.bbox.1;
+                        let bm = car.model.body.bbox.1;
                         let n = cgmath::vec3(r1.x / bm[0], r1.y / bm[1], r1.z / bm[2]);
                         n.normalize()
                     };
@@ -337,7 +341,7 @@ pub fn step(
                     }
                 }
                 _ => (),
-            }*/
+            }
             if let Some(ref cp) = cdata.soft {
                 let df0 = common.contact.k_elastic_spring * cp.depth * modulation;
                 let df = df0.min(common.impulse.elastic_restriction);
