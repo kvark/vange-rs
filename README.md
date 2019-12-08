@@ -22,11 +22,15 @@ Note: leaving the `level=""` empty in the config would load a flat boring debug 
 git clone https://github.com/kvark/vange-rs
 cd vange-rs
 cp config/settings.template.ron config/settings.ron
-vi config/settings.ron # set the game path
-cargo run --bin road --features wgpu/<BACKEND> # where <BACKEND> is one of "vulkan", "metal", "dx12", or "dx11"
+edit config/settings.ron # set the game path
+cargo run
 ```
+
+The graphics engine tries the available backends in this order: Metal, Vulkan, DX12, DX11.
+
 Controls:
   - `WSAD`: movement in the game, rotating the camera around the car during the pause
+  - left shift: turbo
   - `P`: enter/exit pause for debugging
   - `R`: reset forces and orientation of the mechous
   - `<>`: step physics frame back/forward during the pause

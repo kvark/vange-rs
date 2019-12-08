@@ -49,21 +49,7 @@ pub struct Harness {
 
 impl Harness {
     pub fn init(title: &str) -> (Self, config::Settings) {
-        info!("Initializing the device");
         env_logger::init();
-
-        let adapter = wgpu::Adapter::request(
-            &wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::Default,
-            },
-            wgpu::BackendBit::PRIMARY,
-        ).unwrap();
-        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
-            extensions: wgpu::Extensions {
-                anisotropic_filtering: false,
-            },
-            limits: wgpu::Limits::default(),
-        });
 
         info!("Loading the settings");
         let settings = config::Settings::load("config/settings.ron");
@@ -73,7 +59,21 @@ impl Harness {
             depth: 1,
         };
 
-        info!("Initializing the window...");
+        info!("Initializing the device");
+        let adapter = wgpu::Adapter::request(
+            &wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::Default,
+            },
+            settings.backend.to_wgpu(),
+        ).expect("Unable to initialize GPU via the selected backend.");
+        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
+            extensions: wgpu::Extensions {
+                anisotropic_filtering: false,
+            },
+            limits: wgpu::Limits::default(),
+        });
+
+        info!("Initializing the window");
         let event_loop = EventLoop::new();
         let dpi = event_loop
             .primary_monitor()

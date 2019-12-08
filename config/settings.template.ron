@@ -30,6 +30,7 @@
 		size: (1280, 800),
 		reload_on_focus: false,
 	),
+	backend: Auto, // Vulkan, Metal, DX12, DX11
 	render: (
 		light: (
 			pos: (1, 2, 4, 0), // w=0 for directional, w=1 for point light

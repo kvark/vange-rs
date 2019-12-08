@@ -48,6 +48,27 @@ pub struct Window {
     pub reload_on_focus: bool,
 }
 
+#[derive(Deserialize)]
+pub enum Backend {
+    Auto,
+    Metal,
+    Vulkan,
+    DX12,
+    DX11
+}
+
+impl Backend {
+    pub fn to_wgpu(&self) -> wgpu::BackendBit {
+        match *self {
+            Backend::Auto => wgpu::BackendBit::PRIMARY,
+            Backend::Metal => wgpu::BackendBit::METAL,
+            Backend::Vulkan => wgpu::BackendBit::VULKAN,
+            Backend::DX12 => wgpu::BackendBit::DX12,
+            Backend::DX11 => wgpu::BackendBit::DX11,
+        }
+    }
+}
+
 #[derive(Clone, Deserialize)]
 pub struct DebugRender {
     pub max_vertices: usize,
@@ -93,6 +114,7 @@ pub struct Settings {
     pub car: Car,
     pub game: Game,
     pub window: Window,
+    pub backend: Backend,
     pub render: Render,
 }
 
@@ -105,8 +127,13 @@ impl Settings {
             .expect("Unable to open the settings file")
             .read_to_string(&mut string)
             .unwrap();
-        let set: Settings = ron::de::from_str(&string)
-            .expect("Unable to parse settings RON");
+        let set: Settings = match ron::de::from_str(&string) {
+            Ok(set) => set,
+            Err(e) => panic!("Unable to parse settings RON.\n\t{}\n\tError: {:?}",
+                "Please check if `config/settings.template.ron` has changed and your local config needs to be adjusted.",
+                e,
+            ),
+        };
 
         if !set.check_path("options.dat") {
             panic!(
