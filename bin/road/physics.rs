@@ -1,3 +1,6 @@
+//! Physics port of the original game. Most closely described by the following documents:
+//! - https://people.eecs.berkeley.edu/~jfc/mirtich/thesis/mirtichThesis.pdf
+
 use vangers::{
     config, level, model, space,
     render::{
@@ -32,15 +35,15 @@ struct CollisionData {
     hard: Option<CollisionPoint>,
 }
 
-struct Accumulator {
+struct HitAccumulator {
     pos: cgmath::Vector3<f32>,
     depth: f32,
     count: f32,
 }
 
-impl Accumulator {
+impl HitAccumulator {
     fn new() -> Self {
-        Accumulator {
+        HitAccumulator {
             pos: cgmath::vec3(0.0, 0.0, 0.0),
             depth: 0.0,
             count: 0.0,
@@ -124,7 +127,7 @@ fn collide_low(
     level: &level::Level,
     terraconf: &config::common::Terrain,
 ) -> CollisionData {
-    let (mut soft, mut hard) = (Accumulator::new(), Accumulator::new());
+    let (mut soft, mut hard) = (HitAccumulator::new(), HitAccumulator::new());
     for s in samples[poly.samples.clone()].iter() {
         let sp = cgmath::Point3::from(*s).cast::<f32>().unwrap();
         let pos = transform.transform_point(sp * scale).to_vec();
@@ -165,31 +168,67 @@ fn collide_low(
     }
 }
 
-fn calc_collision_matrix_inv(
-    r: cgmath::Vector3<f32>,
-    ji: &cgmath::Matrix3<f32>,
-) -> cgmath::Matrix3<f32> {
-    let t3 = -r.z * ji[1][1] + r.y * ji[2][1];
-    let t7 = -r.z * ji[1][2] + r.y * ji[2][2];
-    let t12 = -r.z * ji[1][0] + r.y * ji[2][0];
-    let t21 = r.z * ji[0][1] - r.x * ji[2][1];
-    let t25 = r.z * ji[0][2] - r.x * ji[2][2];
-    let t30 = r.z * ji[0][0] - r.x * ji[2][0];
-    let t39 = -r.y * ji[0][1] + r.x * ji[1][1];
-    let t43 = -r.y * ji[0][2] + r.x * ji[1][2];
-    let t48 = -r.y * ji[0][0] + r.x * ji[1][0];
-    let cm = cgmath::Matrix3::new(
-        1.0 - t3 * r.z + t7 * r.y,
-        t12 * r.z - t7 * r.x,
-        -t12 * r.y + t3 * r.x,
-        -t21 * r.z + t25 * r.y,
-        1.0 + t30 * r.z - t25 * r.x,
-        -t30 * r.y + t21 * r.x,
-        -t39 * r.z + t43 * r.y,
-        t48 * r.z - t43 * r.x,
-        1.0 - t48 * r.y + t39 * r.x,
-    );
-    cm.invert().unwrap()
+struct Pulsar {
+    j_inv: cgmath::Matrix3<f32>,
+    vel: cgmath::Vector3<f32>,
+    wel_raw: cgmath::Vector3<f32>,
+}
+
+impl Pulsar {
+    fn new(jacobian: cgmath::Matrix3<f32>) -> Self {
+        Pulsar {
+            j_inv: jacobian.invert().unwrap(),
+            vel: cgmath::Vector3::zero(),
+            wel_raw: cgmath::Vector3::zero(),
+        }
+    }
+
+    fn calc_collision_matrix_inv(
+        &self,
+        r: &cgmath::Vector3<f32>,
+    ) -> cgmath::Matrix3<f32> {
+        let ji = &self.j_inv;
+        let t3 = -r.z * ji[1][1] + r.y * ji[2][1];
+        let t7 = -r.z * ji[1][2] + r.y * ji[2][2];
+        let t12 = -r.z * ji[1][0] + r.y * ji[2][0];
+        let t21 = r.z * ji[0][1] - r.x * ji[2][1];
+        let t25 = r.z * ji[0][2] - r.x * ji[2][2];
+        let t30 = r.z * ji[0][0] - r.x * ji[2][0];
+        let t39 = -r.y * ji[0][1] + r.x * ji[1][1];
+        let t43 = -r.y * ji[0][2] + r.x * ji[1][2];
+        let t48 = -r.y * ji[0][0] + r.x * ji[1][0];
+        let cm = cgmath::Matrix3::new(
+            1.0 - t3 * r.z + t7 * r.y,
+            t12 * r.z - t7 * r.x,
+            -t12 * r.y + t3 * r.x,
+            -t21 * r.z + t25 * r.y,
+            1.0 + t30 * r.z - t25 * r.x,
+            -t30 * r.y + t21 * r.x,
+            -t39 * r.z + t43 * r.y,
+            t48 * r.z - t43 * r.x,
+            1.0 - t48 * r.y + t39 * r.x,
+        );
+        cm.invert().unwrap()
+    }
+
+    fn add(
+        &mut self, point: cgmath::Vector3<f32>, vec: cgmath::Vector3<f32>
+    ) -> cgmath::Vector3<f32> {
+        let pulse = self.calc_collision_matrix_inv(&point) * vec;
+        //log::debug!("\t\tCollision speed {:?} pulse {:?}", v_vel, pulse);
+        self.vel += pulse;
+        self.wel_raw += point.cross(pulse);
+        pulse
+    }
+
+    fn add_raw(&mut self, vel: cgmath::Vector3<f32>, wel_raw: cgmath::Vector3<f32>) {
+        self.vel += vel;
+        self.wel_raw += wel_raw;
+    }
+
+    fn finish(self) -> (cgmath::Vector3<f32>, cgmath::Vector3<f32>) {
+        (self.vel, self.j_inv * self.wel_raw)
+    }
 }
 
 
@@ -216,12 +255,11 @@ pub fn step(
     let z_axis = rot_inv * cgmath::Vector3::unit_z();
     let mut v_vel = dynamo.linear_velocity;
     let mut w_vel = dynamo.angular_velocity;
-    let j_inv = {
+    let mut pulsar = {
         let phys = &car.model.body.physics;
-        (cgmath::Matrix3::from(phys.jacobi)
-            * (transform.scale * transform.scale / phys.volume))
-            .invert()
-            .unwrap()
+        let jacobian = cgmath::Matrix3::from(phys.jacobi)
+            * (transform.scale * transform.scale / phys.volume);
+        Pulsar::new(jacobian)
     };
 
     let mut wheels_touch = 0u32;
@@ -261,8 +299,6 @@ pub fn step(
             poly.middle,
             r
         );
-        //let vr = v_vel + w_vel.cross(r);
-        //let mostly_horisontal = vr.z*vr.z < vr.x*vr.x + vr.y*vr.y;
         match level.get((rglob.x as i32, rglob.y as i32)) {
             level::Texel::Single(level::Point(_, 0)) |
             level::Texel::Dual { low: level::Point(_, 0), ..} => {
@@ -312,11 +348,7 @@ pub fn step(
                     let u0 = v_vel + w_vel.cross(r1);
                     let dot = u0.dot(normal);
                     if dot > 0.0 {
-                        let pulse = (calc_collision_matrix_inv(r1, &j_inv) * normal) *
-                            (-common.impulse.factors[0] * modulation * dot);
-                        log::debug!("\t\tCollision speed {:?} pulse {:?}", v_vel, pulse);
-                        v_vel += pulse;
-                        w_vel += j_inv * r1.cross(pulse);
+                        pulsar.add(r1, normal * (-common.impulse.factors[0] * modulation * dot));
                     }
                 },
                 CollisionData{ soft: Some(ref cp), ..} => {
@@ -332,12 +364,7 @@ pub fn step(
                             let kn = u0.dot(poly_norm) * (1.0 - common.impulse.k_friction);
                             u0 = u0 * common.impulse.k_friction + poly_norm * kn;
                         }
-                        let cmi = calc_collision_matrix_inv(r, &j_inv);
-                        let pulse = (cmi * u0) * (-common.impulse.factors[1] * modulation);
-                        log::debug!("\t\tCollision momentum {:?}\n\t\t\tmatrix {:?}\n\t\t\tsample {:?}\n\t\t\tspeed {:?}\n\t\t\tpulse {:?}",
-                            u0, cmi, r, v_vel, pulse);
-                        v_vel += pulse;
-                        w_vel += j_inv * r.cross(pulse);
+                        pulsar.add(r, u0 * (-common.impulse.factors[1] * modulation));
                     }
                 }
                 _ => (),
@@ -434,10 +461,8 @@ pub fn step(
                     cgmath::Vector3::unit_x()
                 };
                 let u0 = normal * vw.dot(normal);
-                let mx = calc_collision_matrix_inv(pos, &j_inv);
-                let pulse = -common.impulse.k_wheel * (mx * u0);
-                v_vel += pulse;
-                w_vel += j_inv * pos.cross(pulse);
+                let pulse = pulsar.add(pos, u0 * -common.impulse.k_wheel);
+
                 if let Some(ref mut lbuf) = line_buffer {
                     let pw = transform.transform_point(cgmath::Point3::from(wheel.pos));
                     let dest = pw + transform.transform_vector(pulse) * 10.0;
@@ -461,8 +486,13 @@ pub fn step(
     }
 
     log::debug!("\tcur acc {:?}", acc_cur);
-    v_vel += acc_cur.f * dt;
-    w_vel += (j_inv * acc_cur.k) * dt;
+    pulsar.add_raw(acc_cur.f * dt, acc_cur.k * dt);
+    {
+        let (v, w) = pulsar.finish();
+        v_vel += v;
+        w_vel += w;
+    }
+
     //log::debug!("J_inv {:?}, handedness {}", j_inv.transpose(), j_inv.x.cross(j_inv.y).dot(j_inv.z));
     log::debug!("\tresulting v={:?} w={:?}", v_vel, w_vel);
     if spring_touch != 0 {
