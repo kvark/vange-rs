@@ -535,7 +535,7 @@ impl Application for Game {
             for agent in self.agents.iter_mut() {
                 let needs_prepare = match agent.physics {
                     Physics::Gpu { ref body, ref mut last_control, ref mut are_uniforms_ready, .. } => {
-                        let needs_prepare = *are_uniforms_ready;
+                        let needs_prepare = !*are_uniforms_ready;
                         *are_uniforms_ready = true;
                         if *last_control != agent.control {
                             *last_control = agent.control.clone();
@@ -663,7 +663,7 @@ impl Application for Game {
             .map(Agent::to_render_model)
             .collect::<Vec<_>>();
         for rm in models.iter() {
-            if rm.gpu_body.is_zero() {
+            if !rm.gpu_body.is_valid() {
                 rm.prepare(&mut encoder, device);
             }
         }

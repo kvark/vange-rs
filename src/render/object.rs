@@ -49,22 +49,22 @@ pub struct Vertex {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
+#[derive(Clone, Copy, Debug, zerocopy::AsBytes, zerocopy::FromBytes)]
 pub struct Locals {
-    _pos_scale: [f32; 4],
-    _orientation: [f32; 4],
-    _shape_scale: f32,
-    _body_id: u32,
+    pos_scale: [f32; 4],
+    orientation: [f32; 4],
+    shape_scale: [f32; 4],
+    body_id: [u32; 4],
 }
 
 impl Locals {
     pub fn new(transform: &Transform, shape_scale: f32, body: &GpuBody) -> Self {
         let gt = GpuTransform::new(transform);
         Locals {
-            _pos_scale: gt.pos_scale,
-            _orientation: gt.orientation,
-            _shape_scale: shape_scale,
-            _body_id: body.index() as u32,
+            pos_scale: gt.pos_scale,
+            orientation: gt.orientation,
+            shape_scale: [shape_scale, 0.0, 0.0, 0.0],
+            body_id: [body.index() as u32, 0, 0, 0],
         }
     }
 }

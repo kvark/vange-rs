@@ -9,11 +9,11 @@ use std::mem;
 #[repr(C)]
 #[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 pub struct Constants {
-    _camera_pos: [f32; 4],
-    _m_vp: [[f32; 4]; 4],
-    _m_inv_vp: [[f32; 4]; 4],
-    _light_pos: [f32; 4],
-    _light_color: [f32; 4],
+    camera_pos: [f32; 4],
+    m_vp: [[f32; 4]; 4],
+    m_inv_vp: [[f32; 4]; 4],
+    light_pos: [f32; 4],
+    light_color: [f32; 4],
 }
 
 impl Constants {
@@ -22,11 +22,11 @@ impl Constants {
 
         let mx_vp = cam.get_view_proj();
         Constants {
-            _camera_pos: cam.loc.extend(1.0).into(),
-            _m_vp: mx_vp.into(),
-            _m_inv_vp: mx_vp.invert().unwrap().into(),
-            _light_pos: light.pos,
-            _light_color: light.color,
+            camera_pos: cam.loc.extend(1.0).into(),
+            m_vp: mx_vp.into(),
+            m_inv_vp: mx_vp.invert().unwrap().into(),
+            light_pos: light.pos,
+            light_color: light.color,
         }
     }
 }

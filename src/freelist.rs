@@ -12,8 +12,8 @@ impl<T> Id<T> {
         self.0 as usize
     }
 
-    pub fn is_zero(&self) -> bool {
-        self.0 == 0 && self.1 == 0
+    pub fn is_valid(&self) -> bool {
+        self.0 != 0 || self.1 != 0
     }
 }
 

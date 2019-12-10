@@ -10,8 +10,8 @@ layout(location = 2) varying vec3 v_Light;
 layout(set = 2, binding = 0) uniform c_Locals {
     vec4 u_PosScale;
     vec4 u_Orientation;
-    float u_ShapeScale;
-    uint u_BodyId;
+    vec4 u_ShapeScale;
+    uvec4 u_BodyId;
 };
 
 layout(set = 1, binding = 0) uniform utexture1D t_ColorTable;
@@ -28,8 +28,8 @@ layout(location = 1) attribute uint a_ColorIndex;
 layout(location = 2) attribute vec4 a_Normal;
 
 void main() {
-    vec4 body_pos_scale = s_Bodies[int(u_BodyId)].pos_scale;
-    vec4 body_orientation = s_Bodies[int(u_BodyId)].orientation;
+    vec4 body_pos_scale = s_Bodies[int(u_BodyId.x)].pos_scale;
+    vec4 body_orientation = s_Bodies[int(u_BodyId.x)].orientation;
 
     vec3 local = qrot(u_Orientation, vec3(a_Pos.xyz)) * u_PosScale.w + u_PosScale.xyz;
     vec3 world = qrot(body_orientation, local) * body_pos_scale.w + body_pos_scale.xyz;

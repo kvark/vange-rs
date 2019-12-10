@@ -341,7 +341,7 @@ impl RenderModel<'_> {
             };
 
             // body
-            data[0] = object::Locals::new(
+            data[self.model.body.locals_id] = object::Locals::new(
                 &self.transform,
                 self.debug_shape_scale.unwrap_or_default(),
                 self.gpu_body,
@@ -464,9 +464,7 @@ impl Render {
         device: &wgpu::Device,
     ) {
         let global_staging = device.create_buffer_with_data(
-            [
-                global::Constants::new(cam, &self.light_config),
-            ].as_bytes(),
+            global::Constants::new(cam, &self.light_config).as_bytes(),
             wgpu::BufferUsage::COPY_SRC,
         );
         encoder.copy_buffer_to_buffer(
