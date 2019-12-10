@@ -31,7 +31,7 @@ void main() {
 
     vec4 irot = qinv(body.orientation);
     vec3 z_axis = qrot(irot, vec3(0.0, 0.0, 1.0));
-    mat3 j_inv = mat3(body.jacobian_inv) / scale;
+    mat3 j_inv = calc_j_inv(body.model, body.pos_scale.w);
     vec3 vel = body.v_linear.xyz;
     vec3 wel = body.v_angular.xyz;
     bool stand_on_wheels = true; //TEMP!

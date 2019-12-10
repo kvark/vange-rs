@@ -682,14 +682,14 @@ impl Context {
         });
 
         let surface_uni_buf = device.create_buffer_with_data(
-            [SurfaceConstants {
+            SurfaceConstants {
                 _tex_scale: [
                     level.size.0 as f32,
                     level.size.1 as f32,
                     level::HEIGHT_SCALE as f32,
                     0.0,
                 ],
-            }].as_bytes(),
+            }.as_bytes(),
             wgpu::BufferUsage::UNIFORM,
         );
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -998,10 +998,10 @@ impl Context {
 
         if let Some(size) = self.pending_resize {
             let staging = device.create_buffer_with_data(
-                [Constants {
+                Constants {
                     _scr_size: [size.width, size.height, 0, 0],
                     _params,
-                }].as_bytes(),
+                }.as_bytes(),
                 wgpu::BufferUsage::COPY_SRC,
             );
             encoder.copy_buffer_to_buffer(
@@ -1024,7 +1024,7 @@ impl Context {
         } = self.kind {
             let scatter_constants = compute_scatter_constants(cam);
             let staging = device.create_buffer_with_data(
-                [scatter_constants].as_bytes(),
+                scatter_constants.as_bytes(),
                 wgpu::BufferUsage::COPY_SRC,
             );
             encoder.copy_buffer_to_buffer(

@@ -83,7 +83,7 @@ void main() {
 
     vec3 v_accel = qrot(irot, vec3(0.0, 0.0, body.springs.z - u_Constants.nature.z));
     vec3 w_accel = qrot(irot, vec3(body.springs.xy, 0.0));
-    mat3 j_inv = mat3(body.jacobian_inv) / (body.pos_scale.w * body.pos_scale.w);
+    mat3 j_inv = calc_j_inv(body.model, body.pos_scale.w);
 
     if (wheels_touch) {
         float speed = log(u_Constants.drag.other.x) * body.physics.mobility_ship.x
@@ -137,7 +137,7 @@ void main() {
     }
 
     if (any(greaterThan(mag * drag, u_Constants.drag.abs_stop))) {
-        vec3 local_z_scaled = (body.model.x * u_Constants.impulse.x) * z_axis;
+        vec3 local_z_scaled = (body.model.jacobi1.w * u_Constants.impulse.x) * z_axis;
         float r_diff_sign = sign(z_axis.z);
         vec3 vs = vel - r_diff_sign * cross(local_z_scaled, wel);
 
