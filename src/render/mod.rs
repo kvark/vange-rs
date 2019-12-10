@@ -312,11 +312,38 @@ impl Palette {
     }
 }
 
+pub fn instantiate_visual_model(
+    model: &model::VisualModel,
+    device: &wgpu::Device,
+    part_bind_group_layout: &wgpu::BindGroupLayout,
+) -> (wgpu::Buffer, wgpu::BindGroup) {
+    let locals_size = (mem::size_of::<object::Locals>() as wgpu::BufferAddress)
+        .max(wgpu::BIND_BUFFER_ALIGNMENT);
+    let locals_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        size: model.mesh_count() as wgpu::BufferAddress * locals_size,
+        usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: part_bind_group_layout,
+        bindings: &[
+            wgpu::Binding {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer {
+                    buffer: &locals_buf,
+                    range: 0 .. locals_size,
+                },
+            },
+        ],
+    });
+    (locals_buf, bind_group)
+}
+
 
 pub struct RenderModel<'a> {
     pub model: &'a model::VisualModel,
     pub gpu_body: &'a body::GpuBody,
     pub locals_buf: &'a wgpu::Buffer,
+    pub bind_group: &'a wgpu::BindGroup,
     pub transform: Transform,
     pub debug_shape_scale: Option<f32>,
 }
@@ -327,7 +354,11 @@ impl RenderModel<'_> {
     ///
     /// For GPU physics path, needs to only be done once.
     /// For pure CPU path, needs to be done before every render.
-    pub fn prepare(&self, encoder: &mut wgpu::CommandEncoder, device: &wgpu::Device) {
+    pub fn prepare(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+    ) {
         use cgmath::{Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
 
         let count = self.model.mesh_count();
@@ -341,11 +372,12 @@ impl RenderModel<'_> {
             };
 
             // body
-            data[0] = object::Locals::new(
+            data[self.model.body.locals_id] = object::Locals::new(
                 &self.transform,
                 self.debug_shape_scale.unwrap_or_default(),
                 self.gpu_body,
             );
+
             // wheels
             for w in self.model.wheels.iter() {
                 if let Some(ref mesh) = w.mesh {
@@ -429,8 +461,12 @@ impl Render {
     pub fn draw_mesh(
         pass: &mut wgpu::RenderPass,
         mesh: &model::Mesh,
+        bind_group: &wgpu::BindGroup,
     ) {
-        pass.set_bind_group(2, &mesh.bind_group, &[]);
+        let locals_size = (mem::size_of::<object::Locals>() as wgpu::BufferAddress)
+            .max(wgpu::BIND_BUFFER_ALIGNMENT);
+        let offset = mesh.locals_id as wgpu::BufferAddress * locals_size;
+        pass.set_bind_group(2, bind_group, &[offset]);
         pass.set_vertex_buffers(0, &[(&mesh.vertex_buf, 0)]);
         pass.draw(0 .. mesh.num_vertices as u32, 0 .. 1);
     }
@@ -438,19 +474,20 @@ impl Render {
     pub fn draw_model(
         pass: &mut wgpu::RenderPass,
         model: &model::VisualModel,
+        bind_group: &wgpu::BindGroup,
     ) {
         // body
-        Render::draw_mesh(pass, &model.body);
+        Render::draw_mesh(pass, &model.body, bind_group);
         // wheels
         for w in model.wheels.iter() {
             if let Some(ref mesh) = w.mesh {
-                Render::draw_mesh(pass, mesh);
+                Render::draw_mesh(pass, mesh, bind_group);
             }
         }
         // slots
         for s in model.slots.iter() {
             if let Some(ref mesh) = s.mesh {
-                Render::draw_mesh(pass, mesh);
+                Render::draw_mesh(pass, mesh, bind_group);
             }
         }
     }
@@ -464,9 +501,7 @@ impl Render {
         device: &wgpu::Device,
     ) {
         let global_staging = device.create_buffer_with_data(
-            [
-                global::Constants::new(cam, &self.light_config),
-            ].as_bytes(),
+            global::Constants::new(cam, &self.light_config).as_bytes(),
             wgpu::BufferUsage::COPY_SRC,
         );
         encoder.copy_buffer_to_buffer(
@@ -509,7 +544,7 @@ impl Render {
         pass.set_pipeline(&self.object.pipeline);
         pass.set_bind_group(1, &self.object.bind_group, &[]);
         for rm in render_models {
-            Render::draw_model(&mut pass, &rm.model);
+            Render::draw_model(&mut pass, rm.model, rm.bind_group);
         }
 
         // draw debug shapes
@@ -517,7 +552,7 @@ impl Render {
             self.debug.draw_shape(
                 &mut pass,
                 &rm.model.shape,
-                &rm.model.body.bind_group,
+                rm.bind_group,
             );
         }
     }
