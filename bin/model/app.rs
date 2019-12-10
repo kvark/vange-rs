@@ -11,6 +11,7 @@ use std::mem;
 pub struct ResourceView {
     model: model::VisualModel,
     locals_buf: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
     global: render::global::Context,
     object: render::object::Context,
     transform: space::Transform,
@@ -40,11 +41,17 @@ impl ResourceView {
 
         info!("Loading model {}", path);
         let file = settings.open_relative(path);
-        let (model, locals_buf) = model::load_m3d(file, device, &object);
+        let model = model::load_m3d(file, device, &object);
+        let (locals_buf, bind_group) = render::instantiate_visual_model(
+            &model,
+            device,
+            &object.part_bind_group_layout,
+        );
 
         ResourceView {
             model,
             locals_buf,
+            bind_group,
             global,
             object,
             transform: cgmath::Decomposed {
@@ -154,6 +161,7 @@ impl Application for ResourceView {
             model: &self.model,
             gpu_body: &render::body::GpuBody::ZERO,
             locals_buf: &self.locals_buf,
+            bind_group: &self.bind_group,
             transform: self.transform,
             debug_shape_scale: None,
         }.prepare(&mut encoder, device);
@@ -188,6 +196,7 @@ impl Application for ResourceView {
             render::Render::draw_model(
                 &mut pass,
                 &self.model,
+                &self.bind_group,
             );
         }
 

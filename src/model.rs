@@ -3,7 +3,6 @@ use crate::render::{
     debug::Position as DebugPos,
     object::{
         Context as ObjectContext,
-        Locals as ObjectLocals,
         Vertex as ObjectVertex,
     },
 };
@@ -22,7 +21,6 @@ use std::{
 
 pub struct Mesh {
     pub locals_id: usize,
-    pub bind_group: wgpu::BindGroup,
     pub num_vertices: usize,
     pub vertex_buf: wgpu::Buffer,
     pub offset: [f32; 3],
@@ -132,26 +130,8 @@ fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
 pub fn load_c3d(
     raw: m3d::Mesh<m3d::Geometry<m3d::DrawTriangle>>,
     device: &wgpu::Device,
-    locals_buf: &wgpu::Buffer,
     locals_id: usize,
-    object: &ObjectContext,
 ) -> Arc<Mesh> {
-    let locals_size = (mem::size_of::<ObjectLocals>() as wgpu::BufferAddress)
-        .max(wgpu::BIND_BUFFER_ALIGNMENT);
-    let locals_base = (locals_id as wgpu::BufferAddress) * locals_size;
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: &object.part_bind_group_layout,
-        bindings: &[
-            wgpu::Binding {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: locals_buf,
-                    range: locals_base .. locals_base + locals_size,
-                },
-            },
-        ],
-    });
-
     let num_vertices = raw.geometry.polygons.len() * 3;
     debug!("\tGot {} GPU vertices...", num_vertices);
     let vertex_size = mem::size_of::<ObjectVertex>();
@@ -178,7 +158,6 @@ pub fn load_c3d(
     }
 
     Arc::new(Mesh {
-        bind_group,
         locals_id,
         num_vertices,
         vertex_buf: mapping.finish(),
@@ -327,20 +306,13 @@ pub fn load_m3d(
     file: File,
     device: &wgpu::Device,
     object: &ObjectContext,
-) -> (VisualModel, wgpu::Buffer) {
+) -> VisualModel {
     let raw = m3d::FullModel::load(file);
     let wheel_offset = 1;
     let debrie_offset = wheel_offset + raw.wheels.len();
-    let locals_num = debrie_offset + raw.debris.len() + raw.slots.len();
-    let locals_size = mem::size_of::<ObjectLocals>()
-        .max(wgpu::BIND_BUFFER_ALIGNMENT as usize);
-    let locals_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        size: (locals_num * locals_size) as wgpu::BufferAddress,
-        usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-    });
 
     let model = VisualModel {
-        body: load_c3d(raw.body, device, &locals_buf, 0, object),
+        body: load_c3d(raw.body, device, 0),
         shape: load_c3d_shape(raw.shape, device, true, object),
         dimensions: raw.dimensions,
         max_radius: raw.max_radius,
@@ -349,19 +321,19 @@ pub fn load_m3d(
             .into_iter()
             .enumerate()
             .map(|(i, wheel)| wheel.map(|mesh| {
-                load_c3d(mesh, device, &locals_buf, wheel_offset + i, object)
+                load_c3d(mesh, device, wheel_offset + i)
             }))
             .collect(),
         debris: raw.debris
             .into_iter()
             .enumerate()
             .map(|(i, debrie)| m3d::Debrie {
-                mesh: load_c3d(debrie.mesh, device, &locals_buf, debrie_offset + i, object),
+                mesh: load_c3d(debrie.mesh, device, debrie_offset + i),
                 shape: load_c3d_shape(debrie.shape, device, false, object),
             })
             .collect(),
         slots: m3d::Slot::map_all(raw.slots, |_, _| unreachable!()),
     };
 
-    (model, locals_buf)
+    model
 }

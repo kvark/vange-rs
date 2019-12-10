@@ -245,7 +245,7 @@ impl Context {
                 wgpu::BindGroupLayoutBinding { // part locals
                     binding: 0,
                     visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+                    ty: wgpu::BindingType::UniformBuffer { dynamic: true },
                 },
             ],
         });

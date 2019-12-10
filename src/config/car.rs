@@ -10,7 +10,6 @@ use wgpu;
 use std::{
     collections::HashMap,
     fs::File,
-    sync::Arc,
 };
 
 
@@ -158,7 +157,6 @@ pub struct CarInfo {
     pub stats: CarStats,
     pub physics: CarPhysics,
     pub model: model::VisualModel,
-    pub locals_buf: Arc<wgpu::Buffer>,
     pub scale: f32,
 }
 
@@ -197,7 +195,7 @@ pub fn load_registry(
             physics.scale_size
         };
         let file = settings.open_relative(&mi.path);
-        let (model, locals_buf) = model::load_m3d(file, device, object);
+        let model = model::load_m3d(file, device, object);
         map.insert(
             name.to_owned(),
             CarInfo {
@@ -211,7 +209,6 @@ pub fn load_registry(
                 stats: CarStats::new(&data),
                 physics,
                 model,
-                locals_buf: Arc::new(locals_buf),
                 scale,
             },
         );

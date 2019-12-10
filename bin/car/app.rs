@@ -6,15 +6,13 @@ use futures::executor::LocalSpawner;
 use log::info;
 use zerocopy::AsBytes as _;
 
-use std::{
-    mem,
-    sync::Arc,
-};
+use std::mem;
 
 
 pub struct CarView {
     model: model::VisualModel,
-    locals_buf: Arc<wgpu::Buffer>,
+    locals_buf: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
     transform: space::Transform,
     physics: config::car::CarPhysics,
     debug_render: render::debug::Context,
@@ -70,16 +68,21 @@ impl CarView {
             ms.mesh = Some(model::load_c3d(
                 raw,
                 device,
-                &cinfo.locals_buf,
                 slot_locals_id + i,
-                &object,
             ));
             ms.scale = info.scale;
         }
 
+        let (locals_buf, bind_group) = render::instantiate_visual_model(
+            &model,
+            device,
+            &object.part_bind_group_layout,
+        );
+
         CarView {
             model,
-            locals_buf: Arc::clone(&cinfo.locals_buf),
+            locals_buf,
+            bind_group,
             transform: cgmath::Decomposed {
                 scale: cinfo.scale,
                 disp: cgmath::Vector3::unit_z(),
@@ -222,6 +225,7 @@ impl Application for CarView {
             model: &self.model,
             gpu_body: &render::body::GpuBody::ZERO,
             locals_buf: &self.locals_buf,
+            bind_group: &self.bind_group,
             transform: self.transform,
             debug_shape_scale: Some(self.physics.scale_bound),
         }.prepare(&mut encoder, device);
@@ -256,12 +260,13 @@ impl Application for CarView {
             render::Render::draw_model(
                 &mut pass,
                 &self.model,
+                &self.bind_group,
             );
 
             self.debug_render.draw_shape(
                 &mut pass,
                 &self.model.shape,
-                &self.model.body.bind_group,
+                &self.bind_group,
             );
         }
 
