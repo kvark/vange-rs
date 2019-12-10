@@ -231,6 +231,9 @@ impl Pulsar {
     }
 }
 
+pub fn jump_dir(power: f32) -> cgmath::Vector3<f32> {
+    5.0 * power * cgmath::vec3(0.0, 3.0, 10.0).normalize()
+}
 
 pub fn step(
     dynamo: &mut Dynamo,
@@ -241,6 +244,7 @@ pub fn step(
     common: &config::common::Common,
     f_turbo: f32,
     f_brake: f32,
+    jump: Option<f32>,
     mut line_buffer: Option<&mut LineBuffer>,
 ) {
     let speed_correction_factor = dt / common.nature.time_delta0;
@@ -255,6 +259,17 @@ pub fn step(
     let z_axis = rot_inv * cgmath::Vector3::unit_z();
     let mut v_vel = dynamo.linear_velocity;
     let mut w_vel = dynamo.angular_velocity;
+    let device_modulation = 1.0;
+    let dt_impulse = 1.0;
+
+    if let Some(power) = jump {
+        let mass = common.nature.density * car.model.body.physics.volume * transform.scale * transform.scale;
+        let f = device_modulation * common.force.k_distance_to_force * dt_impulse / mass.powf(0.3);
+        log::info!("jump mass {:?}, f {:?}", mass, f);
+        //DBV dV = A_g2l*DBV(-Sin(Pi/10)*Sin(psi),-Sin(Pi/10)*Cos(psi),Cos(Pi/10));
+        v_vel += f * jump_dir(power);
+    }
+
     let mut pulsar = {
         let phys = &car.model.body.physics;
         let jacobian = cgmath::Matrix3::from(phys.jacobi)

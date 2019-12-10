@@ -234,7 +234,7 @@ impl GpuCollider {
             ],
         };
         let global_uniforms = device.create_buffer_with_data(
-            [globals].as_bytes(),
+            globals.as_bytes(),
             wgpu::BufferUsage::UNIFORM,
         );
         let locals_size = mem::size_of::<Locals>()

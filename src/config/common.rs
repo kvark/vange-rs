@@ -122,6 +122,17 @@ pub struct Contact {
     pub k_friction_spring: f32,
 }
 
+pub struct Force {
+    pub f_spring_impulse: f32,
+    pub k_spring_impulse: f32,
+    pub f_traction_impulse: f32,
+    pub k_distance_to_force: f32,
+    pub explosion: VelocityPair,
+    pub max_jump_power: f32,
+    pub side_impulse_delay: f32,
+    pub side_impulse_duration: f32,
+}
+
 pub struct Speed {
     pub standard_frame_rate: u32,
     pub speed_correction_tau: f32,
@@ -137,6 +148,7 @@ pub struct Common {
     pub terrain: Terrain,
     pub mole: Mole,
     pub contact: Contact,
+    pub force: Force,
     pub speed: Speed,
 }
 
@@ -273,6 +285,16 @@ pub fn load(file: File) -> Common {
             k_friction_wheel_y: fi.next_key_value("k_friction_wheel_y:"),
             k_friction_wheel_z: fi.next_key_value("k_friction_wheel_z:"),
             k_friction_spring: fi.next_key_value("k_friction_spring:"),
+        },
+        force: Force {
+            f_spring_impulse: fi.next_key_value("f_spring_impulse:"),
+            k_spring_impulse: fi.next_key_value("K_spring_impulse:"),
+            f_traction_impulse: fi.next_key_value("f_traction_impulse:"),
+            k_distance_to_force: fi.next_key_value("k_distance_to_force:"),
+            explosion: get_pair(&mut fi, "explosion"),
+            max_jump_power: fi.next_key_value("max_jump_power:"),
+            side_impulse_delay: fi.next_key_value("side_impulse_delay:"),
+            side_impulse_duration: fi.next_key_value("side_impulse_duration:"),
         },
         //TODO: actually read from the config
         speed: Speed {

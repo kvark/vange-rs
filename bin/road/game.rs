@@ -58,6 +58,7 @@ pub struct Agent {
     spirit: Spirit,
     pub car: config::car::CarInfo,
     control: Control,
+    jump: Option<f32>,
     physics: Physics,
 }
 
@@ -81,6 +82,7 @@ impl Agent {
             spirit: Spirit::Other,
             car: car.clone(),
             control: Control::default(),
+            jump: None,
             physics: match gpu_store {
                 Some(store) => Physics::Gpu {
                     body: store.alloc(&transform, &car.model, &car.physics),
@@ -137,6 +139,7 @@ impl Agent {
             common,
             if self.control.turbo { common.global.k_traction_turbo } else { 1.0 },
             if self.control.brake { common.global.f_brake_max } else { 0.0 },
+            self.jump.take(),
             line_buffer,
         )
     }
@@ -185,6 +188,7 @@ pub struct Game {
     spin_hor: f32,
     spin_ver: f32,
     turbo: bool,
+    jump: Option<f32>,
     is_paused: bool,
     tick: Option<f32>,
 }
@@ -333,6 +337,7 @@ impl Game {
             spin_hor: 0.0,
             spin_ver: 0.0,
             turbo: false,
+            jump: None,
             is_paused: false,
             tick: None,
         }
@@ -357,6 +362,7 @@ impl Application for Game {
             Some(agent) => agent,
             None => return false,
         };
+
         match input {
             KeyboardInput {
                 state: ElementState::Pressed,
@@ -386,6 +392,7 @@ impl Application for Game {
                 Key::Comma => self.tick = Some(-1.0),
                 Key::Period => self.tick = Some(1.0),
                 Key::LShift => self.turbo = true,
+                Key::LAlt => self.jump = Some(0.0),
                 Key::W => self.spin_ver = 1.0,
                 Key::S => self.spin_ver = -1.0,
                 Key::R => {
@@ -407,6 +414,7 @@ impl Application for Game {
                 Key::W | Key::S => self.spin_ver = 0.0,
                 Key::A | Key::D => self.spin_hor = 0.0,
                 Key::LShift => self.turbo = false,
+                Key::LAlt => player.jump = self.jump.take(),
                 _ => (),
             }
             /*
@@ -435,6 +443,11 @@ impl Application for Game {
         delta: f32,
         spawner: &LocalSpawner,
     ) -> Vec<wgpu::CommandBuffer> {
+        if let Some(ref mut jump) = self.jump {
+            let power = delta * (self.db.common.speed.standard_frame_rate as f32);
+            *jump = (*jump + power).min(self.db.common.force.max_jump_power);
+        }
+
         {
             let player = self.agents
                 .iter_mut()
@@ -534,6 +547,9 @@ impl Application for Game {
                                 if agent.control.brake { glob.f_brake_max } else { 0.0 },
                             ];
                             gpu.store.update_control(body, c);
+                        }
+                        if let Some(power) = agent.jump.take() {
+                            gpu.store.add_push(body, physics::jump_dir(power));
                         }
                         needs_prepare
                     }
