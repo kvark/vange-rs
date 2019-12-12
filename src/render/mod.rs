@@ -107,7 +107,7 @@ impl Shaders {
         specialization: &[&str],
         device: &wgpu::Device,
     ) -> Result<Self, IoError> {
-        let base_path = PathBuf::from("data").join("shader");
+        let base_path = PathBuf::from("res").join("shader");
         let path = base_path.join(name).with_extension("glsl");
         if !path.is_file() {
             panic!("Shader not found: {:?}", path);
