@@ -1,1 +1,8 @@
 theme: jekyll-theme-cayman
+
+title: Vangers Oxidation Project
+description: >-
+  Vange-rs experiments and technology blog: future technology from the past.
+
+baseurl: "/vange-rs"
+url: "https://kvark.github.io"
