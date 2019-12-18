@@ -5,6 +5,8 @@ title: Data Formats
 
 The original game features vast levels that were destructible and "live": there was often something moving underground, gates opening and closing, seasons changing, making the world feel very natural. But how could all of this be even stored in memory of a machine from the last century? 128Mb of RAM was supposed to be enough for the whole system running the game.
 
+For the technical breakdown of the formats please refer to the [wiki page](https://github.com/kvark/vange-rs/wiki). This blog post focuses on intuitive description that allows reasoning about the data.
+
 ## Level
 
 Level data is stored and maintained on a per-texel as a multi-layer height map with metadata. Every point of potentially 4096x32768 resolution of a level has its own 1-byte height and 1-byte metadata. For areas that are double-layered, two horizontally adjacent cells are merged to represent the 2x1 segment of the map. They encode the following values:
@@ -64,3 +66,20 @@ Finally, this is a line from `wrlds.dat`:
 ```
 Necross 	thechain/necross/world.ini
 ```
+
+## Palette
+
+The game has various color tables for objects and levels, depending on the current season (yes, the game had dynamic season change in 1998). Palettes are stored as 256 triples of bytes, each representing a color component that for some reason is divided by 4:
+
+![level layers]({{site.baseurl}}/assets/palette.png)
+
+You can see 8 different sections here corresponding to the different types of terrain.
+
+## Modding
+
+[Vange-rs](https://github.com/kvark/vange-rs) project has a `convert` binary that can be used for conversions into and from popular formats:
+  - Model to/from Wavefront OBJ with RON metadata
+  - Level to/from multiple PNGs with RON metadata
+  - Palette to/from PNG
+
+See the [Readme section](https://github.com/kvark/vange-rs#converter) for the exact commands.

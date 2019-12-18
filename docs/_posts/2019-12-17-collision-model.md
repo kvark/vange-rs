@@ -19,12 +19,14 @@ These parameters are updated regularly with regards to the forces, impulses, tim
 
 ### Impulses
 
-First, we consider all collisions and pushes from another objects as well as the terrain, in order to have a list of impulses that affect the body. Collision vector is computed from the current velocities and the point of contact:
+First, we consider all collisions and pushes from another objects as well as the terrain, in order to have a list of impulses that affect the body. The collision vector is computed as a projection of the current velocity at the collision point, projected onto the direction of the collision:
+{: #impulse-equation }
 ```rust
-let collision_vector = linear_velocity + cross(angular_velocity, collision_point);
+let point_velocity = linear_velocity + cross(angular_velocity, collision_point);
+let collision_vector = SOME_CONSTANTS * collision_direction * dot(point_velocity, collision_direction);
 ```
 
-The collision vector is scaled based on some constants that determine the collision power. In order to evaluate the impulse, we then compute the local collision matrix:
+In order to evaluate the impulse, we then compute the local collision matrix:
 
 ```cpp
 mat3 calc_collision_matrix_inv(vec3 r, mat3 ji) {
@@ -40,7 +42,7 @@ mat3 calc_collision_matrix_inv(vec3 r, mat3 ji) {
 }
 ```
 
-Here, `r` is the point of contact, and `ji` is an inverted Jacobian matrix that is adjusted for volume and scale. These come from the physics part of the model data as described in the [Data Formats]({{site.baseurl}}/{% post_url 2019-12-12-data-formats %}). My understanding is that the matrix represents an approximation of the shape of an object, and the fact that it may respond differently to collisions coming from different directions.
+Here, `r` is the point of contact, and `ji` is an inverted Jacobian matrix that is adjusted for volume and scale. These come from the physics part of the model data as described in the [Data Formats]({{site.baseurl}}/{% post_url 2019-12-12-data-formats %}). My understanding is that the matrix represents an approximation of the distribution of mass in an object, which makes it react respond differently to collisions coming from different directions.
 
 Once the local collision matrix is computed, the raw impulse can be derived as:
 ```rust
@@ -55,8 +57,9 @@ angular_velocity += jacobian_inv * cross(collision_point, impulse);
 ### Forces
 
 Forces are also tracked separately for translation and rotation. Whenever a force vector affects the body at a particular point, we compute the linear and angular components as follows:
+{: #force-equation }
 ```rust
-fn apply_force(vector, point) {
+fn apply_force(point, vector) {
 	linear_force += vector;
 	angular_force += cross(point, vector);
 }
@@ -64,11 +67,9 @@ fn apply_force(vector, point) {
 
 First force that is always present is gravity. It's applied at point `(0, 0, z_offset_of_mass_center)`, which comes from the model parameters.
 
-Interestingly, collisions also affect forces, or more specifically - the spring force. It corresponds to some in-game machinery of a car that puts pressure in all directions and can be activated for a jump. Spring force is applied at `collision_point` with `collision_vector`.
+Interestingly, collisions also affect forces, or more specifically - the spring force. It corresponds to some in-game machinery of a car that puts pressure in all directions and can be activated for a jump. Spring force is applied [as the force equation](#force-equation) at `collision_point` with `collision_vector`.
 
-Note: this part that may need to take the time delta into account in order to have smooth physics simulation with variable frame rate.
-
-Finally, local effects like vortexes may also contribute to the forces.
+Finally, local effects like vortexes or artifact abilities may also contribute to the forces.
 
 Before the forces can translate into the velocity change, we need to make sure they are converted into the local space. The application is done as follows:
 ```rust
@@ -76,7 +77,7 @@ linear_velocity += time_delta * linear_forces;
 angular_velocity += time_delta * jacobian_inv * angular_forces;
 ```
 
-So technically a force works the same way as an impulse integrated over time, as if the `collision_vector` is given (as opposed to being computed based on the velocities), which makes the whole model rather elegant in my eyes. In `vange-rs`, both paths go through a "raw impulse" representation that is common between forces and impulses:
+So technically a force works the same way as an impulse integrated over time, as if the `collision_vector` is given (as opposed to being computed), which makes the whole model rather elegant in my eyes. In `vange-rs`, both paths go through a "raw impulse" representation that is common between forces and impulses:
   - for forces, they are pre-multiplied by `time_delta`
   - for impulses, the angular component comes from the `cross(point, vector)`
   - multiplication by `jacobian_inv` is done only once at the end of the simulation step
@@ -120,7 +121,7 @@ At the end of the step (after the position and orientation are updated), the vel
 
 Remember the collision shapes we described in the [Data Formats]({{site.baseurl}}/{% post_url 2019-12-12-data-formats %})? These simplified quad-based mesh approximations get intersected with the terrain at each step. How? By just rasterizing them on the terrain and sampling the heights (and metadata) at each intersection point.
 
-For each collision shape quad, we find the average in the penetration depth (along the Z axis) as well as the point of contact. Then we simply generate an impulse at that point with the vector pointing downwards, following the regular impulse equations. This picture shows the averaged contact points and vectors:
+For each collision shape quad, we find the average in the penetration depth (along the Z axis) as well as the point of contact. Then we simply generate an impulse at that point with the vector pointing downwards, following the regular [impulse equations](#impulse-equation). This picture shows the averaged contact points and vectors:
 
 ![terrain collision vectors]({{site.baseurl}}/assets/terrain-collision-vectors.jpg)
 
@@ -128,10 +129,16 @@ Note: more precisely, the pixels are split into groups for "soft" contacts and "
 
 ### Controls
 
-User-controlled car is also affected by the traction, which is computed separately for each wheel. The basic logic is similar to a regular impulse computed at the wheel position (based on the current velocities), but with the collision vector projected onto the rudder vector (steering direction):
+User-controlled car is also affected by the traction, which is computed separately for each wheel. Each wheel generates an impulse at its position along the rudder vector, following the same [impulse equation](#impulse-equation):
 ```rust
-let rudder_vec = vec3(cos(car_rudder), -sin(car_rudder), 0.0);
-let projected_collision_vector = rudder_vec * dot(collision_vector, rudder_vec);
+let wheel_collision_direction = vec3(cos(car_rudder), -sin(car_rudder), 0.0);
+```
+
+Jumps are implemented as modification of the linear velocity based on the mass:
+```rust
+fn jump(power) {
+	linear_velocity += power * LOCAL_JUMP_DIRECTION / pow(car_mass, 0.3);
+}
 ```
 
 ### Simulation Loop
