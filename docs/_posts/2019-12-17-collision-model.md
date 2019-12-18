@@ -19,7 +19,12 @@ These parameters are updated regularly with regards to the forces, impulses, tim
 
 ### Impulses
 
-First, we consider all collisions and pushes from another objects as well as the terrain, in order to have a list of impulses that affect the body. Collision at `point` directed along the `vector` (which is scaled by the collision power) is evaluated based on the local collision matrix:
+First, we consider all collisions and pushes from another objects as well as the terrain, in order to have a list of impulses that affect the body. Collision vector is computed from the current velocities and the point of contact:
+```rust
+let collision_vector = linear_velocity + cross(angular_velocity, collision_point);
+```
+
+The collision vector is scaled based on some constants that determine the collision power. In order to evaluate the impulse, we then compute the local collision matrix:
 
 ```cpp
 mat3 calc_collision_matrix_inv(vec3 r, mat3 ji) {
@@ -71,7 +76,7 @@ linear_velocity += time_delta * linear_forces;
 angular_velocity += time_delta * jacobian_inv * angular_forces;
 ```
 
-So technically a force works the same way as an impulse integrated over time, which makes the whole model rather elegant in my eyes. In `vange-rs`, both paths go through a "raw impulse" representation that is common between forces and impulses:
+So technically a force works the same way as an impulse integrated over time, as if the `collision_vector` is given (as opposed to being computed based on the velocities), which makes the whole model rather elegant in my eyes. In `vange-rs`, both paths go through a "raw impulse" representation that is common between forces and impulses:
   - for forces, they are pre-multiplied by `time_delta`
   - for impulses, the angular component comes from the `cross(point, vector)`
   - multiplication by `jacobian_inv` is done only once at the end of the simulation step
@@ -120,6 +125,14 @@ For each collision shape quad, we find the average in the penetration depth (alo
 ![terrain collision vectors]({{site.baseurl}}/assets/terrain-collision-vectors.jpg)
 
 Note: more precisely, the pixels are split into groups for "soft" contacts and "hard" constants, and these averaged contact points are used differently for some logic, like the horizontal wall collisions.
+
+### Controls
+
+User-controlled car is also affected by the traction, which is computed separately for each wheel. The basic logic is similar to a regular impulse computed at the wheel position (based on the current velocities), but with the collision vector projected onto the rudder vector (steering direction):
+```rust
+let rudder_vec = vec3(cos(car_rudder), -sin(car_rudder), 0.0);
+let projected_collision_vector = rudder_vec * dot(collision_vector, rudder_vec);
+```
 
 ### Simulation Loop
 
