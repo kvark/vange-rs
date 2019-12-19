@@ -3,7 +3,7 @@ layout: post
 title: Data Formats
 ---
 
-The original game features vast levels that were destructible and "live": there was often something moving underground, gates opening and closing, seasons changing, making the world feel very natural. But how could all of this be even stored in memory of a machine from the last century? 128Mb of RAM was supposed to be enough for the whole system running the game.
+The original game features vast levels that were destructible and "live": there was often something moving underground, gates opening and closing, seasons changing, making the world feel very natural. But how could all of this be even stored in memory of a machine from the last century? 16Mb of RAM was supposed to be enough for the whole system running the game.
 
 For the technical breakdown of the formats please refer to the [wiki page](https://github.com/kvark/vange-rs/wiki). This blog post focuses on intuitive description that allows reasoning about the data.
 

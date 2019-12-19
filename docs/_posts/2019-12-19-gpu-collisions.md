@@ -43,7 +43,7 @@ CPU-side keeps an association between the objects in the world and entries in th
 
 ### Shape rasterization
 
-This is a graphics rendering step that is done on a per-object basis. We render the collision shape quads by transforming them into world space, and for each pixel sampling the terrain and computing the penetration depth:
+This is a [graphics rendering](https://github.com/kvark/vange-rs/blob/5a460719ead2f102d6824315f0e38c4312e57f6c/res/shader/physics/collision_add.glsl) step that is done on a per-object basis. We render the collision shape quads by transforming them into world space, and for each pixel sampling the terrain and computing the penetration depth:
 
 ![GPU shape polygon]({{site.baseurl}}/assets/gpu-shape-polygon.png)
 
@@ -66,7 +66,7 @@ Note: there are much better ways of gathering data on GPU than relying on atomic
 
 ### Contact resolution
 
-At this stage, we have a buffer with collision info for every quad of every object on the level. We need to derive the spring forces from it. We do this by running a compute job, which has a thread per game object. One needs to be careful with extra threads coming from the thread groups: we either need to make them do nothing, or make sure that the source and destination buffers have enough space for them to work on, even if we don't care about the results.
+At this stage, we have a buffer with collision info for every quad of every object on the level. We need to derive the spring forces from it. We do this by running a [compute job](https://github.com/kvark/vange-rs/blob/5a460719ead2f102d6824315f0e38c4312e57f6c/res/shader/physics/body_gather.glsl), which has a thread per game object. One needs to be careful with extra threads coming from the thread groups: we either need to make them do nothing, or make sure that the source and destination buffers have enough space for them to work on, even if we don't care about the results.
 
 Each thread is supplied with a range of addresses into the polygon buffer, based on what shape quads belong to the object. It iterates the polygon data and resolves the contact point and velocity. A thread produces a contribution to the string force affecting the object, as well as changes the velocities based on the impulse of the collision, as described in the [Collision Model]({{site.baseurl}}/{% post_url 2019-12-17-collision-model %}):
 ```rust
@@ -89,19 +89,19 @@ Technically, the spring force output is a separate temporary piece of data, but 
 
 ### Simulation step
 
-The rest of the simulation logic is contained in a big fat compute job doing a step. It, once again, launches a thread per game object. The logic of a thread is straightforward but heavy on computation:
+The rest of the simulation logic is contained in a big fat [compute job](https://github.com/kvark/vange-rs/blob/master/res/shader/physics/body_step.glsl) doing a step. It, once again, launches a thread per game object. The logic of a thread is straightforward but heavy on computation:
   1. apply player controls to the engine parameters
   2. process the impulses from the moving wheels
   3. process the gravity and spring forces
   4. apply the drag force
   5. update position and orientation
 
-This is largely the same logic as we have on the CPU path, just operating on fields of our main storage buffer. [wgpu-rs](https://github.com/gfx-rs/wgpu-rs) makes sure the effect of these updates are visible to consequent compute and rendering jobs, taking care of the synchronization.
+This is largely the same logic as we have on the CPU path, just operating on fields of our main storage buffer. [wgpu-rs](https://github.com/gfx-rs/wgpu-rs) makes sure the effects of these updates are visible to consequent compute and rendering jobs, taking care of the synchronization.
 
-The whole loop is done multiple times per frame, based on the configurable maximum delta time. This ensures the stability of the simulation equations. On slower GPUs, we may end up in a situation where the GPU just can't keep up with the work, given that the longer it takes, the more iterations it would be asked to do.
+The whole loop is done [multiple times](https://github.com/kvark/vange-rs/blob/5a460719ead2f102d6824315f0e38c4312e57f6c/bin/road/game.rs#L579) per frame, based on the configurable maximum delta time. This ensures the stability of the simulation equations. On slower GPUs, we may end up in a situation where the GPU just can't keep up with the work, given that the longer it takes, the more iterations it would be asked to do.
 
 ### Readback
 
 This is all cool, but what if we need to know the actual position of an object on CPU at any point? For example, for AI decision making, unless that part goes on the GPU in the future as well :)
 
-Every frame, we request a copy of the positional data into a separate buffer. Once this copy is done on the GPU, we map this buffer on CPU, read the data, and update the CPU-mirror of the affected objects. Since there are multiple frames in flight, these download buffers need to be ring-buffered. `wgpu-rs` takes responsibility of deferring the actual mapping of the contents to a point where the buffers are no longer used by the GPU.
+Every frame, we [request a copy](https://github.com/kvark/vange-rs/blob/5a460719ead2f102d6824315f0e38c4312e57f6c/src/render/body.rs#L797-L805) of the positional data into a separate buffer. Once this copy is done on the GPU, we map this buffer on CPU, read the data, and update the CPU-mirror of the affected objects. Since there are multiple frames in flight, these download buffers need to be ring-buffered. `wgpu-rs` takes responsibility of deferring the actual mapping of the contents to a point where the buffers are no longer used by the GPU.

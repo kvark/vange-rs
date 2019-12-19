@@ -26,7 +26,7 @@ let point_velocity = linear_velocity + cross(angular_velocity, collision_point);
 let collision_vector = SOME_CONSTANTS * collision_direction * dot(point_velocity, collision_direction);
 ```
 
-In order to evaluate the impulse, we then compute the local collision matrix:
+In order to evaluate the impulse, we then [compute](https://github.com/kvark/vange-rs/blob/5a460719ead2f102d6824315f0e38c4312e57f6c/res/shader/physics/pulse.inc.glsl) the local collision matrix:
 
 ```cpp
 mat3 calc_collision_matrix_inv(vec3 r, mat3 ji) {
