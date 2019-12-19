@@ -41,7 +41,10 @@ impl ResourceView {
 
         info!("Loading model {}", path);
         let file = settings.open_relative(path);
-        let model = model::load_m3d(file, device, &object);
+        let model = model::load_m3d(
+            file, device, &object,
+            settings.game.physics.shape_sampling,
+        );
         let (locals_buf, bind_group) = render::instantiate_visual_model(
             &model,
             device,

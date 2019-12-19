@@ -195,7 +195,10 @@ pub fn load_registry(
             physics.scale_size
         };
         let file = settings.open_relative(&mi.path);
-        let model = model::load_m3d(file, device, object);
+        let model = model::load_m3d(
+            file, device, object,
+            settings.game.physics.shape_sampling,
+        );
         map.insert(
             name.to_owned(),
             CarInfo {

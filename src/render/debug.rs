@@ -320,7 +320,7 @@ impl Context {
                                 attributes: &[
                                     wgpu::VertexAttributeDescriptor {
                                         offset: 0,
-                                        format: wgpu::VertexFormat::Float4,
+                                        format: wgpu::VertexFormat::Uchar4Norm,
                                         shader_location: 1,
                                     },
                                 ],
@@ -368,7 +368,7 @@ impl Context {
         }
 
         pass.set_bind_group(2, &shape.bind_group, &[]);
-        pass.set_bind_group(3, &part_bind_group, &[]);
+        pass.set_bind_group(3, &part_bind_group, &[0]);
 
         // draw collision polygon faces
         if let Some(ref pipeline) = self.pipeline_face {

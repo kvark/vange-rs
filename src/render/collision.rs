@@ -121,7 +121,11 @@ impl GpuCollider {
                     format: DUMMY_TARGET_FORMAT,
                     color_blend: wgpu::BlendDescriptor::REPLACE,
                     alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                    write_mask: wgpu::ColorWrite::empty(),
+                    write_mask: if cfg!(debug_assertions) {
+                        wgpu::ColorWrite::all()
+                    } else {
+                        wgpu::ColorWrite::empty()
+                    },
                 },
             ],
             depth_stencil_state: None,

@@ -55,6 +55,8 @@ layout(set = 0, binding = 1, std430) buffer Collision {
     CollisionPolygon s_Collisions[];
 };
 
+layout(location = 0) out float o_Dummy;
+
 void main() {
     Surface suf = get_surface(v_World.xy);
 
@@ -87,5 +89,7 @@ void main() {
             atomicAdd(s_Collisions[v_TargetIndex].depth_soft, encoded);
         }
     }
+
+    o_Dummy = depth_raw/8.0;
 }
 #endif //FS

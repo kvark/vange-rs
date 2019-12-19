@@ -50,12 +50,14 @@ pub type ShapeVertex = [i8; 4];
 
 struct Tessellator {
     samples: Vec<RawVertex>,
+    depth: u8,
 }
 
 impl Tessellator {
-    fn new() -> Self {
+    fn new(depth: u8) -> Self {
         Tessellator {
             samples: Vec::new(),
+            depth,
         }
     }
     fn tessellate(
@@ -63,7 +65,6 @@ impl Tessellator {
         corners: &[RawVertex],
         _middle: RawVertex,
     ) -> &[RawVertex] {
-        let go_deeper = false;
         self.samples.clear();
         //self.samples.push(middle);
         let mid_sum = corners
@@ -73,7 +74,7 @@ impl Tessellator {
                 sum[1] + cur[1] as f32,
                 sum[2] + cur[2] as f32,
             ]);
-        if go_deeper {
+        if self.depth != 0 {
             let corner_ratio = 0.66f32;
             let div = (1.0 - corner_ratio) / corners.len() as f32;
             let mid_rationed = [
@@ -174,6 +175,7 @@ pub fn load_c3d(
 pub fn load_c3d_shape(
     raw: m3d::Mesh<m3d::Geometry<m3d::CollisionQuad>>,
     device: &wgpu::Device,
+    shape_sampling: u8,
     with_sample_buf: bool,
     object: &ObjectContext,
 ) -> Arc<Shape> {
@@ -182,7 +184,7 @@ pub fn load_c3d_shape(
     let mut polygon_data = Vec::with_capacity(raw.geometry.polygons.len());
     let mut samples = Vec::new();
     let mut sample_data = Vec::new();
-    let mut tess = Tessellator::new();
+    let mut tess = Tessellator::new(shape_sampling);
 
     for quad in &raw.geometry.polygons {
         let corners = [
@@ -306,6 +308,7 @@ pub fn load_m3d(
     file: File,
     device: &wgpu::Device,
     object: &ObjectContext,
+    shape_sampling: u8,
 ) -> VisualModel {
     let raw = m3d::FullModel::load(file);
     let wheel_offset = 1;
@@ -313,7 +316,7 @@ pub fn load_m3d(
 
     let model = VisualModel {
         body: load_c3d(raw.body, device, 0),
-        shape: load_c3d_shape(raw.shape, device, true, object),
+        shape: load_c3d_shape(raw.shape, device, shape_sampling, true, object),
         dimensions: raw.dimensions,
         max_radius: raw.max_radius,
         color: raw.color,
@@ -329,7 +332,7 @@ pub fn load_m3d(
             .enumerate()
             .map(|(i, debrie)| m3d::Debrie {
                 mesh: load_c3d(debrie.mesh, device, debrie_offset + i),
-                shape: load_c3d_shape(debrie.shape, device, false, object),
+                shape: load_c3d_shape(debrie.shape, device, 0, false, object),
             })
             .collect(),
         slots: m3d::Slot::map_all(raw.slots, |_, _| unreachable!()),

@@ -29,6 +29,7 @@ pub struct GpuCollision {
 #[derive(Deserialize)]
 pub struct Physics {
     pub max_quant: f32,
+    pub shape_sampling: u8,
     pub gpu_collision: Option<GpuCollision>,
 }
 
