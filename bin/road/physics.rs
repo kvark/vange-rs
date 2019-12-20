@@ -119,6 +119,12 @@ pub fn get_height(altitude: u8) -> f32 {
     altitude as f32 * (level::HEIGHT_SCALE as f32) / 255.0
 }
 
+// see `GET_MIDDLE_HIGHT` macro
+fn get_middle(low: u8, high: u8) -> f32 {
+    let extra_room = if high.saturating_sub(low) > 130 { 110 } else { 48 };
+    get_height(low.saturating_add(extra_room))
+}
+
 fn collide_low(
     poly: &model::Polygon,
     samples: &[model::RawVertex],
@@ -137,9 +143,7 @@ fn collide_low(
                 get_height(point.0)
             }
             level::Texel::Dual { high, low, .. } => {
-                // see `GET_MIDDLE_HIGHT` macro
-                let extra_room = if high.0.saturating_sub(low.0) > 130 { 110 } else { 48 };
-                let middle = get_height(low.0.saturating_add(extra_room));
+                let middle = get_middle(low.0, high.0);
                 if pos.z > middle {
                     let top = get_height(high.0);
                     if pos.z - middle > top - pos.z {
@@ -457,6 +461,24 @@ pub fn step(
             cgmath::vec3(cos, -sin, 0.0)
         };
         for wheel in car.model.wheels.iter() {
+            let pw = transform.transform_point(cgmath::Point3::from(wheel.pos));
+            let hit = match level.get((pw.x as i32, pw.y as i32)) {
+                level::Texel::Single(point) => {
+                    pw.z <= get_height(point.0)
+                }
+                level::Texel::Dual { high, low, .. } => {
+                    let middle = get_middle(low.0, high.0);
+                    if pw.z > middle {
+                        pw.z <= get_height(high.0)
+                    } else {
+                        pw.z <= get_height(low.0)
+                    }
+                }
+            };
+            if !hit {
+                continue
+            }
+
             let rx_max = if wheel.pos[0] > 0.0 {
                 car.model.body.bbox.1[0]
             } else {
@@ -479,7 +501,6 @@ pub fn step(
                 let pulse = pulsar.add(pos, u0 * -common.impulse.k_wheel);
 
                 if let Some(ref mut lbuf) = line_buffer {
-                    let pw = transform.transform_point(cgmath::Point3::from(wheel.pos));
                     let dest = pw + transform.transform_vector(pulse) * 10.0;
                     lbuf.add(pw.into(), dest.into(), 0xFFFFFF00);
                 }
