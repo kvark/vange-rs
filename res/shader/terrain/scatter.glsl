@@ -18,25 +18,34 @@ layout(set = 2, binding = 1) uniform c_Scatter {
 
 
 vec2 generate_pos() {
-    float y_sqrt = mix(
-        sqrt(abs(u_RangeY.x)) * sign(u_RangeY.x),
-        sqrt(abs(u_RangeY.y)) * sign(u_RangeY.y),
-        float(gl_GlobalInvocationID.y) / float(gl_NumWorkGroups.y * gl_WorkGroupSize.y - 1)
-    );
-    float y = y_sqrt * y_sqrt * sign(y_sqrt);
+    vec2 screen_coord = vec2(gl_GlobalInvocationID.xy) /
+        vec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy - vec2(1));
+
+    float y;
+    if (true) {
+        float y_sqrt = mix(
+            sqrt(abs(u_RangeY.x)) * sign(u_RangeY.x),
+            sqrt(abs(u_RangeY.y)) * sign(u_RangeY.y),
+            screen_coord.y
+        );
+        y = y_sqrt * y_sqrt * sign(y_sqrt);
+    } else {
+        y = mix(u_RangeY.x, u_RangeY.y, screen_coord.y);
+    }
+
     float x_limit = mix(
         u_RangeX.x, u_RangeX.y,
         (y - u_RangeY.x) / (u_RangeY.y - u_RangeY.x)
     );
-    float x = mix(
-        -x_limit, x_limit,
-        float(gl_GlobalInvocationID.x) / float(gl_NumWorkGroups.x * gl_WorkGroupSize.x - 1)
-    );
+    float x = mix(-x_limit, x_limit, screen_coord.x);
+
     return u_CamOrigin + u_CamDir * y + vec2(u_CamDir.y, -u_CamDir.x) * x;
 }
 
 bool is_visible(vec4 p) {
-    return p.w > 0.0 && p.z > 0.0 && p.x >= -p.w && p.x <= p.w && p.y >= -p.w && p.y < p.w;
+    return p.w > 0.0 && p.z >= 0.0 &&
+        p.x >= -p.w && p.x <= p.w &&
+        p.y >= -p.w && p.y <= p.w;
 }
 
 void add_voxel(vec2 pos, float altitude, uint type, float lit_factor) {
@@ -48,7 +57,7 @@ void add_voxel(vec2 pos, float altitude, uint type, float lit_factor) {
     float color_id = evaluate_color_id(type, pos / u_TextureScale.xy, altitude / u_TextureScale.z, lit_factor);
     float depth = clamp(ndc.z, 0.0, 1.0);
     uint value = (uint(depth * float(0xFFFFFF)) << 8U) | uint(color_id * float(0xFF));
-    uvec2 tc = min(u_ScreenSize.xy - 1U, uvec2(round((ndc.xy * 0.5 + 0.5) * vec2(u_ScreenSize.xy))));
+    uvec2 tc = clamp(uvec2(round((ndc.xy * 0.5 + 0.5) * vec2(u_ScreenSize.xy))), uvec2(0U), u_ScreenSize.xy - 1U);
     atomicMin(w_Data[tc.y * u_ScreenSize.x + tc.x], value);
 }
 
