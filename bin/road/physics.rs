@@ -172,17 +172,23 @@ fn collide_low(
     }
 }
 
-struct Pulsar {
+struct RigidBody {
     j_inv: cgmath::Matrix3<f32>,
     vel: cgmath::Vector3<f32>,
+    wel_orig: cgmath::Vector3<f32>,
     wel_raw: cgmath::Vector3<f32>,
 }
 
-impl Pulsar {
-    fn new(jacobian: cgmath::Matrix3<f32>) -> Self {
-        Pulsar {
+impl RigidBody {
+    fn new(
+        jacobian: &cgmath::Matrix3<f32>,
+        vel: cgmath::Vector3<f32>,
+        wel: cgmath::Vector3<f32>,
+    ) -> Self {
+        RigidBody {
             j_inv: jacobian.invert().unwrap(),
-            vel: cgmath::Vector3::zero(),
+            vel,
+            wel_orig: wel,
             wel_raw: cgmath::Vector3::zero(),
         }
     }
@@ -215,23 +221,28 @@ impl Pulsar {
         cm.invert().unwrap()
     }
 
-    fn add(
-        &mut self, point: cgmath::Vector3<f32>, vec: cgmath::Vector3<f32>
-    ) -> cgmath::Vector3<f32> {
-        let pulse = self.calc_collision_matrix_inv(&point) * vec;
-        //log::debug!("\t\tCollision speed {:?} pulse {:?}", v_vel, pulse);
-        self.vel += pulse;
-        self.wel_raw += point.cross(pulse);
-        pulse
-    }
-
     fn add_raw(&mut self, vel: cgmath::Vector3<f32>, wel_raw: cgmath::Vector3<f32>) {
         self.vel += vel;
         self.wel_raw += wel_raw;
     }
 
+    fn push(
+        &mut self,
+        point: cgmath::Vector3<f32>,
+        vec: cgmath::Vector3<f32>,
+    ) -> cgmath::Vector3<f32> {
+        let pulse = self.calc_collision_matrix_inv(&point) * vec;
+        self.vel += pulse;
+        self.wel_raw += point.cross(pulse);
+        pulse
+    }
+
+    fn velocity_at(&self, point: cgmath::Vector3<f32>) -> cgmath::Vector3<f32> {
+        self.vel + self.wel_orig.cross(point)
+    }
+
     fn finish(self) -> (cgmath::Vector3<f32>, cgmath::Vector3<f32>) {
-        (self.vel, self.j_inv * self.wel_raw)
+        (self.vel, self.wel_orig + self.j_inv * self.wel_raw)
     }
 }
 
@@ -261,25 +272,23 @@ pub fn step(
     let flood_level = level.flood_map[0] as f32;
     // Z axis in the local coordinate space
     let z_axis = rot_inv * cgmath::Vector3::unit_z();
-    let mut v_vel = dynamo.linear_velocity;
-    let mut w_vel = dynamo.angular_velocity;
     let device_modulation = 1.0;
     let dt_impulse = 1.0;
+
+    let mut rigid = {
+        let phys = &car.model.body.physics;
+        let jacobian = cgmath::Matrix3::from(phys.jacobi)
+            * (transform.scale * transform.scale / phys.volume);
+        RigidBody::new(&jacobian, dynamo.linear_velocity, dynamo.angular_velocity)
+    };
 
     if let Some(power) = jump {
         let mass = common.nature.density * car.model.body.physics.volume * transform.scale * transform.scale;
         let f = device_modulation * common.force.k_distance_to_force * dt_impulse / mass.powf(0.3);
         log::info!("jump mass {:?}, f {:?}", mass, f);
         //DBV dV = A_g2l*DBV(-Sin(Pi/10)*Sin(psi),-Sin(Pi/10)*Cos(psi),Cos(Pi/10));
-        v_vel += f * jump_dir(power);
+        rigid.vel += f * jump_dir(power);
     }
-
-    let mut pulsar = {
-        let phys = &car.model.body.physics;
-        let jacobian = cgmath::Matrix3::from(phys.jacobi)
-            * (transform.scale * transform.scale / phys.volume);
-        Pulsar::new(jacobian)
-    };
 
     let mut wheels_touch = 0u32;
     let mut spring_touch = 0;
@@ -352,38 +361,37 @@ pub fn step(
 
             let origin = transform.disp;
             let mostly_horisontal = {
-                let tmp = v_vel + w_vel.cross(r);
+                let tmp = rigid.velocity_at(r);
                 tmp.z * tmp.z < tmp.x * tmp.x + tmp.y * tmp.y
             };
             match cdata {
                 CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
                     let r1 = rot_inv * cgmath::vec3(
                         cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0); // ignore vertical
+                    let pv = rigid.velocity_at(r1);
                     let normal = {
                         let bm = car.model.body.bbox.1;
                         let n = cgmath::vec3(r1.x / bm[0], r1.y / bm[1], r1.z / bm[2]);
                         n.normalize()
                     };
-                    let u0 = v_vel + w_vel.cross(r1);
-                    let dot = u0.dot(normal);
+                    let dot = pv.dot(normal);
                     if dot > 0.0 {
-                        pulsar.add(r1, normal * (-common.impulse.factors[0] * modulation * dot));
+                        rigid.push(r, normal * (dot * -common.impulse.factors[0] * modulation));
                     }
                 },
                 CollisionData{ soft: Some(ref cp), ..} => {
-                    let r1 = rot_inv * cgmath::vec3(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
                     //TODO: let r1 = rot_inv * (cp.pos - origin);
-                    let mut u0 = v_vel + w_vel.cross(r1);
-                    log::debug!("\t\tContact {:?}\n\t\t\torigin={:?}\n\t\t\tu0 = {:?}", cp, origin, u0);
-                    if u0.dot(z_axis) < 0.0 {
-                        if stand_on_wheels { // ignore XY
-                            u0.x = 0.0;
-                            u0.y = 0.0;
+                    let r1 = rot_inv * cgmath::vec3(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
+                    let pv = rigid.velocity_at(r1);
+                    if pv.dot(z_axis) < 0.0 {
+                        let vec  = if stand_on_wheels {
+                            // ignore XY
+                            cgmath::vec3(0.0, 0.0, pv.z)
                         } else {
-                            let kn = u0.dot(poly_norm) * (1.0 - common.impulse.k_friction);
-                            u0 = u0 * common.impulse.k_friction + poly_norm * kn;
-                        }
-                        pulsar.add(r, u0 * (-common.impulse.factors[1] * modulation));
+                            let projected = poly_norm * poly_norm.dot(pv);
+                            common.impulse.k_friction * pv + (1.0 - common.impulse.k_friction) * projected
+                        };
+                        rigid.push(r, vec * (-common.impulse.factors[1] * modulation));
                     }
                 }
                 _ => (),
@@ -438,14 +446,14 @@ pub fn step(
     }
 
     // apply drag
-    let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(v_vel.magnitude());
-    let mut w_drag = common.drag.free.w * common.drag.speed.w.powf(w_vel.magnitude2()); //why mag2?
+    let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(rigid.vel.magnitude());
+    let mut w_drag = common.drag.free.w * common.drag.speed.w.powf(rigid.wel_orig.magnitude2()); //why mag2?
     if wheels_touch > 0 {
         //TODO: why `ln()`?
         let speed = common.drag.wheel_speed.ln() * car.physics.mobility_factor
             * common.global.speed_factor
             / car.physics.speed_factor;
-        v_vel.y *= (1.0 + speed).powf(speed_correction_factor);
+        rigid.vel.y *= (1.0 + speed).powf(speed_correction_factor);
     }
 
     let _ = (float_count, water_immersion, terrain_immersion); //TODO
@@ -462,21 +470,24 @@ pub fn step(
         };
         for wheel in car.model.wheels.iter() {
             let pw = transform.transform_point(cgmath::Point3::from(wheel.pos));
-            let hit = match level.get((pw.x as i32, pw.y as i32)) {
-                level::Texel::Single(point) => {
-                    pw.z <= get_height(point.0)
-                }
-                level::Texel::Dual { high, low, .. } => {
-                    let middle = get_middle(low.0, high.0);
-                    if pw.z > middle {
-                        pw.z <= get_height(high.0)
-                    } else {
-                        pw.z <= get_height(low.0)
+            let detect_wheel_hits = false;
+            if detect_wheel_hits {
+                let hit = match level.get((pw.x as i32, pw.y as i32)) {
+                    level::Texel::Single(point) => {
+                        pw.z <= get_height(point.0)
                     }
+                    level::Texel::Dual { high, low, .. } => {
+                        let middle = get_middle(low.0, high.0);
+                        if pw.z > middle {
+                            pw.z <= get_height(high.0)
+                        } else {
+                            pw.z <= get_height(low.0)
+                        }
+                    }
+                };
+                if !hit {
+                    continue
                 }
-            };
-            if !hit {
-                continue
             }
 
             let rx_max = if wheel.pos[0] > 0.0 {
@@ -486,20 +497,20 @@ pub fn step(
             };
             let pos = cgmath::vec3(rx_max, wheel.pos[1], wheel.pos[2])
                 * transform.scale;
-            acc_cur.f.y += f_traction_per_wheel;
+            let pv = rigid.velocity_at(pos);
 
-            let vw = v_vel + w_vel.cross(pos);
-            acc_cur.f -= vw * f_brake;
+            acc_cur.f.y += f_traction_per_wheel;
+            acc_cur.f -= pv * f_brake;
 
             if !is_after_collision {
-                let normal = if wheel.steer != 0 {
+                let dir = if wheel.steer != 0 {
                     rudder_vec
                 } else {
                     cgmath::Vector3::unit_x()
                 };
-                let u0 = normal * vw.dot(normal);
-                let pulse = pulsar.add(pos, u0 * -common.impulse.k_wheel);
 
+                let dot = dir.dot(pv);
+                let pulse = rigid.push(pos, dir * (dot * -common.impulse.k_wheel));
                 if let Some(ref mut lbuf) = line_buffer {
                     let dest = pw + transform.transform_vector(pulse) * 10.0;
                     lbuf.add(pw.into(), dest.into(), 0xFFFFFF00);
@@ -515,19 +526,15 @@ pub fn step(
             car.physics.z_offset_of_mass_center * transform.scale,
         );
         acc_cur.k -= common.nature.gravity * tmp.cross(z_axis);
-        let vz = z_axis.dot(v_vel);
+        let vz = z_axis.dot(rigid.vel);
         if vz < -10.0 {
             v_drag *= common.drag.z.powf(-vz);
         }
     }
 
     log::debug!("\tcur acc {:?}", acc_cur);
-    pulsar.add_raw(acc_cur.f * dt, acc_cur.k * dt);
-    {
-        let (v, w) = pulsar.finish();
-        v_vel += v;
-        w_vel += w;
-    }
+    rigid.add_raw(acc_cur.f * dt, acc_cur.k * dt);
+    let (mut v_vel, mut w_vel) = rigid.finish();
 
     //log::debug!("J_inv {:?}, handedness {}", j_inv.transpose(), j_inv.x.cross(j_inv.y).dot(j_inv.z));
     log::debug!("\tresulting v={:?} w={:?}", v_vel, w_vel);
