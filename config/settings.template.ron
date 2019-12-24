@@ -6,6 +6,12 @@
 		level: "Fostral", // see `wrlds.dat` for the list
 		cycle: "Eleerection", // see `bunches.prm` for the list, leave empty for bonus worlds
 		view: Perspective, // can be "Flat" or "Perspective"
+		camera: (
+			angle: 60,
+			height: 300,
+			target_height_offset: 200,
+			speed: 1,
+		),
 		other: (
 			count: 10, // number of NPC vangers
 		),

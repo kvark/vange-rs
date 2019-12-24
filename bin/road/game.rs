@@ -15,12 +15,7 @@ use vangers::{
     },
 };
 
-use cgmath::{
-    Angle as _,
-    Rotation3 as _,
-    Zero as _,
-    Transform as _,
-};
+use cgmath::prelude::*;
 use futures::executor::LocalSpawner;
 
 use std::{
@@ -191,6 +186,37 @@ struct Gpu {
     collider: GpuCollider,
 }
 
+enum CameraStyle {
+    Simple(space::Direction),
+    Follow(space::Follow),
+}
+
+impl CameraStyle {
+    fn new(config: &config::settings::Camera) -> Self {
+        let angle = cgmath::Deg(config.angle as f32);
+        if config.speed > 0.0 {
+            CameraStyle::Follow(space::Follow {
+                transform: cgmath::Decomposed {
+                    disp: cgmath::vec3(
+                        0.0,
+                        -angle.cos() * config.height,
+                        config.height + config.target_height_offset,
+                    ),
+                    rot: cgmath::Quaternion::from_angle_x(cgmath::Deg::turn_div_4() - angle),
+                    scale: 1.0,
+                },
+                speed: config.speed,
+                fix_z: true,
+            })
+        } else {
+            CameraStyle::Simple(space::Direction {
+                view: cgmath::vec3(0.0, angle.cos(), -angle.sin()),
+                height: config.height,
+            })
+        }
+    }
+}
+
 pub struct Game {
     db: DataBase,
     render: Render,
@@ -200,6 +226,7 @@ pub struct Game {
     level: level::Level,
     agents: Vec<Agent>,
     cam: space::Camera,
+    cam_style: CameraStyle,
     max_quant: f32,
     spin_hor: f32,
     spin_ver: f32,
@@ -350,6 +377,7 @@ impl Game {
                     }
                 },
             },
+            cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
             //debug_collision_map: settings.render.debug.collision_map,
             spin_hor: 0.0,
@@ -365,7 +393,6 @@ impl Game {
         &mut self,
         step: f32,
     ) {
-        use cgmath::InnerSpace;
         let mut back = self.cam.rot * cgmath::Vector3::unit_z();
         back.z = 0.0;
         self.cam.loc -= back.normalize() * step;
@@ -505,28 +532,13 @@ impl Application for Game {
             player.control.motor = 1.0 * self.spin_ver;
             player.control.turbo = self.turbo;
 
-            if true {
-                self.cam.follow(
-                    &target,
-                    delta,
-                    &space::Follow {
-                        transform: cgmath::Decomposed {
-                            disp: cgmath::vec3(0.0, -300.0, 500.0),
-                            rot: cgmath::Quaternion::from_angle_x(cgmath::Rad(0.7)),
-                            scale: 1.0,
-                        },
-                        speed: 100.0,
-                        fix_z: true,
-                    },
-                );
-            } else {
-                self.cam.look_by(
-                    &target,
-                    &space::Direction {
-                        view: cgmath::vec3(0.0, 1.0, -3.0),
-                        height: 200.0,
-                    },
-                );
+            match self.cam_style {
+                CameraStyle::Simple(ref dir) => {
+                    self.cam.look_by(&target, dir);
+                }
+                CameraStyle::Follow(ref follow) => {
+                    self.cam.follow(&target, delta, follow);
+                }
             }
         }
 

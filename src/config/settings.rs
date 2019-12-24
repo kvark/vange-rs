@@ -15,6 +15,14 @@ pub enum View {
 }
 
 #[derive(Deserialize)]
+pub struct Camera {
+    pub angle: u8,
+    pub height: f32,
+    pub target_height_offset: f32,
+    pub speed: f32,
+}
+
+#[derive(Deserialize)]
 pub struct Other {
     pub count: usize,
 }
@@ -38,6 +46,7 @@ pub struct Game {
     pub level: String,
     pub cycle: String,
     pub view: View,
+    pub camera: Camera,
     pub other: Other,
     pub physics: Physics,
 }

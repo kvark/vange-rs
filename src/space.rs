@@ -1,5 +1,4 @@
-use cgmath;
-use cgmath::{Rotation3 as Rotation3_, Transform as Transform_};
+use cgmath::{InnerSpace as _, Rotation as _, Rotation3 as _, Transform as _};
 use std::ops::Range;
 
 pub type Transform = cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>;
@@ -102,8 +101,8 @@ impl Camera {
         follow: &Follow,
     ) {
         let new_target = if follow.fix_z {
-            let z_axis = target.rot * cgmath::vec3(0.0, 0.0, 1.0);
-            let adjust_quat = cgmath::Quaternion::from_arc(z_axis, cgmath::vec3(0.0, 0.0, 1.0), None);
+            let z_axis = target.rot * cgmath::Vector3::unit_z();
+            let adjust_quat = cgmath::Quaternion::from_arc(z_axis, cgmath::Vector3::unit_z(), None);
             Transform {
                 disp: target.disp,
                 rot: adjust_quat * target.rot,
@@ -115,9 +114,12 @@ impl Camera {
 
         let result = new_target.concat(&follow.transform);
         let k = (dt * -follow.speed).exp();
-        //TODO
+
         self.loc = result.disp * (1.0 - k) + self.loc * k;
-        self.rot = result.rot.slerp(self.rot, k);
+        self.rot = cgmath::Quaternion::look_at(
+            (self.loc - target.disp).normalize(),
+            cgmath::Vector3::unit_z(),
+        ).invert();
     }
 
     pub fn look_by(
