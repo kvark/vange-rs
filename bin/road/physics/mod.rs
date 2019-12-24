@@ -2,18 +2,20 @@
 //! - https://people.eecs.berkeley.edu/~jfc/mirtich/thesis/mirtichThesis.pdf
 
 use vangers::{
-    config, level, model, space,
+    config, level, space,
     render::{
         debug::LineBuffer,
     },
 };
 
-use cgmath::{
-    self,
-    prelude::*,
-};
+use cgmath::prelude::*;
 
 use std::{f32::EPSILON};
+
+mod rigid;
+mod terrain;
+
+pub use terrain::get_height;
 
 const MAX_TRACTION: config::common::Traction = 4.0;
 
@@ -22,57 +24,6 @@ struct AccelerationVectors {
     f: cgmath::Vector3<f32>, // linear
     k: cgmath::Vector3<f32>, // angular
 }
-
-#[derive(Debug)]
-struct CollisionPoint {
-    pos: cgmath::Vector3<f32>,
-    depth: f32,
-}
-
-#[derive(Debug)]
-struct CollisionData {
-    soft: Option<CollisionPoint>,
-    hard: Option<CollisionPoint>,
-}
-
-struct HitAccumulator {
-    pos: cgmath::Vector3<f32>,
-    depth: f32,
-    count: f32,
-}
-
-impl HitAccumulator {
-    fn new() -> Self {
-        HitAccumulator {
-            pos: cgmath::vec3(0.0, 0.0, 0.0),
-            depth: 0.0,
-            count: 0.0,
-        }
-    }
-    fn add(
-        &mut self,
-        pos: cgmath::Vector3<f32>,
-        depth: f32,
-    ) {
-        self.pos += pos;
-        self.depth += depth;
-        self.count += 1.0;
-    }
-    fn finish(
-        &self,
-        min: f32,
-    ) -> Option<CollisionPoint> {
-        if self.count > min {
-            Some(CollisionPoint {
-                pos: self.pos / self.count,
-                depth: self.depth / self.count,
-            })
-        } else {
-            None
-        }
-    }
-}
-
 
 pub struct Dynamo {
     pub traction: config::common::Traction,
@@ -114,138 +65,6 @@ impl Dynamo {
     }
 }
 
-
-pub fn get_height(altitude: u8) -> f32 {
-    altitude as f32 * (level::HEIGHT_SCALE as f32) / 255.0
-}
-
-// see `GET_MIDDLE_HIGHT` macro
-fn get_middle(low: u8, high: u8) -> f32 {
-    let extra_room = if high.saturating_sub(low) > 130 { 110 } else { 48 };
-    get_height(low.saturating_add(extra_room))
-}
-
-fn collide_low(
-    poly: &model::Polygon,
-    samples: &[model::RawVertex],
-    scale: f32,
-    transform: &space::Transform,
-    level: &level::Level,
-    terraconf: &config::common::Terrain,
-) -> CollisionData {
-    let (mut soft, mut hard) = (HitAccumulator::new(), HitAccumulator::new());
-    for s in samples[poly.samples.clone()].iter() {
-        let sp = cgmath::Point3::from(*s).cast::<f32>().unwrap();
-        let pos = transform.transform_point(sp * scale).to_vec();
-        let texel = level.get((pos.x as i32, pos.y as i32));
-        let height = match texel {
-            level::Texel::Single(point) => {
-                get_height(point.0)
-            }
-            level::Texel::Dual { high, low, .. } => {
-                let middle = get_middle(low.0, high.0);
-                if pos.z > middle {
-                    let top = get_height(high.0);
-                    if pos.z - middle > top - pos.z {
-                        top
-                    } else {
-                        continue;
-                    }
-                } else {
-                    get_height(low.0)
-                }
-            }
-        };
-        let dz = height - pos.z;
-        //log::debug!("\t\t\tSample h={:?} at {:?}, dz={}", height, pos, dz);
-        if dz > terraconf.min_wall_delta {
-            //log::debug!("\t\t\tHard touch of {} at {:?}", dz, pos);
-            hard.add(pos, dz);
-        } else if dz > 0.0 {
-            //log::debug!("\t\t\tSoft touch of {} at {:?}", dz, pos);
-            soft.add(pos, dz);
-        }
-    }
-    CollisionData {
-        soft: (if soft.count > 0.0 { &soft } else { &hard }).finish(0.0),
-        hard: hard.finish(4.0),
-    }
-}
-
-struct RigidBody {
-    j_inv: cgmath::Matrix3<f32>,
-    vel: cgmath::Vector3<f32>,
-    wel_orig: cgmath::Vector3<f32>,
-    wel_raw: cgmath::Vector3<f32>,
-}
-
-impl RigidBody {
-    fn new(
-        jacobian: &cgmath::Matrix3<f32>,
-        vel: cgmath::Vector3<f32>,
-        wel: cgmath::Vector3<f32>,
-    ) -> Self {
-        RigidBody {
-            j_inv: jacobian.invert().unwrap(),
-            vel,
-            wel_orig: wel,
-            wel_raw: cgmath::Vector3::zero(),
-        }
-    }
-
-    fn calc_collision_matrix_inv(
-        &self,
-        r: &cgmath::Vector3<f32>,
-    ) -> cgmath::Matrix3<f32> {
-        let ji = &self.j_inv;
-        let t3 = -r.z * ji[1][1] + r.y * ji[2][1];
-        let t7 = -r.z * ji[1][2] + r.y * ji[2][2];
-        let t12 = -r.z * ji[1][0] + r.y * ji[2][0];
-        let t21 = r.z * ji[0][1] - r.x * ji[2][1];
-        let t25 = r.z * ji[0][2] - r.x * ji[2][2];
-        let t30 = r.z * ji[0][0] - r.x * ji[2][0];
-        let t39 = -r.y * ji[0][1] + r.x * ji[1][1];
-        let t43 = -r.y * ji[0][2] + r.x * ji[1][2];
-        let t48 = -r.y * ji[0][0] + r.x * ji[1][0];
-        let cm = cgmath::Matrix3::new(
-            1.0 - t3 * r.z + t7 * r.y,
-            t12 * r.z - t7 * r.x,
-            -t12 * r.y + t3 * r.x,
-            -t21 * r.z + t25 * r.y,
-            1.0 + t30 * r.z - t25 * r.x,
-            -t30 * r.y + t21 * r.x,
-            -t39 * r.z + t43 * r.y,
-            t48 * r.z - t43 * r.x,
-            1.0 - t48 * r.y + t39 * r.x,
-        );
-        cm.invert().unwrap()
-    }
-
-    fn add_raw(&mut self, vel: cgmath::Vector3<f32>, wel_raw: cgmath::Vector3<f32>) {
-        self.vel += vel;
-        self.wel_raw += wel_raw;
-    }
-
-    fn push(
-        &mut self,
-        point: cgmath::Vector3<f32>,
-        vec: cgmath::Vector3<f32>,
-    ) -> cgmath::Vector3<f32> {
-        let pulse = self.calc_collision_matrix_inv(&point) * vec;
-        self.vel += pulse;
-        self.wel_raw += point.cross(pulse);
-        pulse
-    }
-
-    fn velocity_at(&self, point: cgmath::Vector3<f32>) -> cgmath::Vector3<f32> {
-        self.vel + self.wel_orig.cross(point)
-    }
-
-    fn finish(self) -> (cgmath::Vector3<f32>, cgmath::Vector3<f32>) {
-        (self.vel, self.wel_orig + self.j_inv * self.wel_raw)
-    }
-}
-
 pub fn jump_dir(power: f32) -> cgmath::Vector3<f32> {
     5.0 * power * cgmath::vec3(0.0, 3.0, 10.0).normalize()
 }
@@ -279,7 +98,7 @@ pub fn step(
         let phys = &car.model.body.physics;
         let jacobian = cgmath::Matrix3::from(phys.jacobi)
             * (transform.scale * transform.scale / phys.volume);
-        RigidBody::new(&jacobian, dynamo.linear_velocity, dynamo.angular_velocity)
+        rigid::RigidBody::new(&jacobian, dynamo.linear_velocity, dynamo.angular_velocity)
     };
 
     if let Some(power) = jump {
@@ -340,7 +159,7 @@ pub fn step(
         };
         let poly_norm = cgmath::Vector3::from(poly.normal).normalize();
         if z_axis.dot(poly_norm) < 0.0 {
-            let cdata = collide_low(
+            let cdata = terrain::CollisionData::collide_low(
                 poly,
                 &car.model.shape.samples,
                 car.physics.scale_bound,
@@ -365,7 +184,7 @@ pub fn step(
                 tmp.z * tmp.z < tmp.x * tmp.x + tmp.y * tmp.y
             };
             match cdata {
-                CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
+                terrain::CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
                     let r1 = rot_inv * cgmath::vec3(
                         cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0); // ignore vertical
                     let pv = rigid.velocity_at(r1);
@@ -379,7 +198,7 @@ pub fn step(
                         rigid.push(r, normal * (dot * -common.impulse.factors[0] * modulation));
                     }
                 },
-                CollisionData{ soft: Some(ref cp), ..} => {
+                terrain::CollisionData{ soft: Some(ref cp), ..} => {
                     //TODO: let r1 = rot_inv * (cp.pos - origin);
                     let r1 = rot_inv * cgmath::vec3(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
                     let pv = rigid.velocity_at(r1);
@@ -447,7 +266,7 @@ pub fn step(
 
     // apply drag
     let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(rigid.vel.magnitude());
-    let mut w_drag = common.drag.free.w * common.drag.speed.w.powf(rigid.wel_orig.magnitude2()); //why mag2?
+    let mut w_drag = common.drag.free.w * common.drag.speed.w.powf(rigid.angular_velocity().magnitude2()); //why mag2?
     if wheels_touch > 0 {
         //TODO: why `ln()`?
         let speed = common.drag.wheel_speed.ln() * car.physics.mobility_factor
@@ -472,20 +291,8 @@ pub fn step(
             let pw = transform.transform_point(cgmath::Point3::from(wheel.pos));
             let detect_wheel_hits = false;
             if detect_wheel_hits {
-                let hit = match level.get((pw.x as i32, pw.y as i32)) {
-                    level::Texel::Single(point) => {
-                        pw.z <= get_height(point.0)
-                    }
-                    level::Texel::Dual { high, low, .. } => {
-                        let middle = get_middle(low.0, high.0);
-                        if pw.z > middle {
-                            pw.z <= get_height(high.0)
-                        } else {
-                            pw.z <= get_height(low.0)
-                        }
-                    }
-                };
-                if !hit {
+                let dist = terrain::get_distance_to_terrain(level, pw);
+                if dist > 0.0 {
                     continue
                 }
             }
