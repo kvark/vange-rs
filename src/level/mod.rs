@@ -20,7 +20,7 @@ const DELTA_SHIFT0: u8 = 2 + 3;
 const DELTA_SHIFT1: u8 = 0 + 3;
 const DELTA_MASK: u8 = 0x3;
 const TERRAIN_SHIFT: u8 = 3;
-pub const HEIGHT_SCALE: u32 = 255;
+pub const HEIGHT_SCALE: u32 = 128;
 
 pub struct Level {
     pub size: (i32, i32),
