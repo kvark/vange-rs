@@ -11,8 +11,7 @@ use std::mem;
 
 pub struct CarView {
     model: model::VisualModel,
-    locals_buf: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
+    instance_buf: wgpu::Buffer,
     transform: space::Transform,
     physics: config::car::CarPhysics,
     debug_render: render::debug::Context,
@@ -73,16 +72,11 @@ impl CarView {
             ms.scale = info.scale;
         }
 
-        let (locals_buf, bind_group) = render::instantiate_visual_model(
-            &model,
-            device,
-            &object.part_bind_group_layout,
-        );
+        let instance_buf = render::instantiate_visual_model(&model, device);
 
         CarView {
             model,
-            locals_buf,
-            bind_group,
+            instance_buf,
             transform: cgmath::Decomposed {
                 scale: cinfo.scale,
                 disp: cgmath::Vector3::unit_z(),
@@ -224,8 +218,7 @@ impl Application for CarView {
         render::RenderModel {
             model: &self.model,
             gpu_body: &render::body::GpuBody::ZERO,
-            locals_buf: &self.locals_buf,
-            bind_group: &self.bind_group,
+            instance_buf: &self.instance_buf,
             transform: self.transform,
             debug_shape_scale: Some(self.physics.scale_bound),
         }.prepare(&mut encoder, device);
@@ -260,13 +253,13 @@ impl Application for CarView {
             render::Render::draw_model(
                 &mut pass,
                 &self.model,
-                &self.bind_group,
+                &self.instance_buf,
             );
 
             self.debug_render.draw_shape(
                 &mut pass,
                 &self.model.shape,
-                &self.bind_group,
+                &self.instance_buf,
             );
         }
 

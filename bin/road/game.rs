@@ -11,7 +11,6 @@ use vangers::{
         body::{GpuBody, GpuStore, GpuStoreInit},
         collision::{GpuCollider, GpuEpoch},
         debug::LineBuffer,
-        object::Context as ObjectContext,
     },
 };
 
@@ -53,8 +52,7 @@ pub struct Agent {
     _name: String,
     spirit: Spirit,
     car: config::car::CarInfo,
-    locals_buf: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
+    instance_buf: wgpu::Buffer,
     dirty_uniforms: bool,
     control: Control,
     jump: Option<f32>,
@@ -69,7 +67,6 @@ impl Agent {
         orientation: cgmath::Rad<f32>,
         level: &level::Level,
         device: &wgpu::Device,
-        object_context: &ObjectContext,
         gpu_store: Option<&mut GpuStore>,
     ) -> Self {
         let height = physics::get_height(level.get(coords).top()) + 5.; //center offset
@@ -78,18 +75,13 @@ impl Agent {
             disp: cgmath::vec3(coords.0 as f32, coords.1 as f32, height),
             rot: cgmath::Quaternion::from_angle_z(orientation),
         };
-        let (locals_buf, bind_group) = instantiate_visual_model(
-            &car.model,
-            device,
-            &object_context.part_bind_group_layout,
-        );
+        let instance_buf = instantiate_visual_model(&car.model, device);
 
         Agent {
             _name: name,
             spirit: Spirit::Other,
             car: car.clone(),
-            locals_buf,
-            bind_group,
+            instance_buf,
             dirty_uniforms: true,
             control: Control::default(),
             jump: None,
@@ -162,8 +154,7 @@ impl Agent {
         RenderModel {
             model: &self.car.model,
             gpu_body,
-            locals_buf: &self.locals_buf,
-            bind_group: &self.bind_group,
+            instance_buf: &self.instance_buf,
             transform,
             debug_shape_scale: match self.spirit {
                 Spirit::Player => Some(self.car.physics.scale_bound),
@@ -305,7 +296,6 @@ impl Game {
             cgmath::Rad::turn_div_2(),
             &level,
             device,
-            &render.object,
             gpu.as_mut().map(|Gpu { ref mut store, .. }| store),
         );
         player_agent.spirit = Spirit::Player;
@@ -341,7 +331,6 @@ impl Game {
                 cgmath::Rad(rng.gen()),
                 &level,
                 device,
-                &render.object,
                 gpu.as_mut().map(|Gpu { ref mut store, .. }| store),
             );
             agent.control.motor = 1.0; //full on
