@@ -397,6 +397,39 @@ impl RenderModel<'_> {
     }
 }
 
+struct InstanceArray {
+    data: Vec<object::Instance>,
+    // holding the mesh alive, while the key is just a raw pointer
+    mesh: Arc<Mesh>,
+}
+
+pub struct Batcher {
+    instances: HashMap<*const Mesh, InstanceArray>,
+}
+
+impl Batcher {
+    fn add_mesh(&mut self, mesh: &Arc<Mesh>, instance: object::Instance) {
+        self.instances
+            .entry(mesh.as_ptr())
+            .or_insert_with(|| InstanceArray {
+                data: Vec::new(),
+                mesh: Arc::clone(mesh),
+            })
+            .data.push(instance);
+    }
+
+    fn flush(&mut self, pass: &mut wgpu::RenderPass, device: &wgpu::Device) {
+        for (_, array) in self.instances.drain() {
+            let instance_buf = device.create_buffer_with_data(
+                array.data.as_bytes(),
+                wgpu::BufferUsage::VERTEX,
+            );
+            pass.set_vertex_buffers(0, &[(&array.mesh.vertex_buf, 0), (&instance_buf, 0)]);
+            pass.draw(0 .. array.mesh.num_vertices as u32, 0 .. array.data.len() as u32);
+        }
+    }
+}
+
 pub struct Render {
     global: global::Context,
     pub object: object::Context,
