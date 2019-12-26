@@ -183,6 +183,26 @@ impl CameraStyle {
     }
 }
 
+struct Clipper {
+    mx_vp: cgmath::Matrix4<f32>,
+    threshold: f32,
+}
+
+impl Clipper {
+    fn new(cam: &space::Camera) -> Self {
+        Clipper {
+            mx_vp: cam.get_view_proj(),
+            threshold: 1.05,
+        }
+    }
+
+    fn clip(&self, pos: &cgmath::Vector3<f32>) -> bool {
+        let p = self.mx_vp * pos.extend(1.0);
+        let w = p.w * self.threshold;
+        p.x < -w || p.x > w || p.y < -w || p.y > w
+    }
+}
+
 pub struct Game {
     db: DataBase,
     render: Render,
@@ -621,10 +641,16 @@ impl Application for Game {
         }
 
         let identity_transform = space::Transform::one();
+        let clipper = Clipper::new(&self.cam);
 
         for agent in self.agents.iter() {
             let (gpu_body, transform) = match agent.physics {
-                Physics::Cpu { ref transform, .. } => (&GpuBody::ZERO, transform),
+                Physics::Cpu { ref transform, .. } => {
+                    if clipper.clip(&transform.disp) {
+                        continue
+                    }
+                    (&GpuBody::ZERO, transform)
+                }
                 Physics::Gpu { ref body, .. } => (body, &identity_transform),
             };
             let debug_shape_scale = match agent.spirit {
