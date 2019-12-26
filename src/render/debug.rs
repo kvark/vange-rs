@@ -5,7 +5,11 @@ use crate::{
         Shaders,
         COLOR_FORMAT, DEPTH_FORMAT, SHAPE_POLYGON_BUFFER,
         global::Context as GlobalContext,
-        object::{Context as ObjectContext, INSTANCE_DESCRIPTOR},
+        object::{
+            Context as ObjectContext,
+            Instance as ObjectInstance,
+            INSTANCE_DESCRIPTOR,
+        },
     },
 };
 
@@ -364,15 +368,19 @@ impl Context {
         pass: &mut wgpu::RenderPass,
         shape: &model::Shape,
         instance_buf: &wgpu::Buffer,
+        instance_id: usize,
     ) {
         if !self.settings.collision_shapes {
             return
         }
 
+        //TODO: this is broken - both regular rendering and debug one
+        // require instancing now, one has to yield and be refactored.
+        let instance_offset = instance_id * mem::size_of::<ObjectInstance>();
         pass.set_bind_group(2, &shape.bind_group, &[]);
         pass.set_vertex_buffers(0, &[
             (&shape.polygon_buf, 0),
-            (instance_buf, 0)
+            (instance_buf, instance_offset as wgpu::BufferAddress),
         ]);
 
         // draw collision polygon faces

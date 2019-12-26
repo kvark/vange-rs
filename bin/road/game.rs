@@ -6,7 +6,7 @@ use m3d::Mesh;
 use vangers::{
     config, level, model, space,
     render::{
-        Render, RenderModel, ScreenTargets,
+        Batcher, Render, RenderModel, ScreenTargets,
         instantiate_visual_model,
         body::{GpuBody, GpuStore, GpuStoreInit},
         collision::{GpuCollider, GpuEpoch},
@@ -211,6 +211,7 @@ impl CameraStyle {
 pub struct Game {
     db: DataBase,
     render: Render,
+    batcher: Batcher,
     gpu: Option<Gpu>,
     //debug_collision_map: bool,
     line_buffer: LineBuffer,
@@ -340,6 +341,7 @@ impl Game {
         Game {
             db,
             render,
+            batcher: Batcher::new(),
             gpu,
             line_buffer: LineBuffer::new(),
             level,
@@ -670,23 +672,31 @@ impl Application for Game {
             gpu.store.consume_gpu_results(spawner);
         }
 
+        let identity_transform = space::Transform::one();
+        for agent in self.agents.iter() {
+            let (gpu_body, transform) = match agent.physics {
+                Physics::Cpu { ref transform, .. } => (&GpuBody::ZERO, transform),
+                Physics::Gpu { ref body, .. } => (body, &identity_transform),
+            };
+            let debug_shape_scale = match agent.spirit {
+                Spirit::Player => Some(agent.car.physics.scale_bound),
+                Spirit::Other => None,
+            };
+            self.batcher.add_model(
+                &agent.car.model,
+                &transform,
+                debug_shape_scale,
+                gpu_body,
+            );
+        }
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
 
-        let models = self.agents
-            .iter()
-            .map(Agent::to_render_model)
-            .collect::<Vec<_>>();
-        for (rm, agent) in models.iter().zip(self.agents.iter()) {
-            if agent.dirty_uniforms {
-                rm.prepare(&mut encoder, device);
-            }
-        }
-
         self.render.draw_world(
             &mut encoder,
-            &models,
+            &mut self.batcher,
             &self.cam,
             targets,
             device,

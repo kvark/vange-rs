@@ -260,6 +260,7 @@ impl Application for CarView {
                 &mut pass,
                 &self.model.shape,
                 &self.instance_buf,
+                0,
             );
         }
 

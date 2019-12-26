@@ -5,16 +5,17 @@ use crate::{
     space::{Camera, Transform},
 };
 
-use cgmath::Decomposed;
 use glsl_to_spirv;
 use zerocopy::AsBytes as _;
 
 use std::{
+    collections::HashMap,
     io::{BufReader, Read, Write, Error as IoError},
     fs::File,
     mem,
     path::PathBuf,
     slice,
+    sync::Arc,
 };
 
 pub mod body;
@@ -323,7 +324,6 @@ pub fn instantiate_visual_model(
     })
 }
 
-
 pub struct RenderModel<'a> {
     pub model: &'a model::VisualModel,
     pub gpu_body: &'a body::GpuBody,
@@ -343,7 +343,7 @@ impl RenderModel<'_> {
         encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
     ) {
-        use cgmath::{Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
+        use cgmath::{Decomposed, Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
 
         let count = self.model.mesh_count();
         let mapping = device.create_buffer_mapped(
@@ -400,17 +400,31 @@ impl RenderModel<'_> {
 struct InstanceArray {
     data: Vec<object::Instance>,
     // holding the mesh alive, while the key is just a raw pointer
-    mesh: Arc<Mesh>,
+    mesh: Arc<model::Mesh>,
 }
 
 pub struct Batcher {
-    instances: HashMap<*const Mesh, InstanceArray>,
+    instances: HashMap<*const model::Mesh, InstanceArray>,
+    debug_shapes: Vec<Arc<model::Shape>>,
+    debug_instances: Vec<object::Instance>,
 }
 
 impl Batcher {
-    fn add_mesh(&mut self, mesh: &Arc<Mesh>, instance: object::Instance) {
+    pub fn new() -> Self {
+        Batcher {
+            instances: HashMap::new(),
+            debug_shapes: Vec::new(),
+            debug_instances: Vec::new(),
+        }
+    }
+
+    pub fn add_mesh(
+        &mut self,
+        mesh: &Arc<model::Mesh>,
+        instance: object::Instance,
+    ) {
         self.instances
-            .entry(mesh.as_ptr())
+            .entry(&**mesh as *const _)
             .or_insert_with(|| InstanceArray {
                 data: Vec::new(),
                 mesh: Arc::clone(mesh),
@@ -418,15 +432,84 @@ impl Batcher {
             .data.push(instance);
     }
 
+    pub fn add_model(
+        &mut self,
+        model: &model::VisualModel,
+        base_transform: &Transform,
+        debug_shape_scale: Option<f32>,
+        gpu_body: &body::GpuBody,
+    ) {
+        use cgmath::{One as _, Rotation3 as _, Transform as _};
+
+        // body
+        self.add_mesh(
+            &model.body,
+            object::Instance::new(base_transform, 0.0, gpu_body),
+        );
+        if let Some(shape_scale) = debug_shape_scale {
+            self.debug_shapes.push(Arc::clone(&model.shape));
+            self.debug_instances.push(object::Instance::new(
+                base_transform,
+                shape_scale,
+                gpu_body,
+            ));
+        }
+
+        // wheels
+        for w in model.wheels.iter() {
+            if let Some(ref mesh) = w.mesh {
+                let transform = base_transform.concat(&Transform {
+                    disp: mesh.offset.into(),
+                    rot: cgmath::Quaternion::one(),
+                    scale: 1.0,
+                });
+                self.add_mesh(
+                    mesh,
+                    object::Instance::new(&transform, 0.0, gpu_body),
+                );
+            }
+        }
+
+        // slots
+        for s in model.slots.iter() {
+            if let Some(ref mesh) = s.mesh {
+                let mut local = Transform {
+                    disp: cgmath::vec3(s.pos[0] as f32, s.pos[1] as f32, s.pos[2] as f32),
+                    rot: cgmath::Quaternion::from_angle_y(cgmath::Deg(s.angle as f32)),
+                    scale: s.scale / base_transform.scale,
+                };
+                local.disp -= local.transform_vector(cgmath::Vector3::from(mesh.offset));
+                let transform = base_transform.concat(&local);
+                self.add_mesh(
+                    mesh,
+                    object::Instance::new(&transform, 0.0, gpu_body),
+                );
+            }
+        }
+    }
+
     fn flush(&mut self, pass: &mut wgpu::RenderPass, device: &wgpu::Device) {
-        for (_, array) in self.instances.drain() {
+        for array in self.instances.values_mut() {
+            if array.data.is_empty() {
+                continue
+            }
             let instance_buf = device.create_buffer_with_data(
                 array.data.as_bytes(),
                 wgpu::BufferUsage::VERTEX,
             );
             pass.set_vertex_buffers(0, &[(&array.mesh.vertex_buf, 0), (&instance_buf, 0)]);
             pass.draw(0 .. array.mesh.num_vertices as u32, 0 .. array.data.len() as u32);
+            array.data.clear();
         }
+        //TODO:
+        self.debug_shapes.clear();
+        self.debug_instances.clear();
+    }
+
+    pub fn clear(&mut self) {
+        self.instances.clear();
+        self.debug_shapes.clear();
+        self.debug_instances.clear();
     }
 }
 
@@ -500,7 +583,7 @@ impl Render {
         }
     }
 
-    pub fn draw_world<'a>(
+    pub fn draw_world_old<'a>(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         render_models: &[RenderModel<'a>],
@@ -561,8 +644,63 @@ impl Render {
                 &mut pass,
                 &rm.model.shape,
                 rm.instance_buf,
+                0,
             );
         }
+    }
+
+    pub fn draw_world<'a>(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        batcher: &mut Batcher,
+        cam: &Camera,
+        targets: ScreenTargets,
+        device: &wgpu::Device,
+    ) {
+        let global_staging = device.create_buffer_with_data(
+            global::Constants::new(cam, &self.light_config).as_bytes(),
+            wgpu::BufferUsage::COPY_SRC,
+        );
+        encoder.copy_buffer_to_buffer(
+            &global_staging,
+            0,
+            &self.global.uniform_buf,
+            0,
+            mem::size_of::<global::Constants>() as wgpu::BufferAddress,
+        );
+
+        self.terrain.prepare(encoder, device, &self.global, cam);
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            color_attachments: &[
+                wgpu::RenderPassColorAttachmentDescriptor {
+                    attachment: targets.color,
+                    resolve_target: None,
+                    load_op: wgpu::LoadOp::Clear,
+                    store_op: wgpu::StoreOp::Store,
+                    clear_color: wgpu::Color {
+                        r: 0.1, g: 0.2, b: 0.3, a: 1.0,
+                    },
+                },
+            ],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                attachment: targets.depth,
+                depth_load_op: wgpu::LoadOp::Clear,
+                depth_store_op: wgpu::StoreOp::Store,
+                clear_depth: 1.0,
+                stencil_load_op: wgpu::LoadOp::Clear,
+                stencil_store_op: wgpu::StoreOp::Store,
+                clear_stencil: 0,
+            }),
+        });
+
+        pass.set_bind_group(0, &self.global.bind_group, &[]);
+        self.terrain.draw(&mut pass);
+
+        // draw vehicle models
+        pass.set_pipeline(&self.object.pipeline);
+        pass.set_bind_group(1, &self.object.bind_group, &[]);
+        batcher.flush(&mut pass, device);
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {
