@@ -20,7 +20,6 @@ use std::{
 
 
 pub struct Mesh {
-    pub locals_id: usize,
     pub num_vertices: usize,
     pub vertex_buf: wgpu::Buffer,
     pub offset: [f32; 3],
@@ -131,7 +130,6 @@ fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
 pub fn load_c3d(
     raw: m3d::Mesh<m3d::Geometry<m3d::DrawTriangle>>,
     device: &wgpu::Device,
-    locals_id: usize,
 ) -> Arc<Mesh> {
     let num_vertices = raw.geometry.polygons.len() * 3;
     debug!("\tGot {} GPU vertices...", num_vertices);
@@ -159,7 +157,6 @@ pub fn load_c3d(
     }
 
     Arc::new(Mesh {
-        locals_id,
         num_vertices,
         vertex_buf: mapping.finish(),
         offset: vec_i2f(raw.parent_off),
@@ -311,27 +308,23 @@ pub fn load_m3d(
     shape_sampling: u8,
 ) -> VisualModel {
     let raw = m3d::FullModel::load(file);
-    let wheel_offset = 1;
-    let debrie_offset = wheel_offset + raw.wheels.len();
 
     let model = VisualModel {
-        body: load_c3d(raw.body, device, 0),
+        body: load_c3d(raw.body, device),
         shape: load_c3d_shape(raw.shape, device, shape_sampling, true, object),
         dimensions: raw.dimensions,
         max_radius: raw.max_radius,
         color: raw.color,
         wheels: raw.wheels
             .into_iter()
-            .enumerate()
-            .map(|(i, wheel)| wheel.map(|mesh| {
-                load_c3d(mesh, device, wheel_offset + i)
+            .map(|wheel| wheel.map(|mesh| {
+                load_c3d(mesh, device)
             }))
             .collect(),
         debris: raw.debris
             .into_iter()
-            .enumerate()
-            .map(|(i, debrie)| m3d::Debrie {
-                mesh: load_c3d(debrie.mesh, device, debrie_offset + i),
+            .map(|debrie| m3d::Debrie {
+                mesh: load_c3d(debrie.mesh, device),
                 shape: load_c3d_shape(debrie.shape, device, 0, false, object),
             })
             .collect(),

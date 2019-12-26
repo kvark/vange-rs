@@ -6,8 +6,7 @@ use m3d::Mesh;
 use vangers::{
     config, level, model, space,
     render::{
-        Batcher, Render, RenderModel, ScreenTargets,
-        instantiate_visual_model,
+        Batcher, Render, ScreenTargets,
         body::{GpuBody, GpuStore, GpuStoreInit},
         collision::{GpuCollider, GpuEpoch},
         debug::LineBuffer,
@@ -52,8 +51,6 @@ pub struct Agent {
     _name: String,
     spirit: Spirit,
     car: config::car::CarInfo,
-    instance_buf: wgpu::Buffer,
-    dirty_uniforms: bool,
     control: Control,
     jump: Option<f32>,
     physics: Physics,
@@ -66,7 +63,6 @@ impl Agent {
         coords: (i32, i32),
         orientation: cgmath::Rad<f32>,
         level: &level::Level,
-        device: &wgpu::Device,
         gpu_store: Option<&mut GpuStore>,
     ) -> Self {
         let height = physics::get_height(level.get(coords).top()) + 5.; //center offset
@@ -75,14 +71,11 @@ impl Agent {
             disp: cgmath::vec3(coords.0 as f32, coords.1 as f32, height),
             rot: cgmath::Quaternion::from_angle_z(orientation),
         };
-        let instance_buf = instantiate_visual_model(&car.model, device);
 
         Agent {
             _name: name,
             spirit: Spirit::Other,
             car: car.clone(),
-            instance_buf,
-            dirty_uniforms: true,
             control: Control::default(),
             jump: None,
             physics: match gpu_store {
@@ -131,7 +124,6 @@ impl Agent {
             Physics::Cpu { ref mut transform, ref mut dynamo } => (dynamo, transform),
             Physics::Gpu { .. } => return,
         };
-        self.dirty_uniforms = true;
         physics::step(
             dynamo,
             transform,
@@ -144,23 +136,6 @@ impl Agent {
             self.jump.take(),
             line_buffer,
         )
-    }
-
-    fn to_render_model(&self) -> RenderModel {
-        let (gpu_body, transform) = match self.physics {
-            Physics::Cpu { ref transform, .. } => (&GpuBody::ZERO, transform.clone()),
-            Physics::Gpu { ref body, .. } => (body, space::Transform::one()),
-        };
-        RenderModel {
-            model: &self.car.model,
-            gpu_body,
-            instance_buf: &self.instance_buf,
-            transform,
-            debug_shape_scale: match self.spirit {
-                Spirit::Player => Some(self.car.physics.scale_bound),
-                Spirit::Other => None,
-            },
-        }
     }
 }
 
@@ -296,23 +271,16 @@ impl Game {
             coords,
             cgmath::Rad::turn_div_2(),
             &level,
-            device,
             gpu.as_mut().map(|Gpu { ref mut store, .. }| store),
         );
         player_agent.spirit = Spirit::Player;
-        let slot_locals_id = player_agent.car.model.mesh_count() - player_agent.car.model.slots.len();
-        for (i, (ms, sid)) in player_agent.car.model.slots
+        for (ms, sid) in player_agent.car.model.slots
             .iter_mut()
             .zip(settings.car.slots.iter())
-            .enumerate()
         {
             let info = &db.game.model_infos[sid];
             let raw = Mesh::load(&mut settings.open_relative(&info.path));
-            ms.mesh = Some(model::load_c3d(
-                raw,
-                device,
-                slot_locals_id + i,
-            ));
+            ms.mesh = Some(model::load_c3d(raw, device));
             ms.scale = info.scale;
         }
 
@@ -331,7 +299,6 @@ impl Game {
                 (x, y),
                 cgmath::Rad(rng.gen()),
                 &level,
-                device,
                 gpu.as_mut().map(|Gpu { ref mut store, .. }| store),
             );
             agent.control.motor = 1.0; //full on
@@ -433,7 +400,6 @@ impl Application for Game {
                 Key::S => self.spin_ver = -1.0,
                 Key::R => {
                     if let Physics::Cpu { ref mut transform ,ref mut dynamo } = player.physics {
-                        player.dirty_uniforms = true;
                         transform.rot = cgmath::One::one();
                         dynamo.linear_velocity = cgmath::Vector3::zero();
                         dynamo.angular_velocity = cgmath::Vector3::zero();
@@ -555,11 +521,6 @@ impl Application for Game {
 
             // initialize new entries, update
             for agent in self.agents.iter_mut() {
-                if agent.dirty_uniforms {
-                    agent.dirty_uniforms = false;
-                    agent.to_render_model().prepare(&mut prep_encoder, device);
-                }
-
                 if let Physics::Gpu { ref body, ref mut last_control, .. } = agent.physics {
                     if *last_control != agent.control {
                         *last_control = agent.control.clone();

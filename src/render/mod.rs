@@ -14,7 +14,6 @@ use std::{
     fs::File,
     mem,
     path::PathBuf,
-    slice,
     sync::Arc,
 };
 
@@ -313,89 +312,6 @@ impl Palette {
     }
 }
 
-pub fn instantiate_visual_model(
-    model: &model::VisualModel,
-    device: &wgpu::Device,
-) -> wgpu::Buffer {
-    let instance_size = mem::size_of::<object::Instance>() as wgpu::BufferAddress;
-    device.create_buffer(&wgpu::BufferDescriptor {
-        size: model.mesh_count() as wgpu::BufferAddress * instance_size,
-        usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
-    })
-}
-
-pub struct RenderModel<'a> {
-    pub model: &'a model::VisualModel,
-    pub gpu_body: &'a body::GpuBody,
-    pub instance_buf: &'a wgpu::Buffer,
-    pub transform: Transform,
-    pub debug_shape_scale: Option<f32>,
-}
-
-impl RenderModel<'_> {
-    /// Prepare the `instance_buf` data based on the transformation and
-    /// model structure.
-    ///
-    /// For GPU physics path, needs to only be done once.
-    /// For pure CPU path, needs to be done before every render.
-    pub fn prepare(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        device: &wgpu::Device,
-    ) {
-        use cgmath::{Decomposed, Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
-
-        let count = self.model.mesh_count();
-        let mapping = device.create_buffer_mapped(
-            count * mem::size_of::<object::Instance>(),
-            wgpu::BufferUsage::COPY_SRC,
-        );
-        {
-            let data = unsafe {
-                slice::from_raw_parts_mut(mapping.data.as_mut_ptr() as *mut object::Instance, count)
-            };
-
-            // body
-            data[self.model.body.locals_id] = object::Instance::new(
-                &self.transform,
-                self.debug_shape_scale.unwrap_or_default(),
-                self.gpu_body,
-            );
-
-            // wheels
-            for w in self.model.wheels.iter() {
-                if let Some(ref mesh) = w.mesh {
-                    let transform = self.transform.concat(&Decomposed {
-                        disp: mesh.offset.into(),
-                        rot: Quaternion::one(),
-                        scale: 1.0,
-                    });
-                    data[mesh.locals_id] = object::Instance::new(&transform, 0.0, self.gpu_body);
-                }
-            }
-            // slots
-            for s in self.model.slots.iter() {
-                if let Some(ref mesh) = s.mesh {
-                    let mut local = Decomposed {
-                        disp: Vector3::new(s.pos[0] as f32, s.pos[1] as f32, s.pos[2] as f32),
-                        rot: Quaternion::from_angle_y(Rad::from(Deg(s.angle as f32))),
-                        scale: s.scale / self.transform.scale,
-                    };
-                    local.disp -= local.transform_vector(Vector3::from(mesh.offset));
-                    let transform = self.transform.concat(&local);
-                    data[mesh.locals_id] = object::Instance::new(&transform, 0.0, self.gpu_body);
-                }
-            }
-        }
-
-        let temp = mapping.finish();
-        encoder.copy_buffer_to_buffer(
-            &temp, 0,
-            &self.instance_buf, 0,
-            (count * mem::size_of::<object::Instance>()) as wgpu::BufferAddress,
-        );
-    }
-}
 
 struct InstanceArray {
     data: Vec<object::Instance>,
@@ -488,7 +404,7 @@ impl Batcher {
         }
     }
 
-    fn flush(&mut self, pass: &mut wgpu::RenderPass, device: &wgpu::Device) {
+    pub fn flush(&mut self, pass: &mut wgpu::RenderPass, device: &wgpu::Device) {
         for array in self.instances.values_mut() {
             if array.data.is_empty() {
                 continue
@@ -551,105 +467,7 @@ impl Render {
         }
     }
 
-    pub fn draw_mesh(
-        pass: &mut wgpu::RenderPass,
-        mesh: &model::Mesh,
-        instance_buf: &wgpu::Buffer,
-    ) {
-        let locals_size = mem::size_of::<object::Instance>() as wgpu::BufferAddress;
-        let offset = mesh.locals_id as wgpu::BufferAddress * locals_size;
-        pass.set_vertex_buffers(0, &[(&mesh.vertex_buf, 0), (instance_buf, offset)]);
-        pass.draw(0 .. mesh.num_vertices as u32, 0 .. 1);
-    }
-
-    pub fn draw_model(
-        pass: &mut wgpu::RenderPass,
-        model: &model::VisualModel,
-        instance_buf: &wgpu::Buffer,
-    ) {
-        // body
-        Render::draw_mesh(pass, &model.body, instance_buf);
-        // wheels
-        for w in model.wheels.iter() {
-            if let Some(ref mesh) = w.mesh {
-                Render::draw_mesh(pass, mesh, instance_buf);
-            }
-        }
-        // slots
-        for s in model.slots.iter() {
-            if let Some(ref mesh) = s.mesh {
-                Render::draw_mesh(pass, mesh, instance_buf);
-            }
-        }
-    }
-
-    pub fn draw_world_old<'a>(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        render_models: &[RenderModel<'a>],
-        cam: &Camera,
-        targets: ScreenTargets,
-        device: &wgpu::Device,
-    ) {
-        let global_staging = device.create_buffer_with_data(
-            global::Constants::new(cam, &self.light_config).as_bytes(),
-            wgpu::BufferUsage::COPY_SRC,
-        );
-        encoder.copy_buffer_to_buffer(
-            &global_staging,
-            0,
-            &self.global.uniform_buf,
-            0,
-            mem::size_of::<global::Constants>() as wgpu::BufferAddress,
-        );
-
-        self.terrain.prepare(encoder, device, &self.global, cam);
-
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            color_attachments: &[
-                wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: targets.color,
-                    resolve_target: None,
-                    load_op: wgpu::LoadOp::Clear,
-                    store_op: wgpu::StoreOp::Store,
-                    clear_color: wgpu::Color {
-                        r: 0.1, g: 0.2, b: 0.3, a: 1.0,
-                    },
-                },
-            ],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
-                attachment: targets.depth,
-                depth_load_op: wgpu::LoadOp::Clear,
-                depth_store_op: wgpu::StoreOp::Store,
-                clear_depth: 1.0,
-                stencil_load_op: wgpu::LoadOp::Clear,
-                stencil_store_op: wgpu::StoreOp::Store,
-                clear_stencil: 0,
-            }),
-        });
-
-        pass.set_bind_group(0, &self.global.bind_group, &[]);
-        self.terrain.draw(&mut pass);
-
-        // draw vehicle models
-        pass.set_pipeline(&self.object.pipeline);
-        pass.set_bind_group(1, &self.object.bind_group, &[]);
-        for rm in render_models {
-            Render::draw_model(&mut pass, rm.model, rm.instance_buf);
-        }
-
-        // draw debug shapes
-        for rm in render_models {
-            self.debug.draw_shape(
-                &mut pass,
-                &rm.model.shape,
-                rm.instance_buf,
-                0,
-            );
-        }
-    }
-
-    pub fn draw_world<'a>(
+    pub fn draw_world(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         batcher: &mut Batcher,
