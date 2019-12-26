@@ -571,39 +571,26 @@ impl Application for Game {
 
             vec![prep_encoder.finish(), encoder.finish()]
         } else {
-            for a in self.agents.iter_mut() {
+            use rayon::prelude::*;
+
+            let max_quant = self.max_quant;
+            let common = &self.db.common;
+            let level = &self.level;
+
+            self.agents.par_iter_mut().for_each(|a| {
+                let mut dt = physics_dt;
                 a.cpu_apply_control(
                     input_factor,
-                    &self.db.common,
+                    common,
                 );
-            }
 
-            while physics_dt > self.max_quant {
-                for a in self.agents.iter_mut() {
-                    a.cpu_step(
-                        self.max_quant,
-                        &self.level,
-                        &self.db.common,
-                        None,
-                    );
+                while dt > max_quant {
+                    a.cpu_step(max_quant, level, common, None);
+                    dt -= max_quant;
                 }
-                physics_dt -= self.max_quant;
-            }
 
-            self.line_buffer.clear();
-
-            for a in self.agents.iter_mut() {
-                let lbuf = match a.spirit {
-                    Spirit::Player => Some(&mut self.line_buffer),
-                    Spirit::Other => None,
-                };
-                a.cpu_step(
-                    physics_dt,
-                    &self.level,
-                    &self.db.common,
-                    lbuf,
-                );
-            }
+                a.cpu_step(dt, level, common, None);
+            });
 
             Vec::new()
         }
@@ -634,6 +621,7 @@ impl Application for Game {
         }
 
         let identity_transform = space::Transform::one();
+
         for agent in self.agents.iter() {
             let (gpu_body, transform) = match agent.physics {
                 Physics::Cpu { ref transform, .. } => (&GpuBody::ZERO, transform),
