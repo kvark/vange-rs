@@ -23,8 +23,15 @@ pub struct Camera {
 }
 
 #[derive(Deserialize)]
+pub enum SpawnAt {
+    Player,
+    Random,
+}
+
+#[derive(Deserialize)]
 pub struct Other {
     pub count: usize,
+    pub spawn_at: SpawnAt,
 }
 
 #[derive(Deserialize)]

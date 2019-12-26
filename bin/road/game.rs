@@ -137,6 +137,13 @@ impl Agent {
             line_buffer,
         )
     }
+
+    fn position(&self) -> cgmath::Vector3<f32> {
+        match self.physics {
+            Physics::Cpu { ref transform, .. } => transform.disp,
+            Physics::Gpu { .. } => cgmath::Vector3::zero(), //TODO
+        }
+    }
 }
 
 struct DataBase {
@@ -311,13 +318,18 @@ impl Game {
         for i in 0 .. settings.game.other.count {
             use rand::{Rng, prelude::SliceRandom};
             let car_id = car_names.choose(&mut rng).unwrap();
-            let x = rng.gen_range(0, level.size.0);
-            let y = rng.gen_range(0, level.size.1);
+            let (x, y) = match settings.game.other.spawn_at {
+                config::settings::SpawnAt::Player => coords,
+                config::settings::SpawnAt::Random => (
+                    rng.gen_range(0, level.size.0),
+                    rng.gen_range(0, level.size.1),
+                ),
+            };
             let mut agent = Agent::spawn(
                 format!("Other-{}", i),
                 &db.cars[car_id],
                 (x, y),
-                cgmath::Rad(rng.gen()),
+                rng.gen(),
                 &level,
                 gpu.as_mut().map(|Gpu { ref mut store, .. }| store),
             );
@@ -593,6 +605,7 @@ impl Application for Game {
         } else {
             use rayon::prelude::*;
 
+            let clipper = Clipper::new(&self.cam);
             let max_quant = self.max_quant;
             let common = &self.db.common;
             let level = &self.level;
@@ -604,9 +617,12 @@ impl Application for Game {
                     common,
                 );
 
-                while dt > max_quant {
-                    a.cpu_step(max_quant, level, common, None);
-                    dt -= max_quant;
+                // only go through the full iteration on visible objects
+                if !clipper.clip(&a.position()) {
+                    while dt > max_quant {
+                        a.cpu_step(max_quant, level, common, None);
+                        dt -= max_quant;
+                    }
                 }
 
                 a.cpu_step(dt, level, common, None);

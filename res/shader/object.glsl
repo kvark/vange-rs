@@ -33,7 +33,7 @@ void main() {
     gl_Position = u_ViewProj * vec4(world, 1.0);
 
     uvec2 color_params = texelFetch(usampler1D(t_ColorTable, s_ColorTableSampler), int(a_ColorIndex), 0).xy;
-    v_Color = texelFetch(sampler1D(t_Palette, s_PaletteSampler), int(color_params[0]), 0);
+    v_Color = texelFetch(sampler1D(t_Palette, s_PaletteSampler), int(color_params.x), 0);
 
     vec3 n = normalize(a_Normal.xyz);
     v_Normal = qrot(body_orientation, qrot(a_Orientation, n));
