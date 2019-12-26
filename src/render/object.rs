@@ -50,28 +50,54 @@ pub struct Vertex {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, zerocopy::AsBytes, zerocopy::FromBytes)]
-pub struct Locals {
+pub struct Instance {
     pos_scale: [f32; 4],
     orientation: [f32; 4],
-    shape_scale: [f32; 4],
-    body_id: [u32; 4],
+    shape_scale: f32,
+    body_id: u32,
 }
 
-impl Locals {
+impl Instance {
     pub fn new(transform: &Transform, shape_scale: f32, body: &GpuBody) -> Self {
         let gt = GpuTransform::new(transform);
-        Locals {
+        Instance {
             pos_scale: gt.pos_scale,
             orientation: gt.orientation,
-            shape_scale: [shape_scale, 0.0, 0.0, 0.0],
-            body_id: [body.index() as u32, 0, 0, 0],
+            shape_scale: shape_scale,
+            body_id: body.index() as u32,
         }
     }
 }
 
+pub const INSTANCE_DESCRIPTOR: wgpu::VertexBufferDescriptor = wgpu::VertexBufferDescriptor {
+    stride: mem::size_of::<Instance>() as wgpu::BufferAddress,
+    step_mode: wgpu::InputStepMode::Instance,
+    attributes: &[
+        wgpu::VertexAttributeDescriptor {
+            offset: 0,
+            format: wgpu::VertexFormat::Float4,
+            shader_location: 3,
+        },
+        wgpu::VertexAttributeDescriptor {
+            offset: 16,
+            format: wgpu::VertexFormat::Float4,
+            shader_location: 4,
+        },
+        wgpu::VertexAttributeDescriptor {
+            offset: 32,
+            format: wgpu::VertexFormat::Float,
+            shader_location: 5,
+        },
+        wgpu::VertexAttributeDescriptor {
+            offset: 36,
+            format: wgpu::VertexFormat::Uint,
+            shader_location: 6,
+        },
+    ],
+};
+
 pub struct Context {
     pub bind_group: wgpu::BindGroup,
-    pub part_bind_group_layout: wgpu::BindGroupLayout,
     pub shape_bind_group_layout: wgpu::BindGroupLayout,
     pub pipeline_layout: wgpu::PipelineLayout,
     pub pipeline: wgpu::RenderPipeline,
@@ -143,6 +169,7 @@ impl Context {
                         },
                     ],
                 },
+                INSTANCE_DESCRIPTOR,
             ],
             sample_count: 1,
             alpha_to_coverage_enabled: false,
@@ -240,15 +267,6 @@ impl Context {
                 },
             ],
         });
-        let part_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            bindings: &[
-                wgpu::BindGroupLayoutBinding { // part locals
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: true },
-                },
-            ],
-        });
         let shape_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             bindings: &[
                 wgpu::BindGroupLayoutBinding { // shape locals
@@ -284,14 +302,12 @@ impl Context {
             bind_group_layouts: &[
                 &global.bind_group_layout,
                 &bind_group_layout,
-                &part_bind_group_layout,
             ],
         });
         let pipeline = Self::create_pipeline(&pipeline_layout, device);
 
         Context {
             bind_group,
-            part_bind_group_layout,
             shape_bind_group_layout,
             pipeline_layout,
             pipeline,

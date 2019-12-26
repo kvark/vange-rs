@@ -5,7 +5,11 @@ use crate::{
         Shaders,
         COLOR_FORMAT, DEPTH_FORMAT, SHAPE_POLYGON_BUFFER,
         global::Context as GlobalContext,
-        object::Context as ObjectContext,
+        object::{
+            Context as ObjectContext,
+            Instance as ObjectInstance,
+            INSTANCE_DESCRIPTOR,
+        },
     },
 };
 
@@ -131,7 +135,6 @@ impl Context {
                 &global.bind_group_layout,
                 &bind_group_layout,
                 &object.shape_bind_group_layout,
-                &object.part_bind_group_layout,
             ],
         });
 
@@ -253,7 +256,10 @@ impl Context {
                     stencil_write_mask: !0,
                 }),
                 index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[ SHAPE_POLYGON_BUFFER ],
+                vertex_buffers: &[
+                    SHAPE_POLYGON_BUFFER,
+                    INSTANCE_DESCRIPTOR,
+                ],
                 sample_count: 1,
                 alpha_to_coverage_enabled: false,
                 sample_mask: !0,
@@ -361,27 +367,32 @@ impl Context {
         &self,
         pass: &mut wgpu::RenderPass,
         shape: &model::Shape,
-        part_bind_group: &wgpu::BindGroup,
+        instance_buf: &wgpu::Buffer,
+        instance_id: usize,
     ) {
         if !self.settings.collision_shapes {
             return
         }
 
+        //TODO: this is broken - both regular rendering and debug one
+        // require instancing now, one has to yield and be refactored.
+        let instance_offset = instance_id * mem::size_of::<ObjectInstance>();
         pass.set_bind_group(2, &shape.bind_group, &[]);
-        pass.set_bind_group(3, &part_bind_group, &[0]);
+        pass.set_vertex_buffers(0, &[
+            (&shape.polygon_buf, 0),
+            (instance_buf, instance_offset as wgpu::BufferAddress),
+        ]);
 
         // draw collision polygon faces
         if let Some(ref pipeline) = self.pipeline_face {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, &self.bind_group_face, &[]);
-            pass.set_vertex_buffers(0, &[(&shape.polygon_buf, 0)]);
             pass.draw(0 .. 4, 0 .. shape.polygons.len() as u32);
         }
         // draw collision polygon edges
         if let Some(ref pipeline) = self.pipeline_edge {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, &self.bind_group_edge, &[]);
-            pass.set_vertex_buffers(0, &[(&shape.polygon_buf, 0)]);
             pass.draw(0 .. 4, 0 .. shape.polygons.len() as u32);
         }
 

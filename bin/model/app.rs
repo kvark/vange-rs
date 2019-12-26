@@ -10,8 +10,6 @@ use std::mem;
 
 pub struct ResourceView {
     model: model::VisualModel,
-    locals_buf: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
     global: render::global::Context,
     object: render::object::Context,
     transform: space::Transform,
@@ -45,16 +43,9 @@ impl ResourceView {
             file, device, &object,
             settings.game.physics.shape_sampling,
         );
-        let (locals_buf, bind_group) = render::instantiate_visual_model(
-            &model,
-            device,
-            &object.part_bind_group_layout,
-        );
 
         ResourceView {
             model,
-            locals_buf,
-            bind_group,
             global,
             object,
             transform: cgmath::Decomposed {
@@ -145,6 +136,14 @@ impl Application for ResourceView {
         targets: render::ScreenTargets,
         _spawner: &LocalSpawner,
     ) -> wgpu::CommandBuffer {
+        let mut batcher = render::Batcher::new();
+        batcher.add_model(
+            &self.model,
+            &self.transform,
+            None,
+            &render::body::GpuBody::ZERO,
+        );
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
@@ -160,14 +159,6 @@ impl Application for ResourceView {
             0,
             mem::size_of::<render::global::Constants>() as wgpu::BufferAddress,
         );
-        render::RenderModel {
-            model: &self.model,
-            gpu_body: &render::body::GpuBody::ZERO,
-            locals_buf: &self.locals_buf,
-            bind_group: &self.bind_group,
-            transform: self.transform,
-            debug_shape_scale: None,
-        }.prepare(&mut encoder, device);
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -196,11 +187,8 @@ impl Application for ResourceView {
             pass.set_pipeline(&self.object.pipeline);
             pass.set_bind_group(0, &self.global.bind_group, &[]);
             pass.set_bind_group(1, &self.object.bind_group, &[]);
-            render::Render::draw_model(
-                &mut pass,
-                &self.model,
-                &self.bind_group,
-            );
+
+            batcher.flush(&mut pass, device);
         }
 
         encoder.finish()

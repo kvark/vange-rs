@@ -5,16 +5,16 @@ use crate::{
     space::{Camera, Transform},
 };
 
-use cgmath::Decomposed;
 use glsl_to_spirv;
 use zerocopy::AsBytes as _;
 
 use std::{
+    collections::HashMap,
     io::{BufReader, Read, Write, Error as IoError},
     fs::File,
     mem,
     path::PathBuf,
-    slice,
+    sync::Arc,
 };
 
 pub mod body;
@@ -312,111 +312,120 @@ impl Palette {
     }
 }
 
-pub fn instantiate_visual_model(
-    model: &model::VisualModel,
-    device: &wgpu::Device,
-    part_bind_group_layout: &wgpu::BindGroupLayout,
-) -> (wgpu::Buffer, wgpu::BindGroup) {
-    let locals_size = (mem::size_of::<object::Locals>() as wgpu::BufferAddress)
-        .max(wgpu::BIND_BUFFER_ALIGNMENT);
-    let locals_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        size: model.mesh_count() as wgpu::BufferAddress * locals_size,
-        usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-    });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: part_bind_group_layout,
-        bindings: &[
-            wgpu::Binding {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &locals_buf,
-                    range: 0 .. locals_size,
-                },
-            },
-        ],
-    });
-    (locals_buf, bind_group)
+
+struct InstanceArray {
+    data: Vec<object::Instance>,
+    // holding the mesh alive, while the key is just a raw pointer
+    mesh: Arc<model::Mesh>,
 }
 
-
-pub struct RenderModel<'a> {
-    pub model: &'a model::VisualModel,
-    pub gpu_body: &'a body::GpuBody,
-    pub locals_buf: &'a wgpu::Buffer,
-    pub bind_group: &'a wgpu::BindGroup,
-    pub transform: Transform,
-    pub debug_shape_scale: Option<f32>,
+pub struct Batcher {
+    instances: HashMap<*const model::Mesh, InstanceArray>,
+    debug_shapes: Vec<Arc<model::Shape>>,
+    debug_instances: Vec<object::Instance>,
 }
 
-impl RenderModel<'_> {
-    /// Prepare the `locals_buf` uniform data based on the transformation and
-    /// model structure.
-    ///
-    /// For GPU physics path, needs to only be done once.
-    /// For pure CPU path, needs to be done before every render.
-    pub fn prepare(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        device: &wgpu::Device,
+impl Batcher {
+    pub fn new() -> Self {
+        Batcher {
+            instances: HashMap::new(),
+            debug_shapes: Vec::new(),
+            debug_instances: Vec::new(),
+        }
+    }
+
+    pub fn add_mesh(
+        &mut self,
+        mesh: &Arc<model::Mesh>,
+        instance: object::Instance,
     ) {
-        use cgmath::{Deg, One, Quaternion, Rad, Rotation3, Transform, Vector3};
+        self.instances
+            .entry(&**mesh as *const _)
+            .or_insert_with(|| InstanceArray {
+                data: Vec::new(),
+                mesh: Arc::clone(mesh),
+            })
+            .data.push(instance);
+    }
 
-        let count = self.model.mesh_count();
-        let mapping = device.create_buffer_mapped(
-            count * mem::size_of::<object::Locals>(),
-            wgpu::BufferUsage::COPY_SRC,
+    pub fn add_model(
+        &mut self,
+        model: &model::VisualModel,
+        base_transform: &Transform,
+        debug_shape_scale: Option<f32>,
+        gpu_body: &body::GpuBody,
+    ) {
+        use cgmath::{One as _, Rotation3 as _, Transform as _};
+
+        // body
+        self.add_mesh(
+            &model.body,
+            object::Instance::new(base_transform, 0.0, gpu_body),
         );
-        {
-            let data = unsafe {
-                slice::from_raw_parts_mut(mapping.data.as_mut_ptr() as *mut object::Locals, count)
-            };
+        if let Some(shape_scale) = debug_shape_scale {
+            self.debug_shapes.push(Arc::clone(&model.shape));
+            self.debug_instances.push(object::Instance::new(
+                base_transform,
+                shape_scale,
+                gpu_body,
+            ));
+        }
 
-            // body
-            data[self.model.body.locals_id] = object::Locals::new(
-                &self.transform,
-                self.debug_shape_scale.unwrap_or_default(),
-                self.gpu_body,
-            );
-
-            // wheels
-            for w in self.model.wheels.iter() {
-                if let Some(ref mesh) = w.mesh {
-                    let transform = self.transform.concat(&Decomposed {
-                        disp: mesh.offset.into(),
-                        rot: Quaternion::one(),
-                        scale: 1.0,
-                    });
-                    data[mesh.locals_id] = object::Locals::new(&transform, 0.0, self.gpu_body);
-                }
-            }
-            // slots
-            for s in self.model.slots.iter() {
-                if let Some(ref mesh) = s.mesh {
-                    let mut local = Decomposed {
-                        disp: Vector3::new(s.pos[0] as f32, s.pos[1] as f32, s.pos[2] as f32),
-                        rot: Quaternion::from_angle_y(Rad::from(Deg(s.angle as f32))),
-                        scale: s.scale / self.transform.scale,
-                    };
-                    local.disp -= local.transform_vector(Vector3::from(mesh.offset));
-                    let transform = self.transform.concat(&local);
-                    data[mesh.locals_id] = object::Locals::new(&transform, 0.0, self.gpu_body);
-                }
+        // wheels
+        for w in model.wheels.iter() {
+            if let Some(ref mesh) = w.mesh {
+                let transform = base_transform.concat(&Transform {
+                    disp: mesh.offset.into(),
+                    rot: cgmath::Quaternion::one(),
+                    scale: 1.0,
+                });
+                self.add_mesh(
+                    mesh,
+                    object::Instance::new(&transform, 0.0, gpu_body),
+                );
             }
         }
 
-        let temp = mapping.finish();
-        let locals_alignment = mem::size_of::<object::Locals>()
-            .max(wgpu::BIND_BUFFER_ALIGNMENT as usize);
-        // copy each chunk separately, given different alignment
-        for i in 0 .. count {
-            encoder.copy_buffer_to_buffer(
-                &temp,
-                (i * mem::size_of::<object::Locals>()) as wgpu::BufferAddress,
-                &self.locals_buf,
-                (i * locals_alignment) as wgpu::BufferAddress,
-                mem::size_of::<object::Locals>() as wgpu::BufferAddress,
-            );
+        // slots
+        for s in model.slots.iter() {
+            if let Some(ref mesh) = s.mesh {
+                let mut local = Transform {
+                    disp: cgmath::vec3(s.pos[0] as f32, s.pos[1] as f32, s.pos[2] as f32),
+                    rot: cgmath::Quaternion::from_angle_y(cgmath::Deg(s.angle as f32)),
+                    scale: s.scale / base_transform.scale,
+                };
+                local.disp -= local.transform_vector(cgmath::Vector3::from(mesh.offset));
+                let transform = base_transform.concat(&local);
+                self.add_mesh(
+                    mesh,
+                    object::Instance::new(&transform, 0.0, gpu_body),
+                );
+            }
         }
+    }
+
+    pub fn flush(&mut self, pass: &mut wgpu::RenderPass, device: &wgpu::Device) {
+        for array in self.instances.values_mut() {
+            if array.data.is_empty() {
+                continue
+            }
+            let instance_buf = device.create_buffer_with_data(
+                array.data.as_bytes(),
+                wgpu::BufferUsage::VERTEX,
+            );
+            pass.set_vertex_buffers(0, &[(&array.mesh.vertex_buf, 0), (&instance_buf, 0)]);
+            pass.draw(0 .. array.mesh.num_vertices as u32, 0 .. array.data.len() as u32);
+            array.data.clear();
+        }
+        //TODO:
+        self.debug_shapes.clear();
+        self.debug_instances.clear();
+    }
+
+    pub fn clear(&mut self) {
+        self.instances.clear();
+        self.debug_shapes.clear();
+        self.debug_instances.clear();
     }
 }
 
@@ -458,44 +467,10 @@ impl Render {
         }
     }
 
-    pub fn draw_mesh(
-        pass: &mut wgpu::RenderPass,
-        mesh: &model::Mesh,
-        bind_group: &wgpu::BindGroup,
-    ) {
-        let locals_size = (mem::size_of::<object::Locals>() as wgpu::BufferAddress)
-            .max(wgpu::BIND_BUFFER_ALIGNMENT);
-        let offset = mesh.locals_id as wgpu::BufferAddress * locals_size;
-        pass.set_bind_group(2, bind_group, &[offset]);
-        pass.set_vertex_buffers(0, &[(&mesh.vertex_buf, 0)]);
-        pass.draw(0 .. mesh.num_vertices as u32, 0 .. 1);
-    }
-
-    pub fn draw_model(
-        pass: &mut wgpu::RenderPass,
-        model: &model::VisualModel,
-        bind_group: &wgpu::BindGroup,
-    ) {
-        // body
-        Render::draw_mesh(pass, &model.body, bind_group);
-        // wheels
-        for w in model.wheels.iter() {
-            if let Some(ref mesh) = w.mesh {
-                Render::draw_mesh(pass, mesh, bind_group);
-            }
-        }
-        // slots
-        for s in model.slots.iter() {
-            if let Some(ref mesh) = s.mesh {
-                Render::draw_mesh(pass, mesh, bind_group);
-            }
-        }
-    }
-
-    pub fn draw_world<'a>(
+    pub fn draw_world(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        render_models: &[RenderModel<'a>],
+        batcher: &mut Batcher,
         cam: &Camera,
         targets: ScreenTargets,
         device: &wgpu::Device,
@@ -543,18 +518,7 @@ impl Render {
         // draw vehicle models
         pass.set_pipeline(&self.object.pipeline);
         pass.set_bind_group(1, &self.object.bind_group, &[]);
-        for rm in render_models {
-            Render::draw_model(&mut pass, rm.model, rm.bind_group);
-        }
-
-        // draw debug shapes
-        for rm in render_models {
-            self.debug.draw_shape(
-                &mut pass,
-                &rm.model.shape,
-                rm.bind_group,
-            );
-        }
+        batcher.flush(&mut pass, device);
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {

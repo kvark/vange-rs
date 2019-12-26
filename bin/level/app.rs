@@ -2,7 +2,7 @@ use crate::boilerplate::Application;
 use vangers::{
     config, level, space,
     render::{
-        Render, ScreenTargets,
+        Batcher, Render, ScreenTargets,
         body::GpuStoreInit,
     },
 };
@@ -303,7 +303,7 @@ impl Application for LevelView {
         });
         self.render.draw_world(
             &mut encoder,
-            &[],
+            &mut Batcher::new(),
             &self.cam,
             targets,
             device,

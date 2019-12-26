@@ -11,8 +11,6 @@ use std::mem;
 
 pub struct CarView {
     model: model::VisualModel,
-    locals_buf: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
     transform: space::Transform,
     physics: config::car::CarPhysics,
     debug_render: render::debug::Context,
@@ -57,32 +55,18 @@ impl CarView {
             }
         };
         let mut model = cinfo.model.clone();
-        let slot_locals_id = model.mesh_count() - model.slots.len();
-        for (i, (ms, sid)) in model.slots
+        for (ms, sid) in model.slots
             .iter_mut()
             .zip(settings.car.slots.iter())
-            .enumerate()
         {
             let info = &game_reg.model_infos[sid];
             let raw = Mesh::load(&mut settings.open_relative(&info.path));
-            ms.mesh = Some(model::load_c3d(
-                raw,
-                device,
-                slot_locals_id + i,
-            ));
+            ms.mesh = Some(model::load_c3d(raw, device));
             ms.scale = info.scale;
         }
 
-        let (locals_buf, bind_group) = render::instantiate_visual_model(
-            &model,
-            device,
-            &object.part_bind_group_layout,
-        );
-
         CarView {
             model,
-            locals_buf,
-            bind_group,
             transform: cgmath::Decomposed {
                 scale: cinfo.scale,
                 disp: cgmath::Vector3::unit_z(),
@@ -205,6 +189,14 @@ impl Application for CarView {
         targets: render::ScreenTargets,
         _spawner: &LocalSpawner,
     ) -> wgpu::CommandBuffer {
+        let mut batcher = render::Batcher::new();
+        batcher.add_model(
+            &self.model,
+            &self.transform,
+            Some(self.physics.scale_bound),
+            &render::body::GpuBody::ZERO,
+        );
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             todo: 0,
         });
@@ -220,15 +212,6 @@ impl Application for CarView {
             0,
             mem::size_of::<render::global::Constants>() as wgpu::BufferAddress,
         );
-
-        render::RenderModel {
-            model: &self.model,
-            gpu_body: &render::body::GpuBody::ZERO,
-            locals_buf: &self.locals_buf,
-            bind_group: &self.bind_group,
-            transform: self.transform,
-            debug_shape_scale: Some(self.physics.scale_bound),
-        }.prepare(&mut encoder, device);
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -257,17 +240,17 @@ impl Application for CarView {
             pass.set_pipeline(&self.object.pipeline);
             pass.set_bind_group(0, &self.global.bind_group, &[]);
             pass.set_bind_group(1, &self.object.bind_group, &[]);
-            render::Render::draw_model(
-                &mut pass,
-                &self.model,
-                &self.bind_group,
-            );
 
+            batcher.flush(&mut pass, device);
+
+            let _ = &self.debug_render;
+            /*TODO:
             self.debug_render.draw_shape(
                 &mut pass,
                 &self.model.shape,
-                &self.bind_group,
-            );
+                &self.instance_buf,
+                0,
+            );*/
         }
 
         encoder.finish()
