@@ -354,13 +354,14 @@ impl Batcher {
         base_transform: &Transform,
         debug_shape_scale: Option<f32>,
         gpu_body: &body::GpuBody,
+        color: object::BodyColor,
     ) {
         use cgmath::{One as _, Rotation3 as _, Transform as _};
 
         // body
         self.add_mesh(
             &model.body,
-            object::Instance::new(base_transform, 0.0, gpu_body),
+            object::Instance::new(base_transform, 0.0, gpu_body, color),
         );
         if let Some(shape_scale) = debug_shape_scale {
             self.debug_shapes.push(Arc::clone(&model.shape));
@@ -368,6 +369,7 @@ impl Batcher {
                 base_transform,
                 shape_scale,
                 gpu_body,
+                color,
             ));
         }
 
@@ -381,7 +383,7 @@ impl Batcher {
                 });
                 self.add_mesh(
                     mesh,
-                    object::Instance::new(&transform, 0.0, gpu_body),
+                    object::Instance::new(&transform, 0.0, gpu_body, color),
                 );
             }
         }
@@ -398,7 +400,7 @@ impl Batcher {
                 let transform = base_transform.concat(&local);
                 self.add_mesh(
                     mesh,
-                    object::Instance::new(&transform, 0.0, gpu_body),
+                    object::Instance::new(&transform, 0.0, gpu_body, color),
                 );
             }
         }

@@ -29,7 +29,8 @@
 	),
 	car: (
 		id: "OxidizeMonk",
-		//id: "IronShadow",
+		// "IronShadow",
+		color: Green, // Dummy, Red, Blue, Yellow, Gray
 		slots: [],
 		//slots: ["HeavyLaser", "LightMissile", "LightFireBall"],
 	),

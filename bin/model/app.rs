@@ -142,6 +142,7 @@ impl Application for ResourceView {
             &self.transform,
             None,
             &render::body::GpuBody::ZERO,
+            render::object::BodyColor::Dummy,
         );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

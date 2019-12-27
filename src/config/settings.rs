@@ -1,3 +1,5 @@
+use crate::render::object::BodyColor;
+
 use std::fs::File;
 use std::path::PathBuf;
 
@@ -5,6 +7,7 @@ use std::path::PathBuf;
 #[derive(Deserialize)]
 pub struct Car {
     pub id: String,
+    pub color: BodyColor,
     pub slots: Vec<String>,
 }
 

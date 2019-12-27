@@ -10,6 +10,7 @@ use vangers::{
         body::{GpuBody, GpuStore, GpuStoreInit},
         collision::{GpuCollider, GpuEpoch},
         debug::LineBuffer,
+        object::BodyColor,
     },
 };
 
@@ -51,6 +52,7 @@ pub struct Agent {
     _name: String,
     spirit: Spirit,
     car: config::car::CarInfo,
+    color: BodyColor,
     control: Control,
     jump: Option<f32>,
     physics: Physics,
@@ -60,6 +62,7 @@ impl Agent {
     fn spawn(
         name: String,
         car: &config::car::CarInfo,
+        color: BodyColor,
         coords: (i32, i32),
         orientation: cgmath::Rad<f32>,
         level: &level::Level,
@@ -76,6 +79,7 @@ impl Agent {
             _name: name,
             spirit: Spirit::Other,
             car: car.clone(),
+            color,
             control: Control::default(),
             jump: None,
             physics: match gpu_store {
@@ -295,6 +299,7 @@ impl Game {
         let mut player_agent = Agent::spawn(
             "Player".to_string(),
             &db.cars[&settings.car.id],
+            settings.car.color,
             coords,
             cgmath::Rad::turn_div_2(),
             &level,
@@ -317,6 +322,12 @@ impl Game {
         // populate with random agents
         for i in 0 .. settings.game.other.count {
             use rand::{Rng, prelude::SliceRandom};
+            let color = match rng.gen_range(0, 3) {
+                0 => BodyColor::Green,
+                1 => BodyColor::Red,
+                2 => BodyColor::Blue,
+                _ => unreachable!(),
+            };
             let car_id = car_names.choose(&mut rng).unwrap();
             let (x, y) = match settings.game.other.spawn_at {
                 config::settings::SpawnAt::Player => coords,
@@ -328,6 +339,7 @@ impl Game {
             let mut agent = Agent::spawn(
                 format!("Other-{}", i),
                 &db.cars[car_id],
+                color,
                 (x, y),
                 rng.gen(),
                 &level,
@@ -678,6 +690,7 @@ impl Application for Game {
                 &transform,
                 debug_shape_scale,
                 gpu_body,
+                agent.color,
             );
         }
 

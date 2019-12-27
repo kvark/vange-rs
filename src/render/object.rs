@@ -40,6 +40,17 @@ const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
     [224, 4], // rotten item
 ];
 
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Deserialize)]
+pub enum BodyColor {
+    Dummy = 1,
+    Green = 21,
+    Red = 7,
+    Blue = 8,
+    Yellow = 9,
+    Gray = 10,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 pub struct Vertex {
@@ -54,17 +65,17 @@ pub struct Instance {
     pos_scale: [f32; 4],
     orientation: [f32; 4],
     shape_scale: f32,
-    body_id: u32,
+    body_and_color_id: [u32; 2],
 }
 
 impl Instance {
-    pub fn new(transform: &Transform, shape_scale: f32, body: &GpuBody) -> Self {
+    pub fn new(transform: &Transform, shape_scale: f32, body: &GpuBody, color: BodyColor) -> Self {
         let gt = GpuTransform::new(transform);
         Instance {
             pos_scale: gt.pos_scale,
             orientation: gt.orientation,
             shape_scale: shape_scale,
-            body_id: body.index() as u32,
+            body_and_color_id: [body.index() as u32, color as u32],
         }
     }
 }
@@ -90,7 +101,7 @@ pub const INSTANCE_DESCRIPTOR: wgpu::VertexBufferDescriptor = wgpu::VertexBuffer
         },
         wgpu::VertexAttributeDescriptor {
             offset: 36,
-            format: wgpu::VertexFormat::Uint,
+            format: wgpu::VertexFormat::Uint2,
             shader_location: 6,
         },
     ],
