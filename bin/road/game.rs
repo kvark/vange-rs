@@ -10,6 +10,7 @@ use vangers::{
         body::{GpuBody, GpuStore, GpuStoreInit},
         collision::{GpuCollider, GpuEpoch},
         debug::LineBuffer,
+        object::BodyColor,
     },
 };
 
@@ -51,6 +52,7 @@ pub struct Agent {
     _name: String,
     spirit: Spirit,
     car: config::car::CarInfo,
+    color: BodyColor,
     control: Control,
     jump: Option<f32>,
     physics: Physics,
@@ -60,6 +62,7 @@ impl Agent {
     fn spawn(
         name: String,
         car: &config::car::CarInfo,
+        color: BodyColor,
         coords: (i32, i32),
         orientation: cgmath::Rad<f32>,
         level: &level::Level,
@@ -76,6 +79,7 @@ impl Agent {
             _name: name,
             spirit: Spirit::Other,
             car: car.clone(),
+            color,
             control: Control::default(),
             jump: None,
             physics: match gpu_store {
@@ -136,6 +140,13 @@ impl Agent {
             self.jump.take(),
             line_buffer,
         )
+    }
+
+    fn position(&self) -> cgmath::Vector3<f32> {
+        match self.physics {
+            Physics::Cpu { ref transform, .. } => transform.disp,
+            Physics::Gpu { .. } => cgmath::Vector3::zero(), //TODO
+        }
     }
 }
 
@@ -288,6 +299,7 @@ impl Game {
         let mut player_agent = Agent::spawn(
             "Player".to_string(),
             &db.cars[&settings.car.id],
+            settings.car.color,
             coords,
             cgmath::Rad::turn_div_2(),
             &level,
@@ -310,14 +322,26 @@ impl Game {
         // populate with random agents
         for i in 0 .. settings.game.other.count {
             use rand::{Rng, prelude::SliceRandom};
+            let color = match rng.gen_range(0, 3) {
+                0 => BodyColor::Green,
+                1 => BodyColor::Red,
+                2 => BodyColor::Blue,
+                _ => unreachable!(),
+            };
             let car_id = car_names.choose(&mut rng).unwrap();
-            let x = rng.gen_range(0, level.size.0);
-            let y = rng.gen_range(0, level.size.1);
+            let (x, y) = match settings.game.other.spawn_at {
+                config::settings::SpawnAt::Player => coords,
+                config::settings::SpawnAt::Random => (
+                    rng.gen_range(0, level.size.0),
+                    rng.gen_range(0, level.size.1),
+                ),
+            };
             let mut agent = Agent::spawn(
                 format!("Other-{}", i),
                 &db.cars[car_id],
+                color,
                 (x, y),
-                cgmath::Rad(rng.gen()),
+                rng.gen(),
                 &level,
                 gpu.as_mut().map(|Gpu { ref mut store, .. }| store),
             );
@@ -593,6 +617,7 @@ impl Application for Game {
         } else {
             use rayon::prelude::*;
 
+            let clipper = Clipper::new(&self.cam);
             let max_quant = self.max_quant;
             let common = &self.db.common;
             let level = &self.level;
@@ -604,9 +629,12 @@ impl Application for Game {
                     common,
                 );
 
-                while dt > max_quant {
-                    a.cpu_step(max_quant, level, common, None);
-                    dt -= max_quant;
+                // only go through the full iteration on visible objects
+                if !clipper.clip(&a.position()) {
+                    while dt > max_quant {
+                        a.cpu_step(max_quant, level, common, None);
+                        dt -= max_quant;
+                    }
                 }
 
                 a.cpu_step(dt, level, common, None);
@@ -662,6 +690,7 @@ impl Application for Game {
                 &transform,
                 debug_shape_scale,
                 gpu_body,
+                agent.color,
             );
         }
 

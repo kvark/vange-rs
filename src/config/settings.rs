@@ -1,3 +1,5 @@
+use crate::render::object::BodyColor;
+
 use std::fs::File;
 use std::path::PathBuf;
 
@@ -5,6 +7,7 @@ use std::path::PathBuf;
 #[derive(Deserialize)]
 pub struct Car {
     pub id: String,
+    pub color: BodyColor,
     pub slots: Vec<String>,
 }
 
@@ -23,8 +26,15 @@ pub struct Camera {
 }
 
 #[derive(Deserialize)]
+pub enum SpawnAt {
+    Player,
+    Random,
+}
+
+#[derive(Deserialize)]
 pub struct Other {
     pub count: usize,
+    pub spawn_at: SpawnAt,
 }
 
 #[derive(Deserialize)]

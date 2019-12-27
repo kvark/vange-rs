@@ -7,6 +7,8 @@ layout(location = 2) varying vec3 v_Light;
 
 #ifdef SHADER_VS
 
+const uint BODY_COLOR_ID = 1;
+
 layout(set = 1, binding = 0) uniform utexture1D t_ColorTable;
 layout(set = 1, binding = 1) uniform texture1D t_Palette;
 layout(set = 1, binding = 2) uniform sampler s_ColorTableSampler;
@@ -22,18 +24,20 @@ layout(location = 2) attribute vec4 a_Normal;
 
 layout(location = 3) attribute vec4 a_PosScale;
 layout(location = 4) attribute vec4 a_Orientation;
-layout(location = 6) attribute uint a_BodyId;
+layout(location = 6) attribute uvec2 a_BodyAndColorId;
 
 void main() {
-    vec4 body_pos_scale = s_Bodies[int(a_BodyId)].pos_scale;
-    vec4 body_orientation = s_Bodies[int(a_BodyId)].orientation;
+    int body_id = int(a_BodyAndColorId.x);
+    vec4 body_pos_scale = s_Bodies[body_id].pos_scale;
+    vec4 body_orientation = s_Bodies[body_id].orientation;
 
     vec3 local = qrot(a_Orientation, vec3(a_Vertex.xyz)) * a_PosScale.w + a_PosScale.xyz;
     vec3 world = qrot(body_orientation, local) * body_pos_scale.w + body_pos_scale.xyz;
     gl_Position = u_ViewProj * vec4(world, 1.0);
 
-    uvec2 color_params = texelFetch(usampler1D(t_ColorTable, s_ColorTableSampler), int(a_ColorIndex), 0).xy;
-    v_Color = texelFetch(sampler1D(t_Palette, s_PaletteSampler), int(color_params[0]), 0);
+    uint color_id = a_ColorIndex == BODY_COLOR_ID ? a_BodyAndColorId.y : a_ColorIndex;
+    uvec2 color_params = texelFetch(usampler1D(t_ColorTable, s_ColorTableSampler), int(color_id), 0).xy;
+    v_Color = texelFetch(sampler1D(t_Palette, s_PaletteSampler), int(color_params.x), 0);
 
     vec3 n = normalize(a_Normal.xyz);
     v_Normal = qrot(body_orientation, qrot(a_Orientation, n));

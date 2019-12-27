@@ -13,6 +13,7 @@ pub struct CarView {
     model: model::VisualModel,
     transform: space::Transform,
     physics: config::car::CarPhysics,
+    color: render::object::BodyColor,
     debug_render: render::debug::Context,
     global: render::global::Context,
     object: render::object::Context,
@@ -73,6 +74,7 @@ impl CarView {
                 rot: cgmath::One::one(),
             },
             physics: cinfo.physics.clone(),
+            color: settings.car.color,
             debug_render: render::debug::Context::new(
                 device,
                 &settings.render.debug,
@@ -195,6 +197,7 @@ impl Application for CarView {
             &self.transform,
             Some(self.physics.scale_bound),
             &render::body::GpuBody::ZERO,
+            self.color,
         );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
