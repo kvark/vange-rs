@@ -1,4 +1,10 @@
-use cgmath::{InnerSpace as _, Rotation as _, Rotation3 as _, Transform as _};
+use cgmath::{
+    EuclideanSpace as _,
+    InnerSpace as _,
+    Rotation as _,
+    Rotation3 as _,
+    Transform as _,
+};
 use std::ops::Range;
 
 pub type Transform = cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>;
@@ -72,13 +78,12 @@ pub struct Direction {
 
 impl Camera {
     pub fn get_view_proj(&self) -> cgmath::Matrix4<f32> {
-        use cgmath::{Decomposed, Matrix4};
-        let view = Decomposed {
+        let view = cgmath::Decomposed {
             scale: 1.0,
             rot: self.rot,
             disp: self.loc,
         };
-        let view_mx = Matrix4::from(view.inverse_transform().unwrap());
+        let view_mx = cgmath::Matrix4::from(view.inverse_transform().unwrap());
         let mut mvp = self.proj.to_matrix() * view_mx;
         // convert from GL to wgpu/gfx-rs
         // 1) depth conversion from [-1,1] to [0,1]
@@ -92,6 +97,12 @@ impl Camera {
         mvp.z.y *= -1.0;
         mvp.w.y *= -1.0;
         mvp
+    }
+
+    pub fn intersect_height(&self, height: f32) -> cgmath::Point3<f32> {
+        let dir = self.rot * cgmath::Vector3::unit_z();
+        let t = (height - self.loc.z) / dir.z;
+        cgmath::Point3::from_vec(self.loc) + t * dir
     }
 
     pub fn follow(

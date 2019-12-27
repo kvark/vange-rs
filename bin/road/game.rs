@@ -123,6 +123,7 @@ impl Agent {
         level: &level::Level,
         common: &config::common::Common,
         line_buffer: Option<&mut LineBuffer>,
+        focus_point: &cgmath::Point3<f32>,
     ) {
         let (dynamo, transform) = match self.physics {
             Physics::Cpu { ref mut transform, ref mut dynamo } => (dynamo, transform),
@@ -139,7 +140,15 @@ impl Agent {
             if self.control.brake { common.global.f_brake_max } else { 0.0 },
             self.jump.take(),
             line_buffer,
-        )
+        );
+
+        let wrap = cgmath::vec2(level.size.0 as f32, (level.size.1 >> 1) as f32);
+        let offset = cgmath::Point3::from_vec(transform.disp) - *focus_point;
+        transform.disp = focus_point.to_vec() + cgmath::vec3(
+            (offset.x + 0.5 * wrap.x).rem_euclid(wrap.x) - 0.5 * wrap.x,
+            (offset.y + 0.5 * wrap.y).rem_euclid(wrap.y) - 0.5 * wrap.y,
+            offset.z
+        );
     }
 
     fn position(&self) -> cgmath::Vector3<f32> {
@@ -498,6 +507,8 @@ impl Application for Game {
         delta: f32,
         spawner: &LocalSpawner,
     ) -> Vec<wgpu::CommandBuffer> {
+        let focus_point = self.cam.intersect_height(level::HEIGHT_SCALE as f32 * 0.3);
+
         if let Some(ref mut jump) = self.jump {
             let power = delta * (self.db.common.speed.standard_frame_rate as f32);
             *jump = (*jump + power).min(self.db.common.force.max_jump_power);
@@ -525,6 +536,7 @@ impl Application for Game {
                         &self.level,
                         &self.db.common,
                         Some(&mut self.line_buffer),
+                        &focus_point,
                     );
                 }
 
@@ -640,12 +652,12 @@ impl Application for Game {
                 // only go through the full iteration on visible objects
                 if !clipper.clip(&a.position()) {
                     while dt > max_quant {
-                        a.cpu_step(max_quant, level, common, None);
+                        a.cpu_step(max_quant, level, common, None, &focus_point);
                         dt -= max_quant;
                     }
                 }
 
-                a.cpu_step(dt, level, common, None);
+                a.cpu_step(dt, level, common, None, &focus_point);
             });
 
             Vec::new()
