@@ -254,7 +254,11 @@ impl Game {
                 .map_or((0, 0), |e| e.coordinates);
 
             let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
-            let ini_name = &worlds[&settings.game.level];
+            let ini_name = match worlds.get(&settings.game.level) {
+                Some(name) => name,
+                None => panic!("Unknown level '{}', valid names are: {:?}",
+                    settings.game.level, worlds.keys().collect::<Vec<_>>()),
+            };
             let ini_path = settings.data_path.join(ini_name);
             log::info!("Using level {}", ini_name);
 
@@ -296,9 +300,14 @@ impl Game {
         });
 
         log::info!("Spawning agents");
+        let car_names = db.cars.keys().cloned().collect::<Vec<_>>();
         let mut player_agent = Agent::spawn(
             "Player".to_string(),
-            &db.cars[&settings.car.id],
+            match db.cars.get(&settings.car.id) {
+                Some(name) => name,
+                None => panic!("Unknown car '{}', valid names are: {:?}",
+                    settings.car.id, car_names),
+            },
             settings.car.color,
             coords,
             cgmath::Rad::turn_div_2(),
@@ -318,7 +327,6 @@ impl Game {
 
         let mut agents = vec![player_agent];
         let mut rng = rand::thread_rng();
-        let car_names = db.cars.keys().cloned().collect::<Vec<_>>();
         // populate with random agents
         for i in 0 .. settings.game.other.count {
             use rand::{Rng, prelude::SliceRandom};
