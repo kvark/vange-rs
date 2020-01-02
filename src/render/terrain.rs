@@ -429,7 +429,7 @@ impl Context {
         config: &TerrainSettings,
         screen_extent: wgpu::Extent3d,
     ) -> Self {
-        let origin = wgpu::Origin3d { x: 0.0, y: 0.0, z: 0.0 };
+        let origin = wgpu::Origin3d { x: 0, y: 0, z: 0 };
         let extent = wgpu::Extent3d {
             width: level.size.0 as u32,
             height: level.size.1 as u32,

@@ -133,7 +133,7 @@ impl Harness {
             event_loop,
             window,
             device,
-            mut queue,
+            queue,
             surface,
             mut swap_chain,
             mut extent,

@@ -4,7 +4,6 @@ layout(location = 0) varying vec4 v_Color;
 layout(location = 1) varying vec3 v_Normal;
 layout(location = 2) varying vec3 v_Light;
 
-
 #ifdef SHADER_VS
 
 const uint BODY_COLOR_ID = 1;
@@ -37,7 +36,8 @@ void main() {
 
     uint color_id = a_ColorIndex == BODY_COLOR_ID ? a_BodyAndColorId.y : a_ColorIndex;
     uvec2 color_params = texelFetch(usampler1D(t_ColorTable, s_ColorTableSampler), int(color_id), 0).xy;
-    v_Color = texelFetch(sampler1D(t_Palette, s_PaletteSampler), int(color_params.x), 0);
+    uint palette_coord = color_params.x + (128U >> color_params.y) - 1U;
+    v_Color = texelFetch(sampler1D(t_Palette, s_PaletteSampler), int(palette_coord), 0);
 
     vec3 n = normalize(a_Normal.xyz);
     v_Normal = qrot(body_orientation, qrot(a_Orientation, n));
@@ -48,7 +48,7 @@ void main() {
 
 #ifdef SHADER_FS
 
-const float c_Emissive = 0.3, c_Ambient = 0.5, c_Diffuse = 3.0;
+const float c_Emissive = 0.0, c_Ambient = 0.3, c_Diffuse = 0.5;
 
 layout(location = 0) out vec4 o_Color;
 
