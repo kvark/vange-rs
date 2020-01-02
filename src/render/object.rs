@@ -265,7 +265,7 @@ impl Context {
                 },
                 wgpu::BindGroupLayoutBinding { // palette map
                     binding: 1,
-                    visibility: wgpu::ShaderStage::VERTEX,
+                    visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D1,
                         multisampled: false,

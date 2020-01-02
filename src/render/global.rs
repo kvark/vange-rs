@@ -51,7 +51,7 @@ impl Context {
                     visibility: wgpu::ShaderStage::all(),
                     ty: wgpu::BindingType::Sampler,
                 },
-                wgpu::BindGroupLayoutBinding { // palette sampler
+                wgpu::BindGroupLayoutBinding { // GPU store
                     binding: 2,
                     visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::StorageBuffer {
@@ -70,7 +70,7 @@ impl Context {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: 0.0,
             lod_max_clamp: 0.0,
