@@ -19,11 +19,17 @@ use std::{
 };
 
 
+pub struct BoundingBox {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+    pub radius: f32,
+}
+
 pub struct Mesh {
     pub num_vertices: usize,
     pub vertex_buf: wgpu::Buffer,
     pub offset: [f32; 3],
-    pub bbox: ([f32; 3], [f32; 3], f32),
+    pub bbox: BoundingBox,
     pub physics: m3d::Physics,
 }
 
@@ -160,11 +166,11 @@ pub fn load_c3d(
         num_vertices,
         vertex_buf: mapping.finish(),
         offset: vec_i2f(raw.parent_off),
-        bbox: (
-            vec_i2f(raw.bounds.coord_min),
-            vec_i2f(raw.bounds.coord_max),
-            raw.max_radius as f32,
-        ),
+        bbox: BoundingBox {
+            min: vec_i2f(raw.bounds.coord_min),
+            max: vec_i2f(raw.bounds.coord_max),
+            radius: raw.max_radius as f32,
+        },
         physics: raw.physics,
     })
 }

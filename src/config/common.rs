@@ -129,8 +129,8 @@ pub struct Force {
     pub k_distance_to_force: f32,
     pub explosion: VelocityPair,
     pub max_jump_power: f32,
-    pub side_impulse_delay: f32,
-    pub side_impulse_duration: f32,
+    pub side_impulse_delay: u8,
+    pub side_impulse_duration: u8,
 }
 
 pub struct Speed {

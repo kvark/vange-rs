@@ -79,6 +79,7 @@ pub fn step(
     f_turbo: f32,
     f_brake: f32,
     jump: Option<f32>,
+    roll: f32,
     mut line_buffer: Option<&mut LineBuffer>,
 ) {
     let speed_correction_factor = dt / common.nature.time_delta0;
@@ -189,7 +190,7 @@ pub fn step(
                         cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0); // ignore vertical
                     let pv = rigid.velocity_at(r1);
                     let normal = {
-                        let bm = car.model.body.bbox.1;
+                        let bm = car.model.body.bbox.max;
                         let n = cgmath::vec3(r1.x / bm[0], r1.y / bm[1], r1.z / bm[2]);
                         n.normalize()
                     };
@@ -298,9 +299,9 @@ pub fn step(
             }
 
             let rx_max = if wheel.pos[0] > 0.0 {
-                car.model.body.bbox.1[0]
+                car.model.body.bbox.max[0]
             } else {
-                car.model.body.bbox.0[0]
+                car.model.body.bbox.min[0]
             };
             let pos = cgmath::vec3(rx_max, wheel.pos[1], wheel.pos[2])
                 * transform.scale;
@@ -339,6 +340,19 @@ pub fn step(
         }
     }
 
+    if roll != 0.0 && wheels_touch == 0 && spring_touch != 0 {
+        let df = common.force.f_spring_impulse * speed_correction_factor;
+        let x_edge = if roll > 0.0 {
+            car.model.body.bbox.max[0]
+        } else {
+            car.model.body.bbox.min[0]
+        };
+        rigid.add_raw(
+            cgmath::vec3(0.0, 0.0, df),
+            cgmath::vec3(0.0, df * x_edge * transform.scale, 0.0),
+        );
+    }
+
     log::debug!("\tcur acc {:?}", acc_cur);
     rigid.add_raw(acc_cur.f * dt, acc_cur.k * dt);
     let (mut v_vel, mut w_vel) = rigid.finish();
@@ -358,7 +372,7 @@ pub fn step(
     }
 
     if v_mag * v_drag > common.drag.abs_stop.v || w_mag * w_drag > common.drag.abs_stop.w {
-        let radius = car.model.body.bbox.2; //approx?
+        let radius = car.model.body.bbox.radius; //approx?
         let local_z_scaled = z_axis * (radius * common.impulse.rolling_scale);
         let r_diff_sign = down_minus_up.signum() as f32;
         let vs = v_vel - r_diff_sign * local_z_scaled.cross(w_vel);

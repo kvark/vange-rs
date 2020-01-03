@@ -601,7 +601,7 @@ impl GpuStore {
                     ji[3],
                     ji[4],
                     ji[5],
-                    model.body.bbox.2,
+                    model.body.bbox.radius,
                 ],
                 jacobi2: [
                     ji[6],

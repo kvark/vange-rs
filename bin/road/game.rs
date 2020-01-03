@@ -32,6 +32,7 @@ enum Spirit {
 struct Control {
     motor: f32,
     rudder: f32,
+    roll: f32,
     brake: bool,
     turbo: bool,
 }
@@ -46,6 +47,14 @@ enum Physics {
         collision_epochs: HashMap<GpuEpoch, usize>,
         last_control: Control,
     },
+}
+
+enum SimulationStep<'a> {
+    Intermediate,
+    Final {
+        focus_point: &'a cgmath::Point3<f32>,
+        line_buffer: Option<&'a mut LineBuffer>,
+    }
 }
 
 pub struct Agent {
@@ -122,12 +131,17 @@ impl Agent {
         dt: f32,
         level: &level::Level,
         common: &config::common::Common,
-        line_buffer: Option<&mut LineBuffer>,
-        focus_point: &cgmath::Point3<f32>,
+        sim_step: SimulationStep,
     ) {
         let (dynamo, transform) = match self.physics {
             Physics::Cpu { ref mut transform, ref mut dynamo } => (dynamo, transform),
             Physics::Gpu { .. } => return,
+        };
+        let (jump, roll, focus_point, line_buffer) = match sim_step {
+            SimulationStep::Intermediate =>
+                (None, 0.0, None, None),
+            SimulationStep::Final { focus_point, line_buffer } =>
+                (self.jump.take(), self.control.roll, Some(*focus_point), line_buffer),
         };
         physics::step(
             dynamo,
@@ -138,17 +152,20 @@ impl Agent {
             common,
             if self.control.turbo { common.global.k_traction_turbo } else { 1.0 },
             if self.control.brake { common.global.f_brake_max } else { 0.0 },
-            self.jump.take(),
+            jump,
+            roll,
             line_buffer,
         );
 
-        let wrap = cgmath::vec2(level.size.0 as f32, (level.size.1 >> 1) as f32);
-        let offset = cgmath::Point3::from_vec(transform.disp) - *focus_point;
-        transform.disp = focus_point.to_vec() + cgmath::vec3(
-            (offset.x + 0.5 * wrap.x).rem_euclid(wrap.x) - 0.5 * wrap.x,
-            (offset.y + 0.5 * wrap.y).rem_euclid(wrap.y) - 0.5 * wrap.y,
-            offset.z
-        );
+        if let Some(focus) = focus_point {
+            let wrap = cgmath::vec2(level.size.0 as f32, (level.size.1 >> 1) as f32);
+            let offset = cgmath::Point3::from_vec(transform.disp) - focus;
+            transform.disp = focus.to_vec() + cgmath::vec3(
+                (offset.x + 0.5 * wrap.x).rem_euclid(wrap.x) - 0.5 * wrap.x,
+                (offset.y + 0.5 * wrap.y).rem_euclid(wrap.y) - 0.5 * wrap.y,
+                offset.z
+            );
+        }
     }
 
     fn position(&self) -> cgmath::Vector3<f32> {
@@ -223,6 +240,11 @@ impl Clipper {
     }
 }
 
+struct Roll {
+    dir: f32,
+    time: f32,
+}
+
 pub struct Game {
     db: DataBase,
     render: Render,
@@ -239,6 +261,7 @@ pub struct Game {
     spin_ver: f32,
     turbo: bool,
     jump: Option<f32>,
+    roll: Option<Roll>,
     is_paused: bool,
     tick: Option<f32>,
 }
@@ -403,6 +426,7 @@ impl Game {
             spin_ver: 0.0,
             turbo: false,
             jump: None,
+            roll: None,
             is_paused: false,
             tick: None,
         }
@@ -468,6 +492,8 @@ impl Application for Game {
                 }
                 Key::A => self.spin_hor = -1.0,
                 Key::D => self.spin_hor = 1.0,
+                Key::Q => self.roll = Some(Roll { dir: -1.0, time: 0.0 }),
+                Key::E => self.roll = Some(Roll { dir: 1.0, time: 0.0 }),
                 _ => (),
             }
             KeyboardInput {
@@ -477,6 +503,7 @@ impl Application for Game {
             } => match key {
                 Key::W | Key::S => self.spin_ver = 0.0,
                 Key::A | Key::D => self.spin_hor = 0.0,
+                Key::Q | Key::E => self.roll = None,
                 Key::LShift => self.turbo = false,
                 Key::LAlt => player.jump = self.jump.take(),
                 _ => (),
@@ -531,12 +558,16 @@ impl Application for Game {
             if self.is_paused {
                 if let Some(tick) = self.tick.take() {
                     self.line_buffer.clear();
+                    player.control.roll = 0.0;
+
                     player.cpu_step(
                         tick * self.max_quant,
                         &self.level,
                         &self.db.common,
-                        Some(&mut self.line_buffer),
-                        &focus_point,
+                        SimulationStep::Final {
+                            focus_point: &focus_point,
+                            line_buffer: Some(&mut self.line_buffer),
+                        },
                     );
                 }
 
@@ -552,6 +583,21 @@ impl Application for Game {
             player.control.rudder = self.spin_hor;
             player.control.motor = 1.0 * self.spin_ver;
             player.control.turbo = self.turbo;
+            player.control.roll = match self.roll {
+                Some(ref mut roll) => {
+                    let roll_count = (roll.time * self.db.common.speed.standard_frame_rate as f32).min(100.0) as u8;
+                    roll.time += delta;
+                    if roll_count > self.db.common.force.side_impulse_delay {
+                        roll.time = 0.0;
+                    }
+                    if roll_count < self.db.common.force.side_impulse_duration {
+                        roll.dir
+                    } else {
+                        0.0
+                    }
+                }
+                None => 0.0,
+            };
 
             match self.cam_style {
                 CameraStyle::Simple(ref dir) => {
@@ -652,12 +698,15 @@ impl Application for Game {
                 // only go through the full iteration on visible objects
                 if !clipper.clip(&a.position()) {
                     while dt > max_quant {
-                        a.cpu_step(max_quant, level, common, None, &focus_point);
+                        a.cpu_step(max_quant, level, common, SimulationStep::Intermediate);
                         dt -= max_quant;
                     }
                 }
 
-                a.cpu_step(dt, level, common, None, &focus_point);
+                a.cpu_step(dt, level, common, SimulationStep::Final {
+                    focus_point: &focus_point,
+                    line_buffer: None,
+                });
             });
 
             Vec::new()
