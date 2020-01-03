@@ -21,11 +21,16 @@ use std::{
     collections::HashMap,
 };
 
+#[derive(Debug, PartialEq)]
+struct Ai {
+    last_transform: space::Transform,
+    roll_time: f32,
+}
 
-#[derive(Eq, PartialEq)]
+#[derive(Debug, PartialEq)]
 enum Spirit {
     Player,
-    Other,
+    Other(Ai),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -86,7 +91,10 @@ impl Agent {
 
         Agent {
             _name: name,
-            spirit: Spirit::Other,
+            spirit: Spirit::Other(Ai {
+                last_transform: transform,
+                roll_time: 0.0,
+            }),
             car: car.clone(),
             color,
             control: Control::default(),
@@ -166,6 +174,32 @@ impl Agent {
                 offset.z
             );
         }
+    }
+
+    fn ai_behavior(&mut self, delta: f32) {
+        let ai = match self.spirit {
+            Spirit::Player => return,
+            Spirit::Other(ref mut ai) => ai,
+        };
+        self.control.motor = 1.0; //full on
+
+        let transform = match self.physics {
+            Physics::Cpu { ref transform, .. } => transform,
+            Physics::Gpu { .. } => return, //TODO
+        };
+
+        if ai.roll_time > 0.0 {
+            ai.roll_time -= delta;
+            if ai.roll_time <= 0.0 {
+                self.control.roll = 0.0;
+            }
+        } else if ai.last_transform.disp == transform.disp {
+            ai.roll_time = 0.5;
+            let x_axis = transform.rot * cgmath::Vector3::unit_x();
+            self.control.roll = x_axis.z.signum();
+        }
+
+        ai.last_transform = *transform;
     }
 
     fn position(&self) -> cgmath::Vector3<f32> {
@@ -376,7 +410,7 @@ impl Game {
                     rng.gen_range(0, level.size.1),
                 ),
             };
-            let mut agent = Agent::spawn(
+            let agent = Agent::spawn(
                 format!("Other-{}", i),
                 &db.cars[car_id],
                 color,
@@ -385,7 +419,6 @@ impl Game {
                 &level,
                 gpu.as_mut().map(|Gpu { ref mut store, .. }| store),
             );
-            agent.control.motor = 1.0; //full on
             agents.push(agent);
         }
 
@@ -707,6 +740,8 @@ impl Application for Game {
                     focus_point: &focus_point,
                     line_buffer: None,
                 });
+
+                a.ai_behavior(delta);
             });
 
             Vec::new()
@@ -752,7 +787,7 @@ impl Application for Game {
             };
             let debug_shape_scale = match agent.spirit {
                 Spirit::Player => Some(agent.car.physics.scale_bound),
-                Spirit::Other => None,
+                Spirit::Other { .. } => None,
             };
             self.batcher.add_model(
                 &agent.car.model,
