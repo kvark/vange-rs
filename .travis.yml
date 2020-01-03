@@ -1,12 +1,36 @@
 language: rust
-rust:
-  - stable
-  - nightly
-os:
-  - linux
-  - osx
-  - windows
+jobs:
+  include:
+  - rust: nightly
+    os: linux
+    env:
+  - rust: stable
+    os: linux
+    env: DEPLOY_SUFFIX= MV_TOOL=mv ZIP_TOOL="zip -r"
+  - rust: stable
+    os: osx
+    env: DEPLOY_SUFFIX= MV_TOOL=mv ZIP_TOOL="zip -r"
+  - rust: stable
+    os: windows
+    env: DEPLOY_SUFFIX=".exe" MV_TOOL=move ZIP_TOOL="7z a -tzip"
 
 branches:
   except:
-    - staging.tmp
+  - staging.tmp
+
+before_deploy:
+  - cargo build --release
+  - $MV_TOOL config/settings.template.ron config/settings.ron
+  - $ZIP_TOOL "vangers-${TRAVIS_OS_NAME}.zip" README.md config res "target/release/car${DEPLOY_SUFFIX}" "target/release/convert${DEPLOY_SUFFIX}" "target/release/level${DEPLOY_SUFFIX}" "target/relese/model${DEPLOY_SUFFIX}" "target/release/road${DEPLOY_SUFFIX}"
+
+deploy:
+  provider: releases
+  api_key:
+    secure: TZdnA+72Vw8qCx6w3iu8fE2F2YNvTx3jHe8SLzo/1dqdmRM+VNFO2S4mx7XudSvvTGgTH8CXqEHs97mHdUtr5Rn0KRlsFcrDgdL6jDFEP/vpDIt9nL9WBAyyOls9g9xtxZBokjNqQ43N3NAT8E1FiT6Qx3bWvmpKmXGsRd9p+3h/JUY1AtZNhrvbcPmoAVJTXTOigPBPTnSgW9GgD1NPYl/3lpc9cjeHiRvsbMANuYvw8BiwSC0bCOP2tm+4k74nWCkbG0EvrOPubwAstoY/MQ1t7myty6XpPbDJv8oHTMj+JDr5Dau8qahpQLWrMyeB8vwTWRPBUc6Hb7QC4a+bXXnxHFU62lPghDbOAzCTNWo2JYaByX7lv38nNRtV7QD19g5QKSNAzapy7j12TycrPQa3KIiu53e1t0RAvXyvrT31fqjBzNOxyNmTRr/1M1hVQJEZzdnU6khzUDzDluw2HJEXGRh8bC0MuWTrsb+Zk8CopHDcZBndh1b/7LB0gJI9odigwsLRhv13G91BkxHXtkU35ceGW8pvo6BZIP/7/ca4tIUkSs31qFVm7mMwyn7g7oxg9HGn/c4vs+Lys3VgBnFEipcZ4yOmUfB+c4xXq0SgGLKcx225SpZuxFDsUBPQffTjwayiLyMYBwS3QB/IauCeBqvIRfWNZQPEobIQq1E=
+  skip_cleanup: true
+  overwrite: true
+  file: "vangers-${TRAVIS_OS_NAME}.zip"
+  on:
+    tags: true
+    repo: kvark/vange-rs
+    condition: $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_BRANCH == $TRAVIS_TAG
