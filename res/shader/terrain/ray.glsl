@@ -1,4 +1,4 @@
-//!include vs:globals.inc fs:globals.inc fs:surface.inc fs:color.inc
+//!include vs:globals.inc fs:globals.inc fs:terrain/locals.inc fs:surface.inc fs:color.inc
 
 #ifdef SHADER_VS
 
@@ -12,11 +12,6 @@ void main() {
 
 #ifdef SHADER_FS
 //imported: Surface, u_TextureScale, get_surface, evaluate_color
-
-layout(set = 1, binding = 1) uniform c_Locals {
-    uvec4 u_ScreenSize;      // XY = size
-    uvec4 u_Params;
-};
 
 const float
     c_ReflectionVariance = 0.5,

@@ -1,46 +1,11 @@
-//!include cs:globals.inc cs:surface.inc cs:color.inc
+//!include cs:globals.inc cs:terrain/locals.inc cs:surface.inc cs:color.inc
 
 #ifdef SHADER_CS
 //imported: Surface, get_surface, evaluate_color_id
 
-layout(set = 1, binding = 1) uniform c_Locals {
-    uvec4 u_ScreenSize;      // XY = size
-};
 layout(set = 2, binding = 0, std430) buffer Storage {
     uint w_Data[];
 };
-layout(set = 2, binding = 1) uniform c_Scatter {
-    vec2 u_CamOrigin;
-    vec2 u_CamDir;
-    vec2 u_RangeY;
-    vec2 u_RangeX;
-};
-
-
-vec2 generate_pos() {
-    vec2 screen_coord = vec2(gl_GlobalInvocationID.xy) /
-        vec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy - vec2(1));
-
-    float y;
-    if (true) {
-        float y_sqrt = mix(
-            sqrt(abs(u_RangeY.x)) * sign(u_RangeY.x),
-            sqrt(abs(u_RangeY.y)) * sign(u_RangeY.y),
-            screen_coord.y
-        );
-        y = y_sqrt * y_sqrt * sign(y_sqrt);
-    } else {
-        y = mix(u_RangeY.x, u_RangeY.y, screen_coord.y);
-    }
-
-    float x_limit = mix(
-        u_RangeX.x, u_RangeX.y,
-        (y - u_RangeY.x) / (u_RangeY.y - u_RangeY.x)
-    );
-    float x = mix(-x_limit, x_limit, screen_coord.x);
-
-    return u_CamOrigin + u_CamDir * y + vec2(u_CamDir.y, -u_CamDir.x) * x;
-}
 
 bool is_visible(vec4 p) {
     return p.w > 0.0 && p.z >= 0.0 &&
@@ -62,7 +27,10 @@ void add_voxel(vec2 pos, float altitude, uint type, float lit_factor) {
 }
 
 void main() {
-    vec2 pos = generate_pos();
+    vec2 source_coord = vec2(gl_GlobalInvocationID.xy) /
+        vec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy - vec2(1));
+    vec2 pos = generate_scatter_pos(source_coord);
+
     Surface suf = get_surface(pos);
     float base = 0.0;
     float t = float(gl_GlobalInvocationID.z) / float(gl_NumWorkGroups.z * gl_WorkGroupSize.z);

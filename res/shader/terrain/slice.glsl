@@ -7,7 +7,7 @@ layout(location = 0) varying vec4 v_Pos;
 layout(location = 0) attribute ivec4 a_Pos;
 
 void main() {
-    v_Pos = vec4(ivec4(a_Pos.xy * u_TextureScale.xy, 255 - gl_InstanceIndex, 1));
+    v_Pos = vec4(a_Pos.xy * u_TextureScale.xy, u_TextureScale.z - float(gl_InstanceIndex + 1), 1.0);
     gl_Position = u_ViewProj * v_Pos;
 }
 #endif //VS

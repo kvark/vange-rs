@@ -12,7 +12,7 @@ use crate::{
 
 use zerocopy::AsBytes as _;
 
-use std::mem;
+use std::{mem, ops::Range};
 
 
 pub const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -33,18 +33,17 @@ struct SurfaceConstants {
 #[repr(C)]
 #[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct Constants {
-    _scr_size: [u32; 4],
-    _params: [u32; 4],
+    screen_size: [u32; 4],
+    params: [u32; 4],
+    cam_origin_dir: [f32; 4],
+    sample_range: [f32; 4], // -x, +x, -y, +y
 }
 
-#[allow(dead_code)]
-#[repr(C)]
-#[derive(Clone, Copy, Debug, zerocopy::AsBytes, zerocopy::FromBytes)]
 struct ScatterConstants {
-    origin: [f32; 2],
-    dir: [f32; 2],
-    y_range: [f32; 2],
-    x_range: [f32; 2],
+    origin: cgmath::Point2<f32>,
+    dir: cgmath::Vector2<f32>,
+    sample_y: Range<f32>,
+    sample_x: Range<f32>,
 }
 
 fn compute_scatter_constants(cam: &Camera) -> ScatterConstants {
@@ -107,10 +106,10 @@ fn compute_scatter_constants(cam: &Camera) -> ScatterConstants {
     }
 
     ScatterConstants {
-        origin: cam_origin.into(),
-        dir: cam_dir.into(),
-        y_range: [y_range.start, y_range.end],
-        x_range: [x0.end.max(-x0.start), x1.end.max(-x1.start)],
+        origin: cam_origin,
+        dir: cam_dir,
+        sample_y: y_range,
+        sample_x: x0.end.max(-x0.start) .. x1.end.max(-x1.start),
     }
 }
 
@@ -156,6 +155,12 @@ enum Kind {
         pipeline: wgpu::RenderPipeline,
         geo: Geometry,
     },
+    Paint {
+        pipeline: wgpu::RenderPipeline,
+        line_count: u32,
+        density: f32,
+        min_divisor: f32,
+    },
     Scatter {
         pipeline_layout: wgpu::PipelineLayout,
         bg_layout: wgpu::BindGroupLayout,
@@ -163,7 +168,6 @@ enum Kind {
         clear_pipeline: wgpu::ComputePipeline,
         copy_pipeline: wgpu::RenderPipeline,
         bind_group: wgpu::BindGroup,
-        constant_buf: wgpu::Buffer,
         compute_groups: [u32; 3],
         density: [u32; 3],
     },
@@ -184,7 +188,8 @@ pub struct Context {
     pipeline_layout: wgpu::PipelineLayout,
     kind: Kind,
     dirty_rects: Vec<Rect>,
-    pending_resize: Option<wgpu::Extent3d>,
+    dirty_constants: bool,
+    screen_size: wgpu::Extent3d,
 }
 
 impl Context {
@@ -311,6 +316,55 @@ impl Context {
         })
     }
 
+    fn create_paint_pipeline(
+        layout: &wgpu::PipelineLayout,
+        device: &wgpu::Device,
+    ) -> wgpu::RenderPipeline {
+        let shaders = Shaders::new("terrain/paint", &[], device)
+            .unwrap();
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            layout,
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
+                module: &shaders.vs,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                module: &shaders.fs,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: wgpu::CullMode::None,
+                depth_bias: 0,
+                depth_bias_slope_scale: 0.0,
+                depth_bias_clamp: 0.0,
+            }),
+            primitive_topology: wgpu::PrimitiveTopology::LineList,
+            color_states: &[
+                wgpu::ColorStateDescriptor {
+                    format: COLOR_FORMAT,
+                    alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                    color_blend: wgpu::BlendDescriptor::REPLACE,
+                    write_mask: wgpu::ColorWrite::all(),
+                },
+            ],
+            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_read_mask: !0,
+                stencil_write_mask: !0,
+            }),
+            index_format: wgpu::IndexFormat::Uint16,
+            vertex_buffers: &[],
+            sample_count: 1,
+            alpha_to_coverage_enabled: false,
+            sample_mask: !0,
+        })
+    }
+
     fn create_scatter_pipelines(
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
@@ -383,7 +437,6 @@ impl Context {
 
     fn create_scatter_resources(
         extent: wgpu::Extent3d,
-        constant_buf: &wgpu::Buffer,
         layout: &wgpu::BindGroupLayout,
         device: &wgpu::Device,
     ) -> (wgpu::BindGroup, [u32; 3]) {
@@ -401,13 +454,6 @@ impl Context {
                     resource: wgpu::BindingResource::Buffer {
                         buffer: &storage_buffer,
                         range: 0 .. size,
-                    },
-                },
-                wgpu::Binding {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: constant_buf,
-                        range: 0 .. mem::size_of::<ScatterConstants>() as wgpu::BufferAddress,
                     },
                 },
             ],
@@ -620,12 +666,12 @@ impl Context {
                 },
                 wgpu::BindGroupLayoutBinding { // terrain locals
                     binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStage::all(),
                     ty: wgpu::BindingType::UniformBuffer { dynamic: false },
                 },
                 wgpu::BindGroupLayoutBinding { // height map
                     binding: 2,
-                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStage::all(),
                     ty: wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
@@ -633,7 +679,7 @@ impl Context {
                 },
                 wgpu::BindGroupLayoutBinding { // meta map
                     binding: 3,
-                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStage::all(),
                     ty: wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
@@ -665,7 +711,7 @@ impl Context {
                 },
                 wgpu::BindGroupLayoutBinding { // main sampler
                     binding: 7,
-                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStage::all(),
                     ty: wgpu::BindingType::Sampler,
                 },
                 wgpu::BindGroupLayoutBinding { // flood sampler
@@ -840,6 +886,16 @@ impl Context {
                     geo,
                 }
             }
+            TerrainSettings::Painted { density, min_divisor } => {
+                let pipeline = Self::create_paint_pipeline(&pipeline_layout, device);
+
+                Kind::Paint {
+                    pipeline,
+                    line_count: 0,
+                    density,
+                    min_divisor,
+                }
+            }
             TerrainSettings::Scattered { density } => {
                 let local_bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     bindings: &[
@@ -849,13 +905,6 @@ impl Context {
                             ty: wgpu::BindingType::StorageBuffer {
                                 dynamic: false,
                                 readonly: false,
-                            },
-                        },
-                        wgpu::BindGroupLayoutBinding { // constants
-                            binding: 1,
-                            visibility: wgpu::ShaderStage::COMPUTE,
-                            ty: wgpu::BindingType::UniformBuffer {
-                                dynamic: false,
                             },
                         },
                     ],
@@ -870,13 +919,8 @@ impl Context {
 
                 let (scatter_pipeline, clear_pipeline, copy_pipeline) =
                     Self::create_scatter_pipelines(&local_pipeline_layout, device);
-                let constant_buf = device.create_buffer(&wgpu::BufferDescriptor {
-                    size: mem::size_of::<ScatterConstants>() as wgpu::BufferAddress,
-                    usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-                });
                 let (local_bg, compute_groups) = Self::create_scatter_resources(
                     screen_extent,
-                    &constant_buf,
                     &local_bg_layout,
                     device,
                 );
@@ -887,7 +931,6 @@ impl Context {
                     clear_pipeline,
                     copy_pipeline,
                     bind_group: local_bg,
-                    constant_buf,
                     compute_groups,
                     density,
                 }
@@ -909,7 +952,8 @@ impl Context {
                     h: level.size.1 as u16,
                 },
             ],
-            pending_resize: Some(screen_extent),
+            dirty_constants: true,
+            screen_size: screen_extent,
         }
     }
 
@@ -942,6 +986,12 @@ impl Context {
                     device,
                 );
             }
+            Kind::Paint { ref mut pipeline, .. } => {
+                *pipeline = Self::create_paint_pipeline(
+                    &self.pipeline_layout,
+                    device,
+                );
+            }
             Kind::Scatter {
                 ref pipeline_layout,
                 ref mut scatter_pipeline,
@@ -962,18 +1012,21 @@ impl Context {
         extent: wgpu::Extent3d,
         device: &wgpu::Device,
     ) {
-        self.pending_resize = Some(extent);
+        self.screen_size = extent;
+        self.dirty_constants = true;
 
-        if let Kind::Scatter {
-            ref bg_layout,
-            ref mut bind_group,
-            ref constant_buf,
-            ref mut compute_groups,
-            ..
-        } = self.kind {
-            let (bg, gs) = Self::create_scatter_resources(extent, constant_buf, bg_layout, device);
-            *bind_group = bg;
-            *compute_groups = gs;
+        match self.kind {
+            Kind::Scatter {
+                ref bg_layout,
+                ref mut bind_group,
+                ref mut compute_groups,
+                ..
+            } => {
+                let (bg, gs) = Self::create_scatter_resources(extent, bg_layout, device);
+                *bind_group = bg;
+                *compute_groups = gs;
+            }
+            _ => {}
         }
     }
 
@@ -991,16 +1044,37 @@ impl Context {
             self.dirty_rects.clear();
         }
 
-        let mut _params = match self.kind {
+        let params = match self.kind {
             Kind::RayMip { params, .. } => params,
+            Kind::Paint { density, min_divisor, .. } => {
+                use cgmath::Rotation as _;
+                let dir = cam.rot.rotate_vector(cgmath::Vector3::unit_z());
+                let pixel_count = self.screen_size.width * self.screen_size.height;
+                let paint_lines = (density * pixel_count as f32 / (-dir.z).max(min_divisor)) as u32;
+                [paint_lines, 0, 0, 0]
+            },
             _ => [0; 4],
         };
 
-        if let Some(size) = self.pending_resize {
+        if self.dirty_constants {
+            self.dirty_constants = false;
+            let sc = compute_scatter_constants(cam);
             let staging = device.create_buffer_with_data(
                 Constants {
-                    _scr_size: [size.width, size.height, 0, 0],
-                    _params,
+                    screen_size: [self.screen_size.width, self.screen_size.height, 0, 0],
+                    params,
+                    cam_origin_dir: [
+                        sc.origin.x,
+                        sc.origin.y,
+                        sc.dir.x,
+                        sc.dir.y,
+                    ],
+                    sample_range: [
+                        sc.sample_x.start,
+                        sc.sample_x.end,
+                        sc.sample_y.start,
+                        sc.sample_y.end,
+                    ],
                 }.as_bytes(),
                 wgpu::BufferUsage::COPY_SRC,
             );
@@ -1013,39 +1087,31 @@ impl Context {
             );
         }
 
-        if let Kind::Scatter {
-            ref clear_pipeline,
-            ref scatter_pipeline,
-            ref bind_group,
-            ref constant_buf,
-            compute_groups,
-            density,
-            ..
-        } = self.kind {
-            let scatter_constants = compute_scatter_constants(cam);
-            let staging = device.create_buffer_with_data(
-                scatter_constants.as_bytes(),
-                wgpu::BufferUsage::COPY_SRC,
-            );
-            encoder.copy_buffer_to_buffer(
-                &staging,
-                0,
-                constant_buf,
-                0,
-                mem::size_of::<ScatterConstants>() as wgpu::BufferAddress,
-            );
-
-            let mut pass = encoder.begin_compute_pass();
-            pass.set_bind_group(0, &global.bind_group, &[]);
-            pass.set_bind_group(1, &self.bind_group, &[]);
-            pass.set_bind_group(2, bind_group, &[]);
-            pass.set_pipeline(clear_pipeline);
-            pass.dispatch(compute_groups[0], compute_groups[1], compute_groups[2]);
-            pass.set_pipeline(scatter_pipeline);
-            pass.dispatch(compute_groups[0] * density[0], compute_groups[1] * density[1], density[2]);
+        match self.kind {
+            Kind::Paint { ref mut line_count, .. } => {
+                self.dirty_constants = true; // force update
+                *line_count = params[0];
+            }
+            Kind::Scatter {
+                ref clear_pipeline,
+                ref scatter_pipeline,
+                ref bind_group,
+                compute_groups,
+                density,
+                ..
+            } => {
+                self.dirty_constants = true; // force update
+                let mut pass = encoder.begin_compute_pass();
+                pass.set_bind_group(0, &global.bind_group, &[]);
+                pass.set_bind_group(1, &self.bind_group, &[]);
+                pass.set_bind_group(2, bind_group, &[]);
+                pass.set_pipeline(clear_pipeline);
+                pass.dispatch(compute_groups[0], compute_groups[1], compute_groups[2]);
+                pass.set_pipeline(scatter_pipeline);
+                pass.dispatch(compute_groups[0] * density[0], compute_groups[1] * density[1], density[2]);
+            }
+            _ => {}
         }
-
-        self.pending_resize = None;
     }
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass) {
@@ -1068,7 +1134,11 @@ impl Context {
                 pass.set_pipeline(pipeline);
                 pass.set_index_buffer(&geo.index_buf, 0);
                 pass.set_vertex_buffers(0, &[(&geo.vertex_buf, 0)]);
-                pass.draw_indexed(0 .. geo.num_indices as u32, 0, 0 .. 1);
+                pass.draw_indexed(0 .. geo.num_indices as u32, 0, 0 .. level::HEIGHT_SCALE);
+            }
+            Kind::Paint { ref pipeline, line_count, .. } => {
+                pass.set_pipeline(pipeline);
+                pass.draw(0 .. 4, 0 .. line_count);
             }
             Kind::Scatter { ref copy_pipeline, ref bind_group, .. } => {
                 pass.set_pipeline(copy_pipeline);
