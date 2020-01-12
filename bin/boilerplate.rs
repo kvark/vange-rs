@@ -219,14 +219,18 @@ impl Harness {
                         queue.submit(&update_command_buffers);
                     }
 
-                    let frame = swap_chain.get_next_texture().unwrap();
-                    let targets = ScreenTargets {
-                        extent,
-                        color: &frame.view,
-                        depth: &depth_target,
-                    };
-                    let render_commane_buffer = app.draw(&device, targets, &spawner);
-                    queue.submit(&[render_commane_buffer]);
+                    match swap_chain.get_next_texture() {
+                        Ok(frame) => {
+                            let targets = ScreenTargets {
+                                extent,
+                                color: &frame.view,
+                                depth: &depth_target,
+                            };
+                            let render_commane_buffer = app.draw(&device, targets, &spawner);
+                            queue.submit(&[render_commane_buffer]);
+                        },
+                        Err(_) => {}
+                    }
                 }
                 _ => (),
             }
