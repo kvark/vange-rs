@@ -1114,7 +1114,7 @@ impl Context {
         }
     }
 
-    pub fn draw(&self, pass: &mut wgpu::RenderPass) {
+    pub fn draw<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
         pass.set_bind_group(1, &self.bind_group, &[]);
         // draw terrain
         match self.kind {

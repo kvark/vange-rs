@@ -317,6 +317,8 @@ struct InstanceArray {
     data: Vec<object::Instance>,
     // holding the mesh alive, while the key is just a raw pointer
     mesh: Arc<model::Mesh>,
+    // actual hardware buffer for this data
+    buffer: Option<wgpu::Buffer>,
 }
 
 pub struct Batcher {
@@ -344,6 +346,7 @@ impl Batcher {
             .or_insert_with(|| InstanceArray {
                 data: Vec::new(),
                 mesh: Arc::clone(mesh),
+                buffer: None,
             })
             .data.push(instance);
     }
@@ -406,16 +409,19 @@ impl Batcher {
         }
     }
 
-    pub fn flush(&mut self, pass: &mut wgpu::RenderPass, device: &wgpu::Device) {
+    pub fn flush<'a>(&'a mut self, pass: &mut wgpu::RenderPass<'a>, device: &wgpu::Device) {
         for array in self.instances.values_mut() {
             if array.data.is_empty() {
                 continue
             }
-            let instance_buf = device.create_buffer_with_data(
+            array.buffer = Some(device.create_buffer_with_data(
                 array.data.as_bytes(),
                 wgpu::BufferUsage::VERTEX,
-            );
-            pass.set_vertex_buffers(0, &[(&array.mesh.vertex_buf, 0), (&instance_buf, 0)]);
+            ));
+            pass.set_vertex_buffers(0, &[
+                (&array.mesh.vertex_buf, 0),
+                (array.buffer.as_ref().unwrap(), 0),
+            ]);
             pass.draw(0 .. array.mesh.num_vertices as u32, 0 .. array.data.len() as u32);
             array.data.clear();
         }

@@ -112,6 +112,9 @@ pub struct Context {
     bind_group_line: wgpu::BindGroup,
     bind_group_face: wgpu::BindGroup,
     bind_group_edge: wgpu::BindGroup,
+    // hold the buffers alive
+    vertex_buf: Option<wgpu::Buffer>,
+    color_buf: Option<wgpu::Buffer>,
 }
 
 impl Context {
@@ -200,6 +203,8 @@ impl Context {
             bind_group_line,
             bind_group_face,
             bind_group_edge,
+            vertex_buf: None,
+            color_buf: None,
         };
         result.reload(device);
         result
@@ -342,11 +347,11 @@ impl Context {
         }
     }
 
-    fn draw_liner(
-        &self,
-        pass: &mut wgpu::RenderPass,
-        vertex_buf: &wgpu::Buffer,
-        color_buf: &wgpu::Buffer,
+    fn draw_liner<'a>(
+        &'a self,
+        pass: &mut wgpu::RenderPass<'a>,
+        vertex_buf: &'a wgpu::Buffer,
+        color_buf: &'a wgpu::Buffer,
         color_rate: wgpu::InputStepMode,
         num_vert: usize,
     ) {
@@ -363,11 +368,11 @@ impl Context {
         }
     }
 
-    pub fn draw_shape(
-        &self,
-        pass: &mut wgpu::RenderPass,
-        shape: &model::Shape,
-        instance_buf: &wgpu::Buffer,
+    pub fn draw_shape<'a>(
+        &'a self,
+        pass: &mut wgpu::RenderPass<'a>,
+        shape: &'a model::Shape,
+        instance_buf: &'a wgpu::Buffer,
         instance_id: usize,
     ) {
         if !self.settings.collision_shapes {
@@ -409,26 +414,26 @@ impl Context {
         }
     }
 
-    pub fn draw_lines(
-        &self,
-        pass: &mut wgpu::RenderPass,
+    pub fn draw_lines<'a>(
+        &'a mut self,
+        pass: &mut wgpu::RenderPass<'a>,
         device: &wgpu::Device,
         linebuf: &LineBuffer,
     ){
-        let vertex_buf = device.create_buffer_with_data(
+        self.vertex_buf = Some(device.create_buffer_with_data(
             linebuf.vertices.as_bytes(),
             wgpu::BufferUsage::VERTEX,
-        );
-        let color_buf = device.create_buffer_with_data(
+        ));
+        self.color_buf = Some(device.create_buffer_with_data(
             linebuf.colors.as_bytes(),
             wgpu::BufferUsage::VERTEX,
-        );
+        ));
         assert_eq!(linebuf.vertices.len(), linebuf.colors.len());
 
         self.draw_liner(
             pass,
-            &vertex_buf,
-            &color_buf,
+            self.vertex_buf.as_ref().unwrap(),
+            self.color_buf.as_ref().unwrap(),
             wgpu::InputStepMode::Vertex,
             linebuf.vertices.len(),
         );

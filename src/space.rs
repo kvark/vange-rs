@@ -65,6 +65,7 @@ pub struct Camera {
     pub proj: Projection,
 }
 
+#[derive(Debug)]
 pub struct Follow {
     pub transform: Transform,
     pub speed: f32,

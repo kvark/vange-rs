@@ -75,7 +75,7 @@ pub struct GpuCollider {
     ranges: Vec<GpuRange>,
 }
 
-pub struct GpuSession<'this, 'pass> {
+pub struct GpuSession<'pass, 'this> {
     pass: wgpu::RenderPass<'pass>,
     uniform_buf: &'this wgpu::Buffer,
     dynamic_bind_group: &'this wgpu::BindGroup,
@@ -340,12 +340,12 @@ impl GpuCollider {
         self.clear_pipeline = clear_pipeline;
     }
 
-    pub fn begin<'this, 'pass>(
+    pub fn begin<'pass, 'this: 'pass>(
         &'this mut self,
         encoder: &'pass mut wgpu::CommandEncoder,
-        terrain: &TerrainContext,
+        terrain: &'pass TerrainContext,
         _spawner: &LocalSpawner,
-    ) -> GpuSession<'this, 'pass> {
+    ) -> GpuSession<'pass, 'this> {
         if self.dirty_group_count != 0 {
             let mut pass = encoder.begin_compute_pass();
             pass.set_pipeline(&self.clear_pipeline);
@@ -396,8 +396,8 @@ impl GpuCollider {
     }
 }
 
-impl<'this> GpuSession<'this, '_> {
-    pub fn add(&mut self, shape: &Shape, range_id: usize) -> usize {
+impl<'pass, 'this: 'pass> GpuSession<'pass, 'this> {
+    pub fn add(&mut self, shape: &'pass Shape, range_id: usize) -> usize {
         let locals = Locals {
             indexes: [range_id as u32, self.polygon_id as u32],
         };
