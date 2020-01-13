@@ -401,7 +401,7 @@ impl<'pass, 'this: 'pass> GpuSession<'pass, 'this> {
         let locals = Locals {
             indexes: [range_id as u32, self.polygon_id as u32],
         };
-        let offset = (self.object_locals.len() * self.locals_size) as wgpu::BufferAddress;
+        let offset = (self.object_locals.len() * self.locals_size) as wgpu::DynamicOffset;
 
         self.pass.set_bind_group(2, &shape.bind_group, &[]);
         self.pass.set_bind_group(3, self.dynamic_bind_group, &[offset]);
