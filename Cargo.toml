@@ -64,5 +64,5 @@ env_logger = "0.5"
 getopts = "0.2"
 obj = "0.9"
 png = "0.13"
-winit = "0.20.0-alpha4"
+winit = "0.20"
 

@@ -170,23 +170,24 @@ impl Application for LevelView {
     }
 
     fn on_key(&mut self, input: event::KeyboardInput) -> bool {
-        use winit::event::{ElementState, KeyboardInput, ModifiersState, VirtualKeyCode as Key};
+        use winit::event::{ElementState, KeyboardInput, VirtualKeyCode as Key};
 
         let i = &mut self.input;
+        #[allow(deprecated)]
         match input {
             KeyboardInput {
                 state: ElementState::Pressed,
                 virtual_keycode: Some(key),
-                modifiers: ModifiersState { alt, shift, .. },
+                ref modifiers,
                 ..
             } => match key {
                 Key::Escape => return false,
-                Key::W => *i = Input::Ver { dir: 1.0, alt, shift },
-                Key::S => *i = Input::Ver { dir: -1.0, alt, shift },
-                Key::A => *i = Input::Hor { dir: -1.0, alt, shift },
-                Key::D => *i = Input::Hor { dir: 1.0, alt, shift },
-                Key::Z => *i = Input::Dep { dir: -1.0, alt },
-                Key::X => *i = Input::Dep { dir: 1.0, alt },
+                Key::W => *i = Input::Ver { dir: 1.0, alt: modifiers.alt(), shift: modifiers.shift() },
+                Key::S => *i = Input::Ver { dir: -1.0, alt: modifiers.alt(), shift: modifiers.shift() },
+                Key::A => *i = Input::Hor { dir: -1.0, alt: modifiers.alt(), shift: modifiers.shift() },
+                Key::D => *i = Input::Hor { dir: 1.0, alt: modifiers.alt(), shift: modifiers.shift() },
+                Key::Z => *i = Input::Dep { dir: -1.0, alt: modifiers.alt() },
+                Key::X => *i = Input::Dep { dir: 1.0, alt: modifiers.alt() },
                 Key::LAlt => self.alt_button_pressed = true,
                 _ => (),
             }

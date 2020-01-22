@@ -7,7 +7,6 @@ use env_logger;
 use futures::executor::{LocalPool, LocalSpawner};
 use log::info;
 use winit::{
-    self,
     event,
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
@@ -37,7 +36,7 @@ pub trait Application {
 
 pub struct Harness {
     event_loop: EventLoop<()>,
-    window: Window,
+    _window: Window,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     surface: wgpu::Surface,
@@ -75,13 +74,10 @@ impl Harness {
 
         info!("Initializing the window");
         let event_loop = EventLoop::new();
-        let dpi = event_loop
-            .primary_monitor()
-            .hidpi_factor();
         let window = WindowBuilder::new()
             .with_title(title)
             .with_inner_size(
-                winit::dpi::LogicalSize::from_physical((extent.width, extent.height), dpi),
+                winit::dpi::PhysicalSize::new(extent.width, extent.height),
             )
             .with_resizable(true)
             .build(&event_loop)
@@ -110,7 +106,7 @@ impl Harness {
 
         let harness = Harness {
             event_loop,
-            window,
+            _window: window,
             device,
             queue,
             surface,
@@ -131,7 +127,6 @@ impl Harness {
         let mut needs_reload = false;
         let Harness {
             event_loop,
-            window,
             device,
             queue,
             surface,
@@ -139,6 +134,7 @@ impl Harness {
             mut extent,
             reload_on_focus,
             mut depth_target,
+            ..
         } = self;
 
         event_loop.run(move |event, _, control_flow| {
@@ -150,18 +146,17 @@ impl Harness {
                     event: event::WindowEvent::Resized(size),
                     ..
                 } => {
-                    let physical = size.to_physical(window.hidpi_factor());
-                    info!("Resizing to {:?}", physical);
+                    info!("Resizing to {:?}", size);
                     extent = wgpu::Extent3d {
-                        width: physical.width.round() as u32,
-                        height: physical.height.round() as u32,
+                        width: size.width,
+                        height: size.height,
                         depth: 1,
                     };
                     let sc_desc = wgpu::SwapChainDescriptor {
                         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
                         format: COLOR_FORMAT,
-                        width: extent.width,
-                        height: extent.height,
+                        width: size.width,
+                        height: size.height,
                         present_mode: wgpu::PresentMode::Vsync,
                     };
                     swap_chain = device.create_swap_chain(&surface, &sc_desc);
@@ -195,19 +190,18 @@ impl Harness {
                             *control_flow = ControlFlow::Exit;
                         }
                     }
-                    event::WindowEvent::MouseWheel {delta, ..} => {
+                    event::WindowEvent::MouseWheel { delta, ..} => {
                         app.on_mouse_wheel(delta)
                     }
-                    event::WindowEvent::CursorMoved {position, ..} => {
-                        let physical = position.to_physical(window.hidpi_factor());
-                        app.on_cursor_move(physical.into())
+                    event::WindowEvent::CursorMoved { position, ..} => {
+                        app.on_cursor_move(position.into())
                     }
-                    event::WindowEvent::MouseInput {state, button, ..} => {
+                    event::WindowEvent::MouseInput { state, button, ..} => {
                         app.on_mouse_button(state, button)
                     }
                     _ => {}
                 },
-                event::Event::EventsCleared => {
+                event::Event::MainEventsCleared => {
                     let spawner = task_pool.spawner();
                     let duration = time::Instant::now() - last_time;
                     last_time += duration;
