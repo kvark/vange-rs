@@ -1670,7 +1670,7 @@ dependencies = [
 [[package]]
 name = "wgpu"
 version = "0.4.0"
-source = "git+https://github.com/gfx-rs/wgpu-rs#d2425783a3bd577e7368f1ea867dd9ecdcc7a0ca"
+source = "git+https://github.com/gfx-rs/wgpu-rs#37464839374887b4507a31e953938280a844ec88"
 dependencies = [
  "arrayvec 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "raw-window-handle 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
