@@ -83,28 +83,7 @@ impl Instance {
 pub const INSTANCE_DESCRIPTOR: wgpu::VertexBufferDescriptor = wgpu::VertexBufferDescriptor {
     stride: mem::size_of::<Instance>() as wgpu::BufferAddress,
     step_mode: wgpu::InputStepMode::Instance,
-    attributes: &[
-        wgpu::VertexAttributeDescriptor {
-            offset: 0,
-            format: wgpu::VertexFormat::Float4,
-            shader_location: 3,
-        },
-        wgpu::VertexAttributeDescriptor {
-            offset: 16,
-            format: wgpu::VertexFormat::Float4,
-            shader_location: 4,
-        },
-        wgpu::VertexAttributeDescriptor {
-            offset: 32,
-            format: wgpu::VertexFormat::Float,
-            shader_location: 5,
-        },
-        wgpu::VertexAttributeDescriptor {
-            offset: 36,
-            format: wgpu::VertexFormat::Uint2,
-            shader_location: 6,
-        },
-    ],
+    attributes: &wgpu::vertex_attr_array![3 => Float4, 4 => Float4, 5 => Float, 6 => Uint2],
 };
 
 pub struct Context {
@@ -162,23 +141,7 @@ impl Context {
                 wgpu::VertexBufferDescriptor {
                     stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttributeDescriptor {
-                            offset: 0,
-                            format: wgpu::VertexFormat::Char4,
-                            shader_location: 0,
-                        },
-                        wgpu::VertexAttributeDescriptor {
-                            offset: 4,
-                            format: wgpu::VertexFormat::Uint,
-                            shader_location: 1,
-                        },
-                        wgpu::VertexAttributeDescriptor {
-                            offset: 8,
-                            format: wgpu::VertexFormat::Char4Norm,
-                            shader_location: 2,
-                        },
-                    ],
+                    attributes: &wgpu::vertex_attr_array![0 => Char4, 1 => Uint, 2 => Char4Norm],
                 },
                 INSTANCE_DESCRIPTOR,
             ],

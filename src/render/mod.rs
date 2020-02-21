@@ -68,23 +68,7 @@ pub struct ShapePolygon {
 pub const SHAPE_POLYGON_BUFFER: wgpu::VertexBufferDescriptor  = wgpu::VertexBufferDescriptor {
     stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
     step_mode: wgpu::InputStepMode::Instance,
-    attributes: &[
-        wgpu::VertexAttributeDescriptor {
-            offset: 0,
-            format: wgpu::VertexFormat::Ushort4,
-            shader_location: 0,
-        },
-        wgpu::VertexAttributeDescriptor {
-            offset: 8,
-            format: wgpu::VertexFormat::Char4Norm,
-            shader_location: 1,
-        },
-        wgpu::VertexAttributeDescriptor {
-            offset: 12,
-            format: wgpu::VertexFormat::Float4,
-            shader_location: 2,
-        },
-    ],
+    attributes: &wgpu::vertex_attr_array![0 => Ushort4, 1 => Char4Norm, 2 => Float4],
 };
 
 pub struct Shaders {
