@@ -18,6 +18,10 @@ branches:
   except:
   - staging.tmp
 
+before_install:
+- if [[ $TRAVIS_RUST_VERSION != "nightly" ]] && [[ $TRAVIS_OS_NAME == "windows" ]]; then rustup default stable-msvc; fi
+- if [[ $TRAVIS_RUST_VERSION == "nightly" ]] && [[ $TRAVIS_OS_NAME == "windows" ]]; then rustup default nightly-msvc; fi
+
 before_deploy:
   - cargo build --release
   - $MV_TOOL config/settings.template.ron config/settings.ron
