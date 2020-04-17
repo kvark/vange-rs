@@ -300,7 +300,7 @@ impl Application for LevelView {
         _spawner: &LocalSpawner,
     ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            todo: 0,
+            label: Some("Draw"),
         });
         self.render.draw_world(
             &mut encoder,

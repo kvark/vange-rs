@@ -92,11 +92,6 @@ impl Camera {
         mvp.y.z = 0.5*(mvp.y.z + mvp.y.w);
         mvp.z.z = 0.5*(mvp.z.z + mvp.z.w);
         mvp.w.z = 0.5*(mvp.w.z + mvp.w.w);
-        // 2) invert Y
-        mvp.x.y *= -1.0;
-        mvp.y.y *= -1.0;
-        mvp.z.y *= -1.0;
-        mvp.w.y *= -1.0;
         mvp
     }
 

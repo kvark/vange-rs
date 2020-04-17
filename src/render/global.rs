@@ -2,12 +2,12 @@ use crate::{
     config::settings,
     space::Camera,
 };
-
+use bytemuck::{Pod, Zeroable};
 use std::mem;
 
 
 #[repr(C)]
-#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
+#[derive(Clone, Copy)]
 pub struct Constants {
     camera_pos: [f32; 4],
     m_vp: [[f32; 4]; 4],
@@ -15,6 +15,8 @@ pub struct Constants {
     light_pos: [f32; 4],
     light_color: [f32; 4],
 }
+unsafe impl Pod for Constants {}
+unsafe impl Zeroable for Constants {}
 
 impl Constants {
     pub fn new(cam: &Camera, light: &settings::Light) -> Self {
@@ -40,18 +42,19 @@ pub struct Context {
 impl Context {
     pub fn new(device: &wgpu::Device, store_buffer: wgpu::BindingResource) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Global"),
             bindings: &[
-                wgpu::BindGroupLayoutBinding {
+                wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStage::all(),
                     ty: wgpu::BindingType::UniformBuffer { dynamic: false },
                 },
-                wgpu::BindGroupLayoutBinding { // palette sampler
+                wgpu::BindGroupLayoutEntry { // palette sampler
                     binding: 1,
                     visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::Sampler,
+                    ty: wgpu::BindingType::Sampler { comparison: false },
                 },
-                wgpu::BindGroupLayoutBinding { // GPU store
+                wgpu::BindGroupLayoutEntry { // GPU store
                     binding: 2,
                     visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::StorageBuffer {
@@ -62,6 +65,7 @@ impl Context {
             ],
         });
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Uniform"),
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         });
@@ -74,9 +78,10 @@ impl Context {
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: 0.0,
             lod_max_clamp: 0.0,
-            compare_function: wgpu::CompareFunction::Always,
+            compare: wgpu::CompareFunction::Always,
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Global"),
             layout: &bind_group_layout,
             bindings: &[
                 wgpu::Binding {

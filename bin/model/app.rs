@@ -3,7 +3,6 @@ use vangers::{config, level, model, render, space};
 
 use futures::executor::LocalSpawner;
 use log::info;
-use zerocopy::AsBytes as _;
 
 use std::mem;
 
@@ -28,7 +27,7 @@ impl ResourceView {
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
         let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            todo: 0,
+            label: Some("Init"),
         });
         let store_init = render::body::GpuStoreInit::new_dummy(device);
         let global = render::global::Context::new(device, store_init.resource());
@@ -146,11 +145,11 @@ impl Application for ResourceView {
         );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            todo: 0,
+            label: Some("Draw"),
         });
         let global_data = render::global::Constants::new(&self.cam, &self.light_config);
         let global_staging = device.create_buffer_with_data(
-            [global_data].as_bytes(),
+            bytemuck::bytes_of(&global_data),
             wgpu::BufferUsage::COPY_SRC,
         );
         encoder.copy_buffer_to_buffer(
