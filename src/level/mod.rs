@@ -1,10 +1,9 @@
 use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 
-use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::fs::File;
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::Instant;
-
 
 mod config;
 
@@ -63,7 +62,7 @@ pub enum Texel {
         low: Point,
         high: Point,
         delta: Delta,
-    }
+    },
 }
 
 impl Texel {
@@ -91,8 +90,14 @@ impl Level {
             palette: [[0xFF; 4]; 0x100],
             // not pretty, I know
             terrains: [
-                tc.clone(), tc.clone(), tc.clone(), tc.clone(),
-                tc.clone(), tc.clone(), tc.clone(), tc.clone(),
+                tc.clone(),
+                tc.clone(),
+                tc.clone(),
+                tc.clone(),
+                tc.clone(),
+                tc.clone(),
+                tc.clone(),
+                tc.clone(),
             ],
         }
     }
@@ -126,11 +131,11 @@ impl Level {
 
     pub fn export(&self) -> Vec<u8> {
         let mut data = vec![0; self.size.0 as usize * self.size.1 as usize * 4];
-        for y in 0 .. self.size.1 {
+        for y in 0..self.size.1 {
             let base_y = (y * self.size.0) as usize * 4;
-            for x in 0 .. self.size.0 {
+            for x in 0..self.size.0 {
                 let base_x = base_y + x as usize * 4;
-                let color = &mut data[base_x .. base_x + 4];
+                let color = &mut data[base_x..base_x + 4];
                 match self.get((x, y)) {
                     Texel::Single(Point(alt, ty)) => {
                         color[0] = alt;
@@ -158,9 +163,9 @@ impl Level {
 #[allow(unused)]
 fn print_palette(data: &[[u8; 4]], info: &str) {
     print!("Palette - {}:", info);
-    for i in 0 .. 3 {
+    for i in 0..3 {
         print!("\n\t");
-        for j in 0 .. 0x100 {
+        for j in 0..0x100 {
             print!("{:02X}", data[j][i]);
         }
     }
@@ -171,7 +176,7 @@ pub fn read_palette(input: File, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 
     let mut file = BufReader::new(input);
     let mut data = [[0; 4]; 0x100];
     for p in data.iter_mut() {
-        file.read(&mut p[.. 3]).unwrap();
+        file.read(&mut p[..3]).unwrap();
         //p[0] <<= 2; p[1] <<= 2; p[2] <<= 2;
     }
     //print_palette(&data, "read from file");
@@ -180,12 +185,12 @@ pub fn read_palette(input: File, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 
         data[0] = [0; 4];
 
         for tc in terrains {
-            for c in &mut data[tc.colors.start as usize][.. 3] {
+            for c in &mut data[tc.colors.start as usize][..3] {
                 *c >>= 1;
             }
         }
 
-        for i in 0 .. 16 {
+        for i in 0..16 {
             let mut value = [(i * 4) as u8; 4];
             value[3] = 0;
             data[224 + i] = value;
@@ -195,14 +200,15 @@ pub fn read_palette(input: File, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 
     }
     // see `XGR_Screen::setpal` of the original
     for p in data.iter_mut() {
-        p[0] <<= 2; p[1] <<= 2; p[2] <<= 2;
+        p[0] <<= 2;
+        p[1] <<= 2;
+        p[2] <<= 2;
     }
     //print_palette(&data, "scale");
     //TODO: there is quite a bit of logic missing here,
     // see `GeneralTableOpen` and `PalettePrepare` of the original.
     data
 }
-
 
 fn report_time(start: Instant) {
     let d = Instant::now() - start;
@@ -226,16 +232,16 @@ pub fn load_flood(config: &LevelConfig) -> Vec<u8> {
         let flood_size = size.1 >> config.section.as_power();
         let geo_pow = config.geo.as_power();
         let net_size = size.0 * size.1 >> (2 * geo_pow);
-        let flood_offset = (2 * 4 + (1 + 4 + 4) * 4 + 2 * net_size + 2 * geo_pow * 4
+        let flood_offset = (2 * 4
+            + (1 + 4 + 4) * 4
+            + 2 * net_size
+            + 2 * geo_pow * 4
             + 2 * flood_size * geo_pow * 4) as u64;
         let expected_file_size = flood_offset + (flood_size * 4) as u64;
-        assert_eq!(
-            vpr_file.metadata().unwrap().len(),
-            expected_file_size,
-        );
+        assert_eq!(vpr_file.metadata().unwrap().len(), expected_file_size,);
         let mut vpr = BufReader::new(vpr_file);
         vpr.seek(SeekFrom::Start(flood_offset)).unwrap();
-        (0 .. flood_size)
+        (0..flood_size)
             .map(|_| vpr.read_u32::<E>().unwrap() as u8)
             .collect()
     };
@@ -243,7 +249,6 @@ pub fn load_flood(config: &LevelConfig) -> Vec<u8> {
     report_time(instant);
     flood_map
 }
-
 
 pub struct LevelData {
     pub height: Vec<u8>,
@@ -262,7 +267,7 @@ impl From<Level> for LevelData {
 }
 
 fn avg(a: u8, b: u8) -> u8 {
-    (a>>1) + (b>>1) + (a & b & 1)
+    (a >> 1) + (b >> 1) + (a & b & 1)
 }
 
 impl LevelData {
@@ -282,8 +287,9 @@ impl LevelData {
         let mut vmc = BufWriter::new(File::create(path).unwrap());
 
         let base_offset = self.size.1 as u64 * (2 + 4) + Splay::tree_size();
-        for i in 0 .. self.size.1 {
-            vmc.write_i32::<E>(base_offset as i32 + i * self.size.0 * 2).unwrap();
+        for i in 0..self.size.1 {
+            vmc.write_i32::<E>(base_offset as i32 + i * self.size.0 * 2)
+                .unwrap();
             vmc.write_i16::<E>(self.size.0 as i16 * 2).unwrap();
         }
 
@@ -307,9 +313,8 @@ impl LevelData {
             size,
         };
 
-
-        for y in 0 .. size.1 as usize {
-            let row = y * size.0 as usize * 4 .. (y + 1) * size.0 as usize * 4;
+        for y in 0..size.1 as usize {
+            let row = y * size.0 as usize * 4..(y + 1) * size.0 as usize * 4;
             for (xd2, color) in data[row].chunks(8).enumerate() {
                 let i = y * size.0 as usize + xd2 * 2;
                 let delta = (avg(color[2], color[6]) >> DELTA_SHIFT1).min(0xF);
@@ -317,12 +322,10 @@ impl LevelData {
                 if delta != 0 {
                     // average between two texels
                     let mat = avg(color[3], color[7]);
-                    level.meta[i + 0] = DOUBLE_LEVEL |
-                        ((mat & 0xF) << TERRAIN_SHIFT) |
-                        (delta >> 2);
-                    level.meta[i + 1] = DOUBLE_LEVEL |
-                        ((mat >> 4) << TERRAIN_SHIFT) |
-                        (delta & DELTA_MASK);
+                    level.meta[i + 0] =
+                        DOUBLE_LEVEL | ((mat & 0xF) << TERRAIN_SHIFT) | (delta >> 2);
+                    level.meta[i + 1] =
+                        DOUBLE_LEVEL | ((mat >> 4) << TERRAIN_SHIFT) | (delta & DELTA_MASK);
                     level.height[i + 0] = avg(color[0], color[4]);
                     level.height[i + 1] = avg(color[1], color[5]);
                 } else {
@@ -341,28 +344,37 @@ impl LevelData {
     pub fn export_layers(&self) -> LevelLayers {
         let mut ll = LevelLayers::new((self.size.0 as u32, self.size.1 as u32));
 
-        for y in 0 .. self.size.1 as usize {
-            let range = y * self.size.0 as usize .. (y + 1) * self.size.0 as usize;
+        for y in 0..self.size.1 as usize {
+            let range = y * self.size.0 as usize..(y + 1) * self.size.0 as usize;
             let hrow = &self.height[range.clone()];
             let mrow = &self.meta[range];
-            for ((&h0, &h1), (&m0, &m1)) in hrow.iter().step_by(2)
+            for ((&h0, &h1), (&m0, &m1)) in hrow
+                .iter()
+                .step_by(2)
                 .zip(hrow[1..].iter().step_by(2))
                 .zip(mrow.iter().step_by(2).zip(mrow[1..].iter().step_by(2)))
             {
                 let t0 = (m0 >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1);
                 let t1 = (m1 >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1);
                 if m0 & DOUBLE_LEVEL != 0 {
-                    let d = ((m0 & DELTA_MASK) << DELTA_SHIFT0) + ((m1 & DELTA_MASK) << DELTA_SHIFT1);
+                    let d =
+                        ((m0 & DELTA_MASK) << DELTA_SHIFT0) + ((m1 & DELTA_MASK) << DELTA_SHIFT1);
                     //assert!(h0 + d <= h1); //TODO: figure out why this isn't true
-                    ll.het0.push(h0); ll.het0.push(h0);
-                    ll.het1.push(h1); ll.het1.push(h1);
-                    ll.delta.push(d); ll.delta.push(d);
+                    ll.het0.push(h0);
+                    ll.het0.push(h0);
+                    ll.het1.push(h1);
+                    ll.het1.push(h1);
+                    ll.delta.push(d);
+                    ll.delta.push(d);
                     ll.mat0.push(t0 | (t0 << 4));
                     ll.mat1.push(t1 | (t1 << 4));
                 } else {
-                    ll.het0.push(h0); ll.het0.push(h1);
-                    ll.het1.push(h0); ll.het1.push(h1);
-                    ll.delta.push(0); ll.delta.push(0);
+                    ll.het0.push(h0);
+                    ll.het0.push(h1);
+                    ll.het1.push(h0);
+                    ll.het1.push(h1);
+                    ll.delta.push(0);
+                    ll.delta.push(0);
                     ll.mat0.push(t0 | (t1 << 4));
                     ll.mat1.push(t0 | (t1 << 4));
                 }
@@ -377,21 +389,31 @@ impl LevelData {
         let mut height = Vec::with_capacity(total);
         let mut meta = Vec::with_capacity(total);
 
-        for (((&h0a, &h0b), (&h1a, &h1b)), ((&da, &db), (&mat0, &mat1))) in
-            ll.het0.iter().step_by(2).zip(ll.het0[1..].iter().step_by(2))
-            .zip(ll.het1.iter().step_by(2).zip(ll.het1[1..].iter().step_by(2)))
-            .zip(ll.delta.iter().step_by(2).zip(ll.delta[1..].iter().step_by(2)).zip(ll.mat0.iter().zip(&ll.mat1)))
+        for (((&h0a, &h0b), (&h1a, &h1b)), ((&da, &db), (&mat0, &mat1))) in ll
+            .het0
+            .iter()
+            .step_by(2)
+            .zip(ll.het0[1..].iter().step_by(2))
+            .zip(
+                ll.het1
+                    .iter()
+                    .step_by(2)
+                    .zip(ll.het1[1..].iter().step_by(2)),
+            )
+            .zip(
+                ll.delta
+                    .iter()
+                    .step_by(2)
+                    .zip(ll.delta[1..].iter().step_by(2))
+                    .zip(ll.mat0.iter().zip(&ll.mat1)),
+            )
         {
             //assert!(h0a + da <= h1a && h0b + db <= h1b);
             let delta = avg(da, db);
             if delta != 0 {
                 //Note: mat0b and mat1a are ignored here, assuming the same as mat0a and mat1b respectively
-                meta.push(DOUBLE_LEVEL |
-                    ((mat0 & 0xF) << TERRAIN_SHIFT) |
-                    (delta >> 2));
-                meta.push(DOUBLE_LEVEL |
-                    ((mat1 >> 4) << TERRAIN_SHIFT) |
-                    (delta & DELTA_MASK));
+                meta.push(DOUBLE_LEVEL | ((mat0 & 0xF) << TERRAIN_SHIFT) | (delta >> 2));
+                meta.push(DOUBLE_LEVEL | ((mat1 >> 4) << TERRAIN_SHIFT) | (delta & DELTA_MASK));
                 height.push(avg(h0a, h0b));
                 height.push(avg(h1a, h1b));
             } else {
@@ -411,7 +433,6 @@ impl LevelData {
     }
 }
 
-
 pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
     use rayon::prelude::*;
     use splay::Splay;
@@ -430,7 +451,7 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
     info!("\tLoading compression tables...");
     let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
     let mut sz_table = Vec::<i16>::with_capacity(size.1 as usize);
-    for _ in 0 .. size.1 {
+    for _ in 0..size.1 {
         st_table.push(vmc_base.read_i32::<E>().unwrap());
         sz_table.push(vmc_base.read_i16::<E>().unwrap());
     }
@@ -438,7 +459,8 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
     info!("\tDecompressing level data...");
     let splay = Splay::new(&mut vmc_base);
 
-    level.height
+    level
+        .height
         .chunks_mut(size.0 as _)
         .zip(level.meta.chunks_mut(size.0 as _))
         .zip(st_table.iter().zip(&sz_table))
@@ -447,12 +469,16 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
         .for_each(|source_group| {
             //Note: a separate file per group is required
             let mut vmc = File::open(path).unwrap();
-            let data_size: i16 = source_group.iter().map(|(_, (_, &size))| size).max().unwrap();
+            let data_size: i16 = source_group
+                .iter()
+                .map(|(_, (_, &size))| size)
+                .max()
+                .unwrap();
             let mut data = vec![0u8; data_size as usize];
             for &mut ((ref mut h_row, ref mut m_row), (offset, &size)) in source_group {
                 vmc.seek(SeekFrom::Start(*offset as u64)).unwrap();
-                vmc.read(&mut data[.. size as usize]).unwrap();
-                splay.expand(&data[.. size as usize], h_row, m_row);
+                vmc.read(&mut data[..size as usize]).unwrap();
+                splay.expand(&data[..size as usize], h_row, m_row);
             }
         });
 
@@ -469,7 +495,8 @@ pub fn load_vmp(path: &Path, size: (i32, i32)) -> LevelData {
     };
 
     let mut vmp = BufReader::new(File::open(path).unwrap());
-    level.height
+    level
+        .height
         .chunks_mut(size.0 as _)
         .zip(level.meta.chunks_mut(size.0 as _))
         .for_each(|(h_row, m_row)| {
@@ -491,8 +518,7 @@ pub fn load(config: &LevelConfig) -> Level {
 
     info!("Loading flood map...");
     let flood_map = load_flood(config);
-    let palette = File::open(&config.path_palette)
-        .expect("Unable to open the palette file");
+    let palette = File::open(&config.path_palette).expect("Unable to open the palette file");
 
     Level {
         size,

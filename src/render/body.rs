@@ -1,16 +1,8 @@
 use crate::{
-    config::{
-        car::CarPhysics,
-        common::Common,
-        settings,
-    },
+    config::{car::CarPhysics, common::Common, settings},
     freelist::{self, FreeList},
     model::VisualModel,
-    render::{
-        collision::{GpuRange},
-        GpuTransform,
-        Shaders,
-    },
+    render::{collision::GpuRange, GpuTransform, Shaders},
     space::Transform,
 };
 
@@ -18,8 +10,10 @@ use bytemuck::{Pod, Zeroable};
 use cgmath::SquareMatrix as _;
 use futures::{executor::LocalSpawner, task::LocalSpawn as _, FutureExt};
 
-use std::{mem, slice, sync::{Arc, Mutex, MutexGuard}};
-
+use std::{
+    mem, slice,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 const WORK_GROUP_WIDTH: u32 = 32;
 const MAX_WHEELS: usize = 4;
@@ -133,7 +127,6 @@ struct Constants {
 unsafe impl Pod for Constants {}
 unsafe impl Zeroable for Constants {}
 
-
 pub type GpuBody = freelist::Id<Data>;
 
 struct Pipelines {
@@ -158,7 +151,8 @@ impl Pipelines {
                         [WORK_GROUP_WIDTH, 1, 1],
                         &[],
                         device,
-                    ).unwrap(),
+                    )
+                    .unwrap(),
                     entry_point: "main",
                 },
             }),
@@ -170,7 +164,8 @@ impl Pipelines {
                         [WORK_GROUP_WIDTH, 1, 1],
                         &[],
                         device,
-                    ).unwrap(),
+                    )
+                    .unwrap(),
                     entry_point: "main",
                 },
             }),
@@ -182,7 +177,8 @@ impl Pipelines {
                         [WORK_GROUP_WIDTH, 1, 1],
                         &[],
                         device,
-                    ).unwrap(),
+                    )
+                    .unwrap(),
                     entry_point: "main",
                 },
             }),
@@ -197,24 +193,24 @@ pub struct GpuStoreInit {
 }
 
 impl GpuStoreInit {
-    pub fn new(
-        device: &wgpu::Device,
-        settings: &settings::GpuCollision,
-    ) -> Self {
+    pub fn new(device: &wgpu::Device, settings: &settings::GpuCollision) -> Self {
         let rounded_max_objects = {
             let tail = settings.max_objects as u32 % WORK_GROUP_WIDTH;
-            settings.max_objects + if tail != 0 {
-                (WORK_GROUP_WIDTH - tail) as usize
-            } else {
-                0
-            }
+            settings.max_objects
+                + if tail != 0 {
+                    (WORK_GROUP_WIDTH - tail) as usize
+                } else {
+                    0
+                }
         };
 
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GpuStore"),
             size: (rounded_max_objects * mem::size_of::<Data>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::STORAGE_READ |
-                wgpu::BufferUsage::COPY_SRC | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsage::STORAGE
+                | wgpu::BufferUsage::STORAGE_READ
+                | wgpu::BufferUsage::COPY_SRC
+                | wgpu::BufferUsage::COPY_DST,
         });
 
         GpuStoreInit {
@@ -240,7 +236,7 @@ impl GpuStoreInit {
     pub fn resource(&self) -> wgpu::BindingResource {
         wgpu::BindingResource::Buffer {
             buffer: &self.buffer,
-            range: 0 .. (self.rounded_max_objects * mem::size_of::<Data>()) as wgpu::BufferAddress,
+            range: 0..(self.rounded_max_objects * mem::size_of::<Data>()) as wgpu::BufferAddress,
         }
     }
 }
@@ -297,7 +293,8 @@ impl GpuStore {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Body"),
             bindings: &[
-                wgpu::BindGroupLayoutEntry { // data
+                wgpu::BindGroupLayoutEntry {
+                    // data
                     binding: 0,
                     visibility: wgpu::ShaderStage::COMPUTE,
                     ty: wgpu::BindingType::StorageBuffer {
@@ -305,74 +302,68 @@ impl GpuStore {
                         readonly: false,
                     },
                 },
-                wgpu::BindGroupLayoutEntry { // uniforms
+                wgpu::BindGroupLayoutEntry {
+                    // uniforms
                     binding: 1,
                     visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: false,
-                    },
+                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
                 },
-                wgpu::BindGroupLayoutEntry { // constants
+                wgpu::BindGroupLayoutEntry {
+                    // constants
                     binding: 2,
                     visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: false,
-                    },
+                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
                 },
             ],
         });
         let pipeline_layout_step = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            bind_group_layouts: &[
-                &bind_group_layout,
-            ],
+            bind_group_layouts: &[&bind_group_layout],
         });
 
-        let bind_group_layout_gather = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Gather"),
-            bindings: &[
-                wgpu::BindGroupLayoutEntry { // collisions
+        let bind_group_layout_gather =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Gather"),
+                bindings: &[
+                    wgpu::BindGroupLayoutEntry {
+                        // collisions
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageBuffer {
+                            dynamic: false,
+                            readonly: true,
+                        },
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        // ranges
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageBuffer {
+                            dynamic: false,
+                            readonly: true,
+                        },
+                    },
+                ],
+            });
+        let pipeline_layout_gather =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                bind_group_layouts: &[&bind_group_layout, &bind_group_layout_gather],
+            });
+
+        let bind_group_layout_push =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Push"),
+                bindings: &[wgpu::BindGroupLayoutEntry {
+                    // pushes
                     binding: 0,
                     visibility: wgpu::ShaderStage::COMPUTE,
                     ty: wgpu::BindingType::StorageBuffer {
                         dynamic: false,
                         readonly: true,
                     },
-                },
-                wgpu::BindGroupLayoutEntry { // ranges
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::StorageBuffer {
-                        dynamic: false,
-                        readonly: true,
-                    },
-                },
-            ],
-        });
-        let pipeline_layout_gather = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            bind_group_layouts: &[
-                &bind_group_layout,
-                &bind_group_layout_gather,
-            ],
-        });
-
-        let bind_group_layout_push = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Push"),
-            bindings: &[
-                wgpu::BindGroupLayoutEntry { // pushes
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::StorageBuffer {
-                        dynamic: false,
-                        readonly: true,
-                    },
-                },
-            ],
-        });
+                }],
+            });
         let pipeline_layout_push = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            bind_group_layouts: &[
-                &bind_group_layout,
-                &bind_group_layout_push,
-            ],
+            bind_group_layouts: &[&bind_group_layout, &bind_group_layout_push],
         });
 
         let pipelines = Pipelines::new(
@@ -413,24 +404,14 @@ impl GpuStore {
                 common.global.air_speed_factor,
                 common.global.underground_speed_factor,
             ],
-            global_mobility: [
-                common.global.mobility_factor,
-                0.0,
-                0.0,
-                0.0,
-            ],
+            global_mobility: [common.global.mobility_factor, 0.0, 0.0, 0.0],
             car_rudder: [
                 common.car.rudder_step,
                 common.car.rudder_max,
                 common.car.rudder_k_decr,
                 0.0,
             ],
-            car_traction: [
-                common.car.traction_incr,
-                common.car.traction_decr,
-                0.0,
-                0.0,
-            ],
+            car_traction: [common.car.traction_incr, common.car.traction_decr, 0.0, 0.0],
             impulse_elastic: [
                 common.impulse.elastic_restriction,
                 common.impulse.elastic_time_scale_factor,
@@ -456,10 +437,7 @@ impl GpuStore {
                 abs_min: common.drag.abs_min.to_array(),
                 abs_stop: common.drag.abs_stop.to_array(),
                 coll: common.drag.coll.to_array(),
-                other: [
-                    common.drag.wheel_speed,
-                    common.drag.z,
-                ],
+                other: [common.drag.wheel_speed, common.drag.z],
                 _pad: [0.0; 2],
             },
             contact_elastic: [
@@ -468,17 +446,10 @@ impl GpuStore {
                 common.contact.k_elastic_xy,
                 common.contact.k_elastic_db_coll,
             ],
-            force: [
-                common.force.k_distance_to_force,
-                0.0,
-                0.0,
-                0.0,
-            ],
+            force: [common.force.k_distance_to_force, 0.0, 0.0, 0.0],
         };
-        let buf_constants = device.create_buffer_with_data(
-            bytemuck::bytes_of(&constants),
-            wgpu::BufferUsage::UNIFORM,
-        );
+        let buf_constants = device
+            .create_buffer_with_data(bytemuck::bytes_of(&constants), wgpu::BufferUsage::UNIFORM);
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Body"),
@@ -492,14 +463,14 @@ impl GpuStore {
                     binding: 1,
                     resource: wgpu::BindingResource::Buffer {
                         buffer: &buf_uniforms,
-                        range: 0 .. desc_uniforms.size,
+                        range: 0..desc_uniforms.size,
                     },
                 },
                 wgpu::Binding {
                     binding: 2,
                     resource: wgpu::BindingResource::Buffer {
                         buffer: &buf_constants,
-                        range: 0 .. mem::size_of::<Constants>() as wgpu::BufferAddress,
+                        range: 0..mem::size_of::<Constants>() as wgpu::BufferAddress,
                     },
                 },
             ],
@@ -516,7 +487,7 @@ impl GpuStore {
                     binding: 1,
                     resource: wgpu::BindingResource::Buffer {
                         buffer: &buf_ranges,
-                        range: 0 .. desc_ranges.size,
+                        range: 0..desc_ranges.size,
                     },
                 },
             ],
@@ -524,15 +495,13 @@ impl GpuStore {
         let bind_group_push = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Push"),
             layout: &bind_group_layout_push,
-            bindings: &[
-                wgpu::Binding {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &buf_pushes,
-                        range: 0 .. desc_pushes.size,
-                    },
+            bindings: &[wgpu::Binding {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer {
+                    buffer: &buf_pushes,
+                    range: 0..desc_pushes.size,
                 },
-            ],
+            }],
         });
 
         GpuStore {
@@ -563,7 +532,9 @@ impl GpuStore {
     pub fn update_control(&mut self, body: &GpuBody, control: GpuControl) {
         self.updates.push((
             body.index(),
-            Update::SetControl { index: self.update_control.len() },
+            Update::SetControl {
+                index: self.update_control.len(),
+            },
         ));
         self.update_control.push(control);
     }
@@ -593,7 +564,8 @@ impl GpuStore {
         assert!(id.index() < self.capacity);
 
         let matrix = cgmath::Matrix3::from(model.body.physics.jacobi)
-            .invert().unwrap();
+            .invert()
+            .unwrap();
         let ji: &[f32; 9] = matrix.as_ref();
 
         let gt = GpuTransform::new(transform);
@@ -614,24 +586,9 @@ impl GpuStore {
             angular: [0.0; 4],
             collision: [0.0; 4],
             model: Model {
-                jacobi0: [
-                    ji[0],
-                    ji[1],
-                    ji[2],
-                    model.body.physics.volume,
-                ],
-                jacobi1: [
-                    ji[3],
-                    ji[4],
-                    ji[5],
-                    model.body.bbox.radius,
-                ],
-                jacobi2: [
-                    ji[6],
-                    ji[7],
-                    ji[8],
-                    0.0,
-                ],
+                jacobi0: [ji[0], ji[1], ji[2], model.body.physics.volume],
+                jacobi1: [ji[3], ji[4], ji[5], model.body.bbox.radius],
+                jacobi2: [ji[6], ji[7], ji[8], 0.0],
             },
             physics: Physics {
                 scale: [
@@ -658,7 +615,9 @@ impl GpuStore {
 
         self.updates.push((
             id.index(),
-            Update::InitData { index: self.update_data.len() }
+            Update::InitData {
+                index: self.update_data.len(),
+            },
         ));
         self.update_data.push(data);
         id
@@ -668,11 +627,7 @@ impl GpuStore {
         self.free_list.free(id);
     }
 
-    pub fn update_entries(
-        &mut self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-    ) {
+    pub fn update_entries(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
         let buf_init_data = if self.update_data.is_empty() {
             None
         } else {
@@ -730,17 +685,18 @@ impl GpuStore {
         assert!(self.updates.is_empty());
         if !self.pending_pushes.is_empty() {
             if self.pending_pushes.len() < WORK_GROUP_WIDTH as usize {
-                self.pending_pushes.resize_with(WORK_GROUP_WIDTH as usize, ||
-                    GpuPush { dir_id: [-1.0; 4] }
-                );
+                self.pending_pushes
+                    .resize_with(WORK_GROUP_WIDTH as usize, || GpuPush { dir_id: [-1.0; 4] });
             }
             let temp = device.create_buffer_with_data(
-                bytemuck::cast_slice(&self.pending_pushes[.. WORK_GROUP_WIDTH as usize]),
+                bytemuck::cast_slice(&self.pending_pushes[..WORK_GROUP_WIDTH as usize]),
                 wgpu::BufferUsage::COPY_SRC,
             );
             encoder.copy_buffer_to_buffer(
-                &temp, 0,
-                &self.buf_pushes, 0,
+                &temp,
+                0,
+                &self.buf_pushes,
+                0,
                 (WORK_GROUP_WIDTH as usize * mem::size_of::<GpuPush>()) as wgpu::BufferAddress,
             );
         }
@@ -754,14 +710,16 @@ impl GpuStore {
 
         // update range buffer
         {
-            let sub_range = &raw_ranges[.. (num_groups * WORK_GROUP_WIDTH) as usize];
+            let sub_range = &raw_ranges[..(num_groups * WORK_GROUP_WIDTH) as usize];
             let temp = device.create_buffer_with_data(
                 bytemuck::cast_slice(sub_range),
                 wgpu::BufferUsage::COPY_SRC,
             );
             encoder.copy_buffer_to_buffer(
-                &temp, 0,
-                &self.buf_ranges, 0,
+                &temp,
+                0,
+                &self.buf_ranges,
+                0,
                 (sub_range.len() * mem::size_of::<GpuRange>()) as wgpu::BufferAddress,
             );
         }
@@ -776,8 +734,10 @@ impl GpuStore {
                 wgpu::BufferUsage::COPY_SRC,
             );
             encoder.copy_buffer_to_buffer(
-                &temp, 0,
-                &self.buf_uniforms, 0,
+                &temp,
+                0,
+                &self.buf_uniforms,
+                0,
                 mem::size_of::<Uniforms>() as wgpu::BufferAddress,
             );
         }
@@ -801,7 +761,7 @@ impl GpuStore {
 
         // remove the first N pushes
         if !self.pending_pushes.is_empty() {
-            self.pending_pushes.drain(.. WORK_GROUP_WIDTH as usize);
+            self.pending_pushes.drain(..WORK_GROUP_WIDTH as usize);
         }
     }
 
@@ -818,7 +778,7 @@ impl GpuStore {
         });
 
         let offset = mem::size_of::<GpuControl>() + mem::size_of::<[f32; 4]>(); // skip control & engine
-        for i in 0 .. count {
+        for i in 0..count {
             encoder.copy_buffer_to_buffer(
                 &self.buf_data,
                 (i * mem::size_of::<Data>() + offset) as wgpu::BufferAddress,
@@ -828,10 +788,7 @@ impl GpuStore {
             );
         }
 
-        self.gpu_result = Some(GpuResult {
-            buffer,
-            count,
-        })
+        self.gpu_result = Some(GpuResult { buffer, count })
     }
 
     pub fn consume_gpu_results(&mut self, spawner: &LocalSpawner) {
@@ -842,7 +799,10 @@ impl GpuStore {
 
         let latest = Arc::clone(&self.cpu_mirror);
         let future = buffer
-            .map_read(0, (count * mem::size_of::<GpuTransform>()) as wgpu::BufferAddress)
+            .map_read(
+                0,
+                (count * mem::size_of::<GpuTransform>()) as wgpu::BufferAddress,
+            )
             .map(move |mapping| {
                 let _ = buffer; //TODO: remove when wgpu upsteam is fixed
                 let data = unsafe {
@@ -852,18 +812,16 @@ impl GpuStore {
                     )
                 };
 
-                let transforms = data
-                    .iter()
-                    .map(|gt| Transform {
-                        disp: cgmath::vec3(gt.pos_scale[0], gt.pos_scale[1], gt.pos_scale[2]),
-                        rot: cgmath::Quaternion::new(
-                            gt.orientation[3],
-                            gt.orientation[0],
-                            gt.orientation[1],
-                            gt.orientation[2],
-                        ),
-                        scale: gt.pos_scale[3],
-                    });
+                let transforms = data.iter().map(|gt| Transform {
+                    disp: cgmath::vec3(gt.pos_scale[0], gt.pos_scale[1], gt.pos_scale[2]),
+                    rot: cgmath::Quaternion::new(
+                        gt.orientation[3],
+                        gt.orientation[0],
+                        gt.orientation[1],
+                        gt.orientation[2],
+                    ),
+                    scale: gt.pos_scale[3],
+                });
 
                 let mut storage = latest.lock().unwrap();
                 storage.transforms.clear();

@@ -7,7 +7,6 @@ use log::info;
 
 use std::mem;
 
-
 pub struct CarView {
     model: model::VisualModel,
     transform: space::Transform,
@@ -35,18 +34,11 @@ impl CarView {
         let store_init = render::body::GpuStoreInit::new_dummy(device);
         let global = render::global::Context::new(device, store_init.resource());
         let object = render::object::Context::new(&mut init_encoder, device, &pal_data, &global);
-        queue.submit(&[
-            init_encoder.finish(),
-        ]);
+        queue.submit(&[init_encoder.finish()]);
 
         info!("Loading car registry");
         let game_reg = config::game::Registry::load(settings);
-        let car_reg = config::car::load_registry(
-            settings,
-            &game_reg,
-            device,
-            &object,
-        );
+        let car_reg = config::car::load_registry(settings, &game_reg, device, &object);
         let cinfo = match car_reg.get(&settings.car.id) {
             Some(ci) => ci,
             None => {
@@ -55,10 +47,7 @@ impl CarView {
             }
         };
         let mut model = cinfo.model.clone();
-        for (ms, sid) in model.slots
-            .iter_mut()
-            .zip(settings.car.slots.iter())
-        {
+        for (ms, sid) in model.slots.iter_mut().zip(settings.car.slots.iter()) {
             let info = &game_reg.model_infos[sid];
             let raw = Mesh::load(&mut settings.open_relative(&info.path));
             ms.mesh = Some(model::load_c3d(raw, device));
@@ -84,9 +73,7 @@ impl CarView {
             object,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, -64.0, 32.0),
-                rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(
-                    cgmath::Angle::turn_div_6(),
-                ),
+                rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(cgmath::Angle::turn_div_6()),
                 proj: space::Projection::Perspective(cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
                     aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
@@ -99,10 +86,7 @@ impl CarView {
         }
     }
 
-    fn rotate_z(
-        &mut self,
-        angle: cgmath::Rad<f32>,
-    ) {
+    fn rotate_z(&mut self, angle: cgmath::Rad<f32>) {
         use cgmath::Transform;
         let other = cgmath::Decomposed {
             scale: 1.0,
@@ -112,10 +96,7 @@ impl CarView {
         self.transform = other.concat(&self.transform);
     }
 
-    fn rotate_x(
-        &mut self,
-        angle: cgmath::Rad<f32>,
-    ) {
+    fn rotate_x(&mut self, angle: cgmath::Rad<f32>) {
         use cgmath::Transform;
         let other = cgmath::Decomposed {
             scale: 1.0,
@@ -143,7 +124,7 @@ impl Application for CarView {
                 Key::W => self.rotation.1 = -angle,
                 Key::S => self.rotation.1 = angle,
                 _ => (),
-            }
+            },
             KeyboardInput {
                 state: ElementState::Released,
                 virtual_keycode: Some(key),
@@ -152,7 +133,7 @@ impl Application for CarView {
                 Key::A | Key::D => self.rotation.0 = cgmath::Rad(0.),
                 Key::W | Key::S => self.rotation.1 = cgmath::Rad(0.),
                 _ => (),
-            }
+            },
             _ => {}
         }
 
@@ -177,7 +158,9 @@ impl Application for CarView {
     }
 
     fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
-        self.cam.proj.update(extent.width as u16, extent.height as u16);
+        self.cam
+            .proj
+            .update(extent.width as u16, extent.height as u16);
     }
 
     fn reload(&mut self, device: &wgpu::Device) {
@@ -217,17 +200,18 @@ impl Application for CarView {
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                color_attachments: &[
-                    wgpu::RenderPassColorAttachmentDescriptor {
-                        attachment: targets.color,
-                        resolve_target: None,
-                        load_op: wgpu::LoadOp::Clear,
-                        store_op: wgpu::StoreOp::Store,
-                        clear_color: wgpu::Color {
-                            r: 0.1, g: 0.2, b: 0.3, a: 1.0,
-                        },
+                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                    attachment: targets.color,
+                    resolve_target: None,
+                    load_op: wgpu::LoadOp::Clear,
+                    store_op: wgpu::StoreOp::Store,
+                    clear_color: wgpu::Color {
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
+                        a: 1.0,
                     },
-                ],
+                }],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
                     attachment: targets.depth,
                     depth_load_op: wgpu::LoadOp::Clear,

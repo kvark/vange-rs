@@ -4,7 +4,6 @@ use serde_scan;
 
 use std::fs::File;
 
-
 #[derive(Debug, Deserialize)]
 pub struct Cycle {
     pub name: String,
@@ -31,15 +30,15 @@ pub fn load(file: File) -> Vec<Bunch> {
         let (escave, bios, count): (String, String, usize) = fi.scan();
         let mut cycles = Vec::with_capacity(count);
         info!("Escave {} has {} cycles", escave, count);
-        for _ in 0 .. count {
+        for _ in 0..count {
             fi.advance();
             let cycle = {
                 let mut elems = fi.cur().split('"');
                 assert!(elems.next().unwrap().is_empty());
                 let name = elems.next().unwrap().to_string();
                 let leftover = elems.next().unwrap();
-                let (cirt_max, radiance_time, price, palette_path)
-                    = serde_scan::from_str(leftover).unwrap();
+                let (cirt_max, radiance_time, price, palette_path) =
+                    serde_scan::from_str(leftover).unwrap();
                 Cycle {
                     name,
                     cirt_max,

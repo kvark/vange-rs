@@ -1,10 +1,9 @@
 use crate::render::{
+    terrain::{Rect, HEIGHT_FORMAT},
     Shaders,
-    terrain::{HEIGHT_FORMAT, Rect},
 };
 use bytemuck::{Pod, Zeroable};
 use std::mem;
-
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -32,8 +31,7 @@ impl MaxMipper {
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
     ) -> wgpu::RenderPipeline {
-        let shaders = Shaders::new("terrain/mip", &[], device)
-            .unwrap();
+        let shaders = Shaders::new("terrain/mip", &[], device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
             vertex_stage: wgpu::ProgrammableStageDescriptor {
@@ -52,30 +50,24 @@ impl MaxMipper {
                 depth_bias_clamp: 0.0,
             }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[
-                wgpu::ColorStateDescriptor {
-                    format: HEIGHT_FORMAT,
-                    alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                    color_blend: wgpu::BlendDescriptor::REPLACE,
-                    write_mask: wgpu::ColorWrite::all(),
-                },
-            ],
+            color_states: &[wgpu::ColorStateDescriptor {
+                format: HEIGHT_FORMAT,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::all(),
+            }],
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[
-                    wgpu::VertexBufferDescriptor {
-                        stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                        step_mode: wgpu::InputStepMode::Vertex,
-                        attributes: &[
-                            wgpu::VertexAttributeDescriptor {
-                                offset: 0,
-                                format: wgpu::VertexFormat::Float2,
-                                shader_location: 0,
-                            },
-                        ],
-                    },
-                ],
+                vertex_buffers: &[wgpu::VertexBufferDescriptor {
+                    stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::InputStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttributeDescriptor {
+                        offset: 0,
+                        format: wgpu::VertexFormat::Float2,
+                        shader_location: 0,
+                    }],
+                }],
             },
             sample_count: 1,
             alpha_to_coverage_enabled: false,
@@ -92,12 +84,14 @@ impl MaxMipper {
         let bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("MaxMipper"),
             bindings: &[
-                wgpu::BindGroupLayoutEntry { // sampler
+                wgpu::BindGroupLayoutEntry {
+                    // sampler
                     binding: 0,
                     visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::Sampler { comparison: false },
                 },
-                wgpu::BindGroupLayoutEntry { // texture
+                wgpu::BindGroupLayoutEntry {
+                    // texture
                     binding: 1,
                     visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::SampledTexture {
@@ -109,9 +103,7 @@ impl MaxMipper {
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            bind_group_layouts: &[
-                &bg_layout,
-            ],
+            bind_group_layouts: &[&bg_layout],
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -126,7 +118,7 @@ impl MaxMipper {
         });
 
         let mut mips = Vec::with_capacity(mip_count as usize);
-        for level in 0 .. mip_count {
+        for level in 0..mip_count {
             let view = texture.create_view(&wgpu::TextureViewDescriptor {
                 format: HEIGHT_FORMAT,
                 dimension: wgpu::TextureViewDimension::D2,
@@ -152,10 +144,7 @@ impl MaxMipper {
                 ],
             });
 
-            mips.push(Mip {
-                view,
-                bind_group,
-            });
+            mips.push(Mip { view, bind_group });
         }
 
         let pipeline = Self::create_pipeline(&pipeline_layout, device);
@@ -198,30 +187,25 @@ impl MaxMipper {
             wgpu::BufferUsage::VERTEX,
         );
 
-        for mip in 0 .. self.mips.len() - 1 {
+        for mip in 0..self.mips.len() - 1 {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                color_attachments: &[
-                    wgpu::RenderPassColorAttachmentDescriptor {
-                        attachment: &self.mips[mip + 1].view,
-                        resolve_target: None,
-                        load_op: wgpu::LoadOp::Clear,
-                        store_op: wgpu::StoreOp::Store,
-                        clear_color: wgpu::Color::BLACK,
-                    },
-                ],
+                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                    attachment: &self.mips[mip + 1].view,
+                    resolve_target: None,
+                    load_op: wgpu::LoadOp::Clear,
+                    store_op: wgpu::StoreOp::Store,
+                    clear_color: wgpu::Color::BLACK,
+                }],
                 depth_stencil_attachment: None,
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.mips[mip].bind_group, &[]);
             pass.set_vertex_buffer(0, &vertex_buf, 0, 0);
-            pass.draw(0 .. rects.len() as u32 * 6, 0 .. 1);
+            pass.draw(0..rects.len() as u32 * 6, 0..1);
         }
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {
-        self.pipeline = Self::create_pipeline(
-            &self.pipeline_layout,
-            device,
-        );
+        self.pipeline = Self::create_pipeline(&self.pipeline_layout, device);
     }
 }

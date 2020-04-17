@@ -1,10 +1,9 @@
 mod level_png;
 mod model_obj;
 
-
 use std::{
+    fs::{read as fs_read, File},
     io::BufWriter,
-    fs::{File, read as fs_read},
     path::PathBuf,
 };
 
@@ -51,7 +50,6 @@ pub fn save_tiff(path: &PathBuf, layers: vangers::level::LevelLayers) {
     tiff::save(file, &images).unwrap();
 }
 
-
 fn main() {
     use std::env;
     use std::io::Write;
@@ -62,13 +60,10 @@ fn main() {
         .parsing_style(getopts::ParsingStyle::StopAtFirstFree)
         .optflag("h", "help", "print this help menu");
 
-    let matches = options.parse(&args[1 ..]).unwrap();
+    let matches = options.parse(&args[1..]).unwrap();
     if matches.opt_present("h") || matches.free.len() != 2 {
         println!("Vangers resource converter");
-        let brief = format!(
-            "Usage: {} [options] <input> <output>",
-            args[0]
-        );
+        let brief = format!("Usage: {} [options] <input> <output>", args[0]);
         println!("{}", options.usage(&brief));
         return;
     }
@@ -77,8 +72,14 @@ fn main() {
     let dst_path = PathBuf::from(matches.free[1].as_str());
 
     match (
-        src_path.extension().and_then(|ostr| ostr.to_str()).unwrap_or(""),
-        dst_path.extension().and_then(|ostr| ostr.to_str()).unwrap_or(""),
+        src_path
+            .extension()
+            .and_then(|ostr| ostr.to_str())
+            .unwrap_or(""),
+        dst_path
+            .extension()
+            .and_then(|ostr| ostr.to_str())
+            .unwrap_or(""),
     ) {
         ("m3d", "ron") => {
             let file = File::open(&src_path).unwrap();

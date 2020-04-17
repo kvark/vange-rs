@@ -4,7 +4,6 @@ use ini::Ini;
 use std::ops::Range;
 use std::path::PathBuf;
 
-
 pub struct Power(pub i32);
 impl Power {
     pub fn as_value(&self) -> i32 {
@@ -36,8 +35,10 @@ pub struct LevelConfig {
 
 impl LevelConfig {
     pub fn load(ini_path: &PathBuf) -> Self {
-        let ini = Ini::load_from_file(ini_path)
-            .expect(&format!("Unable to read the level's INI description: {:?}", ini_path));
+        let ini = Ini::load_from_file(ini_path).expect(&format!(
+            "Unable to read the level's INI description: {:?}",
+            ini_path
+        ));
         let global = &ini["Global Parameters"];
         let storage = &ini["Storage"];
         let render = &ini["Rendering Parameters"];
@@ -48,8 +49,14 @@ impl LevelConfig {
             colors: 0..0,
         };
         let mut terrains = [
-            tc.clone(), tc.clone(), tc.clone(), tc.clone(),
-            tc.clone(), tc.clone(), tc.clone(), tc.clone(),
+            tc.clone(),
+            tc.clone(),
+            tc.clone(),
+            tc.clone(),
+            tc.clone(),
+            tc.clone(),
+            tc.clone(),
+            tc.clone(),
         ];
         for (t, val) in terrains
             .iter_mut()

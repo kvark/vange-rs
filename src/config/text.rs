@@ -5,7 +5,6 @@ use std::fmt::Debug;
 use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
 
-
 pub struct Reader<I> {
     input: BufReader<I>,
     line: String,
@@ -50,10 +49,7 @@ impl<I: Read> Reader<I> {
         self.cur().parse().unwrap()
     }
 
-    pub fn next_key_value<T>(
-        &mut self,
-        key: &str,
-    ) -> T
+    pub fn next_key_value<T>(&mut self, key: &str) -> T
     where
         T: FromStr,
         T::Err: Debug,
@@ -78,7 +74,6 @@ impl<I: Read> Reader<I> {
     }
 
     pub fn scan<'a, T: Deserialize<'a>>(&'a mut self) -> T {
-        serde_scan::from_str(&self.line)
-            .expect(&format!("Unable to scan line: {}", self.line))
+        serde_scan::from_str(&self.line).expect(&format!("Unable to scan line: {}", self.line))
     }
 }

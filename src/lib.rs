@@ -14,5 +14,5 @@ pub mod config;
 mod freelist;
 pub mod level;
 pub mod model;
-pub mod space;
 pub mod render;
+pub mod space;

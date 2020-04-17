@@ -1,17 +1,10 @@
 use crate::{
-    config::Settings,
-    config::text::Reader,
-    model,
-    render::object::Context as ObjectContext,
+    config::text::Reader, config::Settings, model, render::object::Context as ObjectContext,
 };
 
 use wgpu;
 
-use std::{
-    collections::HashMap,
-    fs::File,
-};
-
+use std::{collections::HashMap, fs::File};
 
 pub type BoxSize = u8;
 pub type Price = u32;
@@ -179,7 +172,7 @@ pub fn load_registry(
         num_main, num_ruffa, num_const
     );
 
-    for i in 0 .. num_main + num_ruffa + num_const {
+    for i in 0..num_main + num_ruffa + num_const {
         let (name, data) = fi.next_entry();
         let mi = &reg.model_infos[name];
         let mut prm_path = settings.data_path.join(&mi.path).with_extension("prm");
@@ -195,10 +188,7 @@ pub fn load_registry(
             physics.scale_size
         };
         let file = settings.open_relative(&mi.path);
-        let model = model::load_m3d(
-            file, device, object,
-            settings.game.physics.shape_sampling,
-        );
+        let model = model::load_m3d(file, device, object, settings.game.physics.shape_sampling);
         map.insert(
             name.to_owned(),
             CarInfo {

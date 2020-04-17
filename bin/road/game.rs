@@ -1,25 +1,21 @@
-use crate::{
-    boilerplate::Application,
-    physics,
-};
+use crate::{boilerplate::Application, physics};
 use m3d::Mesh;
 use vangers::{
-    config, level, model, space,
+    config, level, model,
     render::{
-        Batcher, Render, ScreenTargets,
         body::{GpuBody, GpuStore, GpuStoreInit},
         collision::{GpuCollider, GpuEpoch},
         debug::LineBuffer,
         object::BodyColor,
+        Batcher, Render, ScreenTargets,
     },
+    space,
 };
 
 use cgmath::prelude::*;
 use futures::executor::LocalSpawner;
 
-use std::{
-    collections::HashMap,
-};
+use std::collections::HashMap;
 
 #[derive(Debug, PartialEq)]
 struct Ai {
@@ -59,7 +55,7 @@ enum SimulationStep<'a> {
     Final {
         focus_point: &'a cgmath::Point3<f32>,
         line_buffer: Option<&'a mut LineBuffer>,
-    }
+    },
 }
 
 pub struct Agent {
@@ -119,15 +115,11 @@ impl Agent {
             Physics::Gpu { .. } => return,
         };
         if self.control.rudder != 0.0 {
-            let angle = dynamo.rudder.0 +
-                common.car.rudder_step * 2.0 * dt * self.control.rudder;
-            dynamo.rudder.0 = angle
-                .min(common.car.rudder_max)
-                .max(-common.car.rudder_max);
+            let angle = dynamo.rudder.0 + common.car.rudder_step * 2.0 * dt * self.control.rudder;
+            dynamo.rudder.0 = angle.min(common.car.rudder_max).max(-common.car.rudder_max);
         }
         if self.control.motor != 0.0 {
-            dynamo
-                .change_traction(self.control.motor * dt * common.car.traction_incr);
+            dynamo.change_traction(self.control.motor * dt * common.car.traction_incr);
         }
         if self.control.brake && dynamo.traction != 0.0 {
             dynamo.traction *= (-dt).exp2();
@@ -142,14 +134,23 @@ impl Agent {
         sim_step: SimulationStep,
     ) {
         let (dynamo, transform) = match self.physics {
-            Physics::Cpu { ref mut transform, ref mut dynamo } => (dynamo, transform),
+            Physics::Cpu {
+                ref mut transform,
+                ref mut dynamo,
+            } => (dynamo, transform),
             Physics::Gpu { .. } => return,
         };
         let (jump, roll, focus_point, line_buffer) = match sim_step {
-            SimulationStep::Intermediate =>
-                (None, 0.0, None, None),
-            SimulationStep::Final { focus_point, line_buffer } =>
-                (self.jump.take(), self.control.roll, Some(*focus_point), line_buffer),
+            SimulationStep::Intermediate => (None, 0.0, None, None),
+            SimulationStep::Final {
+                focus_point,
+                line_buffer,
+            } => (
+                self.jump.take(),
+                self.control.roll,
+                Some(*focus_point),
+                line_buffer,
+            ),
         };
         physics::step(
             dynamo,
@@ -158,8 +159,16 @@ impl Agent {
             &self.car,
             level,
             common,
-            if self.control.turbo { common.global.k_traction_turbo } else { 1.0 },
-            if self.control.brake { common.global.f_brake_max } else { 0.0 },
+            if self.control.turbo {
+                common.global.k_traction_turbo
+            } else {
+                1.0
+            },
+            if self.control.brake {
+                common.global.f_brake_max
+            } else {
+                0.0
+            },
             jump,
             roll,
             line_buffer,
@@ -168,11 +177,12 @@ impl Agent {
         if let Some(focus) = focus_point {
             let wrap = cgmath::vec2(level.size.0 as f32, (level.size.1 >> 1) as f32);
             let offset = cgmath::Point3::from_vec(transform.disp) - focus;
-            transform.disp = focus.to_vec() + cgmath::vec3(
-                (offset.x + 0.5 * wrap.x).rem_euclid(wrap.x) - 0.5 * wrap.x,
-                (offset.y + 0.5 * wrap.y).rem_euclid(wrap.y) - 0.5 * wrap.y,
-                offset.z
-            );
+            transform.disp = focus.to_vec()
+                + cgmath::vec3(
+                    (offset.x + 0.5 * wrap.x).rem_euclid(wrap.x) - 0.5 * wrap.x,
+                    (offset.y + 0.5 * wrap.y).rem_euclid(wrap.y) - 0.5 * wrap.y,
+                    offset.z,
+                );
         }
     }
 
@@ -300,7 +310,6 @@ pub struct Game {
     tick: Option<f32>,
 }
 
-
 impl Game {
     pub fn new(
         settings: &config::Settings,
@@ -322,8 +331,11 @@ impl Game {
             let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
             let ini_name = match worlds.get(&settings.game.level) {
                 Some(name) => name,
-                None => panic!("Unknown level '{}', valid names are: {:?}",
-                    settings.game.level, worlds.keys().collect::<Vec<_>>()),
+                None => panic!(
+                    "Unknown level '{}', valid names are: {:?}",
+                    settings.game.level,
+                    worlds.keys().collect::<Vec<_>>()
+                ),
             };
             let ini_path = settings.data_path.join(ini_name);
             log::info!("Using level {}", ini_name);
@@ -335,13 +347,21 @@ impl Game {
         };
 
         log::info!("Initializing the render");
-        let depth = 10f32 .. 10000f32;
+        let depth = 10f32..10000f32;
         let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
         let store_init = match settings.game.physics.gpu_collision {
             Some(ref gc) => GpuStoreInit::new(device, gc),
             None => GpuStoreInit::new_dummy(device),
         };
-        let render = Render::new(device, queue, &level, &pal_data, &settings.render, screen_extent, store_init.resource());
+        let render = Render::new(
+            device,
+            queue,
+            &level,
+            &pal_data,
+            &settings.render,
+            screen_extent,
+            store_init.resource(),
+        );
 
         log::info!("Loading world database");
         let db = {
@@ -357,12 +377,16 @@ impl Game {
 
         let mut gpu = settings.game.physics.gpu_collision.as_ref().map(|gc| {
             log::info!("Initializing the GPU store and collider");
-            let collider = GpuCollider::new(device, gc, &db.common, &render.object, &render.terrain, store_init.resource());
+            let collider = GpuCollider::new(
+                device,
+                gc,
+                &db.common,
+                &render.object,
+                &render.terrain,
+                store_init.resource(),
+            );
             let store = GpuStore::new(device, &db.common, store_init, collider.collision_buffer());
-            Gpu {
-                store,
-                collider,
-            }
+            Gpu { store, collider }
         });
 
         log::info!("Spawning agents");
@@ -371,8 +395,10 @@ impl Game {
             "Player".to_string(),
             match db.cars.get(&settings.car.id) {
                 Some(name) => name,
-                None => panic!("Unknown car '{}', valid names are: {:?}",
-                    settings.car.id, car_names),
+                None => panic!(
+                    "Unknown car '{}', valid names are: {:?}",
+                    settings.car.id, car_names
+                ),
             },
             settings.car.color,
             coords,
@@ -381,7 +407,10 @@ impl Game {
             gpu.as_mut().map(|Gpu { ref mut store, .. }| store),
         );
         player_agent.spirit = Spirit::Player;
-        for (ms, sid) in player_agent.car.model.slots
+        for (ms, sid) in player_agent
+            .car
+            .model
+            .slots
             .iter_mut()
             .zip(settings.car.slots.iter())
         {
@@ -394,8 +423,8 @@ impl Game {
         let mut agents = vec![player_agent];
         let mut rng = rand::thread_rng();
         // populate with random agents
-        for i in 0 .. settings.game.other.count {
-            use rand::{Rng, prelude::SliceRandom};
+        for i in 0..settings.game.other.count {
+            use rand::{prelude::SliceRandom, Rng};
             let color = match rng.gen_range(0, 3) {
                 0 => BodyColor::Green,
                 1 => BodyColor::Red,
@@ -443,13 +472,11 @@ impl Game {
                         };
                         space::Projection::Perspective(pf)
                     }
-                    config::settings::View::Flat => {
-                        space::Projection::ortho(
-                            settings.window.size[0] as u16,
-                            settings.window.size[1] as u16,
-                            depth,
-                        )
-                    }
+                    config::settings::View::Flat => space::Projection::ortho(
+                        settings.window.size[0] as u16,
+                        settings.window.size[1] as u16,
+                        depth,
+                    ),
                 },
             },
             cam_style: CameraStyle::new(&settings.game.camera),
@@ -465,10 +492,7 @@ impl Game {
         }
     }
 
-    fn _move_cam(
-        &mut self,
-        step: f32,
-    ) {
+    fn _move_cam(&mut self, step: f32) {
         let mut back = self.cam.rot * cgmath::Vector3::unit_z();
         back.z = 0.0;
         self.cam.loc -= back.normalize() * step;
@@ -494,11 +518,15 @@ impl Application for Game {
                 Key::P => {
                     let center = match player.physics {
                         Physics::Cpu { ref transform, .. } => transform.clone(),
-                        Physics::Gpu { ref body, .. } => {
-                            self.gpu.as_ref().unwrap()
-                                .store.cpu_mirror()
-                                .get(body).unwrap().clone()
-                        },
+                        Physics::Gpu { ref body, .. } => self
+                            .gpu
+                            .as_ref()
+                            .unwrap()
+                            .store
+                            .cpu_mirror()
+                            .get(body)
+                            .unwrap()
+                            .clone(),
                     };
                     self.tick = None;
                     if self.is_paused {
@@ -517,7 +545,11 @@ impl Application for Game {
                 Key::W => self.spin_ver = 1.0,
                 Key::S => self.spin_ver = -1.0,
                 Key::R => {
-                    if let Physics::Cpu { ref mut transform ,ref mut dynamo } = player.physics {
+                    if let Physics::Cpu {
+                        ref mut transform,
+                        ref mut dynamo,
+                    } = player.physics
+                    {
                         transform.rot = cgmath::One::one();
                         dynamo.linear_velocity = cgmath::Vector3::zero();
                         dynamo.angular_velocity = cgmath::Vector3::zero();
@@ -525,10 +557,20 @@ impl Application for Game {
                 }
                 Key::A => self.spin_hor = -1.0,
                 Key::D => self.spin_hor = 1.0,
-                Key::Q => self.roll = Some(Roll { dir: -1.0, time: 0.0 }),
-                Key::E => self.roll = Some(Roll { dir: 1.0, time: 0.0 }),
+                Key::Q => {
+                    self.roll = Some(Roll {
+                        dir: -1.0,
+                        time: 0.0,
+                    })
+                }
+                Key::E => {
+                    self.roll = Some(Roll {
+                        dir: 1.0,
+                        time: 0.0,
+                    })
+                }
                 _ => (),
-            }
+            },
             KeyboardInput {
                 state: ElementState::Released,
                 virtual_keycode: Some(key),
@@ -540,7 +582,7 @@ impl Application for Game {
                 Key::LShift => self.turbo = false,
                 Key::LAlt => player.jump = self.jump.take(),
                 _ => (),
-            }
+            },
             /*
             Event::KeyboardInput(_, _, Some(Key::R)) =>
                 self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
@@ -575,17 +617,22 @@ impl Application for Game {
         }
 
         {
-            let player = self.agents
+            let player = self
+                .agents
                 .iter_mut()
                 .find(|a| a.spirit == Spirit::Player)
                 .unwrap();
             let target = match player.physics {
                 Physics::Cpu { ref transform, .. } => transform.clone(),
-                Physics::Gpu { ref body, .. } => {
-                    self.gpu.as_ref().unwrap()
-                        .store.cpu_mirror().get(body).cloned()
-                        .unwrap_or(space::Transform::one())
-                },
+                Physics::Gpu { ref body, .. } => self
+                    .gpu
+                    .as_ref()
+                    .unwrap()
+                    .store
+                    .cpu_mirror()
+                    .get(body)
+                    .cloned()
+                    .unwrap_or(space::Transform::one()),
             };
 
             if self.is_paused {
@@ -618,7 +665,8 @@ impl Application for Game {
             player.control.turbo = self.turbo;
             player.control.roll = match self.roll {
                 Some(ref mut roll) => {
-                    let roll_count = (roll.time * self.db.common.speed.standard_frame_rate as f32).min(100.0) as u8;
+                    let roll_count = (roll.time * self.db.common.speed.standard_frame_rate as f32)
+                        .min(100.0) as u8;
                     roll.time += delta;
                     if roll_count > self.db.common.force.side_impulse_delay {
                         roll.time = 0.0;
@@ -664,15 +712,28 @@ impl Application for Game {
 
             // initialize new entries, update
             for agent in self.agents.iter_mut() {
-                if let Physics::Gpu { ref body, ref mut last_control, .. } = agent.physics {
+                if let Physics::Gpu {
+                    ref body,
+                    ref mut last_control,
+                    ..
+                } = agent.physics
+                {
                     if *last_control != agent.control {
                         *last_control = agent.control.clone();
                         let glob = &self.db.common.global;
                         let c = [
                             agent.control.rudder,
                             agent.control.motor,
-                            if agent.control.turbo { glob.k_traction_turbo } else { 1.0 },
-                            if agent.control.brake { glob.f_brake_max } else { 0.0 },
+                            if agent.control.turbo {
+                                glob.k_traction_turbo
+                            } else {
+                                1.0
+                            },
+                            if agent.control.brake {
+                                glob.f_brake_max
+                            } else {
+                                0.0
+                            },
                         ];
                         gpu.store.update_control(body, c);
                     }
@@ -684,11 +745,9 @@ impl Application for Game {
             gpu.store.update_entries(device, &mut encoder);
 
             while physics_dt > self.max_quant {
-                let mut session = gpu.collider.begin(
-                    &mut encoder,
-                    &self.render.terrain,
-                    spawner,
-                );
+                let mut session = gpu
+                    .collider
+                    .begin(&mut encoder, &self.render.terrain, spawner);
                 for agent in &mut self.agents {
                     if let Physics::Gpu { ref body, .. } = agent.physics {
                         session.add(&agent.car.model.shape, body.index());
@@ -700,9 +759,16 @@ impl Application for Game {
                 physics_dt -= self.max_quant;
             }
 
-            let mut session = gpu.collider.begin(&mut encoder, &self.render.terrain, spawner);
+            let mut session = gpu
+                .collider
+                .begin(&mut encoder, &self.render.terrain, spawner);
             for agent in &mut self.agents {
-                if let Physics::Gpu { ref body, ref mut collision_epochs, .. } = agent.physics {
+                if let Physics::Gpu {
+                    ref body,
+                    ref mut collision_epochs,
+                    ..
+                } = agent.physics
+                {
                     let start_index = session.add(&agent.car.model.shape, body.index());
                     let old = collision_epochs.insert(session.epoch, start_index);
                     assert_eq!(old, None);
@@ -723,10 +789,7 @@ impl Application for Game {
 
             self.agents.par_iter_mut().for_each(|a| {
                 let mut dt = physics_dt;
-                a.cpu_apply_control(
-                    input_factor,
-                    common,
-                );
+                a.cpu_apply_control(input_factor, common);
 
                 // only go through the full iteration on visible objects
                 if !clipper.clip(&a.position()) {
@@ -736,10 +799,15 @@ impl Application for Game {
                     }
                 }
 
-                a.cpu_step(dt, level, common, SimulationStep::Final {
-                    focus_point: &focus_point,
-                    line_buffer: None,
-                });
+                a.cpu_step(
+                    dt,
+                    level,
+                    common,
+                    SimulationStep::Final {
+                        focus_point: &focus_point,
+                        line_buffer: None,
+                    },
+                );
 
                 a.ai_behavior(delta);
             });
@@ -749,13 +817,20 @@ impl Application for Game {
     }
 
     fn resize(&mut self, device: &wgpu::Device, extent: wgpu::Extent3d) {
-        self.cam.proj.update(extent.width as u16, extent.height as u16);
+        self.cam
+            .proj
+            .update(extent.width as u16, extent.height as u16);
         self.render.resize(extent, device);
     }
 
     fn reload(&mut self, device: &wgpu::Device) {
         self.render.reload(device);
-        if let Some(Gpu{ ref mut store, ref mut collider, .. }) = self.gpu {
+        if let Some(Gpu {
+            ref mut store,
+            ref mut collider,
+            ..
+        }) = self.gpu
+        {
             store.reload(device);
             collider.reload(device);
         }
@@ -779,7 +854,7 @@ impl Application for Game {
             let (gpu_body, transform) = match agent.physics {
                 Physics::Cpu { ref transform, .. } => {
                     if clipper.clip(&transform.disp) {
-                        continue
+                        continue;
                     }
                     (&GpuBody::ZERO, transform)
                 }
@@ -802,13 +877,8 @@ impl Application for Game {
             label: Some("Draw"),
         });
 
-        self.render.draw_world(
-            &mut encoder,
-            &mut self.batcher,
-            &self.cam,
-            targets,
-            device,
-        );
+        self.render
+            .draw_world(&mut encoder, &mut self.batcher, &self.cam, targets, device);
 
         /*
         self.render.debug.draw_lines(

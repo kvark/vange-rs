@@ -1,10 +1,6 @@
-use crate::{
-    config::Settings,
-    config::text::Reader,
-};
+use crate::{config::text::Reader, config::Settings};
 
 use std::collections::HashMap;
-
 
 pub struct ModelInfo {
     pub path: String,
@@ -28,7 +24,7 @@ impl Registry {
         let count: u32 = fi.cur().split_whitespace().nth(1).unwrap().parse().unwrap();
         let max_size: u8 = fi.next_key_value("MaxSize");
 
-        for i in 0 .. count {
+        for i in 0..count {
             let num = fi.next_key_value("ModelNum");
             assert_eq!(i, num);
             let name: String = fi.next_key_value("Name");

@@ -8,14 +8,12 @@ extern crate serde_derive;
 mod geometry;
 
 pub use self::geometry::{
-    CollisionQuad, ColorId, DrawTriangle, Geometry, Vertex,
-    NORMALIZER, NUM_COLOR_IDS,
+    CollisionQuad, ColorId, DrawTriangle, Geometry, Vertex, NORMALIZER, NUM_COLOR_IDS,
 };
 
 use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 use std::fs::File;
 use std::io::Write;
-
 
 const MAX_SLOTS: usize = 3;
 const MAGIC_VERSION: u32 = 8;
@@ -48,7 +46,6 @@ fn write_vec_i8<I: WriteBytesExt>(dest: &mut I, v: [i8; 3]) {
     dest.write_i8(v[2]).unwrap();
 }
 
-
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Physics {
     pub volume: f32,
@@ -77,17 +74,24 @@ impl Physics {
     fn write<I: WriteBytesExt>(&self, dest: &mut I) {
         let q = [
             self.volume,
-            self.rcm[0], self.rcm[1], self.rcm[2],
-            self.jacobi[0][0], self.jacobi[1][0], self.jacobi[2][0],
-            self.jacobi[0][1], self.jacobi[1][1], self.jacobi[2][1],
-            self.jacobi[0][2], self.jacobi[1][2], self.jacobi[2][2],
+            self.rcm[0],
+            self.rcm[1],
+            self.rcm[2],
+            self.jacobi[0][0],
+            self.jacobi[1][0],
+            self.jacobi[2][0],
+            self.jacobi[0][1],
+            self.jacobi[1][1],
+            self.jacobi[2][1],
+            self.jacobi[0][2],
+            self.jacobi[1][2],
+            self.jacobi[2][2],
         ];
         for qel in q.iter() {
             dest.write_f64::<E>(*qel as f64).unwrap();
         }
     }
 }
-
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Wheel<M> {
@@ -153,7 +157,8 @@ impl<M> Slot<M> {
     }
 
     pub fn map_all<T, F: FnMut(M, u8) -> T>(
-        mut slots: [Self; MAX_SLOTS], mut fun: F
+        mut slots: [Self; MAX_SLOTS],
+        mut fun: F,
     ) -> [Slot<T>; MAX_SLOTS] {
         [
             slots[0].take().map(|m| fun(m, 0)),
@@ -201,7 +206,6 @@ impl Bounds {
     }
 }
 
-
 #[derive(Serialize, Deserialize)]
 pub struct Mesh<G> {
     pub geometry: G,
@@ -226,16 +230,12 @@ impl<G> Mesh<G> {
 }
 
 pub trait Polygon: Sized {
-    fn new(
-        middle: [i8; 3], flat_normal: [i8; 3], material: [u32; 2], vertices: &[Vertex]
-    ) -> Self;
+    fn new(middle: [i8; 3], flat_normal: [i8; 3], material: [u32; 2], vertices: &[Vertex]) -> Self;
     fn dump(&self, vertices: &mut Vec<Vertex>) -> ([i8; 3], [i8; 3], [u32; 2]);
     fn num_vertices() -> u32;
 }
 impl Polygon for DrawTriangle {
-    fn new(
-        _middle: [i8; 3], flat_normal: [i8; 3], material: [u32; 2], v: &[Vertex]
-    ) -> Self {
+    fn new(_middle: [i8; 3], flat_normal: [i8; 3], material: [u32; 2], v: &[Vertex]) -> Self {
         assert_eq!(v.len(), 3);
         DrawTriangle {
             vertices: [v[0], v[1], v[2]],
@@ -252,9 +252,7 @@ impl Polygon for DrawTriangle {
     }
 }
 impl Polygon for CollisionQuad {
-    fn new(
-        middle: [i8; 3], flat_normal: [i8; 3], _material: [u32; 2], v: &[Vertex]
-    ) -> Self {
+    fn new(middle: [i8; 3], flat_normal: [i8; 3], _material: [u32; 2], v: &[Vertex]) -> Self {
         assert_eq!(v.len(), 4);
         CollisionQuad {
             vertices: [v[0].pos, v[1].pos, v[2].pos, v[3].pos],
@@ -298,7 +296,7 @@ impl<P: Polygon> Mesh<Geometry<P>> {
         );
 
         debug!("\tReading {} positions...", num_positions);
-        for _ in 0 .. num_positions {
+        for _ in 0..num_positions {
             read_vec_i32(source); //unknown
             let pos = read_vec_i8(source);
             let _sort_info = source.read_u32::<E>().unwrap();
@@ -306,7 +304,7 @@ impl<P: Polygon> Mesh<Geometry<P>> {
         }
 
         debug!("\tReading {} normals...", num_normals);
-        for _ in 0 .. num_normals {
+        for _ in 0..num_normals {
             let norm = read_vec_i8(source);
             let _something = source.read_i8().unwrap();
             let _sort_info = source.read_u32::<E>().unwrap();
@@ -315,7 +313,7 @@ impl<P: Polygon> Mesh<Geometry<P>> {
 
         debug!("\tReading {} polygons...", num_polygons);
         let mut vertices = Vec::with_capacity(4);
-        for _ in 0 .. num_polygons {
+        for _ in 0..num_polygons {
             let num_corners = source.read_u32::<E>().unwrap();
             let _sort_info = source.read_u32::<E>().unwrap();
             let material = [
@@ -327,21 +325,22 @@ impl<P: Polygon> Mesh<Geometry<P>> {
             let middle = read_vec_i8(source);
 
             vertices.clear();
-            for _ in 0 .. num_corners {
+            for _ in 0..num_corners {
                 vertices.push(Vertex {
                     pos: source.read_u32::<E>().unwrap() as u16,
                     normal: source.read_u32::<E>().unwrap() as u16,
                 });
             }
 
-            result.geometry.polygons.push(
-                P::new(middle, flat_normal, material, &vertices),
-            );
+            result
+                .geometry
+                .polygons
+                .push(P::new(middle, flat_normal, material, &vertices));
         }
 
         // sorted variable polygons
-        for _ in 0 .. 3 {
-            for _ in 0 .. num_polygons {
+        for _ in 0..3 {
+            for _ in 0..num_polygons {
                 let _poly_ind = source.read_u32::<E>().unwrap();
             }
         }
@@ -351,9 +350,12 @@ impl<P: Polygon> Mesh<Geometry<P>> {
 
     pub fn save<W: Write>(&self, dest: &mut W) {
         dest.write_u32::<E>(MAGIC_VERSION).unwrap();
-        dest.write_u32::<E>(self.geometry.positions.len() as u32).unwrap();
-        dest.write_u32::<E>(self.geometry.normals.len() as u32).unwrap();
-        dest.write_u32::<E>(self.geometry.polygons.len() as u32).unwrap();
+        dest.write_u32::<E>(self.geometry.positions.len() as u32)
+            .unwrap();
+        dest.write_u32::<E>(self.geometry.normals.len() as u32)
+            .unwrap();
+        dest.write_u32::<E>(self.geometry.polygons.len() as u32)
+            .unwrap();
         let total_verts = self.geometry.polygons.len() as u32 * P::num_vertices();
         dest.write_u32::<E>(total_verts).unwrap();
 
@@ -398,15 +400,14 @@ impl<P: Polygon> Mesh<Geometry<P>> {
             }
         }
 
-        for _ in 0 .. 3 {
-            for _ in 0 .. self.geometry.polygons.len() {
+        for _ in 0..3 {
+            for _ in 0..self.geometry.polygons.len() {
                 let poly_ind = 0; //TODO?
                 dest.write_u32::<E>(poly_ind).unwrap();
             }
         }
     }
 }
-
 
 pub type DrawMesh = Mesh<Geometry<DrawTriangle>>;
 pub type CollisionMesh = Mesh<Geometry<CollisionQuad>>;
@@ -433,7 +434,7 @@ impl FullModel {
 
         let mut wheels = Vec::with_capacity(num_wheels as usize);
         debug!("\tReading {} wheels...", num_wheels);
-        for _ in 0 .. num_wheels {
+        for _ in 0..num_wheels {
             let steer = input.read_u32::<E>().unwrap();
             let pos = [
                 input.read_f64::<E>().unwrap() as f32,
@@ -461,7 +462,7 @@ impl FullModel {
 
         let mut debris = Vec::with_capacity(num_debris as usize);
         debug!("\tReading {} debris...", num_debris);
-        for _ in 0 .. num_debris {
+        for _ in 0..num_debris {
             debris.push(Debrie {
                 mesh: Mesh::load(&mut input),
                 shape: Mesh::load(&mut input),

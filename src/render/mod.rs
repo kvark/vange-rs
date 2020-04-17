@@ -1,7 +1,6 @@
 use crate::{
     config::settings,
-    level,
-    model,
+    level, model,
     space::{Camera, Transform},
 };
 
@@ -10,8 +9,8 @@ use glsl_to_spirv;
 
 use std::{
     collections::HashMap,
-    io::{BufReader, Read, Write, Error as IoError},
     fs::File,
+    io::{BufReader, Error as IoError, Read, Write},
     mem,
     path::PathBuf,
     sync::Arc,
@@ -24,7 +23,6 @@ pub mod global;
 pub mod mipmap;
 pub mod object;
 pub mod terrain;
-
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -67,7 +65,7 @@ pub struct ShapePolygon {
 unsafe impl Pod for ShapePolygon {}
 unsafe impl Zeroable for ShapePolygon {}
 
-pub const SHAPE_POLYGON_BUFFER: wgpu::VertexBufferDescriptor  = wgpu::VertexBufferDescriptor {
+pub const SHAPE_POLYGON_BUFFER: wgpu::VertexBufferDescriptor = wgpu::VertexBufferDescriptor {
     stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
     step_mode: wgpu::InputStepMode::Instance,
     attributes: &wgpu::vertex_attr_array![0 => Ushort4, 1 => Char4Norm, 2 => Float4],
@@ -82,7 +80,7 @@ impl Shaders {
     fn fail(name: &str, source: &str, log: &str) -> ! {
         println!("Generated shader:");
         for (i, line) in source.lines().enumerate() {
-            println!("{:3}| {}", i+1, line);
+            println!("{:3}| {}", i + 1, line);
         }
         let msg = log.replace("\\n", "\n");
         panic!("\nUnable to compile '{}': {}", name, msg);
@@ -103,8 +101,7 @@ impl Shaders {
         let mut buf_fs = b"#version 450\n#define SHADER_FS\n".to_vec();
 
         let mut code = String::new();
-        BufReader::new(File::open(&path)?)
-            .read_to_string(&mut code)?;
+        BufReader::new(File::open(&path)?).read_to_string(&mut code)?;
         // parse meta-data
         {
             let mut lines = code.lines();
@@ -118,12 +115,9 @@ impl Shaders {
                         other => panic!("Unknown target: {}", other),
                     };
                     let include = temp.next().unwrap();
-                    let inc_path = base_path
-                        .join(include)
-                        .with_extension("inc.glsl");
+                    let inc_path = base_path.join(include).with_extension("inc.glsl");
                     match File::open(&inc_path) {
-                        Ok(include) => BufReader::new(include)
-                            .read_to_end(target)?,
+                        Ok(include) => BufReader::new(include).read_to_end(target)?,
                         Err(e) => panic!("Unable to include {:?}: {:?}", inc_path, e),
                     };
                 }
@@ -142,13 +136,12 @@ impl Shaders {
             }
         }
 
-        write!(buf_vs, "\n{}", code
-            .replace("attribute", "in")
-            .replace("varying", "out")
+        write!(
+            buf_vs,
+            "\n{}",
+            code.replace("attribute", "in").replace("varying", "out")
         )?;
-        write!(buf_fs, "\n{}", code
-            .replace("varying", "in")
-        )?;
+        write!(buf_fs, "\n{}", code.replace("varying", "in"))?;
 
         let str_vs = String::from_utf8_lossy(&buf_vs);
         let str_fs = String::from_utf8_lossy(&buf_fs);
@@ -187,13 +180,15 @@ impl Shaders {
         }
 
         let mut buf = b"#version 450\n".to_vec();
-        write!(buf, "layout(local_size_x = {}, local_size_y = {}, local_size_z = {}) in;\n",
-            group_size[0], group_size[1], group_size[2])?;
+        write!(
+            buf,
+            "layout(local_size_x = {}, local_size_y = {}, local_size_z = {}) in;\n",
+            group_size[0], group_size[1], group_size[2]
+        )?;
         write!(buf, "#define SHADER_CS\n")?;
 
         let mut code = String::new();
-        BufReader::new(File::open(&path)?)
-            .read_to_string(&mut code)?;
+        BufReader::new(File::open(&path)?).read_to_string(&mut code)?;
         // parse meta-data
         {
             let mut lines = code.lines();
@@ -206,11 +201,8 @@ impl Shaders {
                         other => panic!("Unknown target: {}", other),
                     };
                     let include = temp.next().unwrap();
-                    let inc_path = base_path
-                        .join(include)
-                        .with_extension("inc.glsl");
-                    BufReader::new(File::open(inc_path)?)
-                        .read_to_end(target)?;
+                    let inc_path = base_path.join(include).with_extension("inc.glsl");
+                    BufReader::new(File::open(inc_path)?).read_to_end(target)?;
                 }
             }
             let second = lines.next().unwrap();
@@ -238,10 +230,8 @@ impl Shaders {
         };
 
         Ok(device.create_shader_module(&spv))
-
     }
 }
-
 
 pub struct Palette {
     pub view: wgpu::TextureView,
@@ -268,10 +258,8 @@ impl Palette {
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
 
-        let staging = device.create_buffer_with_data(
-            bytemuck::cast_slice(data),
-            wgpu::BufferUsage::COPY_SRC,
-        );
+        let staging =
+            device.create_buffer_with_data(bytemuck::cast_slice(data), wgpu::BufferUsage::COPY_SRC);
         encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
                 buffer: &staging,
@@ -283,11 +271,7 @@ impl Palette {
                 texture: &texture,
                 mip_level: 0,
                 array_layer: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: 0,
-                },
+                origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
             },
             extent,
         );
@@ -297,7 +281,6 @@ impl Palette {
         }
     }
 }
-
 
 struct InstanceArray {
     data: Vec<object::Instance>,
@@ -322,11 +305,7 @@ impl Batcher {
         }
     }
 
-    pub fn add_mesh(
-        &mut self,
-        mesh: &Arc<model::Mesh>,
-        instance: object::Instance,
-    ) {
+    pub fn add_mesh(&mut self, mesh: &Arc<model::Mesh>, instance: object::Instance) {
         self.instances
             .entry(&**mesh)
             .or_insert_with(|| InstanceArray {
@@ -334,7 +313,8 @@ impl Batcher {
                 mesh: Arc::clone(mesh),
                 buffer: None,
             })
-            .data.push(instance);
+            .data
+            .push(instance);
     }
 
     pub fn add_model(
@@ -398,7 +378,7 @@ impl Batcher {
     pub fn flush<'a>(&'a mut self, pass: &mut wgpu::RenderPass<'a>, device: &wgpu::Device) {
         for array in self.instances.values_mut() {
             if array.data.is_empty() {
-                continue
+                continue;
             }
             array.buffer = Some(device.create_buffer_with_data(
                 bytemuck::cast_slice(&array.data),
@@ -406,7 +386,10 @@ impl Batcher {
             ));
             pass.set_vertex_buffer(0, &array.mesh.vertex_buf, 0, 0);
             pass.set_vertex_buffer(1, array.buffer.as_ref().unwrap(), 0, 0);
-            pass.draw(0 .. array.mesh.num_vertices as u32, 0 .. array.data.len() as u32);
+            pass.draw(
+                0..array.mesh.num_vertices as u32,
+                0..array.data.len() as u32,
+            );
             array.data.clear();
         }
         //TODO:
@@ -444,11 +427,16 @@ impl Render {
         });
         let global = global::Context::new(device, store_buffer);
         let object = object::Context::new(&mut init_encoder, device, object_palette, &global);
-        let terrain = terrain::Context::new(&mut init_encoder, device, level, &global, &settings.terrain, screen_extent);
+        let terrain = terrain::Context::new(
+            &mut init_encoder,
+            device,
+            level,
+            &global,
+            &settings.terrain,
+            screen_extent,
+        );
         let debug = debug::Context::new(device, &settings.debug, &global, &object);
-        queue.submit(&[
-            init_encoder.finish(),
-        ]);
+        queue.submit(&[init_encoder.finish()]);
 
         Render {
             global,
@@ -482,17 +470,18 @@ impl Render {
         self.terrain.prepare(encoder, device, &self.global, cam);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            color_attachments: &[
-                wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: targets.color,
-                    resolve_target: None,
-                    load_op: wgpu::LoadOp::Clear,
-                    store_op: wgpu::StoreOp::Store,
-                    clear_color: wgpu::Color {
-                        r: 0.1, g: 0.2, b: 0.3, a: 1.0,
-                    },
+            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                attachment: targets.color,
+                resolve_target: None,
+                load_op: wgpu::LoadOp::Clear,
+                store_op: wgpu::StoreOp::Store,
+                clear_color: wgpu::Color {
+                    r: 0.1,
+                    g: 0.2,
+                    b: 0.3,
+                    a: 1.0,
                 },
-            ],
+            }],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
                 attachment: targets.depth,
                 depth_load_op: wgpu::LoadOp::Clear,

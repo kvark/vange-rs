@@ -1,13 +1,9 @@
 use vangers::level::LevelLayers;
 
 use ron;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-use std::{
-    fs::File,
-    path::PathBuf,
-};
-
+use std::{fs::File, path::PathBuf};
 
 #[derive(Serialize, Deserialize)]
 struct MultiPng {
@@ -35,11 +31,7 @@ pub fn save(path: &PathBuf, layers: LevelLayers) {
         let mut encoder = png::Encoder::new(file, layers.size.0 as u32, layers.size.1 as u32);
         encoder.set_color(png::ColorType::RGB);
         data.clear();
-        for ((&h0, &h1), &delta) in layers.het0
-            .iter()
-            .zip(&layers.het1)
-            .zip(&layers.delta)
-        {
+        for ((&h0, &h1), &delta) in layers.het0.iter().zip(&layers.het1).zip(&layers.delta) {
             data.extend_from_slice(&[h0, h1, delta]);
         }
         encoder

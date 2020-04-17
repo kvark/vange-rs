@@ -2,10 +2,8 @@ use crate::{
     config::{common::Common, settings},
     model::Shape,
     render::{
+        object::Context as ObjectContext, terrain::Context as TerrainContext, Shaders,
         SHAPE_POLYGON_BUFFER,
-        Shaders,
-        object::Context as ObjectContext,
-        terrain::{Context as TerrainContext},
     },
 };
 
@@ -13,7 +11,6 @@ use bytemuck::{Pod, Zeroable};
 use futures::executor::LocalSpawner;
 
 use std::mem;
-
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -104,8 +101,7 @@ impl GpuCollider {
         clear_layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
     ) -> (wgpu::RenderPipeline, wgpu::ComputePipeline) {
-        let shaders = Shaders::new("physics/collision_add", &[], device)
-            .unwrap();
+        let shaders = Shaders::new("physics/collision_add", &[], device).unwrap();
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
             vertex_stage: wgpu::ProgrammableStageDescriptor {
@@ -124,24 +120,20 @@ impl GpuCollider {
                 depth_bias_clamp: 0.0,
             }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
-            color_states: &[
-                wgpu::ColorStateDescriptor {
-                    format: DUMMY_TARGET_FORMAT,
-                    color_blend: wgpu::BlendDescriptor::REPLACE,
-                    alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                    write_mask: if cfg!(debug_assertions) {
-                        wgpu::ColorWrite::all()
-                    } else {
-                        wgpu::ColorWrite::empty()
-                    },
+            color_states: &[wgpu::ColorStateDescriptor {
+                format: DUMMY_TARGET_FORMAT,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: if cfg!(debug_assertions) {
+                    wgpu::ColorWrite::all()
+                } else {
+                    wgpu::ColorWrite::empty()
                 },
-            ],
+            }],
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[
-                    SHAPE_POLYGON_BUFFER.clone(),
-                ],
+                vertex_buffers: &[SHAPE_POLYGON_BUFFER.clone()],
             },
             sample_count: 1,
             alpha_to_coverage_enabled: false,
@@ -153,7 +145,8 @@ impl GpuCollider {
             [CLEAR_WORK_GROUP_WIDTH, 1, 1],
             &[],
             device,
-        ).unwrap();
+        )
+        .unwrap();
         let clear_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             layout: clear_layout,
             compute_stage: wgpu::ProgrammableStageDescriptor {
@@ -176,14 +169,14 @@ impl GpuCollider {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Collision"),
             bindings: &[
-                wgpu::BindGroupLayoutEntry { // global uniforms
+                wgpu::BindGroupLayoutEntry {
+                    // global uniforms
                     binding: 0,
                     visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: false,
-                    },
+                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
                 },
-                wgpu::BindGroupLayoutEntry { // collisions
+                wgpu::BindGroupLayoutEntry {
+                    // collisions
                     binding: 1,
                     visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
                     ty: wgpu::BindingType::StorageBuffer {
@@ -191,7 +184,8 @@ impl GpuCollider {
                         readonly: false,
                     },
                 },
-                wgpu::BindGroupLayoutEntry { // data
+                wgpu::BindGroupLayoutEntry {
+                    // data
                     binding: 2,
                     visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::StorageBuffer {
@@ -201,18 +195,15 @@ impl GpuCollider {
                 },
             ],
         });
-        let dynamic_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Collision dynamic"),
-            bindings: &[
-                wgpu::BindGroupLayoutEntry {
+        let dynamic_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Collision dynamic"),
+                bindings: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: true,
-                    },
-                },
-            ],
-        });
+                    ty: wgpu::BindingType::UniformBuffer { dynamic: true },
+                }],
+            });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             bind_group_layouts: &[
                 &bind_group_layout,
@@ -222,16 +213,12 @@ impl GpuCollider {
             ],
         });
 
-        let clear_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            bind_group_layouts: &[
-                &bind_group_layout,
-            ],
-        });
-        let (pipeline, clear_pipeline) = Self::create_pipelines(
-            &pipeline_layout,
-            &clear_pipeline_layout,
-            device,
-        );
+        let clear_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                bind_group_layouts: &[&bind_group_layout],
+            });
+        let (pipeline, clear_pipeline) =
+            Self::create_pipelines(&pipeline_layout, &clear_pipeline_layout, device);
 
         // ensure the total size fits complete number of workgroups
 
@@ -242,31 +229,26 @@ impl GpuCollider {
                 1.0 / 256.0,
                 0.0,
             ],
-            penetration: [
-                common.terrain.min_wall_delta,
-                0.0,
-                0.0,
-                0.0,
-            ],
+            penetration: [common.terrain.min_wall_delta, 0.0, 0.0, 0.0],
         };
-        let global_uniforms = device.create_buffer_with_data(
-            bytemuck::bytes_of(&globals),
-            wgpu::BufferUsage::UNIFORM,
-        );
-        let locals_size = mem::size_of::<Locals>()
-            .max(wgpu::BIND_BUFFER_ALIGNMENT as usize);
+        let global_uniforms = device
+            .create_buffer_with_data(bytemuck::bytes_of(&globals), wgpu::BufferUsage::UNIFORM);
+        let locals_size = mem::size_of::<Locals>().max(wgpu::BIND_BUFFER_ALIGNMENT as usize);
         let locals_total_size = (settings.max_objects * locals_size) as wgpu::BufferAddress;
         let local_uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Collision Locals"),
             size: locals_total_size,
             usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::UNIFORM,
         });
-        let max_polygons_total = (settings.max_polygons_total - 1) | (CLEAR_WORK_GROUP_WIDTH - 1) as usize + 1;
+        let max_polygons_total =
+            (settings.max_polygons_total - 1) | (CLEAR_WORK_GROUP_WIDTH - 1) as usize + 1;
         let buf_size = (max_polygons_total * mem::size_of::<PolygonData>()) as wgpu::BufferAddress;
         let collision_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Collision"),
             size: buf_size,
-            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::STORAGE_READ | wgpu::BufferUsage::COPY_SRC,
+            usage: wgpu::BufferUsage::STORAGE
+                | wgpu::BufferUsage::STORAGE_READ
+                | wgpu::BufferUsage::COPY_SRC,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -277,14 +259,14 @@ impl GpuCollider {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer {
                         buffer: &global_uniforms,
-                        range: 0 .. mem::size_of::<Globals>() as wgpu::BufferAddress,
+                        range: 0..mem::size_of::<Globals>() as wgpu::BufferAddress,
                     },
                 },
                 wgpu::Binding {
                     binding: 1,
                     resource: wgpu::BindingResource::Buffer {
                         buffer: &collision_buffer,
-                        range: 0 .. buf_size,
+                        range: 0..buf_size,
                     },
                 },
                 wgpu::Binding {
@@ -296,15 +278,13 @@ impl GpuCollider {
         let dynamic_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Collision dynamic"),
             layout: &dynamic_bind_group_layout,
-            bindings: &[
-                wgpu::Binding {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &local_uniforms,
-                        range: 0 .. mem::size_of::<Locals>() as wgpu::BufferAddress,
-                    },
+            bindings: &[wgpu::Binding {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer {
+                    buffer: &local_uniforms,
+                    range: 0..mem::size_of::<Locals>() as wgpu::BufferAddress,
                 },
-            ],
+            }],
         });
 
         let dummy_target = device
@@ -344,14 +324,9 @@ impl GpuCollider {
         }
     }
 
-    pub fn reload(
-        &mut self, device: &wgpu::Device,
-    ) {
-        let (pipeline, clear_pipeline) = Self::create_pipelines(
-            &self.pipeline_layout,
-            &self.clear_pipeline_layout,
-            device,
-        );
+    pub fn reload(&mut self, device: &wgpu::Device) {
+        let (pipeline, clear_pipeline) =
+            Self::create_pipelines(&self.pipeline_layout, &self.clear_pipeline_layout, device);
         self.pipeline = pipeline;
         self.clear_pipeline = clear_pipeline;
     }
@@ -371,15 +346,13 @@ impl GpuCollider {
         }
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            color_attachments: &[
-                wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &self.dummy_target,
-                    resolve_target: None,
-                    load_op: wgpu::LoadOp::Clear,
-                    store_op: wgpu::StoreOp::Clear,
-                    clear_color: wgpu::Color::BLACK,
-                },
-            ],
+            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                attachment: &self.dummy_target,
+                resolve_target: None,
+                load_op: wgpu::LoadOp::Clear,
+                store_op: wgpu::StoreOp::Clear,
+                clear_color: wgpu::Color::BLACK,
+            }],
             depth_stencil_attachment: None,
         });
         pass.set_pipeline(&self.pipeline);
@@ -407,7 +380,7 @@ impl GpuCollider {
     pub fn collision_buffer(&self) -> wgpu::BindingResource {
         wgpu::BindingResource::Buffer {
             buffer: &self.buffer,
-            range: 0 .. (self.capacity * mem::size_of::<PolygonData>()) as wgpu::BufferAddress,
+            range: 0..(self.capacity * mem::size_of::<PolygonData>()) as wgpu::BufferAddress,
         }
     }
 }
@@ -420,9 +393,10 @@ impl<'pass, 'this: 'pass> GpuSession<'pass, 'this> {
         let offset = (self.object_locals.len() * self.locals_size) as wgpu::DynamicOffset;
 
         self.pass.set_bind_group(2, &shape.bind_group, &[]);
-        self.pass.set_bind_group(3, self.dynamic_bind_group, &[offset]);
+        self.pass
+            .set_bind_group(3, self.dynamic_bind_group, &[offset]);
         self.pass.set_vertex_buffer(0, &shape.polygon_buf, 0, 0);
-        self.pass.draw(0 .. 4, 0 .. shape.polygons.len() as u32);
+        self.pass.draw(0..4, 0..shape.polygons.len() as u32);
 
         let offset = self.polygon_id;
         self.ranges[range_id] = encode_gpu_range(offset, shape.polygons.len());
@@ -446,10 +420,12 @@ impl<'pass, 'this: 'pass> GpuSession<'pass, 'this> {
             bytemuck::cast_slice(&self.object_locals),
             wgpu::BufferUsage::COPY_SRC,
         );
-        for i in 0 .. self.object_locals.len() {
+        for i in 0..self.object_locals.len() {
             prep_encoder.copy_buffer_to_buffer(
-                &temp, (mem::size_of::<Locals>() * i) as wgpu::BufferAddress,
-                self.uniform_buf, (self.locals_size * i) as wgpu::BufferAddress,
+                &temp,
+                (mem::size_of::<Locals>() * i) as wgpu::BufferAddress,
+                self.uniform_buf,
+                (self.locals_size * i) as wgpu::BufferAddress,
                 mem::size_of::<Locals>() as wgpu::BufferAddress,
             );
         }

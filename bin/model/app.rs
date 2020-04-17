@@ -6,7 +6,6 @@ use log::info;
 
 use std::mem;
 
-
 pub struct ResourceView {
     model: model::VisualModel,
     global: render::global::Context,
@@ -32,16 +31,11 @@ impl ResourceView {
         let store_init = render::body::GpuStoreInit::new_dummy(device);
         let global = render::global::Context::new(device, store_init.resource());
         let object = render::object::Context::new(&mut init_encoder, device, &pal_data, &global);
-        queue.submit(&[
-            init_encoder.finish(),
-        ]);
+        queue.submit(&[init_encoder.finish()]);
 
         info!("Loading model {}", path);
         let file = settings.open_relative(path);
-        let model = model::load_m3d(
-            file, device, &object,
-            settings.game.physics.shape_sampling,
-        );
+        let model = model::load_m3d(file, device, &object, settings.game.physics.shape_sampling);
 
         ResourceView {
             model,
@@ -54,9 +48,7 @@ impl ResourceView {
             },
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, -200.0, 100.0),
-                rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(
-                    cgmath::Angle::turn_div_6(),
-                ),
+                rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(cgmath::Angle::turn_div_6()),
                 proj: space::Projection::Perspective(cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
                     aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
@@ -85,7 +77,7 @@ impl Application for ResourceView {
                 Key::A => self.rotation = -angle,
                 Key::D => self.rotation = angle,
                 _ => (),
-            }
+            },
             KeyboardInput {
                 state: ElementState::Released,
                 virtual_keycode: Some(key),
@@ -93,7 +85,7 @@ impl Application for ResourceView {
             } => match key {
                 Key::A | Key::D => self.rotation = cgmath::Rad(0.0),
                 _ => (),
-            }
+            },
             _ => {}
         }
 
@@ -122,7 +114,9 @@ impl Application for ResourceView {
     }
 
     fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
-        self.cam.proj.update(extent.width as u16, extent.height as u16);
+        self.cam
+            .proj
+            .update(extent.width as u16, extent.height as u16);
     }
 
     fn reload(&mut self, device: &wgpu::Device) {
@@ -162,17 +156,18 @@ impl Application for ResourceView {
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                color_attachments: &[
-                    wgpu::RenderPassColorAttachmentDescriptor {
-                        attachment: targets.color,
-                        resolve_target: None,
-                        load_op: wgpu::LoadOp::Clear,
-                        store_op: wgpu::StoreOp::Store,
-                        clear_color: wgpu::Color {
-                            r: 0.1, g: 0.2, b: 0.3, a: 1.0,
-                        },
+                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                    attachment: targets.color,
+                    resolve_target: None,
+                    load_op: wgpu::LoadOp::Clear,
+                    store_op: wgpu::StoreOp::Store,
+                    clear_color: wgpu::Color {
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
+                        a: 1.0,
                     },
-                ],
+                }],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
                     attachment: targets.depth,
                     depth_load_op: wgpu::LoadOp::Clear,
