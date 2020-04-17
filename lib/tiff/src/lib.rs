@@ -4,7 +4,6 @@ use byteorder::{LittleEndian as E, WriteBytesExt};
 
 use std::io::{Result as IoResult, Seek, SeekFrom};
 
-
 const TY_ASCII: u16 = 2;
 const TY_SHORT: u16 = 3;
 const TY_LONG: u16 = 4;
@@ -43,7 +42,8 @@ pub fn save<W: Seek + WriteBytesExt>(mut tiff: W, images: &[Image]) -> IoResult<
         tiff.write_u32::<E>(cur_offset + 4)?; // IFD offset
         let total_bytes = (im.width * im.height) as usize * im.bpp as usize / 8;
         assert_eq!(total_bytes, im.data.len());
-        let description: u32 = im.name
+        let description: u32 = im
+            .name
             .chars()
             .take(3)
             .enumerate()
@@ -94,7 +94,13 @@ pub fn save<W: Seek + WriteBytesExt>(mut tiff: W, images: &[Image]) -> IoResult<
             },
         ];
         tiff.write_u16::<E>(fields.len() as u16)?;
-        for &Field { tag, ty, count, value } in &fields {
+        for &Field {
+            tag,
+            ty,
+            count,
+            value,
+        } in &fields
+        {
             tiff.write_u16::<E>(tag)?;
             tiff.write_u16::<E>(ty)?;
             tiff.write_u32::<E>(count)?;
@@ -107,7 +113,7 @@ pub fn save<W: Seek + WriteBytesExt>(mut tiff: W, images: &[Image]) -> IoResult<
     // gap
     assert!(cur_offset < data_start);
     tiff.write_u32::<E>(0)?; // next IFD offset
-    for _ in cur_offset + 4 .. data_start {
+    for _ in cur_offset + 4..data_start {
         tiff.write_u8(0)?;
     }
     // image data

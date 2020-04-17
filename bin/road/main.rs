@@ -1,9 +1,9 @@
 use log::info;
 
-mod game;
-mod physics;
 #[path = "../boilerplate.rs"]
 mod boilerplate;
+mod game;
+mod physics;
 
 fn main() {
     use std::env;
@@ -17,7 +17,7 @@ fn main() {
         .parsing_style(getopts::ParsingStyle::StopAtFirstFree)
         .optflag("h", "help", "print this help menu");
 
-    let matches = options.parse(&args[1 ..]).unwrap();
+    let matches = options.parse(&args[1..]).unwrap();
     if matches.opt_present("h") || !matches.free.is_empty() {
         println!("Vangers game prototype");
         let brief = format!("Usage: {} [options]", args[0]);
@@ -25,7 +25,12 @@ fn main() {
         return;
     }
 
-    let game = game::Game::new(&settings, harness.extent, &harness.device, &mut harness.queue);
+    let game = game::Game::new(
+        &settings,
+        harness.extent,
+        &harness.device,
+        &mut harness.queue,
+    );
 
     harness.main_loop(game);
 }

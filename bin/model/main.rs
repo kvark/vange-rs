@@ -13,7 +13,7 @@ fn main() {
         .parsing_style(getopts::ParsingStyle::StopAtFirstFree)
         .optflag("h", "help", "print this help menu");
 
-    let matches = options.parse(&args[1 ..]).unwrap();
+    let matches = options.parse(&args[1..]).unwrap();
     if matches.opt_present("h") || matches.free.len() != 1 {
         println!("Vangers model viewer");
         let brief = format!("Usage: {} [options] <path_to_model>", args[0]);

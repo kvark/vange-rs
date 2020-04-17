@@ -3,7 +3,6 @@ use crate::render::object::BodyColor;
 use std::fs::File;
 use std::path::PathBuf;
 
-
 #[derive(Deserialize)]
 pub struct Car {
     pub id: String,
@@ -74,7 +73,7 @@ pub enum Backend {
     Metal,
     Vulkan,
     DX12,
-    DX11
+    DX11,
 }
 
 impl Backend {
@@ -169,34 +168,26 @@ impl Settings {
         set
     }
 
-    pub fn open_relative(
-        &self,
-        path: &str,
-    ) -> File {
-        File::open(self.data_path.join(path))
-            .expect(&format!("Unable to open game file: {}", path))
+    pub fn open_relative(&self, path: &str) -> File {
+        File::open(self.data_path.join(path)).expect(&format!("Unable to open game file: {}", path))
     }
 
-    pub fn check_path(
-        &self,
-        path: &str,
-    ) -> bool {
+    pub fn check_path(&self, path: &str) -> bool {
         self.data_path.join(path).exists()
     }
 
     pub fn open_palette(&self) -> File {
-        let path = self.data_path
+        let path = self
+            .data_path
             .join("resource")
             .join("pal")
             .join("objects.pal");
         File::open(path).expect("Unable to open palette")
     }
 
-    pub fn _open_vehicle_model(
-        &self,
-        name: &str,
-    ) -> File {
-        let path = self.data_path
+    pub fn _open_vehicle_model(&self, name: &str) -> File {
+        let path = self
+            .data_path
             .join("resource")
             .join("m3d")
             .join("mechous")

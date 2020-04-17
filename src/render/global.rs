@@ -1,10 +1,6 @@
-use crate::{
-    config::settings,
-    space::Camera,
-};
+use crate::{config::settings, space::Camera};
 use bytemuck::{Pod, Zeroable};
 use std::mem;
-
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -49,12 +45,14 @@ impl Context {
                     visibility: wgpu::ShaderStage::all(),
                     ty: wgpu::BindingType::UniformBuffer { dynamic: false },
                 },
-                wgpu::BindGroupLayoutEntry { // palette sampler
+                wgpu::BindGroupLayoutEntry {
+                    // palette sampler
                     binding: 1,
                     visibility: wgpu::ShaderStage::all(),
                     ty: wgpu::BindingType::Sampler { comparison: false },
                 },
-                wgpu::BindGroupLayoutEntry { // GPU store
+                wgpu::BindGroupLayoutEntry {
+                    // GPU store
                     binding: 2,
                     visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::StorageBuffer {
@@ -88,7 +86,7 @@ impl Context {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer {
                         buffer: &uniform_buf,
-                        range: 0 .. mem::size_of::<Constants>() as wgpu::BufferAddress,
+                        range: 0..mem::size_of::<Constants>() as wgpu::BufferAddress,
                     },
                 },
                 wgpu::Binding {

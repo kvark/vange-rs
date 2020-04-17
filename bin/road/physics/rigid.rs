@@ -21,10 +21,7 @@ impl RigidBody {
         }
     }
 
-    fn calc_collision_matrix_inv(
-        &self,
-        r: &cgmath::Vector3<f32>,
-    ) -> cgmath::Matrix3<f32> {
+    fn calc_collision_matrix_inv(&self, r: &cgmath::Vector3<f32>) -> cgmath::Matrix3<f32> {
         let ji = &self.j_inv;
         let t3 = -r.z * ji[1][1] + r.y * ji[2][1];
         let t7 = -r.z * ji[1][2] + r.y * ji[2][2];

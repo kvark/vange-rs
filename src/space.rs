@@ -1,10 +1,4 @@
-use cgmath::{
-    EuclideanSpace as _,
-    InnerSpace as _,
-    Rotation as _,
-    Rotation3 as _,
-    Transform as _,
-};
+use cgmath::{EuclideanSpace as _, InnerSpace as _, Rotation as _, Rotation3 as _, Transform as _};
 use std::ops::Range;
 
 pub type Transform = cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>;
@@ -34,7 +28,10 @@ impl Projection {
 
     pub fn update(&mut self, w: u16, h: u16) {
         match *self {
-            Projection::Ortho { ref mut p, ref mut original } => {
+            Projection::Ortho {
+                ref mut p,
+                ref mut original,
+            } => {
                 let scale_x = w as f32 / original.0 as f32;
                 let scale_y = h as f32 / original.1 as f32;
                 let center_x = 0.5 * p.left + 0.5 * p.right;
@@ -88,10 +85,10 @@ impl Camera {
         let mut mvp = self.proj.to_matrix() * view_mx;
         // convert from GL to wgpu/gfx-rs
         // 1) depth conversion from [-1,1] to [0,1]
-        mvp.x.z = 0.5*(mvp.x.z + mvp.x.w);
-        mvp.y.z = 0.5*(mvp.y.z + mvp.y.w);
-        mvp.z.z = 0.5*(mvp.z.z + mvp.z.w);
-        mvp.w.z = 0.5*(mvp.w.z + mvp.w.w);
+        mvp.x.z = 0.5 * (mvp.x.z + mvp.x.w);
+        mvp.y.z = 0.5 * (mvp.y.z + mvp.y.w);
+        mvp.z.z = 0.5 * (mvp.z.z + mvp.z.w);
+        mvp.w.z = 0.5 * (mvp.w.z + mvp.w.w);
         mvp
     }
 
@@ -101,12 +98,7 @@ impl Camera {
         cgmath::Point3::from_vec(self.loc) + t * dir
     }
 
-    pub fn follow(
-        &mut self,
-        target: &Transform,
-        dt: f32,
-        follow: &Follow,
-    ) {
+    pub fn follow(&mut self, target: &Transform, dt: f32, follow: &Follow) {
         let new_target = if follow.fix_z {
             let z_axis = target.rot * cgmath::Vector3::unit_z();
             let adjust_quat = cgmath::Quaternion::from_arc(z_axis, cgmath::Vector3::unit_z(), None);
@@ -126,14 +118,11 @@ impl Camera {
         self.rot = cgmath::Quaternion::look_at(
             (self.loc - target.disp).normalize(),
             cgmath::Vector3::unit_z(),
-        ).invert();
+        )
+        .invert();
     }
 
-    pub fn look_by(
-        &mut self,
-        target: &Transform,
-        dir: &Direction,
-    ) {
+    pub fn look_by(&mut self, target: &Transform, dir: &Direction) {
         debug_assert!(dir.view.z < 0.0);
         let k = (target.disp.z - self.loc.z) / -dir.view.z;
         self.loc = target.disp + dir.view * k;
@@ -142,11 +131,8 @@ impl Camera {
             cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Deg(30.0));
     }
 
-    pub fn focus_on(
-        &mut self,
-        target: &Transform,
-    ) {
-        use cgmath::{Angle};
+    pub fn focus_on(&mut self, target: &Transform) {
+        use cgmath::Angle;
         self.loc = target.disp + cgmath::vec3(0.0, -64.0, 40.0);
         self.rot = cgmath::Quaternion::from_axis_angle(
             cgmath::Vector3::unit_x(),

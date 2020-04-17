@@ -1,16 +1,13 @@
 use crate::boilerplate::Application;
 use vangers::{
-    config, level, space,
-    render::{
-        Batcher, Render, ScreenTargets,
-        body::GpuStoreInit,
-    },
+    config, level,
+    render::{body::GpuStoreInit, Batcher, Render, ScreenTargets},
+    space,
 };
 
 use futures::executor::LocalSpawner;
 use log::info;
 use winit::event;
-
 
 #[derive(Debug)]
 enum Input {
@@ -48,10 +45,10 @@ impl LevelView {
             let escaves = config::escaves::load(settings.open_relative("escaves.prm"));
             let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
 
-            let ini_name = worlds.get(&settings.game.level)
-                .expect(&format!("Unable to find the world, supported: {:?}",
-                    worlds.keys().collect::<Vec<_>>()
-                ));
+            let ini_name = worlds.get(&settings.game.level).expect(&format!(
+                "Unable to find the world, supported: {:?}",
+                worlds.keys().collect::<Vec<_>>()
+            ));
             let ini_path = settings.data_path.join(ini_name);
             info!("Using level {}", ini_name);
 
@@ -62,25 +59,30 @@ impl LevelView {
                 let escave = escaves
                     .iter()
                     .find(|e| e.world == settings.game.level)
-                    .expect(&format!("Unable to find the escave for this world, supported: {:?}",
+                    .expect(&format!(
+                        "Unable to find the escave for this world, supported: {:?}",
                         escaves.iter().map(|e| &e.world).collect::<Vec<_>>()
                     ));
                 let bunch = {
                     let file = settings.open_relative("bunches.prm");
                     let mut bunches = config::bunches::load(file);
-                    let index = bunches
-                        .iter()
-                        .position(|b| b.escave == escave.name)
-                        .expect(&format!("Unable to find the bunch, supported: {:?}",
-                            bunches.iter().map(|b| &b.escave).collect::<Vec<_>>()
-                        ));
+                    let index =
+                        bunches
+                            .iter()
+                            .position(|b| b.escave == escave.name)
+                            .expect(&format!(
+                                "Unable to find the bunch, supported: {:?}",
+                                bunches.iter().map(|b| &b.escave).collect::<Vec<_>>()
+                            ));
                     info!("Found bunch {}", index);
                     bunches.swap_remove(index)
                 };
-                let cycle = bunch.cycles
+                let cycle = bunch
+                    .cycles
                     .iter()
                     .find(|c| c.name == settings.game.cycle)
-                    .expect(&format!("Unknown cycle is provided, supported: {:?}",
+                    .expect(&format!(
+                        "Unknown cycle is provided, supported: {:?}",
                         bunch.cycles.iter().map(|c| &c.name).collect::<Vec<_>>()
                     ));
                 override_palette = Some(settings.open_relative(&cycle.palette_path));
@@ -94,9 +96,17 @@ impl LevelView {
         };
 
         let objects_palette = level::read_palette(settings.open_palette(), None);
-        let depth = 10f32 .. 10000f32;
+        let depth = 10f32..10000f32;
         let store_init = GpuStoreInit::new_dummy(device);
-        let render = Render::new(device, queue, &level, &objects_palette, &settings.render, screen_extent, store_init.resource());
+        let render = Render::new(
+            device,
+            queue,
+            &level,
+            &objects_palette,
+            &settings.render,
+            screen_extent,
+            store_init.resource(),
+        );
 
         LevelView {
             render,
@@ -114,13 +124,11 @@ impl LevelView {
                         };
                         space::Projection::Perspective(pf)
                     }
-                    config::settings::View::Flat => {
-                        space::Projection::ortho(
-                            settings.window.size[0] as u16,
-                            settings.window.size[1] as u16,
-                            depth,
-                        )
-                    }
+                    config::settings::View::Flat => space::Projection::ortho(
+                        settings.window.size[0] as u16,
+                        settings.window.size[1] as u16,
+                        depth,
+                    ),
                 },
             },
             input: Input::Empty,
@@ -132,7 +140,7 @@ impl LevelView {
 }
 
 impl Application for LevelView {
-    fn on_cursor_move(&mut self, position: (f64, f64)){
+    fn on_cursor_move(&mut self, position: (f64, f64)) {
         if !self.mouse_button_pressed {
             return;
         }
@@ -146,7 +154,7 @@ impl Application for LevelView {
         let shift = position_vec - self.last_mouse_pos;
         self.input = if self.alt_button_pressed {
             Input::RotQuant(shift)
-        }else {
+        } else {
             Input::PlaneQuant(shift)
         };
         self.last_mouse_pos = position_vec;
@@ -159,7 +167,6 @@ impl Application for LevelView {
             }
             _ => {}
         }
-
     }
 
     fn on_mouse_button(&mut self, state: event::ElementState, button: event::MouseButton) {
@@ -182,15 +189,49 @@ impl Application for LevelView {
                 ..
             } => match key {
                 Key::Escape => return false,
-                Key::W => *i = Input::Ver { dir: 1.0, alt: modifiers.alt(), shift: modifiers.shift() },
-                Key::S => *i = Input::Ver { dir: -1.0, alt: modifiers.alt(), shift: modifiers.shift() },
-                Key::A => *i = Input::Hor { dir: -1.0, alt: modifiers.alt(), shift: modifiers.shift() },
-                Key::D => *i = Input::Hor { dir: 1.0, alt: modifiers.alt(), shift: modifiers.shift() },
-                Key::Z => *i = Input::Dep { dir: -1.0, alt: modifiers.alt() },
-                Key::X => *i = Input::Dep { dir: 1.0, alt: modifiers.alt() },
+                Key::W => {
+                    *i = Input::Ver {
+                        dir: 1.0,
+                        alt: modifiers.alt(),
+                        shift: modifiers.shift(),
+                    }
+                }
+                Key::S => {
+                    *i = Input::Ver {
+                        dir: -1.0,
+                        alt: modifiers.alt(),
+                        shift: modifiers.shift(),
+                    }
+                }
+                Key::A => {
+                    *i = Input::Hor {
+                        dir: -1.0,
+                        alt: modifiers.alt(),
+                        shift: modifiers.shift(),
+                    }
+                }
+                Key::D => {
+                    *i = Input::Hor {
+                        dir: 1.0,
+                        alt: modifiers.alt(),
+                        shift: modifiers.shift(),
+                    }
+                }
+                Key::Z => {
+                    *i = Input::Dep {
+                        dir: -1.0,
+                        alt: modifiers.alt(),
+                    }
+                }
+                Key::X => {
+                    *i = Input::Dep {
+                        dir: 1.0,
+                        alt: modifiers.alt(),
+                    }
+                }
                 Key::LAlt => self.alt_button_pressed = true,
                 _ => (),
-            }
+            },
             KeyboardInput {
                 state: ElementState::Released,
                 virtual_keycode: Some(key),
@@ -199,7 +240,7 @@ impl Application for LevelView {
                 Key::W | Key::S | Key::A | Key::D | Key::Z | Key::X => *i = Input::Empty,
                 Key::LAlt => self.alt_button_pressed = false,
                 _ => (),
-            }
+            },
             /*
             Event::KeyboardInput(_, _, Some(Key::R)) =>
                 self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
@@ -221,17 +262,25 @@ impl Application for LevelView {
         use cgmath::{InnerSpace, Rotation3, Zero};
         let move_speed = match self.cam.proj {
             space::Projection::Perspective(_) => 100.0,
-            space::Projection::Ortho{..} => 500.0,
+            space::Projection::Ortho { .. } => 500.0,
         };
         let fast_move_speed = 5.0 * move_speed;
         match self.input {
-            Input::Hor { dir, alt: false, shift } if dir != 0.0 => {
+            Input::Hor {
+                dir,
+                alt: false,
+                shift,
+            } if dir != 0.0 => {
                 let mut vec = self.cam.rot * cgmath::Vector3::unit_x();
                 vec.z = 0.0;
                 let speed = if shift { fast_move_speed } else { move_speed };
                 self.cam.loc += speed * delta * dir * vec.normalize();
             }
-            Input::Ver { dir, alt: false, shift } if dir != 0.0 => {
+            Input::Ver {
+                dir,
+                alt: false,
+                shift,
+            } if dir != 0.0 => {
                 let mut vec = self.cam.rot * cgmath::Vector3::unit_z();
                 vec.z = 0.0;
                 if vec == cgmath::Vector3::zero() {
@@ -253,7 +302,7 @@ impl Application for LevelView {
                 let rot = cgmath::Quaternion::from_angle_x(cgmath::Rad(1.0 * delta * dir));
                 self.cam.rot = self.cam.rot * rot;
             }
-            Input::DepQuant(dir)=> {
+            Input::DepQuant(dir) => {
                 let vec = cgmath::Vector3::unit_z();
                 self.cam.loc += 1000.0 * delta * dir * vec.normalize();
                 self.input = Input::Empty;
@@ -267,15 +316,17 @@ impl Application for LevelView {
                 let norm1 = vec.magnitude();
                 vec.z = 0.0;
                 let norm = vec.magnitude();
-                vec *= norm1/norm;
+                vec *= norm1 / norm;
 
-                self.cam.loc += self.cam.loc.z * 0.2  * delta * vec;
+                self.cam.loc += self.cam.loc.z * 0.2 * delta * vec;
                 self.input = Input::Empty;
             }
             Input::RotQuant(dir) => {
-                let rot_x = cgmath::Quaternion::from_angle_z(cgmath::Rad(0.3 * 1.0 * delta * dir.x));
-                let rot_y = cgmath::Quaternion::from_angle_x(cgmath::Rad(0.3 * 1.0 * delta * dir.y));
-                self.cam.rot = rot_x  * self.cam.rot * rot_y;
+                let rot_x =
+                    cgmath::Quaternion::from_angle_z(cgmath::Rad(0.3 * 1.0 * delta * dir.x));
+                let rot_y =
+                    cgmath::Quaternion::from_angle_x(cgmath::Rad(0.3 * 1.0 * delta * dir.y));
+                self.cam.rot = rot_x * self.cam.rot * rot_y;
                 self.input = Input::Empty;
             }
             _ => {}
@@ -285,7 +336,9 @@ impl Application for LevelView {
     }
 
     fn resize(&mut self, device: &wgpu::Device, extent: wgpu::Extent3d) {
-        self.cam.proj.update(extent.width as u16, extent.height as u16);
+        self.cam
+            .proj
+            .update(extent.width as u16, extent.height as u16);
         self.render.resize(extent, device);
     }
 

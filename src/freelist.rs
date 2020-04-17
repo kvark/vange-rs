@@ -30,9 +30,7 @@ impl<T> FreeList<T> {
 
     pub fn alloc(&mut self) -> Id<T> {
         match self.free.pop() {
-            Some(index) => {
-                Id(index, self.epochs[index as usize], PhantomData)
-            }
+            Some(index) => Id(index, self.epochs[index as usize], PhantomData),
             None => {
                 const START_EPOCH: Epoch = 1;
                 let index = self.epochs.len() as Index;

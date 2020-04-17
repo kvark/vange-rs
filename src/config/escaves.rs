@@ -2,7 +2,6 @@ use crate::config::text::Reader;
 
 use std::fs::File;
 
-
 #[derive(Debug, Deserialize)]
 pub struct ItemSource {
     pub item: String,
@@ -28,7 +27,10 @@ pub fn load(file: File) -> Vec<Escave> {
         let (name, world, x, y, special_item): (String, String, i32, i32, String) = fi.scan();
         info!("Escave {} in {} at {}x{}", name, world, x, y);
         let mut need_items = Vec::new();
-        while { fi.advance(); fi.cur() != "none" } {
+        while {
+            fi.advance();
+            fi.cur() != "none"
+        } {
             let item = fi.scan();
             need_items.push(item);
         }

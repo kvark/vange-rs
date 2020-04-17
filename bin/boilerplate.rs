@@ -12,7 +12,6 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-
 pub trait Application {
     fn on_key(&mut self, input: event::KeyboardInput) -> bool;
     fn on_mouse_wheel(&mut self, _delta: event::MouseScrollDelta) {}
@@ -64,32 +63,29 @@ impl Harness {
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
             .with_title(title)
-            .with_inner_size(
-                winit::dpi::PhysicalSize::new(extent.width, extent.height),
-            )
+            .with_inner_size(winit::dpi::PhysicalSize::new(extent.width, extent.height))
             .with_resizable(true)
             .build(&event_loop)
             .unwrap();
         let surface = wgpu::Surface::create(&window);
 
         info!("Initializing the device");
-        let adapter = task_pool.run_until(
-            wgpu::Adapter::request(
+        let adapter = task_pool
+            .run_until(wgpu::Adapter::request(
                 &wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::Default,
                     compatible_surface: Some(&surface),
                 },
                 settings.backend.to_wgpu(),
-            )
-        ).expect("Unable to initialize GPU via the selected backend.");
-        let (device, queue) = task_pool.run_until(
-            adapter.request_device(&wgpu::DeviceDescriptor {
+            ))
+            .expect("Unable to initialize GPU via the selected backend.");
+        let (device, queue) =
+            task_pool.run_until(adapter.request_device(&wgpu::DeviceDescriptor {
                 extensions: wgpu::Extensions {
                     anisotropic_filtering: false,
                 },
                 limits: wgpu::Limits::default(),
-            })
-        );
+            }));
 
         let sc_desc = wgpu::SwapChainDescriptor {
             usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
@@ -198,13 +194,11 @@ impl Harness {
                             *control_flow = ControlFlow::Exit;
                         }
                     }
-                    event::WindowEvent::MouseWheel { delta, ..} => {
-                        app.on_mouse_wheel(delta)
-                    }
-                    event::WindowEvent::CursorMoved { position, ..} => {
+                    event::WindowEvent::MouseWheel { delta, .. } => app.on_mouse_wheel(delta),
+                    event::WindowEvent::CursorMoved { position, .. } => {
                         app.on_cursor_move(position.into())
                     }
-                    event::WindowEvent::MouseInput { state, button, ..} => {
+                    event::WindowEvent::MouseInput { state, button, .. } => {
                         app.on_mouse_button(state, button)
                     }
                     _ => {}
@@ -213,8 +207,7 @@ impl Harness {
                     let spawner = task_pool.spawner();
                     let duration = time::Instant::now() - last_time;
                     last_time += duration;
-                    let delta = duration.as_secs() as f32 +
-                        duration.subsec_nanos() as f32 * 1.0e-9;
+                    let delta = duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1.0e-9;
 
                     let update_command_buffers = app.update(&device, delta, &spawner);
                     if !update_command_buffers.is_empty() {
@@ -230,7 +223,7 @@ impl Harness {
                             };
                             let render_commane_buffer = app.draw(&device, targets, &spawner);
                             queue.submit(&[render_commane_buffer]);
-                        },
+                        }
                         Err(_) => {}
                     }
                 }

@@ -1,21 +1,11 @@
 use crate::render::{
-    ShapePolygon,
     debug::Position as DebugPos,
-    object::{
-        Context as ObjectContext,
-        Vertex as ObjectVertex,
-    },
+    object::{Context as ObjectContext, Vertex as ObjectVertex},
+    ShapePolygon,
 };
 use m3d;
 
-use std::{
-    mem,
-    fs::File,
-    ops::Range,
-    slice,
-    sync::Arc,
-};
-
+use std::{fs::File, mem, ops::Range, slice, sync::Arc};
 
 pub struct BoundingBox {
     pub min: [f32; 3],
@@ -63,20 +53,16 @@ impl Tessellator {
             depth,
         }
     }
-    fn tessellate(
-        &mut self,
-        corners: &[RawVertex],
-        _middle: RawVertex,
-    ) -> &[RawVertex] {
+    fn tessellate(&mut self, corners: &[RawVertex], _middle: RawVertex) -> &[RawVertex] {
         self.samples.clear();
         //self.samples.push(middle);
-        let mid_sum = corners
-            .iter()
-            .fold([0f32; 3], |sum, cur| [
+        let mid_sum = corners.iter().fold([0f32; 3], |sum, cur| {
+            [
                 sum[0] + cur[0] as f32,
                 sum[1] + cur[1] as f32,
                 sum[2] + cur[2] as f32,
-            ]);
+            ]
+        });
         if self.depth != 0 {
             let corner_ratio = 0.66f32;
             let div = (1.0 - corner_ratio) / corners.len() as f32;
@@ -85,16 +71,19 @@ impl Tessellator {
                 (mid_sum[1] * div) as i8,
                 (mid_sum[2] * div) as i8,
             ];
-            let ring1 = corners.iter().map(|c| {
-                [
-                    (corner_ratio * c[0] as f32) as i8 + mid_rationed[0],
-                    (corner_ratio * c[1] as f32) as i8 + mid_rationed[1],
-                    (corner_ratio * c[2] as f32) as i8 + mid_rationed[2],
-                ]
-            }).collect::<Vec<_>>();
-            self.samples.extend((0 .. corners.len()).map(|i| {
+            let ring1 = corners
+                .iter()
+                .map(|c| {
+                    [
+                        (corner_ratio * c[0] as f32) as i8 + mid_rationed[0],
+                        (corner_ratio * c[1] as f32) as i8 + mid_rationed[1],
+                        (corner_ratio * c[2] as f32) as i8 + mid_rationed[2],
+                    ]
+                })
+                .collect::<Vec<_>>();
+            self.samples.extend((0..corners.len()).map(|i| {
                 let c0 = &ring1[i];
-                let c1 = &ring1[(i+1)%corners.len()];
+                let c1 = &ring1[(i + 1) % corners.len()];
                 [
                     c0[0] / 2 + c1[0] / 2,
                     c0[1] / 2 + c1[1] / 2,
@@ -126,7 +115,6 @@ impl Tessellator {
     }
 }
 
-
 fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
     [v[0] as f32, v[1] as f32, v[2] as f32]
 }
@@ -143,13 +131,13 @@ pub fn load_c3d(
         size: (num_vertices * vertex_size) as wgpu::BufferAddress,
         usage: wgpu::BufferUsage::VERTEX,
     });
-    for (chunk, tri) in mapping.data
+    for (chunk, tri) in mapping
+        .data
         .chunks_mut(3 * vertex_size)
         .zip(&raw.geometry.polygons)
     {
-        let out_vertices = unsafe {
-            slice::from_raw_parts_mut(chunk.as_mut_ptr() as *mut ObjectVertex, 3)
-        };
+        let out_vertices =
+            unsafe { slice::from_raw_parts_mut(chunk.as_mut_ptr() as *mut ObjectVertex, 3) };
         for (vo, v) in out_vertices.iter_mut().zip(&tri.vertices) {
             let p = raw.geometry.positions[v.pos as usize];
             let n = raw.geometry.normals[v.normal as usize];
@@ -209,7 +197,7 @@ pub fn load_c3d_shape(
                 quad.flat_normal[2],
                 0,
             ],
-            origin_square: [ middle[0], middle[1], middle[2], square ],
+            origin_square: [middle[0], middle[1], middle[2], square],
         });
         let normal = [
             quad.flat_normal[0] as f32 / m3d::NORMALIZER,
@@ -221,7 +209,7 @@ pub fn load_c3d_shape(
         if with_sample_buf {
             let mut nlen = 16.0;
             sample_data.push(DebugPos {
-                pos: [ middle[0], middle[1], middle[2], 1.0],
+                pos: [middle[0], middle[1], middle[2], 1.0],
             });
             sample_data.push(DebugPos {
                 pos: [
@@ -250,7 +238,7 @@ pub fn load_c3d_shape(
         polygons.push(Polygon {
             middle,
             normal,
-            samples: samples.len() .. samples.len() + cur_samples.len(),
+            samples: samples.len()..samples.len() + cur_samples.len(),
         });
         samples.extend(cur_samples);
     }
@@ -258,13 +246,12 @@ pub fn load_c3d_shape(
     let vertex_buf = {
         let mapping = device.create_buffer_mapped(&wgpu::BufferDescriptor {
             label: Some("Shape"),
-            size: (raw.geometry.positions.len() * mem::size_of::<ShapeVertex>()) as wgpu::BufferAddress,
+            size: (raw.geometry.positions.len() * mem::size_of::<ShapeVertex>())
+                as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::STORAGE_READ,
         });
         for (vo, p) in mapping.data.chunks_mut(4).zip(&raw.geometry.positions) {
-            vo[..3].copy_from_slice(unsafe {
-                slice::from_raw_parts(p.as_ptr() as *const u8, 3)
-            });
+            vo[..3].copy_from_slice(unsafe { slice::from_raw_parts(p.as_ptr() as *const u8, 3) });
             vo[3] = 1;
         }
         mapping.finish()
@@ -272,15 +259,13 @@ pub fn load_c3d_shape(
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Shape"),
         layout: &object.shape_bind_group_layout,
-        bindings: &[
-            wgpu::Binding {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &vertex_buf,
-                    range: 0 .. (raw.geometry.positions.len() * 4) as wgpu::BufferAddress,
-                },
+        bindings: &[wgpu::Binding {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer {
+                buffer: &vertex_buf,
+                range: 0..(raw.geometry.positions.len() * 4) as wgpu::BufferAddress,
             },
-        ],
+        }],
     });
 
     Arc::new(Shape {
@@ -288,11 +273,10 @@ pub fn load_c3d_shape(
         samples,
         vertex_buf,
         bind_group,
-        polygon_buf: device
-            .create_buffer_with_data(
-                bytemuck::cast_slice(&polygon_data),
-                wgpu::BufferUsage::VERTEX,
-            ),
+        polygon_buf: device.create_buffer_with_data(
+            bytemuck::cast_slice(&polygon_data),
+            wgpu::BufferUsage::VERTEX,
+        ),
         sample_buf: if with_sample_buf {
             let buffer = device.create_buffer_with_data(
                 bytemuck::cast_slice(&sample_data),
@@ -322,13 +306,13 @@ pub fn load_m3d(
         dimensions: raw.dimensions,
         max_radius: raw.max_radius,
         color: raw.color,
-        wheels: raw.wheels
+        wheels: raw
+            .wheels
             .into_iter()
-            .map(|wheel| wheel.map(|mesh| {
-                load_c3d(mesh, device)
-            }))
+            .map(|wheel| wheel.map(|mesh| load_c3d(mesh, device)))
             .collect(),
-        debris: raw.debris
+        debris: raw
+            .debris
             .into_iter()
             .map(|debrie| m3d::Debrie {
                 mesh: load_c3d(debrie.mesh, device),

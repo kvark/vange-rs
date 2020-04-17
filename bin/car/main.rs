@@ -16,7 +16,7 @@ fn main() {
         .parsing_style(getopts::ParsingStyle::StopAtFirstFree)
         .optflag("h", "help", "print this help menu");
 
-    let matches = options.parse(&args[1 ..]).unwrap();
+    let matches = options.parse(&args[1..]).unwrap();
     if matches.opt_present("h") || !matches.free.is_empty() {
         println!("Vangers mechos explorer");
         let brief = format!("Usage: {} [options]", args[0]);

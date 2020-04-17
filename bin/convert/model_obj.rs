@@ -1,6 +1,6 @@
-use m3d::{NORMALIZER, NUM_COLOR_IDS,
-    CollisionQuad, ColorId, DrawTriangle, Geometry, Polygon, Vertex,
-    FullModel, Mesh, Model, Slot, Debrie,
+use m3d::{
+    CollisionQuad, ColorId, Debrie, DrawTriangle, FullModel, Geometry, Mesh, Model, Polygon, Slot,
+    Vertex, NORMALIZER, NUM_COLOR_IDS,
 };
 
 use obj::{IndexTuple, Obj, SimplePolygon};
@@ -14,7 +14,6 @@ use std::{
 
 type RefModel = Model<Mesh<String>, Mesh<String>>;
 
-
 pub fn export(full: FullModel, model_path: &PathBuf) {
     const BODY_PATH: &str = "body.obj";
     const SHAPE_PATH: &str = "body-shape.obj";
@@ -23,19 +22,18 @@ pub fn export(full: FullModel, model_path: &PathBuf) {
 
     let model = RefModel {
         body: full.body.map(|geom| {
-            save_draw_geometry(&geom, dir_path.join(BODY_PATH))
-                .unwrap();
+            save_draw_geometry(&geom, dir_path.join(BODY_PATH)).unwrap();
             BODY_PATH.to_string()
         }),
         shape: full.shape.map(|geom| {
-            save_collision_geometry(&geom, dir_path.join(SHAPE_PATH))
-                .unwrap();
+            save_collision_geometry(&geom, dir_path.join(SHAPE_PATH)).unwrap();
             SHAPE_PATH.to_string()
         }),
         dimensions: full.dimensions,
         max_radius: full.max_radius,
         color: full.color,
-        wheels: full.wheels
+        wheels: full
+            .wheels
             .into_iter()
             .enumerate()
             .map(|(i, wheel)| {
@@ -48,7 +46,8 @@ pub fn export(full: FullModel, model_path: &PathBuf) {
                 })
             })
             .collect(),
-        debris: full.debris
+        debris: full
+            .debris
             .into_iter()
             .enumerate()
             .map(|(i, debrie)| Debrie {
@@ -84,8 +83,9 @@ pub fn import(model_path: &PathBuf) -> FullModel {
     let model = ron::de::from_reader::<_, RefModel>(model_file).unwrap();
 
     let resolve_geom_draw = |name| -> Geometry<DrawTriangle> { load_geometry(dir_path.join(name)) };
-    let resolve_geom_coll = |name| -> Geometry<CollisionQuad> { load_geometry(dir_path.join(name)) };
-    let resolve_mesh = |mesh: Mesh<String>| { mesh.map(&resolve_geom_draw) };
+    let resolve_geom_coll =
+        |name| -> Geometry<CollisionQuad> { load_geometry(dir_path.join(name)) };
+    let resolve_mesh = |mesh: Mesh<String>| mesh.map(&resolve_geom_draw);
 
     FullModel {
         body: model.body.map(&resolve_geom_draw),
@@ -93,23 +93,22 @@ pub fn import(model_path: &PathBuf) -> FullModel {
         dimensions: model.dimensions,
         max_radius: model.max_radius,
         color: model.color,
-        wheels: model.wheels
+        wheels: model
+            .wheels
             .into_iter()
             .map(|wheel| wheel.map(&resolve_mesh))
             .collect(),
-        debris: model.debris
+        debris: model
+            .debris
             .into_iter()
             .map(|debrie| Debrie {
                 mesh: debrie.mesh.map(&resolve_geom_draw),
                 shape: debrie.shape.map(&resolve_geom_coll),
             })
             .collect(),
-        slots: Slot::map_all(model.slots, |mesh, _| {
-            resolve_mesh(mesh)
-        }),
+        slots: Slot::map_all(model.slots, |mesh, _| resolve_mesh(mesh)),
     }
 }
-
 
 fn map_color_id(id: u32) -> ColorId {
     use std::mem;
@@ -129,9 +128,17 @@ fn flatten_normal(poly: &[IndexTuple], normals: &[[f32; 3]]) -> [i8; 3] {
         };
         [u[0] + n[0], u[1] + n[1], u[2] + n[2]]
     });
-    let m2 = n.iter().fold(0f32, |u, v| u + v*v);
-    let scale = if m2 == 0.0 { 0.0 } else { NORMALIZER / m2.sqrt() };
-    [(n[0] * scale) as i8, (n[1] * scale) as i8, (n[2] * scale) as i8]
+    let m2 = n.iter().fold(0f32, |u, v| u + v * v);
+    let scale = if m2 == 0.0 {
+        0.0
+    } else {
+        NORMALIZER / m2.sqrt()
+    };
+    [
+        (n[0] * scale) as i8,
+        (n[1] * scale) as i8,
+        (n[2] * scale) as i8,
+    ]
 }
 
 fn flatten_pos(poly: &[IndexTuple], positions: &[[f32; 3]]) -> [i8; 3] {
@@ -139,7 +146,11 @@ fn flatten_pos(poly: &[IndexTuple], positions: &[[f32; 3]]) -> [i8; 3] {
         let p = positions[*pi];
         [u[0] + p[0], u[1] + p[1], u[2] + p[2]]
     });
-    [ (m[0] * 0.25) as i8, (m[1] * 0.25) as i8, (m[2] * 0.25) as i8 ]
+    [
+        (m[0] * 0.25) as i8,
+        (m[1] * 0.25) as i8,
+        (m[2] * 0.25) as i8,
+    ]
 }
 
 pub fn save_draw_geometry(geom: &Geometry<DrawTriangle>, path: PathBuf) -> IoResult<()> {
@@ -163,14 +174,14 @@ pub fn save_draw_geometry(geom: &Geometry<DrawTriangle>, path: PathBuf) -> IoRes
     for p in &geom.polygons {
         mask |= 1 << p.material[0];
     }
-    for color_id in 0 .. NUM_COLOR_IDS {
+    for color_id in 0..NUM_COLOR_IDS {
         if mask & (1 << color_id) == 0 {
-            continue
+            continue;
         }
         writeln!(dest, "g {:?}", map_color_id(color_id))?;
         for p in &geom.polygons {
             if p.material[0] != color_id {
-                continue
+                continue;
             }
             write!(dest, "f")?;
             for v in &p.vertices {
@@ -216,29 +227,36 @@ pub fn save_collision_geometry(geom: &Geometry<CollisionQuad>, path: PathBuf) ->
 pub fn load_geometry<P: Polygon>(path: PathBuf) -> Geometry<P> {
     let obj: Obj<SimplePolygon> = Obj::load(&path).unwrap();
 
-    let positions = obj.position
+    let positions = obj
+        .position
         .iter()
-        .map(|p| [
-            p[0].min(NORMALIZER).max(-NORMALIZER) as i8,
-            p[1].min(NORMALIZER).max(-NORMALIZER) as i8,
-            p[2].min(NORMALIZER).max(-NORMALIZER) as i8,
-        ])
+        .map(|p| {
+            [
+                p[0].min(NORMALIZER).max(-NORMALIZER) as i8,
+                p[1].min(NORMALIZER).max(-NORMALIZER) as i8,
+                p[2].min(NORMALIZER).max(-NORMALIZER) as i8,
+            ]
+        })
         .collect();
-    let normals = obj.normal
+    let normals = obj
+        .normal
         .iter()
-        .map(|n| [
-            (n[0] * NORMALIZER) as i8,
-            (n[1] * NORMALIZER) as i8,
-            (n[2] * NORMALIZER) as i8,
-        ])
+        .map(|n| {
+            [
+                (n[0] * NORMALIZER) as i8,
+                (n[1] * NORMALIZER) as i8,
+                (n[2] * NORMALIZER) as i8,
+            ]
+        })
         .collect();
 
-    let color_names = (0 .. NUM_COLOR_IDS)
+    let color_names = (0..NUM_COLOR_IDS)
         .map(|id| format!("{:?}", map_color_id(id)))
         .collect::<Vec<_>>();
 
     let obj_ref = &obj;
-    let polygons = obj.objects
+    let polygons = obj
+        .objects
         .iter()
         .flat_map(|object| {
             object.groups.iter().flat_map(|group| {
@@ -247,23 +265,21 @@ pub fn load_geometry<P: Polygon>(path: PathBuf) -> Geometry<P> {
                     .iter()
                     .position(|c| c == &group.name)
                     .unwrap_or(0);
-                group.polys
-                    .iter()
-                    .map(move |poly| {
-                        vertices.clear();
-                        for &IndexTuple(pi, _, ni) in poly {
-                            vertices.push(Vertex {
-                                pos: pi as u16,
-                                normal: ni.unwrap_or(0) as u16,
-                            })
-                        }
-                        P::new(
-                            flatten_pos(poly, &obj_ref.position),
-                            flatten_normal(poly, &obj_ref.normal),
-                            [color_id as u32, 0],
-                            &vertices
-                        )
-                    })
+                group.polys.iter().map(move |poly| {
+                    vertices.clear();
+                    for &IndexTuple(pi, _, ni) in poly {
+                        vertices.push(Vertex {
+                            pos: pi as u16,
+                            normal: ni.unwrap_or(0) as u16,
+                        })
+                    }
+                    P::new(
+                        flatten_pos(poly, &obj_ref.position),
+                        flatten_normal(poly, &obj_ref.normal),
+                        [color_id as u32, 0],
+                        &vertices,
+                    )
+                })
             })
         })
         .collect();

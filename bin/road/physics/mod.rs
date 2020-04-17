@@ -1,16 +1,11 @@
 //! Physics port of the original game. Most closely described by the following documents:
 //! - https://people.eecs.berkeley.edu/~jfc/mirtich/thesis/mirtichThesis.pdf
 
-use vangers::{
-    config, level, space,
-    render::{
-        debug::LineBuffer,
-    },
-};
+use vangers::{config, level, render::debug::LineBuffer, space};
 
 use cgmath::prelude::*;
 
-use std::{f32::EPSILON};
+use std::f32::EPSILON;
 
 mod rigid;
 mod terrain;
@@ -44,19 +39,11 @@ impl Default for Dynamo {
 }
 
 impl Dynamo {
-    pub fn change_traction(
-        &mut self,
-        delta: config::common::Traction,
-    ) {
-        self.traction = (self.traction + delta)
-            .min(MAX_TRACTION)
-            .max(-MAX_TRACTION);
+    pub fn change_traction(&mut self, delta: config::common::Traction) {
+        self.traction = (self.traction + delta).min(MAX_TRACTION).max(-MAX_TRACTION);
     }
 
-    pub fn slow_down(
-        &mut self,
-        delta: config::common::Traction,
-    ) {
+    pub fn slow_down(&mut self, delta: config::common::Traction) {
         let old = self.traction;
         self.change_traction(delta * -old.signum());
         if old * self.traction < 0.0 {
@@ -97,13 +84,16 @@ pub fn step(
 
     let mut rigid = {
         let phys = &car.model.body.physics;
-        let jacobian = cgmath::Matrix3::from(phys.jacobi)
-            * (transform.scale * transform.scale / phys.volume);
+        let jacobian =
+            cgmath::Matrix3::from(phys.jacobi) * (transform.scale * transform.scale / phys.volume);
         rigid::RigidBody::new(&jacobian, dynamo.linear_velocity, dynamo.angular_velocity)
     };
 
     if let Some(power) = jump {
-        let mass = common.nature.density * car.model.body.physics.volume * transform.scale * transform.scale;
+        let mass = common.nature.density
+            * car.model.body.physics.volume
+            * transform.scale
+            * transform.scale;
         let f = device_modulation * common.force.k_distance_to_force * dt_impulse / mass.powf(0.3);
         log::info!("jump mass {:?}, f {:?}", mass, f);
         //DBV dV = A_g2l*DBV(-Sin(Pi/10)*Sin(psi),-Sin(Pi/10)*Cos(psi),Cos(Pi/10));
@@ -116,8 +106,8 @@ pub fn step(
 
     let mut float_count = 0;
     let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
-    let stand_on_wheels = z_axis.z > 0.0 &&
-        (transform.rot * cgmath::Vector3::unit_x()).z.abs() < 0.7;
+    let stand_on_wheels =
+        z_axis.z > 0.0 && (transform.rot * cgmath::Vector3::unit_x()).z.abs() < 0.7;
     let modulation = 1.0;
     let mut acc_cur = AccelerationVectors {
         f: rot_inv * acc_global.f,
@@ -135,8 +125,7 @@ pub fn step(
     let mut sum_df = 0.;
 
     for (bound_poly_id, poly) in car.model.shape.polygons.iter().enumerate() {
-        let r = cgmath::Vector3::from(poly.middle)
-            * (transform.scale * car.physics.scale_bound);
+        let r = cgmath::Vector3::from(poly.middle) * (transform.scale * car.physics.scale_bound);
         let rg0 = transform.rot * r;
         let rglob = rg0 + transform.disp;
         log::debug!(
@@ -148,14 +137,17 @@ pub fn step(
             r
         );
         match level.get((rglob.x as i32, rglob.y as i32)) {
-            level::Texel::Single(level::Point(_, 0)) |
-            level::Texel::Dual { low: level::Point(_, 0), ..} => {
+            level::Texel::Single(level::Point(_, 0))
+            | level::Texel::Dual {
+                low: level::Point(_, 0),
+                ..
+            } => {
                 let dz = flood_level - rglob.z;
                 if dz > 0.0 {
                     float_count += 1;
                     water_immersion += dz;
                 }
-            },
+            }
             _ => {}
         };
         let poly_norm = cgmath::Vector3::from(poly.normal).normalize();
@@ -185,9 +177,10 @@ pub fn step(
                 tmp.z * tmp.z < tmp.x * tmp.x + tmp.y * tmp.y
             };
             match cdata {
-                terrain::CollisionData{ hard: Some(ref cp), ..} if mostly_horisontal => {
-                    let r1 = rot_inv * cgmath::vec3(
-                        cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0); // ignore vertical
+                terrain::CollisionData {
+                    hard: Some(ref cp), ..
+                } if mostly_horisontal => {
+                    let r1 = rot_inv * cgmath::vec3(cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0); // ignore vertical
                     let pv = rigid.velocity_at(r1);
                     let normal = {
                         let bm = car.model.body.bbox.max;
@@ -198,18 +191,22 @@ pub fn step(
                     if dot > 0.0 {
                         rigid.push(r, normal * (dot * -common.impulse.factors[0] * modulation));
                     }
-                },
-                terrain::CollisionData{ soft: Some(ref cp), ..} => {
+                }
+                terrain::CollisionData {
+                    soft: Some(ref cp), ..
+                } => {
                     //TODO: let r1 = rot_inv * (cp.pos - origin);
-                    let r1 = rot_inv * cgmath::vec3(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
+                    let r1 =
+                        rot_inv * cgmath::vec3(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
                     let pv = rigid.velocity_at(r1);
                     if pv.dot(z_axis) < 0.0 {
-                        let vec  = if stand_on_wheels {
+                        let vec = if stand_on_wheels {
                             // ignore XY
                             cgmath::vec3(0.0, 0.0, pv.z)
                         } else {
                             let projected = poly_norm * poly_norm.dot(pv);
-                            common.impulse.k_friction * pv + (1.0 - common.impulse.k_friction) * projected
+                            common.impulse.k_friction * pv
+                                + (1.0 - common.impulse.k_friction) * projected
                         };
                         rigid.push(r, vec * (-common.impulse.factors[1] * modulation));
                     }
@@ -267,23 +264,26 @@ pub fn step(
 
     // apply drag
     let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(rigid.vel.magnitude());
-    let mut w_drag = common.drag.free.w * common.drag.speed.w.powf(rigid.angular_velocity().magnitude2()); //why mag2?
+    let mut w_drag = common.drag.free.w
+        * common
+            .drag
+            .speed
+            .w
+            .powf(rigid.angular_velocity().magnitude2()); //why mag2?
     if wheels_touch > 0 {
         //TODO: why `ln()`?
-        let speed = common.drag.wheel_speed.ln() * car.physics.mobility_factor
-            * common.global.speed_factor
-            / car.physics.speed_factor;
+        let speed =
+            common.drag.wheel_speed.ln() * car.physics.mobility_factor * common.global.speed_factor
+                / car.physics.speed_factor;
         rigid.vel.y *= (1.0 + speed).powf(speed_correction_factor);
     }
 
     let _ = (float_count, water_immersion, terrain_immersion); //TODO
     let is_after_collision = false;
     if wheels_touch != 0 && stand_on_wheels {
-        let f_traction_per_wheel = car.physics.mobility_factor
-            * common.global.mobility_factor
-            * f_turbo
-            * dynamo.traction
-            / (car.model.wheels.len() as f32);
+        let f_traction_per_wheel =
+            car.physics.mobility_factor * common.global.mobility_factor * f_turbo * dynamo.traction
+                / (car.model.wheels.len() as f32);
         let rudder_vec = {
             let (sin, cos) = dynamo.rudder.sin_cos();
             cgmath::vec3(cos, -sin, 0.0)
@@ -294,7 +294,7 @@ pub fn step(
             if detect_wheel_hits {
                 let dist = terrain::get_distance_to_terrain(level, pw);
                 if dist > 0.0 {
-                    continue
+                    continue;
                 }
             }
 
@@ -303,8 +303,7 @@ pub fn step(
             } else {
                 car.model.body.bbox.min[0]
             };
-            let pos = cgmath::vec3(rx_max, wheel.pos[1], wheel.pos[2])
-                * transform.scale;
+            let pos = cgmath::vec3(rx_max, wheel.pos[1], wheel.pos[2]) * transform.scale;
             let pv = rigid.velocity_at(pos);
 
             acc_cur.f.y += f_traction_per_wheel;
@@ -327,7 +326,8 @@ pub fn step(
         }
     }
 
-    if spring_touch + wheels_touch != 0 { //|| in_water
+    if spring_touch + wheels_touch != 0 {
+        //|| in_water
         let tmp = cgmath::Vector3::new(
             0.0,
             0.0,
@@ -378,15 +378,17 @@ pub fn step(
         let vs = v_vel - r_diff_sign * local_z_scaled.cross(w_vel);
 
         let angle = cgmath::Rad(-dt * w_mag);
-        let vel_rot_inv =
-            cgmath::Quaternion::from_axis_angle(w_vel / (w_mag + EPSILON), angle);
+        let vel_rot_inv = cgmath::Quaternion::from_axis_angle(w_vel / (w_mag + EPSILON), angle);
         transform.disp += (transform.rot * vs) * dt;
         transform.rot = transform.rot * vel_rot_inv.invert();
         v_vel = vel_rot_inv * v_vel;
         w_vel = vel_rot_inv * w_vel;
         log::debug!(
             "\tvs={:?} {:?}\n\t\tdisp {:?} scale {}",
-            vs, transform.rot, transform.disp, transform.scale
+            vs,
+            transform.rot,
+            transform.disp,
+            transform.scale
         );
     }
     //log::debug!("\tdrag v={} w={}", v_drag, w_drag);

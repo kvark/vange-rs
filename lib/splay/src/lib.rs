@@ -16,11 +16,11 @@ impl Splay {
             tree1: [0; 512],
             tree2: [0; 512],
         };
-        for i in 0 .. 512 {
+        for i in 0..512 {
             let v = input.read_i32::<E>().unwrap();
             splay.tree1[i] = v;
         }
-        for i in 0 .. 512 {
+        for i in 0..512 {
             let v = input.read_i32::<E>().unwrap();
             splay.tree2[i] = v;
         }
@@ -28,11 +28,11 @@ impl Splay {
     }
 
     pub fn write_trivial<O: WriteBytesExt>(output: &mut O) {
-        for _ in 0 .. 2 {
-            for i in 0i32 .. 256 {
+        for _ in 0..2 {
+            for i in 0i32..256 {
                 output.write_i32::<E>(i).unwrap();
             }
-            for i in 0i32 .. 256 {
+            for i in 0i32..256 {
                 output.write_i32::<E>(-i).unwrap();
             }
         }
@@ -83,7 +83,7 @@ impl Splay {
         let mut cur_size = 0;
         loop {
             let cur = input.read_u8().unwrap();
-            for bit in (0 .. 8).rev() {
+            for bit in (0..8).rev() {
                 let i = (c_index << 1) + ((cur >> bit) as usize & 1);
                 let code = tree[i];
                 c_index = if code <= 0 {
@@ -101,22 +101,13 @@ impl Splay {
         }
     }
 
-    pub fn expand(
-        &self,
-        input: &[u8],
-        output1: &mut [u8],
-        output2: &mut [u8],
-    ) {
+    pub fn expand(&self, input: &[u8], output1: &mut [u8], output2: &mut [u8]) {
         let off1 = Self::decompress(&self.tree1, input, output1, |b, c| b.wrapping_add(c));
-        let off2 = Self::decompress(&self.tree2, &input[off1 ..], output2, |b, c| b ^ c);
+        let off2 = Self::decompress(&self.tree2, &input[off1..], output2, |b, c| b ^ c);
         assert_eq!(off1 + off2, input.len());
     }
 
-    pub fn compress_trivial<O: Write>(
-        input1: &[u8],
-        input2: &[u8],
-        output: &mut O,
-    ) {
+    pub fn compress_trivial<O: Write>(input1: &[u8], input2: &[u8], output: &mut O) {
         let mut last_char = 0;
         for &b in input1 {
             output.write_u8(b.wrapping_sub(last_char)).unwrap();
