@@ -11,7 +11,7 @@ You need the **original game** in order to try out `vange-rs`. The path to resou
 
 ## Technonolgy
 
-The game uses [wgpu-rs](https://github.com/gfx-rs/wgpu) for graphics and [winit](https://github.com/tomaka/winit) for windowing.
+The game uses [wgpu-rs](https://github.com/gfx-rs/wgpu-rs) for graphics and [winit](https://github.com/tomaka/winit) for windowing.
 
 The level is drawn in a single full-screen draw call with a bit of ray tracing magic. There is also an experimental tessellation-based renderer, but neither produce results of sufficient quality. See the [dedicated wiki page](https://github.com/kvark/vange-rs/wiki/Rendering-Techniques) for our rendering technologies.
 

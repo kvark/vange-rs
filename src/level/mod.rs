@@ -231,7 +231,7 @@ pub fn load_flood(config: &LevelConfig) -> Vec<u8> {
         let expected_file_size = flood_offset + (flood_size * 4) as u64;
         assert_eq!(
             vpr_file.metadata().unwrap().len(),
-            expected_file_size as u64
+            expected_file_size,
         );
         let mut vpr = BufReader::new(vpr_file);
         vpr.seek(SeekFrom::Start(flood_offset)).unwrap();

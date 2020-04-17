@@ -163,7 +163,7 @@ impl Context {
         device: &wgpu::Device
     ) -> (wgpu::TextureView, wgpu::Sampler) {
         let extent = wgpu::Extent3d {
-            width: NUM_COLOR_IDS as u32,
+            width: NUM_COLOR_IDS,
             height: 1,
             depth: 1,
         };
@@ -187,7 +187,7 @@ impl Context {
             wgpu::BufferCopyView {
                 buffer: &staging,
                 offset: 0,
-                bytes_per_row: NUM_COLOR_IDS as u32 * 2,
+                bytes_per_row: NUM_COLOR_IDS * 2,
                 rows_per_image: 0,
             },
             wgpu::TextureCopyView {

@@ -525,7 +525,7 @@ impl Context {
         let height_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Terrain height"),
             size: extent,
-            mip_level_count: terrain_mip_count as u32,
+            mip_level_count: terrain_mip_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HEIGHT_FORMAT,

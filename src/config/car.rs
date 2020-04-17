@@ -49,8 +49,8 @@ impl CarStats {
     fn new(d: &[u32]) -> Self {
         CarStats {
             class: d[0] as u8,
-            price_buy: d[1] as Price,
-            price_sell: d[2] as Price,
+            price_buy: d[1],
+            price_sell: d[2],
             size: [
                 d[3] as BoxSize,
                 d[4] as BoxSize,
