@@ -7,6 +7,7 @@ use crate::{
     },
     space::Transform,
 };
+use bytemuck::{Pod, Zeroable};
 use m3d::NUM_COLOR_IDS;
 
 use std::{mem, slice};
@@ -52,21 +53,25 @@ pub enum BodyColor {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
+#[derive(Clone, Copy)]
 pub struct Vertex {
     pub pos: [i8; 4],
     pub color: u32,
     pub normal: [i8; 4],
 }
+unsafe impl Pod for Vertex {}
+unsafe impl Zeroable for Vertex {}
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, zerocopy::AsBytes, zerocopy::FromBytes)]
+#[derive(Clone, Copy, Debug)]
 pub struct Instance {
     pos_scale: [f32; 4],
     orientation: [f32; 4],
     shape_scale: f32,
     body_and_color_id: [u32; 2],
 }
+unsafe impl Pod for Instance {}
+unsafe impl Zeroable for Instance {}
 
 impl Instance {
     pub fn new(transform: &Transform, shape_scale: f32, body: &GpuBody, color: BodyColor) -> Self {
@@ -136,15 +141,17 @@ impl Context {
                 stencil_read_mask: !0,
                 stencil_write_mask: !0,
             }),
-            index_format: wgpu::IndexFormat::Uint16,
-            vertex_buffers: &[
-                wgpu::VertexBufferDescriptor {
-                    stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                    step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Char4, 1 => Uint, 2 => Char4Norm],
-                },
-                INSTANCE_DESCRIPTOR,
-            ],
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: wgpu::IndexFormat::Uint16,
+                vertex_buffers: &[
+                    wgpu::VertexBufferDescriptor {
+                        stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                        step_mode: wgpu::InputStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Char4, 1 => Uint, 2 => Char4Norm],
+                    },
+                    INSTANCE_DESCRIPTOR,
+                ],
+            },
             sample_count: 1,
             alpha_to_coverage_enabled: false,
             sample_mask: !0,
@@ -161,8 +168,8 @@ impl Context {
             depth: 1,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Color table"),
             size: extent,
-            array_layer_count: 1,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
@@ -180,8 +187,8 @@ impl Context {
             wgpu::BufferCopyView {
                 buffer: &staging,
                 offset: 0,
-                row_pitch: NUM_COLOR_IDS as u32 * 2,
-                image_height: 1,
+                bytes_per_row: NUM_COLOR_IDS as u32 * 2,
+                rows_per_image: 0,
             },
             wgpu::TextureCopyView {
                 texture: &texture,
@@ -205,7 +212,7 @@ impl Context {
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: 0.0,
             lod_max_clamp: 0.0,
-            compare_function: wgpu::CompareFunction::Always,
+            compare: wgpu::CompareFunction::Always,
         });
         (texture.create_default_view(), sampler)
     }
@@ -217,33 +224,37 @@ impl Context {
         global: &GlobalContext,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Object"),
             bindings: &[
-                wgpu::BindGroupLayoutBinding { // color map
+                wgpu::BindGroupLayoutEntry { // color map
                     binding: 0,
                     visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D1,
+                        component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
                 },
-                wgpu::BindGroupLayoutBinding { // palette map
+                wgpu::BindGroupLayoutEntry { // palette map
                     binding: 1,
                     visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D1,
+                        component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
                 },
-                wgpu::BindGroupLayoutBinding { // color table sampler
+                wgpu::BindGroupLayoutEntry { // color table sampler
                     binding: 2,
                     visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::Sampler,
+                    ty: wgpu::BindingType::Sampler { comparison: false },
                 },
             ],
         });
         let shape_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Shape"),
             bindings: &[
-                wgpu::BindGroupLayoutBinding { // shape locals
+                wgpu::BindGroupLayoutEntry { // shape locals
                     binding: 0,
                     visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::StorageBuffer { dynamic: false, readonly: true },
@@ -256,6 +267,7 @@ impl Context {
             init_encoder, device
         );
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Object"),
             layout: &bind_group_layout,
             bindings: &[
                 wgpu::Binding {

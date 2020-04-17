@@ -35,6 +35,7 @@ pub trait Application {
 }
 
 pub struct Harness {
+    task_pool: LocalPool,
     event_loop: EventLoop<()>,
     _window: Window,
     pub device: wgpu::Device,
@@ -49,6 +50,7 @@ pub struct Harness {
 impl Harness {
     pub fn init(title: &str) -> (Self, config::Settings) {
         env_logger::init();
+        let mut task_pool = LocalPool::new();
 
         info!("Loading the settings");
         let settings = config::Settings::load("config/settings.ron");
@@ -57,20 +59,6 @@ impl Harness {
             height: settings.window.size[1],
             depth: 1,
         };
-
-        info!("Initializing the device");
-        let adapter = wgpu::Adapter::request(
-            &wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::Default,
-            },
-            settings.backend.to_wgpu(),
-        ).expect("Unable to initialize GPU via the selected backend.");
-        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
-            extensions: wgpu::Extensions {
-                anisotropic_filtering: false,
-            },
-            limits: wgpu::Limits::default(),
-        });
 
         info!("Initializing the window");
         let event_loop = EventLoop::new();
@@ -82,20 +70,39 @@ impl Harness {
             .with_resizable(true)
             .build(&event_loop)
             .unwrap();
-
         let surface = wgpu::Surface::create(&window);
+
+        info!("Initializing the device");
+        let adapter = task_pool.run_until(
+            wgpu::Adapter::request(
+                &wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::Default,
+                    compatible_surface: Some(&surface),
+                },
+                settings.backend.to_wgpu(),
+            )
+        ).expect("Unable to initialize GPU via the selected backend.");
+        let (device, queue) = task_pool.run_until(
+            adapter.request_device(&wgpu::DeviceDescriptor {
+                extensions: wgpu::Extensions {
+                    anisotropic_filtering: false,
+                },
+                limits: wgpu::Limits::default(),
+            })
+        );
+
         let sc_desc = wgpu::SwapChainDescriptor {
             usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
             format: COLOR_FORMAT,
             width: extent.width,
             height: extent.height,
-            present_mode: wgpu::PresentMode::Vsync,
+            present_mode: wgpu::PresentMode::Mailbox,
         };
         let swap_chain = device.create_swap_chain(&surface, &sc_desc);
         let depth_target = device
             .create_texture(&wgpu::TextureDescriptor {
+                label: Some("Depth"),
                 size: extent,
-                array_layer_count: 1,
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -105,6 +112,7 @@ impl Harness {
             .create_default_view();
 
         let harness = Harness {
+            task_pool,
             event_loop,
             _window: window,
             device,
@@ -123,9 +131,9 @@ impl Harness {
         use std::time;
 
         let mut last_time = time::Instant::now();
-        let mut task_pool = LocalPool::new();
         let mut needs_reload = false;
         let Harness {
+            mut task_pool,
             event_loop,
             device,
             queue,
@@ -157,13 +165,13 @@ impl Harness {
                         format: COLOR_FORMAT,
                         width: size.width,
                         height: size.height,
-                        present_mode: wgpu::PresentMode::Vsync,
+                        present_mode: wgpu::PresentMode::Mailbox,
                     };
                     swap_chain = device.create_swap_chain(&surface, &sc_desc);
                     depth_target = device
                         .create_texture(&wgpu::TextureDescriptor {
+                            label: Some("Depth"),
                             size: extent,
-                            array_layer_count: 1,
                             mip_level_count: 1,
                             sample_count: 1,
                             dimension: wgpu::TextureDimension::D2,

@@ -656,10 +656,10 @@ impl Application for Game {
 
         if let Some(ref mut gpu) = self.gpu {
             let mut prep_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                todo: 0,
+                label: Some("Preparation"),
             });
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                todo: 0,
+                label: Some("Update"),
             });
 
             // initialize new entries, update
@@ -799,7 +799,7 @@ impl Application for Game {
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            todo: 0,
+            label: Some("Draw"),
         });
 
         self.render.draw_world(

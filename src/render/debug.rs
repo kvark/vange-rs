@@ -13,8 +13,7 @@ use crate::{
     },
 };
 
-use zerocopy::AsBytes as _;
-
+use bytemuck::{Pod, Zeroable};
 use std::{
     mem,
     collections::HashMap,
@@ -36,23 +35,29 @@ enum Visibility {
 type Selector = (Visibility, wgpu::InputStepMode);
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, zerocopy::AsBytes, zerocopy::FromBytes)]
+#[derive(Clone, Copy, Debug)]
 pub struct Position {
     pub pos: [f32; 4],
 }
+unsafe impl Pod for Position {}
+unsafe impl Zeroable for Position {}
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, zerocopy::AsBytes, zerocopy::FromBytes)]
+#[derive(Clone, Copy, Debug)]
 pub struct Color {
     pub color: u32,
 }
+unsafe impl Pod for Color {}
+unsafe impl Zeroable for Color {}
 
 #[repr(C)]
-#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
+#[derive(Clone, Copy)]
 struct Locals {
     color: [f32; 4],
     _pad: [f32; 60],
 }
+unsafe impl Pod for Locals {}
+unsafe impl Zeroable for Locals {}
 
 impl Locals {
     fn new(color: [f32; 4]) -> Self {
@@ -125,8 +130,9 @@ impl Context {
         object: &ObjectContext,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Debug"),
             bindings: &[
-                wgpu::BindGroupLayoutBinding { // locals
+                wgpu::BindGroupLayoutEntry { // locals
                     binding: 0,
                     visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::UniformBuffer { dynamic: false },
@@ -142,21 +148,20 @@ impl Context {
         });
 
         let line_color_buf = device.create_buffer_with_data(
-            [
-                Color { color: 0xFF000080 }, // line
-            ].as_bytes(),
+            bytemuck::bytes_of(&Color { color: 0xFF000080 }), // line
             wgpu::BufferUsage::VERTEX,
         );
         let locals_buf = device.create_buffer_with_data(
-            [
+            bytemuck::cast_slice(&[
                 Locals::new([1.0; 4]), // line
                 Locals::new([0.0, 1.0, 0.0, 0.2]), // face
                 Locals::new([1.0, 1.0, 0.0, 0.2]), // edge
-            ].as_bytes(),
+            ]),
             wgpu::BufferUsage::UNIFORM,
         );
         let locals_size = mem::size_of::<Locals>() as wgpu::BufferAddress;
         let bind_group_line = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Debug line"),
             layout: &bind_group_layout,
             bindings: &[
                 wgpu::Binding {
@@ -169,6 +174,7 @@ impl Context {
             ],
         });
         let bind_group_face = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Debug face"),
             layout: &bind_group_layout,
             bindings: &[
                 wgpu::Binding {
@@ -181,6 +187,7 @@ impl Context {
             ],
         });
         let bind_group_edge = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Debug edge"),
             layout: &bind_group_layout,
             bindings: &[
                 wgpu::Binding {
@@ -260,11 +267,13 @@ impl Context {
                     stencil_read_mask: !0,
                     stencil_write_mask: !0,
                 }),
-                index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[
-                    SHAPE_POLYGON_BUFFER,
-                    INSTANCE_DESCRIPTOR,
-                ],
+                vertex_state: wgpu::VertexStateDescriptor {
+                    index_format: wgpu::IndexFormat::Uint16,
+                    vertex_buffers: &[
+                        SHAPE_POLYGON_BUFFER,
+                        INSTANCE_DESCRIPTOR,
+                    ],
+                },
                 sample_count: 1,
                 alpha_to_coverage_enabled: false,
                 sample_mask: !0,
@@ -312,31 +321,33 @@ impl Context {
                             stencil_read_mask: !0,
                             stencil_write_mask: !0,
                         }),
-                        index_format: wgpu::IndexFormat::Uint16,
-                        vertex_buffers: &[
-                            wgpu::VertexBufferDescriptor {
-                                stride: mem::size_of::<Position>() as wgpu::BufferAddress,
-                                step_mode: wgpu::InputStepMode::Vertex,
-                                attributes: &[
-                                    wgpu::VertexAttributeDescriptor {
-                                        offset: 0,
-                                        format: wgpu::VertexFormat::Float4,
-                                        shader_location: 0,
-                                    },
-                                ],
-                            },
-                            wgpu::VertexBufferDescriptor {
-                                stride: mem::size_of::<Color>() as wgpu::BufferAddress,
-                                step_mode: color_rate,
-                                attributes: &[
-                                    wgpu::VertexAttributeDescriptor {
-                                        offset: 0,
-                                        format: wgpu::VertexFormat::Uchar4Norm,
-                                        shader_location: 1,
-                                    },
-                                ],
-                            },
-                        ],
+                        vertex_state: wgpu::VertexStateDescriptor {
+                            index_format: wgpu::IndexFormat::Uint16,
+                            vertex_buffers: &[
+                                wgpu::VertexBufferDescriptor {
+                                    stride: mem::size_of::<Position>() as wgpu::BufferAddress,
+                                    step_mode: wgpu::InputStepMode::Vertex,
+                                    attributes: &[
+                                        wgpu::VertexAttributeDescriptor {
+                                            offset: 0,
+                                            format: wgpu::VertexFormat::Float4,
+                                            shader_location: 0,
+                                        },
+                                    ],
+                                },
+                                wgpu::VertexBufferDescriptor {
+                                    stride: mem::size_of::<Color>() as wgpu::BufferAddress,
+                                    step_mode: color_rate,
+                                    attributes: &[
+                                        wgpu::VertexAttributeDescriptor {
+                                            offset: 0,
+                                            format: wgpu::VertexFormat::Uchar4Norm,
+                                            shader_location: 1,
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
                         sample_count: 1,
                         alpha_to_coverage_enabled: false,
                         sample_mask: !0,
@@ -356,10 +367,8 @@ impl Context {
         num_vert: usize,
     ) {
         pass.set_blend_color(wgpu::Color::WHITE);
-        pass.set_vertex_buffers(0, &[
-            (vertex_buf, 0),
-            (color_buf, 0),
-        ]);
+        pass.set_vertex_buffer(0, vertex_buf, 0, 0);
+        pass.set_vertex_buffer(1, color_buf, 0, 0);
         for &vis in &[Visibility::Front, Visibility::Behind] {
             if let Some(ref pipeline) = self.pipelines_line.get(&(vis, color_rate)) {
                 pass.set_pipeline(pipeline);
@@ -383,10 +392,13 @@ impl Context {
         // require instancing now, one has to yield and be refactored.
         let instance_offset = instance_id * mem::size_of::<ObjectInstance>();
         pass.set_bind_group(2, &shape.bind_group, &[]);
-        pass.set_vertex_buffers(0, &[
-            (&shape.polygon_buf, 0),
-            (instance_buf, instance_offset as wgpu::BufferAddress),
-        ]);
+        pass.set_vertex_buffer(0, &shape.polygon_buf, 0, 0);
+        pass.set_vertex_buffer(
+            1,
+            instance_buf,
+            instance_offset as wgpu::BufferAddress,
+            mem::size_of::<ObjectInstance>() as wgpu::BufferAddress,
+        );
 
         // draw collision polygon faces
         if let Some(ref pipeline) = self.pipeline_face {
@@ -421,11 +433,11 @@ impl Context {
         linebuf: &LineBuffer,
     ){
         self.vertex_buf = Some(device.create_buffer_with_data(
-            linebuf.vertices.as_bytes(),
+            bytemuck::cast_slice(&linebuf.vertices),
             wgpu::BufferUsage::VERTEX,
         ));
         self.color_buf = Some(device.create_buffer_with_data(
-            linebuf.colors.as_bytes(),
+            bytemuck::cast_slice(&linebuf.colors),
             wgpu::BufferUsage::VERTEX,
         ));
         assert_eq!(linebuf.vertices.len(), linebuf.colors.len());

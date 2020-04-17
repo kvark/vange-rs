@@ -43,6 +43,7 @@ m3d = { path = "lib/m3d" }
 splay = { path = "lib/splay" }
 tiff = { path = "lib/tiff" }
 # library
+bytemuck = "1"
 byteorder = "1.0"
 cgmath = "0.17"
 futures = "0.3"
@@ -58,7 +59,6 @@ serde_scan = "0.1"
 wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
 #wgpu = { path = "../wgpu-rs" }
 #wgpu = "0.4"
-zerocopy = "0.2"
 # binaries
 env_logger = "0.5"
 getopts = "0.2"

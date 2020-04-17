@@ -5,8 +5,8 @@ use crate::{
     space::{Camera, Transform},
 };
 
+use bytemuck::{Pod, Zeroable};
 use glsl_to_spirv;
-use zerocopy::AsBytes as _;
 
 use std::{
     collections::HashMap,
@@ -58,12 +58,14 @@ pub struct SurfaceData {
 pub type ShapeVertex = [f32; 4];
 
 #[repr(C)]
-#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
+#[derive(Clone, Copy)]
 pub struct ShapePolygon {
     pub indices: [u16; 4],
     pub normal: [i8; 4],
     pub origin_square: [f32; 4],
 }
+unsafe impl Pod for ShapePolygon {}
+unsafe impl Zeroable for ShapePolygon {}
 
 pub const SHAPE_POLYGON_BUFFER: wgpu::VertexBufferDescriptor  = wgpu::VertexBufferDescriptor {
     stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
@@ -257,8 +259,8 @@ impl Palette {
             depth: 1,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Palette"),
             size: extent,
-            array_layer_count: 1,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
@@ -267,15 +269,15 @@ impl Palette {
         });
 
         let staging = device.create_buffer_with_data(
-            data.as_bytes(),
+            bytemuck::cast_slice(data),
             wgpu::BufferUsage::COPY_SRC,
         );
         encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
                 buffer: &staging,
                 offset: 0,
-                row_pitch: 0x100 * 4,
-                image_height: 1,
+                bytes_per_row: 0x100 * 4,
+                rows_per_image: 0,
             },
             wgpu::TextureCopyView {
                 texture: &texture,
@@ -399,13 +401,11 @@ impl Batcher {
                 continue
             }
             array.buffer = Some(device.create_buffer_with_data(
-                array.data.as_bytes(),
+                bytemuck::cast_slice(&array.data),
                 wgpu::BufferUsage::VERTEX,
             ));
-            pass.set_vertex_buffers(0, &[
-                (&array.mesh.vertex_buf, 0),
-                (array.buffer.as_ref().unwrap(), 0),
-            ]);
+            pass.set_vertex_buffer(0, &array.mesh.vertex_buf, 0, 0);
+            pass.set_vertex_buffer(1, array.buffer.as_ref().unwrap(), 0, 0);
             pass.draw(0 .. array.mesh.num_vertices as u32, 0 .. array.data.len() as u32);
             array.data.clear();
         }
@@ -440,7 +440,7 @@ impl Render {
         store_buffer: wgpu::BindingResource,
     ) -> Self {
         let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            todo: 0,
+            label: Some("Init"),
         });
         let global = global::Context::new(device, store_buffer);
         let object = object::Context::new(&mut init_encoder, device, object_palette, &global);
@@ -468,7 +468,7 @@ impl Render {
         device: &wgpu::Device,
     ) {
         let global_staging = device.create_buffer_with_data(
-            global::Constants::new(cam, &self.light_config).as_bytes(),
+            bytemuck::bytes_of(&global::Constants::new(cam, &self.light_config)),
             wgpu::BufferUsage::COPY_SRC,
         );
         encoder.copy_buffer_to_buffer(

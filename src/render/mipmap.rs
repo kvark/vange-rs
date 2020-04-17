@@ -2,14 +2,17 @@ use crate::render::{
     Shaders,
     terrain::{HEIGHT_FORMAT, Rect},
 };
-use std::{mem, slice};
+use bytemuck::{Pod, Zeroable};
+use std::mem;
 
 
 #[repr(C)]
-#[derive(Clone, Copy, zerocopy::AsBytes, zerocopy::FromBytes)]
+#[derive(Clone, Copy)]
 struct Vertex {
     _pos: [f32; 2],
 }
+unsafe impl Pod for Vertex {}
+unsafe impl Zeroable for Vertex {}
 
 struct Mip {
     view: wgpu::TextureView,
@@ -58,20 +61,22 @@ impl MaxMipper {
                 },
             ],
             depth_stencil_state: None,
-            index_format: wgpu::IndexFormat::Uint16,
-            vertex_buffers: &[
-                wgpu::VertexBufferDescriptor {
-                    stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                    step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttributeDescriptor {
-                            offset: 0,
-                            format: wgpu::VertexFormat::Float2,
-                            shader_location: 0,
-                        },
-                    ],
-                },
-            ],
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: wgpu::IndexFormat::Uint16,
+                vertex_buffers: &[
+                    wgpu::VertexBufferDescriptor {
+                        stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                        step_mode: wgpu::InputStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttributeDescriptor {
+                                offset: 0,
+                                format: wgpu::VertexFormat::Float2,
+                                shader_location: 0,
+                            },
+                        ],
+                    },
+                ],
+            },
             sample_count: 1,
             alpha_to_coverage_enabled: false,
             sample_mask: !0,
@@ -85,17 +90,19 @@ impl MaxMipper {
         device: &wgpu::Device,
     ) -> Self {
         let bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("MaxMipper"),
             bindings: &[
-                wgpu::BindGroupLayoutBinding { // sampler
+                wgpu::BindGroupLayoutEntry { // sampler
                     binding: 0,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler,
+                    ty: wgpu::BindingType::Sampler { comparison: false },
                 },
-                wgpu::BindGroupLayoutBinding { // texture
+                wgpu::BindGroupLayoutEntry { // texture
                     binding: 1,
                     visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
                 },
@@ -115,7 +122,7 @@ impl MaxMipper {
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: -100.0,
             lod_max_clamp: 100.0,
-            compare_function: wgpu::CompareFunction::Always,
+            compare: wgpu::CompareFunction::Always,
         });
 
         let mut mips = Vec::with_capacity(mip_count as usize);
@@ -131,6 +138,7 @@ impl MaxMipper {
             });
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("MaxMipper"),
                 layout: &bg_layout,
                 bindings: &[
                     wgpu::Binding {
@@ -166,34 +174,29 @@ impl MaxMipper {
         encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
     ) {
-        let mapped = device.create_buffer_mapped(
-            rects.len() * 6 * mem::size_of::<Vertex>(),
-            wgpu::BufferUsage::VERTEX,
-        );
-        {
-            let vertices = unsafe {
-                slice::from_raw_parts_mut(mapped.data.as_mut_ptr() as *mut Vertex, rects.len() * 6)
-            };
-            for (r, data) in rects.iter().zip(vertices.chunks_mut(6)) {
-                let v_abs = [
-                    (r.x, r.y),
-                    (r.x + r.w, r.y),
-                    (r.x, r.y + r.h),
-                    (r.x, r.y + r.h),
-                    (r.x + r.w, r.y),
-                    (r.x + r.w, r.y + r.h),
-                ];
-                for (i, &(x, y)) in v_abs.iter().enumerate() {
-                    data[i] = Vertex {
-                        _pos: [
-                            x as f32 / self.size.width as f32,
-                            y as f32 / self.size.height as f32,
-                        ],
-                    };
-                }
+        let mut vertex_data = Vec::with_capacity(rects.len() * 6);
+        for r in rects.iter() {
+            let v_abs = [
+                (r.x, r.y),
+                (r.x + r.w, r.y),
+                (r.x, r.y + r.h),
+                (r.x, r.y + r.h),
+                (r.x + r.w, r.y),
+                (r.x + r.w, r.y + r.h),
+            ];
+            for &(x, y) in v_abs.iter() {
+                vertex_data.push(Vertex {
+                    _pos: [
+                        x as f32 / self.size.width as f32,
+                        y as f32 / self.size.height as f32,
+                    ],
+                });
             }
         }
-        let vertex_buf = mapped.finish();
+        let vertex_buf = device.create_buffer_with_data(
+            bytemuck::cast_slice(&vertex_data),
+            wgpu::BufferUsage::VERTEX,
+        );
 
         for mip in 0 .. self.mips.len() - 1 {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -210,7 +213,7 @@ impl MaxMipper {
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.mips[mip].bind_group, &[]);
-            pass.set_vertex_buffers(0, &[(&vertex_buf, 0)]);
+            pass.set_vertex_buffer(0, &vertex_buf, 0, 0);
             pass.draw(0 .. rects.len() as u32 * 6, 0 .. 1);
         }
     }

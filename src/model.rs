@@ -8,8 +8,6 @@ use crate::render::{
 };
 use m3d;
 
-use zerocopy::AsBytes as _;
-
 use std::{
     mem,
     fs::File,
@@ -140,10 +138,11 @@ pub fn load_c3d(
     let num_vertices = raw.geometry.polygons.len() * 3;
     debug!("\tGot {} GPU vertices...", num_vertices);
     let vertex_size = mem::size_of::<ObjectVertex>();
-    let mapping = device.create_buffer_mapped(
-        num_vertices * vertex_size,
-        wgpu::BufferUsage::VERTEX,
-    );
+    let mapping = device.create_buffer_mapped(&wgpu::BufferDescriptor {
+        label: Some("C3D"),
+        size: (num_vertices * vertex_size) as wgpu::BufferAddress,
+        usage: wgpu::BufferUsage::VERTEX,
+    });
     for (chunk, tri) in mapping.data
         .chunks_mut(3 * vertex_size)
         .zip(&raw.geometry.polygons)
@@ -257,10 +256,11 @@ pub fn load_c3d_shape(
     }
 
     let vertex_buf = {
-        let mapping = device.create_buffer_mapped(
-            raw.geometry.positions.len() * mem::size_of::<ShapeVertex>(),
-            wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::STORAGE_READ,
-        );
+        let mapping = device.create_buffer_mapped(&wgpu::BufferDescriptor {
+            label: Some("Shape"),
+            size: (raw.geometry.positions.len() * mem::size_of::<ShapeVertex>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::STORAGE_READ,
+        });
         for (vo, p) in mapping.data.chunks_mut(4).zip(&raw.geometry.positions) {
             vo[..3].copy_from_slice(unsafe {
                 slice::from_raw_parts(p.as_ptr() as *const u8, 3)
@@ -270,6 +270,7 @@ pub fn load_c3d_shape(
         mapping.finish()
     };
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Shape"),
         layout: &object.shape_bind_group_layout,
         bindings: &[
             wgpu::Binding {
@@ -289,12 +290,12 @@ pub fn load_c3d_shape(
         bind_group,
         polygon_buf: device
             .create_buffer_with_data(
-                polygon_data.as_bytes(),
+                bytemuck::cast_slice(&polygon_data),
                 wgpu::BufferUsage::VERTEX,
             ),
         sample_buf: if with_sample_buf {
             let buffer = device.create_buffer_with_data(
-                sample_data.as_bytes(),
+                bytemuck::cast_slice(&sample_data),
                 wgpu::BufferUsage::VERTEX,
             );
             Some((buffer, sample_data.len()))
