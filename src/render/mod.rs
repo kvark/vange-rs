@@ -328,7 +328,7 @@ impl Batcher {
         instance: object::Instance,
     ) {
         self.instances
-            .entry(&**mesh as *const _)
+            .entry(&**mesh)
             .or_insert_with(|| InstanceArray {
                 data: Vec::new(),
                 mesh: Arc::clone(mesh),
