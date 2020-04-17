@@ -80,7 +80,7 @@ impl LevelConfig {
         LevelConfig {
             path_data,
             path_palette: ini_path.with_file_name(&storage["Palette File"]),
-            is_compressed: storage["Compressed Format Using"] != "0",
+            is_compressed: &storage["Compressed Format Using"] != "0",
             //name: self.game.level.clone(),
             size: (
                 Power(global["Map Power X"].parse().unwrap()),
