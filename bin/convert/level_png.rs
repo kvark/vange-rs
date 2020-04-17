@@ -17,7 +17,6 @@ struct MultiPng {
 }
 
 pub fn save(path: &PathBuf, layers: LevelLayers) {
-    use png::Parameter;
     use std::io::Write;
 
     let mp = MultiPng {
@@ -34,7 +33,7 @@ pub fn save(path: &PathBuf, layers: LevelLayers) {
         println!("\t\t{}...", mp.height);
         let file = File::create(path.with_file_name(mp.height)).unwrap();
         let mut encoder = png::Encoder::new(file, layers.size.0 as u32, layers.size.1 as u32);
-        png::ColorType::RGB.set_param(&mut encoder);
+        encoder.set_color(png::ColorType::RGB);
         data.clear();
         for ((&h0, &h1), &delta) in layers.het0
             .iter()
@@ -53,7 +52,7 @@ pub fn save(path: &PathBuf, layers: LevelLayers) {
         println!("\t\t{}...", mp.material);
         let file = File::create(path.with_file_name(mp.material)).unwrap();
         let mut encoder = png::Encoder::new(file, layers.size.0 as u32, layers.size.1 as u32);
-        png::ColorType::RGB.set_param(&mut encoder);
+        encoder.set_color(png::ColorType::RGB);
         data.clear();
         for (&m0, &m1) in layers.mat0.iter().zip(&layers.mat1) {
             data.extend_from_slice(&[m0 << 4, m1 << 4, 0, m0 & 0xF0, m1 & 0xF0, 0]);

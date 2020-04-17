@@ -53,7 +53,6 @@ pub fn save_tiff(path: &PathBuf, layers: vangers::level::LevelLayers) {
 
 
 fn main() {
-    use png::Parameter;
     use std::env;
     use std::io::Write;
 
@@ -127,7 +126,7 @@ fn main() {
             let data = fs_read(&src_path).unwrap();
             let file = File::create(&dst_path).unwrap();
             let mut encoder = png::Encoder::new(file, 0x100, 1);
-            png::ColorType::RGB.set_param(&mut encoder);
+            encoder.set_color(png::ColorType::RGB);
             encoder
                 .write_header()
                 .unwrap()
