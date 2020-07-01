@@ -431,11 +431,11 @@ impl Context {
         layout: &wgpu::BindGroupLayout,
         device: &wgpu::Device,
     ) -> (wgpu::BindGroup, [u32; 3]) {
-        let size = 4 * (extent.width * extent.height) as wgpu::BufferAddress;
         let storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Scatter"),
-            size,
+            size: 4 * (extent.width * extent.height) as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::STORAGE,
+            mapped_at_creation: false,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -443,10 +443,7 @@ impl Context {
             layout,
             bindings: &[wgpu::Binding {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &storage_buffer,
-                    range: 0..size,
-                },
+                resource: wgpu::BindingResource::Buffer(storage_buffer.slice(..)),
             }],
         });
 
@@ -460,14 +457,13 @@ impl Context {
     }
 
     pub fn new(
-        init_encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         level: &level::Level,
         global: &GlobalContext,
         config: &TerrainSettings,
         screen_extent: wgpu::Extent3d,
     ) -> Self {
-        let origin = wgpu::Origin3d { x: 0, y: 0, z: 0 };
         let extent = wgpu::Extent3d {
             width: level.size.0 as u32,
             height: level.size.1 as u32,
@@ -540,84 +536,64 @@ impl Context {
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
 
-        let height_staging = device.create_buffer_with_data(
-            bytemuck::cast_slice(&level.height),
-            wgpu::BufferUsage::COPY_SRC,
-        );
-        let meta_staging = device.create_buffer_with_data(
-            bytemuck::cast_slice(&level.meta),
-            wgpu::BufferUsage::COPY_SRC,
-        );
-        let flood_staging = device.create_buffer_with_data(
-            bytemuck::cast_slice(&level.flood_map),
-            wgpu::BufferUsage::COPY_SRC,
-        );
-        let table_staging = device.create_buffer_with_data(
-            bytemuck::cast_slice(&terrrain_table),
-            wgpu::BufferUsage::COPY_SRC,
-        );
-
-        init_encoder.copy_buffer_to_texture(
-            wgpu::BufferCopyView {
-                buffer: &height_staging,
-                offset: 0,
-                bytes_per_row: level.size.0 as u32,
-                rows_per_image: 0,
-            },
+        queue.write_texture(
             wgpu::TextureCopyView {
                 texture: &height_texture,
                 mip_level: 0,
-                array_layer: 0,
-                origin,
+                origin: wgpu::Origin3d::ZERO,
             },
-            extent,
-        );
-        init_encoder.copy_buffer_to_texture(
-            wgpu::BufferCopyView {
-                buffer: &meta_staging,
+            bytemuck::cast_slice(&level.height),
+            wgpu::TextureDataLayout {
                 offset: 0,
                 bytes_per_row: level.size.0 as u32,
                 rows_per_image: 0,
             },
+            extent,
+        );
+        queue.write_texture(
             wgpu::TextureCopyView {
                 texture: &meta_texture,
                 mip_level: 0,
-                array_layer: 0,
-                origin,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            bytemuck::cast_slice(&level.meta),
+            wgpu::TextureDataLayout {
+                offset: 0,
+                bytes_per_row: level.size.0 as u32,
+                rows_per_image: 0,
             },
             extent,
         );
-        init_encoder.copy_buffer_to_texture(
-            wgpu::BufferCopyView {
-                buffer: &flood_staging,
+        queue.write_texture(
+            wgpu::TextureCopyView {
+                texture: &flood_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            bytemuck::cast_slice(&level.flood_map),
+            wgpu::TextureDataLayout {
                 offset: 0,
                 bytes_per_row: flood_extent.width,
                 rows_per_image: 0,
             },
-            wgpu::TextureCopyView {
-                texture: &flood_texture,
-                mip_level: 0,
-                array_layer: 0,
-                origin,
-            },
             flood_extent,
         );
-        init_encoder.copy_buffer_to_texture(
-            wgpu::BufferCopyView {
-                buffer: &table_staging,
+        queue.write_texture(
+            wgpu::TextureCopyView {
+                texture: &table_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            bytemuck::cast_slice(&terrrain_table),
+            wgpu::TextureDataLayout {
                 offset: 0,
                 bytes_per_row: table_extent.width * 4,
                 rows_per_image: 0,
             },
-            wgpu::TextureCopyView {
-                texture: &table_texture,
-                mip_level: 0,
-                array_layer: 0,
-                origin,
-            },
             table_extent,
         );
-        let palette = Palette::new(init_encoder, device, &level.palette);
+
+        let palette = Palette::new(device, queue, &level.palette);
 
         let repeat_nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -626,9 +602,7 @@ impl Context {
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: 0.0,
-            lod_max_clamp: 0.0,
-            compare: wgpu::CompareFunction::Always,
+            ..Default::default()
         });
         let flood_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -637,9 +611,7 @@ impl Context {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: 0.0,
-            lod_max_clamp: 0.0,
-            compare: wgpu::CompareFunction::Always,
+            ..Default::default()
         });
         let table_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -648,94 +620,98 @@ impl Context {
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: 0.0,
-            lod_max_clamp: 0.0,
-            compare: wgpu::CompareFunction::Always,
+            ..Default::default()
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Terrain"),
             bindings: &[
-                wgpu::BindGroupLayoutEntry {
-                    // surface uniforms
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // terrain locals
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // height map
-                    binding: 2,
-                    visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::SampledTexture {
+                // surface uniforms
+                wgpu::BindGroupLayoutEntry::new(
+                    0,
+                    wgpu::ShaderStage::all(),
+                    wgpu::BindingType::UniformBuffer {
+                        dynamic: false,
+                        min_binding_size: None,
+                    },
+                ),
+                // terrain locals
+                wgpu::BindGroupLayoutEntry::new(
+                    1,
+                    wgpu::ShaderStage::all(),
+                    wgpu::BindingType::UniformBuffer {
+                        dynamic: false,
+                        min_binding_size: None,
+                    },
+                ),
+                // height map
+                wgpu::BindGroupLayoutEntry::new(
+                    2,
+                    wgpu::ShaderStage::all(),
+                    wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D2,
                         component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // meta map
-                    binding: 3,
-                    visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::SampledTexture {
+                ),
+                // meta map
+                wgpu::BindGroupLayoutEntry::new(
+                    3,
+                    wgpu::ShaderStage::all(),
+                    wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D2,
                         component_type: wgpu::TextureComponentType::Uint,
                         multisampled: false,
                     },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // flood map
-                    binding: 4,
-                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::SampledTexture {
+                ),
+                // flood map
+                wgpu::BindGroupLayoutEntry::new(
+                    4,
+                    wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D1,
                         component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // table map
-                    binding: 5,
-                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::SampledTexture {
+                ),
+                // table map
+                wgpu::BindGroupLayoutEntry::new(
+                    5,
+                    wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D1,
                         component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // palette map
-                    binding: 6,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture {
+                ),
+                // palette map
+                wgpu::BindGroupLayoutEntry::new(
+                    6,
+                    wgpu::ShaderStage::FRAGMENT,
+                    wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D1,
                         component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // main sampler
-                    binding: 7,
-                    visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::Sampler { comparison: false },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // flood sampler
-                    binding: 8,
-                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::Sampler { comparison: false },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // table sampler
-                    binding: 9,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler { comparison: false },
-                },
+                ),
+                // main sampler
+                wgpu::BindGroupLayoutEntry::new(
+                    7,
+                    wgpu::ShaderStage::all(),
+                    wgpu::BindingType::Sampler { comparison: false },
+                ),
+                // flood sampler
+                wgpu::BindGroupLayoutEntry::new(
+                    8,
+                    wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    wgpu::BindingType::Sampler { comparison: false },
+                ),
+                // table sampler
+                wgpu::BindGroupLayoutEntry::new(
+                    9,
+                    wgpu::ShaderStage::FRAGMENT,
+                    wgpu::BindingType::Sampler { comparison: false },
+                ),
             ],
         });
 
@@ -754,6 +730,7 @@ impl Context {
             label: Some("Terrain uniforms"),
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -762,17 +739,11 @@ impl Context {
             bindings: &[
                 wgpu::Binding {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &surface_uni_buf,
-                        range: 0..mem::size_of::<SurfaceConstants>() as wgpu::BufferAddress,
-                    },
+                    resource: wgpu::BindingResource::Buffer(surface_uni_buf.slice(..)),
                 },
                 wgpu::Binding {
                     binding: 1,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &uniform_buf,
-                        range: 0..mem::size_of::<Constants>() as wgpu::BufferAddress,
-                    },
+                    resource: wgpu::BindingResource::Buffer(uniform_buf.slice(..)),
                 },
                 wgpu::Binding {
                     binding: 2,
@@ -920,15 +891,18 @@ impl Context {
                 let local_bg_layout =
                     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                         label: Some("Terrain locals"),
-                        bindings: &[wgpu::BindGroupLayoutEntry {
+                        bindings: &[
                             // output map
-                            binding: 0,
-                            visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                            ty: wgpu::BindingType::StorageBuffer {
-                                dynamic: false,
-                                readonly: false,
-                            },
-                        }],
+                            wgpu::BindGroupLayoutEntry::new(
+                                0,
+                                wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                                wgpu::BindingType::StorageBuffer {
+                                    dynamic: false,
+                                    readonly: false,
+                                    min_binding_size: None,
+                                },
+                            ),
+                        ],
                     });
                 let local_pipeline_layout =
                     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1144,8 +1118,8 @@ impl Context {
                 ..
             } => {
                 pass.set_pipeline(pipeline);
-                pass.set_index_buffer(&geo.index_buf, 0, 0);
-                pass.set_vertex_buffer(0, &geo.vertex_buf, 0, 0);
+                pass.set_index_buffer(geo.index_buf.slice(..));
+                pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.draw_indexed(0..geo.num_indices as u32, 0, 0..1);
             }
             /*
@@ -1158,8 +1132,8 @@ impl Context {
                 ref geo,
             } => {
                 pass.set_pipeline(pipeline);
-                pass.set_index_buffer(&geo.index_buf, 0, 0);
-                pass.set_vertex_buffer(0, &geo.vertex_buf, 0, 0);
+                pass.set_index_buffer(geo.index_buf.slice(..));
+                pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.draw_indexed(0..geo.num_indices as u32, 0, 0..level::HEIGHT_SCALE);
             }
             Kind::Paint {

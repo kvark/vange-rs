@@ -155,8 +155,8 @@ impl Context {
     }
 
     fn create_color_table(
-        encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
     ) -> (wgpu::TextureView, wgpu::Sampler) {
         let extent = wgpu::Extent3d {
             width: NUM_COLOR_IDS,
@@ -173,22 +173,17 @@ impl Context {
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
 
-        let staging = device.create_buffer_with_data(
-            unsafe { slice::from_raw_parts(COLOR_TABLE[0].as_ptr(), NUM_COLOR_IDS as usize * 2) },
-            wgpu::BufferUsage::COPY_SRC,
-        );
-        encoder.copy_buffer_to_texture(
-            wgpu::BufferCopyView {
-                buffer: &staging,
-                offset: 0,
-                bytes_per_row: NUM_COLOR_IDS * 2,
-                rows_per_image: 0,
-            },
+        queue.write_texture(
             wgpu::TextureCopyView {
                 texture: &texture,
                 mip_level: 0,
-                array_layer: 0,
-                origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
+                origin: wgpu::Origin3d::ZERO,
+            },
+            unsafe { slice::from_raw_parts(COLOR_TABLE[0].as_ptr(), NUM_COLOR_IDS as usize * 2) },
+            wgpu::TextureDataLayout {
+                offset: 0,
+                bytes_per_row: NUM_COLOR_IDS * 2,
+                rows_per_image: 0,
             },
             extent,
         );
@@ -200,67 +195,67 @@ impl Context {
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: 0.0,
-            lod_max_clamp: 0.0,
-            compare: wgpu::CompareFunction::Always,
+            ..Default::default()
         });
         (texture.create_default_view(), sampler)
     }
 
     pub fn new(
-        init_encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         palette_data: &[[u8; 4]],
         global: &GlobalContext,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Object"),
             bindings: &[
-                wgpu::BindGroupLayoutEntry {
-                    // color map
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::SampledTexture {
+                // color map
+                wgpu::BindGroupLayoutEntry::new(
+                    0,
+                    wgpu::ShaderStage::VERTEX,
+                    wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D1,
                         component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // palette map
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture {
+                ),
+                // palette map
+                wgpu::BindGroupLayoutEntry::new(
+                    1,
+                    wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                    wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D1,
                         component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // color table sampler
-                    binding: 2,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::Sampler { comparison: false },
-                },
+                ),
+                // color table sampler
+                wgpu::BindGroupLayoutEntry::new(
+                    2,
+                    wgpu::ShaderStage::VERTEX,
+                    wgpu::BindingType::Sampler { comparison: false },
+                ),
             ],
         });
         let shape_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Shape"),
-                bindings: &[wgpu::BindGroupLayoutEntry {
+                bindings: &[
                     // shape locals
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::StorageBuffer {
-                        dynamic: false,
-                        readonly: true,
-                    },
-                }],
+                    wgpu::BindGroupLayoutEntry::new(
+                        0,
+                        wgpu::ShaderStage::VERTEX,
+                        wgpu::BindingType::StorageBuffer {
+                            dynamic: false,
+                            readonly: true,
+                            min_binding_size: None,
+                        },
+                    ),
+                ],
             });
 
-        let palette = Palette::new(init_encoder, device, palette_data);
-        let (color_table_view, color_table_sampler) =
-            Self::create_color_table(init_encoder, device);
+        let palette = Palette::new(device, queue, palette_data);
+        let (color_table_view, color_table_sampler) = Self::create_color_table(device, queue);
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Object"),
             layout: &bind_group_layout,

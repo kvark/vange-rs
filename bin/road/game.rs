@@ -315,7 +315,7 @@ impl Game {
         settings: &config::Settings,
         screen_extent: wgpu::Extent3d,
         device: &wgpu::Device,
-        queue: &mut wgpu::Queue,
+        queue: &wgpu::Queue,
     ) -> Self {
         log::info!("Loading world parameters");
         let (level, coords) = if settings.game.level.is_empty() {

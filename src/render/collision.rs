@@ -169,40 +169,48 @@ impl GpuCollider {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Collision"),
             bindings: &[
-                wgpu::BindGroupLayoutEntry {
-                    // global uniforms
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // collisions
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::StorageBuffer {
+                // global uniforms
+                wgpu::BindGroupLayoutEntry::new(
+                    0,
+                    wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                    wgpu::BindingType::UniformBuffer {
+                        dynamic: false,
+                        min_binding_size: None,
+                    },
+                ),
+                // collisions
+                wgpu::BindGroupLayoutEntry::new(
+                    1,
+                    wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    wgpu::BindingType::StorageBuffer {
                         dynamic: false,
                         readonly: false,
+                        min_binding_size: None,
                     },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // data
-                    binding: 2,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::StorageBuffer {
+                ),
+                // data
+                wgpu::BindGroupLayoutEntry::new(
+                    2,
+                    wgpu::ShaderStage::VERTEX,
+                    wgpu::BindingType::StorageBuffer {
                         dynamic: false,
                         readonly: false,
+                        min_binding_size: None,
                     },
-                },
+                ),
             ],
         });
         let dynamic_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Collision dynamic"),
-                bindings: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: true },
-                }],
+                bindings: &[wgpu::BindGroupLayoutEntry::new(
+                    0,
+                    wgpu::ShaderStage::VERTEX,
+                    wgpu::BindingType::UniformBuffer {
+                        dynamic: true,
+                        min_binding_size: None,
+                    },
+                )],
             });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             bind_group_layouts: &[
@@ -239,6 +247,7 @@ impl GpuCollider {
             label: Some("Collision Locals"),
             size: locals_total_size,
             usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::UNIFORM,
+            mapped_at_creation: false,
         });
         let max_polygons_total =
             (settings.max_polygons_total - 1) | (CLEAR_WORK_GROUP_WIDTH - 1) as usize + 1;
@@ -247,8 +256,9 @@ impl GpuCollider {
             label: Some("Collision"),
             size: buf_size,
             usage: wgpu::BufferUsage::STORAGE
-                | wgpu::BufferUsage::STORAGE_READ
+                | wgpu::BufferUsage::STORAGE
                 | wgpu::BufferUsage::COPY_SRC,
+            mapped_at_creation: false,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -257,17 +267,11 @@ impl GpuCollider {
             bindings: &[
                 wgpu::Binding {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &global_uniforms,
-                        range: 0..mem::size_of::<Globals>() as wgpu::BufferAddress,
-                    },
+                    resource: wgpu::BindingResource::Buffer(global_uniforms.slice(..)),
                 },
                 wgpu::Binding {
                     binding: 1,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &collision_buffer,
-                        range: 0..buf_size,
-                    },
+                    resource: wgpu::BindingResource::Buffer(collision_buffer.slice(..)),
                 },
                 wgpu::Binding {
                     binding: 2,
@@ -280,10 +284,7 @@ impl GpuCollider {
             layout: &dynamic_bind_group_layout,
             bindings: &[wgpu::Binding {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &local_uniforms,
-                    range: 0..mem::size_of::<Locals>() as wgpu::BufferAddress,
-                },
+                resource: wgpu::BindingResource::Buffer(local_uniforms.slice(..)),
             }],
         });
 
@@ -349,9 +350,10 @@ impl GpuCollider {
             color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
                 attachment: &self.dummy_target,
                 resolve_target: None,
-                load_op: wgpu::LoadOp::Clear,
-                store_op: wgpu::StoreOp::Clear,
-                clear_color: wgpu::Color::BLACK,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: false,
+                },
             }],
             depth_stencil_attachment: None,
         });
@@ -369,7 +371,7 @@ impl GpuCollider {
             uniform_buf: &self.uniform_buf,
             dynamic_bind_group: &self.dynamic_bind_group,
             locals_size: self.locals_size,
-            object_locals: Vec::new(),
+            object_locals: Vec::with_capacity(self.capacity),
             ranges: &mut self.ranges,
             polygon_id: 0,
             dirty_group_count: &mut self.dirty_group_count,
@@ -378,10 +380,7 @@ impl GpuCollider {
     }
 
     pub fn collision_buffer(&self) -> wgpu::BindingResource {
-        wgpu::BindingResource::Buffer {
-            buffer: &self.buffer,
-            range: 0..(self.capacity * mem::size_of::<PolygonData>()) as wgpu::BufferAddress,
-        }
+        wgpu::BindingResource::Buffer(self.buffer.slice(..))
     }
 }
 
@@ -395,7 +394,7 @@ impl<'pass, 'this: 'pass> GpuSession<'pass, 'this> {
         self.pass.set_bind_group(2, &shape.bind_group, &[]);
         self.pass
             .set_bind_group(3, self.dynamic_bind_group, &[offset]);
-        self.pass.set_vertex_buffer(0, &shape.polygon_buf, 0, 0);
+        self.pass.set_vertex_buffer(0, shape.polygon_buf.slice(..));
         self.pass.draw(0..4, 0..shape.polygons.len() as u32);
 
         let offset = self.polygon_id;

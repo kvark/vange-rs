@@ -148,22 +148,23 @@ impl Shaders {
         debug!("vs:\n{}", str_vs);
         debug!("fs:\n{}", str_fs);
 
-        let spv_vs = match glsl_to_spirv::compile(&str_vs, glsl_to_spirv::ShaderType::Vertex) {
-            Ok(file) => wgpu::read_spirv(file).unwrap(),
+        let (mut spv_vs, mut spv_fs) = (Vec::new(), Vec::new());
+        match glsl_to_spirv::compile(&str_vs, glsl_to_spirv::ShaderType::Vertex) {
+            Ok(mut file) => file.read_to_end(&mut spv_vs).unwrap(),
             Err(ref e) => {
                 Self::fail(name, &str_vs, e);
             }
         };
-        let spv_fs = match glsl_to_spirv::compile(&str_fs, glsl_to_spirv::ShaderType::Fragment) {
-            Ok(file) => wgpu::read_spirv(file).unwrap(),
+        match glsl_to_spirv::compile(&str_fs, glsl_to_spirv::ShaderType::Fragment) {
+            Ok(mut file) => file.read_to_end(&mut spv_fs).unwrap(),
             Err(ref e) => {
                 Self::fail(name, &str_fs, e);
             }
         };
 
         Ok(Shaders {
-            vs: device.create_shader_module(&spv_vs),
-            fs: device.create_shader_module(&spv_fs),
+            vs: device.create_shader_module(wgpu::util::make_spirv(&spv_vs)),
+            fs: device.create_shader_module(wgpu::util::make_spirv(&spv_fs)),
         })
     }
 
@@ -222,14 +223,15 @@ impl Shaders {
         let str_cs = String::from_utf8_lossy(&buf);
         debug!("cs:\n{}", str_cs);
 
-        let spv = match glsl_to_spirv::compile(&str_cs, glsl_to_spirv::ShaderType::Compute) {
-            Ok(file) => wgpu::read_spirv(file).unwrap(),
+        let mut spv = Vec::new();
+        match glsl_to_spirv::compile(&str_cs, glsl_to_spirv::ShaderType::Compute) {
+            Ok(mut file) => file.read_to_end(&mut spv).unwrap(),
             Err(ref e) => {
                 Self::fail(name, &str_cs, e);
             }
         };
 
-        Ok(device.create_shader_module(&spv))
+        Ok(device.create_shader_module(wgpu::util::make_spirv(&spv)))
     }
 }
 
@@ -238,11 +240,7 @@ pub struct Palette {
 }
 
 impl Palette {
-    pub fn new(
-        encoder: &mut wgpu::CommandEncoder,
-        device: &wgpu::Device,
-        data: &[[u8; 4]],
-    ) -> Self {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, data: &[[u8; 4]]) -> Self {
         let extent = wgpu::Extent3d {
             width: 0x100,
             height: 1,
@@ -258,20 +256,17 @@ impl Palette {
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
 
-        let staging =
-            device.create_buffer_with_data(bytemuck::cast_slice(data), wgpu::BufferUsage::COPY_SRC);
-        encoder.copy_buffer_to_texture(
-            wgpu::BufferCopyView {
-                buffer: &staging,
-                offset: 0,
-                bytes_per_row: 0x100 * 4,
-                rows_per_image: 0,
-            },
+        queue.write_texture(
             wgpu::TextureCopyView {
                 texture: &texture,
                 mip_level: 0,
-                array_layer: 0,
-                origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
+                origin: wgpu::Origin3d::ZERO,
+            },
+            bytemuck::cast_slice(data),
+            wgpu::TextureDataLayout {
+                offset: 0,
+                bytes_per_row: 0x100 * 4,
+                rows_per_image: 0,
             },
             extent,
         );
@@ -384,8 +379,8 @@ impl Batcher {
                 bytemuck::cast_slice(&array.data),
                 wgpu::BufferUsage::VERTEX,
             ));
-            pass.set_vertex_buffer(0, &array.mesh.vertex_buf, 0, 0);
-            pass.set_vertex_buffer(1, array.buffer.as_ref().unwrap(), 0, 0);
+            pass.set_vertex_buffer(0, array.mesh.vertex_buf.slice(..));
+            pass.set_vertex_buffer(1, array.buffer.as_ref().unwrap().slice(..));
             pass.draw(
                 0..array.mesh.num_vertices as u32,
                 0..array.data.len() as u32,
@@ -415,28 +410,24 @@ pub struct Render {
 impl Render {
     pub fn new(
         device: &wgpu::Device,
-        queue: &mut wgpu::Queue,
+        queue: &wgpu::Queue,
         level: &level::Level,
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
         screen_extent: wgpu::Extent3d,
         store_buffer: wgpu::BindingResource,
     ) -> Self {
-        let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Init"),
-        });
         let global = global::Context::new(device, store_buffer);
-        let object = object::Context::new(&mut init_encoder, device, object_palette, &global);
+        let object = object::Context::new(device, queue, object_palette, &global);
         let terrain = terrain::Context::new(
-            &mut init_encoder,
             device,
+            queue,
             level,
             &global,
             &settings.terrain,
             screen_extent,
         );
         let debug = debug::Context::new(device, &settings.debug, &global, &object);
-        queue.submit(&[init_encoder.finish()]);
 
         Render {
             global,
@@ -473,23 +464,23 @@ impl Render {
             color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
                 attachment: targets.color,
                 resolve_target: None,
-                load_op: wgpu::LoadOp::Clear,
-                store_op: wgpu::StoreOp::Store,
-                clear_color: wgpu::Color {
-                    r: 0.1,
-                    g: 0.2,
-                    b: 0.3,
-                    a: 1.0,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
+                        a: 1.0,
+                    }),
+                    store: true,
                 },
             }],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
                 attachment: targets.depth,
-                depth_load_op: wgpu::LoadOp::Clear,
-                depth_store_op: wgpu::StoreOp::Store,
-                clear_depth: 1.0,
-                stencil_load_op: wgpu::LoadOp::Clear,
-                stencil_store_op: wgpu::StoreOp::Store,
-                clear_stencil: 0,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: true,
+                }),
+                stencil_ops: None,
             }),
         });
 

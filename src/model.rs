@@ -126,32 +126,36 @@ pub fn load_c3d(
     let num_vertices = raw.geometry.polygons.len() * 3;
     debug!("\tGot {} GPU vertices...", num_vertices);
     let vertex_size = mem::size_of::<ObjectVertex>();
-    let mapping = device.create_buffer_mapped(&wgpu::BufferDescriptor {
+    let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("C3D"),
         size: (num_vertices * vertex_size) as wgpu::BufferAddress,
         usage: wgpu::BufferUsage::VERTEX,
+        mapped_at_creation: true,
     });
-    for (chunk, tri) in mapping
-        .data
-        .chunks_mut(3 * vertex_size)
-        .zip(&raw.geometry.polygons)
     {
-        let out_vertices =
-            unsafe { slice::from_raw_parts_mut(chunk.as_mut_ptr() as *mut ObjectVertex, 3) };
-        for (vo, v) in out_vertices.iter_mut().zip(&tri.vertices) {
-            let p = raw.geometry.positions[v.pos as usize];
-            let n = raw.geometry.normals[v.normal as usize];
-            *vo = ObjectVertex {
-                pos: [p[0], p[1], p[2], 1],
-                color: tri.material[0],
-                normal: [n[0], n[1], n[2], 0],
-            };
+        let mut mapping = vertex_buf.slice(..).get_mapped_range_mut();
+        for (chunk, tri) in mapping
+            .chunks_mut(3 * vertex_size)
+            .zip(&raw.geometry.polygons)
+        {
+            let out_vertices =
+                unsafe { slice::from_raw_parts_mut(chunk.as_mut_ptr() as *mut ObjectVertex, 3) };
+            for (vo, v) in out_vertices.iter_mut().zip(&tri.vertices) {
+                let p = raw.geometry.positions[v.pos as usize];
+                let n = raw.geometry.normals[v.normal as usize];
+                *vo = ObjectVertex {
+                    pos: [p[0], p[1], p[2], 1],
+                    color: tri.material[0],
+                    normal: [n[0], n[1], n[2], 0],
+                };
+            }
         }
     }
+    vertex_buf.unmap();
 
     Arc::new(Mesh {
         num_vertices,
-        vertex_buf: mapping.finish(),
+        vertex_buf,
         offset: vec_i2f(raw.parent_off),
         bbox: BoundingBox {
             min: vec_i2f(raw.bounds.coord_min),
@@ -243,28 +247,26 @@ pub fn load_c3d_shape(
         samples.extend(cur_samples);
     }
 
-    let vertex_buf = {
-        let mapping = device.create_buffer_mapped(&wgpu::BufferDescriptor {
-            label: Some("Shape"),
-            size: (raw.geometry.positions.len() * mem::size_of::<ShapeVertex>())
-                as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::STORAGE_READ,
-        });
-        for (vo, p) in mapping.data.chunks_mut(4).zip(&raw.geometry.positions) {
+    let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Shape"),
+        size: (raw.geometry.positions.len() * mem::size_of::<ShapeVertex>()) as wgpu::BufferAddress,
+        usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::STORAGE,
+        mapped_at_creation: true,
+    });
+    {
+        let mut mapping = vertex_buf.slice(..).get_mapped_range_mut();
+        for (vo, p) in mapping.chunks_mut(4).zip(&raw.geometry.positions) {
             vo[..3].copy_from_slice(unsafe { slice::from_raw_parts(p.as_ptr() as *const u8, 3) });
             vo[3] = 1;
         }
-        mapping.finish()
     };
+    vertex_buf.unmap();
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Shape"),
         layout: &object.shape_bind_group_layout,
         bindings: &[wgpu::Binding {
             binding: 0,
-            resource: wgpu::BindingResource::Buffer {
-                buffer: &vertex_buf,
-                range: 0..(raw.geometry.positions.len() * 4) as wgpu::BufferAddress,
-            },
+            resource: wgpu::BindingResource::Buffer(vertex_buf.slice(..)),
         }],
     });
 

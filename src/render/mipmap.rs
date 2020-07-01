@@ -84,22 +84,22 @@ impl MaxMipper {
         let bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("MaxMipper"),
             bindings: &[
-                wgpu::BindGroupLayoutEntry {
-                    // sampler
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler { comparison: false },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // texture
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture {
+                // sampler
+                wgpu::BindGroupLayoutEntry::new(
+                    0,
+                    wgpu::ShaderStage::FRAGMENT,
+                    wgpu::BindingType::Sampler { comparison: false },
+                ),
+                // texture
+                wgpu::BindGroupLayoutEntry::new(
+                    1,
+                    wgpu::ShaderStage::FRAGMENT,
+                    wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D2,
                         component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
-                },
+                ),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -112,14 +112,13 @@ impl MaxMipper {
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: -100.0,
-            lod_max_clamp: 100.0,
-            compare: wgpu::CompareFunction::Always,
+            ..Default::default()
         });
 
         let mut mips = Vec::with_capacity(mip_count as usize);
         for level in 0..mip_count {
             let view = texture.create_view(&wgpu::TextureViewDescriptor {
+                label: None,
                 format: HEIGHT_FORMAT,
                 dimension: wgpu::TextureViewDimension::D2,
                 aspect: wgpu::TextureAspect::All,
@@ -192,15 +191,16 @@ impl MaxMipper {
                 color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
                     attachment: &self.mips[mip + 1].view,
                     resolve_target: None,
-                    load_op: wgpu::LoadOp::Clear,
-                    store_op: wgpu::StoreOp::Store,
-                    clear_color: wgpu::Color::BLACK,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: true,
+                    },
                 }],
                 depth_stencil_attachment: None,
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.mips[mip].bind_group, &[]);
-            pass.set_vertex_buffer(0, &vertex_buf, 0, 0);
+            pass.set_vertex_buffer(0, vertex_buf.slice(..));
             pass.draw(0..rects.len() as u32 * 6, 0..1);
         }
     }

@@ -21,20 +21,12 @@ pub struct CarView {
 }
 
 impl CarView {
-    pub fn new(
-        settings: &config::Settings,
-        device: &wgpu::Device,
-        queue: &mut wgpu::Queue,
-    ) -> Self {
+    pub fn new(settings: &config::Settings, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
-        let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Init"),
-        });
         let store_init = render::body::GpuStoreInit::new_dummy(device);
         let global = render::global::Context::new(device, store_init.resource());
-        let object = render::object::Context::new(&mut init_encoder, device, &pal_data, &global);
-        queue.submit(&[init_encoder.finish()]);
+        let object = render::object::Context::new(device, queue, &pal_data, &global);
 
         info!("Loading car registry");
         let game_reg = config::game::Registry::load(settings);
@@ -203,23 +195,23 @@ impl Application for CarView {
                 color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
                     attachment: targets.color,
                     resolve_target: None,
-                    load_op: wgpu::LoadOp::Clear,
-                    store_op: wgpu::StoreOp::Store,
-                    clear_color: wgpu::Color {
-                        r: 0.1,
-                        g: 0.2,
-                        b: 0.3,
-                        a: 1.0,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1.0,
+                        }),
+                        store: true,
                     },
                 }],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
                     attachment: targets.depth,
-                    depth_load_op: wgpu::LoadOp::Clear,
-                    depth_store_op: wgpu::StoreOp::Store,
-                    clear_depth: 1.0,
-                    stencil_load_op: wgpu::LoadOp::Clear,
-                    stencil_store_op: wgpu::StoreOp::Store,
-                    clear_stencil: 0,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: true,
+                    }),
+                    stencil_ops: None,
                 }),
             });
 

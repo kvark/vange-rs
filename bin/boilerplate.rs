@@ -36,7 +36,7 @@ pub trait Application {
 pub struct Harness {
     task_pool: LocalPool,
     event_loop: EventLoop<()>,
-    _window: Window,
+    window: Window,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     surface: wgpu::Surface,
@@ -60,6 +60,7 @@ impl Harness {
         };
 
         info!("Initializing the window");
+        let instance = wgpu::Instance::new(settings.backend.to_wgpu());
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
             .with_title(title)
@@ -67,25 +68,28 @@ impl Harness {
             .with_resizable(true)
             .build(&event_loop)
             .unwrap();
-        let surface = wgpu::Surface::create(&window);
+        let surface = unsafe { instance.create_surface(&window) };
 
         info!("Initializing the device");
         let adapter = task_pool
-            .run_until(wgpu::Adapter::request(
+            .run_until(instance.request_adapter(
                 &wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::Default,
                     compatible_surface: Some(&surface),
                 },
-                settings.backend.to_wgpu(),
+                wgpu::UnsafeFeatures::disallow(),
             ))
             .expect("Unable to initialize GPU via the selected backend.");
-        let (device, queue) =
-            task_pool.run_until(adapter.request_device(&wgpu::DeviceDescriptor {
-                extensions: wgpu::Extensions {
-                    anisotropic_filtering: false,
+        let (device, queue) = task_pool
+            .run_until(adapter.request_device(
+                &wgpu::DeviceDescriptor {
+                    features: wgpu::Features::empty(),
+                    limits: wgpu::Limits::default(),
+                    shader_validation: true,
                 },
-                limits: wgpu::Limits::default(),
-            }));
+                None,
+            ))
+            .unwrap();
 
         let sc_desc = wgpu::SwapChainDescriptor {
             usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
@@ -110,7 +114,7 @@ impl Harness {
         let harness = Harness {
             task_pool,
             event_loop,
-            _window: window,
+            window: window,
             device,
             queue,
             surface,
@@ -131,6 +135,7 @@ impl Harness {
         let Harness {
             mut task_pool,
             event_loop,
+            window,
             device,
             queue,
             surface,
@@ -138,10 +143,10 @@ impl Harness {
             mut extent,
             reload_on_focus,
             mut depth_target,
-            ..
         } = self;
 
         event_loop.run(move |event, _, control_flow| {
+            let _ = window;
             *control_flow = ControlFlow::Poll;
             task_pool.run_until_stalled();
 
@@ -211,21 +216,21 @@ impl Harness {
 
                     let update_command_buffers = app.update(&device, delta, &spawner);
                     if !update_command_buffers.is_empty() {
-                        queue.submit(&update_command_buffers);
+                        queue.submit(update_command_buffers);
                     }
 
-                    match swap_chain.get_next_texture() {
+                    match swap_chain.get_next_frame() {
                         Ok(frame) => {
                             let targets = ScreenTargets {
                                 extent,
-                                color: &frame.view,
+                                color: &frame.output.view,
                                 depth: &depth_target,
                             };
                             let render_commane_buffer = app.draw(&device, targets, &spawner);
-                            queue.submit(&[render_commane_buffer]);
+                            queue.submit(Some(render_commane_buffer));
                         }
                         Err(_) => {}
-                    }
+                    };
                 }
                 _ => (),
             }

@@ -114,12 +114,17 @@ impl Context {
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Debug"),
-            bindings: &[wgpu::BindGroupLayoutEntry {
+            bindings: &[
                 // locals
-                binding: 0,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-            }],
+                wgpu::BindGroupLayoutEntry::new(
+                    0,
+                    wgpu::ShaderStage::FRAGMENT,
+                    wgpu::BindingType::UniformBuffer {
+                        dynamic: false,
+                        min_binding_size: None,
+                    },
+                ),
+            ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             bind_group_layouts: &[
@@ -147,10 +152,9 @@ impl Context {
             layout: &bind_group_layout,
             bindings: &[wgpu::Binding {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &locals_buf,
-                    range: 0 * locals_size..1 * locals_size,
-                },
+                resource: wgpu::BindingResource::Buffer(
+                    locals_buf.slice(0 * locals_size..1 * locals_size),
+                ),
             }],
         });
         let bind_group_face = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -158,10 +162,9 @@ impl Context {
             layout: &bind_group_layout,
             bindings: &[wgpu::Binding {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &locals_buf,
-                    range: 1 * locals_size..2 * locals_size,
-                },
+                resource: wgpu::BindingResource::Buffer(
+                    locals_buf.slice(1 * locals_size..2 * locals_size),
+                ),
             }],
         });
         let bind_group_edge = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -169,10 +172,9 @@ impl Context {
             layout: &bind_group_layout,
             bindings: &[wgpu::Binding {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &locals_buf,
-                    range: 2 * locals_size..3 * locals_size,
-                },
+                resource: wgpu::BindingResource::Buffer(
+                    locals_buf.slice(2 * locals_size..3 * locals_size),
+                ),
             }],
         });
 
@@ -331,8 +333,8 @@ impl Context {
         num_vert: usize,
     ) {
         pass.set_blend_color(wgpu::Color::WHITE);
-        pass.set_vertex_buffer(0, vertex_buf, 0, 0);
-        pass.set_vertex_buffer(1, color_buf, 0, 0);
+        pass.set_vertex_buffer(0, vertex_buf.slice(..));
+        pass.set_vertex_buffer(1, color_buf.slice(..));
         for &vis in &[Visibility::Front, Visibility::Behind] {
             if let Some(ref pipeline) = self.pipelines_line.get(&(vis, color_rate)) {
                 pass.set_pipeline(pipeline);
@@ -356,12 +358,13 @@ impl Context {
         // require instancing now, one has to yield and be refactored.
         let instance_offset = instance_id * mem::size_of::<ObjectInstance>();
         pass.set_bind_group(2, &shape.bind_group, &[]);
-        pass.set_vertex_buffer(0, &shape.polygon_buf, 0, 0);
+        pass.set_vertex_buffer(0, shape.polygon_buf.slice(..));
         pass.set_vertex_buffer(
             1,
-            instance_buf,
-            instance_offset as wgpu::BufferAddress,
-            mem::size_of::<ObjectInstance>() as wgpu::BufferAddress,
+            instance_buf.slice(
+                instance_offset as wgpu::BufferAddress
+                    ..mem::size_of::<ObjectInstance>() as wgpu::BufferAddress,
+            ),
         );
 
         // draw collision polygon faces

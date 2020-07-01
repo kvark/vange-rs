@@ -36,7 +36,7 @@ impl LevelView {
         settings: &config::settings::Settings,
         screen_extent: wgpu::Extent3d,
         device: &wgpu::Device,
-        queue: &mut wgpu::Queue,
+        queue: &wgpu::Queue,
     ) -> Self {
         let level = if settings.game.level.is_empty() {
             info!("Using test level");

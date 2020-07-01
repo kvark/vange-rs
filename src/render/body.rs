@@ -208,9 +208,9 @@ impl GpuStoreInit {
             label: Some("GpuStore"),
             size: (rounded_max_objects * mem::size_of::<Data>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::STORAGE
-                | wgpu::BufferUsage::STORAGE_READ
                 | wgpu::BufferUsage::COPY_SRC
                 | wgpu::BufferUsage::COPY_DST,
+            mapped_at_creation: false,
         });
 
         GpuStoreInit {
@@ -221,10 +221,8 @@ impl GpuStoreInit {
     }
 
     pub fn new_dummy(device: &wgpu::Device) -> Self {
-        let buffer = device.create_buffer_with_data(
-            bytemuck::bytes_of(&Data::DUMMY),
-            wgpu::BufferUsage::STORAGE_READ,
-        );
+        let buffer = device
+            .create_buffer_with_data(bytemuck::bytes_of(&Data::DUMMY), wgpu::BufferUsage::STORAGE);
 
         GpuStoreInit {
             buffer,
@@ -234,10 +232,7 @@ impl GpuStoreInit {
     }
 
     pub fn resource(&self) -> wgpu::BindingResource {
-        wgpu::BindingResource::Buffer {
-            buffer: &self.buffer,
-            range: 0..(self.rounded_max_objects * mem::size_of::<Data>()) as wgpu::BufferAddress,
-        }
+        wgpu::BindingResource::Buffer(self.buffer.slice(..))
     }
 }
 
@@ -293,27 +288,34 @@ impl GpuStore {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Body"),
             bindings: &[
-                wgpu::BindGroupLayoutEntry {
-                    // data
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::StorageBuffer {
+                // data
+                wgpu::BindGroupLayoutEntry::new(
+                    0,
+                    wgpu::ShaderStage::COMPUTE,
+                    wgpu::BindingType::StorageBuffer {
                         dynamic: false,
                         readonly: false,
+                        min_binding_size: None,
                     },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // uniforms
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // constants
-                    binding: 2,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-                },
+                ),
+                // uniforms
+                wgpu::BindGroupLayoutEntry::new(
+                    1,
+                    wgpu::ShaderStage::COMPUTE,
+                    wgpu::BindingType::UniformBuffer {
+                        dynamic: false,
+                        min_binding_size: None,
+                    },
+                ),
+                // constants
+                wgpu::BindGroupLayoutEntry::new(
+                    2,
+                    wgpu::ShaderStage::COMPUTE,
+                    wgpu::BindingType::UniformBuffer {
+                        dynamic: false,
+                        min_binding_size: None,
+                    },
+                ),
             ],
         });
         let pipeline_layout_step = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -324,24 +326,26 @@ impl GpuStore {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Gather"),
                 bindings: &[
-                    wgpu::BindGroupLayoutEntry {
-                        // collisions
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::COMPUTE,
-                        ty: wgpu::BindingType::StorageBuffer {
+                    // collisions
+                    wgpu::BindGroupLayoutEntry::new(
+                        0,
+                        wgpu::ShaderStage::COMPUTE,
+                        wgpu::BindingType::StorageBuffer {
                             dynamic: false,
                             readonly: true,
+                            min_binding_size: None,
                         },
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        // ranges
-                        binding: 1,
-                        visibility: wgpu::ShaderStage::COMPUTE,
-                        ty: wgpu::BindingType::StorageBuffer {
+                    ),
+                    // ranges
+                    wgpu::BindGroupLayoutEntry::new(
+                        1,
+                        wgpu::ShaderStage::COMPUTE,
+                        wgpu::BindingType::StorageBuffer {
                             dynamic: false,
                             readonly: true,
+                            min_binding_size: None,
                         },
-                    },
+                    ),
                 ],
             });
         let pipeline_layout_gather =
@@ -352,15 +356,18 @@ impl GpuStore {
         let bind_group_layout_push =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Push"),
-                bindings: &[wgpu::BindGroupLayoutEntry {
+                bindings: &[
                     // pushes
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::StorageBuffer {
-                        dynamic: false,
-                        readonly: true,
-                    },
-                }],
+                    wgpu::BindGroupLayoutEntry::new(
+                        0,
+                        wgpu::ShaderStage::COMPUTE,
+                        wgpu::BindingType::StorageBuffer {
+                            dynamic: false,
+                            readonly: true,
+                            min_binding_size: None,
+                        },
+                    ),
+                ],
             });
         let pipeline_layout_push = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             bind_group_layouts: &[&bind_group_layout, &bind_group_layout_push],
@@ -376,18 +383,21 @@ impl GpuStore {
             label: Some("Uniforms"),
             size: mem::size_of::<Uniforms>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            mapped_at_creation: false,
         };
         let buf_uniforms = device.create_buffer(&desc_uniforms);
         let desc_ranges = wgpu::BufferDescriptor {
             label: Some("Ranges"),
             size: (init.rounded_max_objects * mem::size_of::<GpuRange>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::STORAGE_READ | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
+            mapped_at_creation: false,
         };
         let buf_ranges = device.create_buffer(&desc_ranges);
         let desc_pushes = wgpu::BufferDescriptor {
             label: Some("Pushes"),
             size: (WORK_GROUP_WIDTH as usize * mem::size_of::<GpuPush>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::STORAGE_READ | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
+            mapped_at_creation: false,
         };
         let buf_pushes = device.create_buffer(&desc_pushes);
 
@@ -461,17 +471,11 @@ impl GpuStore {
                 },
                 wgpu::Binding {
                     binding: 1,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &buf_uniforms,
-                        range: 0..desc_uniforms.size,
-                    },
+                    resource: wgpu::BindingResource::Buffer(buf_uniforms.slice(..)),
                 },
                 wgpu::Binding {
                     binding: 2,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &buf_constants,
-                        range: 0..mem::size_of::<Constants>() as wgpu::BufferAddress,
-                    },
+                    resource: wgpu::BindingResource::Buffer(buf_constants.slice(..)),
                 },
             ],
         });
@@ -485,10 +489,7 @@ impl GpuStore {
                 },
                 wgpu::Binding {
                     binding: 1,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &buf_ranges,
-                        range: 0..desc_ranges.size,
-                    },
+                    resource: wgpu::BindingResource::Buffer(buf_ranges.slice(..)),
                 },
             ],
         });
@@ -497,10 +498,7 @@ impl GpuStore {
             layout: &bind_group_layout_push,
             bindings: &[wgpu::Binding {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &buf_pushes,
-                    range: 0..desc_pushes.size,
-                },
+                resource: wgpu::BindingResource::Buffer(buf_pushes.slice(..)),
             }],
         });
 
@@ -775,6 +773,7 @@ impl GpuStore {
             label: Some("Gpu Results"),
             size: (count * mem::size_of::<GpuTransform>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::MAP_READ,
+            mapped_at_creation: false,
         });
 
         let offset = mem::size_of::<GpuControl>() + mem::size_of::<[f32; 4]>(); // skip control & engine
@@ -798,18 +797,14 @@ impl GpuStore {
         };
 
         let latest = Arc::clone(&self.cpu_mirror);
+        let end = (count * mem::size_of::<GpuTransform>()) as wgpu::BufferAddress;
         let future = buffer
-            .map_read(
-                0,
-                (count * mem::size_of::<GpuTransform>()) as wgpu::BufferAddress,
-            )
-            .map(move |mapping| {
-                let _ = buffer; //TODO: remove when wgpu upsteam is fixed
+            .slice(..end)
+            .map_async(wgpu::MapMode::Read)
+            .map(move |_| {
+                let mapping = buffer.slice(..end).get_mapped_range();
                 let data = unsafe {
-                    slice::from_raw_parts(
-                        mapping.unwrap().as_slice().as_ptr() as *const GpuTransform,
-                        count,
-                    )
+                    slice::from_raw_parts(*mapping.as_ptr() as *const GpuTransform, count)
                 };
 
                 let transforms = data.iter().map(|gt| Transform {

@@ -40,32 +40,37 @@ impl Context {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Global"),
             bindings: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // palette sampler
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::Sampler { comparison: false },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    // GPU store
-                    binding: 2,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::StorageBuffer {
+                wgpu::BindGroupLayoutEntry::new(
+                    0,
+                    wgpu::ShaderStage::all(),
+                    wgpu::BindingType::UniformBuffer {
+                        dynamic: false,
+                        min_binding_size: None,
+                    },
+                ),
+                // palette sampler
+                wgpu::BindGroupLayoutEntry::new(
+                    1,
+                    wgpu::ShaderStage::all(),
+                    wgpu::BindingType::Sampler { comparison: false },
+                ),
+                // GPU store
+                wgpu::BindGroupLayoutEntry::new(
+                    2,
+                    wgpu::ShaderStage::VERTEX,
+                    wgpu::BindingType::StorageBuffer {
                         dynamic: false,
                         readonly: true,
+                        min_binding_size: None,
                     },
-                },
+                ),
             ],
         });
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Uniform"),
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            mapped_at_creation: false,
         });
         let palette_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -74,9 +79,7 @@ impl Context {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: 0.0,
-            lod_max_clamp: 0.0,
-            compare: wgpu::CompareFunction::Always,
+            ..Default::default()
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Global"),
@@ -84,10 +87,7 @@ impl Context {
             bindings: &[
                 wgpu::Binding {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &uniform_buf,
-                        range: 0..mem::size_of::<Constants>() as wgpu::BufferAddress,
-                    },
+                    resource: wgpu::BindingResource::Buffer(uniform_buf.slice(..)),
                 },
                 wgpu::Binding {
                     binding: 1,
