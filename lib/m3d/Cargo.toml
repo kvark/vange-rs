@@ -7,6 +7,6 @@ authors = ["Dzmitry Malyshau <kvarkus@gmail.com>"]
 [dependencies]
 byteorder = "1.0"
 log = "0.4"
-ron = "0.4"
+ron = "0.6"
 serde = "1.0"
 serde_derive = "1.0"
