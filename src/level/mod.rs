@@ -14,11 +14,11 @@ pub const NUM_TERRAINS: usize = 8;
 
 pub type Altitude = u8;
 pub type Delta = Altitude;
-const DOUBLE_LEVEL: u8 = 1 << 6;
-const DELTA_SHIFT0: u8 = 2 + 3;
-const DELTA_SHIFT1: u8 = 0 + 3;
-const DELTA_MASK: u8 = 0x3;
-const TERRAIN_SHIFT: u8 = 3;
+pub const DOUBLE_LEVEL: u8 = 1 << 6;
+pub const DELTA_SHIFT0: u8 = 2 + 3;
+pub const DELTA_SHIFT1: u8 = 0 + 3;
+pub const DELTA_MASK: u8 = 0x3;
+pub const TERRAIN_SHIFT: u8 = 3;
 pub const HEIGHT_SCALE: u32 = 128;
 
 pub struct Level {
@@ -29,29 +29,6 @@ pub struct Level {
     pub meta: Vec<u8>,
     pub palette: [[u8; 4]; 0x100],
     pub terrains: [TerrainConfig; NUM_TERRAINS],
-}
-
-pub struct LevelLayers {
-    pub size: (u32, u32),
-    pub het0: Vec<u8>,
-    pub het1: Vec<u8>,
-    pub delta: Vec<u8>,
-    pub mat0: Vec<u8>,
-    pub mat1: Vec<u8>,
-}
-
-impl LevelLayers {
-    pub fn new(size: (u32, u32)) -> Self {
-        let total = (size.0 * size.1) as usize;
-        LevelLayers {
-            size,
-            het0: Vec::with_capacity(total),
-            het1: Vec::with_capacity(total),
-            delta: Vec::with_capacity(total),
-            mat0: Vec::with_capacity(total / 2),
-            mat1: Vec::with_capacity(total / 2),
-        }
-    }
 }
 
 pub struct Point(pub Altitude, pub TerrainType);
@@ -253,7 +230,7 @@ pub fn load_flood(config: &LevelConfig) -> Vec<u8> {
 pub struct LevelData {
     pub height: Vec<u8>,
     pub meta: Vec<u8>,
-    size: (i32, i32),
+    pub size: (i32, i32),
 }
 
 impl From<Level> for LevelData {
@@ -339,97 +316,6 @@ impl LevelData {
         }
 
         level
-    }
-
-    pub fn export_layers(&self) -> LevelLayers {
-        let mut ll = LevelLayers::new((self.size.0 as u32, self.size.1 as u32));
-
-        for y in 0..self.size.1 as usize {
-            let range = y * self.size.0 as usize..(y + 1) * self.size.0 as usize;
-            let hrow = &self.height[range.clone()];
-            let mrow = &self.meta[range];
-            for ((&h0, &h1), (&m0, &m1)) in hrow
-                .iter()
-                .step_by(2)
-                .zip(hrow[1..].iter().step_by(2))
-                .zip(mrow.iter().step_by(2).zip(mrow[1..].iter().step_by(2)))
-            {
-                let t0 = (m0 >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1);
-                let t1 = (m1 >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1);
-                if m0 & DOUBLE_LEVEL != 0 {
-                    let d =
-                        ((m0 & DELTA_MASK) << DELTA_SHIFT0) + ((m1 & DELTA_MASK) << DELTA_SHIFT1);
-                    //assert!(h0 + d <= h1); //TODO: figure out why this isn't true
-                    ll.het0.push(h0);
-                    ll.het0.push(h0);
-                    ll.het1.push(h1);
-                    ll.het1.push(h1);
-                    ll.delta.push(d);
-                    ll.delta.push(d);
-                    ll.mat0.push(t0 | (t0 << 4));
-                    ll.mat1.push(t1 | (t1 << 4));
-                } else {
-                    ll.het0.push(h0);
-                    ll.het0.push(h1);
-                    ll.het1.push(h0);
-                    ll.het1.push(h1);
-                    ll.delta.push(0);
-                    ll.delta.push(0);
-                    ll.mat0.push(t0 | (t1 << 4));
-                    ll.mat1.push(t0 | (t1 << 4));
-                }
-            }
-        }
-
-        ll
-    }
-
-    pub fn import_layers(ll: LevelLayers) -> Self {
-        let total = ll.size.0 as usize * ll.size.1 as usize;
-        let mut height = Vec::with_capacity(total);
-        let mut meta = Vec::with_capacity(total);
-
-        for (((&h0a, &h0b), (&h1a, &h1b)), ((&da, &db), (&mat0, &mat1))) in ll
-            .het0
-            .iter()
-            .step_by(2)
-            .zip(ll.het0[1..].iter().step_by(2))
-            .zip(
-                ll.het1
-                    .iter()
-                    .step_by(2)
-                    .zip(ll.het1[1..].iter().step_by(2)),
-            )
-            .zip(
-                ll.delta
-                    .iter()
-                    .step_by(2)
-                    .zip(ll.delta[1..].iter().step_by(2))
-                    .zip(ll.mat0.iter().zip(&ll.mat1)),
-            )
-        {
-            //assert!(h0a + da <= h1a && h0b + db <= h1b);
-            let delta = avg(da, db);
-            if delta != 0 {
-                //Note: mat0b and mat1a are ignored here, assuming the same as mat0a and mat1b respectively
-                meta.push(DOUBLE_LEVEL | ((mat0 & 0xF) << TERRAIN_SHIFT) | (delta >> 2));
-                meta.push(DOUBLE_LEVEL | ((mat1 >> 4) << TERRAIN_SHIFT) | (delta & DELTA_MASK));
-                height.push(avg(h0a, h0b));
-                height.push(avg(h1a, h1b));
-            } else {
-                //Note: mat1 and deltas are ignored here, assuming mat0 == mat1
-                height.push(avg(h0a, h1a));
-                height.push(avg(h0b, h1b));
-                meta.push((mat0 & 0xF) << TERRAIN_SHIFT);
-                meta.push((mat0 >> 4) << TERRAIN_SHIFT);
-            }
-        }
-
-        LevelData {
-            size: (ll.size.0 as i32, ll.size.1 as i32),
-            meta,
-            height,
-        }
     }
 }
 
@@ -529,8 +415,4 @@ pub fn load(config: &LevelConfig) -> Level {
         palette: read_palette(palette, Some(&config.terrains)),
         terrains: config.terrains.clone(),
     }
-}
-
-pub fn load_layers(config: &LevelConfig) -> LevelLayers {
-    LevelData::from(load(config)).export_layers()
 }

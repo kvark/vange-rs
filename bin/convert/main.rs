@@ -1,3 +1,4 @@
+mod layers;
 mod level_png;
 mod model_obj;
 
@@ -7,7 +8,7 @@ use std::{
     path::PathBuf,
 };
 
-pub fn save_tiff(path: &PathBuf, layers: vangers::level::LevelLayers) {
+pub fn save_tiff(path: &PathBuf, layers: layers::LevelLayers) {
     let images = [
         tiff::Image {
             width: layers.size.0 as u32,
@@ -97,14 +98,19 @@ fn main() {
         ("ini", "ron") => {
             println!("\tLoading the level...");
             let config = vangers::level::LevelConfig::load(&src_path);
-            let layers = vangers::level::load_layers(&config);
+            let level = vangers::level::load(&config);
+            let palette = layers::extract_palette(&level);
+            let layers =
+                layers::LevelLayers::from_level_data(&vangers::level::LevelData::from(level));
             println!("\tSaving multiple PNGs...");
-            level_png::save(&dst_path, layers);
+            level_png::save(&dst_path, layers, &palette);
         }
         ("ini", "tiff") => {
             println!("\tLoading the level...");
             let config = vangers::level::LevelConfig::load(&src_path);
-            let layers = vangers::level::load_layers(&config);
+            let level = vangers::level::load(&config);
+            let layers =
+                layers::LevelLayers::from_level_data(&vangers::level::LevelData::from(level));
             println!("\tSaving TIFF layers...");
             save_tiff(&dst_path, layers);
         }
@@ -119,8 +125,8 @@ fn main() {
             println!("\tLoading multiple PNGs...");
             let layers = level_png::load(&src_path);
             println!("\tSaving VMP...");
-            let level = vangers::level::LevelData::import_layers(layers);
-            level.save_vmp(&dst_path);
+            let level_data = layers.export();
+            level_data.save_vmp(&dst_path);
         }
         ("pal", "png") => {
             println!("Converting palette to PNG...");
