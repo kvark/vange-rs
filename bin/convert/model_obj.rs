@@ -3,7 +3,7 @@ use m3d::{
     Vertex, NORMALIZER, NUM_COLOR_IDS,
 };
 
-use obj::{IndexTuple, Obj, SimplePolygon};
+use obj::{IndexTuple, Obj};
 use ron;
 
 use std::{
@@ -225,9 +225,10 @@ pub fn save_collision_geometry(geom: &Geometry<CollisionQuad>, path: PathBuf) ->
 }
 
 pub fn load_geometry<P: Polygon>(path: PathBuf) -> Geometry<P> {
-    let obj: Obj<SimplePolygon> = Obj::load(&path).unwrap();
+    let obj = Obj::load(&path).unwrap();
 
     let positions = obj
+        .data
         .position
         .iter()
         .map(|p| {
@@ -239,6 +240,7 @@ pub fn load_geometry<P: Polygon>(path: PathBuf) -> Geometry<P> {
         })
         .collect();
     let normals = obj
+        .data
         .normal
         .iter()
         .map(|n| {
@@ -254,8 +256,9 @@ pub fn load_geometry<P: Polygon>(path: PathBuf) -> Geometry<P> {
         .map(|id| format!("{:?}", map_color_id(id)))
         .collect::<Vec<_>>();
 
-    let obj_ref = &obj;
+    let data_ref = &obj.data;
     let polygons = obj
+        .data
         .objects
         .iter()
         .flat_map(|object| {
@@ -267,15 +270,15 @@ pub fn load_geometry<P: Polygon>(path: PathBuf) -> Geometry<P> {
                     .unwrap_or(0);
                 group.polys.iter().map(move |poly| {
                     vertices.clear();
-                    for &IndexTuple(pi, _, ni) in poly {
+                    for &IndexTuple(pi, _, ni) in poly.0.iter() {
                         vertices.push(Vertex {
                             pos: pi as u16,
                             normal: ni.unwrap_or(0) as u16,
                         })
                     }
                     P::new(
-                        flatten_pos(poly, &obj_ref.position),
-                        flatten_normal(poly, &obj_ref.normal),
+                        flatten_pos(&poly.0, &data_ref.position),
+                        flatten_normal(&poly.0, &data_ref.normal),
                         [color_id as u32, 0],
                         &vertices,
                     )

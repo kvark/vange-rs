@@ -62,7 +62,7 @@ wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
 # binaries
 env_logger = "0.7"
 getopts = "0.2"
-obj = "0.9"
+obj = "0.10"
 png = "0.16"
 winit = "0.22"
 
