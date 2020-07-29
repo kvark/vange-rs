@@ -1,5 +1,5 @@
 # Vange-rs
-[![Build Status](https://travis-ci.org/kvark/vange-rs.svg?branch=master)](https://travis-ci.org/kvark/vange-rs)
+![Check](https://github.com/kvark/vange-rs/workflows/Check/badge.svg)
 [![Gitter](https://badges.gitter.im/kvark/vange-rs.svg)](https://gitter.im/vange-rs/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 
 [Vangers](https://www.gog.com/game/vangers) is a legendary game featuring unique gameplay and technical innovation.
