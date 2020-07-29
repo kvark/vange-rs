@@ -9,6 +9,7 @@ use std::{fs::File, path::PathBuf};
 struct MultiPng {
     size: (u32, u32),
     height: String,
+    num_terrains: u8,
     material_lo: String,
     material_hi: String,
 }
@@ -19,6 +20,7 @@ pub fn save(path: &PathBuf, layers: LevelLayers, palette: &[u8]) {
     let mp = MultiPng {
         size: layers.size,
         height: "height.png".to_string(),
+        num_terrains: layers.num_terrains,
         material_lo: "material_lo.png".to_string(),
         material_hi: "material_hi.png".to_string(),
     };
@@ -73,7 +75,7 @@ pub fn save(path: &PathBuf, layers: LevelLayers, palette: &[u8]) {
 pub fn load(path: &PathBuf) -> LevelLayers {
     let level_file = File::open(path).unwrap();
     let mp = ron::de::from_reader::<_, MultiPng>(level_file).unwrap();
-    let mut layers = LevelLayers::new(mp.size);
+    let mut layers = LevelLayers::new(mp.size, mp.num_terrains);
     {
         println!("\t\t{}...", mp.height);
         let file = File::open(path.with_file_name(mp.height)).unwrap();

@@ -100,8 +100,10 @@ fn main() {
             let config = vangers::level::LevelConfig::load(&src_path);
             let level = vangers::level::load(&config);
             let palette = layers::extract_palette(&level);
-            let layers =
-                layers::LevelLayers::from_level_data(&vangers::level::LevelData::from(level));
+            let layers = layers::LevelLayers::from_level_data(
+                &vangers::level::LevelData::from(level),
+                config.terrains.len() as u8,
+            );
             println!("\tSaving multiple PNGs...");
             level_png::save(&dst_path, layers, &palette);
         }
@@ -109,8 +111,10 @@ fn main() {
             println!("\tLoading the level...");
             let config = vangers::level::LevelConfig::load(&src_path);
             let level = vangers::level::load(&config);
-            let layers =
-                layers::LevelLayers::from_level_data(&vangers::level::LevelData::from(level));
+            let layers = layers::LevelLayers::from_level_data(
+                &vangers::level::LevelData::from(level),
+                config.terrains.len() as u8,
+            );
             println!("\tSaving TIFF layers...");
             save_tiff(&dst_path, layers);
         }

@@ -1,6 +1,5 @@
 use vangers::level::{
-    Level, LevelData, DELTA_MASK, DELTA_SHIFT0, DELTA_SHIFT1, DOUBLE_LEVEL, NUM_TERRAINS,
-    TERRAIN_SHIFT,
+    Level, LevelData, TerrainBits, DELTA_MASK, DELTA_SHIFT0, DELTA_SHIFT1, DOUBLE_LEVEL,
 };
 
 fn avg(a: u8, b: u8) -> u8 {
@@ -17,6 +16,7 @@ pub fn extract_palette(level: &Level) -> Vec<u8> {
 
 pub struct LevelLayers {
     pub size: (u32, u32),
+    pub num_terrains: u8,
     pub het0: Vec<u8>,
     pub het1: Vec<u8>,
     pub delta: Vec<u8>,
@@ -25,10 +25,11 @@ pub struct LevelLayers {
 }
 
 impl LevelLayers {
-    pub fn new(size: (u32, u32)) -> Self {
+    pub fn new(size: (u32, u32), num_terrains: u8) -> Self {
         let total = (size.0 * size.1) as usize;
         LevelLayers {
             size,
+            num_terrains,
             het0: Vec::with_capacity(total),
             het1: Vec::with_capacity(total),
             delta: Vec::with_capacity(total),
@@ -37,13 +38,14 @@ impl LevelLayers {
         }
     }
 
-    pub fn from_level_data(data: &LevelData) -> Self {
-        let mut ll = LevelLayers::new((data.size.0 as u32, data.size.1 as u32));
+    pub fn from_level_data(data: &LevelData, num_terrains: u8) -> Self {
+        let mut ll = LevelLayers::new((data.size.0 as u32, data.size.1 as u32), num_terrains);
         ll.import(data);
         ll
     }
 
     fn import(&mut self, data: &LevelData) {
+        let terrain_bits = TerrainBits::new(self.num_terrains);
         for y in 0..data.size.1 as usize {
             let range = y * data.size.0 as usize..(y + 1) * data.size.0 as usize;
             let hrow = &data.height[range.clone()];
@@ -54,8 +56,8 @@ impl LevelLayers {
                 .zip(hrow[1..].iter().step_by(2))
                 .zip(mrow.iter().step_by(2).zip(mrow[1..].iter().step_by(2)))
             {
-                let t0 = (m0 >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1);
-                let t1 = (m1 >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1);
+                let t0 = terrain_bits.read(m0);
+                let t1 = terrain_bits.read(m1);
                 if m0 & DOUBLE_LEVEL != 0 {
                     let d =
                         ((m0 & DELTA_MASK) << DELTA_SHIFT0) + ((m1 & DELTA_MASK) << DELTA_SHIFT1);
@@ -83,6 +85,7 @@ impl LevelLayers {
     }
 
     pub fn export(self) -> LevelData {
+        let terrain_shift = TerrainBits::new(self.num_terrains).shift;
         let total = self.size.0 as usize * self.size.1 as usize;
         let mut height = Vec::with_capacity(total);
         let mut meta = Vec::with_capacity(total);
@@ -110,16 +113,16 @@ impl LevelLayers {
             let delta = avg(da, db);
             if delta != 0 {
                 //Note: mat0b and mat1a are ignored here, assuming the same as mat0a and mat1b respectively
-                meta.push(DOUBLE_LEVEL | ((mat0 & 0xF) << TERRAIN_SHIFT) | (delta >> 2));
-                meta.push(DOUBLE_LEVEL | ((mat1 >> 4) << TERRAIN_SHIFT) | (delta & DELTA_MASK));
+                meta.push(DOUBLE_LEVEL | ((mat0 & 0xF) << terrain_shift) | (delta >> 2));
+                meta.push(DOUBLE_LEVEL | ((mat1 >> 4) << terrain_shift) | (delta & DELTA_MASK));
                 height.push(avg(h0a, h0b));
                 height.push(avg(h1a, h1b));
             } else {
                 //Note: mat1 and deltas are ignored here, assuming mat0 == mat1
                 height.push(avg(h0a, h1a));
                 height.push(avg(h0b, h1b));
-                meta.push((mat0 & 0xF) << TERRAIN_SHIFT);
-                meta.push((mat0 >> 4) << TERRAIN_SHIFT);
+                meta.push((mat0 & 0xF) << terrain_shift);
+                meta.push((mat0 >> 4) << terrain_shift);
             }
         }
 

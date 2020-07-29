@@ -1,5 +1,3 @@
-use super::NUM_TERRAINS;
-
 use ini::Ini;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -30,7 +28,7 @@ pub struct LevelConfig {
     pub geo: Power,
     pub section: Power,
     pub min_square: Power,
-    pub terrains: [TerrainConfig; NUM_TERRAINS],
+    pub terrains: Box<[TerrainConfig]>,
 }
 
 impl LevelConfig {
@@ -43,21 +41,17 @@ impl LevelConfig {
         let storage = &ini["Storage"];
         let render = &ini["Rendering Parameters"];
 
-        let tc = TerrainConfig {
-            shadow_offset: 0,
-            height_shift: 0,
-            colors: 0..0,
-        };
-        let mut terrains = [
-            tc.clone(),
-            tc.clone(),
-            tc.clone(),
-            tc.clone(),
-            tc.clone(),
-            tc.clone(),
-            tc.clone(),
-            tc.clone(),
-        ];
+        let terra_count = render
+            .get("Terrain Max")
+            .map_or(8, |value| value.parse::<usize>().unwrap());
+        let mut terrains = (0..terra_count)
+            .map(|_| TerrainConfig {
+                shadow_offset: 0,
+                height_shift: 0,
+                colors: 0..0,
+            })
+            .collect::<Box<[_]>>();
+
         for (t, val) in terrains
             .iter_mut()
             .zip(render["Shadow Offsets"].split_whitespace())
