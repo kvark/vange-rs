@@ -475,7 +475,7 @@ impl Context {
             depth: 1,
         };
         let table_extent = wgpu::Extent3d {
-            width: level::NUM_TERRAINS as u32,
+            width: level.terrains.len() as u32,
             height: 1,
             depth: 1,
         };

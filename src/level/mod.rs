@@ -10,7 +10,6 @@ mod config;
 pub use self::config::{LevelConfig, TerrainConfig};
 
 pub type TerrainType = u8;
-pub const NUM_TERRAINS: usize = 8;
 
 pub type Altitude = u8;
 pub type Delta = Altitude;
@@ -18,7 +17,6 @@ pub const DOUBLE_LEVEL: u8 = 1 << 6;
 pub const DELTA_SHIFT0: u8 = 2 + 3;
 pub const DELTA_SHIFT1: u8 = 0 + 3;
 pub const DELTA_MASK: u8 = 0x3;
-pub const TERRAIN_SHIFT: u8 = 3;
 pub const HEIGHT_SCALE: u32 = 128;
 
 pub struct Level {
@@ -28,10 +26,35 @@ pub struct Level {
     pub height: Vec<u8>,
     pub meta: Vec<u8>,
     pub palette: [[u8; 4]; 0x100],
-    pub terrains: [TerrainConfig; NUM_TERRAINS],
+    pub terrains: Box<[TerrainConfig]>,
 }
 
 pub struct Point(pub Altitude, pub TerrainType);
+
+pub struct TerrainBits {
+    pub shift: u8,
+    pub mask: TerrainType,
+}
+
+impl TerrainBits {
+    pub fn new(count: u8) -> Self {
+        match count {
+            8 => TerrainBits {
+                shift: 3,
+                mask: 0x7,
+            },
+            16 => TerrainBits {
+                shift: 2,
+                mask: 0xF,
+            },
+            other => panic!("Unexpected terrain count {}!", other),
+        }
+    }
+
+    pub fn read(&self, meta: u8) -> TerrainType {
+        (meta >> self.shift) & self.mask
+    }
+}
 
 pub enum Texel {
     Single(Point),
@@ -65,24 +88,12 @@ impl Level {
             height: vec![0, 0],
             meta: vec![0, 0],
             palette: [[0xFF; 4]; 0x100],
-            // not pretty, I know
-            terrains: [
-                tc.clone(),
-                tc.clone(),
-                tc.clone(),
-                tc.clone(),
-                tc.clone(),
-                tc.clone(),
-                tc.clone(),
-                tc.clone(),
-            ],
+            terrains: (0..8).map(|_| tc.clone()).collect(),
         }
     }
 
     pub fn get(&self, mut coord: (i32, i32)) -> Texel {
-        fn get_terrain(meta: u8) -> TerrainType {
-            (meta >> TERRAIN_SHIFT) & (NUM_TERRAINS as u8 - 1)
-        }
+        let bits = TerrainBits::new(self.terrains.len() as u8);
         while coord.0 < 0 {
             coord.0 += self.size.0;
         }
@@ -97,12 +108,12 @@ impl Level {
             let d0 = (meta0 & DELTA_MASK) << DELTA_SHIFT0;
             let d1 = (meta1 & DELTA_MASK) << DELTA_SHIFT1;
             Texel::Dual {
-                low: Point(self.height[i & !1], get_terrain(meta0)),
-                high: Point(self.height[i | 1], get_terrain(meta1)),
+                low: Point(self.height[i & !1], bits.read(meta0)),
+                high: Point(self.height[i | 1], bits.read(meta1)),
                 delta: d0 + d1,
             }
         } else {
-            Texel::Single(Point(self.height[i], get_terrain(meta)))
+            Texel::Single(Point(self.height[i], bits.read(meta)))
         }
     }
 
@@ -281,7 +292,7 @@ impl LevelData {
             });
     }
 
-    pub fn import(data: &[u8], size: (i32, i32)) -> Self {
+    pub fn import(data: &[u8], size: (i32, i32), terrain_shift: u8) -> Self {
         let total = (size.0 * size.1) as usize;
         assert_eq!(data.len(), total * 4);
         let mut level = LevelData {
@@ -300,15 +311,15 @@ impl LevelData {
                     // average between two texels
                     let mat = avg(color[3], color[7]);
                     level.meta[i + 0] =
-                        DOUBLE_LEVEL | ((mat & 0xF) << TERRAIN_SHIFT) | (delta >> 2);
+                        DOUBLE_LEVEL | ((mat & 0xF) << terrain_shift) | (delta >> 2);
                     level.meta[i + 1] =
-                        DOUBLE_LEVEL | ((mat >> 4) << TERRAIN_SHIFT) | (delta & DELTA_MASK);
+                        DOUBLE_LEVEL | ((mat >> 4) << terrain_shift) | (delta & DELTA_MASK);
                     level.height[i + 0] = avg(color[0], color[4]);
                     level.height[i + 1] = avg(color[1], color[5]);
                 } else {
                     // average between low and high
-                    level.meta[i + 0] = (color[3] & 0xF) << TERRAIN_SHIFT;
-                    level.meta[i + 1] = (color[7] & 0xF) << TERRAIN_SHIFT;
+                    level.meta[i + 0] = (color[3] & 0xF) << terrain_shift;
+                    level.meta[i + 1] = (color[7] & 0xF) << terrain_shift;
                     level.height[i + 0] = avg(color[0], color[1]);
                     level.height[i + 1] = avg(color[4], color[5]);
                 }
