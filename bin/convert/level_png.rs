@@ -100,7 +100,8 @@ pub fn load(path: &PathBuf) -> LevelLayers {
     {
         println!("\t\t{}...", mp.material_lo);
         let file = File::open(path.with_file_name(mp.material_lo)).unwrap();
-        let decoder = png::Decoder::new(file);
+        let mut decoder = png::Decoder::new(file);
+        decoder.set_transformations(png::Transformations::empty());
         let (info, mut reader) = decoder.read_info().unwrap();
         assert_eq!((info.width, info.height), mp.size);
         assert_eq!(info.bit_depth, png::BitDepth::Four);
@@ -113,7 +114,8 @@ pub fn load(path: &PathBuf) -> LevelLayers {
     {
         println!("\t\t{}...", mp.material_hi);
         let file = File::open(path.with_file_name(mp.material_hi)).unwrap();
-        let decoder = png::Decoder::new(file);
+        let mut decoder = png::Decoder::new(file);
+        decoder.set_transformations(png::Transformations::empty());
         let (info, mut reader) = decoder.read_info().unwrap();
         assert_eq!((info.width, info.height), mp.size);
         assert_eq!(info.bit_depth, png::BitDepth::Four);

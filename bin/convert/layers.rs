@@ -10,7 +10,13 @@ pub fn extract_palette(level: &Level) -> Vec<u8> {
     level
         .terrains
         .iter()
-        .flat_map(|terr| level.palette[terr.colors.end as usize - 1].iter().cloned())
+        .flat_map(|terr| {
+            let slice = match terr.colors.end.checked_sub(1) {
+                Some(index) => &level.palette[index as usize][..3],
+                None => &[0xFF; 3],
+            };
+            slice.iter().cloned()
+        })
         .collect()
 }
 
