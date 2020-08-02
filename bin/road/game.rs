@@ -849,6 +849,7 @@ impl Application for Game {
 
         let identity_transform = space::Transform::one();
         let clipper = Clipper::new(&self.cam);
+        self.batcher.clear();
 
         for agent in self.agents.iter() {
             let (gpu_body, transform) = match agent.physics {

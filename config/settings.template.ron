@@ -44,6 +44,7 @@
 		light: (
 			pos: (1, 2, 4, 0), // w=0 for directional, w=1 for point light
 			color: (1, 1, 1, 1),
+			shadow_size: 1024,
 		),
 		terrain: RayTraced,
 		// RayTraced,

@@ -1,7 +1,7 @@
 use crate::{
     config::settings,
     level, model,
-    space::{Camera, Transform},
+    space::{Camera, Projection, Transform},
 };
 
 use bytemuck::{Pod, Zeroable};
@@ -370,32 +370,68 @@ impl Batcher {
         }
     }
 
-    pub fn flush<'a>(&'a mut self, pass: &mut wgpu::RenderPass<'a>, device: &wgpu::Device) {
+    pub fn prepare(&mut self, device: &wgpu::Device) {
         for array in self.instances.values_mut() {
+            if !array.data.is_empty() {
+                array.buffer = Some(device.create_buffer_with_data(
+                    bytemuck::cast_slice(&array.data),
+                    wgpu::BufferUsage::VERTEX,
+                ));
+            }
+        }
+    }
+
+    pub fn draw<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
+        for array in self.instances.values() {
             if array.data.is_empty() {
                 continue;
             }
-            array.buffer = Some(device.create_buffer_with_data(
-                bytemuck::cast_slice(&array.data),
-                wgpu::BufferUsage::VERTEX,
-            ));
             pass.set_vertex_buffer(0, array.mesh.vertex_buf.slice(..));
             pass.set_vertex_buffer(1, array.buffer.as_ref().unwrap().slice(..));
             pass.draw(
                 0..array.mesh.num_vertices as u32,
                 0..array.data.len() as u32,
             );
-            array.data.clear();
         }
-        //TODO:
-        self.debug_shapes.clear();
-        self.debug_instances.clear();
     }
 
     pub fn clear(&mut self) {
-        self.instances.clear();
+        for array in self.instances.values_mut() {
+            array.data.clear();
+            array.buffer = None;
+        }
         self.debug_shapes.clear();
         self.debug_instances.clear();
+    }
+}
+
+pub struct Shadow {
+    view: wgpu::TextureView,
+    cam: Camera,
+}
+
+impl Shadow {
+    fn update_view(&mut self, _cam: &Camera) {
+        //TODO
+    }
+}
+
+pub struct PipelineSet {
+    main: wgpu::RenderPipeline,
+    shadow: wgpu::RenderPipeline,
+}
+
+pub enum PipelineKind {
+    Main,
+    Shadow,
+}
+
+impl PipelineSet {
+    pub fn select(&self, kind: PipelineKind) -> &wgpu::RenderPipeline {
+        match kind {
+            PipelineKind::Main => &self.main,
+            PipelineKind::Shadow => &self.shadow,
+        }
     }
 }
 
@@ -404,6 +440,7 @@ pub struct Render {
     pub object: object::Context,
     pub terrain: terrain::Context,
     pub debug: debug::Context,
+    pub shadow: Option<Shadow>,
     pub light_config: settings::Light,
 }
 
@@ -417,6 +454,8 @@ impl Render {
         screen_extent: wgpu::Extent3d,
         store_buffer: wgpu::BindingResource,
     ) -> Self {
+        use cgmath::Rotation as _;
+
         let global = global::Context::new(device, store_buffer);
         let object = object::Context::new(device, queue, object_palette, &global);
         let terrain = terrain::Context::new(
@@ -429,11 +468,46 @@ impl Render {
         );
         let debug = debug::Context::new(device, &settings.debug, &global, &object);
 
+        let shadow = if settings.light.shadow_size != 0 {
+            let shadow_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Shadow"),
+                size: wgpu::Extent3d {
+                    width: settings.light.shadow_size,
+                    height: settings.light.shadow_size,
+                    depth: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            });
+            Some(Shadow {
+                view: shadow_tex.create_default_view(),
+                cam: {
+                    let loc = cgmath::Vector4::from(settings.light.pos).truncate();
+                    let up = if loc.x == 0.0 && loc.y == 0.0 {
+                        cgmath::Vector3::unit_y()
+                    } else {
+                        cgmath::Vector3::unit_z()
+                    };
+                    Camera {
+                        loc,
+                        rot: cgmath::Quaternion::look_at(loc, up),
+                        proj: Projection::ortho(1, 1, 0.0..1.0),
+                    }
+                },
+            })
+        } else {
+            None
+        };
+
         Render {
             global,
             object,
             terrain,
             debug,
+            shadow,
             light_config: settings.light.clone(),
         }
     }
@@ -446,51 +520,95 @@ impl Render {
         targets: ScreenTargets,
         device: &wgpu::Device,
     ) {
-        let global_staging = device.create_buffer_with_data(
-            bytemuck::bytes_of(&global::Constants::new(cam, &self.light_config)),
-            wgpu::BufferUsage::COPY_SRC,
-        );
-        encoder.copy_buffer_to_buffer(
-            &global_staging,
-            0,
-            &self.global.uniform_buf,
-            0,
-            mem::size_of::<global::Constants>() as wgpu::BufferAddress,
-        );
+        batcher.prepare(device);
+        //TODO: common routine for draw passes
+        //TODO: use `write_buffer`
 
-        self.terrain.prepare(encoder, device, &self.global, cam);
+        if let Some(ref mut shadow) = self.shadow {
+            shadow.update_view(cam);
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                attachment: targets.color,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.1,
-                        g: 0.2,
-                        b: 0.3,
-                        a: 1.0,
+            let global_staging = device.create_buffer_with_data(
+                bytemuck::bytes_of(&global::Constants::new(&shadow.cam, &self.light_config)),
+                wgpu::BufferUsage::COPY_SRC,
+            );
+            encoder.copy_buffer_to_buffer(
+                &global_staging,
+                0,
+                &self.global.uniform_buf,
+                0,
+                mem::size_of::<global::Constants>() as wgpu::BufferAddress,
+            );
+
+            //self.terrain.prepare(encoder, device, &self.global, cam);
+
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                    attachment: &shadow.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: true,
                     }),
-                    store: true,
-                },
-            }],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
-                attachment: targets.depth,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: true,
+                    stencil_ops: None,
                 }),
-                stencil_ops: None,
-            }),
-        });
+            });
 
-        pass.set_bind_group(0, &self.global.bind_group, &[]);
-        self.terrain.draw(&mut pass);
+            pass.set_bind_group(0, &self.global.bind_group, &[]);
+            self.terrain.draw(&mut pass, PipelineKind::Shadow);
 
-        // draw vehicle models
-        pass.set_pipeline(&self.object.pipeline);
-        pass.set_bind_group(1, &self.object.bind_group, &[]);
-        batcher.flush(&mut pass, device);
+            // draw vehicle models
+            pass.set_pipeline(&self.object.pipelines.shadow);
+            pass.set_bind_group(1, &self.object.bind_group, &[]);
+            batcher.draw(&mut pass);
+        }
+        // main pass
+        {
+            let global_staging = device.create_buffer_with_data(
+                bytemuck::bytes_of(&global::Constants::new(cam, &self.light_config)),
+                wgpu::BufferUsage::COPY_SRC,
+            );
+            encoder.copy_buffer_to_buffer(
+                &global_staging,
+                0,
+                &self.global.uniform_buf,
+                0,
+                mem::size_of::<global::Constants>() as wgpu::BufferAddress,
+            );
+
+            self.terrain.prepare(encoder, device, &self.global, cam);
+
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                    attachment: targets.color,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1.0,
+                        }),
+                        store: true,
+                    },
+                }],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                    attachment: targets.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: true,
+                    }),
+                    stencil_ops: None,
+                }),
+            });
+
+            pass.set_bind_group(0, &self.global.bind_group, &[]);
+            self.terrain.draw(&mut pass, PipelineKind::Main);
+
+            // draw vehicle models
+            pass.set_pipeline(&self.object.pipelines.main);
+            pass.set_bind_group(1, &self.object.bind_group, &[]);
+            batcher.draw(&mut pass);
+        }
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {

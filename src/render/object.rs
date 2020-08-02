@@ -1,7 +1,7 @@
 use crate::{
     render::{
-        body::GpuBody, global::Context as GlobalContext, GpuTransform, Palette, Shaders,
-        COLOR_FORMAT, DEPTH_FORMAT,
+        body::GpuBody, global::Context as GlobalContext, GpuTransform, Palette, PipelineSet,
+        Shaders, COLOR_FORMAT, DEPTH_FORMAT,
     },
     space::Transform,
 };
@@ -92,23 +92,26 @@ pub struct Context {
     pub bind_group: wgpu::BindGroup,
     pub shape_bind_group_layout: wgpu::BindGroupLayout,
     pub pipeline_layout: wgpu::PipelineLayout,
-    pub pipeline: wgpu::RenderPipeline,
+    pub pipelines: PipelineSet,
 }
 
 impl Context {
-    fn create_pipeline(
-        layout: &wgpu::PipelineLayout,
-        device: &wgpu::Device,
-    ) -> wgpu::RenderPipeline {
-        let shaders = Shaders::new("object", &[], device).unwrap();
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    fn create_pipelines(layout: &wgpu::PipelineLayout, device: &wgpu::Device) -> PipelineSet {
+        let vertex_descriptor = wgpu::VertexBufferDescriptor {
+            stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Char4, 1 => Uint, 2 => Char4Norm],
+        };
+
+        let main_shaders = Shaders::new("object", &["COLOR"], device).unwrap();
+        let main = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
             vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &shaders.vs,
+                module: &main_shaders.vs,
                 entry_point: "main",
             },
             fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &shaders.fs,
+                module: &main_shaders.fs,
                 entry_point: "main",
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
@@ -120,14 +123,12 @@ impl Context {
                 depth_bias_clamp: 0.0,
             }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[
-                wgpu::ColorStateDescriptor {
-                    format: COLOR_FORMAT,
-                    alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                    color_blend: wgpu::BlendDescriptor::REPLACE,
-                    write_mask: wgpu::ColorWrite::all(),
-                },
-            ],
+            color_states: &[wgpu::ColorStateDescriptor {
+                format: COLOR_FORMAT,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::all(),
+            }],
             depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: true,
@@ -139,19 +140,53 @@ impl Context {
             }),
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[
-                    wgpu::VertexBufferDescriptor {
-                        stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                        step_mode: wgpu::InputStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Char4, 1 => Uint, 2 => Char4Norm],
-                    },
-                    INSTANCE_DESCRIPTOR,
-                ],
+                vertex_buffers: &[vertex_descriptor.clone(), INSTANCE_DESCRIPTOR],
             },
             sample_count: 1,
             alpha_to_coverage_enabled: false,
             sample_mask: !0,
-        })
+        });
+
+        let shadow_shaders = Shaders::new("object", &[], device).unwrap();
+        let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            layout,
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
+                module: &shadow_shaders.vs,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                module: &shadow_shaders.fs,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+                front_face: wgpu::FrontFace::Ccw,
+                // original was not drawn with rasterizer, used no culling
+                cull_mode: wgpu::CullMode::None,
+                depth_bias: 0,
+                depth_bias_slope_scale: 0.0,
+                depth_bias_clamp: 0.0,
+            }),
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            color_states: &[],
+            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_read_mask: !0,
+                stencil_write_mask: !0,
+            }),
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: wgpu::IndexFormat::Uint16,
+                vertex_buffers: &[vertex_descriptor, INSTANCE_DESCRIPTOR],
+            },
+            sample_count: 1,
+            alpha_to_coverage_enabled: false,
+            sample_mask: !0,
+        });
+
+        PipelineSet { main, shadow }
     }
 
     fn create_color_table(
@@ -277,17 +312,17 @@ impl Context {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout],
         });
-        let pipeline = Self::create_pipeline(&pipeline_layout, device);
+        let pipelines = Self::create_pipelines(&pipeline_layout, device);
 
         Context {
             bind_group,
             shape_bind_group_layout,
             pipeline_layout,
-            pipeline,
+            pipelines,
         }
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {
-        self.pipeline = Self::create_pipeline(&self.pipeline_layout, device);
+        self.pipelines = Self::create_pipelines(&self.pipeline_layout, device);
     }
 }

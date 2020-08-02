@@ -133,6 +133,7 @@ impl Application for ResourceView {
             &render::body::GpuBody::ZERO,
             render::object::BodyColor::Dummy,
         );
+        batcher.prepare(device);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Draw"),
@@ -175,11 +176,11 @@ impl Application for ResourceView {
                 }),
             });
 
-            pass.set_pipeline(&self.object.pipeline);
+            pass.set_pipeline(self.object.pipelines.select(render::PipelineKind::Main));
             pass.set_bind_group(0, &self.global.bind_group, &[]);
             pass.set_bind_group(1, &self.object.bind_group, &[]);
 
-            batcher.flush(&mut pass, device);
+            batcher.draw(&mut pass);
         }
 
         encoder.finish()

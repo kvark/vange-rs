@@ -173,6 +173,7 @@ impl Application for CarView {
             &render::body::GpuBody::ZERO,
             self.color,
         );
+        batcher.prepare(device);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Draw"),
@@ -215,11 +216,11 @@ impl Application for CarView {
                 }),
             });
 
-            pass.set_pipeline(&self.object.pipeline);
+            pass.set_pipeline(self.object.pipelines.select(render::PipelineKind::Main));
             pass.set_bind_group(0, &self.global.bind_group, &[]);
             pass.set_bind_group(1, &self.object.bind_group, &[]);
 
-            batcher.flush(&mut pass, device);
+            batcher.draw(&mut pass);
 
             let _ = &self.debug_render;
             /*TODO:
