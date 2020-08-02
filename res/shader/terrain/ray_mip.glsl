@@ -100,11 +100,7 @@ vec3 cast_ray(vec3 point, vec3 dir) {
 }
 
 void main() {
-    vec4 sp_ndc = vec4(
-        gl_FragCoord.xy / vec2(u_ScreenSize.xy) * 2.0 - 1.0,
-        -1.0,
-        1.0
-    );
+    vec4 sp_ndc = get_frag_ndc();
     vec4 sp_world = u_InvViewProj * sp_ndc;
     vec4 sp_zero = u_InvViewProj * vec4(0.0, 0.0, -1.0, 1.0);
     vec3 near_plane = sp_world.xyz / sp_world.w;

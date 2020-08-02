@@ -82,14 +82,13 @@ impl Camera {
             disp: self.loc,
         };
         let view_mx = cgmath::Matrix4::from(view.inverse_transform().unwrap());
-        let mut mvp = self.proj.to_matrix() * view_mx;
-        // convert from GL to wgpu/gfx-rs
-        // 1) depth conversion from [-1,1] to [0,1]
-        mvp.x.z = 0.5 * (mvp.x.z + mvp.x.w);
-        mvp.y.z = 0.5 * (mvp.y.z + mvp.y.w);
-        mvp.z.z = 0.5 * (mvp.z.z + mvp.z.w);
-        mvp.w.z = 0.5 * (mvp.w.z + mvp.w.w);
-        mvp
+        let mut proj = self.proj.to_matrix();
+        // convert from GL's depth of [-1,1] to wgpu/gfx-rs [0,1]
+        proj.x.z = 0.5 * (proj.x.z + proj.x.w);
+        proj.y.z = 0.5 * (proj.y.z + proj.y.w);
+        proj.z.z = 0.5 * (proj.z.z + proj.z.w);
+        proj.w.z = 0.5 * (proj.w.z + proj.w.w);
+        proj * view_mx
     }
 
     pub fn intersect_height(&self, height: f32) -> cgmath::Point3<f32> {
