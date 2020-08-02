@@ -1,4 +1,5 @@
 //!include vs:globals.inc fs:globals.inc fs:terrain/locals.inc fs:surface.inc fs:color.inc
+//!specialization COLOR
 
 #ifdef SHADER_VS
 
@@ -13,6 +14,7 @@ void main() {
 #ifdef SHADER_FS
 //imported: Surface, u_TextureScale, get_surface, evaluate_color
 
+#if COLOR
 const float
     c_ReflectionVariance = 0.5,
     c_ReflectionPower = 0.2;
@@ -20,7 +22,7 @@ const float
 #define TERRAIN_WATER   0U
 
 layout(location = 0) out vec4 o_Color;
-
+#endif //COLOR
 
 vec3 cast_ray_to_plane(float level, vec3 base, vec3 dir) {
     float t = (level - base.z) / dir.z;
@@ -110,9 +112,11 @@ CastPoint cast_ray_to_map(vec3 base, vec3 dir) {
     return result;
 }
 
+#if COLOR
 vec4 color_point(CastPoint pt, float lit_factor) {
     return evaluate_color(pt.type, pt.tex_coord, pt.pos.z / u_TextureScale.z, lit_factor);
 }
+#endif
 
 void main() {
     vec4 sp_ndc = get_frag_ndc();
@@ -125,6 +129,7 @@ void main() {
 
     CastPoint pt = cast_ray_to_map(near_plane, view);
 
+    #if COLOR
     float lit_factor;
     if (pt.is_underground) {
         lit_factor = 0.25;
@@ -164,6 +169,7 @@ void main() {
         }
     }
     o_Color = frag_color;
+    #endif //COLOR
 
     vec4 target_ndc = u_ViewProj * vec4(pt.pos, 1.0);
     gl_FragDepth = target_ndc.z / target_ndc.w;

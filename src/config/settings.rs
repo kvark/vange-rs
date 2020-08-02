@@ -100,6 +100,7 @@ pub struct DebugRender {
 pub struct Light {
     pub pos: [f32; 4],
     pub color: [f32; 4],
+    pub shadow_size: u32,
 }
 
 #[derive(Clone, Deserialize)]

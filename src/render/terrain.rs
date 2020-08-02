@@ -2,8 +2,8 @@ use crate::{
     config::settings::Terrain as TerrainSettings,
     level,
     render::{
-        global::Context as GlobalContext, mipmap::MaxMipper, Palette, Shaders, COLOR_FORMAT,
-        DEPTH_FORMAT,
+        global::Context as GlobalContext, mipmap::MaxMipper, Palette, PipelineKind, PipelineSet,
+        Shaders, COLOR_FORMAT, DEPTH_FORMAT,
     },
     space::Camera,
 };
@@ -136,11 +136,11 @@ impl Geometry {
 
 enum Kind {
     Ray {
-        pipeline: wgpu::RenderPipeline,
+        pipelines: PipelineSet,
         geo: Geometry,
     },
     RayMip {
-        pipeline: wgpu::RenderPipeline,
+        pipelines: PipelineSet,
         geo: Geometry,
         mipper: MaxMipper,
         params: [u32; 4],
@@ -192,20 +192,33 @@ pub struct Context {
 }
 
 impl Context {
-    fn create_ray_pipeline(
+    fn create_ray_pipelines(
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
         name: &str,
-    ) -> wgpu::RenderPipeline {
-        let shaders = Shaders::new(name, &[], device).unwrap();
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    ) -> PipelineSet {
+        let vertex_state = wgpu::VertexStateDescriptor {
+            index_format: wgpu::IndexFormat::Uint16,
+            vertex_buffers: &[wgpu::VertexBufferDescriptor {
+                stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                step_mode: wgpu::InputStepMode::Vertex,
+                attributes: &[wgpu::VertexAttributeDescriptor {
+                    offset: 0,
+                    format: wgpu::VertexFormat::Char4,
+                    shader_location: 0,
+                }],
+            }],
+        };
+
+        let main_shaders = Shaders::new(name, &["COLOR"], device).unwrap();
+        let main = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout,
             vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &shaders.vs,
+                module: &main_shaders.vs,
                 entry_point: "main",
             },
             fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &shaders.fs,
+                module: &main_shaders.fs,
                 entry_point: "main",
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
@@ -231,22 +244,48 @@ impl Context {
                 stencil_read_mask: !0,
                 stencil_write_mask: !0,
             }),
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                    stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                    step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &[wgpu::VertexAttributeDescriptor {
-                        offset: 0,
-                        format: wgpu::VertexFormat::Char4,
-                        shader_location: 0,
-                    }],
-                }],
-            },
+            vertex_state: vertex_state.clone(),
             sample_count: 1,
             alpha_to_coverage_enabled: false,
             sample_mask: !0,
-        })
+        });
+
+        let shadow_shaders = Shaders::new(name, &[], device).unwrap();
+        let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            layout,
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
+                module: &shadow_shaders.vs,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                module: &shadow_shaders.fs,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: wgpu::CullMode::None,
+                depth_bias: 0,
+                depth_bias_slope_scale: 0.0,
+                depth_bias_clamp: 0.0,
+            }),
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            color_states: &[],
+            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_read_mask: !0,
+                stencil_write_mask: !0,
+            }),
+            vertex_state,
+            sample_count: 1,
+            alpha_to_coverage_enabled: false,
+            sample_mask: !0,
+        });
+
+        PipelineSet { main, shadow }
     }
 
     fn create_slice_pipeline(
@@ -810,8 +849,8 @@ impl Context {
                     device,
                 );
 
-                let pipeline = Self::create_ray_pipeline(&pipeline_layout, device, "terrain/ray");
-                Kind::Ray { pipeline, geo }
+                let pipelines = Self::create_ray_pipelines(&pipeline_layout, device, "terrain/ray");
+                Kind::Ray { pipelines, geo }
             }
             TerrainSettings::RayMipTraced {
                 mip_count,
@@ -835,12 +874,12 @@ impl Context {
                     device,
                 );
 
-                let pipeline =
-                    Self::create_ray_pipeline(&pipeline_layout, device, "terrain/ray_mip");
+                let pipelines =
+                    Self::create_ray_pipelines(&pipeline_layout, device, "terrain/ray_mip");
                 let mipper = MaxMipper::new(&height_texture, extent, mip_count, device);
 
                 Kind::RayMip {
-                    pipeline,
+                    pipelines,
                     geo,
                     mipper,
                     params: [
@@ -951,17 +990,18 @@ impl Context {
     pub fn reload(&mut self, device: &wgpu::Device) {
         match self.kind {
             Kind::Ray {
-                ref mut pipeline, ..
+                ref mut pipelines, ..
             } => {
-                *pipeline = Self::create_ray_pipeline(&self.pipeline_layout, device, "terrain/ray");
+                *pipelines =
+                    Self::create_ray_pipelines(&self.pipeline_layout, device, "terrain/ray");
             }
             Kind::RayMip {
-                ref mut pipeline,
+                ref mut pipelines,
                 ref mut mipper,
                 ..
             } => {
-                *pipeline =
-                    Self::create_ray_pipeline(&self.pipeline_layout, device, "terrain/ray_mip");
+                *pipelines =
+                    Self::create_ray_pipelines(&self.pipeline_layout, device, "terrain/ray_mip");
                 mipper.reload(device);
             }
             /*
@@ -1104,20 +1144,20 @@ impl Context {
         }
     }
 
-    pub fn draw<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
+    pub fn draw<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, kind: PipelineKind) {
         pass.set_bind_group(1, &self.bind_group, &[]);
         // draw terrain
         match self.kind {
             Kind::Ray {
-                ref pipeline,
+                ref pipelines,
                 ref geo,
             }
             | Kind::RayMip {
-                ref pipeline,
+                ref pipelines,
                 ref geo,
                 ..
             } => {
-                pass.set_pipeline(pipeline);
+                pass.set_pipeline(pipelines.select(kind));
                 pass.set_index_buffer(geo.index_buf.slice(..));
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.draw_indexed(0..geo.num_indices as u32, 0, 0..1);
