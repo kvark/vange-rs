@@ -1,4 +1,4 @@
-//!include vs:globals.inc fs:globals.inc fs:terrain/locals.inc fs:surface.inc fs:color.inc
+//!include vs:globals.inc fs:globals.inc fs:terrain/locals.inc fs:surface.inc fs:shadow.inc fs:color.inc
 //!specialization COLOR
 
 #ifdef SHADER_VS
@@ -134,24 +134,7 @@ void main() {
     CastPoint pt = cast_ray_to_map(sp_near_plane, view);
 
     #if COLOR
-    float lit_factor;
-    if (pt.is_underground) {
-        lit_factor = 0.25;
-    } else {
-        vec3 light_vec = normalize(u_LightPos.xyz - pt.pos * u_LightPos.w);
-        vec3 a = pt.pos;
-        vec3 outside = cast_ray_to_plane(u_TextureScale.z, a, light_vec);
-        vec3 b = outside;
-
-        Surface suf = cast_ray_impl(a, b, true, 4, 4);
-        if (suf.delta != 0.0 && b.z < suf.low_alt + suf.delta) {
-            // continue casting overground
-            a = b; b = outside;
-            cast_ray_impl(a, b, true, 3, 3);
-        }
-        lit_factor = b == outside ? 1.0 : 0.5;
-    }
-
+    float lit_factor = fetch_shadow(pt.pos);
     vec4 frag_color = color_point(pt, lit_factor);
 
     if (pt.type == TERRAIN_WATER) {
@@ -167,7 +150,6 @@ void main() {
             other.pos = b;
             other.type = suf.high_type;
             other.tex_coord = suf.tex_coord;
-            //other.is_shadowed = suf.is_shadowed;
             vec4 ref_color = color_point(other, 0.8);
             frag_color += c_ReflectionPower * ref_color;
         }

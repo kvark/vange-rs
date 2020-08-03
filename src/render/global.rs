@@ -1,4 +1,4 @@
-use crate::{config::settings, render::Shadow, space::Camera};
+use crate::{config::settings, space::Camera};
 use bytemuck::{Pod, Zeroable};
 use std::mem;
 
@@ -8,7 +8,7 @@ pub struct Constants {
     camera_pos: [f32; 4],
     m_vp: [[f32; 4]; 4],
     m_inv_vp: [[f32; 4]; 4],
-    m_light: [[f32; 4]; 4],
+    m_light_vp: [[f32; 4]; 4],
     light_pos: [f32; 4],
     light_color: [f32; 4],
 }
@@ -16,16 +16,18 @@ unsafe impl Pod for Constants {}
 unsafe impl Zeroable for Constants {}
 
 impl Constants {
-    pub fn new(cam: &Camera, light: &settings::Light) -> Self {
+    pub fn new(cam: &Camera, light: &settings::Light, shadow_cam: Option<&Camera>) -> Self {
         use cgmath::SquareMatrix;
 
-        let light_cam = Shadow::make_camera(light.pos);
+        let m_light_vp = shadow_cam
+            .map_or_else(cgmath::Matrix4::identity, |sc| sc.get_view_proj())
+            .into();
         let mx_vp = cam.get_view_proj();
         Constants {
             camera_pos: cam.loc.extend(1.0).into(),
             m_vp: mx_vp.into(),
             m_inv_vp: mx_vp.invert().unwrap().into(),
-            m_light: light_cam.get_view_proj().into(),
+            m_light_vp,
             light_pos: light.pos,
             light_color: light.color,
         }
@@ -42,6 +44,7 @@ pub struct Context {
 impl Context {
     pub fn new(
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         store_buffer: wgpu::BindingResource,
         shadow_view: Option<&wgpu::TextureView>,
     ) -> Self {
@@ -115,23 +118,39 @@ impl Context {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
-        let dummy_shadow = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("DummyShadow"),
-            size: wgpu::Extent3d {
+        let dummy_shadow_view = {
+            let size = wgpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsage::SAMPLED
-                | wgpu::TextureUsage::OUTPUT_ATTACHMENT
-                | wgpu::TextureUsage::COPY_DST,
-        });
-        //TODO: initialize with white!
-        let dummy_shadow_view = dummy_shadow.create_default_view();
+            };
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("DummyShadow"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsage::SAMPLED
+                    | wgpu::TextureUsage::OUTPUT_ATTACHMENT
+                    | wgpu::TextureUsage::COPY_DST,
+            });
+            queue.write_texture(
+                wgpu::TextureCopyView {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                },
+                &[0, 0, 128, 63], // f32 1.0
+                wgpu::TextureDataLayout {
+                    offset: 0,
+                    bytes_per_row: 4,
+                    rows_per_image: 0,
+                },
+                size,
+            );
+            texture.create_default_view()
+        };
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Global"),

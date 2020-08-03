@@ -1,10 +1,10 @@
-//!include vs:body.inc vs:globals.inc vs:quat.inc fs:globals.inc
+//!include vs:body.inc vs:globals.inc vs:quat.inc fs:globals.inc fs:shadow.inc
 //!specialization COLOR
 
 #if COLOR
 layout(location = 0) varying vec2 v_PaletteRange;
-layout(location = 1) varying vec3 v_Normal;
-layout(location = 2) varying vec3 v_Light;
+layout(location = 1) varying vec3 v_Position;
+layout(location = 2) varying vec3 v_Normal;
 #endif
 
 #ifdef SHADER_VS
@@ -44,9 +44,9 @@ void main() {
     v_PaletteRange = vec2(range.x, range.x + (128U >> range.y));
 
     vec3 n = normalize(a_Normal.xyz);
+    v_Position = world;
     v_Normal = qrot(body_orientation, qrot(a_Orientation, n));
-    v_Light = u_LightPos.xyz - world * u_LightPos.w;
-    #endif
+    #endif //COLOR
 }
 #endif //VS
 
@@ -62,8 +62,10 @@ layout(location = 0) out vec4 o_Color;
 
 void main() {
     #if COLOR
+    float lit_factor = fetch_shadow(v_Position);
     vec3 normal = normalize(v_Normal) * (gl_FrontFacing ? -1.0 : 1.0);
-    float n_dot_l = max(0.0, dot(normal, normalize(v_Light)));
+    vec3 light = normalize(u_LightPos.xyz - v_Position * u_LightPos.w);
+    float n_dot_l = lit_factor * max(0.0, dot(normal, light));
     float tc_raw = mix(v_PaletteRange.x, v_PaletteRange.y, n_dot_l);
     float tc = clamp(tc_raw, v_PaletteRange.x + 0.5, v_PaletteRange.y - 0.5) / 256.0;
     o_Color = texture(sampler1D(t_Palette, s_PaletteSampler), tc);
