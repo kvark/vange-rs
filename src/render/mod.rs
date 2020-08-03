@@ -432,11 +432,11 @@ impl Shadow {
         use cgmath::{EuclideanSpace, InnerSpace};
         let right = self.cam.rot * cgmath::Vector3::unit_x();
         let up = self.cam.rot * cgmath::Vector3::unit_y();
-        let forward = self.cam.rot * cgmath::Vector3::unit_z();
+        let backward = self.cam.rot * cgmath::Vector3::unit_z();
         cgmath::Point3::new(
             world_pt.to_vec().dot(right),
             world_pt.to_vec().dot(up),
-            world_pt.to_vec().dot(-forward),
+            world_pt.to_vec().dot(-backward),
         )
     }
 
@@ -535,6 +535,7 @@ impl Render {
 
         let global = global::Context::new(
             device,
+            queue,
             store_buffer,
             shadow.as_ref().map(|shadow| &shadow.view),
         );
@@ -575,8 +576,9 @@ impl Render {
         if let Some(ref mut shadow) = self.shadow {
             shadow.update_view(cam);
 
+            let constants = global::Constants::new(&shadow.cam, &self.light_config, None);
             let global_staging = device.create_buffer_with_data(
-                bytemuck::bytes_of(&global::Constants::new(&shadow.cam, &self.light_config)),
+                bytemuck::bytes_of(&constants),
                 wgpu::BufferUsage::COPY_SRC,
             );
             encoder.copy_buffer_to_buffer(
@@ -621,8 +623,13 @@ impl Render {
         }
         // main pass
         {
+            let constants = global::Constants::new(
+                cam,
+                &self.light_config,
+                self.shadow.as_ref().map(|shadow| &shadow.cam),
+            );
             let global_staging = device.create_buffer_with_data(
-                bytemuck::bytes_of(&global::Constants::new(cam, &self.light_config)),
+                bytemuck::bytes_of(&constants),
                 wgpu::BufferUsage::COPY_SRC,
             );
             encoder.copy_buffer_to_buffer(

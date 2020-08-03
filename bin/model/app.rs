@@ -26,7 +26,7 @@ impl ResourceView {
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
         let store_init = render::body::GpuStoreInit::new_dummy(device);
-        let global = render::global::Context::new(device, store_init.resource(), None);
+        let global = render::global::Context::new(device, queue, store_init.resource(), None);
         let object = render::object::Context::new(device, queue, &pal_data, &global);
 
         info!("Loading model {}", path);
@@ -138,7 +138,7 @@ impl Application for ResourceView {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Draw"),
         });
-        let global_data = render::global::Constants::new(&self.cam, &self.light_config);
+        let global_data = render::global::Constants::new(&self.cam, &self.light_config, None);
         let global_staging = device.create_buffer_with_data(
             bytemuck::bytes_of(&global_data),
             wgpu::BufferUsage::COPY_SRC,
