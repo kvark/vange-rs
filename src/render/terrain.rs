@@ -187,8 +187,6 @@ pub struct Context {
     pipeline_layout: wgpu::PipelineLayout,
     kind: Kind,
     dirty_rects: Vec<Rect>,
-    dirty_constants: bool,
-    screen_size: wgpu::Extent3d,
 }
 
 impl Context {
@@ -982,8 +980,6 @@ impl Context {
                 w: level.size.0 as u16,
                 h: level.size.1 as u16,
             }],
-            dirty_constants: true,
-            screen_size: screen_extent,
         }
     }
 
@@ -1037,9 +1033,6 @@ impl Context {
     }
 
     pub fn resize(&mut self, extent: wgpu::Extent3d, device: &wgpu::Device) {
-        self.screen_size = extent;
-        self.dirty_constants = true;
-
         match self.kind {
             Kind::Scatter {
                 ref bg_layout,
@@ -1061,6 +1054,7 @@ impl Context {
         device: &wgpu::Device,
         global: &GlobalContext,
         cam: &Camera,
+        screen_size: wgpu::Extent3d,
     ) {
         if !self.dirty_rects.is_empty() {
             if let Kind::RayMip { ref mipper, .. } = self.kind {
@@ -1078,19 +1072,19 @@ impl Context {
             } => {
                 use cgmath::Rotation as _;
                 let dir = cam.rot.rotate_vector(cgmath::Vector3::unit_z());
-                let pixel_count = self.screen_size.width * self.screen_size.height;
+                let pixel_count = screen_size.width * screen_size.height;
                 let paint_lines = (density * pixel_count as f32 / (-dir.z).max(min_divisor)) as u32;
                 [paint_lines, 0, 0, 0]
             }
             _ => [0; 4],
         };
 
-        if self.dirty_constants {
-            self.dirty_constants = false;
+        {
+            // constants update
             let sc = compute_scatter_constants(cam);
             let staging = device.create_buffer_with_data(
                 bytemuck::bytes_of(&Constants {
-                    screen_size: [self.screen_size.width, self.screen_size.height, 0, 0],
+                    screen_size: [screen_size.width, screen_size.height, 0, 0],
                     params,
                     cam_origin_dir: [sc.origin.x, sc.origin.y, sc.dir.x, sc.dir.y],
                     sample_range: [
@@ -1115,7 +1109,6 @@ impl Context {
             Kind::Paint {
                 ref mut line_count, ..
             } => {
-                self.dirty_constants = true; // force update
                 *line_count = params[0];
             }
             Kind::Scatter {
@@ -1126,7 +1119,6 @@ impl Context {
                 density,
                 ..
             } => {
-                self.dirty_constants = true; // force update
                 let mut pass = encoder.begin_compute_pass();
                 pass.set_bind_group(0, &global.bind_group, &[]);
                 pass.set_bind_group(1, &self.bind_group, &[]);

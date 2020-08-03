@@ -75,26 +75,73 @@ pub struct Direction {
 }
 
 impl Camera {
-    pub fn get_view_proj(&self) -> cgmath::Matrix4<f32> {
-        let view = cgmath::Decomposed {
-            scale: 1.0,
-            rot: self.rot,
-            disp: self.loc,
-        };
-        let view_mx = cgmath::Matrix4::from(view.inverse_transform().unwrap());
+    fn get_proj_matrix(&self) -> cgmath::Matrix4<f32> {
         let mut proj = self.proj.to_matrix();
         // convert from GL's depth of [-1,1] to wgpu/gfx-rs [0,1]
         proj.x.z = 0.5 * (proj.x.z + proj.x.w);
         proj.y.z = 0.5 * (proj.y.z + proj.y.w);
         proj.z.z = 0.5 * (proj.z.z + proj.z.w);
         proj.w.z = 0.5 * (proj.w.z + proj.w.w);
-        proj * view_mx
+        proj
+    }
+
+    fn view_transform(&self) -> Transform {
+        cgmath::Decomposed {
+            scale: 1.0,
+            rot: self.rot,
+            disp: self.loc,
+        }
+    }
+
+    pub fn get_view_proj(&self) -> cgmath::Matrix4<f32> {
+        let view = self.view_transform();
+        let view_mx = cgmath::Matrix4::from(view.inverse_transform().unwrap());
+        self.get_proj_matrix() * view_mx
+    }
+
+    //TODO: return `Option`
+    fn intersect_ray_height(&self, dir: cgmath::Vector3<f32>, height: f32) -> cgmath::Point3<f32> {
+        let t = (height - self.loc.z) / dir.z;
+        cgmath::Point3::from_vec(self.loc) + t * dir
     }
 
     pub fn intersect_height(&self, height: f32) -> cgmath::Point3<f32> {
         let dir = self.rot * cgmath::Vector3::unit_z();
-        let t = (height - self.loc.z) / dir.z;
-        cgmath::Point3::from_vec(self.loc) + t * dir
+        self.intersect_ray_height(dir, height)
+    }
+
+    pub fn visible_bounds(&self, height: f32) -> Range<cgmath::Vector2<f32>> {
+        let center = self.intersect_height(height).to_vec().truncate();
+        let mut bounds = center..center;
+
+        let proj = self.get_view_proj();
+        let view = self.view_transform();
+        let mx = cgmath::Matrix4::from(view) * proj.inverse_transform().unwrap();
+        let ndc_points = [
+            cgmath::vec2(-1.0, -1.0),
+            cgmath::vec2(1.0, -1.0),
+            cgmath::vec2(1.0, 1.0),
+            cgmath::vec2(-1.0, 1.0),
+        ];
+        for ndc in &ndc_points {
+            let wp = cgmath::Point3::from_homogeneous(mx * cgmath::vec4(ndc.x, ndc.y, 1.0, 1.0));
+            let pt = self.intersect_ray_height(wp - cgmath::Point3::from_vec(self.loc), height);
+            bounds.start.x = bounds.start.x.min(pt.x);
+            bounds.start.y = bounds.start.y.min(pt.y);
+            bounds.end.x = bounds.end.x.max(pt.x);
+            bounds.end.y = bounds.end.y.max(pt.y);
+        }
+        bounds
+    }
+
+    pub fn bound_points(&self, height: f32) -> [cgmath::Point3<f32>; 4] {
+        let vb = self.visible_bounds(height);
+        [
+            cgmath::Point3::new(vb.start.x, vb.start.y, height),
+            cgmath::Point3::new(vb.end.x, vb.start.y, height),
+            cgmath::Point3::new(vb.end.x, vb.end.y, height),
+            cgmath::Point3::new(vb.start.x, vb.end.y, height),
+        ]
     }
 
     pub fn follow(&mut self, target: &Transform, dt: f32, follow: &Follow) {

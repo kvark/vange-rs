@@ -9,7 +9,7 @@ vec4 get_frag_ndc() {
     // note the Y-flip here
     return vec4(
         ((gl_FragCoord.xy / vec2(u_ScreenSize.xy)) * 2.0 - 1.0) * vec2(1.0, -1.0),
-        -1.0,
+        0.0,
         1.0
     );
 }

@@ -121,13 +121,17 @@ vec4 color_point(CastPoint pt, float lit_factor) {
 void main() {
     vec4 sp_ndc = get_frag_ndc();
     vec4 sp_world = u_InvViewProj * sp_ndc;
+    vec3 sp_near_plane = sp_world.xyz / sp_world.w;
+    #if COLOR
     vec4 sp_zero = u_InvViewProj * vec4(0.0, 0.0, -1.0, 1.0);
-    vec3 near_plane = sp_world.xyz / sp_world.w;
     vec3 view_base =
-        u_ViewProj[2][3] == 0.0 ? sp_zero.xyz/sp_zero.w : near_plane;
+        u_ViewProj[2][3] == 0.0 ? sp_zero.xyz/sp_zero.w : sp_near_plane;
+    #else
+    vec3 view_base = vec3(0.0);
+    #endif
     vec3 view = normalize(view_base - u_CameraPos.xyz);
 
-    CastPoint pt = cast_ray_to_map(near_plane, view);
+    CastPoint pt = cast_ray_to_map(sp_near_plane, view);
 
     #if COLOR
     float lit_factor;
