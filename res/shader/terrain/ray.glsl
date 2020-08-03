@@ -6,13 +6,19 @@
 layout(location = 0) attribute ivec4 a_Pos;
 
 void main() {
-    gl_Position = u_ViewProj * vec4(a_Pos);
+    // orhto projections don't like infinite values
+    gl_Position = u_ViewProj[2][3] == 0.0 ?
+        // the expected geometry is 4 trianges meeting in the center
+        vec4(a_Pos.xy, 0.0, 0.5) :
+        u_ViewProj * vec4(a_Pos);
 }
 #endif //VS
 
 
 #ifdef SHADER_FS
 //imported: Surface, u_TextureScale, get_surface, evaluate_color
+
+const float c_DepthBias = COLOR != 0 ? 0.0 : 0.01;
 
 #if COLOR
 const float
@@ -119,19 +125,10 @@ vec4 color_point(CastPoint pt, float lit_factor) {
 #endif
 
 void main() {
-    vec4 sp_ndc = get_frag_ndc();
-    vec4 sp_world = u_InvViewProj * sp_ndc;
-    vec3 sp_near_plane = sp_world.xyz / sp_world.w;
-    #if COLOR
-    vec4 sp_zero = u_InvViewProj * vec4(0.0, 0.0, -1.0, 1.0);
-    vec3 view_base =
-        u_ViewProj[2][3] == 0.0 ? sp_zero.xyz/sp_zero.w : sp_near_plane;
-    #else
-    vec3 view_base = vec3(0.0);
-    #endif
-    vec3 view = normalize(view_base - u_CameraPos.xyz);
-
-    CastPoint pt = cast_ray_to_map(sp_near_plane, view);
+    vec3 sp_near_world = get_frag_world(0.0);
+    vec3 sp_far_world = get_frag_world(1.0);
+    vec3 view = normalize(sp_far_world - sp_near_world);
+    CastPoint pt = cast_ray_to_map(sp_near_world, view);
 
     #if COLOR
     float lit_factor = fetch_shadow(pt.pos);
@@ -158,6 +155,6 @@ void main() {
     #endif //COLOR
 
     vec4 target_ndc = u_ViewProj * vec4(pt.pos, 1.0);
-    gl_FragDepth = target_ndc.z / target_ndc.w;
+    gl_FragDepth = target_ndc.z / target_ndc.w + c_DepthBias;
 }
 #endif //FS

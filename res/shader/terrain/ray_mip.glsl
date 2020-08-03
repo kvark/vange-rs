@@ -1,11 +1,16 @@
-//!include vs:globals.inc fs:globals.inc fs:terrain/locals.inc fs:surface.inc fs:color.inc
+//!include vs:globals.inc fs:globals.inc fs:terrain/locals.inc fs:surface.inc fs:shadow.inc fs:color.inc
+//!specialization COLOR
 
 #ifdef SHADER_VS
 
 layout(location = 0) attribute ivec4 a_Pos;
 
 void main() {
-    gl_Position = u_ViewProj * vec4(a_Pos);
+    // orhto projections don't like infinite values
+    gl_Position = u_ViewProj[2][3] == 0.0 ?
+        // the expected geometry is 4 trianges meeting in the center
+        vec4(a_Pos.xy, 0.0, 0.5) :
+        u_ViewProj * vec4(a_Pos);
 }
 #endif //VS
 
@@ -13,11 +18,13 @@ void main() {
 #ifdef SHADER_FS
 //imported: Surface, u_TextureScale, get_lod_height, get_surface, evaluate_color
 
-#define TERRAIN_WATER   0U
-
+const float c_DepthBias = COLOR != 0 ? 0.0 : 0.01;
 const float c_Step = 0.6;
 
+#if COLOR
+#define TERRAIN_WATER   0U
 layout(location = 0) out vec4 o_Color;
+#endif
 
 vec3 cast_ray_to_plane(float level, vec3 base, vec3 dir) {
     float t = (level - base.z) / dir.z;
@@ -88,6 +95,7 @@ vec3 cast_ray(vec3 point, vec3 dir) {
         }
     }
 
+    #if COLOR
     // debug output here
     if (u_Params.w != 0U) {
         o_Color = vec4(
@@ -96,29 +104,27 @@ vec3 cast_ray(vec3 point, vec3 dir) {
             1.0 - float(num_steps) / float(u_Params.z),
             1.0);
     }
+    #endif //COLOR
     return point;
 }
 
 void main() {
-    vec4 sp_ndc = get_frag_ndc();
-    vec4 sp_world = u_InvViewProj * sp_ndc;
-    vec4 sp_zero = u_InvViewProj * vec4(0.0, 0.0, -1.0, 1.0);
-    vec3 near_plane = sp_world.xyz / sp_world.w;
-    vec3 view_base =
-        u_ViewProj[2][3] == 0.0 ? sp_zero.xyz/sp_zero.w : near_plane;
-    vec3 view = normalize(view_base - u_CameraPos.xyz);
+    vec3 sp_near_world = get_frag_world(0.0);
+    vec3 sp_far_world = get_frag_world(1.0);
+    vec3 view = normalize(sp_far_world - sp_near_world);
+    vec3 point = cast_ray(sp_near_world, view);
+    //vec3 point = cast_ray_to_plane(0.0, sp_near_world, view);
 
-    vec3 point = cast_ray(view_base, view);
-    //vec3 point = cast_ray_to_plane(0.0, near_plane, view);
-
+    #if COLOR
     if (u_Params.w == 0U) {
+        float lit_factor = fetch_shadow(point);
         Surface surface = get_surface(point.xy);
         uint type = point.z <= surface.low_alt ? surface.low_type : surface.high_type;
-        float lit_factor = point.z <= surface.low_alt && surface.delta != 0.0 ? 0.25 : 1.0;
         o_Color = evaluate_color(type, surface.tex_coord, point.z / u_TextureScale.z, lit_factor);
     }
+    #endif //COLOR
 
     vec4 target_ndc = u_ViewProj * vec4(point, 1.0);
-    gl_FragDepth = target_ndc.z / target_ndc.w;
+    gl_FragDepth = target_ndc.z / target_ndc.w + c_DepthBias;
 }
 #endif //FS
