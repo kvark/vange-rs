@@ -412,6 +412,22 @@ pub struct Shadow {
 }
 
 impl Shadow {
+    fn make_camera(light_dir: [f32; 4]) -> Camera {
+        use cgmath::Rotation as _;
+
+        let loc = cgmath::Vector4::from(light_dir).truncate();
+        let up = if loc.x == 0.0 && loc.y == 0.0 {
+            cgmath::Vector3::unit_y()
+        } else {
+            cgmath::Vector3::unit_z()
+        };
+        Camera {
+            loc,
+            rot: cgmath::Quaternion::look_at(loc, up),
+            proj: Projection::ortho(1, 1, 0.0..1.0),
+        }
+    }
+
     fn get_local_point(&self, world_pt: cgmath::Point3<f32>) -> cgmath::Point3<f32> {
         use cgmath::{EuclideanSpace, InnerSpace};
         let right = self.cam.rot * cgmath::Vector3::unit_x();
@@ -425,8 +441,6 @@ impl Shadow {
     }
 
     fn update_view(&mut self, cam: &Camera) {
-        use cgmath::EuclideanSpace;
-
         let cam_focus = cam.intersect_height(0.0);
         let center_proj = self.get_local_point(cam_focus);
         let mut p = cgmath::Ortho {
@@ -496,20 +510,6 @@ impl Render {
         screen_size: wgpu::Extent3d,
         store_buffer: wgpu::BindingResource,
     ) -> Self {
-        use cgmath::Rotation as _;
-
-        let global = global::Context::new(device, store_buffer);
-        let object = object::Context::new(device, queue, object_palette, &global);
-        let terrain = terrain::Context::new(
-            device,
-            queue,
-            level,
-            &global,
-            &settings.terrain,
-            screen_size,
-        );
-        let debug = debug::Context::new(device, &settings.debug, &global, &object);
-
         let shadow = if settings.light.shadow_size != 0 {
             let shadow_tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Shadow"),
@@ -526,24 +526,28 @@ impl Render {
             });
             Some(Shadow {
                 view: shadow_tex.create_default_view(),
-                cam: {
-                    let loc = cgmath::Vector4::from(settings.light.pos).truncate();
-                    let up = if loc.x == 0.0 && loc.y == 0.0 {
-                        cgmath::Vector3::unit_y()
-                    } else {
-                        cgmath::Vector3::unit_z()
-                    };
-                    Camera {
-                        loc,
-                        rot: cgmath::Quaternion::look_at(loc, up),
-                        proj: Projection::ortho(1, 1, 0.0..1.0),
-                    }
-                },
+                cam: Shadow::make_camera(settings.light.pos),
                 size: settings.light.shadow_size,
             })
         } else {
             None
         };
+
+        let global = global::Context::new(
+            device,
+            store_buffer,
+            shadow.as_ref().map(|shadow| &shadow.view),
+        );
+        let object = object::Context::new(device, queue, object_palette, &global);
+        let terrain = terrain::Context::new(
+            device,
+            queue,
+            level,
+            &global,
+            &settings.terrain,
+            screen_size,
+        );
+        let debug = debug::Context::new(device, &settings.debug, &global, &object);
 
         Render {
             global,
@@ -607,7 +611,7 @@ impl Render {
                 }),
             });
 
-            pass.set_bind_group(0, &self.global.bind_group, &[]);
+            pass.set_bind_group(0, &self.global.shadow_bind_group, &[]);
             self.terrain.draw(&mut pass, PipelineKind::Shadow);
 
             // draw vehicle models

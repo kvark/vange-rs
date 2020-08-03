@@ -25,7 +25,7 @@ impl CarView {
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
         let store_init = render::body::GpuStoreInit::new_dummy(device);
-        let global = render::global::Context::new(device, store_init.resource());
+        let global = render::global::Context::new(device, store_init.resource(), None);
         let object = render::object::Context::new(device, queue, &pal_data, &global);
 
         info!("Loading car registry");

@@ -114,7 +114,7 @@ impl Camera {
         let center = self.intersect_height(height).to_vec().truncate();
         let mut bounds = center..center;
 
-        let proj = self.get_view_proj();
+        let proj = self.get_proj_matrix();
         let view = self.view_transform();
         let mx = cgmath::Matrix4::from(view) * proj.inverse_transform().unwrap();
         let ndc_points = [
