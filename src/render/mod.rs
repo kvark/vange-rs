@@ -415,33 +415,34 @@ impl Shadow {
     fn make_camera(light_dir: [f32; 4]) -> Camera {
         use cgmath::Rotation as _;
 
-        let loc = cgmath::Vector4::from(light_dir).truncate();
-        let up = if loc.x == 0.0 && loc.y == 0.0 {
+        let dir = cgmath::Vector4::from(light_dir).truncate();
+        let up = if dir.x == 0.0 && dir.y == 0.0 {
             cgmath::Vector3::unit_y()
         } else {
             cgmath::Vector3::unit_z()
         };
         Camera {
-            loc,
-            rot: cgmath::Quaternion::look_at(loc, up),
+            loc: cgmath::Zero::zero(),
+            rot: cgmath::Quaternion::look_at(dir, up),
             proj: Projection::ortho(1, 1, 0.0..1.0),
         }
     }
 
     fn get_local_point(&self, world_pt: cgmath::Point3<f32>) -> cgmath::Point3<f32> {
-        use cgmath::{EuclideanSpace, InnerSpace};
+        use cgmath::{EuclideanSpace as _, InnerSpace as _};
+        let diff = world_pt.to_vec() - self.cam.loc;
         let right = self.cam.rot * cgmath::Vector3::unit_x();
         let up = self.cam.rot * cgmath::Vector3::unit_y();
         let backward = self.cam.rot * cgmath::Vector3::unit_z();
-        cgmath::Point3::new(
-            world_pt.to_vec().dot(right),
-            world_pt.to_vec().dot(up),
-            world_pt.to_vec().dot(-backward),
-        )
+        cgmath::Point3::new(diff.dot(right), diff.dot(up), diff.dot(-backward))
     }
 
     fn update_view(&mut self, cam: &Camera) {
+        use cgmath::EuclideanSpace as _;
+
         let cam_focus = cam.intersect_height(0.0);
+        self.cam.loc = cam_focus.to_vec();
+
         let center_proj = self.get_local_point(cam_focus);
         let mut p = cgmath::Ortho {
             left: center_proj.x,
