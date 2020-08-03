@@ -408,11 +408,52 @@ impl Batcher {
 pub struct Shadow {
     view: wgpu::TextureView,
     cam: Camera,
+    size: u32,
 }
 
 impl Shadow {
-    fn update_view(&mut self, _cam: &Camera) {
-        //TODO
+    fn get_local_point(&self, world_pt: cgmath::Point3<f32>) -> cgmath::Point3<f32> {
+        use cgmath::{EuclideanSpace, InnerSpace};
+        let right = self.cam.rot * cgmath::Vector3::unit_x();
+        let up = self.cam.rot * cgmath::Vector3::unit_y();
+        let forward = self.cam.rot * cgmath::Vector3::unit_z();
+        cgmath::Point3::new(
+            world_pt.to_vec().dot(right),
+            world_pt.to_vec().dot(up),
+            world_pt.to_vec().dot(-forward),
+        )
+    }
+
+    fn update_view(&mut self, cam: &Camera) {
+        use cgmath::EuclideanSpace;
+
+        let cam_focus = cam.intersect_height(0.0);
+        let center_proj = self.get_local_point(cam_focus);
+        let mut p = cgmath::Ortho {
+            left: center_proj.x,
+            right: center_proj.x,
+            top: center_proj.y,
+            bottom: center_proj.y,
+            near: center_proj.z,
+            far: center_proj.z,
+        };
+
+        let points_lo = cam.bound_points(0.0);
+        let points_hi = cam.bound_points(level::HEIGHT_SCALE as f32);
+        for pt in points_lo.iter().chain(points_hi.iter()) {
+            let local = self.get_local_point(*pt);
+            p.left = p.left.min(local.x);
+            p.bottom = p.bottom.min(local.y);
+            p.near = p.near.min(local.z);
+            p.right = p.right.max(local.x);
+            p.top = p.top.max(local.y);
+            p.far = p.far.max(local.z);
+        }
+
+        self.cam.proj = Projection::Ortho {
+            p,
+            original: (0, 0),
+        };
     }
 }
 
@@ -442,6 +483,7 @@ pub struct Render {
     pub debug: debug::Context,
     pub shadow: Option<Shadow>,
     pub light_config: settings::Light,
+    screen_size: wgpu::Extent3d,
 }
 
 impl Render {
@@ -451,7 +493,7 @@ impl Render {
         level: &level::Level,
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
-        screen_extent: wgpu::Extent3d,
+        screen_size: wgpu::Extent3d,
         store_buffer: wgpu::BindingResource,
     ) -> Self {
         use cgmath::Rotation as _;
@@ -464,7 +506,7 @@ impl Render {
             level,
             &global,
             &settings.terrain,
-            screen_extent,
+            screen_size,
         );
         let debug = debug::Context::new(device, &settings.debug, &global, &object);
 
@@ -497,6 +539,7 @@ impl Render {
                         proj: Projection::ortho(1, 1, 0.0..1.0),
                     }
                 },
+                size: settings.light.shadow_size,
             })
         } else {
             None
@@ -509,6 +552,7 @@ impl Render {
             debug,
             shadow,
             light_config: settings.light.clone(),
+            screen_size,
         }
     }
 
@@ -539,7 +583,17 @@ impl Render {
                 mem::size_of::<global::Constants>() as wgpu::BufferAddress,
             );
 
-            //self.terrain.prepare(encoder, device, &self.global, cam);
+            self.terrain.prepare(
+                encoder,
+                device,
+                &self.global,
+                cam,
+                wgpu::Extent3d {
+                    width: shadow.size,
+                    height: shadow.size,
+                    depth: 1,
+                },
+            );
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[],
@@ -575,7 +629,8 @@ impl Render {
                 mem::size_of::<global::Constants>() as wgpu::BufferAddress,
             );
 
-            self.terrain.prepare(encoder, device, &self.global, cam);
+            self.terrain
+                .prepare(encoder, device, &self.global, cam, self.screen_size);
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
@@ -619,6 +674,7 @@ impl Render {
 
     pub fn resize(&mut self, extent: wgpu::Extent3d, device: &wgpu::Device) {
         self.terrain.resize(extent, device);
+        self.screen_size = extent;
     }
 
     /*
