@@ -1,7 +1,7 @@
 use crate::{
     render::{
         body::GpuBody, global::Context as GlobalContext, GpuTransform, Palette, PipelineSet,
-        Shaders, COLOR_FORMAT, DEPTH_FORMAT,
+        Shaders, COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT,
     },
     space::Transform,
 };
@@ -168,7 +168,7 @@ impl Context {
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[],
             depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-                format: DEPTH_FORMAT,
+                format: SHADOW_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,

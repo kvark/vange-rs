@@ -3,7 +3,7 @@ use crate::{
     level,
     render::{
         global::Context as GlobalContext, mipmap::MaxMipper, Palette, PipelineKind, PipelineSet,
-        Shaders, COLOR_FORMAT, DEPTH_FORMAT,
+        Shaders, COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT,
     },
     space::Camera,
 };
@@ -271,7 +271,7 @@ impl Context {
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[],
             depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-                format: DEPTH_FORMAT,
+                format: SHADOW_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Always,
                 stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,

@@ -1,7 +1,7 @@
 use crate::{
     config::settings,
     level, model,
-    space::{Camera, Projection, Transform},
+    space::{Camera, Transform},
 };
 
 use bytemuck::{Pod, Zeroable};
@@ -22,8 +22,10 @@ pub mod debug;
 pub mod global;
 pub mod mipmap;
 pub mod object;
+mod shadow;
 pub mod terrain;
 
+pub use shadow::FORMAT as SHADOW_FORMAT;
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -405,73 +407,6 @@ impl Batcher {
     }
 }
 
-pub struct Shadow {
-    view: wgpu::TextureView,
-    cam: Camera,
-    size: u32,
-}
-
-impl Shadow {
-    fn make_camera(light_dir: [f32; 4]) -> Camera {
-        use cgmath::Rotation as _;
-
-        let dir = cgmath::Vector4::from(light_dir).truncate();
-        let up = if dir.x == 0.0 && dir.y == 0.0 {
-            cgmath::Vector3::unit_y()
-        } else {
-            cgmath::Vector3::unit_z()
-        };
-        Camera {
-            loc: cgmath::Zero::zero(),
-            rot: cgmath::Quaternion::look_at(dir, up),
-            proj: Projection::ortho(1, 1, 0.0..1.0),
-        }
-    }
-
-    fn get_local_point(&self, world_pt: cgmath::Point3<f32>) -> cgmath::Point3<f32> {
-        use cgmath::{EuclideanSpace as _, InnerSpace as _};
-        let diff = world_pt.to_vec() - self.cam.loc;
-        let right = self.cam.rot * cgmath::Vector3::unit_x();
-        let up = self.cam.rot * cgmath::Vector3::unit_y();
-        let backward = self.cam.rot * cgmath::Vector3::unit_z();
-        cgmath::Point3::new(diff.dot(right), diff.dot(up), diff.dot(-backward))
-    }
-
-    fn update_view(&mut self, cam: &Camera) {
-        use cgmath::EuclideanSpace as _;
-
-        let cam_focus = cam.intersect_height(0.0);
-        self.cam.loc = cam_focus.to_vec();
-
-        let center_proj = self.get_local_point(cam_focus);
-        let mut p = cgmath::Ortho {
-            left: center_proj.x,
-            right: center_proj.x,
-            top: center_proj.y,
-            bottom: center_proj.y,
-            near: center_proj.z,
-            far: center_proj.z,
-        };
-
-        let points_lo = cam.bound_points(0.0);
-        let points_hi = cam.bound_points(level::HEIGHT_SCALE as f32);
-        for pt in points_lo.iter().chain(points_hi.iter()) {
-            let local = self.get_local_point(*pt);
-            p.left = p.left.min(local.x);
-            p.bottom = p.bottom.min(local.y);
-            p.near = p.near.min(local.z);
-            p.right = p.right.max(local.x);
-            p.top = p.top.max(local.y);
-            p.far = p.far.max(local.z);
-        }
-
-        self.cam.proj = Projection::Ortho {
-            p,
-            original: (0, 0),
-        };
-    }
-}
-
 pub struct PipelineSet {
     main: wgpu::RenderPipeline,
     shadow: wgpu::RenderPipeline,
@@ -496,7 +431,7 @@ pub struct Render {
     pub object: object::Context,
     pub terrain: terrain::Context,
     pub debug: debug::Context,
-    pub shadow: Option<Shadow>,
+    pub shadow: Option<shadow::Shadow>,
     pub light_config: settings::Light,
     screen_size: wgpu::Extent3d,
 }
@@ -512,24 +447,7 @@ impl Render {
         store_buffer: wgpu::BindingResource,
     ) -> Self {
         let shadow = if settings.light.shadow_size != 0 {
-            let shadow_tex = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Shadow"),
-                size: wgpu::Extent3d {
-                    width: settings.light.shadow_size,
-                    height: settings.light.shadow_size,
-                    depth: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Depth32Float,
-                usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-            });
-            Some(Shadow {
-                view: shadow_tex.create_default_view(),
-                cam: Shadow::make_camera(settings.light.pos),
-                size: settings.light.shadow_size,
-            })
+            Some(shadow::Shadow::new(&settings.light, device))
         } else {
             None
         };
