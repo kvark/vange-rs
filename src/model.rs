@@ -4,6 +4,7 @@ use crate::render::{
     ShapePolygon,
 };
 use m3d;
+use wgpu::util::DeviceExt as _;
 
 use std::{fs::File, mem, ops::Range, slice, sync::Arc};
 
@@ -264,7 +265,7 @@ pub fn load_c3d_shape(
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Shape"),
         layout: &object.shape_bind_group_layout,
-        bindings: &[wgpu::Binding {
+        entries: &[wgpu::BindGroupEntry {
             binding: 0,
             resource: wgpu::BindingResource::Buffer(vertex_buf.slice(..)),
         }],
@@ -275,15 +276,17 @@ pub fn load_c3d_shape(
         samples,
         vertex_buf,
         bind_group,
-        polygon_buf: device.create_buffer_with_data(
-            bytemuck::cast_slice(&polygon_data),
-            wgpu::BufferUsage::VERTEX,
-        ),
+        polygon_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("polygons"),
+            contents: bytemuck::cast_slice(&polygon_data),
+            usage: wgpu::BufferUsage::VERTEX,
+        }),
         sample_buf: if with_sample_buf {
-            let buffer = device.create_buffer_with_data(
-                bytemuck::cast_slice(&sample_data),
-                wgpu::BufferUsage::VERTEX,
-            );
+            let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("samples"),
+                contents: bytemuck::cast_slice(&sample_data),
+                usage: wgpu::BufferUsage::VERTEX,
+            });
             Some((buffer, sample_data.len()))
         } else {
             None

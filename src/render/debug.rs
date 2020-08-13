@@ -3,12 +3,14 @@ use crate::{
     model,
     render::{
         global::Context as GlobalContext,
-        object::{Context as ObjectContext, Instance as ObjectInstance, INSTANCE_DESCRIPTOR},
-        Shaders, COLOR_FORMAT, DEPTH_FORMAT, SHAPE_POLYGON_BUFFER,
+        object::{Context as ObjectContext, Instance as ObjectInstance, InstanceDesc},
+        Shaders, ShapeVertexDesc, COLOR_FORMAT, DEPTH_FORMAT,
     },
 };
 
 use bytemuck::{Pod, Zeroable};
+use wgpu::util::DeviceExt as _;
+
 use std::{collections::HashMap, mem};
 
 const BLEND_FRONT: wgpu::BlendDescriptor = wgpu::BlendDescriptor::REPLACE;
@@ -114,43 +116,48 @@ impl Context {
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Debug"),
-            bindings: &[
+            entries: &[
                 // locals
-                wgpu::BindGroupLayoutEntry::new(
-                    0,
-                    wgpu::ShaderStage::FRAGMENT,
-                    wgpu::BindingType::UniformBuffer {
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::UniformBuffer {
                         dynamic: false,
                         min_binding_size: None,
                     },
-                ),
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("debug"),
             bind_group_layouts: &[
                 &global.bind_group_layout,
                 &bind_group_layout,
                 &object.shape_bind_group_layout,
             ],
+            push_constant_ranges: &[],
         });
 
-        let line_color_buf = device.create_buffer_with_data(
-            bytemuck::bytes_of(&Color { color: 0xFF000080 }), // line
-            wgpu::BufferUsage::VERTEX,
-        );
-        let locals_buf = device.create_buffer_with_data(
-            bytemuck::cast_slice(&[
+        let line_color_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("debug-line-color"),
+            contents: bytemuck::bytes_of(&Color { color: 0xFF000080 }), // line
+            usage: wgpu::BufferUsage::VERTEX,
+        });
+        let locals_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("debug-locals"),
+            contents: bytemuck::cast_slice(&[
                 Locals::new([1.0; 4]),             // line
                 Locals::new([0.0, 1.0, 0.0, 0.2]), // face
                 Locals::new([1.0, 1.0, 0.0, 0.2]), // edge
             ]),
-            wgpu::BufferUsage::UNIFORM,
-        );
+            usage: wgpu::BufferUsage::UNIFORM,
+        });
         let locals_size = mem::size_of::<Locals>() as wgpu::BufferAddress;
         let bind_group_line = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Debug line"),
             layout: &bind_group_layout,
-            bindings: &[wgpu::Binding {
+            entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(
                     locals_buf.slice(0 * locals_size..1 * locals_size),
@@ -160,7 +167,7 @@ impl Context {
         let bind_group_face = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Debug face"),
             layout: &bind_group_layout,
-            bindings: &[wgpu::Binding {
+            entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(
                     locals_buf.slice(1 * locals_size..2 * locals_size),
@@ -170,7 +177,7 @@ impl Context {
         let bind_group_edge = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Debug edge"),
             layout: &bind_group_layout,
-            bindings: &[wgpu::Binding {
+            entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(
                     locals_buf.slice(2 * locals_size..3 * locals_size),
@@ -200,15 +207,14 @@ impl Context {
             front_face: wgpu::FrontFace::Ccw,
             // original was not drawn with rasterizer, used no culling
             cull_mode: wgpu::CullMode::None,
-            depth_bias: 0,
-            depth_bias_slope_scale: 0.0,
-            depth_bias_clamp: 0.0,
+            ..Default::default()
         };
 
         if self.settings.collision_shapes {
             let shaders = Shaders::new("debug_shape", &[], device).unwrap();
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                layout: &self.pipeline_layout,
+                label: Some("debug-shape"),
+                layout: Some(&self.pipeline_layout),
                 vertex_stage: wgpu::ProgrammableStageDescriptor {
                     module: &shaders.vs,
                     entry_point: "main",
@@ -237,14 +243,14 @@ impl Context {
                     format: DEPTH_FORMAT,
                     depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-                    stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-                    stencil_read_mask: !0,
-                    stencil_write_mask: !0,
+                    stencil: Default::default(),
                 }),
                 vertex_state: wgpu::VertexStateDescriptor {
                     index_format: wgpu::IndexFormat::Uint16,
-                    vertex_buffers: &[SHAPE_POLYGON_BUFFER, INSTANCE_DESCRIPTOR],
+                    vertex_buffers: &[
+                        ShapeVertexDesc::new().buffer_desc(),
+                        InstanceDesc::new().buffer_desc(),
+                    ],
                 },
                 sample_count: 1,
                 alpha_to_coverage_enabled: false,
@@ -263,8 +269,10 @@ impl Context {
                     Visibility::Behind => (&BLEND_BEHIND, false, wgpu::CompareFunction::Greater),
                 };
                 for &color_rate in &[wgpu::InputStepMode::Vertex, wgpu::InputStepMode::Instance] {
+                    let name = format!("debug-line-{:?}-{:?}", visibility, color_rate);
                     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                        layout: &self.pipeline_layout,
+                        label: Some(&name),
+                        layout: Some(&self.pipeline_layout),
                         vertex_stage: wgpu::ProgrammableStageDescriptor {
                             module: &shaders.vs,
                             entry_point: "main",
@@ -285,10 +293,7 @@ impl Context {
                             format: DEPTH_FORMAT,
                             depth_write_enabled,
                             depth_compare,
-                            stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-                            stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-                            stencil_read_mask: !0,
-                            stencil_write_mask: !0,
+                            stencil: Default::default(),
                         }),
                         vertex_state: wgpu::VertexStateDescriptor {
                             index_format: wgpu::IndexFormat::Uint16,
@@ -399,14 +404,20 @@ impl Context {
         device: &wgpu::Device,
         linebuf: &LineBuffer,
     ) {
-        self.vertex_buf = Some(device.create_buffer_with_data(
-            bytemuck::cast_slice(&linebuf.vertices),
-            wgpu::BufferUsage::VERTEX,
-        ));
-        self.color_buf = Some(device.create_buffer_with_data(
-            bytemuck::cast_slice(&linebuf.colors),
-            wgpu::BufferUsage::VERTEX,
-        ));
+        self.vertex_buf = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("debug-vertices"),
+                contents: bytemuck::cast_slice(&linebuf.vertices),
+                usage: wgpu::BufferUsage::VERTEX,
+            }),
+        );
+        self.color_buf = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("debug-colors"),
+                contents: bytemuck::cast_slice(&linebuf.colors),
+                usage: wgpu::BufferUsage::VERTEX,
+            }),
+        );
         assert_eq!(linebuf.vertices.len(), linebuf.colors.len());
 
         self.draw_liner(

@@ -9,6 +9,8 @@ use crate::{
 };
 
 use bytemuck::{Pod, Zeroable};
+use wgpu::util::DeviceExt as _;
+
 use std::{mem, ops::Range};
 
 pub const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -123,12 +125,16 @@ struct Geometry {
 impl Geometry {
     fn new(vertices: &[Vertex], indices: &[u16], device: &wgpu::Device) -> Self {
         Geometry {
-            vertex_buf: device.create_buffer_with_data(
-                bytemuck::cast_slice(&vertices),
-                wgpu::BufferUsage::VERTEX,
-            ),
-            index_buf: device
-                .create_buffer_with_data(bytemuck::cast_slice(&indices), wgpu::BufferUsage::INDEX),
+            vertex_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("terrain-vertex"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsage::VERTEX,
+            }),
+            index_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("terrain-index"),
+                contents: bytemuck::cast_slice(&indices),
+                usage: wgpu::BufferUsage::INDEX,
+            }),
             num_indices: indices.len(),
         }
     }
@@ -210,7 +216,8 @@ impl Context {
 
         let main_shaders = Shaders::new(name, &["COLOR"], device).unwrap();
         let main = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout,
+            label: Some("terrain-ray"),
+            layout: Some(layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &main_shaders.vs,
                 entry_point: "main",
@@ -222,9 +229,7 @@ impl Context {
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: wgpu::CullMode::None,
-                depth_bias: 0,
-                depth_bias_slope_scale: 0.0,
-                depth_bias_clamp: 0.0,
+                ..Default::default()
             }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[wgpu::ColorStateDescriptor {
@@ -237,10 +242,7 @@ impl Context {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Always,
-                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_read_mask: !0,
-                stencil_write_mask: !0,
+                stencil: Default::default(),
             }),
             vertex_state: vertex_state.clone(),
             sample_count: 1,
@@ -250,7 +252,8 @@ impl Context {
 
         let shadow_shaders = Shaders::new(name, &[], device).unwrap();
         let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout,
+            label: Some("terrain-ray-shadow"),
+            layout: Some(layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &shadow_shaders.vs,
                 entry_point: "main",
@@ -264,9 +267,7 @@ impl Context {
                 cull_mode: wgpu::CullMode::None,
                 //Note: we need depth bias, but it can't affect our shader
                 // writing the depth out manually.
-                depth_bias: 0,
-                depth_bias_slope_scale: 0.0,
-                depth_bias_clamp: 0.0,
+                ..Default::default()
             }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[],
@@ -274,10 +275,7 @@ impl Context {
                 format: SHADOW_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Always,
-                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_read_mask: !0,
-                stencil_write_mask: !0,
+                stencil: Default::default(),
             }),
             vertex_state,
             sample_count: 1,
@@ -294,7 +292,8 @@ impl Context {
     ) -> wgpu::RenderPipeline {
         let shaders = Shaders::new("terrain/slice", &[], device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout,
+            label: Some("terrain-slice"),
+            layout: Some(layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &shaders.vs,
                 entry_point: "main",
@@ -306,9 +305,7 @@ impl Context {
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: wgpu::CullMode::None,
-                depth_bias: 0,
-                depth_bias_slope_scale: 0.0,
-                depth_bias_clamp: 0.0,
+                ..Default::default()
             }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[wgpu::ColorStateDescriptor {
@@ -321,10 +318,7 @@ impl Context {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
-                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_read_mask: !0,
-                stencil_write_mask: !0,
+                stencil: Default::default(),
             }),
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint16,
@@ -350,7 +344,8 @@ impl Context {
     ) -> wgpu::RenderPipeline {
         let shaders = Shaders::new("terrain/paint", &[], device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout,
+            label: Some("terrain-paint"),
+            layout: Some(layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &shaders.vs,
                 entry_point: "main",
@@ -362,25 +357,15 @@ impl Context {
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: wgpu::CullMode::None,
-                depth_bias: 0,
-                depth_bias_slope_scale: 0.0,
-                depth_bias_clamp: 0.0,
+                ..Default::default()
             }),
             primitive_topology: wgpu::PrimitiveTopology::LineList,
-            color_states: &[wgpu::ColorStateDescriptor {
-                format: COLOR_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                write_mask: wgpu::ColorWrite::all(),
-            }],
+            color_states: &[COLOR_FORMAT.into()],
             depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
-                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_read_mask: !0,
-                stencil_write_mask: !0,
+                stencil: Default::default(),
             }),
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint16,
@@ -403,7 +388,8 @@ impl Context {
         let scatter_shader =
             Shaders::new_compute("terrain/scatter", SCATTER_GROUP_SIZE, &[], device).unwrap();
         let scatter_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            layout,
+            label: Some("terrain-scatter"),
+            layout: Some(layout),
             compute_stage: wgpu::ProgrammableStageDescriptor {
                 module: &scatter_shader,
                 entry_point: "main",
@@ -412,7 +398,8 @@ impl Context {
         let clear_shader =
             Shaders::new_compute("terrain/scatter_clear", SCATTER_GROUP_SIZE, &[], device).unwrap();
         let clear_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            layout,
+            label: Some("terrain-scatter-clear"),
+            layout: Some(layout),
             compute_stage: wgpu::ProgrammableStageDescriptor {
                 module: &clear_shader,
                 entry_point: "main",
@@ -421,7 +408,8 @@ impl Context {
 
         let copy_shaders = Shaders::new("terrain/scatter_copy", &[], device).unwrap();
         let copy_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout,
+            label: Some("terrain-scatter-copy"),
+            layout: Some(layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &copy_shaders.vs,
                 entry_point: "main",
@@ -433,25 +421,15 @@ impl Context {
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: wgpu::CullMode::None,
-                depth_bias: 0,
-                depth_bias_slope_scale: 0.0,
-                depth_bias_clamp: 0.0,
+                ..Default::default()
             }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
-            color_states: &[wgpu::ColorStateDescriptor {
-                format: COLOR_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                write_mask: wgpu::ColorWrite::all(),
-            }],
+            color_states: &[COLOR_FORMAT.into()],
             depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
-                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_read_mask: !0,
-                stencil_write_mask: !0,
+                stencil: Default::default(),
             }),
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint16,
@@ -480,7 +458,7 @@ impl Context {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Scatter"),
             layout,
-            bindings: &[wgpu::Binding {
+            entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(storage_buffer.slice(..)),
             }],
@@ -664,98 +642,109 @@ impl Context {
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Terrain"),
-            bindings: &[
+            entries: &[
                 // surface uniforms
-                wgpu::BindGroupLayoutEntry::new(
-                    0,
-                    wgpu::ShaderStage::all(),
-                    wgpu::BindingType::UniformBuffer {
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::all(),
+                    ty: wgpu::BindingType::UniformBuffer {
                         dynamic: false,
                         min_binding_size: None,
                     },
-                ),
+                    count: None,
+                },
                 // terrain locals
-                wgpu::BindGroupLayoutEntry::new(
-                    1,
-                    wgpu::ShaderStage::all(),
-                    wgpu::BindingType::UniformBuffer {
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStage::all(),
+                    ty: wgpu::BindingType::UniformBuffer {
                         dynamic: false,
                         min_binding_size: None,
                     },
-                ),
+                    count: None,
+                },
                 // height map
-                wgpu::BindGroupLayoutEntry::new(
-                    2,
-                    wgpu::ShaderStage::all(),
-                    wgpu::BindingType::SampledTexture {
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStage::all(),
+                    ty: wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D2,
                         component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
-                ),
+                    count: None,
+                },
                 // meta map
-                wgpu::BindGroupLayoutEntry::new(
-                    3,
-                    wgpu::ShaderStage::all(),
-                    wgpu::BindingType::SampledTexture {
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStage::all(),
+                    ty: wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D2,
                         component_type: wgpu::TextureComponentType::Uint,
                         multisampled: false,
                     },
-                ),
+                    count: None,
+                },
                 // flood map
-                wgpu::BindGroupLayoutEntry::new(
-                    4,
-                    wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    wgpu::BindingType::SampledTexture {
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D1,
                         component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
-                ),
+                    count: None,
+                },
                 // table map
-                wgpu::BindGroupLayoutEntry::new(
-                    5,
-                    wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    wgpu::BindingType::SampledTexture {
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D1,
                         component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
-                ),
+                    count: None,
+                },
                 // palette map
-                wgpu::BindGroupLayoutEntry::new(
-                    6,
-                    wgpu::ShaderStage::FRAGMENT,
-                    wgpu::BindingType::SampledTexture {
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::SampledTexture {
                         dimension: wgpu::TextureViewDimension::D1,
                         component_type: wgpu::TextureComponentType::Float,
                         multisampled: false,
                     },
-                ),
+                    count: None,
+                },
                 // main sampler
-                wgpu::BindGroupLayoutEntry::new(
-                    7,
-                    wgpu::ShaderStage::all(),
-                    wgpu::BindingType::Sampler { comparison: false },
-                ),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStage::all(),
+                    ty: wgpu::BindingType::Sampler { comparison: false },
+                    count: None,
+                },
                 // flood sampler
-                wgpu::BindGroupLayoutEntry::new(
-                    8,
-                    wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    wgpu::BindingType::Sampler { comparison: false },
-                ),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::Sampler { comparison: false },
+                    count: None,
+                },
                 // table sampler
-                wgpu::BindGroupLayoutEntry::new(
-                    9,
-                    wgpu::ShaderStage::FRAGMENT,
-                    wgpu::BindingType::Sampler { comparison: false },
-                ),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler { comparison: false },
+                    count: None,
+                },
             ],
         });
 
-        let surface_uni_buf = device.create_buffer_with_data(
-            bytemuck::bytes_of(&SurfaceConstants {
+        let surface_uni_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("surface-uniforms"),
+            contents: bytemuck::bytes_of(&SurfaceConstants {
                 _tex_scale: [
                     level.size.0 as f32,
                     level.size.1 as f32,
@@ -763,8 +752,8 @@ impl Context {
                     0.0,
                 ],
             }),
-            wgpu::BufferUsage::UNIFORM,
-        );
+            usage: wgpu::BufferUsage::UNIFORM,
+        });
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Terrain uniforms"),
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
@@ -775,52 +764,52 @@ impl Context {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Terrain"),
             layout: &bind_group_layout,
-            bindings: &[
-                wgpu::Binding {
+            entries: &[
+                wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer(surface_uni_buf.slice(..)),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Buffer(uniform_buf.slice(..)),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(
-                        &height_texture.create_default_view(),
+                        &height_texture.create_view(&wgpu::TextureViewDescriptor::default()),
                     ),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(
-                        &meta_texture.create_default_view(),
+                        &meta_texture.create_view(&wgpu::TextureViewDescriptor::default()),
                     ),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(
-                        &flood_texture.create_default_view(),
+                        &flood_texture.create_view(&wgpu::TextureViewDescriptor::default()),
                     ),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(
-                        &table_texture.create_default_view(),
+                        &table_texture.create_view(&wgpu::TextureViewDescriptor::default()),
                     ),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::TextureView(&palette.view),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::Sampler(&repeat_nearest_sampler),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 8,
                     resource: wgpu::BindingResource::Sampler(&flood_sampler),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 9,
                     resource: wgpu::BindingResource::Sampler(&table_sampler),
                 },
@@ -828,7 +817,9 @@ impl Context {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("terrain"),
             bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout],
+            push_constant_ranges: &[],
         });
 
         let kind = match *config {
@@ -930,26 +921,30 @@ impl Context {
                 let local_bg_layout =
                     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                         label: Some("Terrain locals"),
-                        bindings: &[
+                        entries: &[
                             // output map
-                            wgpu::BindGroupLayoutEntry::new(
-                                0,
-                                wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                                wgpu::BindingType::StorageBuffer {
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 0,
+                                visibility: wgpu::ShaderStage::FRAGMENT
+                                    | wgpu::ShaderStage::COMPUTE,
+                                ty: wgpu::BindingType::StorageBuffer {
                                     dynamic: false,
                                     readonly: false,
                                     min_binding_size: None,
                                 },
-                            ),
+                                count: None,
+                            },
                         ],
                     });
                 let local_pipeline_layout =
                     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("scatter"),
                         bind_group_layouts: &[
                             &global.bind_group_layout,
                             &bind_group_layout,
                             &local_bg_layout,
                         ],
+                        push_constant_ranges: &[],
                     });
 
                 let (scatter_pipeline, clear_pipeline, copy_pipeline) =
@@ -1084,8 +1079,9 @@ impl Context {
         {
             // constants update
             let sc = compute_scatter_constants(cam);
-            let staging = device.create_buffer_with_data(
-                bytemuck::bytes_of(&Constants {
+            let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("temp-constants"),
+                contents: bytemuck::bytes_of(&Constants {
                     screen_size: [screen_size.width, screen_size.height, 0, 0],
                     params,
                     cam_origin_dir: [sc.origin.x, sc.origin.y, sc.dir.x, sc.dir.y],
@@ -1096,8 +1092,8 @@ impl Context {
                         sc.sample_y.end,
                     ],
                 }),
-                wgpu::BufferUsage::COPY_SRC,
-            );
+                usage: wgpu::BufferUsage::COPY_SRC,
+            });
             encoder.copy_buffer_to_buffer(
                 &staging,
                 0,
