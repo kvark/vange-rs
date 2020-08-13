@@ -6,6 +6,7 @@ use crate::{
 
 use bytemuck::{Pod, Zeroable};
 use glsl_to_spirv;
+use wgpu::util::DeviceExt as _;
 
 use std::{
     collections::HashMap,
@@ -67,11 +68,25 @@ pub struct ShapePolygon {
 unsafe impl Pod for ShapePolygon {}
 unsafe impl Zeroable for ShapePolygon {}
 
-pub const SHAPE_POLYGON_BUFFER: wgpu::VertexBufferDescriptor = wgpu::VertexBufferDescriptor {
-    stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
-    step_mode: wgpu::InputStepMode::Instance,
-    attributes: &wgpu::vertex_attr_array![0 => Ushort4, 1 => Char4Norm, 2 => Float4],
-};
+pub struct ShapeVertexDesc {
+    attributes: [wgpu::VertexAttributeDescriptor; 3],
+}
+
+impl ShapeVertexDesc {
+    pub fn new() -> Self {
+        ShapeVertexDesc {
+            attributes: wgpu::vertex_attr_array![0 => Ushort4, 1 => Char4Norm, 2 => Float4],
+        }
+    }
+
+    pub fn buffer_desc(&self) -> wgpu::VertexBufferDescriptor {
+        wgpu::VertexBufferDescriptor {
+            stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
+            step_mode: wgpu::InputStepMode::Instance,
+            attributes: &self.attributes,
+        }
+    }
+}
 
 pub struct Shaders {
     vs: wgpu::ShaderModule,
@@ -274,7 +289,7 @@ impl Palette {
         );
 
         Palette {
-            view: texture.create_default_view(),
+            view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
         }
     }
 }
@@ -375,10 +390,13 @@ impl Batcher {
     pub fn prepare(&mut self, device: &wgpu::Device) {
         for array in self.instances.values_mut() {
             if !array.data.is_empty() {
-                array.buffer = Some(device.create_buffer_with_data(
-                    bytemuck::cast_slice(&array.data),
-                    wgpu::BufferUsage::VERTEX,
-                ));
+                array.buffer = Some(
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("instance"),
+                        contents: bytemuck::cast_slice(&array.data),
+                        usage: wgpu::BufferUsage::VERTEX,
+                    }),
+                );
             }
         }
     }
@@ -496,10 +514,11 @@ impl Render {
             shadow.update_view(cam);
 
             let constants = global::Constants::new(&shadow.cam, &self.light_config, None);
-            let global_staging = device.create_buffer_with_data(
-                bytemuck::bytes_of(&constants),
-                wgpu::BufferUsage::COPY_SRC,
-            );
+            let global_staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("temp-global-shadow"),
+                contents: bytemuck::bytes_of(&constants),
+                usage: wgpu::BufferUsage::COPY_SRC,
+            });
             encoder.copy_buffer_to_buffer(
                 &global_staging,
                 0,
@@ -547,10 +566,11 @@ impl Render {
                 &self.light_config,
                 self.shadow.as_ref().map(|shadow| &shadow.cam),
             );
-            let global_staging = device.create_buffer_with_data(
-                bytemuck::bytes_of(&constants),
-                wgpu::BufferUsage::COPY_SRC,
-            );
+            let global_staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("temp-global"),
+                contents: bytemuck::bytes_of(&constants),
+                usage: wgpu::BufferUsage::COPY_SRC,
+            });
             encoder.copy_buffer_to_buffer(
                 &global_staging,
                 0,

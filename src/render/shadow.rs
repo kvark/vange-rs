@@ -40,7 +40,7 @@ impl Shadow {
         };
 
         Shadow {
-            view: texture.create_default_view(),
+            view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
             cam: Camera {
                 loc: cgmath::Zero::zero(),
                 rot: cgmath::Quaternion::look_at(dir, up),

@@ -3,6 +3,7 @@ use vangers::{config, level, model, render, space};
 
 use futures::executor::LocalSpawner;
 use log::info;
+use wgpu::util::DeviceExt as _;
 
 use std::mem;
 
@@ -139,10 +140,11 @@ impl Application for ResourceView {
             label: Some("Draw"),
         });
         let global_data = render::global::Constants::new(&self.cam, &self.light_config, None);
-        let global_staging = device.create_buffer_with_data(
-            bytemuck::bytes_of(&global_data),
-            wgpu::BufferUsage::COPY_SRC,
-        );
+        let global_staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::bytes_of(&global_data),
+            usage: wgpu::BufferUsage::COPY_SRC,
+        });
         encoder.copy_buffer_to_buffer(
             &global_staging,
             0,

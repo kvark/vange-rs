@@ -9,6 +9,7 @@ use crate::{
 use bytemuck::{Pod, Zeroable};
 use cgmath::SquareMatrix as _;
 use futures::{executor::LocalSpawner, task::LocalSpawn as _, FutureExt};
+use wgpu::util::DeviceExt as _;
 
 use std::{
     mem, slice,
@@ -144,7 +145,8 @@ impl Pipelines {
     ) -> Self {
         Pipelines {
             step: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                layout: layout_step,
+                label: Some("body-step"),
+                layout: Some(layout_step),
                 compute_stage: wgpu::ProgrammableStageDescriptor {
                     module: &Shaders::new_compute(
                         "physics/body_step",
@@ -157,7 +159,8 @@ impl Pipelines {
                 },
             }),
             gather: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                layout: layout_gather,
+                label: Some("body-gather"),
+                layout: Some(layout_gather),
                 compute_stage: wgpu::ProgrammableStageDescriptor {
                     module: &Shaders::new_compute(
                         "physics/body_gather",
@@ -170,7 +173,8 @@ impl Pipelines {
                 },
             }),
             push: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                layout: layout_push,
+                label: Some("body-push"),
+                layout: Some(layout_push),
                 compute_stage: wgpu::ProgrammableStageDescriptor {
                     module: &Shaders::new_compute(
                         "physics/body_push",
@@ -221,8 +225,11 @@ impl GpuStoreInit {
     }
 
     pub fn new_dummy(device: &wgpu::Device) -> Self {
-        let buffer = device
-            .create_buffer_with_data(bytemuck::bytes_of(&Data::DUMMY), wgpu::BufferUsage::STORAGE);
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dummy"),
+            contents: bytemuck::bytes_of(&Data::DUMMY),
+            usage: wgpu::BufferUsage::STORAGE,
+        });
 
         GpuStoreInit {
             buffer,
@@ -287,90 +294,102 @@ impl GpuStore {
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Body"),
-            bindings: &[
+            entries: &[
                 // data
-                wgpu::BindGroupLayoutEntry::new(
-                    0,
-                    wgpu::ShaderStage::COMPUTE,
-                    wgpu::BindingType::StorageBuffer {
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::StorageBuffer {
                         dynamic: false,
                         readonly: false,
                         min_binding_size: None,
                     },
-                ),
+                    count: None,
+                },
                 // uniforms
-                wgpu::BindGroupLayoutEntry::new(
-                    1,
-                    wgpu::ShaderStage::COMPUTE,
-                    wgpu::BindingType::UniformBuffer {
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::UniformBuffer {
                         dynamic: false,
                         min_binding_size: None,
                     },
-                ),
+                    count: None,
+                },
                 // constants
-                wgpu::BindGroupLayoutEntry::new(
-                    2,
-                    wgpu::ShaderStage::COMPUTE,
-                    wgpu::BindingType::UniformBuffer {
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::UniformBuffer {
                         dynamic: false,
                         min_binding_size: None,
                     },
-                ),
+                    count: None,
+                },
             ],
         });
         let pipeline_layout_step = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("body-step"),
             bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
         });
 
         let bind_group_layout_gather =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Gather"),
-                bindings: &[
+                entries: &[
                     // collisions
-                    wgpu::BindGroupLayoutEntry::new(
-                        0,
-                        wgpu::ShaderStage::COMPUTE,
-                        wgpu::BindingType::StorageBuffer {
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageBuffer {
                             dynamic: false,
                             readonly: true,
                             min_binding_size: None,
                         },
-                    ),
+                        count: None,
+                    },
                     // ranges
-                    wgpu::BindGroupLayoutEntry::new(
-                        1,
-                        wgpu::ShaderStage::COMPUTE,
-                        wgpu::BindingType::StorageBuffer {
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageBuffer {
                             dynamic: false,
                             readonly: true,
                             min_binding_size: None,
                         },
-                    ),
+                        count: None,
+                    },
                 ],
             });
         let pipeline_layout_gather =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("body-gather"),
                 bind_group_layouts: &[&bind_group_layout, &bind_group_layout_gather],
+                push_constant_ranges: &[],
             });
 
         let bind_group_layout_push =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Push"),
-                bindings: &[
+                entries: &[
                     // pushes
-                    wgpu::BindGroupLayoutEntry::new(
-                        0,
-                        wgpu::ShaderStage::COMPUTE,
-                        wgpu::BindingType::StorageBuffer {
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageBuffer {
                             dynamic: false,
                             readonly: true,
                             min_binding_size: None,
                         },
-                    ),
+                        count: None,
+                    },
                 ],
             });
         let pipeline_layout_push = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("body-push"),
             bind_group_layouts: &[&bind_group_layout, &bind_group_layout_push],
+            push_constant_ranges: &[],
         });
 
         let pipelines = Pipelines::new(
@@ -458,22 +477,25 @@ impl GpuStore {
             ],
             force: [common.force.k_distance_to_force, 0.0, 0.0, 0.0],
         };
-        let buf_constants = device
-            .create_buffer_with_data(bytemuck::bytes_of(&constants), wgpu::BufferUsage::UNIFORM);
+        let buf_constants = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("body-constants"),
+            contents: bytemuck::bytes_of(&constants),
+            usage: wgpu::BufferUsage::UNIFORM,
+        });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Body"),
             layout: &bind_group_layout,
-            bindings: &[
-                wgpu::Binding {
+            entries: &[
+                wgpu::BindGroupEntry {
                     binding: 0,
                     resource: init.resource(),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Buffer(buf_uniforms.slice(..)),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Buffer(buf_constants.slice(..)),
                 },
@@ -482,12 +504,12 @@ impl GpuStore {
         let bind_group_gather = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Gather"),
             layout: &bind_group_layout_gather,
-            bindings: &[
-                wgpu::Binding {
+            entries: &[
+                wgpu::BindGroupEntry {
                     binding: 0,
                     resource: collider_buffer,
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Buffer(buf_ranges.slice(..)),
                 },
@@ -496,7 +518,7 @@ impl GpuStore {
         let bind_group_push = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Push"),
             layout: &bind_group_layout_push,
-            bindings: &[wgpu::Binding {
+            entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(buf_pushes.slice(..)),
             }],
@@ -629,20 +651,22 @@ impl GpuStore {
         let buf_init_data = if self.update_data.is_empty() {
             None
         } else {
-            let buf = device.create_buffer_with_data(
-                bytemuck::cast_slice(&self.update_data),
-                wgpu::BufferUsage::COPY_SRC,
-            );
+            let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("temp-data"),
+                contents: bytemuck::cast_slice(&self.update_data),
+                usage: wgpu::BufferUsage::COPY_SRC,
+            });
             self.update_data.clear();
             Some(buf)
         };
         let buf_set_control = if self.update_control.is_empty() {
             None
         } else {
-            let buf = device.create_buffer_with_data(
-                bytemuck::cast_slice(&self.update_control),
-                wgpu::BufferUsage::COPY_SRC,
-            );
+            let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("temp-control"),
+                contents: bytemuck::cast_slice(&self.update_control),
+                usage: wgpu::BufferUsage::COPY_SRC,
+            });
             self.update_control.clear();
             Some(buf)
         };
@@ -686,10 +710,11 @@ impl GpuStore {
                 self.pending_pushes
                     .resize_with(WORK_GROUP_WIDTH as usize, || GpuPush { dir_id: [-1.0; 4] });
             }
-            let temp = device.create_buffer_with_data(
-                bytemuck::cast_slice(&self.pending_pushes[..WORK_GROUP_WIDTH as usize]),
-                wgpu::BufferUsage::COPY_SRC,
-            );
+            let temp = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("temp-step"),
+                contents: bytemuck::cast_slice(&self.pending_pushes[..WORK_GROUP_WIDTH as usize]),
+                usage: wgpu::BufferUsage::COPY_SRC,
+            });
             encoder.copy_buffer_to_buffer(
                 &temp,
                 0,
@@ -709,10 +734,11 @@ impl GpuStore {
         // update range buffer
         {
             let sub_range = &raw_ranges[..(num_groups * WORK_GROUP_WIDTH) as usize];
-            let temp = device.create_buffer_with_data(
-                bytemuck::cast_slice(sub_range),
-                wgpu::BufferUsage::COPY_SRC,
-            );
+            let temp = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("temp-range"),
+                contents: bytemuck::cast_slice(sub_range),
+                usage: wgpu::BufferUsage::COPY_SRC,
+            });
             encoder.copy_buffer_to_buffer(
                 &temp,
                 0,
@@ -727,10 +753,11 @@ impl GpuStore {
             let uniforms = Uniforms {
                 delta: [delta, 0.0, 0.0, 0.0],
             };
-            let temp = device.create_buffer_with_data(
-                bytemuck::bytes_of(&uniforms),
-                wgpu::BufferUsage::COPY_SRC,
-            );
+            let temp = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("temp-uniforms"),
+                contents: bytemuck::bytes_of(&uniforms),
+                usage: wgpu::BufferUsage::COPY_SRC,
+            });
             encoder.copy_buffer_to_buffer(
                 &temp,
                 0,

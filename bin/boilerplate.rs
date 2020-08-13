@@ -72,13 +72,10 @@ impl Harness {
 
         info!("Initializing the device");
         let adapter = task_pool
-            .run_until(instance.request_adapter(
-                &wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::Default,
-                    compatible_surface: Some(&surface),
-                },
-                wgpu::UnsafeFeatures::disallow(),
-            ))
+            .run_until(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::Default,
+                compatible_surface: Some(&surface),
+            }))
             .expect("Unable to initialize GPU via the selected backend.");
         let (device, queue) = task_pool
             .run_until(adapter.request_device(
@@ -109,7 +106,7 @@ impl Harness {
                 format: DEPTH_FORMAT,
                 usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
             })
-            .create_default_view();
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         let harness = Harness {
             task_pool,
@@ -179,7 +176,7 @@ impl Harness {
                             format: DEPTH_FORMAT,
                             usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
                         })
-                        .create_default_view();
+                        .create_view(&wgpu::TextureViewDescriptor::default());
                     app.resize(&device, extent);
                 }
                 event::Event::WindowEvent { event, .. } => match event {
@@ -219,7 +216,7 @@ impl Harness {
                         queue.submit(update_command_buffers);
                     }
 
-                    match swap_chain.get_next_frame() {
+                    match swap_chain.get_current_frame() {
                         Ok(frame) => {
                             let targets = ScreenTargets {
                                 extent,
