@@ -19,6 +19,7 @@ void add_voxel(vec2 pos, float altitude, uint type, float lit_factor) {
         return;
     }
     vec3 ndc = screen_pos.xyz / screen_pos.w;
+    ndc.y *= -1.0;
     float color_id = evaluate_color_id(type, pos / u_TextureScale.xy, altitude / u_TextureScale.z, lit_factor);
     float depth = clamp(ndc.z, 0.0, 1.0);
     uint value = (uint(depth * float(0xFFFFFF)) << 8U) | uint(color_id * float(0xFF));

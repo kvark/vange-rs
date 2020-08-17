@@ -1161,27 +1161,48 @@ impl Context {
                 ref pipeline,
                 ref geo,
             } => {
-                pass.set_pipeline(pipeline);
-                pass.set_index_buffer(geo.index_buf.slice(..));
-                pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
-                pass.draw_indexed(0..geo.num_indices as u32, 0, 0..level::HEIGHT_SCALE);
+                match kind {
+                    PipelineKind::Main => {
+                        pass.set_pipeline(pipeline);
+                        pass.set_index_buffer(geo.index_buf.slice(..));
+                        pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
+                        pass.draw_indexed(0..geo.num_indices as u32, 0, 0..level::HEIGHT_SCALE);
+                    }
+                    PipelineKind::Shadow => {
+                        //TODO
+                    }
+                }
             }
             Kind::Paint {
                 ref pipeline,
                 line_count,
                 ..
             } => {
-                pass.set_pipeline(pipeline);
-                pass.draw(0..4, 0..line_count);
+                match kind {
+                    PipelineKind::Main => {
+                        pass.set_pipeline(pipeline);
+                        pass.draw(0..4, 0..line_count);
+                    }
+                    PipelineKind::Shadow => {
+                        //TODO
+                    }
+                }
             }
             Kind::Scatter {
                 ref copy_pipeline,
                 ref bind_group,
                 ..
             } => {
-                pass.set_pipeline(copy_pipeline);
-                pass.set_bind_group(2, bind_group, &[]);
-                pass.draw(0..4, 0..1);
+                match kind {
+                    PipelineKind::Main => {
+                        pass.set_pipeline(copy_pipeline);
+                        pass.set_bind_group(2, bind_group, &[]);
+                        pass.draw(0..4, 0..1);
+                    }
+                    PipelineKind::Shadow => {
+                        //TODO
+                    }
+                }
             }
         }
     }
