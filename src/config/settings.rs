@@ -116,10 +116,7 @@ pub enum Terrain {
         screen_space: bool,
     },
     Sliced,
-    Painted {
-        density: f32,
-        min_divisor: f32,
-    },
+    Painted,
     Scattered {
         density: [u32; 3],
     },

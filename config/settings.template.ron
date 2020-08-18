@@ -51,7 +51,7 @@
 		// RayMipTraced (mip_count: 10, max_jumps: 25, max_steps: 100, debug: false),
 		// Scattered( density: (2, 2, 2) ),
 		// Sliced,
-		// Painted( density: 0.1, min_divisor: 0.5 ),
+		// Painted,
 		debug: (
 			max_vertices: 512,
 			collision_shapes: false,

@@ -139,7 +139,7 @@ impl Camera {
         let hi = self.visible_bounds_at(height);
         let min = cgmath::vec2(lo.start.x.min(hi.start.x), lo.start.y.min(hi.start.y));
         let max = cgmath::vec2(lo.end.x.max(hi.end.x), lo.end.y.min(hi.end.y));
-        min .. max
+        min..max
     }
 
     pub fn bound_points(&self, height: f32) -> [cgmath::Point3<f32>; 4] {

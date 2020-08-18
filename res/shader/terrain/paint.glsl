@@ -20,14 +20,18 @@ vec2 generate_paint_pos() {
 }
 
 void main() {
-    vec2 pos = generate_paint_pos();
+    vec2 pos_center = generate_paint_pos();
 
-    Surface suf = get_surface(pos);
-    float altitude = gl_VertexIndex == 3 ? suf.high_alt :
-        gl_VertexIndex == 2 ? suf.low_alt + suf.delta :
-        gl_VertexIndex == 1 ? suf.low_alt : 0.0;
+    Surface suf = get_surface(pos_center);
+    float altitude = gl_VertexIndex >= 12 ? suf.high_alt :
+        gl_VertexIndex >= 8 ? suf.low_alt + suf.delta :
+        gl_VertexIndex >= 4 ? suf.low_alt : 0.0;
+        
+    int cx = ((gl_VertexIndex + 0) & 0x3) >= 2 ? 1 : 0;
+    int cy = ((gl_VertexIndex + 1) & 0x3) >= 2 ? 1 : 0;
+    vec2 pos = trunc(pos_center) + vec2(cx, cy) * sign(pos_center);
 
-    v_Type = gl_VertexIndex < 2 ? suf.low_type : suf.high_type;
+    v_Type = gl_VertexIndex < 8 ? suf.low_type : suf.high_type;
     v_TexCoord = vec3(suf.tex_coord, altitude / u_TextureScale.z);
     gl_Position = u_ViewProj * vec4(pos, altitude, 1.0);
 }

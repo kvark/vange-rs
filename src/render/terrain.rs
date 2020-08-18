@@ -119,7 +119,7 @@ fn compute_scatter_constants(cam: &Camera) -> ScatterConstants {
 struct Geometry {
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer,
-    num_indices: usize,
+    num_indices: u32,
 }
 
 impl Geometry {
@@ -135,7 +135,7 @@ impl Geometry {
                 contents: bytemuck::cast_slice(&indices),
                 usage: wgpu::BufferUsage::INDEX,
             }),
-            num_indices: indices.len(),
+            num_indices: indices.len() as u32,
         }
     }
 }
@@ -162,9 +162,8 @@ enum Kind {
     },
     Paint {
         pipeline: wgpu::RenderPipeline,
-        line_count: u32,
-        density: f32,
-        min_divisor: f32,
+        geo: Geometry,
+        bar_count: u32,
     },
     Scatter {
         pipeline_layout: wgpu::PipelineLayout,
@@ -356,10 +355,10 @@ impl Context {
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::None,
+                cull_mode: wgpu::CullMode::Back,
                 ..Default::default()
             }),
-            primitive_topology: wgpu::PrimitiveTopology::LineList,
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[COLOR_FORMAT.into()],
             depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
                 format: DEPTH_FORMAT,
@@ -904,17 +903,25 @@ impl Context {
 
                 Kind::Slice { pipeline, geo }
             }
-            TerrainSettings::Painted {
-                density,
-                min_divisor,
-            } => {
+            TerrainSettings::Painted => {
+                let geo = Geometry::new(
+                    &[],
+                    &[
+                        // lower half
+                        0, 4, 7, 7, 3, 0, 1, 5, 4, 4, 0, 1, 2, 6, 5, 5, 1, 2, 3, 7, 6, 6, 2, 3, 4,
+                        5, 6, 6, 7, 4, // higher half
+                        8, 12, 15, 15, 11, 8, 9, 13, 12, 12, 8, 9, 10, 14, 13, 13, 9, 10, 11, 16,
+                        14, 14, 10, 11, 12, 13, 14, 14, 15, 12,
+                    ],
+                    device,
+                );
+
                 let pipeline = Self::create_paint_pipeline(&pipeline_layout, device);
 
                 Kind::Paint {
                     pipeline,
-                    line_count: 0,
-                    density,
-                    min_divisor,
+                    geo,
+                    bar_count: 0,
                 }
             }
             TerrainSettings::Scattered { density } => {
@@ -1062,17 +1069,6 @@ impl Context {
 
         let params = match self.kind {
             Kind::RayMip { params, .. } => params,
-            Kind::Paint {
-                density,
-                min_divisor,
-                ..
-            } => {
-                use cgmath::Rotation as _;
-                let dir = cam.rot.rotate_vector(cgmath::Vector3::unit_z());
-                let pixel_count = screen_size.width * screen_size.height;
-                let paint_lines = (density * pixel_count as f32 / (-dir.z).max(min_divisor)) as u32;
-                [paint_lines, 0, 0, 0]
-            }
             _ => [0; 4],
         };
 
@@ -1083,8 +1079,8 @@ impl Context {
             ScatterConstants {
                 origin: cgmath::Point2::new(0.0, 0.0),
                 dir: cgmath::Vector2::new(0.0, 0.0),
-                sample_y: bounds.start.y .. bounds.end.y,
-                sample_x: bounds.start.x .. bounds.end.x,
+                sample_y: bounds.start.y..bounds.end.y,
+                sample_x: bounds.start.x..bounds.end.x,
             }
         };
 
@@ -1116,11 +1112,11 @@ impl Context {
 
         match self.kind {
             Kind::Paint {
-                ref mut line_count, ..
+                ref mut bar_count, ..
             } => {
                 let rows = (sc.sample_y.end - sc.sample_y.start).ceil() as u32;
                 let columns = (sc.sample_x.end - sc.sample_x.start).ceil() as u32;
-                *line_count = rows * columns;
+                *bar_count = rows * columns;
             }
             Kind::Scatter {
                 ref clear_pipeline,
@@ -1163,7 +1159,7 @@ impl Context {
                 pass.set_pipeline(pipelines.select(kind));
                 pass.set_index_buffer(geo.index_buf.slice(..));
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
-                pass.draw_indexed(0..geo.num_indices as u32, 0, 0..1);
+                pass.draw_indexed(0..geo.num_indices, 0, 0..1);
             }
             /*
             Kind::Tess { ref low, ref high, .. } => {
@@ -1179,7 +1175,7 @@ impl Context {
                         pass.set_pipeline(pipeline);
                         pass.set_index_buffer(geo.index_buf.slice(..));
                         pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
-                        pass.draw_indexed(0..geo.num_indices as u32, 0, 0..level::HEIGHT_SCALE);
+                        pass.draw_indexed(0..geo.num_indices, 0, 0..level::HEIGHT_SCALE);
                     }
                     PipelineKind::Shadow => {
                         //TODO
@@ -1188,13 +1184,14 @@ impl Context {
             }
             Kind::Paint {
                 ref pipeline,
-                line_count,
-                ..
+                ref geo,
+                bar_count,
             } => {
                 match kind {
                     PipelineKind::Main => {
                         pass.set_pipeline(pipeline);
-                        pass.draw(0..4, 0..line_count);
+                        pass.set_index_buffer(geo.index_buf.slice(..));
+                        pass.draw_indexed(0..geo.num_indices, 0, 0..bar_count);
                     }
                     PipelineKind::Shadow => {
                         //TODO

@@ -100,11 +100,7 @@ impl LevelLayers {
             .het0
             .iter()
             .zip(&self.het0[1..])
-            .zip(
-                self.het1
-                    .iter()
-                    .zip(&self.het1[1..]),
-            )
+            .zip(self.het1.iter().zip(&self.het1[1..]))
             .step_by(2)
             .zip(
                 self.delta
