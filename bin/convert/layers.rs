@@ -2,6 +2,8 @@ use vangers::level::{
     Level, LevelData, TerrainBits, DELTA_MASK, DELTA_SHIFT0, DELTA_SHIFT1, DOUBLE_LEVEL,
 };
 
+const DELTA_MAX: u8 = (0x3 << DELTA_SHIFT0) + (0x3 << DELTA_SHIFT1);
+
 fn avg(a: u8, b: u8) -> u8 {
     (a >> 1) + (b >> 1) + (a & b & 1)
 }
@@ -52,15 +54,13 @@ impl LevelLayers {
 
     fn import(&mut self, data: &LevelData) {
         let terrain_bits = TerrainBits::new(self.num_terrains);
-        for y in 0..data.size.1 as usize {
-            let range = y * data.size.0 as usize..(y + 1) * data.size.0 as usize;
-            let hrow = &data.height[range.clone()];
-            let mrow = &data.meta[range];
+        let row_size = data.size.0 as usize;
+        for (hrow, mrow) in data.height.chunks(row_size).zip(data.meta.chunks(row_size)) {
             for ((&h0, &h1), (&m0, &m1)) in hrow
                 .iter()
+                .zip(hrow[1..].iter())
+                .zip(mrow.iter().zip(mrow[1..].iter()))
                 .step_by(2)
-                .zip(hrow[1..].iter().step_by(2))
-                .zip(mrow.iter().step_by(2).zip(mrow[1..].iter().step_by(2)))
             {
                 let t0 = terrain_bits.read(m0);
                 let t1 = terrain_bits.read(m1);
@@ -91,7 +91,7 @@ impl LevelLayers {
     }
 
     pub fn export(self) -> LevelData {
-        let terrain_shift = TerrainBits::new(self.num_terrains).shift;
+        let terrain_bits = TerrainBits::new(self.num_terrains);
         let total = self.size.0 as usize * self.size.1 as usize;
         let mut height = Vec::with_capacity(total);
         let mut meta = Vec::with_capacity(total);
@@ -99,36 +99,39 @@ impl LevelLayers {
         for (((&h0a, &h0b), (&h1a, &h1b)), ((&da, &db), (&mat0, &mat1))) in self
             .het0
             .iter()
-            .step_by(2)
-            .zip(self.het0[1..].iter().step_by(2))
+            .zip(&self.het0[1..])
             .zip(
                 self.het1
                     .iter()
-                    .step_by(2)
-                    .zip(self.het1[1..].iter().step_by(2)),
+                    .zip(&self.het1[1..]),
             )
+            .step_by(2)
             .zip(
                 self.delta
                     .iter()
+                    .zip(&self.delta[1..])
                     .step_by(2)
-                    .zip(self.delta[1..].iter().step_by(2))
                     .zip(self.mat0.iter().zip(&self.mat1)),
             )
         {
             //assert!(h0a + da <= h1a && h0b + db <= h1b);
-            let delta = avg(da, db);
+            let (m0a, m0b) = (mat0 & 0xF, mat0 >> 4);
+            let (m1a, m1b) = (mat1 & 0xF, mat1 >> 4);
+            let delta = avg(da, db).min(DELTA_MAX);
             if delta != 0 {
-                //Note: mat0b and mat1a are ignored here, assuming the same as mat0a and mat1b respectively
-                meta.push(DOUBLE_LEVEL | ((mat0 & 0xF) << terrain_shift) | (delta >> 2));
-                meta.push(DOUBLE_LEVEL | ((mat1 >> 4) << terrain_shift) | (delta & DELTA_MASK));
+                let _ = (m0b, m1a); // assuming the same as mat0a and mat1b respectively
+                let rda = (delta >> DELTA_SHIFT0) & DELTA_MASK;
+                let rdb = (delta >> DELTA_SHIFT1) & DELTA_MASK;
+                meta.push(DOUBLE_LEVEL | terrain_bits.write(m0a) | rda);
+                meta.push(DOUBLE_LEVEL | terrain_bits.write(m1b) | rdb);
                 height.push(avg(h0a, h0b));
                 height.push(avg(h1a, h1b));
             } else {
-                //Note: mat1 and deltas are ignored here, assuming mat0 == mat1
+                let _ = (m1a, m1b, delta); // assuming mat0 == mat1, delta == 0
+                meta.push(terrain_bits.write(m0a));
+                meta.push(terrain_bits.write(m0b));
                 height.push(avg(h0a, h1a));
                 height.push(avg(h0b, h1b));
-                meta.push((mat0 & 0xF) << terrain_shift);
-                meta.push((mat0 >> 4) << terrain_shift);
             }
         }
 

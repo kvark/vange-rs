@@ -54,6 +54,10 @@ impl TerrainBits {
     pub fn read(&self, meta: u8) -> TerrainType {
         (meta >> self.shift) & self.mask
     }
+
+    pub fn write(&self, tt: TerrainType) -> u8 {
+        tt << self.shift
+    }
 }
 
 pub enum Texel {
@@ -208,16 +212,16 @@ fn report_time(start: Instant) {
 
 pub fn load_flood(config: &LevelConfig) -> Vec<u8> {
     let size = (config.size.0.as_value(), config.size.1.as_value());
+    let flood_size = size.1 >> config.section.as_power();
 
     let instant = Instant::now();
     let flood_map = {
         let vpr_file = match File::open(&config.path_data.with_extension("vpr")) {
             Ok(file) => file,
-            Err(_) => return Vec::new(),
+            Err(_) => return vec![0; flood_size as usize],
         };
 
         info!("Loading flood map...");
-        let flood_size = size.1 >> config.section.as_power();
         let geo_pow = config.geo.as_power();
         let net_size = size.0 * size.1 >> (2 * geo_pow);
         let flood_offset = (2 * 4
@@ -343,7 +347,7 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
         size,
     };
 
-    let mut vmc_base = BufReader::new(File::open(path).unwrap());
+    let mut vmc_base = BufReader::new(File::open(path).expect("Unable to open VMC"));
 
     info!("\tLoading compression tables...");
     let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
@@ -391,7 +395,7 @@ pub fn load_vmp(path: &Path, size: (i32, i32)) -> LevelData {
         size,
     };
 
-    let mut vmp = BufReader::new(File::open(path).unwrap());
+    let mut vmp = BufReader::new(File::open(path).expect("Unable to open VMP"));
     level
         .height
         .chunks_mut(size.0 as _)
