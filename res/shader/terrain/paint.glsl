@@ -5,13 +5,22 @@ layout(location = 1) flat varying uint v_Type;
 
 #ifdef SHADER_VS
 
-void main() {
+vec2 generate_paint_pos() {
+    /*
     float total_pixels = float(u_ScreenSize.x * u_ScreenSize.y);
     uint pixel_index = uint(total_pixels * float(gl_InstanceIndex) / float(u_Params.x));
-
     uvec2 pixel_pos = uvec2(pixel_index % u_ScreenSize.x, pixel_index / u_ScreenSize.x);
     vec2 source_coord = 2.0 * vec2(pixel_pos) / vec2(u_ScreenSize.xy) - 1.0;
-    vec2 pos = generate_scatter_pos(source_coord);
+    return generate_scatter_pos(source_coord);
+    */
+    int row_size = int(ceil(u_SampleRange.y - u_SampleRange.x));
+    float x = u_SampleRange.x + float(gl_InstanceIndex % row_size);
+    float y = u_SampleRange.z + float(gl_InstanceIndex / row_size);
+    return vec2(x, y);
+}
+
+void main() {
+    vec2 pos = generate_paint_pos();
 
     Surface suf = get_surface(pos);
     float altitude = gl_VertexIndex == 3 ? suf.high_alt :

@@ -1076,9 +1076,20 @@ impl Context {
             _ => [0; 4],
         };
 
+        let sc = if let Kind::Scatter { .. } = self.kind {
+            compute_scatter_constants(cam)
+        } else {
+            let bounds = cam.visible_bounds_up_to(level::HEIGHT_SCALE as f32);
+            ScatterConstants {
+                origin: cgmath::Point2::new(0.0, 0.0),
+                dir: cgmath::Vector2::new(0.0, 0.0),
+                sample_y: bounds.start.y .. bounds.end.y,
+                sample_x: bounds.start.x .. bounds.end.x,
+            }
+        };
+
         {
             // constants update
-            let sc = compute_scatter_constants(cam);
             let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-constants"),
                 contents: bytemuck::bytes_of(&Constants {
@@ -1107,7 +1118,9 @@ impl Context {
             Kind::Paint {
                 ref mut line_count, ..
             } => {
-                *line_count = params[0];
+                let rows = (sc.sample_y.end - sc.sample_y.start).ceil() as u32;
+                let columns = (sc.sample_x.end - sc.sample_x.start).ceil() as u32;
+                *line_count = rows * columns;
             }
             Kind::Scatter {
                 ref clear_pipeline,

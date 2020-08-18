@@ -110,7 +110,7 @@ impl Camera {
         self.intersect_ray_height(dir, height)
     }
 
-    pub fn visible_bounds(&self, height: f32) -> Range<cgmath::Vector2<f32>> {
+    pub fn visible_bounds_at(&self, height: f32) -> Range<cgmath::Vector2<f32>> {
         let center = self.intersect_height(height).to_vec().truncate();
         let mut bounds = center..center;
 
@@ -134,8 +134,16 @@ impl Camera {
         bounds
     }
 
+    pub fn visible_bounds_up_to(&self, height: f32) -> Range<cgmath::Vector2<f32>> {
+        let lo = self.visible_bounds_at(0.0);
+        let hi = self.visible_bounds_at(height);
+        let min = cgmath::vec2(lo.start.x.min(hi.start.x), lo.start.y.min(hi.start.y));
+        let max = cgmath::vec2(lo.end.x.max(hi.end.x), lo.end.y.min(hi.end.y));
+        min .. max
+    }
+
     pub fn bound_points(&self, height: f32) -> [cgmath::Point3<f32>; 4] {
-        let vb = self.visible_bounds(height);
+        let vb = self.visible_bounds_at(height);
         [
             cgmath::Point3::new(vb.start.x, vb.start.y, height),
             cgmath::Point3::new(vb.end.x, vb.start.y, height),
