@@ -22,6 +22,7 @@ pub fn extract_palette(level: &Level) -> Vec<u8> {
         .collect()
 }
 
+#[cfg_attr(test, derive(Clone, PartialEq))]
 pub struct LevelLayers {
     pub size: (u32, u32),
     pub num_terrains: u8,
@@ -137,4 +138,46 @@ impl LevelLayers {
             height,
         }
     }
+}
+
+#[test]
+fn test_roundtrip() {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let size = 64;
+    let num_terrains = 8;
+    let mut layers = LevelLayers::new((size, size), num_terrains);
+
+    for _ in 0..size {
+        for _ in 0..size / 2 {
+            let delta = rng.gen_range(0, 16) << DELTA_SHIFT1;
+            let h0 = rng.gen();
+            let h1 = rng.gen();
+            let t0 = rng.gen_range(0, num_terrains);
+            let t1 = rng.gen_range(0, num_terrains);
+            layers.delta.push(delta);
+            layers.delta.push(delta);
+            if delta != 0 {
+                layers.het0.push(h0);
+                layers.het0.push(h0);
+                layers.het1.push(h1);
+                layers.het1.push(h1);
+                layers.mat0.push(t0 | (t0 << 4));
+                layers.mat1.push(t1 | (t1 << 4));
+            } else {
+                layers.het0.push(h0);
+                layers.het0.push(h1);
+                layers.het1.push(h0);
+                layers.het1.push(h1);
+                layers.mat0.push(t0 | (t1 << 4));
+                layers.mat1.push(t0 | (t1 << 4));
+            }
+        }
+    }
+
+    let ldata = layers.clone().export();
+    let mut layers2 = LevelLayers::new((size, size), num_terrains);
+    layers2.import(&ldata);
+
+    assert!(layers == layers2);
 }
