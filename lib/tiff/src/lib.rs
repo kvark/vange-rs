@@ -1,5 +1,3 @@
-extern crate byteorder;
-
 use byteorder::{LittleEndian as E, WriteBytesExt};
 
 use std::io::{Result as IoResult, Seek, SeekFrom};

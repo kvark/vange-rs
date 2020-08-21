@@ -1,10 +1,3 @@
-extern crate byteorder;
-#[macro_use]
-extern crate log;
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-
 mod geometry;
 
 pub use self::geometry::{
@@ -12,8 +5,8 @@ pub use self::geometry::{
 };
 
 use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
-use std::fs::File;
-use std::io::Write;
+use serde::{Deserialize, Serialize};
+use std::{fs::File, io::Write};
 
 const MAX_SLOTS: usize = 3;
 const MAGIC_VERSION: u32 = 8;
@@ -34,13 +27,13 @@ fn read_vec_i8<I: ReadBytesExt>(source: &mut I) -> [i8; 3] {
     ]
 }
 
-fn write_vec_i32<I: WriteBytesExt>(dest: &mut I, v: [i32; 3]) {
+fn write_vec_i32<W: WriteBytesExt>(dest: &mut W, v: [i32; 3]) {
     dest.write_i32::<E>(v[0]).unwrap();
     dest.write_i32::<E>(v[1]).unwrap();
     dest.write_i32::<E>(v[2]).unwrap();
 }
 
-fn write_vec_i8<I: WriteBytesExt>(dest: &mut I, v: [i8; 3]) {
+fn write_vec_i8<W: WriteBytesExt>(dest: &mut W, v: [i8; 3]) {
     dest.write_i8(v[0]).unwrap();
     dest.write_i8(v[1]).unwrap();
     dest.write_i8(v[2]).unwrap();
@@ -71,7 +64,7 @@ impl Physics {
         }
     }
 
-    fn write<I: WriteBytesExt>(&self, dest: &mut I) {
+    fn write<W: WriteBytesExt>(&self, dest: &mut W) {
         let q = [
             self.volume,
             self.rcm[0],
@@ -169,12 +162,57 @@ impl<M> Slot<M> {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct UpperBound {
+    pub dimensions: [u32; 3],
+    pub radius: u32,
+}
+
+impl UpperBound {
+    fn read<I: ReadBytesExt>(source: &mut I) -> Self {
+        UpperBound {
+            dimensions: [
+                source.read_u32::<E>().unwrap(),
+                source.read_u32::<E>().unwrap(),
+                source.read_u32::<E>().unwrap(),
+            ],
+            radius: source.read_u32::<E>().unwrap(),
+        }
+    }
+
+    fn write<W: WriteBytesExt>(&self, dest: &mut W) {
+        dest.write_u32::<E>(self.dimensions[0]).unwrap();
+        dest.write_u32::<E>(self.dimensions[1]).unwrap();
+        dest.write_u32::<E>(self.dimensions[2]).unwrap();
+        dest.write_u32::<E>(self.radius).unwrap();
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BodyColor {
+    pub offset: u32,
+    pub shift: u32,
+}
+
+impl BodyColor {
+    fn read<I: ReadBytesExt>(source: &mut I) -> Self {
+        BodyColor {
+            offset: source.read_u32::<E>().unwrap(),
+            shift: source.read_u32::<E>().unwrap(),
+        }
+    }
+
+    fn write<W: WriteBytesExt>(&self, dest: &mut W) {
+        dest.write_u32::<E>(self.offset).unwrap();
+        dest.write_u32::<E>(self.shift).unwrap();
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Model<M, S> {
     pub body: M,
     pub shape: S,
-    pub dimensions: [u32; 3],
-    pub max_radius: u32,
-    pub color: [u32; 2],
+    pub bound: UpperBound,
+    pub color: BodyColor,
     pub wheels: Vec<Wheel<M>>,
     pub debris: Vec<Debrie<M, S>>,
     pub slots: [Slot<M>; MAX_SLOTS],
@@ -200,32 +238,9 @@ impl Bounds {
         }
     }
 
-    fn write<I: WriteBytesExt>(&self, dest: &mut I) {
+    fn write<W: WriteBytesExt>(&self, dest: &mut W) {
         write_vec_i32(dest, self.coord_max);
         write_vec_i32(dest, self.coord_min);
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct Mesh<G> {
-    pub geometry: G,
-    pub bounds: Bounds,
-    pub parent_off: [i32; 3],
-    pub parent_rot: [i32; 3],
-    pub max_radius: u32,
-    pub physics: Physics,
-}
-
-impl<G> Mesh<G> {
-    pub fn map<T, F: Fn(G) -> T>(self, fun: F) -> Mesh<T> {
-        Mesh {
-            geometry: fun(self.geometry),
-            bounds: self.bounds,
-            parent_off: self.parent_off,
-            parent_rot: self.parent_rot,
-            max_radius: self.max_radius,
-            physics: self.physics,
-        }
     }
 }
 
@@ -269,6 +284,29 @@ impl Polygon for CollisionQuad {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct Mesh<G> {
+    pub geometry: G,
+    pub bounds: Bounds,
+    pub parent_off: [i32; 3],
+    pub parent_rot: [i32; 3],
+    pub max_radius: u32,
+    pub physics: Physics,
+}
+
+impl<G> Mesh<G> {
+    pub fn map<T, F: FnOnce(G) -> T>(self, fun: F) -> Mesh<T> {
+        Mesh {
+            geometry: fun(self.geometry),
+            bounds: self.bounds,
+            parent_off: self.parent_off,
+            parent_rot: self.parent_rot,
+            max_radius: self.max_radius,
+            physics: self.physics,
+        }
+    }
+}
+
 impl<P: Polygon> Mesh<Geometry<P>> {
     pub fn load<I: ReadBytesExt>(source: &mut I) -> Self {
         let version = source.read_u32::<E>().unwrap();
@@ -290,12 +328,13 @@ impl<P: Polygon> Mesh<Geometry<P>> {
             parent_rot: read_vec_i32(source),
             physics: Physics::load(source),
         };
-        debug!(
+        log::debug!(
             "\tBounds {:?} with offset {:?}",
-            result.bounds, result.parent_off
+            result.bounds,
+            result.parent_off
         );
 
-        debug!("\tReading {} positions...", num_positions);
+        log::debug!("\tReading {} positions...", num_positions);
         for _ in 0..num_positions {
             read_vec_i32(source); //unknown
             let pos = read_vec_i8(source);
@@ -303,7 +342,7 @@ impl<P: Polygon> Mesh<Geometry<P>> {
             result.geometry.positions.push(pos);
         }
 
-        debug!("\tReading {} normals...", num_normals);
+        log::debug!("\tReading {} normals...", num_normals);
         for _ in 0..num_normals {
             let norm = read_vec_i8(source);
             let _something = source.read_i8().unwrap();
@@ -311,7 +350,7 @@ impl<P: Polygon> Mesh<Geometry<P>> {
             result.geometry.normals.push(norm);
         }
 
-        debug!("\tReading {} polygons...", num_polygons);
+        log::debug!("\tReading {} polygons...", num_polygons);
         let mut vertices = Vec::with_capacity(4);
         for _ in 0..num_polygons {
             let num_corners = source.read_u32::<E>().unwrap();
@@ -412,28 +451,47 @@ impl<P: Polygon> Mesh<Geometry<P>> {
 pub type DrawMesh = Mesh<Geometry<DrawTriangle>>;
 pub type CollisionMesh = Mesh<Geometry<CollisionQuad>>;
 
+#[derive(Serialize, Deserialize)]
+pub struct AnimatedMesh<G> {
+    pub meshes: Vec<Mesh<G>>,
+    pub bound: UpperBound,
+    pub color: BodyColor,
+}
+
+impl<P: Polygon> AnimatedMesh<Geometry<P>> {
+    pub fn load(mut input: File) -> Self {
+        let count = input.read_u32::<E>().unwrap();
+        AnimatedMesh {
+            bound: UpperBound::read(&mut input),
+            color: BodyColor::read(&mut input),
+            meshes: (0..count).map(|_| Mesh::load(&mut input)).collect(),
+        }
+    }
+
+    pub fn save(&self, mut output: File) {
+        output.write_u32::<E>(self.meshes.len() as u32).unwrap();
+        self.bound.write(&mut output);
+        self.color.write(&mut output);
+        for mesh in self.meshes.iter() {
+            mesh.save(&mut output);
+        }
+    }
+}
+
 pub type FullModel = Model<DrawMesh, CollisionMesh>;
 
 impl FullModel {
     pub fn load(mut input: File) -> Self {
-        debug!("\tReading the body...");
+        log::debug!("\tReading the body...");
         let body: DrawMesh = Mesh::load(&mut input);
 
-        let dimensions = [
-            input.read_u32::<E>().unwrap(),
-            input.read_u32::<E>().unwrap(),
-            input.read_u32::<E>().unwrap(),
-        ];
-        let max_radius = input.read_u32::<E>().unwrap();
+        let bound = UpperBound::read(&mut input);
         let num_wheels = input.read_u32::<E>().unwrap();
         let num_debris = input.read_u32::<E>().unwrap();
-        let color = [
-            input.read_u32::<E>().unwrap(),
-            input.read_u32::<E>().unwrap(),
-        ];
+        let color = BodyColor::read(&mut input);
 
         let mut wheels = Vec::with_capacity(num_wheels as usize);
-        debug!("\tReading {} wheels...", num_wheels);
+        log::debug!("\tReading {} wheels...", num_wheels);
         for _ in 0..num_wheels {
             let steer = input.read_u32::<E>().unwrap();
             let pos = [
@@ -461,7 +519,7 @@ impl FullModel {
         }
 
         let mut debris = Vec::with_capacity(num_debris as usize);
-        debug!("\tReading {} debris...", num_debris);
+        log::debug!("\tReading {} debris...", num_debris);
         for _ in 0..num_debris {
             debris.push(Debrie {
                 mesh: Mesh::load(&mut input),
@@ -469,12 +527,12 @@ impl FullModel {
             });
         }
 
-        debug!("\tReading the shape...");
+        log::debug!("\tReading the shape...");
         let shape: CollisionMesh = Mesh::load(&mut input);
 
         let mut slots = [Slot::EMPTY, Slot::EMPTY, Slot::EMPTY];
         let slot_mask = input.read_u32::<E>().unwrap();
-        debug!("\tReading {} slot mask...", slot_mask);
+        log::debug!("\tReading {} slot mask...", slot_mask);
         for slot in &mut slots {
             for p in &mut slot.pos {
                 *p = input.read_i32::<E>().unwrap();
@@ -486,8 +544,7 @@ impl FullModel {
         FullModel {
             body,
             shape,
-            dimensions,
-            max_radius,
+            bound,
             color,
             wheels,
             debris,
@@ -497,15 +554,10 @@ impl FullModel {
 
     pub fn save(&self, mut output: File) {
         self.body.save(&mut output);
-        for d in &self.dimensions {
-            output.write_u32::<E>(*d).unwrap();
-        }
-        output.write_u32::<E>(self.max_radius).unwrap();
+        self.bound.write(&mut output);
         output.write_u32::<E>(self.wheels.len() as u32).unwrap();
         output.write_u32::<E>(self.debris.len() as u32).unwrap();
-        for c in &self.color {
-            output.write_u32::<E>(*c).unwrap();
-        }
+        self.color.write(&mut output);
 
         for wheel in &self.wheels {
             output.write_u32::<E>(wheel.steer).unwrap();

@@ -1,12 +1,10 @@
 #![feature(test)]
 
-extern crate byteorder;
-extern crate splay;
-extern crate test;
-
 use byteorder::{LittleEndian as E, ReadBytesExt};
-use std::fs::File;
-use std::io::{Read, Seek};
+use std::{
+    fs::File,
+    io::{Read, Seek},
+};
 
 const VMC_PATH: &'static str = "/hub/gog/Vangers/game/thechain/fostral/output.vmc";
 const SIZE: [usize; 2] = [1 << 11, 1 << 14];

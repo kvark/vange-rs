@@ -308,8 +308,7 @@ pub fn load_m3d(
     let model = VisualModel {
         body: load_c3d(raw.body, device),
         shape: load_c3d_shape(raw.shape, device, shape_sampling, true, object),
-        dimensions: raw.dimensions,
-        max_radius: raw.max_radius,
+        bound: raw.bound,
         color: raw.color,
         wheels: raw
             .wheels

@@ -87,13 +87,26 @@ fn main() {
             println!("\tLoading M3D...");
             let raw = m3d::FullModel::load(file);
             println!("\tExporting OBJ data...");
-            model_obj::export(raw, &dst_path);
+            model_obj::export_m3d(raw, &dst_path);
         }
         ("ron", "md3") => {
             println!("\tImporting OBJ data...");
-            let model = model_obj::import(&src_path);
+            let model = model_obj::import_m3d(&src_path);
             println!("\tSaving M3D...");
             model.save(File::create(&dst_path).unwrap());
+        }
+        ("a3d", "ron") => {
+            let file = File::open(&src_path).unwrap();
+            println!("\tLoading A3D...");
+            let raw = m3d::AnimatedMesh::load(file);
+            println!("\tExporting OBJ data...");
+            model_obj::export_a3d(raw, &dst_path);
+        }
+        ("ron", "a3d") => {
+            println!("\tImporting OBJ data...");
+            let amesh = model_obj::import_a3d(&src_path);
+            println!("\tSaving A3D...");
+            amesh.save(File::create(&dst_path).unwrap());
         }
         ("ini", "ron") => {
             println!("\tLoading the level...");
