@@ -60,22 +60,19 @@ impl Shadow {
     }
 
     pub(super) fn update_view(&mut self, cam: &Camera) {
-        let cam_focus = cam.intersect_height(0.0);
-        self.cam.loc = cam_focus.to_vec();
-
-        let center_proj = self.get_local_point(cam_focus);
+        self.cam.loc = cam.intersect_height(0.0).to_vec();
         let mut p = cgmath::Ortho {
-            left: center_proj.x,
-            right: center_proj.x,
-            top: center_proj.y,
-            bottom: center_proj.y,
-            near: center_proj.z,
-            far: center_proj.z,
+            left: 0.0f32,
+            right: 0.0,
+            top: 0.0,
+            bottom: 0.0,
+            near: 0.0,
+            far: 0.0,
         };
 
         // in addition to the camera bound, we need to include
         // all the potential occluders nearby
-        let mut offset = self.dir * (HEIGHT_SCALE as f32 / self.dir.z);
+        let mut offset = -self.dir * (HEIGHT_SCALE as f32 / self.dir.z);
         offset.z = 0.0;
 
         let points_lo = cam.bound_points(0.0);

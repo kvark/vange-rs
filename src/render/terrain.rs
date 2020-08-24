@@ -1116,7 +1116,14 @@ impl Context {
             } => {
                 let rows = (sc.sample_y.end - sc.sample_y.start).ceil() as u32;
                 let columns = (sc.sample_x.end - sc.sample_x.start).ceil() as u32;
-                *bar_count = rows * columns;
+                let count = rows * columns;
+                const MAX_INSTANCES: u32 = 1_000_000;
+                *bar_count = if count > MAX_INSTANCES {
+                    log::error!("Too many instances: {}", count);
+                    MAX_INSTANCES
+                } else {
+                    count
+                };
             }
             Kind::Scatter {
                 ref clear_pipeline,

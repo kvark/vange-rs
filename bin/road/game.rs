@@ -347,7 +347,7 @@ impl Game {
         };
 
         log::info!("Initializing the render");
-        let depth = 10f32..10000f32;
+        let depth = settings.game.camera.depth_range;
         let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
         let store_init = match settings.game.physics.gpu_collision {
             Some(ref gc) => GpuStoreInit::new(device, gc),
@@ -467,15 +467,15 @@ impl Game {
                         let pf = cgmath::PerspectiveFov {
                             fovy: cgmath::Deg(45.0).into(),
                             aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
-                            near: depth.start,
-                            far: depth.end,
+                            near: depth.0,
+                            far: depth.1,
                         };
                         space::Projection::Perspective(pf)
                     }
                     config::settings::View::Flat => space::Projection::ortho(
                         settings.window.size[0] as u16,
                         settings.window.size[1] as u16,
-                        depth,
+                        depth.0..depth.1,
                     ),
                 },
             },

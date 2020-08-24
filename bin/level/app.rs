@@ -96,7 +96,7 @@ impl LevelView {
         };
 
         let objects_palette = level::read_palette(settings.open_palette(), None);
-        let depth = 10f32..10000f32;
+        let depth = settings.game.camera.depth_range;
         let store_init = GpuStoreInit::new_dummy(device);
         let render = Render::new(
             device,
@@ -119,15 +119,15 @@ impl LevelView {
                         let pf = cgmath::PerspectiveFov {
                             fovy: cgmath::Deg(45.0).into(),
                             aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
-                            near: depth.start,
-                            far: depth.end,
+                            near: depth.0,
+                            far: depth.1,
                         };
                         space::Projection::Perspective(pf)
                     }
                     config::settings::View::Flat => space::Projection::ortho(
                         settings.window.size[0] as u16,
                         settings.window.size[1] as u16,
-                        depth,
+                        depth.0..depth.1,
                     ),
                 },
             },

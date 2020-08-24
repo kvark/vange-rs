@@ -62,6 +62,15 @@ pub struct Camera {
     pub proj: Projection,
 }
 
+impl Camera {
+    fn depth_range(&self) -> Range<f32> {
+        match self.proj {
+            Projection::Ortho { p, .. } => p.near..p.far,
+            Projection::Perspective(p) => p.near..p.far,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Follow {
     pub transform: Transform,
@@ -99,14 +108,22 @@ impl Camera {
         self.get_proj_matrix() * view_mx
     }
 
-    //TODO: return `Option`
+    /// Return the vector scaled in such a way that its Z projection in local
+    /// space of the camera is 1.
+    fn pseudo_normalize_dir(&self, dir: cgmath::Vector3<f32>) -> cgmath::Vector3<f32> {
+        let local = self.rot.invert() * dir;
+        dir * (-1.0 / local.z)
+    }
+
     fn intersect_ray_height(&self, dir: cgmath::Vector3<f32>, height: f32) -> cgmath::Point3<f32> {
-        let t = (height - self.loc.z) / dir.z;
+        let t_raw = (height - self.loc.z) / dir.z;
+        let range = self.depth_range();
+        let t = range.start.max(t_raw).min(range.end);
         cgmath::Point3::from_vec(self.loc) + t * dir
     }
 
     pub fn intersect_height(&self, height: f32) -> cgmath::Point3<f32> {
-        let dir = self.rot * cgmath::Vector3::unit_z();
+        let dir = self.rot * -cgmath::Vector3::unit_z();
         self.intersect_ray_height(dir, height)
     }
 
@@ -125,7 +142,8 @@ impl Camera {
         ];
         for ndc in &ndc_points {
             let wp = cgmath::Point3::from_homogeneous(mx * cgmath::vec4(ndc.x, ndc.y, 1.0, 1.0));
-            let pt = self.intersect_ray_height(wp - cgmath::Point3::from_vec(self.loc), height);
+            let dir = self.pseudo_normalize_dir(wp - cgmath::Point3::from_vec(self.loc));
+            let pt = self.intersect_ray_height(dir, height);
             bounds.start.x = bounds.start.x.min(pt.x);
             bounds.start.y = bounds.start.y.min(pt.y);
             bounds.end.x = bounds.end.x.max(pt.x);
