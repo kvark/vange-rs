@@ -84,6 +84,10 @@ pub struct Direction {
 }
 
 impl Camera {
+    pub fn dir(&self) -> cgmath::Vector3<f32> {
+        self.rot * -cgmath::Vector3::unit_z()
+    }
+
     fn get_proj_matrix(&self) -> cgmath::Matrix4<f32> {
         let mut proj = self.proj.to_matrix();
         // convert from GL's depth of [-1,1] to wgpu/gfx-rs [0,1]
@@ -116,7 +120,7 @@ impl Camera {
     }
 
     pub fn intersect_height(&self, height: f32) -> cgmath::Point3<f32> {
-        let dir = self.rot * -cgmath::Vector3::unit_z();
+        let dir = self.dir();
         self.intersect_ray_height(dir, height)
     }
 
@@ -153,14 +157,8 @@ impl Camera {
 
     pub fn visible_bounds(&self) -> Range<cgmath::Vector2<f32>> {
         let lo = self.visible_bounds_at(0.0);
-        let min = cgmath::vec2(
-            self.loc.x.min(lo.start.x),
-            self.loc.y.min(lo.start.y),
-        );
-        let max = cgmath::vec2(
-            self.loc.x.max(lo.end.x),
-            self.loc.y.max(lo.end.y),
-        );
+        let min = cgmath::vec2(self.loc.x.min(lo.start.x), self.loc.y.min(lo.start.y));
+        let max = cgmath::vec2(self.loc.x.max(lo.end.x), self.loc.y.max(lo.end.y));
         min..max
     }
 

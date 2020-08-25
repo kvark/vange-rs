@@ -6,16 +6,11 @@ layout(location = 1) flat varying uint v_Type;
 #ifdef SHADER_VS
 
 vec2 generate_paint_pos() {
-    /*
-    float total_pixels = float(u_ScreenSize.x * u_ScreenSize.y);
-    uint pixel_index = uint(total_pixels * float(gl_InstanceIndex) / float(u_Params.x));
-    uvec2 pixel_pos = uvec2(pixel_index % u_ScreenSize.x, pixel_index / u_ScreenSize.x);
-    vec2 source_coord = 2.0 * vec2(pixel_pos) / vec2(u_ScreenSize.xy) - 1.0;
-    return generate_scatter_pos(source_coord);
-    */
     int row_size = int(ceil(u_SampleRange.y - u_SampleRange.x));
-    float x = u_SampleRange.x + float(gl_InstanceIndex % row_size);
-    float y = u_SampleRange.z + float(gl_InstanceIndex / row_size);
+    float rel_x = float(gl_InstanceIndex % row_size);
+    float rel_y = float(gl_InstanceIndex / row_size);
+    float x = u_CamOriginDir.z > 0.0 ? u_SampleRange.x + rel_x : u_SampleRange.y - rel_x;
+    float y = u_CamOriginDir.w > 0.0 ? u_SampleRange.z + rel_y : u_SampleRange.w - rel_y;
     return vec2(x, y);
 }
 

@@ -55,7 +55,7 @@ fn compute_scatter_constants(cam: &Camera) -> ScatterConstants {
 
     let cam_origin = Point2::new(cam.loc.x, cam.loc.y);
     let cam_dir = {
-        let vec = cam.rot.rotate_vector(Vector3::unit_z());
+        let vec = cam.dir();
         let v2 = Vector2::new(vec.x, vec.y);
         if v2.magnitude2() > 0.0 {
             v2.normalize()
@@ -1075,10 +1075,11 @@ impl Context {
         let sc = if let Kind::Scatter { .. } = self.kind {
             compute_scatter_constants(cam)
         } else {
+            use cgmath::EuclideanSpace;
             let bounds = cam.visible_bounds();
             ScatterConstants {
-                origin: cgmath::Point2::new(0.0, 0.0),
-                dir: cgmath::Vector2::new(0.0, 0.0),
+                origin: cgmath::Point2::from_vec(cam.loc.truncate()),
+                dir: cam.dir().truncate(),
                 sample_x: bounds.start.x..bounds.end.x,
                 sample_y: bounds.start.y..bounds.end.y,
             }
