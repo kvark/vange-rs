@@ -20,7 +20,7 @@ pub enum View {
 pub struct Camera {
     pub angle: u8,
     pub height: f32,
-    pub target_height_offset: f32,
+    pub target_overhead: f32,
     pub speed: f32,
     pub depth_range: (f32, f32),
 }

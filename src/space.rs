@@ -108,13 +108,6 @@ impl Camera {
         self.get_proj_matrix() * view_mx
     }
 
-    /// Return the vector scaled in such a way that its Z projection in local
-    /// space of the camera is 1.
-    fn pseudo_normalize_dir(&self, dir: cgmath::Vector3<f32>) -> cgmath::Vector3<f32> {
-        let local = self.rot.invert() * dir;
-        dir * (-1.0 / local.z)
-    }
-
     fn intersect_ray_height(&self, dir: cgmath::Vector3<f32>, height: f32) -> cgmath::Point3<f32> {
         let t_raw = (height - self.loc.z) / dir.z;
         let range = self.depth_range();
@@ -134,6 +127,8 @@ impl Camera {
         let proj = self.get_proj_matrix();
         let view = self.view_transform();
         let mx = cgmath::Matrix4::from(view) * proj.inverse_transform().unwrap();
+        // Scale vectors in a way that makes their Z footprint to be -1 in local space.
+        let scaler = 1.0 / self.depth_range().end;
         let ndc_points = [
             cgmath::vec2(-1.0, -1.0),
             cgmath::vec2(1.0, -1.0),
@@ -142,8 +137,12 @@ impl Camera {
         ];
         for ndc in &ndc_points {
             let wp = cgmath::Point3::from_homogeneous(mx * cgmath::vec4(ndc.x, ndc.y, 1.0, 1.0));
-            let dir = self.pseudo_normalize_dir(wp - cgmath::Point3::from_vec(self.loc));
-            let pt = self.intersect_ray_height(dir, height);
+            let pt = if wp.z < self.loc.z {
+                let dir = scaler * (wp - cgmath::Point3::from_vec(self.loc));
+                self.intersect_ray_height(dir, height)
+            } else {
+                wp
+            };
             bounds.start.x = bounds.start.x.min(pt.x);
             bounds.start.y = bounds.start.y.min(pt.y);
             bounds.end.x = bounds.end.x.max(pt.x);
@@ -152,11 +151,16 @@ impl Camera {
         bounds
     }
 
-    pub fn visible_bounds_up_to(&self, height: f32) -> Range<cgmath::Vector2<f32>> {
+    pub fn visible_bounds(&self) -> Range<cgmath::Vector2<f32>> {
         let lo = self.visible_bounds_at(0.0);
-        let hi = self.visible_bounds_at(height);
-        let min = cgmath::vec2(lo.start.x.min(hi.start.x), lo.start.y.min(hi.start.y));
-        let max = cgmath::vec2(lo.end.x.max(hi.end.x), lo.end.y.min(hi.end.y));
+        let min = cgmath::vec2(
+            self.loc.x.min(lo.start.x),
+            self.loc.y.min(lo.start.y),
+        );
+        let max = cgmath::vec2(
+            self.loc.x.max(lo.end.x),
+            self.loc.y.max(lo.end.y),
+        );
         min..max
     }
 

@@ -354,7 +354,7 @@ impl Context {
                 entry_point: "main",
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
+                front_face: wgpu::FrontFace::Cw,
                 cull_mode: wgpu::CullMode::Back,
                 ..Default::default()
             }),
@@ -1075,12 +1075,12 @@ impl Context {
         let sc = if let Kind::Scatter { .. } = self.kind {
             compute_scatter_constants(cam)
         } else {
-            let bounds = cam.visible_bounds_up_to(level::HEIGHT_SCALE as f32);
+            let bounds = cam.visible_bounds();
             ScatterConstants {
                 origin: cgmath::Point2::new(0.0, 0.0),
                 dir: cgmath::Vector2::new(0.0, 0.0),
-                sample_y: bounds.start.y..bounds.end.y,
                 sample_x: bounds.start.x..bounds.end.x,
+                sample_y: bounds.start.y..bounds.end.y,
             }
         };
 

@@ -9,7 +9,7 @@
 		camera: (
 			angle: 60,
 			height: 300,
-			target_height_offset: 200,
+			target_overhead: 200,
 			speed: 1,
 			depth_range: (10, 1000),
 		),

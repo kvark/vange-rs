@@ -240,25 +240,24 @@ enum CameraStyle {
 
 impl CameraStyle {
     fn new(config: &config::settings::Camera) -> Self {
-        let angle = cgmath::Deg(config.angle as f32);
+        // the new angle is relative to the surface perpendicular
+        let angle = cgmath::Deg(config.angle as f32) - cgmath::Deg::turn_div_4();
+        let z = config.height + config.target_overhead;
         if config.speed > 0.0 {
             CameraStyle::Follow(space::Follow {
                 transform: cgmath::Decomposed {
-                    disp: cgmath::vec3(
-                        0.0,
-                        -angle.cos() * config.height,
-                        config.height + config.target_height_offset,
-                    ),
-                    rot: cgmath::Quaternion::from_angle_x(cgmath::Deg::turn_div_4() - angle),
+                    disp: cgmath::vec3(0.0, angle.tan() * config.height, z),
+                    rot: cgmath::Quaternion::from_angle_x(angle),
                     scale: 1.0,
                 },
                 speed: config.speed,
                 fix_z: true,
             })
         } else {
+            //Note: this appears to be broken ATM
             CameraStyle::Simple(space::Direction {
-                view: cgmath::vec3(0.0, angle.cos(), -angle.sin()),
-                height: config.height,
+                view: cgmath::vec3(0.0, angle.sin(), -angle.cos()),
+                height: z,
             })
         }
     }

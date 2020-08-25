@@ -29,7 +29,7 @@ void main() {
         
     int cx = ((gl_VertexIndex + 0) & 0x3) >= 2 ? 1 : 0;
     int cy = ((gl_VertexIndex + 1) & 0x3) >= 2 ? 1 : 0;
-    vec2 pos = trunc(pos_center) + vec2(cx, cy) * sign(pos_center);
+    vec2 pos = floor(pos_center) + vec2(cx, cy);
 
     v_Type = gl_VertexIndex < 8 ? suf.low_type : suf.high_type;
     v_TexCoord = vec3(suf.tex_coord, altitude / u_TextureScale.z);
