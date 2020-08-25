@@ -30,6 +30,13 @@ pub use shadow::FORMAT as SHADOW_FORMAT;
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+const BACKGROUND: wgpu::Color = wgpu::Color {
+    r: 0.1,
+    g: 0.2,
+    b: 0.3,
+    a: 1.0,
+};
+
 pub struct GpuTransform {
     pub pos_scale: [f32; 4],
     pub orientation: [f32; 4],
@@ -587,12 +594,7 @@ impl Render {
                     attachment: targets.color,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(BACKGROUND),
                         store: true,
                     },
                 }],

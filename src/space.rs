@@ -62,15 +62,6 @@ pub struct Camera {
     pub proj: Projection,
 }
 
-impl Camera {
-    fn depth_range(&self) -> Range<f32> {
-        match self.proj {
-            Projection::Ortho { p, .. } => p.near..p.far,
-            Projection::Perspective(p) => p.near..p.far,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Follow {
     pub transform: Transform,
@@ -86,6 +77,13 @@ pub struct Direction {
 impl Camera {
     pub fn dir(&self) -> cgmath::Vector3<f32> {
         self.rot * -cgmath::Vector3::unit_z()
+    }
+
+    pub fn depth_range(&self) -> Range<f32> {
+        match self.proj {
+            Projection::Ortho { p, .. } => p.near..p.far,
+            Projection::Perspective(p) => p.near..p.far,
+        }
     }
 
     fn get_proj_matrix(&self) -> cgmath::Matrix4<f32> {

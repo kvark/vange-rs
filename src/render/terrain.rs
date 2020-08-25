@@ -3,7 +3,7 @@ use crate::{
     level,
     render::{
         global::Context as GlobalContext, mipmap::MaxMipper, Palette, PipelineKind, PipelineSet,
-        Shaders, COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT,
+        Shaders, BACKGROUND, COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT,
     },
     space::Camera,
 };
@@ -39,6 +39,8 @@ struct Constants {
     params: [u32; 4],
     cam_origin_dir: [f32; 4],
     sample_range: [f32; 4], // -x, +x, -y, +y
+    fog_color: [f32; 4],
+    fog_params: [f32; 4],
 }
 unsafe impl Pod for Constants {}
 unsafe impl Zeroable for Constants {}
@@ -1087,6 +1089,7 @@ impl Context {
 
         {
             // constants update
+            let depth_range = cam.depth_range();
             let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-constants"),
                 contents: bytemuck::bytes_of(&Constants {
@@ -1099,6 +1102,13 @@ impl Context {
                         sc.sample_y.start,
                         sc.sample_y.end,
                     ],
+                    fog_color: [
+                        BACKGROUND.r as f32,
+                        BACKGROUND.g as f32,
+                        BACKGROUND.b as f32,
+                        BACKGROUND.a as f32,
+                    ],
+                    fog_params: [depth_range.end - 50.0, depth_range.end, 0.0, 0.0],
                 }),
                 usage: wgpu::BufferUsage::COPY_SRC,
             });

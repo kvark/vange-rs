@@ -1,7 +1,8 @@
-//!include vs:globals.inc vs:terrain/locals.inc vs:surface.inc fs:surface.inc fs:color.inc
+//!include vs:globals.inc vs:terrain/locals.inc fs:globals.inc fs:terrain/locals.inc vs:surface.inc fs:surface.inc fs:color.inc
 
 layout(location = 0) varying vec3 v_TexCoord;
 layout(location = 1) flat varying uint v_Type;
+layout(location = 2) varying vec2 v_Pos;
 
 #ifdef SHADER_VS
 
@@ -16,6 +17,7 @@ vec2 generate_paint_pos() {
 
 void main() {
     vec2 pos_center = generate_paint_pos();
+    v_Pos = pos_center;
 
     Surface suf = get_surface(pos_center);
     float altitude = gl_VertexIndex >= 12 ? suf.high_alt :
@@ -34,12 +36,12 @@ void main() {
 
 
 #ifdef SHADER_FS
-//imported: Surface, u_TextureScale, get_surface, evaluate_color
+//imported: Surface, u_TextureScale, get_surface, evaluate_color, apply_fog
 
 layout(location = 0) out vec4 o_Color;
 
 void main() {
-    //TODO: move most of the evaluation to the vertex shader
-    o_Color = evaluate_color(v_Type, v_TexCoord.xy, v_TexCoord.z, 1.0);
+    vec4 terrain_color = evaluate_color(v_Type, v_TexCoord.xy, v_TexCoord.z, 1.0);
+    o_Color = apply_fog(terrain_color, v_Pos);
 }
 #endif //FS
