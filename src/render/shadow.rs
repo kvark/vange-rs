@@ -17,7 +17,7 @@ pub struct Shadow {
 
 impl Shadow {
     pub(super) fn new(light: &settings::Light, device: &wgpu::Device) -> Self {
-        let size = light.shadow_size;
+        let size = light.shadow.size;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Shadow"),
             size: wgpu::Extent3d {

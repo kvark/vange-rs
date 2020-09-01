@@ -30,13 +30,6 @@ pub use shadow::FORMAT as SHADOW_FORMAT;
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-const BACKGROUND: wgpu::Color = wgpu::Color {
-    r: 0.1,
-    g: 0.2,
-    b: 0.3,
-    a: 1.0,
-};
-
 pub struct GpuTransform {
     pub pos_scale: [f32; 4],
     pub orientation: [f32; 4],
@@ -458,6 +451,7 @@ pub struct Render {
     pub debug: debug::Context,
     pub shadow: Option<shadow::Shadow>,
     pub light_config: settings::Light,
+    pub fog_config: settings::Fog,
     screen_size: wgpu::Extent3d,
 }
 
@@ -471,7 +465,7 @@ impl Render {
         screen_size: wgpu::Extent3d,
         store_buffer: wgpu::BindingResource,
     ) -> Self {
-        let shadow = if settings.light.shadow_size != 0 {
+        let shadow = if settings.light.shadow.size != 0 {
             Some(shadow::Shadow::new(&settings.light, device))
         } else {
             None
@@ -490,6 +484,7 @@ impl Render {
             level,
             &global,
             &settings.terrain,
+            &settings.light.shadow.terrain,
             screen_size,
         );
         let debug = debug::Context::new(device, &settings.debug, &global, &object);
@@ -501,6 +496,7 @@ impl Render {
             debug,
             shadow,
             light_config: settings.light.clone(),
+            fog_config: settings.fog.clone(),
             screen_size,
         }
     }
@@ -538,6 +534,7 @@ impl Render {
                 encoder,
                 device,
                 &self.global,
+                &self.fog_config,
                 cam,
                 wgpu::Extent3d {
                     width: shadow.size,
@@ -559,7 +556,7 @@ impl Render {
             });
 
             pass.set_bind_group(0, &self.global.shadow_bind_group, &[]);
-            self.terrain.draw(&mut pass, PipelineKind::Shadow);
+            self.terrain.draw_shadow(&mut pass);
 
             // draw vehicle models
             pass.set_pipeline(&self.object.pipelines.shadow);
@@ -586,15 +583,29 @@ impl Render {
                 mem::size_of::<global::Constants>() as wgpu::BufferAddress,
             );
 
-            self.terrain
-                .prepare(encoder, device, &self.global, cam, self.screen_size);
+            self.terrain.prepare(
+                encoder,
+                device,
+                &self.global,
+                &self.fog_config,
+                cam,
+                self.screen_size,
+            );
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
                     attachment: targets.color,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(BACKGROUND),
+                        load: wgpu::LoadOp::Clear({
+                            let c = self.fog_config.color;
+                            wgpu::Color {
+                                r: c[0] as f64,
+                                g: c[1] as f64,
+                                b: c[2] as f64,
+                                a: c[3] as f64,
+                            }
+                        }),
                         store: true,
                     },
                 }],
@@ -609,7 +620,7 @@ impl Render {
             });
 
             pass.set_bind_group(0, &self.global.bind_group, &[]);
-            self.terrain.draw(&mut pass, PipelineKind::Main);
+            self.terrain.draw(&mut pass);
 
             // draw vehicle models
             pass.set_pipeline(&self.object.pipelines.main);

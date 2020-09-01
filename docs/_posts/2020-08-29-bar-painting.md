@@ -69,7 +69,7 @@ With this tweak, XCode reports early Z test rejection to be 96%, which is great 
 
 We have a large video uploaded to [/r/rust_gamedev](https://www.reddit.com/r/rust_gamedev/comments/igejxy/vangers_3rd_person_camera/?ref=share&ref_source=link) showing a one-minute ride with 3rd person camera. Here is another shot:
 
-![Final render](https://github.com/kvark/vange-rs/raw/master/etc/shots/Road19-paint-render.png)
+![Final render](https://github.com/kvark/vange-rs/raw/f7b1395e61aba83337e036df29c2bcacec0a48fd/etc/shots/Road19-paint-render.png)
 
 Overall, given the listed optimizations and reduced far plane, this method is the only practical way we can get non-top-down cameras working in vange-rs. It's fairly dumb in terms of used GPU features, performant enough, and produces exact rendering.
 

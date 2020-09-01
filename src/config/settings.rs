@@ -98,10 +98,21 @@ pub struct DebugRender {
 }
 
 #[derive(Clone, Deserialize)]
+pub enum ShadowTerrain {
+    RayTraced,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct Shadow {
+    pub size: u32,
+    pub terrain: ShadowTerrain,
+}
+
+#[derive(Clone, Deserialize)]
 pub struct Light {
     pub pos: [f32; 4],
     pub color: [f32; 4],
-    pub shadow_size: u32,
+    pub shadow: Shadow,
 }
 
 #[derive(Clone, Deserialize)]
@@ -123,10 +134,17 @@ pub enum Terrain {
     },
 }
 
+#[derive(Clone, Deserialize)]
+pub struct Fog {
+    pub color: [f32; 4],
+    pub depth: f32,
+}
+
 #[derive(Deserialize)]
 pub struct Render {
     pub light: Light,
     pub terrain: Terrain,
+    pub fog: Fog,
     pub debug: DebugRender,
 }
 
