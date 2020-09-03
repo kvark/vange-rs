@@ -433,7 +433,7 @@ impl Context {
             layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer(storage_buffer.slice(..)),
+                resource: storage_buffer.as_entire_binding(),
             }],
         });
 
@@ -741,11 +741,11 @@ impl Context {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer(surface_uni_buf.slice(..)),
+                    resource: surface_uni_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Buffer(uniform_buf.slice(..)),
+                    resource: uniform_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,

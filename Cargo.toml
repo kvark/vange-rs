@@ -66,3 +66,10 @@ obj = "0.10"
 png = "0.16"
 winit = "0.22"
 
+[patch.crates-io]
+#gfx-hal = { version = "0.6", path = "../gfx/src/hal" }
+#gfx-backend-empty = { version = "0.6", path = "../gfx/src/backend/empty" }
+#gfx-backend-vulkan = { version = "0.6", path = "../gfx/src/backend/vulkan" }
+#gfx-backend-dx12 = { version = "0.6", path = "../gfx/src/backend/dx12" }
+#gfx-backend-dx11 = { version = "0.6", path = "../gfx/src/backend/dx11" }
+#gfx-backend-metal = { version = "0.6", path = "../gfx/src/backend/metal" }

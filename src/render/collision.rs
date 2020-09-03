@@ -279,11 +279,11 @@ impl GpuCollider {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer(global_uniforms.slice(..)),
+                    resource: global_uniforms.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Buffer(collision_buffer.slice(..)),
+                    resource: collision_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -296,7 +296,7 @@ impl GpuCollider {
             layout: &dynamic_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer(local_uniforms.slice(..)),
+                resource: local_uniforms.as_entire_binding(),
             }],
         });
 
@@ -392,7 +392,7 @@ impl GpuCollider {
     }
 
     pub fn collision_buffer(&self) -> wgpu::BindingResource {
-        wgpu::BindingResource::Buffer(self.buffer.slice(..))
+        self.buffer.as_entire_binding()
     }
 }
 

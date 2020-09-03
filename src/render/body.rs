@@ -239,7 +239,7 @@ impl GpuStoreInit {
     }
 
     pub fn resource(&self) -> wgpu::BindingResource {
-        wgpu::BindingResource::Buffer(self.buffer.slice(..))
+        self.buffer.as_entire_binding()
     }
 }
 
@@ -493,11 +493,11 @@ impl GpuStore {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Buffer(buf_uniforms.slice(..)),
+                    resource: buf_uniforms.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Buffer(buf_constants.slice(..)),
+                    resource: buf_constants.as_entire_binding(),
                 },
             ],
         });
@@ -511,7 +511,7 @@ impl GpuStore {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Buffer(buf_ranges.slice(..)),
+                    resource: buf_ranges.as_entire_binding(),
                 },
             ],
         });
@@ -520,7 +520,7 @@ impl GpuStore {
             layout: &bind_group_layout_push,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer(buf_pushes.slice(..)),
+                resource: buf_pushes.as_entire_binding(),
             }],
         });
 

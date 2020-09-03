@@ -267,7 +267,7 @@ pub fn load_c3d_shape(
         layout: &object.shape_bind_group_layout,
         entries: &[wgpu::BindGroupEntry {
             binding: 0,
-            resource: wgpu::BindingResource::Buffer(vertex_buf.slice(..)),
+            resource: vertex_buf.as_entire_binding(),
         }],
     });
 

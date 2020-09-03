@@ -11,7 +11,7 @@ use crate::{
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt as _;
 
-use std::{collections::HashMap, mem};
+use std::{collections::HashMap, mem, num::NonZeroU64};
 
 const BLEND_FRONT: wgpu::BlendDescriptor = wgpu::BlendDescriptor::REPLACE;
 const BLEND_BEHIND: wgpu::BlendDescriptor = wgpu::BlendDescriptor {
@@ -159,9 +159,11 @@ impl Context {
             layout: &bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer(
-                    locals_buf.slice(0 * locals_size..1 * locals_size),
-                ),
+                resource: wgpu::BindingResource::Buffer {
+                    buffer: &locals_buf,
+                    offset: 0 * locals_size,
+                    size: NonZeroU64::new(locals_size),
+                },
             }],
         });
         let bind_group_face = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -169,9 +171,11 @@ impl Context {
             layout: &bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer(
-                    locals_buf.slice(1 * locals_size..2 * locals_size),
-                ),
+                resource: wgpu::BindingResource::Buffer {
+                    buffer: &locals_buf,
+                    offset: 1 * locals_size,
+                    size: NonZeroU64::new(locals_size),
+                },
             }],
         });
         let bind_group_edge = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -179,9 +183,11 @@ impl Context {
             layout: &bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer(
-                    locals_buf.slice(2 * locals_size..3 * locals_size),
-                ),
+                resource: wgpu::BindingResource::Buffer {
+                    buffer: &locals_buf,
+                    offset: 2 * locals_size,
+                    size: NonZeroU64::new(locals_size),
+                },
             }],
         });
 

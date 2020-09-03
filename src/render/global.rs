@@ -162,7 +162,7 @@ impl Context {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer(uniform_buf.slice(..)),
+                    resource: uniform_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -170,13 +170,7 @@ impl Context {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    //TODO: just clone
-                    resource: match store_buffer {
-                        wgpu::BindingResource::Buffer(slice) => {
-                            wgpu::BindingResource::Buffer(slice.clone())
-                        }
-                        _ => unreachable!(),
-                    },
+                    resource: store_buffer.clone(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -196,7 +190,7 @@ impl Context {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer(uniform_buf.slice(..)),
+                    resource: uniform_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
