@@ -12,6 +12,9 @@ members = [
     "lib/tiff",
 ]
 
+[profile.release]
+debug = true
+
 [lib]
 
 [features]
