@@ -223,8 +223,8 @@ impl Harness {
                                 color: &frame.output.view,
                                 depth: &depth_target,
                             };
-                            let render_commane_buffer = app.draw(&device, targets, &spawner);
-                            queue.submit(Some(render_commane_buffer));
+                            let render_command_buffer = app.draw(&device, targets, &spawner);
+                            queue.submit(Some(render_command_buffer));
                         }
                         Err(_) => {}
                     };
