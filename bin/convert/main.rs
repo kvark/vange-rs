@@ -145,6 +145,12 @@ fn main() {
             let level_data = layers.export();
             level_data.save_vmp(&dst_path);
         }
+        ("vot", "ron") => {
+            println!("\tLoading the VOT...");
+            let mut file = File::open(&src_path).unwrap();
+            let vot = vot::MobileLocation::load(&mut file, 16);
+            println!("\tGot {} frames", vot.frames.len());
+        }
         ("pal", "png") => {
             println!("Converting palette to PNG...");
             let data = fs_read(&src_path).unwrap();

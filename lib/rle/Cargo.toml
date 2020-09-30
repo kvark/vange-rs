@@ -1,0 +1,9 @@
+[package]
+name = "rle"
+version = "0.1.0"
+workspace = "../.."
+authors = ["Dzmitry Malyshau <kvarkus@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+byteorder = "1.0"
