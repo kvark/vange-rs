@@ -174,6 +174,7 @@ enum Kind {
         compute_groups: [u32; 3],
         density: [u32; 3],
     },
+    Mesh {},
 }
 
 pub struct Flood {
@@ -895,6 +896,31 @@ impl Context {
                     density,
                 }
             }
+            settings::Terrain::Mesh => {
+                use density_mesh_core::prelude::*;
+                let mut raw_data =
+                    Vec::with_capacity(extent.width as usize * extent.height as usize);
+                {
+                    let mut value = 0;
+                    for (i, (&h, &m)) in level.height.iter().zip(level.meta.iter()).enumerate() {
+                        if i & 1 == 0 || m & level::DOUBLE_LEVEL == 0 {
+                            value = h;
+                        }
+                        raw_data.push(value);
+                    }
+                }
+                let map =
+                    DensityMap::new(extent.width as usize, extent.height as usize, 1, raw_data)
+                        .unwrap();
+                let settings = GenerateDensityMeshSettings::default();
+                // create density mesh.
+                let mut generator = DensityMeshGenerator::new(Vec::new(), map, settings);
+                // perform initial processing.
+                generator
+                    .process_wait_tracked(|progress, limit, _| println!("\t{}/{}", progress, limit))
+                    .unwrap();
+                Kind::Mesh {}
+            }
         };
 
         let shadow_kind = match *shadow_config {
@@ -993,6 +1019,7 @@ impl Context {
                 *clear_pipeline = clear;
                 *copy_pipeline = copy;
             }
+            Kind::Mesh {} => {}
         }
 
         match self.shadow_kind {
@@ -1316,6 +1343,9 @@ impl Context {
                 pass.set_pipeline(copy_pipeline);
                 pass.set_bind_group(2, bind_group, &[]);
                 pass.draw(0..4, 0..1);
+            }
+            Kind::Mesh {} => {
+                //TODO
             }
         }
     }
