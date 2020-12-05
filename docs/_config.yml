@@ -4,5 +4,5 @@ title: Vangers Oxidation Project
 description: >-
   Vange-rs experiments and technology blog: future technology from the past.
 
-baseurl: "/vange-rs"
-url: "https://kvark.github.io"
+baseurl: "/"
+url: "https://vange.rs"
