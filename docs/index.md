@@ -10,3 +10,5 @@ layout: home
   - fearless GPU and multi-core use
 
 This blog tells the story of this adventure :)
+
+Also see the [related videos](https://peertube.fidonet.io/video-channels/vangers_dev/videos) on PeerTube!
