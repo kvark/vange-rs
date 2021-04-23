@@ -11,7 +11,7 @@ use crate::{
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt as _;
 
-use std::{mem, ops::Range};
+use std::{mem, num::NonZeroU32, ops::Range};
 
 pub const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const SCATTER_GROUP_SIZE: [u32; 3] = [16, 16, 1];
@@ -203,26 +203,12 @@ impl Context {
         name: &str,
         kind: PipelineKind,
     ) -> wgpu::RenderPipeline {
-        let vertex_state = wgpu::VertexStateDescriptor {
-            index_format: wgpu::IndexFormat::Uint16,
-            vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                step_mode: wgpu::InputStepMode::Vertex,
-                attributes: &[wgpu::VertexAttributeDescriptor {
-                    offset: 0,
-                    format: wgpu::VertexFormat::Char4,
-                    shader_location: 0,
-                }],
-            }],
-        };
-
-        let color_descs = [wgpu::ColorStateDescriptor {
+        let color_descs = [wgpu::ColorTargetState {
             format: COLOR_FORMAT,
-            alpha_blend: wgpu::BlendDescriptor::REPLACE,
-            color_blend: wgpu::BlendDescriptor::REPLACE,
+            blend: None,
             write_mask: wgpu::ColorWrite::all(),
         }];
-        let (features, color_states, depth_format) = match kind {
+        let (features, targets, depth_format) = match kind {
             PipelineKind::Main => (&["COLOR"][..], &color_descs[..], DEPTH_FORMAT),
             PipelineKind::Shadow => (&[][..], &[][..], SHADOW_FORMAT),
         };
@@ -231,31 +217,36 @@ impl Context {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain-ray"),
             layout: Some(layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
+            vertex: wgpu::VertexState {
                 module: &shaders.vs,
                 entry_point: "main",
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::InputStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        offset: 0,
+                        format: wgpu::VertexFormat::Sint8x4,
+                        shader_location: 0,
+                    }],
+                }],
             },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            fragment: Some(wgpu::FragmentState {
                 module: &shaders.fs,
                 entry_point: "main",
+                targets,
             }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
-            }),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states,
-            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Always,
                 stencil: Default::default(),
+                bias: Default::default(),
             }),
-            vertex_state: vertex_state.clone(),
-            sample_count: 1,
-            alpha_to_coverage_enabled: false,
-            sample_mask: !0,
+            multisample: wgpu::MultisampleState::default(),
         })
     }
 
@@ -267,47 +258,36 @@ impl Context {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain-slice"),
             layout: Some(layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
+            vertex: wgpu::VertexState {
                 module: &shaders.vs,
                 entry_point: "main",
-            },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &shaders.fs,
-                entry_point: "main",
-            }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::None,
-                ..Default::default()
-            }),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[wgpu::ColorStateDescriptor {
-                format: COLOR_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                write_mask: wgpu::ColorWrite::all(),
-            }],
-            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: Default::default(),
-            }),
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                    stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &[wgpu::VertexAttributeDescriptor {
+                    attributes: &[wgpu::VertexAttribute {
                         offset: 0,
-                        format: wgpu::VertexFormat::Char4,
+                        format: wgpu::VertexFormat::Sint8x4,
                         shader_location: 0,
                     }],
                 }],
             },
-            sample_count: 1,
-            alpha_to_coverage_enabled: false,
-            sample_mask: !0,
+            fragment: Some(wgpu::FragmentState {
+                module: &shaders.fs,
+                entry_point: "main",
+                targets: &[COLOR_FORMAT.into()],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
         })
     }
 
@@ -319,34 +299,30 @@ impl Context {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain-paint"),
             layout: Some(layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
+            vertex: wgpu::VertexState {
                 module: &shaders.vs,
                 entry_point: "main",
+                buffers: &[],
             },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            fragment: Some(wgpu::FragmentState {
                 module: &shaders.fs,
                 entry_point: "main",
+                targets: &[COLOR_FORMAT.into()],
             }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face: wgpu::FrontFace::Cw,
-                cull_mode: wgpu::CullMode::Back,
+                cull_mode: Some(wgpu::Face::Back),
                 ..Default::default()
-            }),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[COLOR_FORMAT.into()],
-            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: Default::default(),
+                bias: Default::default(),
             }),
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[],
-            },
-            sample_count: 1,
-            alpha_to_coverage_enabled: false,
-            sample_mask: !0,
+            multisample: wgpu::MultisampleState::default(),
         })
     }
 
@@ -363,54 +339,44 @@ impl Context {
         let scatter_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("terrain-scatter"),
             layout: Some(layout),
-            compute_stage: wgpu::ProgrammableStageDescriptor {
-                module: &scatter_shader,
-                entry_point: "main",
-            },
+            module: &scatter_shader,
+            entry_point: "main",
         });
         let clear_shader =
             Shaders::new_compute("terrain/scatter_clear", SCATTER_GROUP_SIZE, &[], device).unwrap();
         let clear_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("terrain-scatter-clear"),
             layout: Some(layout),
-            compute_stage: wgpu::ProgrammableStageDescriptor {
-                module: &clear_shader,
-                entry_point: "main",
-            },
+            module: &clear_shader,
+            entry_point: "main",
         });
 
         let copy_shaders = Shaders::new("terrain/scatter_copy", &[], device).unwrap();
         let copy_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain-scatter-copy"),
             layout: Some(layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
+            vertex: wgpu::VertexState {
                 module: &copy_shaders.vs,
                 entry_point: "main",
+                buffers: &[],
             },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            fragment: Some(wgpu::FragmentState {
                 module: &copy_shaders.fs,
                 entry_point: "main",
+                targets: &[COLOR_FORMAT.into()],
             }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
                 ..Default::default()
-            }),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
-            color_states: &[COLOR_FORMAT.into()],
-            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: Default::default(),
+                bias: Default::default(),
             }),
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[],
-            },
-            sample_count: 1,
-            alpha_to_coverage_enabled: false,
-            sample_mask: !0,
+            multisample: wgpu::MultisampleState::default(),
         });
 
         (scatter_pipeline, clear_pipeline, copy_pipeline)
@@ -458,21 +424,21 @@ impl Context {
         let extent = wgpu::Extent3d {
             width: level.size.0 as u32,
             height: level.size.1 as u32,
-            depth: 1,
+            depth_or_array_layers: 1,
         };
         let flood_extent = wgpu::Extent3d {
             width: level.size.1 as u32 >> level.flood_section_power,
             height: 1,
-            depth: 1,
+            depth_or_array_layers: 1,
         };
         let table_extent = wgpu::Extent3d {
             width: level.terrains.len() as u32,
             height: 1,
-            depth: 1,
+            depth_or_array_layers: 1,
         };
         let (terrain_mip_count, terrain_extra_usage) = match *config {
             settings::Terrain::RayMipTraced { mip_count, .. } => {
-                (mip_count, wgpu::TextureUsage::OUTPUT_ATTACHMENT)
+                (mip_count, wgpu::TextureUsage::RENDER_ATTACHMENT)
             }
             _ => (1, wgpu::TextureUsage::empty()),
         };
@@ -528,58 +494,58 @@ impl Context {
         });
 
         queue.write_texture(
-            wgpu::TextureCopyView {
+            wgpu::ImageCopyTexture {
                 texture: &height_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
             bytemuck::cast_slice(&level.height),
-            wgpu::TextureDataLayout {
+            wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: level.size.0 as u32,
-                rows_per_image: 0,
+                bytes_per_row: NonZeroU32::new(level.size.0 as u32),
+                rows_per_image: None,
             },
             extent,
         );
         queue.write_texture(
-            wgpu::TextureCopyView {
+            wgpu::ImageCopyTexture {
                 texture: &meta_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
             bytemuck::cast_slice(&level.meta),
-            wgpu::TextureDataLayout {
+            wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: level.size.0 as u32,
-                rows_per_image: 0,
+                bytes_per_row: NonZeroU32::new(level.size.0 as u32),
+                rows_per_image: None,
             },
             extent,
         );
         queue.write_texture(
-            wgpu::TextureCopyView {
+            wgpu::ImageCopyTexture {
                 texture: &flood_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
             bytemuck::cast_slice(&level.flood_map),
-            wgpu::TextureDataLayout {
+            wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: flood_extent.width,
-                rows_per_image: 0,
+                bytes_per_row: NonZeroU32::new(flood_extent.width),
+                rows_per_image: None,
             },
             flood_extent,
         );
         queue.write_texture(
-            wgpu::TextureCopyView {
+            wgpu::ImageCopyTexture {
                 texture: &table_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
             bytemuck::cast_slice(&terrrain_table),
-            wgpu::TextureDataLayout {
+            wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: table_extent.width * 4,
-                rows_per_image: 0,
+                bytes_per_row: NonZeroU32::new(table_extent.width * 4),
+                rows_per_image: None,
             },
             table_extent,
         );
@@ -621,8 +587,9 @@ impl Context {
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: false,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
@@ -631,8 +598,9 @@ impl Context {
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: false,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
@@ -641,9 +609,9 @@ impl Context {
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::SampledTexture {
-                        dimension: wgpu::TextureViewDimension::D2,
-                        component_type: wgpu::TextureComponentType::Float,
+                    ty: wgpu::BindingType::Texture {
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         multisampled: false,
                     },
                     count: None,
@@ -652,9 +620,9 @@ impl Context {
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::SampledTexture {
-                        dimension: wgpu::TextureViewDimension::D2,
-                        component_type: wgpu::TextureComponentType::Uint,
+                    ty: wgpu::BindingType::Texture {
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Uint,
                         multisampled: false,
                     },
                     count: None,
@@ -663,9 +631,9 @@ impl Context {
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
                     visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::SampledTexture {
-                        dimension: wgpu::TextureViewDimension::D1,
-                        component_type: wgpu::TextureComponentType::Float,
+                    ty: wgpu::BindingType::Texture {
+                        view_dimension: wgpu::TextureViewDimension::D1,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         multisampled: false,
                     },
                     count: None,
@@ -674,9 +642,9 @@ impl Context {
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::SampledTexture {
-                        dimension: wgpu::TextureViewDimension::D1,
-                        component_type: wgpu::TextureComponentType::Float,
+                    ty: wgpu::BindingType::Texture {
+                        view_dimension: wgpu::TextureViewDimension::D1,
+                        sample_type: wgpu::TextureSampleType::Uint,
                         multisampled: false,
                     },
                     count: None,
@@ -685,9 +653,9 @@ impl Context {
                 wgpu::BindGroupLayoutEntry {
                     binding: 6,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture {
-                        dimension: wgpu::TextureViewDimension::D1,
-                        component_type: wgpu::TextureComponentType::Float,
+                    ty: wgpu::BindingType::Texture {
+                        view_dimension: wgpu::TextureViewDimension::D1,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         multisampled: false,
                     },
                     count: None,
@@ -696,21 +664,30 @@ impl Context {
                 wgpu::BindGroupLayoutEntry {
                     binding: 7,
                     visibility: wgpu::ShaderStage::all(),
-                    ty: wgpu::BindingType::Sampler { comparison: false },
+                    ty: wgpu::BindingType::Sampler {
+                        filtering: true,
+                        comparison: false,
+                    },
                     count: None,
                 },
                 // flood sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 8,
                     visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::Sampler { comparison: false },
+                    ty: wgpu::BindingType::Sampler {
+                        filtering: true,
+                        comparison: false,
+                    },
                     count: None,
                 },
                 // table sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 9,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler { comparison: false },
+                    ty: wgpu::BindingType::Sampler {
+                        filtering: true,
+                        comparison: false,
+                    },
                     count: None,
                 },
             ],
@@ -872,7 +849,9 @@ impl Context {
             }
             settings::Terrain::Painted => {
                 let geo = Geometry::new(
-                    &[],
+                    &[
+                        Vertex { _pos: [0; 4] }, //dummy
+                    ],
                     &[
                         // lower half
                         0, 4, 7, 7, 3, 0, 1, 5, 4, 4, 0, 1, 2, 6, 5, 5, 1, 2, 3, 7, 6, 6, 2, 3, 4,
@@ -901,9 +880,9 @@ impl Context {
                                 binding: 0,
                                 visibility: wgpu::ShaderStage::FRAGMENT
                                     | wgpu::ShaderStage::COMPUTE,
-                                ty: wgpu::BindingType::StorageBuffer {
-                                    dynamic: false,
-                                    readonly: false,
+                                ty: wgpu::BindingType::Buffer {
+                                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                    has_dynamic_offset: false,
                                     min_binding_size: None,
                                 },
                                 count: None,
@@ -1141,7 +1120,9 @@ impl Context {
                 density,
                 ..
             } => {
-                let mut pass = encoder.begin_compute_pass();
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("scatter"),
+                });
                 pass.set_bind_group(0, &global.bind_group, &[]);
                 pass.set_bind_group(1, &self.bind_group, &[]);
                 pass.set_bind_group(2, bind_group, &[]);
@@ -1215,7 +1196,7 @@ impl Context {
             Kind::Ray { ref pipeline } | Kind::RayMip { ref pipeline, .. } => {
                 let geo = &self.raytrace_geo;
                 pass.set_pipeline(pipeline);
-                pass.set_index_buffer(geo.index_buf.slice(..));
+                pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.draw_indexed(0..geo.num_indices, 0, 0..1);
             }
@@ -1229,7 +1210,7 @@ impl Context {
                 ref geo,
             } => {
                 pass.set_pipeline(pipeline);
-                pass.set_index_buffer(geo.index_buf.slice(..));
+                pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.draw_indexed(0..geo.num_indices, 0, 0..level::HEIGHT_SCALE);
             }
@@ -1239,7 +1220,7 @@ impl Context {
                 bar_count,
             } => {
                 pass.set_pipeline(pipeline);
-                pass.set_index_buffer(geo.index_buf.slice(..));
+                pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 pass.draw_indexed(0..geo.num_indices, 0, 0..bar_count);
             }
             Kind::Scatter {
@@ -1261,7 +1242,7 @@ impl Context {
             Kind::Ray { ref pipeline } | Kind::RayMip { ref pipeline, .. } => {
                 let geo = &self.raytrace_geo;
                 pass.set_pipeline(pipeline);
-                pass.set_index_buffer(geo.index_buf.slice(..));
+                pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.draw_indexed(0..geo.num_indices, 0, 0..1);
             }

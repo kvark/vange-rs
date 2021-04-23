@@ -30,7 +30,7 @@ float evaluate_palette(uint type, float value, float ycoord) {
     value = clamp(value, 0.0, 1.0);
     vec4 terr = vec4(texelFetch(usampler1D(t_Table, s_PaletteSampler), int(type), 0));
     if (type == 0U && value > 0.0) { // water
-        float flood = texture(sampler1D(t_Flood, s_FloodSampler), ycoord).x;
+        float flood = textureLod(sampler1D(t_Flood, s_FloodSampler), ycoord, 0.0).x;
         float d = c_HorFactor * (1.0 - flood);
         value = clamp(value * 1.25 / (1.0 - d) - 0.25, 0.0, 1.0);
     }

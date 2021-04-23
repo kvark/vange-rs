@@ -5,7 +5,10 @@ mod boilerplate;
 fn main() {
     use std::env;
 
-    let (mut harness, settings) = boilerplate::Harness::init("model");
+    let (mut harness, settings) = boilerplate::Harness::init(boilerplate::HarnessOptions {
+        title: "model",
+        uses_level: false,
+    });
 
     let args: Vec<_> = env::args().collect();
     let mut options = getopts::Options::new();

@@ -46,8 +46,13 @@ pub struct Harness {
     depth_target: wgpu::TextureView,
 }
 
+pub struct HarnessOptions {
+    pub title: &'static str,
+    pub uses_level: bool,
+}
+
 impl Harness {
-    pub fn init(title: &str) -> (Self, config::Settings) {
+    pub fn init(options: HarnessOptions) -> (Self, config::Settings) {
         env_logger::init();
         let mut task_pool = LocalPool::new();
 
@@ -56,14 +61,14 @@ impl Harness {
         let extent = wgpu::Extent3d {
             width: settings.window.size[0],
             height: settings.window.size[1],
-            depth: 1,
+            depth_or_array_layers: 1,
         };
 
         info!("Initializing the window");
         let instance = wgpu::Instance::new(settings.backend.to_wgpu());
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
-            .with_title(title)
+            .with_title(options.title)
             .with_inner_size(winit::dpi::PhysicalSize::new(extent.width, extent.height))
             .with_resizable(true)
             .build(&event_loop)
@@ -73,23 +78,28 @@ impl Harness {
         info!("Initializing the device");
         let adapter = task_pool
             .run_until(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::Default,
+                power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
             }))
             .expect("Unable to initialize GPU via the selected backend.");
+
+        let mut limits = wgpu::Limits::default();
+        if options.uses_level {
+            limits.max_texture_dimension_2d = 16384;
+        }
         let (device, queue) = task_pool
             .run_until(adapter.request_device(
                 &wgpu::DeviceDescriptor {
+                    label: None,
                     features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
-                    shader_validation: true,
+                    limits,
                 },
                 None,
             ))
             .unwrap();
 
         let sc_desc = wgpu::SwapChainDescriptor {
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
             format: COLOR_FORMAT,
             width: extent.width,
             height: extent.height,
@@ -104,7 +114,7 @@ impl Harness {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: DEPTH_FORMAT,
-                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+                usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
             })
             .create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -156,10 +166,10 @@ impl Harness {
                     extent = wgpu::Extent3d {
                         width: size.width,
                         height: size.height,
-                        depth: 1,
+                        depth_or_array_layers: 1,
                     };
                     let sc_desc = wgpu::SwapChainDescriptor {
-                        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+                        usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
                         format: COLOR_FORMAT,
                         width: size.width,
                         height: size.height,
@@ -174,7 +184,7 @@ impl Harness {
                             sample_count: 1,
                             dimension: wgpu::TextureDimension::D2,
                             format: DEPTH_FORMAT,
-                            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+                            usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
                         })
                         .create_view(&wgpu::TextureViewDescriptor::default());
                     app.resize(&device, extent);

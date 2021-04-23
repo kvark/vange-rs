@@ -8,7 +8,10 @@ mod physics;
 fn main() {
     use std::env;
 
-    let (mut harness, settings) = boilerplate::Harness::init("road");
+    let (mut harness, settings) = boilerplate::Harness::init(boilerplate::HarnessOptions {
+        title: "road",
+        uses_level: true,
+    });
 
     info!("Parsing command line");
     let args: Vec<_> = env::args().collect();

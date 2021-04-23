@@ -13,6 +13,7 @@ use std::{
     fs::File,
     io::{BufReader, Error as IoError, Read, Write},
     mem,
+    num::NonZeroU32,
     path::PathBuf,
     sync::Arc,
 };
@@ -69,19 +70,19 @@ unsafe impl Pod for ShapePolygon {}
 unsafe impl Zeroable for ShapePolygon {}
 
 pub struct ShapeVertexDesc {
-    attributes: [wgpu::VertexAttributeDescriptor; 3],
+    attributes: [wgpu::VertexAttribute; 3],
 }
 
 impl ShapeVertexDesc {
     pub fn new() -> Self {
         ShapeVertexDesc {
-            attributes: wgpu::vertex_attr_array![0 => Ushort4, 1 => Char4Norm, 2 => Float4],
+            attributes: wgpu::vertex_attr_array![0 => Uint16x4, 1 => Snorm8x4, 2 => Float32x4],
         }
     }
 
-    pub fn buffer_desc(&self) -> wgpu::VertexBufferDescriptor {
-        wgpu::VertexBufferDescriptor {
-            stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
+    pub fn buffer_desc(&self) -> wgpu::VertexBufferLayout {
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
             step_mode: wgpu::InputStepMode::Instance,
             attributes: &self.attributes,
         }
@@ -114,8 +115,8 @@ impl Shaders {
             panic!("Shader not found: {:?}", path);
         }
 
-        let mut buf_vs = b"#version 450\n#define SHADER_VS\n".to_vec();
-        let mut buf_fs = b"#version 450\n#define SHADER_FS\n".to_vec();
+        let mut buf_vs = b"#version 430\n#define SHADER_VS\n".to_vec();
+        let mut buf_fs = b"#version 430\n#define SHADER_FS\n".to_vec();
 
         let mut code = String::new();
         BufReader::new(File::open(&path)?).read_to_string(&mut code)?;
@@ -180,8 +181,16 @@ impl Shaders {
         };
 
         Ok(Shaders {
-            vs: device.create_shader_module(wgpu::util::make_spirv(&spv_vs)),
-            fs: device.create_shader_module(wgpu::util::make_spirv(&spv_fs)),
+            vs: device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+                label: Some(name),
+                flags: wgpu::ShaderFlags::VALIDATION,
+                source: wgpu::util::make_spirv(&spv_vs),
+            }),
+            fs: device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+                label: Some(name),
+                flags: wgpu::ShaderFlags::VALIDATION,
+                source: wgpu::util::make_spirv(&spv_fs),
+            }),
         })
     }
 
@@ -197,7 +206,7 @@ impl Shaders {
             panic!("Shader not found: {:?}", path);
         }
 
-        let mut buf = b"#version 450\n".to_vec();
+        let mut buf = b"#version 430\n".to_vec();
         write!(
             buf,
             "layout(local_size_x = {}, local_size_y = {}, local_size_z = {}) in;\n",
@@ -248,7 +257,11 @@ impl Shaders {
             }
         };
 
-        Ok(device.create_shader_module(wgpu::util::make_spirv(&spv)))
+        Ok(device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: Some(name),
+            flags: wgpu::ShaderFlags::VALIDATION,
+            source: wgpu::util::make_spirv(&spv),
+        }))
     }
 }
 
@@ -261,7 +274,7 @@ impl Palette {
         let extent = wgpu::Extent3d {
             width: 0x100,
             height: 1,
-            depth: 1,
+            depth_or_array_layers: 1,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Palette"),
@@ -274,16 +287,16 @@ impl Palette {
         });
 
         queue.write_texture(
-            wgpu::TextureCopyView {
+            wgpu::ImageCopyTexture {
                 texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
             bytemuck::cast_slice(data),
-            wgpu::TextureDataLayout {
+            wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: 0x100 * 4,
-                rows_per_image: 0,
+                bytes_per_row: NonZeroU32::new(0x100 * 4),
+                rows_per_image: None,
             },
             extent,
         );
@@ -539,14 +552,15 @@ impl Render {
                 wgpu::Extent3d {
                     width: shadow.size,
                     height: shadow.size,
-                    depth: 1,
+                    depth_or_array_layers: 1,
                 },
             );
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("shadow"),
                 color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
-                    attachment: &shadow.view,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &shadow.view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: true,
@@ -593,8 +607,9 @@ impl Render {
             );
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: targets.color,
+                label: Some("main"),
+                color_attachments: &[wgpu::RenderPassColorAttachment {
+                    view: targets.color,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear({
@@ -609,8 +624,8 @@ impl Render {
                         store: true,
                     },
                 }],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
-                    attachment: targets.depth,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: targets.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: true,

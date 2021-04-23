@@ -150,11 +150,11 @@ fn test_roundtrip() {
 
     for _ in 0..size {
         for _ in 0..size / 2 {
-            let delta = rng.gen_range(0, 16) << DELTA_SHIFT1;
+            let delta = rng.gen_range(0..16) << DELTA_SHIFT1;
             let h0 = rng.gen();
             let h1 = rng.gen();
-            let t0 = rng.gen_range(0, num_terrains);
-            let t1 = rng.gen_range(0, num_terrains);
+            let t0 = rng.gen_range(0..num_terrains);
+            let t1 = rng.gen_range(0..num_terrains);
             layers.delta.push(delta);
             layers.delta.push(delta);
             if delta != 0 {

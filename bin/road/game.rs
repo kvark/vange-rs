@@ -424,7 +424,7 @@ impl Game {
         // populate with random agents
         for i in 0..settings.game.other.count {
             use rand::{prelude::SliceRandom, Rng};
-            let color = match rng.gen_range(0, 3) {
+            let color = match rng.gen_range(0..3) {
                 0 => BodyColor::Green,
                 1 => BodyColor::Red,
                 2 => BodyColor::Blue,
@@ -434,8 +434,8 @@ impl Game {
             let (x, y) = match settings.game.other.spawn_at {
                 config::settings::SpawnAt::Player => coords,
                 config::settings::SpawnAt::Random => (
-                    rng.gen_range(0, level.size.0),
-                    rng.gen_range(0, level.size.1),
+                    rng.gen_range(0..level.size.0),
+                    rng.gen_range(0..level.size.1),
                 ),
             };
             let agent = Agent::spawn(

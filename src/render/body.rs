@@ -147,44 +147,38 @@ impl Pipelines {
             step: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("body-step"),
                 layout: Some(layout_step),
-                compute_stage: wgpu::ProgrammableStageDescriptor {
-                    module: &Shaders::new_compute(
-                        "physics/body_step",
-                        [WORK_GROUP_WIDTH, 1, 1],
-                        &[],
-                        device,
-                    )
-                    .unwrap(),
-                    entry_point: "main",
-                },
+                module: &Shaders::new_compute(
+                    "physics/body_step",
+                    [WORK_GROUP_WIDTH, 1, 1],
+                    &[],
+                    device,
+                )
+                .unwrap(),
+                entry_point: "main",
             }),
             gather: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("body-gather"),
                 layout: Some(layout_gather),
-                compute_stage: wgpu::ProgrammableStageDescriptor {
-                    module: &Shaders::new_compute(
-                        "physics/body_gather",
-                        [WORK_GROUP_WIDTH, 1, 1],
-                        &[],
-                        device,
-                    )
-                    .unwrap(),
-                    entry_point: "main",
-                },
+                module: &Shaders::new_compute(
+                    "physics/body_gather",
+                    [WORK_GROUP_WIDTH, 1, 1],
+                    &[],
+                    device,
+                )
+                .unwrap(),
+                entry_point: "main",
             }),
             push: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("body-push"),
                 layout: Some(layout_push),
-                compute_stage: wgpu::ProgrammableStageDescriptor {
-                    module: &Shaders::new_compute(
-                        "physics/body_push",
-                        [WORK_GROUP_WIDTH, 1, 1],
-                        &[],
-                        device,
-                    )
-                    .unwrap(),
-                    entry_point: "main",
-                },
+                module: &Shaders::new_compute(
+                    "physics/body_push",
+                    [WORK_GROUP_WIDTH, 1, 1],
+                    &[],
+                    device,
+                )
+                .unwrap(),
+                entry_point: "main",
             }),
         }
     }
@@ -299,9 +293,9 @@ impl GpuStore {
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::StorageBuffer {
-                        dynamic: false,
-                        readonly: false,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
@@ -310,8 +304,9 @@ impl GpuStore {
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: false,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
@@ -320,8 +315,9 @@ impl GpuStore {
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: false,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
@@ -342,9 +338,9 @@ impl GpuStore {
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStage::COMPUTE,
-                        ty: wgpu::BindingType::StorageBuffer {
-                            dynamic: false,
-                            readonly: true,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
                             min_binding_size: None,
                         },
                         count: None,
@@ -353,9 +349,9 @@ impl GpuStore {
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStage::COMPUTE,
-                        ty: wgpu::BindingType::StorageBuffer {
-                            dynamic: false,
-                            readonly: true,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
                             min_binding_size: None,
                         },
                         count: None,
@@ -377,9 +373,9 @@ impl GpuStore {
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStage::COMPUTE,
-                        ty: wgpu::BindingType::StorageBuffer {
-                            dynamic: false,
-                            readonly: true,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
                             min_binding_size: None,
                         },
                         count: None,
@@ -769,7 +765,9 @@ impl GpuStore {
 
         // compute all the things
         let do_gather = true;
-        let mut pass = encoder.begin_compute_pass();
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("body"),
+        });
         pass.set_bind_group(0, &self.bind_group, &[]);
         if do_gather {
             pass.set_pipeline(&self.pipelines.gather);
