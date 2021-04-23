@@ -13,10 +13,10 @@ use wgpu::util::DeviceExt as _;
 
 use std::{collections::HashMap, mem, num::NonZeroU64};
 
-const BLEND_FRONT: wgpu::BlendDescriptor = wgpu::BlendDescriptor::REPLACE;
-const BLEND_BEHIND: wgpu::BlendDescriptor = wgpu::BlendDescriptor {
-    src_factor: wgpu::BlendFactor::BlendColor,
-    dst_factor: wgpu::BlendFactor::OneMinusBlendColor,
+const BLEND_FRONT: wgpu::BlendComponent = wgpu::BlendComponent::REPLACE;
+const BLEND_BEHIND: wgpu::BlendComponent = wgpu::BlendComponent {
+    src_factor: wgpu::BlendFactor::Constant,
+    dst_factor: wgpu::BlendFactor::OneMinusConstant,
     operation: wgpu::BlendOperation::Add,
 };
 
@@ -121,8 +121,9 @@ impl Context {
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: false,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
@@ -209,10 +210,10 @@ impl Context {
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {
-        let rasterization_state = wgpu::RasterizationStateDescriptor {
+        let primitive = wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
             front_face: wgpu::FrontFace::Ccw,
             // original was not drawn with rasterizer, used no culling
-            cull_mode: wgpu::CullMode::None,
             ..Default::default()
         };
 
@@ -221,46 +222,43 @@ impl Context {
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("debug-shape"),
                 layout: Some(&self.pipeline_layout),
-                vertex_stage: wgpu::ProgrammableStageDescriptor {
+                vertex: wgpu::VertexState {
                     module: &shaders.vs,
                     entry_point: "main",
-                },
-                fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                    module: &shaders.fs,
-                    entry_point: "main",
-                }),
-                rasterization_state: Some(rasterization_state.clone()),
-                primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
-                color_states: &[wgpu::ColorStateDescriptor {
-                    format: COLOR_FORMAT,
-                    alpha_blend: wgpu::BlendDescriptor {
-                        src_factor: wgpu::BlendFactor::One,
-                        dst_factor: wgpu::BlendFactor::One,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                    color_blend: wgpu::BlendDescriptor {
-                        src_factor: wgpu::BlendFactor::SrcAlpha,
-                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                    write_mask: wgpu::ColorWrite::all(),
-                }],
-                depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: Default::default(),
-                }),
-                vertex_state: wgpu::VertexStateDescriptor {
-                    index_format: wgpu::IndexFormat::Uint16,
-                    vertex_buffers: &[
+                    buffers: &[
                         ShapeVertexDesc::new().buffer_desc(),
                         InstanceDesc::new().buffer_desc(),
                     ],
                 },
-                sample_count: 1,
-                alpha_to_coverage_enabled: false,
-                sample_mask: !0,
+                fragment: Some(wgpu::FragmentState {
+                    module: &shaders.fs,
+                    entry_point: "main",
+                    targets: &[wgpu::ColorTargetState {
+                        format: COLOR_FORMAT,
+                        blend: Some(wgpu::BlendState {
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::SrcAlpha,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                        write_mask: wgpu::ColorWrite::all(),
+                    }],
+                }),
+                primitive,
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
             });
             self.pipeline_face = Some(pipeline);
             self.pipeline_edge = None; //TODO: line raster
@@ -271,62 +269,59 @@ impl Context {
             let shaders = Shaders::new("debug", &[], device).unwrap();
             for &visibility in &[Visibility::Front, Visibility::Behind] {
                 let (blend, depth_write_enabled, depth_compare) = match visibility {
-                    Visibility::Front => (&BLEND_FRONT, true, wgpu::CompareFunction::LessEqual),
-                    Visibility::Behind => (&BLEND_BEHIND, false, wgpu::CompareFunction::Greater),
+                    Visibility::Front => (BLEND_FRONT, true, wgpu::CompareFunction::LessEqual),
+                    Visibility::Behind => (BLEND_BEHIND, false, wgpu::CompareFunction::Greater),
                 };
                 for &color_rate in &[wgpu::InputStepMode::Vertex, wgpu::InputStepMode::Instance] {
                     let name = format!("debug-line-{:?}-{:?}", visibility, color_rate);
                     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                         label: Some(&name),
                         layout: Some(&self.pipeline_layout),
-                        vertex_stage: wgpu::ProgrammableStageDescriptor {
+                        vertex: wgpu::VertexState {
                             module: &shaders.vs,
                             entry_point: "main",
-                        },
-                        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                            module: &shaders.fs,
-                            entry_point: "main",
-                        }),
-                        rasterization_state: Some(rasterization_state.clone()),
-                        primitive_topology: wgpu::PrimitiveTopology::TriangleStrip,
-                        color_states: &[wgpu::ColorStateDescriptor {
-                            format: COLOR_FORMAT,
-                            alpha_blend: blend.clone(),
-                            color_blend: blend.clone(),
-                            write_mask: wgpu::ColorWrite::all(),
-                        }],
-                        depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-                            format: DEPTH_FORMAT,
-                            depth_write_enabled,
-                            depth_compare,
-                            stencil: Default::default(),
-                        }),
-                        vertex_state: wgpu::VertexStateDescriptor {
-                            index_format: wgpu::IndexFormat::Uint16,
-                            vertex_buffers: &[
-                                wgpu::VertexBufferDescriptor {
-                                    stride: mem::size_of::<Position>() as wgpu::BufferAddress,
+                            buffers: &[
+                                wgpu::VertexBufferLayout {
+                                    array_stride: mem::size_of::<Position>() as wgpu::BufferAddress,
                                     step_mode: wgpu::InputStepMode::Vertex,
-                                    attributes: &[wgpu::VertexAttributeDescriptor {
+                                    attributes: &[wgpu::VertexAttribute {
                                         offset: 0,
-                                        format: wgpu::VertexFormat::Float4,
+                                        format: wgpu::VertexFormat::Float32x4,
                                         shader_location: 0,
                                     }],
                                 },
-                                wgpu::VertexBufferDescriptor {
-                                    stride: mem::size_of::<Color>() as wgpu::BufferAddress,
+                                wgpu::VertexBufferLayout {
+                                    array_stride: mem::size_of::<Color>() as wgpu::BufferAddress,
                                     step_mode: color_rate,
-                                    attributes: &[wgpu::VertexAttributeDescriptor {
+                                    attributes: &[wgpu::VertexAttribute {
                                         offset: 0,
-                                        format: wgpu::VertexFormat::Uchar4Norm,
+                                        format: wgpu::VertexFormat::Unorm8x4,
                                         shader_location: 1,
                                     }],
                                 },
                             ],
                         },
-                        sample_count: 1,
-                        alpha_to_coverage_enabled: false,
-                        sample_mask: !0,
+                        fragment: Some(wgpu::FragmentState {
+                            module: &shaders.fs,
+                            entry_point: "main",
+                            targets: &[wgpu::ColorTargetState {
+                                format: COLOR_FORMAT,
+                                blend: Some(wgpu::BlendState {
+                                    color: blend,
+                                    alpha: blend,
+                                }),
+                                write_mask: wgpu::ColorWrite::all(),
+                            }],
+                        }),
+                        primitive,
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: DEPTH_FORMAT,
+                            depth_write_enabled,
+                            depth_compare,
+                            stencil: Default::default(),
+                            bias: Default::default(),
+                        }),
+                        multisample: wgpu::MultisampleState::default(),
                     });
                     self.pipelines_line
                         .insert((visibility, color_rate), pipeline);
@@ -343,7 +338,7 @@ impl Context {
         color_rate: wgpu::InputStepMode,
         num_vert: usize,
     ) {
-        pass.set_blend_color(wgpu::Color::WHITE);
+        pass.set_blend_constant(wgpu::Color::WHITE);
         pass.set_vertex_buffer(0, vertex_buf.slice(..));
         pass.set_vertex_buffer(1, color_buf.slice(..));
         for &vis in &[Visibility::Front, Visibility::Behind] {

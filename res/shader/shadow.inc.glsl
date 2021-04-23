@@ -18,9 +18,10 @@ float fetch_shadow(vec3 pos) {
         0.5 * (homogeneous_coords.xy * flip_correction/homogeneous_coords.w + 1.0),
         homogeneous_coords.z / homogeneous_coords.w
     );
-    float shadow = texture(
+    float shadow = textureLod(
         sampler2DShadow(u_ShadowTexture, u_ShadowSampler),
-        light_local.xyz
+        light_local.xyz,
+        0.0
     );
     return mix(c_Ambient, 1.0, shadow);
 }

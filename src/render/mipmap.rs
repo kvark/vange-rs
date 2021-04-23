@@ -36,37 +36,31 @@ impl MaxMipper {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("mipmap"),
             layout: Some(layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
+            vertex: wgpu::VertexState {
                 module: &shaders.vs,
                 entry_point: "main",
-            },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &shaders.fs,
-                entry_point: "main",
-            }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::None,
-                ..Default::default()
-            }),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[HEIGHT_FORMAT.into()],
-            depth_stencil_state: None,
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                    stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &[wgpu::VertexAttributeDescriptor {
+                    attributes: &[wgpu::VertexAttribute {
                         offset: 0,
-                        format: wgpu::VertexFormat::Float2,
+                        format: wgpu::VertexFormat::Float32x2,
                         shader_location: 0,
                     }],
                 }],
             },
-            sample_count: 1,
-            alpha_to_coverage_enabled: false,
-            sample_mask: !0,
+            fragment: Some(wgpu::FragmentState {
+                module: &shaders.fs,
+                entry_point: "main",
+                targets: &[HEIGHT_FORMAT.into()],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
         })
     }
 
@@ -83,16 +77,19 @@ impl MaxMipper {
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler { comparison: false },
+                    ty: wgpu::BindingType::Sampler {
+                        filtering: true,
+                        comparison: false,
+                    },
                     count: None,
                 },
                 // texture
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture {
-                        dimension: wgpu::TextureViewDimension::D2,
-                        component_type: wgpu::TextureComponentType::Float,
+                    ty: wgpu::BindingType::Texture {
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         multisampled: false,
                     },
                     count: None,
@@ -122,7 +119,7 @@ impl MaxMipper {
                 dimension: None,
                 aspect: wgpu::TextureAspect::All,
                 base_mip_level: level,
-                level_count: NonZeroU32::new(1),
+                mip_level_count: NonZeroU32::new(1),
                 base_array_layer: 0,
                 array_layer_count: NonZeroU32::new(1),
             });
@@ -188,8 +185,9 @@ impl MaxMipper {
 
         for mip in 0..self.mips.len() - 1 {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &self.mips[mip + 1].view,
+                label: Some("mipmap"),
+                color_attachments: &[wgpu::RenderPassColorAttachment {
+                    view: &self.mips[mip + 1].view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
