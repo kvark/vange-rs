@@ -421,6 +421,8 @@ impl Context {
         shadow_config: &settings::ShadowTerrain,
         screen_extent: wgpu::Extent3d,
     ) -> Self {
+        profiling::scope!("Init Terrain");
+
         let extent = wgpu::Extent3d {
             width: level.size.0 as u32,
             height: level.size.1 as u32,

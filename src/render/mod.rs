@@ -109,6 +109,8 @@ impl Shaders {
         specialization: &[&str],
         device: &wgpu::Device,
     ) -> Result<Self, IoError> {
+        profiling::scope!("Load Shaders", name);
+
         let base_path = PathBuf::from("res").join("shader");
         let path = base_path.join(name).with_extension("glsl");
         if !path.is_file() {
@@ -200,6 +202,8 @@ impl Shaders {
         specialization: &[&str],
         device: &wgpu::Device,
     ) -> Result<wgpu::ShaderModule, IoError> {
+        profiling::scope!("Load Shader", name);
+
         let base_path = PathBuf::from("res").join("shader");
         let path = base_path.join(name).with_extension("glsl");
         if !path.is_file() {
@@ -271,6 +275,8 @@ pub struct Palette {
 
 impl Palette {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, data: &[[u8; 4]]) -> Self {
+        profiling::scope!("Create Palette");
+
         let extent = wgpu::Extent3d {
             width: 0x100,
             height: 1,
@@ -478,6 +484,8 @@ impl Render {
         screen_size: wgpu::Extent3d,
         store_buffer: wgpu::BindingResource,
     ) -> Self {
+        profiling::scope!("Init Renderer");
+
         let shadow = if settings.light.shadow.size != 0 {
             Some(shadow::Shadow::new(&settings.light, device))
         } else {
@@ -522,11 +530,13 @@ impl Render {
         targets: ScreenTargets,
         device: &wgpu::Device,
     ) {
+        profiling::scope!("draw_world");
         batcher.prepare(device);
         //TODO: common routine for draw passes
         //TODO: use `write_buffer`
 
         if let Some(ref mut shadow) = self.shadow {
+            profiling::scope!("Shadow Pass");
             shadow.update_view(cam);
 
             let constants = global::Constants::new(&shadow.cam, &self.light_config, None);
@@ -579,6 +589,7 @@ impl Render {
         }
         // main pass
         {
+            profiling::scope!("Main Pass");
             let constants = global::Constants::new(
                 cam,
                 &self.light_config,

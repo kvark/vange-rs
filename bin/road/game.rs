@@ -608,6 +608,7 @@ impl Application for Game {
         delta: f32,
         spawner: &LocalSpawner,
     ) -> Vec<wgpu::CommandBuffer> {
+        profiling::scope!("Update");
         let focus_point = self.cam.intersect_height(level::HEIGHT_SCALE as f32 * 0.3);
 
         if let Some(ref mut jump) = self.jump {

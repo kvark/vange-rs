@@ -309,6 +309,7 @@ impl<G> Mesh<G> {
 
 impl<P: Polygon> Mesh<Geometry<P>> {
     pub fn load<I: ReadBytesExt>(source: &mut I) -> Self {
+        profiling::scope!("Load Mesh");
         let version = source.read_u32::<E>().unwrap();
         assert_eq!(version, MAGIC_VERSION);
         let num_positions = source.read_u32::<E>().unwrap();
@@ -482,6 +483,8 @@ pub type FullModel = Model<DrawMesh, CollisionMesh>;
 
 impl FullModel {
     pub fn load(mut input: File) -> Self {
+        profiling::scope!("Load Model");
+
         log::debug!("\tReading the body...");
         let body: DrawMesh = Mesh::load(&mut input);
 
