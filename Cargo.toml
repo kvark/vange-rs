@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["kvark"]
 edition = "2018"
 default-run = "road"
+publish = false
 
 [workspace]
 members = [
@@ -60,9 +61,7 @@ rust-ini = "0.17"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.4"
-wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
-#wgpu = { path = "../wgpu-rs" }
-#wgpu = "0.4"
+wgpu = "0.8"
 # binaries
 env_logger = "0.8"
 getopts = "0.2"
@@ -70,7 +69,10 @@ obj = "0.10"
 png = "0.16"
 winit = "0.24"
 
-profiling = { version = "1", default-features = false, features = ["profile-with-tracy"] }
+[dependencies.profiling]
+version = "1.0.1"
+default-features = false
+#features = ["profile-with-tracy"]
 
 [patch."https://github.com/gfx-rs/naga"]
 #naga = { path = "../naga" }
@@ -82,3 +84,7 @@ profiling = { version = "1", default-features = false, features = ["profile-with
 #gfx-backend-dx12 = { path = "../gfx/src/backend/dx12" }
 #gfx-backend-dx11 = { path = "../gfx/src/backend/dx11" }
 #gfx-backend-metal = { path = "../gfx/src/backend/metal" }
+
+[patch."https://github.com/gfx-rs/wgpu"]
+#wgpu-core = { path = "../wgpu/wgpu-core" }
+#wgpu-types = { path = "../wgpu/wgpu-types" }
