@@ -160,11 +160,11 @@ impl Context {
             layout: &bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer {
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: &locals_buf,
                     offset: 0 * locals_size,
                     size: NonZeroU64::new(locals_size),
-                },
+                }),
             }],
         });
         let bind_group_face = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -172,11 +172,11 @@ impl Context {
             layout: &bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer {
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: &locals_buf,
                     offset: 1 * locals_size,
                     size: NonZeroU64::new(locals_size),
-                },
+                }),
             }],
         });
         let bind_group_edge = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -184,11 +184,11 @@ impl Context {
             layout: &bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer {
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: &locals_buf,
                     offset: 2 * locals_size,
                     size: NonZeroU64::new(locals_size),
-                },
+                }),
             }],
         });
 
