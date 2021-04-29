@@ -1,9 +1,10 @@
 use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
-use std::path::Path;
-use std::time::Instant;
+use std::{
+    fs::File,
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    path::Path,
+};
 
 mod config;
 
@@ -202,44 +203,29 @@ pub fn read_palette(input: File, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 
     data
 }
 
-fn report_time(start: Instant) {
-    let d = Instant::now() - start;
-    info!(
-        "\ttook {} ms",
-        d.as_secs() as u32 * 1000 + d.subsec_nanos() / 1_000_000
-    );
-}
-
 pub fn load_flood(config: &LevelConfig) -> Vec<u8> {
+    profiling::scope!("Flood Map");
     let size = (config.size.0.as_value(), config.size.1.as_value());
     let flood_size = size.1 >> config.section.as_power();
 
-    let instant = Instant::now();
-    let flood_map = {
-        let vpr_file = match File::open(&config.path_data.with_extension("vpr")) {
-            Ok(file) => file,
-            Err(_) => return vec![0; flood_size as usize],
-        };
-
-        info!("Loading flood map...");
-        let geo_pow = config.geo.as_power();
-        let net_size = size.0 * size.1 >> (2 * geo_pow);
-        let flood_offset = (2 * 4
-            + (1 + 4 + 4) * 4
-            + 2 * net_size
-            + 2 * geo_pow * 4
-            + 2 * flood_size * geo_pow * 4) as u64;
-        let expected_file_size = flood_offset + (flood_size * 4) as u64;
-        assert_eq!(vpr_file.metadata().unwrap().len(), expected_file_size,);
-        let mut vpr = BufReader::new(vpr_file);
-        vpr.seek(SeekFrom::Start(flood_offset)).unwrap();
-        (0..flood_size)
-            .map(|_| vpr.read_u32::<E>().unwrap() as u8)
-            .collect()
+    let vpr_file = match File::open(&config.path_data.with_extension("vpr")) {
+        Ok(file) => file,
+        Err(_) => return vec![0; flood_size as usize],
     };
 
-    report_time(instant);
-    flood_map
+    info!("Loading flood map...");
+    let geo_pow = config.geo.as_power();
+    let net_size = size.0 * size.1 >> (2 * geo_pow);
+    let flood_offset =
+        (2 * 4 + (1 + 4 + 4) * 4 + 2 * net_size + 2 * geo_pow * 4 + 2 * flood_size * geo_pow * 4)
+            as u64;
+    let expected_file_size = flood_offset + (flood_size * 4) as u64;
+    assert_eq!(vpr_file.metadata().unwrap().len(), expected_file_size,);
+    let mut vpr = BufReader::new(vpr_file);
+    vpr.seek(SeekFrom::Start(flood_offset)).unwrap();
+    (0..flood_size)
+        .map(|_| vpr.read_u32::<E>().unwrap() as u8)
+        .collect()
 }
 
 pub struct LevelData {
@@ -339,7 +325,6 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
     use splay::Splay;
 
     info!("Loading height map...");
-    let instant = Instant::now();
     let total = (size.0 * size.1) as usize;
     let mut level = LevelData {
         height: vec![0u8; total],
@@ -347,18 +332,22 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
         size,
     };
 
-    let mut vmc_base = BufReader::new(File::open(path).expect("Unable to open VMC"));
+    let (splay, st_table, sz_table) = {
+        profiling::scope!("Prepare");
+        let mut vmc_base = BufReader::new(File::open(path).expect("Unable to open VMC"));
 
-    info!("\tLoading compression tables...");
-    let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
-    let mut sz_table = Vec::<i16>::with_capacity(size.1 as usize);
-    for _ in 0..size.1 {
-        st_table.push(vmc_base.read_i32::<E>().unwrap());
-        sz_table.push(vmc_base.read_i16::<E>().unwrap());
-    }
+        info!("\tLoading compression tables...");
+        let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
+        let mut sz_table = Vec::<i16>::with_capacity(size.1 as usize);
+        for _ in 0..size.1 {
+            st_table.push(vmc_base.read_i32::<E>().unwrap());
+            sz_table.push(vmc_base.read_i16::<E>().unwrap());
+        }
 
-    info!("\tDecompressing level data...");
-    let splay = Splay::new(&mut vmc_base);
+        info!("\tDecompressing level data...");
+        let splay = Splay::new(&mut vmc_base);
+        (splay, st_table, sz_table)
+    };
 
     level
         .height
@@ -383,7 +372,6 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
             }
         });
 
-    report_time(instant);
     level
 }
 
@@ -409,6 +397,7 @@ pub fn load_vmp(path: &Path, size: (i32, i32)) -> LevelData {
 }
 
 pub fn load(config: &LevelConfig) -> Level {
+    profiling::scope!("Load Level");
     info!("Loading data map...");
     let size = (config.size.0.as_value(), config.size.1.as_value());
     let LevelData { height, meta, size } = if config.is_compressed {

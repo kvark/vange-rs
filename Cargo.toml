@@ -21,6 +21,7 @@ debug = true
 [features]
 default = []
 cross = ["wgpu/cross"]
+profile = ["profiling/profile-with-tracy"]
 
 [[bin]]
 name = "road"
@@ -72,7 +73,6 @@ winit = "0.24"
 [dependencies.profiling]
 version = "1.0.1"
 default-features = false
-#features = ["profile-with-tracy"]
 
 [patch."https://github.com/gfx-rs/naga"]
 #naga = { path = "../naga" }
