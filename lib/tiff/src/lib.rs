@@ -116,7 +116,7 @@ pub fn save<W: Seek + WriteBytesExt>(mut tiff: W, images: &[Image]) -> IoResult<
     }
     // image data
     for im in images {
-        tiff.write(im.data)?;
+        tiff.write_all(im.data)?;
     }
     Ok(())
 }
