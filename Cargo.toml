@@ -68,7 +68,7 @@ env_logger = "0.8"
 getopts = "0.2"
 obj = "0.10"
 png = "0.16"
-winit = "0.24"
+winit = "0.25"
 
 [dependencies.profiling]
 version = "1.0.1"
