@@ -186,7 +186,8 @@ impl Settings {
     }
 
     pub fn open_relative(&self, path: &str) -> File {
-        File::open(self.data_path.join(path)).expect(&format!("Unable to open game file: {}", path))
+        File::open(self.data_path.join(path))
+            .unwrap_or_else(|_| panic!("Unable to open game file: {}", path))
     }
 
     pub fn check_path(&self, path: &str) -> bool {
@@ -210,6 +211,6 @@ impl Settings {
             .join("mechous")
             .join(name)
             .with_extension("m3d");
-        File::open(path).expect(&format!("Unable to open vehicle {}", name))
+        File::open(path).unwrap_or_else(|_| panic!("Unable to open vehicle {}", name))
     }
 }

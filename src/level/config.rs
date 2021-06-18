@@ -1,6 +1,6 @@
 use ini::Ini;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct Power(pub i32);
 impl Power {
@@ -32,11 +32,10 @@ pub struct LevelConfig {
 }
 
 impl LevelConfig {
-    pub fn load(ini_path: &PathBuf) -> Self {
-        let ini = Ini::load_from_file(ini_path).expect(&format!(
-            "Unable to read the level's INI description: {:?}",
-            ini_path
-        ));
+    pub fn load(ini_path: &Path) -> Self {
+        let ini = Ini::load_from_file(ini_path).unwrap_or_else(|_| {
+            panic!("Unable to read the level's INI description: {:?}", ini_path)
+        });
         let global = &ini["Global Parameters"];
         let storage = &ini["Storage"];
         let render = &ini["Rendering Parameters"];

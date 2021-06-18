@@ -305,7 +305,7 @@ pub fn load_m3d(
 ) -> VisualModel {
     let raw = m3d::FullModel::load(file);
 
-    let model = VisualModel {
+    VisualModel {
         body: load_c3d(raw.body, device),
         shape: load_c3d_shape(raw.shape, device, shape_sampling, true, object),
         bound: raw.bound,
@@ -324,7 +324,5 @@ pub fn load_m3d(
             })
             .collect(),
         slots: m3d::Slot::map_all(raw.slots, |_, _| unreachable!()),
-    };
-
-    model
+    }
 }

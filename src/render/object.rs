@@ -76,7 +76,7 @@ impl Instance {
         Instance {
             pos_scale: gt.pos_scale,
             orientation: gt.orientation,
-            shape_scale: shape_scale,
+            shape_scale,
             body_and_color_id: [body.index() as u32, color as u32],
         }
     }

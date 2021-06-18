@@ -256,7 +256,7 @@ impl GpuCollider {
             mapped_at_creation: false,
         });
         let max_polygons_total =
-            (settings.max_polygons_total - 1) | (CLEAR_WORK_GROUP_WIDTH - 1) as usize + 1;
+            (settings.max_polygons_total - 1) | ((CLEAR_WORK_GROUP_WIDTH - 1) as usize + 1);
         let buf_size = (max_polygons_total * mem::size_of::<PolygonData>()) as wgpu::BufferAddress;
         let collision_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Collision"),

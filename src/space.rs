@@ -180,7 +180,7 @@ impl Camera {
                 scale: 1.0,
             }
         } else {
-            target.clone()
+            *target
         };
 
         let result = new_target.concat(&follow.transform);
