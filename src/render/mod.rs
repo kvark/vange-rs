@@ -150,8 +150,8 @@ impl Shaders {
                     } else {
                         0
                     };
-                    write!(buf_vs, "#define {} {}\n", define, value)?;
-                    write!(buf_fs, "#define {} {}\n", define, value)?;
+                    writeln!(buf_vs, "#define {} {}", define, value)?;
+                    writeln!(buf_fs, "#define {} {}", define, value)?;
                 }
             }
         }
@@ -211,12 +211,12 @@ impl Shaders {
         }
 
         let mut buf = b"#version 430\n".to_vec();
-        write!(
+        writeln!(
             buf,
-            "layout(local_size_x = {}, local_size_y = {}, local_size_z = {}) in;\n",
+            "layout(local_size_x = {}, local_size_y = {}, local_size_z = {}) in;",
             group_size[0], group_size[1], group_size[2]
         )?;
-        write!(buf, "#define SHADER_CS\n")?;
+        writeln!(buf, "#define SHADER_CS")?;
 
         let mut code = String::new();
         BufReader::new(File::open(&path)?).read_to_string(&mut code)?;
@@ -244,7 +244,7 @@ impl Shaders {
                     } else {
                         0
                     };
-                    write!(buf, "#define {} {}\n", define, value)?;
+                    writeln!(buf, "#define {} {}", define, value)?;
                 }
             }
         }

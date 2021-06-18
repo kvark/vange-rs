@@ -685,7 +685,7 @@ impl GpuStore {
                         buf_set_control.as_ref().unwrap(),
                         (index * size) as wgpu::BufferAddress,
                         &self.buf_data,
-                        (body_id * data_size + 0) as wgpu::BufferAddress,
+                        (body_id * data_size) as wgpu::BufferAddress,
                         size as wgpu::BufferAddress,
                     );
                 }

@@ -74,6 +74,7 @@ impl<I: Read> Reader<I> {
     }
 
     pub fn scan<'a, T: Deserialize<'a>>(&'a mut self) -> T {
-        serde_scan::from_str(&self.line).expect(&format!("Unable to scan line: {}", self.line))
+        serde_scan::from_str(&self.line)
+            .unwrap_or_else(|_| panic!("Unable to scan line: {}", self.line))
     }
 }

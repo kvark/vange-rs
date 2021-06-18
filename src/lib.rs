@@ -4,6 +4,7 @@
     unused_extern_crates,
     unused_qualifications
 )]
+#![allow(clippy::identity_op, clippy::erasing_op)]
 
 #[macro_use]
 extern crate log;

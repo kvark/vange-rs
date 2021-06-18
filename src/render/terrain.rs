@@ -129,12 +129,12 @@ impl Geometry {
         Geometry {
             vertex_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("terrain-vertex"),
-                contents: bytemuck::cast_slice(&vertices),
+                contents: bytemuck::cast_slice(vertices),
                 usage: wgpu::BufferUsage::VERTEX,
             }),
             index_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("terrain-index"),
-                contents: bytemuck::cast_slice(&indices),
+                contents: bytemuck::cast_slice(indices),
                 usage: wgpu::BufferUsage::INDEX,
             }),
             num_indices: indices.len() as u32,
@@ -1021,18 +1021,16 @@ impl Context {
     }
 
     pub fn resize(&mut self, extent: wgpu::Extent3d, device: &wgpu::Device) {
-        match self.kind {
-            Kind::Scatter {
-                ref bg_layout,
-                ref mut bind_group,
-                ref mut compute_groups,
-                ..
-            } => {
-                let (bg, gs) = Self::create_scatter_resources(extent, bg_layout, device);
-                *bind_group = bg;
-                *compute_groups = gs;
-            }
-            _ => {}
+        if let Kind::Scatter {
+            ref bg_layout,
+            ref mut bind_group,
+            ref mut compute_groups,
+            ..
+        } = self.kind
+        {
+            let (bg, gs) = Self::create_scatter_resources(extent, bg_layout, device);
+            *bind_group = bg;
+            *compute_groups = gs;
         }
     }
 

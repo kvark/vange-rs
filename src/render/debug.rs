@@ -342,7 +342,7 @@ impl Context {
         pass.set_vertex_buffer(0, vertex_buf.slice(..));
         pass.set_vertex_buffer(1, color_buf.slice(..));
         for &vis in &[Visibility::Front, Visibility::Behind] {
-            if let Some(ref pipeline) = self.pipelines_line.get(&(vis, color_rate)) {
+            if let Some(pipeline) = self.pipelines_line.get(&(vis, color_rate)) {
                 pass.set_pipeline(pipeline);
                 pass.draw(0..num_vert as u32, 0..1);
             }

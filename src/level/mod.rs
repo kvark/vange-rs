@@ -162,14 +162,14 @@ fn print_palette(data: &[[u8; 4]], info: &str) {
             print!("{:02X}", data[j][i]);
         }
     }
-    print!("\n");
+    println!();
 }
 
 pub fn read_palette(input: File, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 0x100] {
     let mut file = BufReader::new(input);
     let mut data = [[0; 4]; 0x100];
     for p in data.iter_mut() {
-        file.read(&mut p[..3]).unwrap();
+        file.read_exact(&mut p[..3]).unwrap();
         //p[0] <<= 2; p[1] <<= 2; p[2] <<= 2;
     }
     //print_palette(&data, "read from file");
@@ -215,7 +215,7 @@ pub fn load_flood(config: &LevelConfig) -> Vec<u8> {
 
     info!("Loading flood map...");
     let geo_pow = config.geo.as_power();
-    let net_size = size.0 * size.1 >> (2 * geo_pow);
+    let net_size = (size.0 * size.1) >> (2 * geo_pow);
     let flood_offset =
         (2 * 4 + (1 + 4 + 4) * 4 + 2 * net_size + 2 * geo_pow * 4 + 2 * flood_size * geo_pow * 4)
             as u64;
@@ -255,8 +255,8 @@ impl LevelData {
             .chunks(self.size.0 as _)
             .zip(self.meta.chunks(self.size.0 as _))
             .for_each(|(h_row, m_row)| {
-                vmp.write(h_row).unwrap();
-                vmp.write(m_row).unwrap();
+                vmp.write_all(h_row).unwrap();
+                vmp.write_all(m_row).unwrap();
             });
     }
 
@@ -300,8 +300,7 @@ impl LevelData {
                 if delta != 0 {
                     // average between two texels
                     let mat = avg(color[3], color[7]);
-                    level.meta[i + 0] =
-                        DOUBLE_LEVEL | ((mat & 0xF) << terrain_shift) | (delta >> 2);
+                    level.meta[i + 0] = DOUBLE_LEVEL | ((mat & 0xF) << terrain_shift) | (delta >> 2);
                     level.meta[i + 1] =
                         DOUBLE_LEVEL | ((mat >> 4) << terrain_shift) | (delta & DELTA_MASK);
                     level.height[i + 0] = avg(color[0], color[4]);
@@ -367,7 +366,7 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
             let mut data = vec![0u8; data_size as usize];
             for &mut ((ref mut h_row, ref mut m_row), (offset, &size)) in source_group {
                 vmc.seek(SeekFrom::Start(*offset as u64)).unwrap();
-                vmc.read(&mut data[..size as usize]).unwrap();
+                vmc.read_exact(&mut data[..size as usize]).unwrap();
                 splay.expand(&data[..size as usize], h_row, m_row);
             }
         });
@@ -389,8 +388,8 @@ pub fn load_vmp(path: &Path, size: (i32, i32)) -> LevelData {
         .chunks_mut(size.0 as _)
         .zip(level.meta.chunks_mut(size.0 as _))
         .for_each(|(h_row, m_row)| {
-            vmp.read(h_row).unwrap();
-            vmp.read(m_row).unwrap();
+            vmp.read_exact(h_row).unwrap();
+            vmp.read_exact(m_row).unwrap();
         });
 
     level
