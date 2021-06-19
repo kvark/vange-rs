@@ -445,7 +445,7 @@ impl Context {
             _ => (1, wgpu::TextureUsage::empty()),
         };
 
-        let terrrain_table = level
+        let terrain_table = level
             .terrains
             .iter()
             .map(|terr| {
@@ -543,7 +543,7 @@ impl Context {
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
-            bytemuck::cast_slice(&terrrain_table),
+            bytemuck::cast_slice(&terrain_table),
             wgpu::ImageDataLayout {
                 offset: 0,
                 bytes_per_row: NonZeroU32::new(table_extent.width * 4),
