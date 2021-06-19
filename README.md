@@ -9,7 +9,7 @@ You need the **original game** in order to try out `vange-rs`. The path to resou
 
 ![logo](docs/assets/logo-cut.png)
 
-## Technonolgy
+## Technology
 
 The game uses [wgpu-rs](https://github.com/gfx-rs/wgpu-rs) for graphics and [winit](https://github.com/tomaka/winit) for windowing.
 
