@@ -75,7 +75,7 @@ impl CarView {
                 }),
             },
             rotation: (cgmath::Rad(0.), cgmath::Rad(0.)),
-            light_config: settings.render.light.clone(),
+            light_config: settings.render.light,
         }
     }
 

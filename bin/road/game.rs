@@ -516,16 +516,15 @@ impl Application for Game {
                 Key::Escape => return false,
                 Key::P => {
                     let center = match player.physics {
-                        Physics::Cpu { ref transform, .. } => transform.clone(),
-                        Physics::Gpu { ref body, .. } => self
+                        Physics::Cpu { ref transform, .. } => *transform,
+                        Physics::Gpu { ref body, .. } => *self
                             .gpu
                             .as_ref()
                             .unwrap()
                             .store
                             .cpu_mirror()
                             .get(body)
-                            .unwrap()
-                            .clone(),
+                            .unwrap(),
                     };
                     self.tick = None;
                     if self.is_paused {
@@ -623,7 +622,7 @@ impl Application for Game {
                 .find(|a| a.spirit == Spirit::Player)
                 .unwrap();
             let target = match player.physics {
-                Physics::Cpu { ref transform, .. } => transform.clone(),
+                Physics::Cpu { ref transform, .. } => *transform,
                 Physics::Gpu { ref body, .. } => self
                     .gpu
                     .as_ref()
@@ -632,7 +631,7 @@ impl Application for Game {
                     .cpu_mirror()
                     .get(body)
                     .cloned()
-                    .unwrap_or(space::Transform::one()),
+                    .unwrap_or_else(space::Transform::one),
             };
 
             if self.is_paused {
@@ -867,7 +866,7 @@ impl Application for Game {
             };
             self.batcher.add_model(
                 &agent.car.model,
-                &transform,
+                transform,
                 debug_shape_scale,
                 gpu_body,
                 agent.color,

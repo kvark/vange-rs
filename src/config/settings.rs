@@ -10,13 +10,13 @@ pub struct Car {
     pub slots: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub enum View {
     Flat,
     Perspective,
 }
 
-#[derive(Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub struct Camera {
     pub angle: u8,
     pub height: f32,
@@ -25,26 +25,26 @@ pub struct Camera {
     pub depth_range: (f32, f32),
 }
 
-#[derive(Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub enum SpawnAt {
     Player,
     Random,
 }
 
-#[derive(Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub struct Other {
     pub count: usize,
     pub spawn_at: SpawnAt,
 }
 
-#[derive(Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub struct GpuCollision {
     pub max_objects: usize,
     pub max_polygons_total: usize,
     pub max_raster_size: (u32, u32),
 }
 
-#[derive(Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub struct Physics {
     pub max_quant: f32,
     pub shape_sampling: u8,
@@ -68,7 +68,7 @@ pub struct Window {
     pub reload_on_focus: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub enum Backend {
     Auto,
     Metal,
@@ -89,7 +89,7 @@ impl Backend {
     }
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub struct DebugRender {
     pub max_vertices: usize,
     pub collision_shapes: bool,
@@ -97,25 +97,25 @@ pub struct DebugRender {
     pub impulses: bool,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub enum ShadowTerrain {
     RayTraced,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub struct Shadow {
     pub size: u32,
     pub terrain: ShadowTerrain,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub struct Light {
     pub pos: [f32; 4],
     pub color: [f32; 4],
     pub shadow: Shadow,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub enum Terrain {
     RayTraced,
     RayMipTraced {
@@ -134,13 +134,13 @@ pub enum Terrain {
     },
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub struct Fog {
     pub color: [f32; 4],
     pub depth: f32,
 }
 
-#[derive(Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub struct Render {
     pub light: Light,
     pub terrain: Terrain,

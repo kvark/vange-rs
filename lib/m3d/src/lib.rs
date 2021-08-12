@@ -1,3 +1,15 @@
+#![deny(
+    trivial_casts,
+    trivial_numeric_casts,
+    unused,
+    unused_qualifications,
+    rust_2018_compatibility,
+    rust_2018_idioms,
+    future_incompatible,
+    nonstandard_style,
+    missing_copy_implementations
+)]
+
 mod geometry;
 
 pub use self::geometry::{
@@ -39,7 +51,7 @@ fn write_vec_i8<W: WriteBytesExt>(dest: &mut W, v: [i8; 3]) {
     dest.write_i8(v[2]).unwrap();
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct Physics {
     pub volume: f32,
     pub rcm: [f32; 3],
@@ -161,7 +173,7 @@ impl<M> Slot<M> {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct UpperBound {
     pub dimensions: [u32; 3],
     pub radius: u32,
@@ -187,7 +199,7 @@ impl UpperBound {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct BodyColor {
     pub offset: u32,
     pub shift: u32,
@@ -224,7 +236,7 @@ impl<M, S> Model<M, S> {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct Bounds {
     pub coord_min: [i32; 3],
     pub coord_max: [i32; 3],

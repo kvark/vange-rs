@@ -1,3 +1,15 @@
+#![deny(
+    trivial_casts,
+    trivial_numeric_casts,
+    unused,
+    unused_qualifications,
+    rust_2018_compatibility,
+    rust_2018_idioms,
+    future_incompatible,
+    nonstandard_style,
+    missing_copy_implementations
+)]
+
 use byteorder::{LittleEndian as E, WriteBytesExt};
 
 use std::io::{Result as IoResult, Seek, SeekFrom};
@@ -28,7 +40,7 @@ pub struct Image<'a> {
     pub data: &'a [u8],
 }
 
-pub fn save<W: Seek + WriteBytesExt>(mut tiff: W, images: &[Image]) -> IoResult<()> {
+pub fn save<W: Seek + WriteBytesExt>(mut tiff: W, images: &[Image<'_>]) -> IoResult<()> {
     // header
     tiff.write_u16::<E>(0x4949)?; // little endian
     tiff.write_u16::<E>(42)?; // magic

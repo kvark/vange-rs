@@ -3,17 +3,12 @@ mod app;
 mod boilerplate;
 
 fn main() {
-    let (mut harness, settings) = boilerplate::Harness::init(boilerplate::HarnessOptions {
+    let (harness, settings) = boilerplate::Harness::init(boilerplate::HarnessOptions {
         title: "level",
         uses_level: true,
     });
 
-    let app = app::LevelView::new(
-        &settings,
-        harness.extent,
-        &harness.device,
-        &mut harness.queue,
-    );
+    let app = app::LevelView::new(&settings, harness.extent, &harness.device, &harness.queue);
 
     harness.main_loop(app);
 }

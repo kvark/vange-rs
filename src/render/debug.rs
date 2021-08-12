@@ -193,7 +193,7 @@ impl Context {
         });
 
         let mut result = Context {
-            settings: settings.clone(),
+            settings: *settings,
             pipeline_layout,
             pipelines_line: HashMap::new(),
             pipeline_face: None,

@@ -2,6 +2,7 @@ use ini::Ini;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+#[derive(Copy, Clone)]
 pub struct Power(pub i32);
 impl Power {
     pub fn as_value(&self) -> i32 {

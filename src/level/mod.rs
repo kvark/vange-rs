@@ -30,8 +30,10 @@ pub struct Level {
     pub terrains: Box<[TerrainConfig]>,
 }
 
+#[derive(Copy, Clone)]
 pub struct Point(pub Altitude, pub TerrainType);
 
+#[derive(Copy, Clone)]
 pub struct TerrainBits {
     pub shift: u8,
     pub mask: TerrainType,
@@ -61,6 +63,7 @@ impl TerrainBits {
     }
 }
 
+#[derive(Copy, Clone)]
 pub enum Texel {
     Single(Point),
     Dual {

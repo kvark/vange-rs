@@ -1,7 +1,7 @@
 pub const NORMALIZER: f32 = 124.0;
 pub const NUM_COLOR_IDS: u32 = 25;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(u32)]
 pub enum ColorId {
     Reserved = 0,
@@ -44,12 +44,14 @@ impl Vertex {
     };
 }
 
+#[derive(Copy, Clone)]
 pub struct DrawTriangle {
     pub vertices: [Vertex; 3],
     pub flat_normal: [i8; 3],
     pub material: [u32; 2],
 }
 
+#[derive(Copy, Clone)]
 pub struct CollisionQuad {
     pub vertices: [u16; 4],
     pub middle: [i8; 3],

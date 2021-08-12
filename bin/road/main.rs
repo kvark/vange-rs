@@ -8,7 +8,7 @@ mod physics;
 fn main() {
     use std::env;
 
-    let (mut harness, settings) = boilerplate::Harness::init(boilerplate::HarnessOptions {
+    let (harness, settings) = boilerplate::Harness::init(boilerplate::HarnessOptions {
         title: "road",
         uses_level: true,
     });
@@ -28,12 +28,7 @@ fn main() {
         return;
     }
 
-    let game = game::Game::new(
-        &settings,
-        harness.extent,
-        &harness.device,
-        &mut harness.queue,
-    );
+    let game = game::Game::new(&settings, harness.extent, &harness.device, &harness.queue);
 
     harness.main_loop(game);
 }
