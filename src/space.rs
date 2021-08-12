@@ -3,6 +3,7 @@ use std::ops::Range;
 
 pub type Transform = cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>;
 
+#[derive(Copy, Clone)]
 pub enum Projection {
     Ortho {
         p: cgmath::Ortho<f32>,
@@ -56,19 +57,21 @@ impl Projection {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct Camera {
     pub loc: cgmath::Vector3<f32>,
     pub rot: cgmath::Quaternion<f32>,
     pub proj: Projection,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Follow {
     pub transform: Transform,
     pub speed: f32,
     pub fix_z: bool,
 }
 
+#[derive(Copy, Clone)]
 pub struct Direction {
     pub view: cgmath::Vector3<f32>,
     pub height: f32,

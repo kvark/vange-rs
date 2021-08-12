@@ -45,10 +45,12 @@ impl LevelView {
             let escaves = config::escaves::load(settings.open_relative("escaves.prm"));
             let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
 
-            let ini_name = worlds.get(&settings.game.level).expect(&format!(
-                "Unable to find the world, supported: {:?}",
-                worlds.keys().collect::<Vec<_>>()
-            ));
+            let ini_name = worlds.get(&settings.game.level).unwrap_or_else(|| {
+                panic!(
+                    "Unable to find the world, supported: {:?}",
+                    worlds.keys().collect::<Vec<_>>()
+                )
+            });
             let ini_path = settings.data_path.join(ini_name);
             info!("Using level {}", ini_name);
 
@@ -59,21 +61,24 @@ impl LevelView {
                 let escave = escaves
                     .iter()
                     .find(|e| e.world == settings.game.level)
-                    .expect(&format!(
-                        "Unable to find the escave for this world, supported: {:?}",
-                        escaves.iter().map(|e| &e.world).collect::<Vec<_>>()
-                    ));
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Unable to find the escave for this world, supported: {:?}",
+                            escaves.iter().map(|e| &e.world).collect::<Vec<_>>()
+                        )
+                    });
                 let bunch = {
                     let file = settings.open_relative("bunches.prm");
                     let mut bunches = config::bunches::load(file);
-                    let index =
-                        bunches
-                            .iter()
-                            .position(|b| b.escave == escave.name)
-                            .expect(&format!(
+                    let index = bunches
+                        .iter()
+                        .position(|b| b.escave == escave.name)
+                        .unwrap_or_else(|| {
+                            panic!(
                                 "Unable to find the bunch, supported: {:?}",
                                 bunches.iter().map(|b| &b.escave).collect::<Vec<_>>()
-                            ));
+                            )
+                        });
                     info!("Found bunch {}", index);
                     bunches.swap_remove(index)
                 };
@@ -81,10 +86,12 @@ impl LevelView {
                     .cycles
                     .iter()
                     .find(|c| c.name == settings.game.cycle)
-                    .expect(&format!(
-                        "Unknown cycle is provided, supported: {:?}",
-                        bunch.cycles.iter().map(|c| &c.name).collect::<Vec<_>>()
-                    ));
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Unknown cycle is provided, supported: {:?}",
+                            bunch.cycles.iter().map(|c| &c.name).collect::<Vec<_>>()
+                        )
+                    });
                 override_palette = Some(settings.open_relative(&cycle.palette_path));
             }
 

@@ -54,7 +54,7 @@ impl ResourceView {
                 }),
             },
             rotation: cgmath::Rad(0.),
-            light_config: settings.render.light.clone(),
+            light_config: settings.render.light,
         }
     }
 }

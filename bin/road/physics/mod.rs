@@ -156,7 +156,7 @@ pub fn step(
                 poly,
                 &car.model.shape.samples,
                 car.physics.scale_bound,
-                &transform,
+                transform,
                 level,
                 &common.terrain,
             );

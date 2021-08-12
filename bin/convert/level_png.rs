@@ -2,7 +2,7 @@ use crate::layers::LevelLayers;
 
 use serde::{Deserialize, Serialize};
 
-use std::{fs::File, path::PathBuf};
+use std::{fs::File, path::Path};
 
 #[derive(Serialize, Deserialize)]
 struct MultiPng {
@@ -13,7 +13,7 @@ struct MultiPng {
     material_hi: String,
 }
 
-pub fn save(path: &PathBuf, layers: LevelLayers, palette: &[u8]) {
+pub fn save(path: &Path, layers: LevelLayers, palette: &[u8]) {
     use std::io::Write;
 
     let mp = MultiPng {
@@ -71,7 +71,7 @@ pub fn save(path: &PathBuf, layers: LevelLayers, palette: &[u8]) {
     }
 }
 
-pub fn load(path: &PathBuf) -> LevelLayers {
+pub fn load(path: &Path) -> LevelLayers {
     let level_file = File::open(path).unwrap();
     let mp = ron::de::from_reader::<_, MultiPng>(level_file).unwrap();
     let mut layers = LevelLayers::new(mp.size, mp.num_terrains);

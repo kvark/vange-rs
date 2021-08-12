@@ -5,7 +5,7 @@ mod boilerplate;
 fn main() {
     use std::env;
 
-    let (mut harness, settings) = boilerplate::Harness::init(boilerplate::HarnessOptions {
+    let (harness, settings) = boilerplate::Harness::init(boilerplate::HarnessOptions {
         title: "model",
         uses_level: false,
     });
@@ -25,7 +25,7 @@ fn main() {
     }
 
     let path = &matches.free[0];
-    let app = app::ResourceView::new(path, &settings, &harness.device, &mut harness.queue);
+    let app = app::ResourceView::new(path, &settings, &harness.device, &harness.queue);
 
     harness.main_loop(app);
 }

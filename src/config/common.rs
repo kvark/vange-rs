@@ -8,7 +8,7 @@ pub const MAIN_LOOP_TIME: f32 = 0.05;
 pub type Traction = f32;
 pub type Angle = f32;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct VelocityPair {
     pub v: f32, //linear
     pub w: f32, //angular
@@ -20,6 +20,7 @@ impl VelocityPair {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct Nature {
     pub gravity: f32,
     pub density: f32,
@@ -29,6 +30,7 @@ pub struct Nature {
     pub movement_detection_threshold: u8,
 }
 
+#[derive(Copy, Clone)]
 pub struct Impulse {
     pub elastic_restriction: f32,
     pub elastic_time_scale_factor: f32,
@@ -39,6 +41,7 @@ pub struct Impulse {
     pub k_friction: f32,
 }
 
+#[derive(Copy, Clone)]
 pub struct Car {
     pub rudder_step: Angle,
     pub rudder_max: Angle,
@@ -47,6 +50,7 @@ pub struct Car {
     pub traction_decr: Traction,
 }
 
+#[derive(Copy, Clone)]
 pub struct Global {
     pub speed_factor: f32,
     pub mobility_factor: f32,
@@ -57,6 +61,7 @@ pub struct Global {
     pub f_brake_max: f32,
 }
 
+#[derive(Copy, Clone)]
 pub struct Helicopter {
     pub max_height: u16,
     pub height_incr: u16,
@@ -75,6 +80,7 @@ pub struct Helicopter {
     pub circle_dphi: u16,
 }
 
+#[derive(Copy, Clone)]
 pub struct Drag {
     pub speed: VelocityPair,
     pub wheel_speed: f32,
@@ -93,11 +99,13 @@ pub struct Drag {
     pub abs_min: VelocityPair,
 }
 
+#[derive(Copy, Clone)]
 pub struct Terrain {
     pub dz_max: f32,
     pub min_wall_delta: f32,
 }
 
+#[derive(Copy, Clone)]
 pub struct Mole {
     pub k_elastic_mole: f32,
     pub k_mole: f32,
@@ -106,6 +114,7 @@ pub struct Mole {
     pub mole_submerging_fz: f32,
 }
 
+#[derive(Copy, Clone)]
 pub struct Contact {
     pub k_elastic_wheel: f32,
     pub k_elastic_spring: f32,
@@ -121,6 +130,7 @@ pub struct Contact {
     pub k_friction_spring: f32,
 }
 
+#[derive(Copy, Clone)]
 pub struct Force {
     pub f_spring_impulse: f32,
     pub k_spring_impulse: f32,
@@ -132,11 +142,13 @@ pub struct Force {
     pub side_impulse_duration: u8,
 }
 
+#[derive(Copy, Clone)]
 pub struct Speed {
     pub standard_frame_rate: u32,
     pub speed_correction_tau: f32,
 }
 
+#[derive(Copy, Clone)]
 pub struct Common {
     pub nature: Nature,
     pub impulse: Impulse,

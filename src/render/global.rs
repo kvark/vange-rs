@@ -45,7 +45,7 @@ impl Context {
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        store_buffer: wgpu::BindingResource,
+        store_buffer: wgpu::BindingResource<'_>,
         shadow_view: Option<&wgpu::TextureView>,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

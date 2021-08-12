@@ -232,7 +232,7 @@ impl GpuStoreInit {
         }
     }
 
-    pub fn resource(&self) -> wgpu::BindingResource {
+    pub fn resource(&self) -> wgpu::BindingResource<'_> {
         self.buffer.as_entire_binding()
     }
 }
@@ -284,7 +284,7 @@ impl GpuStore {
         device: &wgpu::Device,
         common: &Common,
         init: GpuStoreInit,
-        collider_buffer: wgpu::BindingResource,
+        collider_buffer: wgpu::BindingResource<'_>,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Body"),
@@ -850,7 +850,7 @@ impl GpuStore {
         spawner.spawn_local_obj(Box::new(future).into()).unwrap();
     }
 
-    pub fn cpu_mirror(&self) -> MutexGuard<GpuStoreMirror> {
+    pub fn cpu_mirror(&self) -> MutexGuard<'_, GpuStoreMirror> {
         self.cpu_mirror.lock().unwrap()
     }
 }

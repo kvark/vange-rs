@@ -82,6 +82,7 @@ impl Instance {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct InstanceDesc {
     attributes: [wgpu::VertexAttribute; 4],
 }
@@ -93,7 +94,7 @@ impl InstanceDesc {
         }
     }
 
-    pub fn buffer_desc(&self) -> wgpu::VertexBufferLayout {
+    pub fn buffer_desc(&self) -> wgpu::VertexBufferLayout<'_> {
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Instance>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,

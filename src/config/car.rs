@@ -11,14 +11,14 @@ pub type Price = u32;
 pub type Time = u16;
 pub type Shield = u16;
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum Kind {
     Main,
     Ruffa,
     Constructor,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct CarStats {
     pub class: u8,
     pub price_buy: Price,
@@ -67,6 +67,7 @@ impl CarStats {
 }
 
 #[repr(u8)]
+#[derive(Copy, Clone)]
 pub enum _Side {
     Front,
     Back,

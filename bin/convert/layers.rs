@@ -157,15 +157,14 @@ fn test_roundtrip() {
             let t1 = rng.gen_range(0..num_terrains);
             layers.delta.push(delta);
             layers.delta.push(delta);
+            layers.het0.push(h0);
             if delta != 0 {
-                layers.het0.push(h0);
                 layers.het0.push(h0);
                 layers.het1.push(h1);
                 layers.het1.push(h1);
                 layers.mat0.push(t0 | (t0 << 4));
                 layers.mat1.push(t1 | (t1 << 4));
             } else {
-                layers.het0.push(h0);
                 layers.het0.push(h1);
                 layers.het1.push(h0);
                 layers.het1.push(h1);

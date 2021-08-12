@@ -31,6 +31,7 @@ pub use shadow::FORMAT as SHADOW_FORMAT;
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+#[derive(Copy, Clone)]
 pub struct GpuTransform {
     pub pos_scale: [f32; 4],
     pub orientation: [f32; 4],
@@ -69,6 +70,7 @@ pub struct ShapePolygon {
 unsafe impl Pod for ShapePolygon {}
 unsafe impl Zeroable for ShapePolygon {}
 
+#[derive(Copy, Clone)]
 pub struct ShapeVertexDesc {
     attributes: [wgpu::VertexAttribute; 3],
 }
@@ -80,7 +82,7 @@ impl ShapeVertexDesc {
         }
     }
 
-    pub fn buffer_desc(&self) -> wgpu::VertexBufferLayout {
+    pub fn buffer_desc(&self) -> wgpu::VertexBufferLayout<'_> {
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
@@ -442,6 +444,7 @@ pub struct PipelineSet {
     shadow: wgpu::RenderPipeline,
 }
 
+#[derive(Copy, Clone)]
 pub enum PipelineKind {
     Main,
     Shadow,
@@ -475,7 +478,7 @@ impl Render {
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
         screen_size: wgpu::Extent3d,
-        store_buffer: wgpu::BindingResource,
+        store_buffer: wgpu::BindingResource<'_>,
     ) -> Self {
         profiling::scope!("Init Renderer");
 
@@ -509,8 +512,8 @@ impl Render {
             terrain,
             debug,
             shadow,
-            light_config: settings.light.clone(),
-            fog_config: settings.fog.clone(),
+            light_config: settings.light,
+            fog_config: settings.fog,
             screen_size,
         }
     }
@@ -520,7 +523,7 @@ impl Render {
         encoder: &mut wgpu::CommandEncoder,
         batcher: &mut Batcher,
         cam: &Camera,
-        targets: ScreenTargets,
+        targets: ScreenTargets<'_>,
         device: &wgpu::Device,
     ) {
         profiling::scope!("draw_world");

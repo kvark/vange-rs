@@ -157,7 +157,7 @@ impl GpuCollider {
         common: &Common,
         object: &ObjectContext,
         terrain: &TerrainContext,
-        store_buffer: wgpu::BindingResource,
+        store_buffer: wgpu::BindingResource<'_>,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Collision"),
@@ -261,9 +261,7 @@ impl GpuCollider {
         let collision_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Collision"),
             size: buf_size,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -388,7 +386,7 @@ impl GpuCollider {
         }
     }
 
-    pub fn collision_buffer(&self) -> wgpu::BindingResource {
+    pub fn collision_buffer(&self) -> wgpu::BindingResource<'_> {
         self.buffer.as_entire_binding()
     }
 }

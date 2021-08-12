@@ -1,6 +1,19 @@
+#![deny(
+    trivial_casts,
+    trivial_numeric_casts,
+    unused,
+    unused_qualifications,
+    rust_2018_compatibility,
+    rust_2018_idioms,
+    future_incompatible,
+    nonstandard_style,
+    missing_copy_implementations
+)]
+
 use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 use std::io::{Read, Write};
 
+#[derive(Copy, Clone)]
 pub struct Splay {
     tree1: [i32; 512],
     tree2: [i32; 512],

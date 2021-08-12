@@ -5,6 +5,7 @@ use m3d::{
 
 use obj::{IndexTuple, Obj};
 
+use std::path::Path;
 use std::{
     fs,
     io::{Result as IoResult, Write},
@@ -15,7 +16,7 @@ type RefModel = Model<Mesh<String>, Mesh<String>>;
 type RefAnimatedMesh = AnimatedMesh<String>;
 type DrawAnimatedMesh = AnimatedMesh<Geometry<DrawTriangle>>;
 
-pub fn export_m3d(full: FullModel, model_path: &PathBuf) {
+pub fn export_m3d(full: FullModel, model_path: &Path) {
     const BODY_PATH: &str = "body.obj";
     const SHAPE_PATH: &str = "body-shape.obj";
 
@@ -76,7 +77,7 @@ pub fn export_m3d(full: FullModel, model_path: &PathBuf) {
     fs::write(model_path, string).unwrap();
 }
 
-pub fn import_m3d(model_path: &PathBuf) -> FullModel {
+pub fn import_m3d(model_path: &Path) -> FullModel {
     let dir_path = model_path.parent().unwrap();
     let model_file = fs::File::open(model_path).unwrap();
     let model = ron::de::from_reader::<_, RefModel>(model_file).unwrap();
@@ -108,7 +109,7 @@ pub fn import_m3d(model_path: &PathBuf) -> FullModel {
     }
 }
 
-pub fn export_a3d(a3d: DrawAnimatedMesh, mesh_path: &PathBuf) {
+pub fn export_a3d(a3d: DrawAnimatedMesh, mesh_path: &Path) {
     let dir_path = mesh_path.parent().unwrap();
 
     let amesh = RefAnimatedMesh {
@@ -132,7 +133,7 @@ pub fn export_a3d(a3d: DrawAnimatedMesh, mesh_path: &PathBuf) {
     fs::write(mesh_path, string).unwrap();
 }
 
-pub fn import_a3d(mesh_path: &PathBuf) -> DrawAnimatedMesh {
+pub fn import_a3d(mesh_path: &Path) -> DrawAnimatedMesh {
     let dir_path = mesh_path.parent().unwrap();
     let amesh_file = fs::File::open(mesh_path).unwrap();
     let a3d = ron::de::from_reader::<_, RefAnimatedMesh>(amesh_file).unwrap();
@@ -195,7 +196,7 @@ pub fn save_draw_geometry(geom: &Geometry<DrawTriangle>, path: PathBuf) -> IoRes
     for p in geom.positions.iter() {
         writeln!(dest, "v {} {} {}", p[0], p[1], p[2])?;
     }
-    writeln!(dest, "")?;
+    writeln!(dest)?;
     for n in geom.normals.iter() {
         writeln!(
             dest,
@@ -205,7 +206,7 @@ pub fn save_draw_geometry(geom: &Geometry<DrawTriangle>, path: PathBuf) -> IoRes
             n[2] as f32 / NORMALIZER
         )?;
     }
-    writeln!(dest, "")?;
+    writeln!(dest)?;
 
     let mut mask = 0u32;
     for p in &geom.polygons {
@@ -224,7 +225,7 @@ pub fn save_draw_geometry(geom: &Geometry<DrawTriangle>, path: PathBuf) -> IoRes
             for v in &p.vertices {
                 write!(dest, " {}//{}", v.pos + 1, v.normal + 1)?;
             }
-            writeln!(dest, "")?;
+            writeln!(dest)?;
         }
     }
 
@@ -236,7 +237,7 @@ pub fn save_collision_geometry(geom: &Geometry<CollisionQuad>, path: PathBuf) ->
     for p in geom.positions.iter() {
         writeln!(dest, "v {} {} {}", p[0], p[1], p[2])?;
     }
-    writeln!(dest, "")?;
+    writeln!(dest)?;
 
     // replace the normals with flat normals
     for p in geom.polygons.iter() {
@@ -248,14 +249,14 @@ pub fn save_collision_geometry(geom: &Geometry<CollisionQuad>, path: PathBuf) ->
             p.flat_normal[2] as f32 / NORMALIZER
         )?;
     }
-    writeln!(dest, "")?;
+    writeln!(dest)?;
 
     for (i, p) in geom.polygons.iter().enumerate() {
         write!(dest, "f")?;
         for &pi in &p.vertices {
             write!(dest, " {}//{}", pi + 1, i + 1)?;
         }
-        writeln!(dest, "")?;
+        writeln!(dest)?;
     }
 
     Ok(())

@@ -5,10 +5,10 @@ mod model_obj;
 use std::{
     fs::{read as fs_read, File},
     io::BufWriter,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
-pub fn save_tiff(path: &PathBuf, layers: layers::LevelLayers) {
+pub fn save_tiff(path: &Path, layers: layers::LevelLayers) {
     let images = [
         tiff::Image {
             width: layers.size.0 as u32,
@@ -174,7 +174,7 @@ fn main() {
             reader.next_frame(&mut data).unwrap();
             let mut output = File::create(&dst_path).unwrap();
             for chunk in data.chunks(stride) {
-                output.write(&chunk[..3]).unwrap();
+                output.write_all(&chunk[..3]).unwrap();
             }
         }
         (in_ext, out_ext) => {

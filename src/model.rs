@@ -8,6 +8,7 @@ use wgpu::util::DeviceExt as _;
 
 use std::{fs::File, mem, ops::Range, slice, sync::Arc};
 
+#[derive(Copy, Clone)]
 pub struct BoundingBox {
     pub min: [f32; 3],
     pub max: [f32; 3],

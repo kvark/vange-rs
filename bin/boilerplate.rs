@@ -3,7 +3,6 @@ use vangers::{
     render::{ScreenTargets, COLOR_FORMAT, DEPTH_FORMAT},
 };
 
-use env_logger;
 use futures::executor::{LocalPool, LocalSpawner};
 use log::info;
 use winit::{
@@ -120,7 +119,7 @@ impl Harness {
         let harness = Harness {
             task_pool,
             event_loop,
-            window: window,
+            window,
             device,
             queue,
             surface,
