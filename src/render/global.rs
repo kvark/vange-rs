@@ -53,7 +53,7 @@ impl Context {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStage::all(),
+                    visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -64,7 +64,7 @@ impl Context {
                 // palette sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStage::all(),
+                    visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::Sampler {
                         filtering: true,
                         comparison: false,
@@ -74,7 +74,7 @@ impl Context {
                 // GPU store
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStage::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
@@ -85,7 +85,7 @@ impl Context {
                 // shadow texture
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -96,7 +96,7 @@ impl Context {
                 // shadow sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler {
                         filtering: true,
                         comparison: true,
@@ -108,7 +108,7 @@ impl Context {
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Uniform"),
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let palette_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -143,7 +143,8 @@ impl Context {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Depth32Float,
-                usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 

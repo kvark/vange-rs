@@ -118,9 +118,9 @@ impl GpuCollider {
                     format: DUMMY_TARGET_FORMAT,
                     blend: None,
                     write_mask: if cfg!(debug_assertions) {
-                        wgpu::ColorWrite::all()
+                        wgpu::ColorWrites::all()
                     } else {
-                        wgpu::ColorWrite::empty()
+                        wgpu::ColorWrites::empty()
                     },
                 }],
             }),
@@ -165,7 +165,7 @@ impl GpuCollider {
                 // global uniforms
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -176,7 +176,7 @@ impl GpuCollider {
                 // collisions
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
@@ -187,7 +187,7 @@ impl GpuCollider {
                 // data
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStage::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
@@ -202,7 +202,7 @@ impl GpuCollider {
                 label: Some("Collision has_dynamic_offset"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: true,
@@ -245,14 +245,14 @@ impl GpuCollider {
         let global_uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("collision-globals"),
             contents: bytemuck::bytes_of(&globals),
-            usage: wgpu::BufferUsage::UNIFORM,
+            usage: wgpu::BufferUsages::UNIFORM,
         });
         let locals_size = mem::size_of::<Locals>().max(wgpu::BIND_BUFFER_ALIGNMENT as usize);
         let locals_total_size = (settings.max_objects * locals_size) as wgpu::BufferAddress;
         let local_uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Collision Locals"),
             size: locals_total_size,
-            usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::UNIFORM,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
             mapped_at_creation: false,
         });
         let max_polygons_total =
@@ -261,9 +261,9 @@ impl GpuCollider {
         let collision_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Collision"),
             size: buf_size,
-            usage: wgpu::BufferUsage::STORAGE
-                | wgpu::BufferUsage::STORAGE
-                | wgpu::BufferUsage::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -306,7 +306,7 @@ impl GpuCollider {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: DUMMY_TARGET_FORMAT,
-                usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             })
             .create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -427,7 +427,7 @@ impl<'pass, 'this: 'pass> GpuSession<'pass, 'this> {
         let temp = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("temp-collision"),
             contents: bytemuck::cast_slice(&self.object_locals),
-            usage: wgpu::BufferUsage::COPY_SRC,
+            usage: wgpu::BufferUsages::COPY_SRC,
         });
         for i in 0..self.object_locals.len() {
             prep_encoder.copy_buffer_to_buffer(

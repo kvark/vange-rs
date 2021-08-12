@@ -96,7 +96,7 @@ impl InstanceDesc {
     pub fn buffer_desc(&self) -> wgpu::VertexBufferLayout {
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Instance>() as wgpu::BufferAddress,
-            step_mode: wgpu::InputStepMode::Instance,
+            step_mode: wgpu::VertexStepMode::Instance,
             attributes: &self.attributes,
         }
     }
@@ -113,7 +113,7 @@ impl Context {
     fn create_pipelines(layout: &wgpu::PipelineLayout, device: &wgpu::Device) -> PipelineSet {
         let vertex_descriptor = wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::InputStepMode::Vertex,
+            step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![0 => Sint8x4, 1 => Uint32, 2 => Snorm8x4],
         };
         let instance_desc = InstanceDesc::new();
@@ -201,15 +201,11 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::Rg8Uint,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
 
         queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
+            texture.as_image_copy(),
             unsafe { slice::from_raw_parts(COLOR_TABLE[0].as_ptr(), NUM_COLOR_IDS as usize * 2) },
             wgpu::ImageDataLayout {
                 offset: 0,
@@ -246,7 +242,7 @@ impl Context {
                 // color map
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Texture {
                         view_dimension: wgpu::TextureViewDimension::D1,
                         sample_type: wgpu::TextureSampleType::Uint,
@@ -257,7 +253,7 @@ impl Context {
                 // palette map
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         view_dimension: wgpu::TextureViewDimension::D1,
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -268,7 +264,7 @@ impl Context {
                 // color table sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStage::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Sampler {
                         filtering: false,
                         comparison: false,
@@ -284,7 +280,7 @@ impl Context {
                     // shape locals
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStage::VERTEX,
+                        visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,

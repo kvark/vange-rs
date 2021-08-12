@@ -40,7 +40,6 @@ pub struct Harness {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     surface: wgpu::Surface,
-    swap_chain: wgpu::SwapChain,
     pub extent: wgpu::Extent3d,
     reload_on_focus: bool,
     depth_target: wgpu::TextureView,
@@ -98,14 +97,14 @@ impl Harness {
             ))
             .unwrap();
 
-        let sc_desc = wgpu::SwapChainDescriptor {
-            usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: COLOR_FORMAT,
             width: extent.width,
             height: extent.height,
             present_mode: wgpu::PresentMode::Mailbox,
         };
-        let swap_chain = device.create_swap_chain(&surface, &sc_desc);
+        surface.configure(&device, &config);
         let depth_target = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("Depth"),
@@ -114,7 +113,7 @@ impl Harness {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: DEPTH_FORMAT,
-                usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             })
             .create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -125,7 +124,6 @@ impl Harness {
             device,
             queue,
             surface,
-            swap_chain,
             extent,
             reload_on_focus: settings.window.reload_on_focus,
             depth_target,
@@ -146,7 +144,6 @@ impl Harness {
             device,
             queue,
             surface,
-            mut swap_chain,
             mut extent,
             reload_on_focus,
             mut depth_target,
@@ -168,14 +165,14 @@ impl Harness {
                         height: size.height,
                         depth_or_array_layers: 1,
                     };
-                    let sc_desc = wgpu::SwapChainDescriptor {
-                        usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
+                    let config = wgpu::SurfaceConfiguration {
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                         format: COLOR_FORMAT,
                         width: size.width,
                         height: size.height,
                         present_mode: wgpu::PresentMode::Mailbox,
                     };
-                    swap_chain = device.create_swap_chain(&surface, &sc_desc);
+                    surface.configure(&device, &config);
                     depth_target = device
                         .create_texture(&wgpu::TextureDescriptor {
                             label: Some("Depth"),
@@ -184,7 +181,7 @@ impl Harness {
                             sample_count: 1,
                             dimension: wgpu::TextureDimension::D2,
                             format: DEPTH_FORMAT,
-                            usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                         })
                         .create_view(&wgpu::TextureViewDescriptor::default());
                     app.resize(&device, extent);
@@ -226,11 +223,15 @@ impl Harness {
                         queue.submit(update_command_buffers);
                     }
 
-                    match swap_chain.get_current_frame() {
+                    match surface.get_current_frame() {
                         Ok(frame) => {
+                            let view = frame
+                                .output
+                                .texture
+                                .create_view(&wgpu::TextureViewDescriptor::default());
                             let targets = ScreenTargets {
                                 extent,
-                                color: &frame.output.view,
+                                color: &view,
                                 depth: &depth_target,
                             };
                             let render_command_buffer = app.draw(&device, targets, &spawner);

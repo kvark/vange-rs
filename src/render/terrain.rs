@@ -130,12 +130,12 @@ impl Geometry {
             vertex_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("terrain-vertex"),
                 contents: bytemuck::cast_slice(vertices),
-                usage: wgpu::BufferUsage::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX,
             }),
             index_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("terrain-index"),
                 contents: bytemuck::cast_slice(indices),
-                usage: wgpu::BufferUsage::INDEX,
+                usage: wgpu::BufferUsages::INDEX,
             }),
             num_indices: indices.len() as u32,
         }
@@ -206,7 +206,7 @@ impl Context {
         let color_descs = [wgpu::ColorTargetState {
             format: COLOR_FORMAT,
             blend: None,
-            write_mask: wgpu::ColorWrite::all(),
+            write_mask: wgpu::ColorWrites::all(),
         }];
         let (features, targets, depth_format) = match kind {
             PipelineKind::Main => (&["COLOR"][..], &color_descs[..], DEPTH_FORMAT),
@@ -222,7 +222,7 @@ impl Context {
                 entry_point: "main",
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                    step_mode: wgpu::InputStepMode::Vertex,
+                    step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &[wgpu::VertexAttribute {
                         offset: 0,
                         format: wgpu::VertexFormat::Sint8x4,
@@ -263,7 +263,7 @@ impl Context {
                 entry_point: "main",
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                    step_mode: wgpu::InputStepMode::Vertex,
+                    step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &[wgpu::VertexAttribute {
                         offset: 0,
                         format: wgpu::VertexFormat::Sint8x4,
@@ -390,7 +390,7 @@ impl Context {
         let storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Scatter"),
             size: 4 * (extent.width * extent.height) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
 
@@ -440,9 +440,9 @@ impl Context {
         };
         let (terrain_mip_count, terrain_extra_usage) = match *config {
             settings::Terrain::RayMipTraced { mip_count, .. } => {
-                (mip_count, wgpu::TextureUsage::RENDER_ATTACHMENT)
+                (mip_count, wgpu::TextureUsages::RENDER_ATTACHMENT)
             }
-            _ => (1, wgpu::TextureUsage::empty()),
+            _ => (1, wgpu::TextureUsages::empty()),
         };
 
         let terrain_table = level
@@ -465,7 +465,9 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HEIGHT_FORMAT,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST | terrain_extra_usage,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | terrain_extra_usage,
         });
         let meta_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Terrain meta"),
@@ -474,7 +476,7 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R8Uint,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
         let flood_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Terrain flood"),
@@ -483,7 +485,7 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
         let table_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Terrain table"),
@@ -492,15 +494,11 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::Rgba8Uint,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
 
         queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &height_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
+            height_texture.as_image_copy(),
             bytemuck::cast_slice(&level.height),
             wgpu::ImageDataLayout {
                 offset: 0,
@@ -510,11 +508,7 @@ impl Context {
             extent,
         );
         queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &meta_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
+            meta_texture.as_image_copy(),
             bytemuck::cast_slice(&level.meta),
             wgpu::ImageDataLayout {
                 offset: 0,
@@ -524,11 +518,7 @@ impl Context {
             extent,
         );
         queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &flood_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
+            flood_texture.as_image_copy(),
             bytemuck::cast_slice(&level.flood_map),
             wgpu::ImageDataLayout {
                 offset: 0,
@@ -538,11 +528,7 @@ impl Context {
             flood_extent,
         );
         queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &table_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
+            table_texture.as_image_copy(),
             bytemuck::cast_slice(&terrain_table),
             wgpu::ImageDataLayout {
                 offset: 0,
@@ -588,7 +574,7 @@ impl Context {
                 // surface uniforms
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStage::all(),
+                    visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -599,7 +585,7 @@ impl Context {
                 // terrain locals
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStage::all(),
+                    visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -610,7 +596,7 @@ impl Context {
                 // height map
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStage::all(),
+                    visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::Texture {
                         view_dimension: wgpu::TextureViewDimension::D2,
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -621,7 +607,7 @@ impl Context {
                 // meta map
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStage::all(),
+                    visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::Texture {
                         view_dimension: wgpu::TextureViewDimension::D2,
                         sample_type: wgpu::TextureSampleType::Uint,
@@ -632,7 +618,7 @@ impl Context {
                 // flood map
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Texture {
                         view_dimension: wgpu::TextureViewDimension::D1,
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -643,7 +629,7 @@ impl Context {
                 // table map
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
-                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Texture {
                         view_dimension: wgpu::TextureViewDimension::D1,
                         sample_type: wgpu::TextureSampleType::Uint,
@@ -654,7 +640,7 @@ impl Context {
                 // palette map
                 wgpu::BindGroupLayoutEntry {
                     binding: 6,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         view_dimension: wgpu::TextureViewDimension::D1,
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -665,7 +651,7 @@ impl Context {
                 // main sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 7,
-                    visibility: wgpu::ShaderStage::all(),
+                    visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::Sampler {
                         filtering: true,
                         comparison: false,
@@ -675,7 +661,7 @@ impl Context {
                 // flood sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 8,
-                    visibility: wgpu::ShaderStage::FRAGMENT | wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Sampler {
                         filtering: true,
                         comparison: false,
@@ -685,7 +671,7 @@ impl Context {
                 // table sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 9,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler {
                         filtering: true,
                         comparison: false,
@@ -705,12 +691,12 @@ impl Context {
                     0.0,
                 ],
             }),
-            usage: wgpu::BufferUsage::UNIFORM,
+            usage: wgpu::BufferUsages::UNIFORM,
         });
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Terrain uniforms"),
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -880,8 +866,8 @@ impl Context {
                             // output map
                             wgpu::BindGroupLayoutEntry {
                                 binding: 0,
-                                visibility: wgpu::ShaderStage::FRAGMENT
-                                    | wgpu::ShaderStage::COMPUTE,
+                                visibility: wgpu::ShaderStages::FRAGMENT
+                                    | wgpu::ShaderStages::COMPUTE,
                                 ty: wgpu::BindingType::Buffer {
                                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                                     has_dynamic_offset: false,
@@ -1086,7 +1072,7 @@ impl Context {
                     fog_color: fog.color,
                     fog_params: [depth_range.end - fog.depth, depth_range.end, 0.0, 0.0],
                 }),
-                usage: wgpu::BufferUsage::COPY_SRC,
+                usage: wgpu::BufferUsages::COPY_SRC,
             });
             encoder.copy_buffer_to_buffer(
                 &staging,
@@ -1177,7 +1163,7 @@ impl Context {
                     fog_color: [0.0; 4],
                     fog_params: [10000000.0, 10000000.0, 0.0, 0.0],
                 }),
-                usage: wgpu::BufferUsage::COPY_SRC,
+                usage: wgpu::BufferUsages::COPY_SRC,
             });
             encoder.copy_buffer_to_buffer(
                 &staging,

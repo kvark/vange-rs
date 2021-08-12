@@ -205,9 +205,9 @@ impl GpuStoreInit {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GpuStore"),
             size: (rounded_max_objects * mem::size_of::<Data>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::STORAGE
-                | wgpu::BufferUsage::COPY_SRC
-                | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -222,7 +222,7 @@ impl GpuStoreInit {
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("dummy"),
             contents: bytemuck::bytes_of(&Data::DUMMY),
-            usage: wgpu::BufferUsage::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE,
         });
 
         GpuStoreInit {
@@ -292,7 +292,7 @@ impl GpuStore {
                 // data
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
@@ -303,7 +303,7 @@ impl GpuStore {
                 // uniforms
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -314,7 +314,7 @@ impl GpuStore {
                 // constants
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -337,7 +337,7 @@ impl GpuStore {
                     // collisions
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStage::COMPUTE,
+                        visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -348,7 +348,7 @@ impl GpuStore {
                     // ranges
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
-                        visibility: wgpu::ShaderStage::COMPUTE,
+                        visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -372,7 +372,7 @@ impl GpuStore {
                     // pushes
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStage::COMPUTE,
+                        visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -397,21 +397,21 @@ impl GpuStore {
         let desc_uniforms = wgpu::BufferDescriptor {
             label: Some("Uniforms"),
             size: mem::size_of::<Uniforms>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         };
         let buf_uniforms = device.create_buffer(&desc_uniforms);
         let desc_ranges = wgpu::BufferDescriptor {
             label: Some("Ranges"),
             size: (init.rounded_max_objects * mem::size_of::<GpuRange>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         };
         let buf_ranges = device.create_buffer(&desc_ranges);
         let desc_pushes = wgpu::BufferDescriptor {
             label: Some("Pushes"),
             size: (WORK_GROUP_WIDTH as usize * mem::size_of::<GpuPush>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         };
         let buf_pushes = device.create_buffer(&desc_pushes);
@@ -476,7 +476,7 @@ impl GpuStore {
         let buf_constants = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("body-constants"),
             contents: bytemuck::bytes_of(&constants),
-            usage: wgpu::BufferUsage::UNIFORM,
+            usage: wgpu::BufferUsages::UNIFORM,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -650,7 +650,7 @@ impl GpuStore {
             let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-data"),
                 contents: bytemuck::cast_slice(&self.update_data),
-                usage: wgpu::BufferUsage::COPY_SRC,
+                usage: wgpu::BufferUsages::COPY_SRC,
             });
             self.update_data.clear();
             Some(buf)
@@ -661,7 +661,7 @@ impl GpuStore {
             let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-control"),
                 contents: bytemuck::cast_slice(&self.update_control),
-                usage: wgpu::BufferUsage::COPY_SRC,
+                usage: wgpu::BufferUsages::COPY_SRC,
             });
             self.update_control.clear();
             Some(buf)
@@ -709,7 +709,7 @@ impl GpuStore {
             let temp = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-step"),
                 contents: bytemuck::cast_slice(&self.pending_pushes[..WORK_GROUP_WIDTH as usize]),
-                usage: wgpu::BufferUsage::COPY_SRC,
+                usage: wgpu::BufferUsages::COPY_SRC,
             });
             encoder.copy_buffer_to_buffer(
                 &temp,
@@ -733,7 +733,7 @@ impl GpuStore {
             let temp = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-range"),
                 contents: bytemuck::cast_slice(sub_range),
-                usage: wgpu::BufferUsage::COPY_SRC,
+                usage: wgpu::BufferUsages::COPY_SRC,
             });
             encoder.copy_buffer_to_buffer(
                 &temp,
@@ -752,7 +752,7 @@ impl GpuStore {
             let temp = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-uniforms"),
                 contents: bytemuck::bytes_of(&uniforms),
-                usage: wgpu::BufferUsage::COPY_SRC,
+                usage: wgpu::BufferUsages::COPY_SRC,
             });
             encoder.copy_buffer_to_buffer(
                 &temp,
@@ -797,7 +797,7 @@ impl GpuStore {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Gpu Results"),
             size: (count * mem::size_of::<GpuTransform>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::MAP_READ,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
 

@@ -183,7 +183,7 @@ impl Application for CarView {
         let global_staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: bytemuck::bytes_of(&global_data),
-            usage: wgpu::BufferUsage::COPY_SRC,
+            usage: wgpu::BufferUsages::COPY_SRC,
         });
         encoder.copy_buffer_to_buffer(
             &global_staging,

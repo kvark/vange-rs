@@ -25,7 +25,7 @@ enum Visibility {
     Front,
     Behind,
 }
-type Selector = (Visibility, wgpu::InputStepMode);
+type Selector = (Visibility, wgpu::VertexStepMode);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -120,7 +120,7 @@ impl Context {
                 // locals
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -143,7 +143,7 @@ impl Context {
         let line_color_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("debug-line-color"),
             contents: bytemuck::bytes_of(&Color { color: 0xFF000080 }), // line
-            usage: wgpu::BufferUsage::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX,
         });
         let locals_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("debug-locals"),
@@ -152,7 +152,7 @@ impl Context {
                 Locals::new([0.0, 1.0, 0.0, 0.2]), // face
                 Locals::new([1.0, 1.0, 0.0, 0.2]), // edge
             ]),
-            usage: wgpu::BufferUsage::UNIFORM,
+            usage: wgpu::BufferUsages::UNIFORM,
         });
         let locals_size = mem::size_of::<Locals>() as wgpu::BufferAddress;
         let bind_group_line = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -247,7 +247,7 @@ impl Context {
                                 operation: wgpu::BlendOperation::Add,
                             },
                         }),
-                        write_mask: wgpu::ColorWrite::all(),
+                        write_mask: wgpu::ColorWrites::all(),
                     }],
                 }),
                 primitive,
@@ -272,7 +272,7 @@ impl Context {
                     Visibility::Front => (BLEND_FRONT, true, wgpu::CompareFunction::LessEqual),
                     Visibility::Behind => (BLEND_BEHIND, false, wgpu::CompareFunction::Greater),
                 };
-                for &color_rate in &[wgpu::InputStepMode::Vertex, wgpu::InputStepMode::Instance] {
+                for &color_rate in &[wgpu::VertexStepMode::Vertex, wgpu::VertexStepMode::Instance] {
                     let name = format!("debug-line-{:?}-{:?}", visibility, color_rate);
                     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                         label: Some(&name),
@@ -283,7 +283,7 @@ impl Context {
                             buffers: &[
                                 wgpu::VertexBufferLayout {
                                     array_stride: mem::size_of::<Position>() as wgpu::BufferAddress,
-                                    step_mode: wgpu::InputStepMode::Vertex,
+                                    step_mode: wgpu::VertexStepMode::Vertex,
                                     attributes: &[wgpu::VertexAttribute {
                                         offset: 0,
                                         format: wgpu::VertexFormat::Float32x4,
@@ -310,7 +310,7 @@ impl Context {
                                     color: blend,
                                     alpha: blend,
                                 }),
-                                write_mask: wgpu::ColorWrite::all(),
+                                write_mask: wgpu::ColorWrites::all(),
                             }],
                         }),
                         primitive,
@@ -335,7 +335,7 @@ impl Context {
         pass: &mut wgpu::RenderPass<'a>,
         vertex_buf: &'a wgpu::Buffer,
         color_buf: &'a wgpu::Buffer,
-        color_rate: wgpu::InputStepMode,
+        color_rate: wgpu::VertexStepMode,
         num_vert: usize,
     ) {
         pass.set_blend_constant(wgpu::Color::WHITE);
@@ -393,7 +393,7 @@ impl Context {
                 pass,
                 sample_buf,
                 &self.line_color_buf,
-                wgpu::InputStepMode::Instance,
+                wgpu::VertexStepMode::Instance,
                 num_vert,
             );
         }
@@ -409,14 +409,14 @@ impl Context {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("debug-vertices"),
                 contents: bytemuck::cast_slice(&linebuf.vertices),
-                usage: wgpu::BufferUsage::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX,
             }),
         );
         self.color_buf = Some(
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("debug-colors"),
                 contents: bytemuck::cast_slice(&linebuf.colors),
-                usage: wgpu::BufferUsage::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX,
             }),
         );
         assert_eq!(linebuf.vertices.len(), linebuf.colors.len());
@@ -425,7 +425,7 @@ impl Context {
             pass,
             self.vertex_buf.as_ref().unwrap(),
             self.color_buf.as_ref().unwrap(),
-            wgpu::InputStepMode::Vertex,
+            wgpu::VertexStepMode::Vertex,
             linebuf.vertices.len(),
         );
     }

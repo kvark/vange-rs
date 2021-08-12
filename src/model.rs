@@ -130,7 +130,7 @@ pub fn load_c3d(
     let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("C3D"),
         size: (num_vertices * vertex_size) as wgpu::BufferAddress,
-        usage: wgpu::BufferUsage::VERTEX,
+        usage: wgpu::BufferUsages::VERTEX,
         mapped_at_creation: true,
     });
     {
@@ -251,7 +251,7 @@ pub fn load_c3d_shape(
     let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Shape"),
         size: (raw.geometry.positions.len() * mem::size_of::<ShapeVertex>()) as wgpu::BufferAddress,
-        usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::STORAGE,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
         mapped_at_creation: true,
     });
     {
@@ -279,13 +279,13 @@ pub fn load_c3d_shape(
         polygon_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("polygons"),
             contents: bytemuck::cast_slice(&polygon_data),
-            usage: wgpu::BufferUsage::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX,
         }),
         sample_buf: if with_sample_buf {
             let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("samples"),
                 contents: bytemuck::cast_slice(&sample_data),
-                usage: wgpu::BufferUsage::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX,
             });
             Some((buffer, sample_data.len()))
         } else {

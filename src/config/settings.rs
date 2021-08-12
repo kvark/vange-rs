@@ -78,13 +78,13 @@ pub enum Backend {
 }
 
 impl Backend {
-    pub fn to_wgpu(&self) -> wgpu::BackendBit {
+    pub fn to_wgpu(&self) -> wgpu::Backends {
         match *self {
-            Backend::Auto => wgpu::BackendBit::PRIMARY,
-            Backend::Metal => wgpu::BackendBit::METAL,
-            Backend::Vulkan => wgpu::BackendBit::VULKAN,
-            Backend::DX12 => wgpu::BackendBit::DX12,
-            Backend::DX11 => wgpu::BackendBit::DX11,
+            Backend::Auto => wgpu::Backends::PRIMARY,
+            Backend::Metal => wgpu::Backends::METAL,
+            Backend::Vulkan => wgpu::Backends::VULKAN,
+            Backend::DX12 => wgpu::Backends::DX12,
+            Backend::DX11 => wgpu::Backends::DX11,
         }
     }
 }

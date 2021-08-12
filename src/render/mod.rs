@@ -83,7 +83,7 @@ impl ShapeVertexDesc {
     pub fn buffer_desc(&self) -> wgpu::VertexBufferLayout {
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
-            step_mode: wgpu::InputStepMode::Instance,
+            step_mode: wgpu::VertexStepMode::Instance,
             attributes: &self.attributes,
         }
     }
@@ -185,12 +185,10 @@ impl Shaders {
         Ok(Shaders {
             vs: device.create_shader_module(&wgpu::ShaderModuleDescriptor {
                 label: Some(name),
-                flags: wgpu::ShaderFlags::VALIDATION,
                 source: wgpu::util::make_spirv(&spv_vs),
             }),
             fs: device.create_shader_module(&wgpu::ShaderModuleDescriptor {
                 label: Some(name),
-                flags: wgpu::ShaderFlags::VALIDATION,
                 source: wgpu::util::make_spirv(&spv_fs),
             }),
         })
@@ -263,7 +261,6 @@ impl Shaders {
 
         Ok(device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some(name),
-            flags: wgpu::ShaderFlags::VALIDATION,
             source: wgpu::util::make_spirv(&spv),
         }))
     }
@@ -289,15 +286,11 @@ impl Palette {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
 
         queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
+            texture.as_image_copy(),
             bytemuck::cast_slice(data),
             wgpu::ImageDataLayout {
                 offset: 0,
@@ -413,7 +406,7 @@ impl Batcher {
                     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("instance"),
                         contents: bytemuck::cast_slice(&array.data),
-                        usage: wgpu::BufferUsage::VERTEX,
+                        usage: wgpu::BufferUsages::VERTEX,
                     }),
                 );
             }
@@ -543,7 +536,7 @@ impl Render {
             let global_staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-global-shadow"),
                 contents: bytemuck::bytes_of(&constants),
-                usage: wgpu::BufferUsage::COPY_SRC,
+                usage: wgpu::BufferUsages::COPY_SRC,
             });
             encoder.copy_buffer_to_buffer(
                 &global_staging,
@@ -598,7 +591,7 @@ impl Render {
             let global_staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-global"),
                 contents: bytemuck::bytes_of(&constants),
-                usage: wgpu::BufferUsage::COPY_SRC,
+                usage: wgpu::BufferUsages::COPY_SRC,
             });
             encoder.copy_buffer_to_buffer(
                 &global_staging,

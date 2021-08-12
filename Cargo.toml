@@ -3,6 +3,7 @@ name = "vangers"
 version = "0.1.0"
 authors = ["kvark"]
 edition = "2018"
+resolver = "2"
 default-run = "road"
 publish = false
 
@@ -20,7 +21,6 @@ debug = true
 
 [features]
 default = []
-cross = ["wgpu/cross"]
 profile = ["profiling/profile-with-tracy"]
 
 [[bin]]
@@ -62,7 +62,7 @@ rust-ini = "0.17"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.4"
-wgpu = "0.8"
+wgpu = { git = "https://github.com/gfx-rs/wgpu", features = ["spirv"] }
 # binaries
 env_logger = "0.8"
 getopts = "0.2"

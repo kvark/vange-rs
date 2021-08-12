@@ -300,7 +300,8 @@ impl LevelData {
                 if delta != 0 {
                     // average between two texels
                     let mat = avg(color[3], color[7]);
-                    level.meta[i + 0] = DOUBLE_LEVEL | ((mat & 0xF) << terrain_shift) | (delta >> 2);
+                    level.meta[i + 0] =
+                        DOUBLE_LEVEL | ((mat & 0xF) << terrain_shift) | (delta >> 2);
                     level.meta[i + 1] =
                         DOUBLE_LEVEL | ((mat >> 4) << terrain_shift) | (delta & DELTA_MASK);
                     level.height[i + 0] = avg(color[0], color[4]);
