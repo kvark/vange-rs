@@ -91,6 +91,12 @@ impl ShapeVertexDesc {
     }
 }
 
+impl Default for ShapeVertexDesc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Shaders {
     vs: wgpu::ShaderModule,
     fs: wgpu::ShaderModule,
@@ -436,6 +442,12 @@ impl Batcher {
         }
         self.debug_shapes.clear();
         self.debug_instances.clear();
+    }
+}
+
+impl Default for Batcher {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

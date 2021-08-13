@@ -92,6 +92,12 @@ impl LineBuffer {
     }
 }
 
+impl Default for LineBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Context {
     settings: settings::DebugRender,
     pipeline_layout: wgpu::PipelineLayout,

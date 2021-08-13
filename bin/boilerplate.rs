@@ -1,3 +1,4 @@
+#![allow(clippy::single_match)]
 use vangers::{
     config,
     render::{ScreenTargets, COLOR_FORMAT, DEPTH_FORMAT},

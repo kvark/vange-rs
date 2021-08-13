@@ -103,6 +103,12 @@ impl InstanceDesc {
     }
 }
 
+impl Default for InstanceDesc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Context {
     pub bind_group: wgpu::BindGroup,
     pub shape_bind_group_layout: wgpu::BindGroupLayout,
