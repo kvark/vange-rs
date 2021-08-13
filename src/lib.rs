@@ -9,7 +9,12 @@
     nonstandard_style,
     missing_copy_implementations
 )]
-#![allow(clippy::identity_op, clippy::erasing_op)]
+#![allow(
+    clippy::identity_op,
+    clippy::erasing_op,
+    clippy::new_without_default,
+    missing_debug_implementations
+)]
 
 #[macro_use]
 extern crate log;
