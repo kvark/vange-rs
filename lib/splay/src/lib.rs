@@ -9,6 +9,7 @@
     nonstandard_style,
     missing_copy_implementations
 )]
+#![allow(missing_debug_implementations, clippy::new_without_default)]
 
 use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 use std::io::{Read, Write};

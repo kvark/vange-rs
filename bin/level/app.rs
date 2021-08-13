@@ -167,6 +167,7 @@ impl Application for LevelView {
         self.last_mouse_pos = position_vec;
     }
 
+    #[allow(clippy::single_match)]
     fn on_mouse_wheel(&mut self, delta: event::MouseScrollDelta) {
         match delta {
             event::MouseScrollDelta::LineDelta(_, y) => {
