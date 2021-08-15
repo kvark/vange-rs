@@ -55,7 +55,7 @@ vec3 cast_ray(vec3 point, vec3 dir) {
 
         // step 1: get the LOD height and early out
         float height = get_lod_height(ipos, int(lod));
-        if (point.z < height) {
+        if (point.z <= height) {
             lod--;
             continue;
         }
@@ -65,7 +65,7 @@ vec3 cast_ray(vec3 point, vec3 dir) {
         // it can be X axis, Y axis, or the depth
         vec2 cell_id = floor(vec2(ipos) / float(1 << lod)); // careful!
         ivec2 cell_tl = ivec2(cell_id) << lod;
-        vec2 cell_offset = float(1 << lod) * step(0.0, dir.xy) - point.xy + vec2(cell_tl);
+        vec2 cell_offset = vec2(cell_tl) + float(1 << lod) * step(0.0, dir.xy) - point.xy;
         vec3 units = vec3(cell_offset, height - point.z) / dir;
         float min_side_unit = min(units.x, units.y);
 
@@ -79,7 +79,7 @@ vec3 cast_ray(vec3 point, vec3 dir) {
         } else {
             // adjust the integer position on cell boundary
             // figure out if we hit the higher LOD bound and switch to it
-            float affinity;
+            float affinity = 0.0;
             vec2 proximity = mod(cell_id, 2.0) - 0.5;
             if (units.x <= units.y) {
                 ipos.x = dir.x < 0.0 ? cell_tl.x - 1 : cell_tl.x + (1 << lod);
