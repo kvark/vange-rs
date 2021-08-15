@@ -209,17 +209,17 @@ impl Context {
             blend: None,
             write_mask: wgpu::ColorWrites::all(),
         }];
-        let (features, targets, depth_format) = match kind {
-            PipelineKind::Main => (&["COLOR"][..], &color_descs[..], DEPTH_FORMAT),
-            PipelineKind::Shadow => (&[][..], &[][..], SHADOW_FORMAT),
+        let (fs_name, targets, depth_format) = match kind {
+            PipelineKind::Main => ("ray_color", &color_descs[..], DEPTH_FORMAT),
+            PipelineKind::Shadow => ("ray", &[][..], SHADOW_FORMAT),
         };
 
-        let shaders = Shaders::new(name, features, device).unwrap();
+        let shader = super::load_shader(name, device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain-ray"),
             layout: Some(layout),
             vertex: wgpu::VertexState {
-                module: &shaders.vs,
+                module: &shader,
                 entry_point: "main",
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
@@ -232,8 +232,8 @@ impl Context {
                 }],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shaders.fs,
-                entry_point: "main",
+                module: &shader,
+                entry_point: fs_name,
                 targets,
             }),
             primitive: wgpu::PrimitiveState {

@@ -91,6 +91,48 @@ impl ShapeVertexDesc {
     }
 }
 
+pub fn make_shader_code(name: &str) -> Result<String, IoError> {
+    let base_path = PathBuf::from("res").join("shader");
+    let path = base_path.join(name).with_extension("wgsl");
+    if !path.is_file() {
+        panic!("Shader not found: {:?}", path);
+    }
+
+    let mut source = String::new();
+    BufReader::new(File::open(&path)?).read_to_string(&mut source)?;
+    let mut buf = String::new();
+    // parse meta-data
+    {
+        let mut lines = source.lines();
+        let first = lines.next().unwrap();
+        if first.starts_with("//!include") {
+            for include in first.split_whitespace().skip(1) {
+                let inc_path = base_path.join(include).with_extension("inc.wgsl");
+                match File::open(&inc_path) {
+                    Ok(include) => BufReader::new(include).read_to_string(&mut buf)?,
+                    Err(e) => panic!("Unable to include {:?}: {:?}", inc_path, e),
+                };
+            }
+        }
+    }
+
+    buf.push_str(&source);
+    Ok(buf)
+}
+
+pub fn load_shader(name: &str, device: &wgpu::Device) -> Result<wgpu::ShaderModule, IoError> {
+    profiling::scope!("Load Shaders", name);
+
+    let code = make_shader_code(name)?;
+    debug!("shader '{}':\n{}", name, code);
+    std::fs::write("last-shader.wgsl", &code).unwrap();
+
+    Ok(device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+        label: Some(name),
+        source: wgpu::ShaderSource::Wgsl(code.into()),
+    }))
+}
+
 pub struct Shaders {
     vs: wgpu::ShaderModule,
     fs: wgpu::ShaderModule,
