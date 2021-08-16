@@ -203,15 +203,16 @@ impl Context {
         device: &wgpu::Device,
         name: &str,
         kind: PipelineKind,
+        entry_point: &str,
     ) -> wgpu::RenderPipeline {
         let color_descs = [wgpu::ColorTargetState {
             format: COLOR_FORMAT,
             blend: None,
             write_mask: wgpu::ColorWrites::all(),
         }];
-        let (fs_name, targets, depth_format) = match kind {
-            PipelineKind::Main => ("ray_color", &color_descs[..], DEPTH_FORMAT),
-            PipelineKind::Shadow => ("ray", &[][..], SHADOW_FORMAT),
+        let (targets, depth_format) = match kind {
+            PipelineKind::Main => (&color_descs[..], DEPTH_FORMAT),
+            PipelineKind::Shadow => (&[][..], SHADOW_FORMAT),
         };
 
         let shader = super::load_shader(name, device).unwrap();
@@ -233,7 +234,7 @@ impl Context {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: fs_name,
+                entry_point,
                 targets,
             }),
             primitive: wgpu::PrimitiveState {
@@ -785,6 +786,7 @@ impl Context {
                     device,
                     "terrain/ray",
                     PipelineKind::Main,
+                    "ray_color",
                 );
                 Kind::Ray { pipeline }
             }
@@ -797,8 +799,9 @@ impl Context {
                 let pipeline = Self::create_ray_pipeline(
                     &pipeline_layout,
                     device,
-                    "terrain/ray_mip",
+                    "terrain/ray",
                     PipelineKind::Main,
+                    "ray_mip_color",
                 );
                 let mipper = MaxMipper::new(&height_texture, extent, mip_count, device);
 
@@ -913,6 +916,7 @@ impl Context {
                     device,
                     "terrain/ray",
                     PipelineKind::Shadow,
+                    "ray",
                 );
                 Kind::Ray { pipeline }
             }
@@ -946,6 +950,7 @@ impl Context {
                     device,
                     "terrain/ray",
                     PipelineKind::Main,
+                    "ray_color",
                 );
             }
             Kind::RayMip {
@@ -956,8 +961,9 @@ impl Context {
                 *pipeline = Self::create_ray_pipeline(
                     &self.pipeline_layout,
                     device,
-                    "terrain/ray_mip",
+                    "terrain/ray",
                     PipelineKind::Main,
+                    "ray_mip_color"
                 );
                 mipper.reload(device);
             }
@@ -1001,6 +1007,7 @@ impl Context {
                     device,
                     "terrain/ray",
                     PipelineKind::Shadow,
+                    "ray",
                 );
             }
             _ => unreachable!(),
