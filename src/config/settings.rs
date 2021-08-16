@@ -124,9 +124,6 @@ pub enum Terrain {
         max_steps: u32,
         debug: bool,
     },
-    Tessellated {
-        screen_space: bool,
-    },
     Sliced,
     Painted,
     Scattered {
