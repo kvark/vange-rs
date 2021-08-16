@@ -6,4 +6,5 @@ fn parse(name: &str) {
 #[test]
 fn parse_shaders() {
     parse("terrain/ray");
+    parse("terrain/mip");
 }
