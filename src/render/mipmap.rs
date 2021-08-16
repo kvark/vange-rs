@@ -1,7 +1,4 @@
-use crate::render::{
-    terrain::{Rect, HEIGHT_FORMAT},
-    Shaders,
-};
+use crate::render::terrain::{Rect, HEIGHT_FORMAT};
 use bytemuck::{Pod, Zeroable};
 use std::{mem, num::NonZeroU32};
 use wgpu::util::DeviceExt as _;
@@ -32,13 +29,13 @@ impl MaxMipper {
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
     ) -> wgpu::RenderPipeline {
-        let shaders = Shaders::new("terrain/mip", &[], device).unwrap();
+        let shader = super::load_shader("terrain/mip", device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("mipmap"),
             layout: Some(layout),
             vertex: wgpu::VertexState {
-                module: &shaders.vs,
-                entry_point: "main",
+                module: &shader,
+                entry_point: "vertex",
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
@@ -50,8 +47,8 @@ impl MaxMipper {
                 }],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shaders.fs,
-                entry_point: "main",
+                module: &shader,
+                entry_point: "fragment",
                 targets: &[HEIGHT_FORMAT.into()],
             }),
             primitive: wgpu::PrimitiveState {
@@ -73,19 +70,9 @@ impl MaxMipper {
         let bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("MaxMipper"),
             entries: &[
-                // sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler {
-                        filtering: true,
-                        comparison: false,
-                    },
-                    count: None,
-                },
                 // texture
                 wgpu::BindGroupLayoutEntry {
-                    binding: 1,
+                    binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -100,15 +87,6 @@ impl MaxMipper {
             label: Some("mipmap"),
             bind_group_layouts: &[&bg_layout],
             push_constant_ranges: &[],
-        });
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
         });
 
         let mut mips = Vec::with_capacity(mip_count as usize);
@@ -127,16 +105,10 @@ impl MaxMipper {
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("MaxMipper"),
                 layout: &bg_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&view),
-                    },
-                ],
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                }],
             });
 
             mips.push(Mip { view, bind_group });
