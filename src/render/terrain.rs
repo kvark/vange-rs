@@ -151,11 +151,6 @@ enum Kind {
         mipper: MaxMipper,
         params: [u32; 4],
     },
-    /*Tess {
-        low: gfx::PipelineState<R, terrain::Meta>,
-        high: gfx::PipelineState<R, terrain::Meta>,
-        screen_space: bool,
-    },*/
     Slice {
         pipeline: wgpu::RenderPipeline,
         geo: Geometry,
@@ -816,7 +811,6 @@ impl Context {
                     ],
                 }
             }
-            settings::Terrain::Tessellated { .. } => unimplemented!(),
             settings::Terrain::Sliced => {
                 let geo = Geometry::new(
                     &[
@@ -963,16 +957,10 @@ impl Context {
                     device,
                     "terrain/ray",
                     PipelineKind::Main,
-                    "ray_mip_color"
+                    "ray_mip_color",
                 );
                 mipper.reload(device);
             }
-            /*
-            Terrain::Tess { ref mut low, ref mut high, screen_space } => {
-                let (lo, hi) = Render::create_terrain_tess_psos(factory, screen_space);
-                *low = lo;
-                *high = hi;
-            }*/
             Kind::Slice {
                 ref mut pipeline, ..
             } => {
@@ -1194,11 +1182,6 @@ impl Context {
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.draw_indexed(0..geo.num_indices, 0, 0..1);
             }
-            /*
-            Kind::Tess { ref low, ref high, .. } => {
-                encoder.draw(&self.terrain_slice, low, &self.terrain_data);
-                encoder.draw(&self.terrain_slice, high, &self.terrain_data);
-            }*/
             Kind::Slice {
                 ref pipeline,
                 ref geo,
