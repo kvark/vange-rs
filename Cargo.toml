@@ -62,13 +62,16 @@ rust-ini = "0.17"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.4"
-wgpu = { git = "https://github.com/gfx-rs/wgpu", features = ["spirv"] }
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "4dc5546", features = ["spirv"] }
 # binaries
 env_logger = "0.8"
 getopts = "0.2"
 obj = "0.10"
 png = "0.16"
 winit = "0.25"
+
+[dev-dependencies]
+naga = { git = "https://github.com/gfx-rs/naga", rev = "7613798", features = ["wgsl-in"] }
 
 [dependencies.profiling]
 version = "1.0.1"
@@ -77,14 +80,7 @@ default-features = false
 [patch."https://github.com/gfx-rs/naga"]
 #naga = { path = "../naga" }
 
-[patch."https://github.com/gfx-rs/gfx"]
-#gfx-hal = { path = "../gfx/src/hal" }
-#gfx-backend-empty = { path = "../gfx/src/backend/empty" }
-#gfx-backend-vulkan = { path = "../gfx/src/backend/vulkan" }
-#gfx-backend-dx12 = { path = "../gfx/src/backend/dx12" }
-#gfx-backend-dx11 = { path = "../gfx/src/backend/dx11" }
-#gfx-backend-metal = { path = "../gfx/src/backend/metal" }
-
 [patch."https://github.com/gfx-rs/wgpu"]
+#wgpu-hal = { path = "../wgpu/wgpu-hal" }
 #wgpu-core = { path = "../wgpu/wgpu-core" }
 #wgpu-types = { path = "../wgpu/wgpu-types" }
