@@ -125,7 +125,9 @@ pub fn load_shader(name: &str, device: &wgpu::Device) -> Result<wgpu::ShaderModu
 
     let code = make_shader_code(name)?;
     debug!("shader '{}':\n{}", name, code);
-    std::fs::write("last-shader.wgsl", &code).unwrap();
+    if cfg!(debug_assertions) {
+        std::fs::write("last-shader.wgsl", &code).unwrap();
+    }
 
     Ok(device.create_shader_module(&wgpu::ShaderModuleDescriptor {
         label: Some(name),
