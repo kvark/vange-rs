@@ -292,18 +292,18 @@ impl Context {
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
     ) -> wgpu::RenderPipeline {
-        let shaders = Shaders::new("terrain/paint", &[], device).unwrap();
+        let shader = super::load_shader("terrain/paint", device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain-paint"),
             layout: Some(layout),
             vertex: wgpu::VertexState {
-                module: &shaders.vs,
-                entry_point: "main",
+                module: &shader,
+                entry_point: "vertex",
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shaders.fs,
-                entry_point: "main",
+                module: &shader,
+                entry_point: "fragment",
                 targets: &[COLOR_FORMAT.into()],
             }),
             primitive: wgpu::PrimitiveState {
