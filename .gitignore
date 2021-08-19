@@ -3,3 +3,4 @@
 /config/settings.ron
 .fuse_hidden*
 .DS_Store
+last-shader.wgsl
