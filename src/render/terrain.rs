@@ -331,35 +331,31 @@ impl Context {
         wgpu::ComputePipeline,
         wgpu::RenderPipeline,
     ) {
-        let scatter_shader =
-            Shaders::new_compute("terrain/scatter", SCATTER_GROUP_SIZE, &[], device).unwrap();
+        let shader = super::load_shader("terrain/scatter", device).unwrap();
         let scatter_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("terrain-scatter"),
             layout: Some(layout),
-            module: &scatter_shader,
+            module: &shader,
             entry_point: "main",
         });
-        let clear_shader =
-            Shaders::new_compute("terrain/scatter_clear", SCATTER_GROUP_SIZE, &[], device).unwrap();
         let clear_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("terrain-scatter-clear"),
             layout: Some(layout),
-            module: &clear_shader,
-            entry_point: "main",
+            module: &shader,
+            entry_point: "clear",
         });
 
-        let copy_shaders = Shaders::new("terrain/scatter_copy", &[], device).unwrap();
         let copy_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain-scatter-copy"),
             layout: Some(layout),
             vertex: wgpu::VertexState {
-                module: &copy_shaders.vs,
-                entry_point: "main",
+                module: &shader,
+                entry_point: "copy_vs",
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &copy_shaders.fs,
-                entry_point: "main",
+                module: &shader,
+                entry_point: "copy_fs",
                 targets: &[COLOR_FORMAT.into()],
             }),
             primitive: wgpu::PrimitiveState {
