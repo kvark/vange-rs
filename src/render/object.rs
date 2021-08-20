@@ -1,7 +1,7 @@
 use crate::{
     render::{
         body::GpuBody, global::Context as GlobalContext, GpuTransform, Palette, PipelineSet,
-        Shaders, COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT,
+        COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT,
     },
     space::Transform,
 };
@@ -118,19 +118,19 @@ impl Context {
             attributes: &wgpu::vertex_attr_array![0 => Sint8x4, 1 => Uint32, 2 => Snorm8x4],
         };
         let instance_desc = InstanceDesc::new();
+        let shader = super::load_shader("object", device).unwrap();
 
-        let main_shaders = Shaders::new("object", &["COLOR"], device).unwrap();
         let main = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("object"),
             layout: Some(layout),
             vertex: wgpu::VertexState {
-                module: &main_shaders.vs,
-                entry_point: "main",
+                module: &shader,
+                entry_point: "color_vs",
                 buffers: &[vertex_descriptor.clone(), instance_desc.buffer_desc()],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &main_shaders.fs,
-                entry_point: "main",
+                module: &shader,
+                entry_point: "color_fs",
                 targets: &[COLOR_FORMAT.into()],
             }),
             primitive: wgpu::PrimitiveState {
@@ -149,20 +149,15 @@ impl Context {
             multisample: wgpu::MultisampleState::default(),
         });
 
-        let shadow_shaders = Shaders::new("object", &[], device).unwrap();
         let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("object-shadow"),
             layout: Some(layout),
             vertex: wgpu::VertexState {
-                module: &shadow_shaders.vs,
-                entry_point: "main",
+                module: &shader,
+                entry_point: "geometry_vs",
                 buffers: &[vertex_descriptor, instance_desc.buffer_desc()],
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shadow_shaders.fs,
-                entry_point: "main",
-                targets: &[],
-            }),
+            fragment: None,
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face: wgpu::FrontFace::Ccw,
