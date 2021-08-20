@@ -2,8 +2,8 @@ use crate::{
     config::settings,
     level,
     render::{
-        global::Context as GlobalContext, mipmap::MaxMipper, Palette, PipelineKind, Shaders,
-        COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT,
+        global::Context as GlobalContext, mipmap::MaxMipper, Palette, PipelineKind, COLOR_FORMAT,
+        DEPTH_FORMAT, SHADOW_FORMAT,
     },
     space::Camera,
 };
@@ -251,13 +251,13 @@ impl Context {
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
     ) -> wgpu::RenderPipeline {
-        let shaders = Shaders::new("terrain/slice", &[], device).unwrap();
+        let shader = super::load_shader("terrain/slice", device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain-slice"),
             layout: Some(layout),
             vertex: wgpu::VertexState {
-                module: &shaders.vs,
-                entry_point: "main",
+                module: &shader,
+                entry_point: "main_vs",
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
@@ -269,8 +269,8 @@ impl Context {
                 }],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shaders.fs,
-                entry_point: "main",
+                module: &shader,
+                entry_point: "main_fs",
                 targets: &[COLOR_FORMAT.into()],
             }),
             primitive: wgpu::PrimitiveState {
