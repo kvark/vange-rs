@@ -266,7 +266,7 @@ impl Context {
 
         self.pipelines_line.clear();
         if self.settings.impulses {
-            let shaders = Shaders::new("debug", &[], device).unwrap();
+            let shader = super::load_shader("debug", device).unwrap();
             for &visibility in &[Visibility::Front, Visibility::Behind] {
                 let (blend, depth_write_enabled, depth_compare) = match visibility {
                     Visibility::Front => (BLEND_FRONT, true, wgpu::CompareFunction::LessEqual),
@@ -278,8 +278,8 @@ impl Context {
                         label: Some(&name),
                         layout: Some(&self.pipeline_layout),
                         vertex: wgpu::VertexState {
-                            module: &shaders.vs,
-                            entry_point: "main",
+                            module: &shader,
+                            entry_point: "main_vs",
                             buffers: &[
                                 wgpu::VertexBufferLayout {
                                     array_stride: mem::size_of::<Position>() as wgpu::BufferAddress,
@@ -302,8 +302,8 @@ impl Context {
                             ],
                         },
                         fragment: Some(wgpu::FragmentState {
-                            module: &shaders.fs,
-                            entry_point: "main",
+                            module: &shader,
+                            entry_point: "main_fs",
                             targets: &[wgpu::ColorTargetState {
                                 format: COLOR_FORMAT,
                                 blend: Some(wgpu::BlendState {
