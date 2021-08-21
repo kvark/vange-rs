@@ -1,3 +1,5 @@
+#![allow(irrefutable_let_patterns)]
+
 use log::info;
 
 #[path = "../boilerplate.rs"]

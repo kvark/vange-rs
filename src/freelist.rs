@@ -13,12 +13,14 @@ impl<T> Id<T> {
     }
 }
 
+#[cfg(feature = "glsl")]
 pub struct FreeList<T> {
     epochs: Vec<Epoch>,
     free: Vec<Index>,
     marker: PhantomData<T>,
 }
 
+#[cfg(feature = "glsl")]
 impl<T> FreeList<T> {
     pub fn new() -> Self {
         FreeList {

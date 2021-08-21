@@ -45,7 +45,7 @@ impl Context {
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        store_buffer: wgpu::BindingResource<'_>,
+        #[cfg(feature = "glsl")] store_buffer: wgpu::BindingResource<'_>,
         shadow_view: Option<&wgpu::TextureView>,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -72,6 +72,7 @@ impl Context {
                     count: None,
                 },
                 // GPU store
+                #[cfg(feature = "glsl")]
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::VERTEX,
@@ -177,6 +178,7 @@ impl Context {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&palette_sampler),
                 },
+                #[cfg(feature = "glsl")]
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: store_buffer.clone(),
@@ -205,6 +207,7 @@ impl Context {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&palette_sampler),
                 },
+                #[cfg(feature = "glsl")]
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: store_buffer,

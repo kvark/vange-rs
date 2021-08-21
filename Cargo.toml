@@ -21,6 +21,7 @@ debug = true
 
 [features]
 default = []
+glsl = ["glsl-to-spirv"]
 profile = ["profiling/profile-with-tracy"]
 
 [[bin]]
@@ -53,7 +54,7 @@ bytemuck = "1"
 byteorder = "1.0"
 cgmath = { version = "0.18", features = ["rand"] }
 futures = "0.3"
-glsl-to-spirv = "0.1"
+glsl-to-spirv = { version = "0.1", optional = true }
 log = "0.4"
 rand = "0.8"
 rayon = "1"
