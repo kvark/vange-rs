@@ -17,8 +17,8 @@ The level is drawn in a single full-screen draw call with a bit of ray tracing m
 
 ## Instructions
 
-The project is structured to provide multiple binaries. `road` binary is for the main game, which includes mechouses, items, and the level.
-Note: leaving the `level=""` empty in the config would load a flat boring debug level.
+The project is structured to provide multiple binaries. `road` binary is for the main game, which includes mechouses, items, and the level. You can find the binaries produced automatically in the [releases](https://github.com/kvark/vange-rs/releases).
+
 
 ```bash
 git clone https://github.com/kvark/vange-rs
@@ -28,7 +28,9 @@ edit config/settings.ron # set the game path
 cargo run
 ```
 
-The graphics engine tries the available backends in this order: Metal, Vulkan, DX12, DX11.
+Note: leaving the `level=""` empty in the config would load a flat boring debug level.
+
+Note: with `backend="Auto"` the engine tries the available backends in this order: Metal, Vulkan, DX12.
 
 Controls:
   - `WSAD`: movement in the game, rotating the camera around the car during the pause

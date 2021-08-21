@@ -1,0 +1,44 @@
+on:
+  push:
+    tags:
+      - 'v*'
+
+name: Release
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        name: ['macOS', 'Windows', 'Linux']
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            copy: mkdir package && cp -R res config package/ && cd target/release && cp road model car level convert ../../package
+          - name: macOS
+            os: macos-latest
+            copy: mkdir package && cp -R res config package/ && cd target/release && cp road model car level convert ../../package
+          - name: Windows
+            os: windows-latest
+            copy: mkdir package && xcopy res package\\res /s/i && xcopy config package\\config /s/i && copy target\\release\\*.exe package
+    steps:
+      - uses: actions/checkout@v2
+      - name: Build
+        run: cargo build --release
+      - name: Copy executables
+        run: ${{ matrix.copy }}
+      - name: Pack
+        uses: papeloto/action-zip@v1
+        with:
+          files: package
+          dest: vangers-${{ matrix.os }}.zip
+          recursive: true
+      - name: Upload builds
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          prerelease: true
+          file: vangers-${{ matrix.os }}.zip
+          tag: ${{ github.ref }}

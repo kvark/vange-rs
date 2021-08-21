@@ -75,6 +75,7 @@ pub enum Backend {
     Vulkan,
     DX12,
     DX11,
+    GL,
 }
 
 impl Backend {
@@ -85,6 +86,7 @@ impl Backend {
             Backend::Vulkan => wgpu::Backends::VULKAN,
             Backend::DX12 => wgpu::Backends::DX12,
             Backend::DX11 => wgpu::Backends::DX11,
+            Backend::GL => wgpu::Backends::GL,
         }
     }
 }
@@ -159,23 +161,27 @@ impl Settings {
     pub fn load(path: &str) -> Self {
         use std::io::Read;
 
+        const TEMPLATE: &str = "config/settings.template.ron";
+        const PATH: &str = "config/settings.ron";
         let mut string = String::new();
         File::open(path)
-            .expect("Unable to open the settings file")
+            .unwrap_or_else(|e| panic!("Unable to open the settings file: {:?}.\nPlease copy '{}' to '{}' and adjust 'data_path'",
+                e, TEMPLATE, PATH))
             .read_to_string(&mut string)
             .unwrap();
         let set: Settings = match ron::de::from_str(&string) {
             Ok(set) => set,
-            Err(e) => panic!("Unable to parse settings RON.\n\t{}\n\tError: {:?}",
-                "Please check if `config/settings.template.ron` has changed and your local config needs to be adjusted.",
+            Err(e) => panic!(
+                "Unable to parse settings RON: {:?}.\nPlease check if `{}` has changed and your local config needs to be adjusted.",
                 e,
+                TEMPLATE,
             ),
         };
 
         if !set.check_path("options.dat") {
             panic!(
-                "Can't find the resources of the original Vangers game at {:?}, {}",
-                set.data_path, "please check your `config/settings.ron`"
+                "Can't find the resources of the original Vangers game at {:?}, please check your `{}`",
+                set.data_path, PATH,
             );
         }
 

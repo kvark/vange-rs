@@ -1,0 +1,68 @@
+(
+	data_path: "/Applications/Gog/Vangers.app/Contents/Resources/game",
+	game: (
+		level: "Fostral", // see `wrlds.dat` for the list
+		cycle: "Eleerection", // see `bunches.prm` for the list, leave empty for bonus worlds
+		view: Perspective, // can be "Flat" or "Perspective"
+		camera: (
+			angle: 15,
+			height: 15,
+			target_overhead: 3,
+			speed: 5,
+			depth_range: (10, 400),
+			fog_depth: 50,
+		),
+		other: (
+			count: 10, // number of NPC vangers
+			spawn_at: Random, // Player
+		),
+		physics: (
+			max_quant: 0.1,
+			shape_sampling: 1,
+			gpu_collision: None/*Some(( // blocked by atomics
+				max_objects: 100,
+				max_polygons_total: 1000,
+				max_raster_size: (100, 100),
+			))*/,
+		),
+	),
+	car: (
+		id: "OxidizeMonk",
+		//example: "IronShadow"
+		color: Green, // Dummy, Red, Blue, Yellow, Gray
+		slots: [],
+		//example: ["HeavyLaser", "LightMissile", "LightFireBall"]
+	),
+	window: (
+		title: "Rusty Road",
+		size: (2280, 1800),
+		reload_on_focus: true,
+	),
+	backend: Auto, // Vulkan, Metal, DX12, DX11
+	render: (
+		light: (
+			pos: (1, 4, 4, 0), // w=0 for directional, w=1 for point light
+			color: (1, 1, 1, 1),
+			shadow: (
+				size: 1024,
+				terrain: RayTraced,
+			),
+		),
+		fog: (
+			color: (0.1, 0.2, 0.3, 1.0),
+			depth: 50,
+		),
+		terrain:
+		// RayTraced,
+		// RayMipTraced (mip_count: 10, max_jumps: 25, max_steps: 100, debug: false),
+		// Scattered( density: (2, 2, 2) ), // blocked by NumWorkgroups builtin
+		// Sliced,
+		 Painted,
+		debug: (
+			max_vertices: 512,
+			collision_shapes: false,
+			collision_map: false,
+			impulses: false,
+		),
+	),
+)
