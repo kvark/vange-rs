@@ -3,8 +3,8 @@ use crate::{
     model,
     render::{
         global::Context as GlobalContext,
-        object::{Context as ObjectContext, Instance as ObjectInstance, InstanceDesc},
-        Shaders, ShapeVertexDesc, COLOR_FORMAT, DEPTH_FORMAT,
+        object::{Context as ObjectContext, Instance as ObjectInstance},
+        COLOR_FORMAT, DEPTH_FORMAT,
     },
 };
 
@@ -217,8 +217,9 @@ impl Context {
             ..Default::default()
         };
 
+        #[cfg(feature = "glsl")]
         if self.settings.collision_shapes {
-            let shaders = Shaders::new("debug_shape", &[], device).unwrap();
+            let shaders = super::Shaders::new("debug_shape", &[], device).unwrap();
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("debug-shape"),
                 layout: Some(&self.pipeline_layout),
@@ -226,8 +227,8 @@ impl Context {
                     module: &shaders.vs,
                     entry_point: "main",
                     buffers: &[
-                        ShapeVertexDesc::new().buffer_desc(),
-                        InstanceDesc::new().buffer_desc(),
+                        super::ShapeVertexDesc::new().buffer_desc(),
+                        super::object::InstanceDesc::new().buffer_desc(),
                     ],
                 },
                 fragment: Some(wgpu::FragmentState {

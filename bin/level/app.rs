@@ -1,7 +1,7 @@
 use crate::boilerplate::Application;
 use vangers::{
     config, level,
-    render::{body::GpuStoreInit, Batcher, Render, ScreenTargets},
+    render::{Batcher, Render, ScreenTargets},
     space,
 };
 
@@ -104,7 +104,8 @@ impl LevelView {
 
         let objects_palette = level::read_palette(settings.open_palette(), None);
         let depth = settings.game.camera.depth_range;
-        let store_init = GpuStoreInit::new_dummy(device);
+        #[cfg(feature = "glsl")]
+        let store_init = vangers::render::body::GpuStoreInit::new_dummy(device);
         let render = Render::new(
             device,
             queue,
@@ -112,6 +113,7 @@ impl LevelView {
             &objects_palette,
             &settings.render,
             screen_extent,
+            #[cfg(feature = "glsl")]
             store_init.resource(),
         );
 

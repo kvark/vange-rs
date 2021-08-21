@@ -15,4 +15,6 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - run: cargo check
+    - if: matrix.os == 'ubuntu-latest'
+      run: cargo check --features glsl
     - run: cargo test

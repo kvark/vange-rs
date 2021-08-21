@@ -5,20 +5,24 @@ use crate::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use glsl_to_spirv;
 use wgpu::util::DeviceExt as _;
 
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufReader, Error as IoError, Read, Write},
+    io::{BufReader, Error as IoError, Read},
     mem,
     num::NonZeroU32,
     path::PathBuf,
     sync::Arc,
 };
 
+#[cfg(feature = "glsl")]
+use std::io::Write as _;
+
+#[cfg(feature = "glsl")]
 pub mod body;
+#[cfg(feature = "glsl")]
 pub mod collision;
 pub mod debug;
 pub mod global;
@@ -26,6 +30,11 @@ pub mod mipmap;
 pub mod object;
 mod shadow;
 pub mod terrain;
+
+#[cfg(not(feature = "glsl"))]
+pub mod body {
+    pub type GpuBody = crate::freelist::Id<()>;
+}
 
 pub use shadow::FORMAT as SHADOW_FORMAT;
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
@@ -135,11 +144,13 @@ pub fn load_shader(name: &str, device: &wgpu::Device) -> Result<wgpu::ShaderModu
     }))
 }
 
+#[cfg(feature = "glsl")]
 pub struct Shaders {
     vs: wgpu::ShaderModule,
     fs: wgpu::ShaderModule,
 }
 
+#[cfg(feature = "glsl")]
 impl Shaders {
     fn fail(name: &str, source: &str, log: &str) -> ! {
         println!("Generated shader:");
@@ -522,7 +533,7 @@ impl Render {
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
         screen_size: wgpu::Extent3d,
-        store_buffer: wgpu::BindingResource<'_>,
+        #[cfg(feature = "glsl")] store_buffer: wgpu::BindingResource<'_>,
     ) -> Self {
         profiling::scope!("Init Renderer");
 
@@ -535,6 +546,7 @@ impl Render {
         let global = global::Context::new(
             device,
             queue,
+            #[cfg(feature = "glsl")]
             store_buffer,
             shadow.as_ref().map(|shadow| &shadow.view),
         );

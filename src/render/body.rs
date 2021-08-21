@@ -1,8 +1,8 @@
 use crate::{
     config::{car::CarPhysics, common::Common, settings},
-    freelist::{self, FreeList},
+    freelist::{FreeList, Id as ListId},
     model::VisualModel,
-    render::{collision::GpuRange, GpuTransform, Shaders},
+    render::{collision::GpuRange, GpuTransform},
     space::Transform,
 };
 
@@ -128,7 +128,7 @@ struct Constants {
 unsafe impl Pod for Constants {}
 unsafe impl Zeroable for Constants {}
 
-pub type GpuBody = freelist::Id<Data>;
+pub type GpuBody = ListId<Data>;
 
 struct Pipelines {
     step: wgpu::ComputePipeline,
@@ -147,7 +147,7 @@ impl Pipelines {
             step: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("body-step"),
                 layout: Some(layout_step),
-                module: &Shaders::new_compute(
+                module: &super::Shaders::new_compute(
                     "physics/body_step",
                     [WORK_GROUP_WIDTH, 1, 1],
                     &[],
@@ -159,7 +159,7 @@ impl Pipelines {
             gather: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("body-gather"),
                 layout: Some(layout_gather),
-                module: &Shaders::new_compute(
+                module: &super::Shaders::new_compute(
                     "physics/body_gather",
                     [WORK_GROUP_WIDTH, 1, 1],
                     &[],
@@ -171,7 +171,7 @@ impl Pipelines {
             push: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("body-push"),
                 layout: Some(layout_push),
-                module: &Shaders::new_compute(
+                module: &super::Shaders::new_compute(
                     "physics/body_push",
                     [WORK_GROUP_WIDTH, 1, 1],
                     &[],
@@ -257,6 +257,7 @@ impl GpuStoreMirror {
     }
 }
 
+#[cfg(feature = "glsl")]
 pub struct GpuStore {
     pipeline_layout_step: wgpu::PipelineLayout,
     pipeline_layout_gather: wgpu::PipelineLayout,

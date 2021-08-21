@@ -17,17 +17,33 @@ struct Geometry {
     [[location(6)]] body_and_color_id: vec2<u32>;
 };
 
+struct BodyGeometry {
+    orient: vec4<f32>;
+    pos: vec3<f32>;
+    scale: f32;
+};
+
+fn get_body(id: u32) -> BodyGeometry {
+    //let pos_scale = s_Storage.bodies[id].pos_scale;
+    //let orient = s_Storage.bodies[body_id].orientation;
+    let pos_scale = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    let orient = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    return BodyGeometry(
+        orient,
+        pos_scale.xyz,
+        pos_scale.w,
+    );
+}
+
 [[stage(vertex)]]
 fn geometry_vs(
     [[location(0)]] vertex: vec4<i32>,
     geo: Geometry,
 ) -> [[builtin(position)]] vec4<f32> {
-    let body_id = i32(geo.body_and_color_id.x);
-    let body_pos_scale = s_Storage.bodies[body_id].pos_scale;
-    let body_orientation = s_Storage.bodies[body_id].orientation;
+    let body = get_body(geo.body_and_color_id.x);
 
     let local = qrot(geo.orientation, vec3<f32>(vertex.xyz)) * geo.pos_scale.w + geo.pos_scale.xyz;
-    let world = qrot(body_orientation, local) * body_pos_scale.w + body_pos_scale.xyz;
+    let world = qrot(body.orient, local) * body.scale + body.pos;
     return u_Globals.view_proj * vec4<f32>(world, 1.0);
 }
 
@@ -45,19 +61,17 @@ fn color_vs(
     [[location(2)]] normal: vec4<f32>,
     geo: Geometry,
 ) -> Varyings {
-    let body_id = i32(geo.body_and_color_id.x);
-    let body_pos_scale = s_Storage.bodies[body_id].pos_scale;
-    let body_orientation = s_Storage.bodies[body_id].orientation;
+    let body = get_body(geo.body_and_color_id.x);
 
     let local = qrot(geo.orientation, vec3<f32>(vertex.xyz)) * geo.pos_scale.w + geo.pos_scale.xyz;
-    let world = qrot(body_orientation, local) * body_pos_scale.w + body_pos_scale.xyz;
+    let world = qrot(body.orient, local) * body.scale + body.pos;
 
     let color_id = select(color_index, geo.body_and_color_id.y, color_index == c_BodyColorId);
     let range = textureLoad(t_ColorTable, i32(color_id), 0).xy;
     let palette_range = vec2<f32>(vec2<u32>(range.x, range.x + (128u >> range.y)));
 
     let n = normalize(normal.xyz);
-    let world_normal = qrot(body_orientation, qrot(geo.orientation, n));
+    let world_normal = qrot(body.orient, qrot(geo.orientation, n));
     return Varyings(
         u_Globals.view_proj * vec4<f32>(world, 1.0),
         palette_range,
