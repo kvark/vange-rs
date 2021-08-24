@@ -40,6 +40,7 @@
 	),
 	backend: Auto, // Vulkan, Metal, DX12, DX11
 	render: (
+		wgpu_trace_path: "",
 		light: (
 			pos: (1, 4, 4, 0), // w=0 for directional, w=1 for point light
 			color: (1, 1, 1, 1),
