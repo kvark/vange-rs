@@ -139,8 +139,9 @@ pub struct Fog {
     pub depth: f32,
 }
 
-#[derive(Copy, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Render {
+    pub wgpu_trace_path: String,
     pub light: Light,
     pub terrain: Terrain,
     pub fog: Fog,

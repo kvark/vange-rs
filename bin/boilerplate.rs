@@ -93,7 +93,11 @@ impl Harness {
                     features: wgpu::Features::empty(),
                     limits,
                 },
-                None,
+                if settings.render.wgpu_trace_path.is_empty() {
+                    None
+                } else {
+                    Some(std::path::Path::new(&settings.render.wgpu_trace_path))
+                },
             ))
             .unwrap();
 

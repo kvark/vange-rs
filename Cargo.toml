@@ -18,7 +18,7 @@ members = [
 
 [features]
 default = []
-glsl = ["glsl-to-spirv"]
+glsl = ["glsl-to-spirv", "wgpu/spirv"]
 profile = ["profiling/profile-with-tracy"]
 
 [[bin]]
@@ -60,7 +60,7 @@ rust-ini = "0.17"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.4"
-wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "8f02b73", features = ["spirv"] }
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "8f02b73", features = [] }
 # binaries
 env_logger = "0.8"
 getopts = "0.2"
