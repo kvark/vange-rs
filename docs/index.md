@@ -6,7 +6,8 @@ layout: home
 
 [Vange-rs](https://github.com/kvark/vange-rs) project is an attempt to re-implement the game by using the original resources with modern technology, such as:
   - [Rust](https://www.rust-lang.org/) programming language
-  - [gfx-hal](https://github.com/gfx-rs/gfx) and [wgpu](https://github.com/gfx-rs/wgpu) graphics stack
+  - [wgpu](https://github.com/gfx-rs/wgpu) graphics stack
   - fearless GPU and multi-core use
 
 This blog tells the story of this adventure :)
+Check out https://kvark.itch.io/vangers as well!
