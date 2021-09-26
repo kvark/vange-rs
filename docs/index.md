@@ -9,5 +9,4 @@ layout: home
   - [wgpu](https://github.com/gfx-rs/wgpu) graphics stack
   - fearless GPU and multi-core use
 
-This blog tells the story of this adventure :)
-Check out https://kvark.itch.io/vangers as well!
+This blog tells the story of this adventure. There is a few [videos on PeerTube](https://peertube.fidonet.io/video-channels/vangers_dev/videos) to watch. Finally, check out [Rusty Vangers on Itch.io](https://kvark.itch.io/vangers)!
