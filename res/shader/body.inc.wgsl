@@ -36,7 +36,7 @@ struct DragConstants {
     abs_stop: vec2<f32>;
     coll: vec2<f32>;
     other: vec2<f32>; // X = wheel speed, Y = drag Z
-    _pad: vec2<f32>;
+    padding: vec2<f32>;
 };
 
 struct GlobalConstants {

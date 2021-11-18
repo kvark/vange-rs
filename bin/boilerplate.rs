@@ -79,6 +79,7 @@ impl Harness {
             .run_until(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
             }))
             .expect("Unable to initialize GPU via the selected backend.");
 
@@ -227,10 +228,9 @@ impl Harness {
                         queue.submit(update_command_buffers);
                     }
 
-                    match surface.get_current_frame() {
+                    match surface.get_current_texture() {
                         Ok(frame) => {
                             let view = frame
-                                .output
                                 .texture
                                 .create_view(&wgpu::TextureViewDescriptor::default());
                             let targets = ScreenTargets {
@@ -240,6 +240,7 @@ impl Harness {
                             };
                             let render_command_buffer = app.draw(&device, targets, &spawner);
                             queue.submit(Some(render_command_buffer));
+                            frame.present();
                         }
                         Err(_) => {}
                     };

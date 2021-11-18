@@ -161,7 +161,7 @@ impl Context {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face: wgpu::FrontFace::Ccw,
-                clamp_depth: false,
+                unclipped_depth: false,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -261,10 +261,7 @@ impl Context {
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Sampler {
-                        filtering: false,
-                        comparison: false,
-                    },
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
             ],

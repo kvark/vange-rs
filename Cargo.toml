@@ -60,7 +60,7 @@ rust-ini = "0.17"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.4"
-wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "8f02b73", features = [] }
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "47fd776", features = [] }
 # binaries
 env_logger = "0.8"
 getopts = "0.2"
@@ -69,8 +69,8 @@ png = "0.16"
 winit = "0.25"
 
 [dev-dependencies]
-#naga = { git = "https://github.com/gfx-rs/naga", rev = "7613798", features = ["wgsl-in"] }
-naga = { version = "0.6", features = ["wgsl-in"] }
+naga = { git = "https://github.com/gfx-rs/naga", rev = "eda078d", features = ["wgsl-in"] }
+#naga = { version = "0.6", features = ["wgsl-in"] }
 
 [dependencies.profiling]
 version = "1.0.1"
@@ -80,6 +80,7 @@ default-features = false
 #naga = { path = "../naga" }
 
 [patch."https://github.com/gfx-rs/wgpu"]
+#wgpu = { path = "../wgpu/wgpu" }
 #wgpu-hal = { path = "../wgpu/wgpu-hal" }
 #wgpu-core = { path = "../wgpu/wgpu-core" }
 #wgpu-types = { path = "../wgpu/wgpu-types" }
