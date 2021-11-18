@@ -811,6 +811,7 @@ impl Application for Game {
         }
 
         {
+            #[cfg(not(target_arch = "wasm32"))]
             use rayon::prelude::*;
 
             let clipper = Clipper::new(&self.cam);
@@ -818,7 +819,13 @@ impl Application for Game {
             let common = &self.db.common;
             let level = &self.level;
 
-            self.agents.par_iter_mut().for_each(|a| {
+            #[cfg(not(target_arch = "wasm32"))]
+            let agent_iter = self.agents.par_iter_mut();
+
+            #[cfg(target_arch = "wasm32")]
+            let agent_iter = self.agents.iter_mut();
+
+            agent_iter.for_each(|a| {
                 let mut dt = physics_dt;
                 a.cpu_apply_control(input_factor, common);
 

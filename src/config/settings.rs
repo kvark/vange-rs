@@ -81,7 +81,7 @@ pub enum Backend {
 impl Backend {
     pub fn to_wgpu(&self) -> wgpu::Backends {
         match *self {
-            Backend::Auto => wgpu::Backends::PRIMARY,
+            Backend::Auto => wgpu::Backends::all(),
             Backend::Metal => wgpu::Backends::METAL,
             Backend::Vulkan => wgpu::Backends::VULKAN,
             Backend::DX12 => wgpu::Backends::DX12,
@@ -194,6 +194,12 @@ impl Settings {
             .unwrap_or_else(|_| panic!("Unable to open game file: {}", path))
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn check_path(&self, _path: &str) -> bool {
+        true
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn check_path(&self, path: &str) -> bool {
         self.data_path.join(path).exists()
     }

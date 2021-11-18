@@ -222,8 +222,12 @@ pub fn load_flood(config: &LevelConfig) -> Vec<u8> {
     let flood_offset =
         (2 * 4 + (1 + 4 + 4) * 4 + 2 * net_size + 2 * geo_pow * 4 + 2 * flood_size * geo_pow * 4)
             as u64;
-    let expected_file_size = flood_offset + (flood_size * 4) as u64;
-    assert_eq!(vpr_file.metadata().unwrap().len(), expected_file_size,);
+    
+    #[cfg(not(target_arch = "wasm32"))] {
+        let expected_file_size = flood_offset + (flood_size * 4) as u64;
+        assert_eq!(vpr_file.metadata().unwrap().len(), expected_file_size,);
+    }
+
     let mut vpr = BufReader::new(vpr_file);
     vpr.seek(SeekFrom::Start(flood_offset)).unwrap();
     (0..flood_size)
@@ -324,6 +328,7 @@ impl LevelData {
 }
 
 pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
+    #[cfg(not(target_arch = "wasm32"))]
     use rayon::prelude::*;
     use splay::Splay;
 
@@ -352,14 +357,20 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
         (splay, st_table, sz_table)
     };
 
-    level
+    let mut level_iter = level
         .height
         .chunks_mut(size.0 as _)
         .zip(level.meta.chunks_mut(size.0 as _))
         .zip(st_table.iter().zip(&sz_table))
-        .collect::<Vec<_>>()
-        .par_chunks_mut(64)
-        .for_each(|source_group| {
+        .collect::<Vec<_>>();
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let level_iter = level_iter.par_chunks_mut(64);
+
+    #[cfg(target_arch = "wasm32")]
+    let level_iter = level_iter.chunks_mut(64);
+
+    level_iter.for_each(|source_group| {
             //Note: a separate file per group is required
             let mut vmc = File::open(path).unwrap();
             let data_size: i16 = source_group
