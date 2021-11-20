@@ -40,6 +40,9 @@ pub use shadow::FORMAT as SHADOW_FORMAT;
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+#[derive(Clone, Copy, Debug)]
+pub struct VertexStorageNotSupported;
+
 #[derive(Copy, Clone)]
 pub struct GpuTransform {
     pub pos_scale: [f32; 4],
@@ -529,6 +532,7 @@ impl Render {
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        downlevel_caps: &wgpu::DownlevelCapabilities,
         level: &level::Level,
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
@@ -550,7 +554,7 @@ impl Render {
             store_buffer,
             shadow.as_ref().map(|shadow| &shadow.view),
         );
-        let object = object::Context::new(device, queue, object_palette, &global);
+        let object = object::Context::new(device, queue, downlevel_caps, object_palette, &global);
         let terrain = terrain::Context::new(
             device,
             queue,

@@ -39,6 +39,7 @@ pub struct Harness {
     window: Window,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
+    pub downlevel_caps: wgpu::DownlevelCapabilities,
     surface: wgpu::Surface,
     pub extent: wgpu::Extent3d,
     reload_on_focus: bool,
@@ -83,7 +84,9 @@ impl Harness {
             }))
             .expect("Unable to initialize GPU via the selected backend.");
 
-        let mut limits = wgpu::Limits::default();
+        let downlevel_caps = adapter.get_downlevel_properties();
+
+        let mut limits = wgpu::Limits::downlevel_defaults();
         if options.uses_level {
             limits.max_texture_dimension_2d = 16384;
         }
@@ -127,6 +130,7 @@ impl Harness {
             event_loop,
             window,
             device,
+            downlevel_caps,
             queue,
             surface,
             extent,
@@ -148,6 +152,7 @@ impl Harness {
             window,
             device,
             queue,
+            downlevel_caps: _,
             surface,
             mut extent,
             reload_on_focus,

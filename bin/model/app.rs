@@ -23,6 +23,7 @@ impl ResourceView {
         settings: &config::settings::Settings,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        downlevel_caps: &wgpu::DownlevelCapabilities,
     ) -> Self {
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
@@ -35,7 +36,8 @@ impl ResourceView {
             store_init.resource(),
             None,
         );
-        let object = render::object::Context::new(device, queue, &pal_data, &global);
+        let object =
+            render::object::Context::new(device, queue, downlevel_caps, &pal_data, &global);
 
         info!("Loading model {}", path);
         let file = settings.open_relative(path);

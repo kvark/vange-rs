@@ -37,6 +37,7 @@ impl LevelView {
         screen_extent: wgpu::Extent3d,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        downlevel_caps: &wgpu::DownlevelCapabilities,
     ) -> Self {
         let level = if settings.game.level.is_empty() {
             info!("Using test level");
@@ -109,6 +110,7 @@ impl LevelView {
         let render = Render::new(
             device,
             queue,
+            downlevel_caps,
             &level,
             &objects_palette,
             &settings.render,

@@ -1,7 +1,7 @@
 use crate::{
     render::{
         body::GpuBody, global::Context as GlobalContext, GpuTransform, Palette, PipelineSet,
-        COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT,
+        VertexStorageNotSupported, COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT,
     },
     space::Transform,
 };
@@ -105,7 +105,7 @@ impl InstanceDesc {
 
 pub struct Context {
     pub bind_group: wgpu::BindGroup,
-    pub shape_bind_group_layout: wgpu::BindGroupLayout,
+    pub shape_bind_group_layout: Result<wgpu::BindGroupLayout, VertexStorageNotSupported>,
     pub pipeline_layout: wgpu::PipelineLayout,
     pub pipelines: PipelineSet,
 }
@@ -229,6 +229,7 @@ impl Context {
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        downlevel_caps: &wgpu::DownlevelCapabilities,
         palette_data: &[[u8; 4]],
         global: &GlobalContext,
     ) -> Self {
@@ -266,8 +267,11 @@ impl Context {
                 },
             ],
         });
-        let shape_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let shape_bind_group_layout = if downlevel_caps
+            .flags
+            .contains(wgpu::DownlevelFlags::VERTEX_STORAGE)
+        {
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Shape"),
                 entries: &[
                     // shape locals
@@ -283,6 +287,10 @@ impl Context {
                     },
                 ],
             });
+            Ok(bgl)
+        } else {
+            Err(VertexStorageNotSupported)
+        };
 
         let palette = Palette::new(device, queue, palette_data);
         let (color_table_view, color_table_sampler) = Self::create_color_table(device, queue);

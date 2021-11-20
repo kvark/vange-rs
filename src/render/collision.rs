@@ -216,7 +216,7 @@ impl GpuCollider {
             bind_group_layouts: &[
                 &bind_group_layout,
                 &terrain.bind_group_layout,
-                &object.shape_bind_group_layout,
+                object.shape_bind_group_layout.as_ref().unwrap(),
                 &dynamic_bind_group_layout,
             ],
             push_constant_ranges: &[],
@@ -399,7 +399,8 @@ impl<'pass, 'this: 'pass> GpuSession<'pass, 'this> {
         };
         let offset = (self.object_locals.len() * self.locals_size) as wgpu::DynamicOffset;
 
-        self.pass.set_bind_group(2, &shape.bind_group, &[]);
+        self.pass
+            .set_bind_group(2, shape.bind_group.as_ref().unwrap(), &[]);
         self.pass
             .set_bind_group(3, self.dynamic_bind_group, &[offset]);
         self.pass.set_vertex_buffer(0, shape.polygon_buf.slice(..));
