@@ -25,7 +25,13 @@ fn main() {
     }
 
     let path = &matches.free[0];
-    let app = app::ResourceView::new(path, &settings, &harness.device, &harness.queue);
+    let app = app::ResourceView::new(
+        path,
+        &settings,
+        &harness.device,
+        &harness.queue,
+        &harness.downlevel_caps,
+    );
 
     harness.main_loop(app);
 }

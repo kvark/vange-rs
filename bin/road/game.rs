@@ -327,6 +327,7 @@ impl Game {
         screen_extent: wgpu::Extent3d,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        downlevel_caps: &wgpu::DownlevelCapabilities,
     ) -> Self {
         log::info!("Loading world parameters");
         let (level, coords) = if settings.game.level.is_empty() {
@@ -368,6 +369,7 @@ impl Game {
         let render = Render::new(
             device,
             queue,
+            downlevel_caps,
             &level,
             &pal_data,
             &settings.render,

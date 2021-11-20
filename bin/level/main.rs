@@ -8,7 +8,13 @@ fn main() {
         uses_level: true,
     });
 
-    let app = app::LevelView::new(&settings, harness.extent, &harness.device, &harness.queue);
+    let app = app::LevelView::new(
+        &settings,
+        harness.extent,
+        &harness.device,
+        &harness.queue,
+        &harness.downlevel_caps,
+    );
 
     harness.main_loop(app);
 }

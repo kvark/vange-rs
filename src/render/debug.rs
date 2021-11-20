@@ -4,7 +4,7 @@ use crate::{
     render::{
         global::Context as GlobalContext,
         object::{Context as ObjectContext, Instance as ObjectInstance},
-        COLOR_FORMAT, DEPTH_FORMAT,
+        VertexStorageNotSupported, COLOR_FORMAT, DEPTH_FORMAT,
     },
 };
 
@@ -94,7 +94,7 @@ impl LineBuffer {
 
 pub struct Context {
     settings: settings::DebugRender,
-    pipeline_layout: wgpu::PipelineLayout,
+    pipeline_layout: Result<wgpu::PipelineLayout, VertexStorageNotSupported>,
     pipelines_line: HashMap<Selector, wgpu::RenderPipeline>,
     pipeline_face: Option<wgpu::RenderPipeline>,
     pipeline_edge: Option<wgpu::RenderPipeline>,
@@ -130,15 +130,17 @@ impl Context {
                 },
             ],
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("debug"),
-            bind_group_layouts: &[
-                &global.bind_group_layout,
-                &bind_group_layout,
-                &object.shape_bind_group_layout,
-            ],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = match object.shape_bind_group_layout {
+            Ok(ref shape_bgl) => {
+                let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("debug"),
+                    bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout, shape_bgl],
+                    push_constant_ranges: &[],
+                });
+                Ok(pl)
+            }
+            Err(e) => Err(e),
+        };
 
         let line_color_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("debug-line-color"),
@@ -218,11 +220,11 @@ impl Context {
         };
 
         #[cfg(feature = "glsl")]
-        if self.settings.collision_shapes {
+        if self.settings.collision_shapes && self.pipeline_layout.is_ok() {
             let shaders = super::Shaders::new("debug_shape", &[], device).unwrap();
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("debug-shape"),
-                layout: Some(&self.pipeline_layout),
+                layout: self.pipeline_layout.as_ref().ok(),
                 vertex: wgpu::VertexState {
                     module: &shaders.vs,
                     entry_point: "main",
@@ -277,7 +279,10 @@ impl Context {
                     let name = format!("debug-line-{:?}-{:?}", visibility, color_rate);
                     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                         label: Some(&name),
-                        layout: Some(&self.pipeline_layout),
+                        layout: match self.pipeline_layout {
+                            Ok(ref layout) => Some(layout),
+                            Err(_) => continue,
+                        },
                         vertex: wgpu::VertexState {
                             module: &shader,
                             entry_point: "main_vs",
@@ -360,11 +365,15 @@ impl Context {
         if !self.settings.collision_shapes {
             return;
         }
+        let shape_bg = match shape.bind_group {
+            Ok(ref bg) => bg,
+            Err(_) => return,
+        };
 
         //TODO: this is broken - both regular rendering and debug one
         // require instancing now, one has to yield and be refactored.
         let instance_offset = instance_id * mem::size_of::<ObjectInstance>();
-        pass.set_bind_group(2, &shape.bind_group, &[]);
+        pass.set_bind_group(2, shape_bg, &[]);
         pass.set_vertex_buffer(0, shape.polygon_buf.slice(..));
         pass.set_vertex_buffer(
             1,

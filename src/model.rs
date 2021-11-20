@@ -1,7 +1,7 @@
 use crate::render::{
     debug::Position as DebugPos,
     object::{Context as ObjectContext, Vertex as ObjectVertex},
-    ShapePolygon,
+    ShapePolygon, VertexStorageNotSupported,
 };
 use m3d;
 use wgpu::util::DeviceExt as _;
@@ -36,7 +36,7 @@ pub struct Shape {
     pub vertex_buf: wgpu::Buffer,
     pub polygon_buf: wgpu::Buffer,
     pub sample_buf: Option<(wgpu::Buffer, usize)>,
-    pub bind_group: wgpu::BindGroup,
+    pub bind_group: Result<wgpu::BindGroup, VertexStorageNotSupported>,
     pub bounds: m3d::Bounds,
 }
 
@@ -263,14 +263,18 @@ pub fn load_c3d_shape(
         }
     };
     vertex_buf.unmap();
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Shape"),
-        layout: &object.shape_bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: vertex_buf.as_entire_binding(),
-        }],
-    });
+
+    let bind_group = match object.shape_bind_group_layout {
+        Ok(ref layout) => Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Shape"),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: vertex_buf.as_entire_binding(),
+            }],
+        })),
+        Err(e) => Err(e),
+    };
 
     Arc::new(Shape {
         polygons,

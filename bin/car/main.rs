@@ -27,7 +27,12 @@ fn main() {
         return;
     }
 
-    let app = app::CarView::new(&settings, &harness.device, &harness.queue);
+    let app = app::CarView::new(
+        &settings,
+        &harness.device,
+        &harness.queue,
+        &harness.downlevel_caps,
+    );
 
     harness.main_loop(app);
 }

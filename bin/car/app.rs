@@ -22,7 +22,12 @@ pub struct CarView {
 }
 
 impl CarView {
-    pub fn new(settings: &config::Settings, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub fn new(
+        settings: &config::Settings,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        downlevel_caps: &wgpu::DownlevelCapabilities,
+    ) -> Self {
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
         #[cfg(feature = "glsl")]
@@ -34,7 +39,8 @@ impl CarView {
             store_init.resource(),
             None,
         );
-        let object = render::object::Context::new(device, queue, &pal_data, &global);
+        let object =
+            render::object::Context::new(device, queue, downlevel_caps, &pal_data, &global);
 
         info!("Loading car registry");
         let game_reg = config::game::Registry::load(settings);
