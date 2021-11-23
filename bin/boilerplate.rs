@@ -85,10 +85,21 @@ impl Harness {
             .expect("Unable to initialize GPU via the selected backend.");
 
         let downlevel_caps = adapter.get_downlevel_properties();
+        let adapter_limits = adapter.limits();
 
         let mut limits = wgpu::Limits::downlevel_defaults();
         if options.uses_level {
-            limits.max_texture_dimension_2d = 16384;
+            let desired_height = 16 << 10;
+            limits.max_texture_dimension_2d =
+                if adapter_limits.max_texture_dimension_2d < desired_height {
+                    log::warn!(
+                        "Adapter only supports {} texutre size",
+                        adapter_limits.max_texture_dimension_2d
+                    );
+                    adapter_limits.max_texture_dimension_2d
+                } else {
+                    desired_height
+                };
         }
         let (device, queue) = task_pool
             .run_until(adapter.request_device(
