@@ -147,6 +147,7 @@ impl Context {
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
+            multiview: None,
         });
 
         let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -176,6 +177,7 @@ impl Context {
                 },
             }),
             multisample: wgpu::MultisampleState::default(),
+            multiview: None,
         });
 
         PipelineSet { main, shadow }

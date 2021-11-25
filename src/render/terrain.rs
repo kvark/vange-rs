@@ -244,6 +244,7 @@ impl Context {
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
+            multiview: None,
         })
     }
 
@@ -285,6 +286,7 @@ impl Context {
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
+            multiview: None,
         })
     }
 
@@ -320,6 +322,7 @@ impl Context {
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
+            multiview: None,
         })
     }
 
@@ -370,6 +373,7 @@ impl Context {
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
+            multiview: None,
         });
 
         (scatter_pipeline, clear_pipeline, copy_pipeline)

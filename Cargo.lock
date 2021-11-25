@@ -1026,17 +1026,17 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "0.7.1"
-source = "git+https://github.com/gfx-rs/naga?rev=eda078d#eda078d736a906b4267e4803db6b32e3162aac30"
+source = "git+https://github.com/gfx-rs/naga?rev=29571cc#29571cc4cfbb28558948b1b31ad764f55b69f37b"
 dependencies = [
  "bit-set",
  "bitflags",
  "codespan-reporting",
- "fxhash",
  "hexf-parse",
  "indexmap",
  "log",
  "num-traits",
  "petgraph",
+ "rustc-hash",
  "spirv",
  "thiserror",
 ]
@@ -1499,6 +1499,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc-hash"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
+
+[[package]]
 name = "rusttype"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1950,7 +1956,7 @@ dependencies = [
 [[package]]
 name = "wgpu"
 version = "0.11.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=47fd776#47fd77619f11a9c008401341f2df95909bce4153"
+source = "git+https://github.com/gfx-rs/wgpu?rev=5f6c067#5f6c06781534dc5ecd54e1a1cf89ece98b46f49f"
 dependencies = [
  "arrayvec",
  "js-sys",
@@ -1970,7 +1976,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "0.11.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=47fd776#47fd77619f11a9c008401341f2df95909bce4153"
+source = "git+https://github.com/gfx-rs/wgpu?rev=5f6c067#5f6c06781534dc5ecd54e1a1cf89ece98b46f49f"
 dependencies = [
  "arrayvec",
  "bitflags",
@@ -1992,7 +1998,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "0.11.2"
-source = "git+https://github.com/gfx-rs/wgpu?rev=47fd776#47fd77619f11a9c008401341f2df95909bce4153"
+source = "git+https://github.com/gfx-rs/wgpu?rev=5f6c067#5f6c06781534dc5ecd54e1a1cf89ece98b46f49f"
 dependencies = [
  "arrayvec",
  "ash",
@@ -2029,7 +2035,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "0.11.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=47fd776#47fd77619f11a9c008401341f2df95909bce4153"
+source = "git+https://github.com/gfx-rs/wgpu?rev=5f6c067#5f6c06781534dc5ecd54e1a1cf89ece98b46f49f"
 dependencies = [
  "bitflags",
 ]

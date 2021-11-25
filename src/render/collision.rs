@@ -132,6 +132,7 @@ impl GpuCollider {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
+            multiview: None,
         });
 
         let clear_shader = Shaders::new_compute(

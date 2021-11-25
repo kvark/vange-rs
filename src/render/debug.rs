@@ -262,6 +262,7 @@ impl Context {
                     bias: Default::default(),
                 }),
                 multisample: wgpu::MultisampleState::default(),
+                multiview: None,
             });
             self.pipeline_face = Some(pipeline);
             self.pipeline_edge = None; //TODO: line raster
@@ -328,6 +329,7 @@ impl Context {
                             bias: Default::default(),
                         }),
                         multisample: wgpu::MultisampleState::default(),
+                        multiview: None,
                     });
                     self.pipelines_line
                         .insert((visibility, color_rate), pipeline);
