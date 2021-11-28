@@ -39,12 +39,14 @@ pub struct Context {
     pub uniform_buf: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
     pub shadow_bind_group: wgpu::BindGroup,
+    pub color_format: wgpu::TextureFormat,
 }
 
 impl Context {
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        color_format: wgpu::TextureFormat,
         #[cfg(feature = "glsl")] store_buffer: wgpu::BindingResource<'_>,
         shadow_view: Option<&wgpu::TextureView>,
     ) -> Self {
@@ -222,6 +224,7 @@ impl Context {
             uniform_buf,
             bind_group,
             shadow_bind_group,
+            color_format,
         }
     }
 }

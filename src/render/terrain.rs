@@ -2,8 +2,8 @@ use crate::{
     config::settings,
     level,
     render::{
-        global::Context as GlobalContext, mipmap::MaxMipper, Palette, PipelineKind, COLOR_FORMAT,
-        DEPTH_FORMAT, SHADOW_FORMAT,
+        global::Context as GlobalContext, mipmap::MaxMipper, Palette, PipelineKind, DEPTH_FORMAT,
+        SHADOW_FORMAT,
     },
     space::Camera,
 };
@@ -186,6 +186,7 @@ pub struct Context {
     pub bind_group: wgpu::BindGroup,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
+    color_format: wgpu::TextureFormat,
     raytrace_geo: Geometry,
     kind: Kind,
     shadow_kind: Kind,
@@ -196,12 +197,13 @@ impl Context {
     fn create_ray_pipeline(
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
+        color_format: wgpu::TextureFormat,
         name: &str,
         kind: PipelineKind,
         entry_point: &str,
     ) -> wgpu::RenderPipeline {
         let color_descs = [wgpu::ColorTargetState {
-            format: COLOR_FORMAT,
+            format: color_format,
             blend: None,
             write_mask: wgpu::ColorWrites::all(),
         }];
@@ -251,6 +253,7 @@ impl Context {
     fn create_slice_pipeline(
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
+        color_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
         let shader = super::load_shader("terrain/slice", device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -272,7 +275,7 @@ impl Context {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "main_fs",
-                targets: &[COLOR_FORMAT.into()],
+                targets: &[color_format.into()],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -293,6 +296,7 @@ impl Context {
     fn create_paint_pipeline(
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
+        color_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
         let shader = super::load_shader("terrain/paint", device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -306,7 +310,7 @@ impl Context {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fragment",
-                targets: &[COLOR_FORMAT.into()],
+                targets: &[color_format.into()],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -329,6 +333,7 @@ impl Context {
     fn create_scatter_pipelines(
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
+        color_format: wgpu::TextureFormat,
     ) -> (
         wgpu::ComputePipeline,
         wgpu::ComputePipeline,
@@ -359,7 +364,7 @@ impl Context {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "copy_fs",
-                targets: &[COLOR_FORMAT.into()],
+                targets: &[color_format.into()],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleStrip,
@@ -770,6 +775,7 @@ impl Context {
                 let pipeline = Self::create_ray_pipeline(
                     &pipeline_layout,
                     device,
+                    global.color_format,
                     "terrain/ray",
                     PipelineKind::Main,
                     "ray_color",
@@ -785,6 +791,7 @@ impl Context {
                 let pipeline = Self::create_ray_pipeline(
                     &pipeline_layout,
                     device,
+                    global.color_format,
                     "terrain/ray",
                     PipelineKind::Main,
                     "ray_mip_color",
@@ -820,7 +827,8 @@ impl Context {
                     device,
                 );
 
-                let pipeline = Self::create_slice_pipeline(&pipeline_layout, device);
+                let pipeline =
+                    Self::create_slice_pipeline(&pipeline_layout, device, global.color_format);
 
                 Kind::Slice { pipeline, geo }
             }
@@ -839,7 +847,8 @@ impl Context {
                     device,
                 );
 
-                let pipeline = Self::create_paint_pipeline(&pipeline_layout, device);
+                let pipeline =
+                    Self::create_paint_pipeline(&pipeline_layout, device, global.color_format);
 
                 Kind::Paint {
                     pipeline,
@@ -878,7 +887,11 @@ impl Context {
                     });
 
                 let (scatter_pipeline, clear_pipeline, copy_pipeline) =
-                    Self::create_scatter_pipelines(&local_pipeline_layout, device);
+                    Self::create_scatter_pipelines(
+                        &local_pipeline_layout,
+                        device,
+                        global.color_format,
+                    );
                 let (local_bg, compute_groups) =
                     Self::create_scatter_resources(screen_extent, &local_bg_layout, device);
                 Kind::Scatter {
@@ -899,6 +912,7 @@ impl Context {
                 let pipeline = Self::create_ray_pipeline(
                     &pipeline_layout,
                     device,
+                    global.color_format,
                     "terrain/ray",
                     PipelineKind::Shadow,
                     "ray",
@@ -913,6 +927,7 @@ impl Context {
             bind_group,
             bind_group_layout,
             pipeline_layout,
+            color_format: global.color_format,
             raytrace_geo,
             kind,
             shadow_kind,
@@ -933,6 +948,7 @@ impl Context {
                 *pipeline = Self::create_ray_pipeline(
                     &self.pipeline_layout,
                     device,
+                    self.color_format,
                     "terrain/ray",
                     PipelineKind::Main,
                     "ray_color",
@@ -946,6 +962,7 @@ impl Context {
                 *pipeline = Self::create_ray_pipeline(
                     &self.pipeline_layout,
                     device,
+                    self.color_format,
                     "terrain/ray",
                     PipelineKind::Main,
                     "ray_mip_color",
@@ -955,12 +972,14 @@ impl Context {
             Kind::Slice {
                 ref mut pipeline, ..
             } => {
-                *pipeline = Self::create_slice_pipeline(&self.pipeline_layout, device);
+                *pipeline =
+                    Self::create_slice_pipeline(&self.pipeline_layout, device, self.color_format);
             }
             Kind::Paint {
                 ref mut pipeline, ..
             } => {
-                *pipeline = Self::create_paint_pipeline(&self.pipeline_layout, device);
+                *pipeline =
+                    Self::create_paint_pipeline(&self.pipeline_layout, device, self.color_format);
             }
             Kind::Scatter {
                 ref pipeline_layout,
@@ -970,7 +989,7 @@ impl Context {
                 ..
             } => {
                 let (scatter, clear, copy) =
-                    Self::create_scatter_pipelines(pipeline_layout, device);
+                    Self::create_scatter_pipelines(pipeline_layout, device, self.color_format);
                 *scatter_pipeline = scatter;
                 *clear_pipeline = clear;
                 *copy_pipeline = copy;
@@ -984,6 +1003,7 @@ impl Context {
                 *pipeline = Self::create_ray_pipeline(
                     &self.pipeline_layout,
                     device,
+                    self.color_format,
                     "terrain/ray",
                     PipelineKind::Shadow,
                     "ray",

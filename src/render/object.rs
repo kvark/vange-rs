@@ -1,7 +1,7 @@
 use crate::{
     render::{
         body::GpuBody, global::Context as GlobalContext, GpuTransform, Palette, PipelineSet,
-        VertexStorageNotSupported, COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT,
+        VertexStorageNotSupported, DEPTH_FORMAT, SHADOW_FORMAT,
     },
     space::Transform,
 };
@@ -108,10 +108,15 @@ pub struct Context {
     pub shape_bind_group_layout: Result<wgpu::BindGroupLayout, VertexStorageNotSupported>,
     pub pipeline_layout: wgpu::PipelineLayout,
     pub pipelines: PipelineSet,
+    pub color_format: wgpu::TextureFormat,
 }
 
 impl Context {
-    fn create_pipelines(layout: &wgpu::PipelineLayout, device: &wgpu::Device) -> PipelineSet {
+    fn create_pipelines(
+        layout: &wgpu::PipelineLayout,
+        device: &wgpu::Device,
+        color_format: wgpu::TextureFormat,
+    ) -> PipelineSet {
         let vertex_descriptor = wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -131,7 +136,7 @@ impl Context {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "color_fs",
-                targets: &[COLOR_FORMAT.into()],
+                targets: &[color_format.into()],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -319,17 +324,18 @@ impl Context {
             bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout],
             push_constant_ranges: &[],
         });
-        let pipelines = Self::create_pipelines(&pipeline_layout, device);
+        let pipelines = Self::create_pipelines(&pipeline_layout, device, global.color_format);
 
         Context {
             bind_group,
             shape_bind_group_layout,
             pipeline_layout,
             pipelines,
+            color_format: global.color_format,
         }
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {
-        self.pipelines = Self::create_pipelines(&self.pipeline_layout, device);
+        self.pipelines = Self::create_pipelines(&self.pipeline_layout, device, self.color_format);
     }
 }

@@ -10,6 +10,7 @@ fn main() {
 
     let app = app::LevelView::new(
         &settings,
+        harness.color_format,
         harness.extent,
         &harness.device,
         &harness.queue,

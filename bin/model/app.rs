@@ -24,6 +24,7 @@ impl ResourceView {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         downlevel_caps: &wgpu::DownlevelCapabilities,
+        color_format: wgpu::TextureFormat,
     ) -> Self {
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
@@ -32,6 +33,7 @@ impl ResourceView {
         let global = render::global::Context::new(
             device,
             queue,
+            color_format,
             #[cfg(feature = "glsl")]
             store_init.resource(),
             None,

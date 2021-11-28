@@ -324,6 +324,7 @@ pub struct Game {
 impl Game {
     pub fn new(
         settings: &config::Settings,
+        color_format: wgpu::TextureFormat,
         screen_extent: wgpu::Extent3d,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -373,6 +374,7 @@ impl Game {
             &level,
             &pal_data,
             &settings.render,
+            color_format,
             screen_extent,
             #[cfg(feature = "glsl")]
             store_init.resource(),
