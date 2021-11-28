@@ -4,7 +4,7 @@ use crate::{
     render::{
         global::Context as GlobalContext,
         object::{Context as ObjectContext, Instance as ObjectInstance},
-        VertexStorageNotSupported, COLOR_FORMAT, DEPTH_FORMAT,
+        VertexStorageNotSupported, DEPTH_FORMAT,
     },
 };
 
@@ -102,6 +102,7 @@ pub struct Context {
     bind_group_line: wgpu::BindGroup,
     bind_group_face: wgpu::BindGroup,
     bind_group_edge: wgpu::BindGroup,
+    color_format: wgpu::TextureFormat,
     // hold the buffers alive
     vertex_buf: Option<wgpu::Buffer>,
     color_buf: Option<wgpu::Buffer>,
@@ -204,6 +205,7 @@ impl Context {
             bind_group_line,
             bind_group_face,
             bind_group_edge,
+            color_format: global.color_format,
             vertex_buf: None,
             color_buf: None,
         };
@@ -237,7 +239,7 @@ impl Context {
                     module: &shaders.fs,
                     entry_point: "main",
                     targets: &[wgpu::ColorTargetState {
-                        format: COLOR_FORMAT,
+                        format: self.color_format,
                         blend: Some(wgpu::BlendState {
                             alpha: wgpu::BlendComponent {
                                 src_factor: wgpu::BlendFactor::One,
@@ -312,7 +314,7 @@ impl Context {
                             module: &shader,
                             entry_point: "main_fs",
                             targets: &[wgpu::ColorTargetState {
-                                format: COLOR_FORMAT,
+                                format: self.color_format,
                                 blend: Some(wgpu::BlendState {
                                     color: blend,
                                     alpha: blend,

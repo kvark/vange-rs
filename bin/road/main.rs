@@ -32,6 +32,7 @@ fn main() {
 
     let game = game::Game::new(
         &settings,
+        harness.color_format,
         harness.extent,
         &harness.device,
         &harness.queue,

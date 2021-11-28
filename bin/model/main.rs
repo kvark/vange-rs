@@ -31,6 +31,7 @@ fn main() {
         &harness.device,
         &harness.queue,
         &harness.downlevel_caps,
+        harness.color_format,
     );
 
     harness.main_loop(app);

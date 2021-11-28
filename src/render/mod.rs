@@ -37,7 +37,6 @@ pub mod body {
 }
 
 pub use shadow::FORMAT as SHADOW_FORMAT;
-pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 #[derive(Clone, Copy, Debug)]
@@ -536,6 +535,7 @@ impl Render {
         level: &level::Level,
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
+        color_format: wgpu::TextureFormat,
         screen_size: wgpu::Extent3d,
         #[cfg(feature = "glsl")] store_buffer: wgpu::BindingResource<'_>,
     ) -> Self {
@@ -550,6 +550,7 @@ impl Render {
         let global = global::Context::new(
             device,
             queue,
+            color_format,
             #[cfg(feature = "glsl")]
             store_buffer,
             shadow.as_ref().map(|shadow| &shadow.view),

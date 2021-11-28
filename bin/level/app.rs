@@ -34,6 +34,7 @@ pub struct LevelView {
 impl LevelView {
     pub fn new(
         settings: &config::settings::Settings,
+        color_format: wgpu::TextureFormat,
         screen_extent: wgpu::Extent3d,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -114,6 +115,7 @@ impl LevelView {
             &level,
             &objects_palette,
             &settings.render,
+            color_format,
             screen_extent,
             #[cfg(feature = "glsl")]
             store_init.resource(),

@@ -1,7 +1,7 @@
 #![allow(clippy::single_match)]
 use vangers::{
     config,
-    render::{ScreenTargets, COLOR_FORMAT, DEPTH_FORMAT},
+    render::{ScreenTargets, DEPTH_FORMAT},
 };
 
 use futures::executor::{LocalPool, LocalSpawner};
@@ -41,6 +41,7 @@ pub struct Harness {
     pub queue: wgpu::Queue,
     pub downlevel_caps: wgpu::DownlevelCapabilities,
     surface: wgpu::Surface,
+    pub color_format: wgpu::TextureFormat,
     pub extent: wgpu::Extent3d,
     reload_on_focus: bool,
     depth_target: wgpu::TextureView,
@@ -118,12 +119,15 @@ impl Harness {
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: COLOR_FORMAT,
+            format: surface
+                .get_preferred_format(&adapter)
+                .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb),
             width: extent.width,
             height: extent.height,
             present_mode: wgpu::PresentMode::Mailbox,
         };
         surface.configure(&device, &config);
+
         let depth_target = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("Depth"),
@@ -144,6 +148,7 @@ impl Harness {
             downlevel_caps,
             queue,
             surface,
+            color_format: config.format,
             extent,
             reload_on_focus: settings.window.reload_on_focus,
             depth_target,
@@ -165,6 +170,7 @@ impl Harness {
             queue,
             downlevel_caps: _,
             surface,
+            color_format,
             mut extent,
             reload_on_focus,
             mut depth_target,
@@ -188,7 +194,7 @@ impl Harness {
                     };
                     let config = wgpu::SurfaceConfiguration {
                         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                        format: COLOR_FORMAT,
+                        format: color_format,
                         width: size.width,
                         height: size.height,
                         present_mode: wgpu::PresentMode::Mailbox,
