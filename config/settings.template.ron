@@ -40,7 +40,7 @@
 		size: (1280, 800),
 		reload_on_focus: false,
 	),
-	backend: Auto, // Vulkan, Metal, DX12, DX11
+	backend: Auto, // Auto, Vulkan, Metal, DX12, GL
 	render: (
 		wgpu_trace_path: "",
 		light: (
