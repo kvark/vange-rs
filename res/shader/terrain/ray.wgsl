@@ -148,6 +148,18 @@ struct FragOutput {
 };
 
 [[stage(fragment)]]
+fn ray_color_debug(in: RayInput) -> FragOutput {
+    let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
+    let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
+    let view = normalize(sp_far_world - sp_near_world);
+
+    var point = cast_ray_to_plane(0.0, sp_near_world, view);
+    let surface = get_surface(point.xy);
+    let color = vec4<f32>(surface.low_alt, surface.high_alt, surface.delta, 0.0) / 255.0;
+    return FragOutput(color, 1.0);
+}
+
+[[stage(fragment)]]
 fn ray_color(in: RayInput) -> FragOutput {
     let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
