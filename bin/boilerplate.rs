@@ -88,7 +88,7 @@ impl Harness {
         let downlevel_caps = adapter.get_downlevel_properties();
         let adapter_limits = adapter.limits();
 
-        let mut limits = wgpu::Limits::downlevel_defaults();
+        let mut limits = wgpu::Limits::downlevel_webgl2_defaults();
         if options.uses_level {
             let desired_height = 16 << 10;
             limits.max_texture_dimension_2d =
