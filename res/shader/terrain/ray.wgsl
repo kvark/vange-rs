@@ -75,7 +75,7 @@ fn cast_ray_impl(
 
 struct CastPoint {
     pos: vec3<f32>;
-    type: u32;
+    ty: u32;
     tex_coord: vec2<f32>;
     is_underground: bool;
     //is_shadowed: bool;
@@ -95,7 +95,7 @@ fn cast_ray_to_map(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     var a = cast_result.a;
     var b = cast_result.b;
     var suf = cast_result.surface;
-    pt.type = suf.high_type;
+    pt.ty = suf.high_type;
     pt.is_underground = false;
 
     if (suf.delta != 0.0 && b.z < suf.low_alt + suf.delta) {
@@ -106,9 +106,9 @@ fn cast_ray_to_map(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
         b = cr.b;
         suf = cr.surface;
         if (b.z >= suf.low_alt + suf.delta) {
-            pt.type = suf.high_type;
+            pt.ty = suf.high_type;
         } else {
-            pt.type = suf.low_type;
+            pt.ty = suf.low_type;
             // underground is better indicated by a real shadow
             //pt.is_underground = true;
         }
@@ -122,7 +122,7 @@ fn cast_ray_to_map(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
 }
 
 fn color_point(pt: CastPoint, lit_factor: f32) -> vec4<f32> {
-    return evaluate_color(pt.type, pt.tex_coord, pt.pos.z / u_Surface.texture_scale.z, lit_factor);
+    return evaluate_color(pt.ty, pt.tex_coord, pt.pos.z / u_Surface.texture_scale.z, lit_factor);
 }
 
 let c_DepthBias: f32 = 0.01;
@@ -169,7 +169,7 @@ fn ray_color(in: RayInput) -> FragOutput {
     let lit_factor = fetch_shadow(pt.pos);
     var frag_color = color_point(pt, lit_factor);
 
-    if (pt.type == c_TerrainWater) {
+    if (pt.ty == c_TerrainWater) {
         let a = pt.pos;
         let variance = a.xy % c_ReflectionVariance;
         let reflected = normalize(view * vec3<f32>(1.0 + variance, -1.0));
@@ -274,8 +274,8 @@ fn ray_mip_color(in: RayInput) -> FragOutput {
 
     let lit_factor = fetch_shadow(point);
     let surface = get_surface(point.xy);
-    let type = select(surface.low_type, surface.high_type, point.z > surface.low_alt);
-    let frag_color = evaluate_color(type, surface.tex_coord, point.z / u_Surface.texture_scale.z, lit_factor);
+    let ty = select(surface.low_type, surface.high_type, point.z > surface.low_alt);
+    let frag_color = evaluate_color(ty, surface.tex_coord, point.z / u_Surface.texture_scale.z, lit_factor);
 
     let target_ndc = u_Globals.view_proj * vec4<f32>(point, 1.0);
     let depth = target_ndc.z / target_ndc.w;
