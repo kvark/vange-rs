@@ -18,10 +18,10 @@ let c_ShadowDepthScale: f32 = 0.6; //~ 2.0 / 3.0;
 // see `RenderPrepare` in `land.cpp` for the original game logic
 
 // material coefficients are called "dx", "sd" and "jj" in the original
-fn evaluate_light(mat: vec3<f32>, height_diff: f32) -> f32 {
-    let dx = mat.x * c_DiffuseScale;
-    let sd = mat.y * c_ShadowDepthScale;
-    let jj = mat.z * height_diff * 256.0;
+fn evaluate_light(material: vec3<f32>, height_diff: f32) -> f32 {
+    let dx = material.x * c_DiffuseScale;
+    let sd = material.y * c_ShadowDepthScale;
+    let jj = material.z * height_diff * 256.0;
     let v = (dx * sd - jj) / sqrt((1.0 + sd * sd) * (dx * dx + jj * jj));
     return clamp(v, 0.0, 1.0);
 }
@@ -41,8 +41,8 @@ fn evaluate_color_id(ty: u32, tex_coord: vec2<f32>, height_normalized: f32, lit_
     let diff =
         textureSampleLevel(t_Height, s_Main, tex_coord, 0.0, vec2<i32>(1, 0)).x -
         textureSampleLevel(t_Height, s_Main, tex_coord, 0.0, vec2<i32>(-1, 0)).x;
-    let mat = select(vec3<f32>(1.0), vec3<f32>(5.0, 1.25, 0.5), ty == 0u);
-    let light_clr = evaluate_light(mat, diff);
+    let material = select(vec3<f32>(1.0), vec3<f32>(5.0, 1.25, 0.5), ty == 0u);
+    let light_clr = evaluate_light(material, diff);
     let tmp = light_clr - c_HorFactor * (1.0 - height_normalized);
     return evaluate_palette(ty, lit_factor * tmp, tex_coord.y);
 }
