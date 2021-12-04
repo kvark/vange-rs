@@ -60,27 +60,27 @@ rust-ini = "0.17"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.4"
-wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "b32dcbb", features = [] }
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "9bbea3d", features = [] }
 # binaries
 env_logger = "0.8"
 getopts = "0.2"
 obj = "0.10"
 png = "0.16"
-winit = "0.25"
+winit = "0.26"
 
 [dev-dependencies]
-naga = { git = "https://github.com/gfx-rs/naga", rev = "29571cc", features = ["wgsl-in"] }
+naga = { git = "https://github.com/gfx-rs/naga", rev = "c69f676", features = ["wgsl-in"] }
 #naga = { version = "0.6", features = ["wgsl-in"] }
 
 [dependencies.profiling]
 version = "1.0.1"
 default-features = false
 
-[patch.crates-io]
-#naga = { path = "../naga" }
-
 [patch."https://github.com/gfx-rs/wgpu"]
 #wgpu = { path = "../wgpu/wgpu" }
 #wgpu-hal = { path = "../wgpu/wgpu-hal" }
 #wgpu-core = { path = "../wgpu/wgpu-core" }
 #wgpu-types = { path = "../wgpu/wgpu-types" }
+
+[patch."https://github.com/gfx-rs/naga"]
+#naga = { path = "../naga" }
