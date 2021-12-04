@@ -276,7 +276,8 @@ impl Context {
         });
         let shape_bind_group_layout = if downlevel_caps
             .flags
-            .contains(wgpu::DownlevelFlags::VERTEX_STORAGE)
+            .contains(wgpu::DownlevelFlags::VERTEX_STORAGE) &&
+            device.limits().max_storage_buffers_per_shader_stage != 0
         {
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Shape"),
