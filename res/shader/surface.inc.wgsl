@@ -53,7 +53,7 @@ fn get_surface(pos: vec2<f32>) -> Surface {
     var suf: Surface;
 
     let tc = pos / u_Surface.texture_scale.xy;
-    let tci = vec2<i32>(pos % u_Surface.texture_scale.xy);
+    let tci = vec2<i32>(pos - floor(pos / u_Surface.texture_scale.xy) * u_Surface.texture_scale.xy);
     suf.tex_coord = tc;
 
     let meta = textureLoad(t_Meta, tci, 0).x;
@@ -64,7 +64,7 @@ fn get_surface(pos: vec2<f32>) -> Surface {
         //TODO: we need either low or high for the most part
         // so this can be more efficient with a boolean param
         var delta = 0u;
-        if (pos.x % 2.0 >= 1.0) {
+        if (tci.x % 2 == 1) {
             let meta_low = textureLoad(t_Meta, tci + vec2<i32>(-1, 0), 0).x;
             suf.high_type = suf.low_type;
             suf.low_type = get_terrain_type(meta_low);

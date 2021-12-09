@@ -171,7 +171,7 @@ fn ray_color(in: RayInput) -> FragOutput {
 
     if (pt.ty == c_TerrainWater) {
         let a = pt.pos;
-        let variance = a.xy % c_ReflectionVariance;
+        let variance = abs(a.xy) % c_ReflectionVariance;
         let reflected = normalize(view * vec3<f32>(1.0 + variance, -1.0));
         let outside = cast_ray_to_plane(u_Surface.texture_scale.z, a, reflected);
 
@@ -244,6 +244,7 @@ fn cast_ray_mip(base_point: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
             // adjust the integer position on cell boundary
             // figure out if we hit the higher LOD bound and switch to it
             var affinity = 0.0;
+            //TODO: this "%" is incorrect, it takes the sign of `cell_id`
             let proximity = cell_id % 2.0 - vec2<f32>(0.5);
             if (units.x <= units.y) {
                 ipos.x = select(cell_tl.x - 1, cell_tl.x + (1 << lod), dir.x >= 0.0);
