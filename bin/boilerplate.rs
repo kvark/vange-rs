@@ -4,7 +4,8 @@ use vangers::{
     render::{ScreenTargets, DEPTH_FORMAT},
 };
 
-use futures::executor::{block_on, LocalPool, LocalSpawner};
+
+use futures::executor::{LocalPool, LocalSpawner};
 use log::info;
 use winit::{
     event,
@@ -12,7 +13,10 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(target_arch="wasm32"))]
+use futures::executor::block_on;
+
+#[cfg(target_arch="wasm32")]
 use crate::web;
 
 pub trait Application {

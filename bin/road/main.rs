@@ -1,6 +1,3 @@
-#![allow(irrefutable_let_patterns)]
-use log::info;
-
 #[path = "../boilerplate.rs"]
 mod boilerplate;
 
@@ -16,7 +13,7 @@ fn main() {
     use std::env;
     env_logger::init();
 
-    info!("Parsing command line");
+    log::info!("Parsing command line");
     let args: Vec<_> = env::args().collect();
     let mut options = getopts::Options::new();
     options
@@ -50,9 +47,6 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 fn main() {
-    #[path = "../web.rs"]
-    mod web;
-
     use env_logger::Builder;
     use log::LevelFilter;
 
