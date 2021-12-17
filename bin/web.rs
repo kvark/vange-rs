@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use log::info;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -8,7 +11,7 @@ use crate::boilerplate::Application;
 
 static mut BINDED: bool = false;
 
-pub fn bind_once(mut _application: &mut dyn Application) {
+pub fn bind_once<T: Application + 'static>(application: Rc<RefCell<T>>) {
     use std::collections::HashMap;
     use winit::event::{ElementState, KeyboardInput, ModifiersState, VirtualKeyCode as Key};
 
@@ -19,10 +22,6 @@ pub fn bind_once(mut _application: &mut dyn Application) {
 
         BINDED = true;
     }
-
-    let application = unsafe {
-        std::mem::transmute::<&mut dyn Application, &'static mut dyn Application>(_application)
-    };
 
     let window = web_sys::window().expect("should have a window in this context");
 
@@ -56,7 +55,7 @@ pub fn bind_once(mut _application: &mut dyn Application) {
             let key = event.key().to_ascii_lowercase();
 
             match mappings.get(&key) {
-                Some(key) => application.on_key(KeyboardInput {
+                Some(key) => application.borrow_mut().on_key(KeyboardInput {
                     state: if pressed {
                         ElementState::Pressed
                     } else {

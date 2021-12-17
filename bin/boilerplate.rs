@@ -1,4 +1,6 @@
 #![allow(clippy::single_match)]
+use std::{cell::RefCell, rc::Rc};
+
 use vangers::{
     config,
     render::{ScreenTargets, DEPTH_FORMAT},
@@ -176,9 +178,11 @@ impl Harness {
         (harness, settings)
     }
 
-    pub fn main_loop<A: 'static + Application>(self, mut app: A) {
+    pub fn main_loop<A: Application + 'static>(self, app: A) {
         #[cfg(not(target_arch = "wasm32"))]
         use std::time;
+
+        let app = Rc::new(RefCell::new(app));
 
         #[cfg(target_arch = "wasm32")]
         let mut last_time = web::now();
@@ -207,7 +211,7 @@ impl Harness {
             task_pool.run_until_stalled();
 
             #[cfg(target_arch = "wasm32")]
-            web::bind_once(&mut app);
+            web::bind_once(Rc::clone(&app));
 
             match event {
                 event::Event::WindowEvent {
@@ -239,7 +243,7 @@ impl Harness {
                             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                         })
                         .create_view(&wgpu::TextureViewDescriptor::default());
-                    app.resize(&device, extent);
+                    app.borrow_mut().resize(&device, extent);
                 }
                 event::Event::WindowEvent { event, .. } => match event {
                     event::WindowEvent::Focused(false) => {
@@ -247,23 +251,23 @@ impl Harness {
                     }
                     event::WindowEvent::Focused(true) if needs_reload => {
                         info!("Reloading shaders");
-                        app.reload(&device);
+                        app.borrow_mut().reload(&device);
                         needs_reload = false;
                     }
                     event::WindowEvent::CloseRequested => {
                         *control_flow = ControlFlow::Exit;
                     }
                     event::WindowEvent::KeyboardInput { input, .. } => {
-                        if !app.on_key(input) {
+                        if !app.borrow_mut().on_key(input) {
                             *control_flow = ControlFlow::Exit;
                         }
                     }
-                    event::WindowEvent::MouseWheel { delta, .. } => app.on_mouse_wheel(delta),
+                    event::WindowEvent::MouseWheel { delta, .. } => app.borrow_mut().on_mouse_wheel(delta),
                     event::WindowEvent::CursorMoved { position, .. } => {
-                        app.on_cursor_move(position.into())
+                        app.borrow_mut().on_cursor_move(position.into())
                     }
                     event::WindowEvent::MouseInput { state, button, .. } => {
-                        app.on_mouse_button(state, button)
+                        app.borrow_mut().on_mouse_button(state, button)
                     }
                     _ => {}
                 },
@@ -287,7 +291,7 @@ impl Harness {
                     }
 
                     if delta > 0.0 {
-                        let update_command_buffers = app.update(&device, delta, &spawner);
+                        let update_command_buffers = app.borrow_mut().update(&device, delta, &spawner);
                         if !update_command_buffers.is_empty() {
                             queue.submit(update_command_buffers);
                         }
@@ -303,7 +307,7 @@ impl Harness {
                                 color: &view,
                                 depth: &depth_target,
                             };
-                            let render_command_buffer = app.draw(&device, targets, &spawner);
+                            let render_command_buffer = app.borrow_mut().draw(&device, targets, &spawner);
                             queue.submit(Some(render_command_buffer));
                             frame.present();
                         }
