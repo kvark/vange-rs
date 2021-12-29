@@ -11,7 +11,7 @@
 			height: 300,
 			target_overhead: 200,
 			speed: 1,
-			depth_range: (10, 1000),
+			depth_range: (10, 2000),
 		),
 		other: (
 			count: 10, // number of NPC vangers
