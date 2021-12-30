@@ -180,6 +180,7 @@ pub fn step(
                 terrain::CollisionData {
                     hard: Some(ref cp), ..
                 } if mostly_horisontal => {
+                    log::debug!("\t\t\tmostly horisontal");
                     let r1 = rot_inv * cgmath::vec3(cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0); // ignore vertical
                     let pv = rigid.velocity_at(r1);
                     let normal = {
@@ -213,16 +214,19 @@ pub fn step(
                 }
                 _ => (),
             }
+
             if let Some(ref cp) = cdata.soft {
-                let df0 = common.contact.k_elastic_spring * cp.depth * modulation;
+                let df0 = common.contact.k_elastic_spring * modulation * cp.depth;
                 let df = df0.min(common.impulse.elastic_restriction);
                 log::debug!("\t\tbound[{}] dF.z = {}, rg0={:?}", bound_poly_id, df, rg0);
-                acc_springs.f.z += df;
-                acc_springs.k.x += rg0.y * df;
-                acc_springs.k.y -= rg0.x * df;
+
                 //let impulse = cgmath::vec3(0., 0., df);
                 //acc_springs.f += impulse;
                 //acc_springs.k += rg0.cross(impulse);
+                acc_springs.f.z += df;
+                acc_springs.k.x += rg0.y * df;
+                acc_springs.k.y -= rg0.x * df;
+
                 if stand_on_wheels {
                     wheels_touch += 1;
                 } else {
