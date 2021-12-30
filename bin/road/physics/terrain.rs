@@ -11,6 +11,7 @@ pub struct CollisionPoint {
 #[derive(Debug)]
 pub struct CollisionData {
     pub soft: Option<CollisionPoint>,
+    pub hard_dominant: bool,
     pub hard: Option<CollisionPoint>,
 }
 
@@ -105,7 +106,7 @@ impl CollisionData {
                 }
             };
             let dz = height - pos.z;
-            //log::debug!("\t\t\tSample h={:?} at {:?}, dz={}", height, pos, dz);
+            log::trace!("\t\t\tSample h={:?} at {:?}, dz={}", height, pos, dz);
             if dz > terraconf.min_wall_delta {
                 //log::debug!("\t\t\tHard touch of {} at {:?}", dz, pos);
                 hard.add(pos, dz);
@@ -114,9 +115,16 @@ impl CollisionData {
                 soft.add(pos, dz);
             }
         }
+
+        let total = (poly.samples.end - poly.samples.start) as f32;
+        // This is tricky: original code was doing pixel collisions and had
+        // a hard-coded constants of 4 pixels to be the threshold.
+        // See `VariablePolygon::lower_average` implementation.
+        let threshold = 0.05 * total;
         CollisionData {
             soft: (if soft.count > 0.0 { &soft } else { &hard }).finish(0.0),
-            hard: hard.finish(4.0),
+            hard_dominant: hard.count * 2.0 >= total,
+            hard: hard.finish(threshold),
         }
     }
 }
