@@ -8,6 +8,7 @@ pub struct Car {
     pub id: String,
     pub color: BodyColor,
     pub slots: Vec<String>,
+    pub pos: Option<(i32, i32)>,
 }
 
 #[derive(Copy, Clone, Deserialize)]
