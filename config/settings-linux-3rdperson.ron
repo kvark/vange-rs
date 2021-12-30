@@ -32,6 +32,7 @@
 		color: Green, // Dummy, Red, Blue, Yellow, Gray
 		slots: [],
 		//example: ["HeavyLaser", "LightMissile", "LightFireBall"]
+		pos: None,
 	),
 	window: (
 		title: "Rusty Road",

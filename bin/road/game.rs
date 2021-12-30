@@ -330,16 +330,24 @@ impl Game {
         queue: &wgpu::Queue,
         downlevel_caps: &wgpu::DownlevelCapabilities,
     ) -> Self {
+        let mut rng = rand::thread_rng();
         log::info!("Loading world parameters");
-        let (level, coords) = if settings.game.level.is_empty() {
+        let mut escaves = config::escaves::load(settings.open_relative("escaves.prm"));
+        let mut escaves_secondary = config::escaves::load(settings.open_relative("spots.prm"));
+        escaves.append(&mut escaves_secondary);
+
+        let (level, default_coords) = if settings.game.level.is_empty() {
             log::info!("Using test level");
             (level::Level::new_test(), (0, 0))
         } else {
-            let escaves = config::escaves::load(settings.open_relative("escaves.prm"));
-            let coordinates = escaves
+            use rand::seq::SliceRandom as _;
+
+            let local_escave_coords = escaves
                 .iter()
-                .find(|e| e.world == settings.game.level)
-                .map_or((0, 0), |e| e.coordinates);
+                .filter(|e| e.world == settings.game.level)
+                .map(|e| e.coordinates)
+                .collect::<Vec<_>>();
+            let coordinates = *local_escave_coords.choose(&mut rng).unwrap();
 
             let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
             let ini_name = match worlds.get(&settings.game.level) {
@@ -358,6 +366,7 @@ impl Game {
 
             (level, coordinates)
         };
+        let coords = settings.car.pos.unwrap_or(default_coords);
 
         log::info!("Initializing the render");
         let depth = settings.game.camera.depth_range;
@@ -387,7 +396,7 @@ impl Game {
                 _bunches: config::bunches::load(settings.open_relative("bunches.prm")),
                 cars: config::car::load_registry(settings, &game, device, &render.object),
                 common: config::common::load(settings.open_relative("common.prm")),
-                _escaves: config::escaves::load(settings.open_relative("escaves.prm")),
+                _escaves: escaves,
                 game,
             }
         };
@@ -441,7 +450,6 @@ impl Game {
         }
 
         let mut agents = vec![player_agent];
-        let mut rng = rand::thread_rng();
         // populate with random agents
         for i in 0..settings.game.other.count {
             use rand::{prelude::SliceRandom, Rng};
