@@ -13,7 +13,7 @@ impl Power {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TerrainConfig {
     pub shadow_offset: u8,
     pub height_shift: u8,
@@ -45,11 +45,7 @@ impl LevelConfig {
             .get("Terrain Max")
             .map_or(8, |value| value.parse::<usize>().unwrap());
         let mut terrains = (0..terra_count)
-            .map(|_| TerrainConfig {
-                shadow_offset: 0,
-                height_shift: 0,
-                colors: 0..0,
-            })
+            .map(|_| TerrainConfig::default())
             .collect::<Box<[_]>>();
 
         for (t, val) in terrains

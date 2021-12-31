@@ -9,6 +9,7 @@ publish = false
 
 [workspace]
 members = [
+    "lib/ffi",
     "lib/m3d",
     "lib/splay",
     "lib/tiff",
