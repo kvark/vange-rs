@@ -92,7 +92,7 @@ impl Backend {
     }
 }
 
-#[derive(Copy, Clone, Deserialize)]
+#[derive(Copy, Clone, Default, Deserialize)]
 pub struct DebugRender {
     pub max_vertices: usize,
     pub collision_shapes: bool,
