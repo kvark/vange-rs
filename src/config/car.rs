@@ -177,7 +177,13 @@ pub fn load_registry(
         let (name, data) = fi.next_entry();
         let mi = &reg.model_infos[name];
         let mut prm_path = settings.data_path.join(&mi.path).with_extension("prm");
+
+        #[cfg(target_arch = "wasm32")]
+        let is_default = false;
+
+        #[cfg(not(target_arch = "wasm32"))]
         let is_default = !prm_path.exists();
+
         if is_default {
             warn!("Vehicle {} doesn't have parameters, using defaults", name);
             prm_path.set_file_name("default");

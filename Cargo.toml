@@ -20,6 +20,7 @@ members = [
 default = []
 glsl = ["glsl-to-spirv", "wgpu/spirv"]
 profile = ["profiling/profile-with-tracy"]
+nodata = []
 
 [[bin]]
 name = "road"
@@ -60,13 +61,13 @@ rust-ini = "0.17"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.4"
-wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "c8d572a", features = [] }
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "c8d572a", features = ["webgl"] }
 # binaries
 env_logger = "0.8"
 getopts = "0.2"
 obj = "0.10"
 png = "0.16"
-winit = "0.26"
+winit = { version = "0.26", features = [] }
 
 [dev-dependencies]
 naga = { git = "https://github.com/gfx-rs/naga", rev = "c69f676", features = ["wgsl-in"] }
@@ -82,5 +83,11 @@ default-features = false
 #wgpu-core = { path = "../wgpu/wgpu-core" }
 #wgpu-types = { path = "../wgpu/wgpu-types" }
 
-[patch."https://github.com/gfx-rs/naga"]
-#naga = { path = "../naga" }
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3.55", features = [] }
+wasm-bindgen = "0.2.78"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = { version = "0.1.7" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.getrandom]
+features = ["js"]

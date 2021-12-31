@@ -105,7 +105,7 @@ impl ShapeVertexDesc {
 pub fn make_shader_code(name: &str) -> Result<String, IoError> {
     let base_path = PathBuf::from("res").join("shader");
     let path = base_path.join(name).with_extension("wgsl");
-    if !path.is_file() {
+    if !is_file(&path) {
         panic!("Shader not found: {:?}", path);
     }
 
@@ -172,7 +172,7 @@ impl Shaders {
 
         let base_path = PathBuf::from("res").join("shader");
         let path = base_path.join(name).with_extension("glsl");
-        if !path.is_file() {
+        if !is_file(&path) {
             panic!("Shader not found: {:?}", path);
         }
 
@@ -263,7 +263,7 @@ impl Shaders {
 
         let base_path = PathBuf::from("res").join("shader");
         let path = base_path.join(name).with_extension("glsl");
-        if !path.is_file() {
+        if !is_file(&path) {
             panic!("Shader not found: {:?}", path);
         }
 
@@ -736,4 +736,14 @@ impl Render {
     pub fn target_color(&self) -> gfx::handle::RenderTargetView<R, ColorFormat> {
         self.terrain_data.out_color.clone()
     }*/
+}
+
+#[cfg(target_arch = "wasm32")]
+fn is_file(_path: &PathBuf) -> bool {
+    true
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_file(path: &PathBuf) -> bool {
+    path.is_file()
 }

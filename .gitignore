@@ -4,3 +4,9 @@
 .fuse_hidden*
 .DS_Store
 last-shader.wgsl
+
+# web version
+web/assets/res
+web/assets/road.css
+web/road*
+res_linux

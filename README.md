@@ -42,6 +42,45 @@ Controls:
 
 <img alt="game" src="etc/shots/Road11-pause.png" width="25%">
 
+### Web version
+
+  Stage                 | State              | Note        |
+  --------------------  | ------------------ | ----------- |
+  Support FS            | :white_check_mark: | [rust-memfs](https://github.com/caiiiycuk/rust-memfs/blob/memfs/README.md)       |
+  WebGL Initialization  | :white_check_mark: ||
+  Loading worlds        | :white_check_mark: ||
+  Loading heights       | :white_check_mark: ||
+  Loading data          | :white_check_mark: ||
+  Loading flood         | :white_check_mark: ||
+  Render                | :white_check_mark: | WebGPU not tested |
+
+**Requrements**
+
+* To build game **you must** put resources of original game in `res_linux/data` folder.
+* You must install [wasm-bindgen](https://rustwasm.github.io/wasm-bindgen/reference/cli.html)
+* If you intended to run the build, then you must use [rust-memfs](https://github.com/caiiiycuk/rust-memfs/blob/memfs/README.md). [explanation (RU)](https://habr.com/ru/post/594611/)
+
+**Debug build**
+
+```sh
+cargo build --target wasm32-unknown-unknown --bin road --verbose && \
+wasm-bindgen --out-dir web/ --target web --keep-debug target/wasm32-unknown-unknown/debug/road.wasm
+```
+
+**Release build**
+```sh
+cargo build --target wasm32-unknown-unknown --bin road --verbose --release && \
+wasm-bindgen --out-dir web/ --target web target/wasm32-unknown-unknown/release/road.wasm
+```
+
+**Build web page**
+```sh
+cd web
+./build.sh
+```
+
+After building you can run game just by serving `web` folder.
+
 ### Mechous viewer/debugger
 `car` binary allows to see the mechos with items selected by the configuration. It also shows the debug collision info.
 ```bash

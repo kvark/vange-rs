@@ -1,0 +1,234 @@
+<html>
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Vange-rs: WebAssembly + Rust</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link href="assets/road.css" rel="stylesheet">
+</head>
+
+<body class="h-full">
+    <div id="controls" class="absolute py-2 px-4 flex flex-col font-mono h-full">
+        <H1 class="font-bold text-lg my-4">Vange-rs: WebAssembly + Rust</H1>
+        <p class="font-bold my-2">Controls (click into canvas to obtains keyboard focus)</p>
+        <p>Move: WASD</p>
+        <p>Jump: Left Alt</p>
+        <p>Turbo: Left Shift</p>
+        <p>Reset: R</p>
+        <p>Car view: P</p>
+
+
+        <p class="font-bold mt-8 mb-2">Select world and press GO! Then wait patiently...</p>
+
+
+        <div class="flex flex-row items-center">
+            <div>World:</div>
+            <select id="level" class="mx-4 p-2" onchange="javascript:updateSettings()">
+                <option>Ark-a-Znoy</option>
+                <option>Boozeena</option>
+                <option>hMok</option>
+                <option>Khox</option>
+                <option selected>Threall</option>
+                <option>Weexow</option>
+                <option>Xplo</option>
+            </select>
+            <button onclick="javascript:go()"
+                class="border px-2 py-1 border-gray-400 rounded bg-gradient-to-r from-yellow-400 via-red-500 to-pink-500">
+                GO!
+            </button>
+        </div>
+
+        <textarea id="settings" class="flex-grow my-2">
+        </textarea>
+    </div>
+    <div class="flex flex-col h-full w-full bg-gray-200 justify-center overflow-hidden">
+        <canvas id="canvas" data-raw-handle="1" width="1280" height="720" class="w-full"
+            style="height: 56vw; display: none;"></canvas>
+    </div>
+
+    <script type="module">
+        import init from "./road.js";
+
+        async function go() {
+            window.fs = await fsPromise;
+
+            document.getElementById("controls").style.display = "none";
+
+            const canvas = document.getElementById("canvas");
+            canvas.addEventListener("webglcontextlost", function (e) { alert('WebGL context lost. You will need to reload the page.'); e.preventDefault(); }, false);
+
+            var gl = canvas.getContext('webgl2', {
+                alpha: false,
+                antialias: false,
+                depth: false,
+                majorVersion: 2,
+                minorVersion: 0,
+                stencil: false,
+            });
+            canvas.style.display = "block";
+
+            init().then(async (m) => { }).catch(console.error);
+        }
+
+        window.go = go;
+    </script>
+
+    <script>
+        const filesToFetch = [
+            "res/shader/quat.inc.glsl",
+            "res/shader/debug.wgsl",
+            "res/shader/object.wgsl",
+            "res/shader/encode.inc.glsl",
+            "res/shader/quat.inc.wgsl",
+            "res/shader/globals.inc.wgsl",
+            "res/shader/downsample.glsl",
+            "res/shader/body.inc.wgsl",
+            "res/shader/shape.inc.glsl",
+            "res/shader/surface.inc.wgsl",
+            "res/shader/body.inc.glsl",
+            "res/shader/globals.inc.glsl",
+            "res/shader/debug_shape.glsl",
+            "res/shader/shadow.inc.wgsl",
+            "res/shader/surface.inc.glsl",
+            "res/shader/color.inc.wgsl",
+            "res/shader/terrain/locals.inc.wgsl",
+            "res/shader/terrain/ray.wgsl",
+            "res/shader/terrain/paint.wgsl",
+            "res/shader/terrain/mip.wgsl",
+            "res/shader/terrain/scatter.wgsl",
+            "res/shader/terrain/slice.wgsl",
+            "res/shader/physics/collision.inc.glsl",
+            "res/shader/physics/collision_clear.glsl",
+            "res/shader/physics/body_step.glsl",
+            "res/shader/physics/collision_add.glsl",
+            "res/shader/physics/body_push.glsl",
+            "res/shader/physics/pulse.inc.glsl",
+            "res/shader/physics/body_gather.glsl",
+        ];
+
+        const fsPromise = fetchFiles();
+
+        async function fetchFiles() {
+            const delayed = [];
+            for (const next of filesToFetch) {
+                delayed.push(fetchFile("assets/" + next).then((contents) => {
+                    return {
+                        file: next,
+                        contents,
+                    };
+                }));
+            }
+
+            const files = {};
+            const resolved = await Promise.all(delayed);
+            for (const { file, contents } of resolved) {
+                files[file] = contents;
+            }
+
+            return files;
+        }
+
+        async function fetchFile(file) {
+            return (await fetch(file)).text();
+        }
+
+        function getFile(file) {
+            if (file === "config/settings.ron") {
+                const settingsEl = document.getElementById("settings")
+                return settingsEl.value;
+            }
+
+            if (fs[file] === undefined) {
+                const message = "File '" + file + "' not loaded int FS!";
+                alert(message);
+                throw new Error(message);
+            }
+
+            return fs[file];
+        }
+
+        function updateSettings() {
+            const settingsEl = document.getElementById("settings")
+            const level = document.getElementById("level").value;
+            settingsEl.value = generateConfig(level);
+        }
+
+        window.onload = () => {
+            updateSettings();
+        }
+
+        const generateConfig = (level) => `
+(
+	data_path: "data",
+	game: (
+		level: "${level}", 
+		cycle: "", 
+		view: Perspective, // can be "Flat" or "Perspective"
+		camera: (
+			angle: 60,
+			height: 300,
+			target_overhead: 200,
+			speed: 1,
+			depth_range: (10, 1000),
+		),
+		other: (
+			count: 10, // number of NPC vangers
+			spawn_at: Random, // Player
+		),
+		physics: (
+			max_quant: 0.1,
+			shape_sampling: 0,
+			gpu_collision: None,
+			//Some((
+			//	max_objects: 100,
+			//	max_polygons_total: 1000,
+			//	max_raster_size: (100, 100),
+			//)),
+		),
+	),
+	car: (
+		id: "OxidizeMonk",
+		// "IronShadow",
+		color: Green, // Dummy, Red, Blue, Yellow, Gray
+		slots: [],
+		//slots: ["HeavyLaser", "LightMissile", "LightFireBall"],
+	),
+	window: (
+		title: "Rusty Road",
+		size: (1280, 720),
+		reload_on_focus: false,
+	),
+	backend: Auto, // Vulkan, Metal, DX12, DX11
+	render: (
+		wgpu_trace_path: "",
+		light: (
+			pos: (1, 2, 4, 0), // w=0 for directional, w=1 for point light
+			color: (1, 1, 1, 1),
+			shadow: (
+				size: 1024,
+				terrain: RayTraced,
+			),
+		),
+		fog: (
+			color: (0.1, 0.2, 0.3, 1.0),
+			depth: 50,
+		),
+		terrain: RayTraced,
+		// RayTraced,
+		// RayMipTraced (mip_count: 10, max_jumps: 25, max_steps: 100, debug: false),
+		// Scattered( density: (2, 2, 2) ),
+		// Sliced,
+		// Painted,
+		debug: (
+			max_vertices: 512,
+			collision_shapes: false,
+			collision_map: false,
+			impulses: false,
+		),
+	),
+)
+        `;
+    </script>
+</body>
+
+</html>

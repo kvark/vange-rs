@@ -1,9 +1,9 @@
 name: Check
 on:
   push:
-    branches: [master]
+    branches: [master, vange-rs-web]
   pull_request:
-    branches: [master]
+    branches: [master, vange-rs-web]
 
 jobs:
   build:
@@ -14,7 +14,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v2
+    - run: rustup target add wasm32-unknown-unknown
     - run: cargo check
+    - run: cargo check --bin road --features nodata --target wasm32-unknown-unknown
     - if: matrix.os == 'ubuntu-latest'
       run: cargo check --features glsl
     - run: cargo test

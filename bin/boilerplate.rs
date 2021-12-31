@@ -1,8 +1,11 @@
 #![allow(clippy::single_match)]
+use std::{cell::RefCell, rc::Rc};
+
 use vangers::{
     config,
     render::{ScreenTargets, DEPTH_FORMAT},
 };
+
 
 use futures::executor::{LocalPool, LocalSpawner};
 use log::info;
@@ -11,6 +14,12 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
 };
+
+#[cfg(not(target_arch="wasm32"))]
+use futures::executor::block_on;
+
+#[cfg(target_arch="wasm32")]
+use crate::web;
 
 pub trait Application {
     fn on_key(&mut self, input: event::KeyboardInput) -> bool;
@@ -53,12 +62,15 @@ pub struct HarnessOptions {
 }
 
 impl Harness {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn init(options: HarnessOptions) -> (Self, config::Settings) {
-        env_logger::init();
-        let mut task_pool = LocalPool::new();
+        block_on(Harness::init_async(options))
+    }
 
+    pub async fn init_async(options: HarnessOptions) -> (Self, config::Settings) {
         info!("Loading the settings");
         let settings = config::Settings::load("config/settings.ron");
+
         let extent = wgpu::Extent3d {
             width: settings.window.size[0],
             height: settings.window.size[1],
@@ -76,19 +88,25 @@ impl Harness {
             .unwrap();
         let surface = unsafe { instance.create_surface(&window) };
 
-        info!("Initializing the device");
-        let adapter = task_pool
-            .run_until(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        info!("Initializing the device:adapter");
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
-            }))
-            .expect("Unable to initialize GPU via the selected backend.");
+            })
+            .await
+            .expect("Unable to initialize GPU via the selected backend (adapter).");
 
         let downlevel_caps = adapter.get_downlevel_properties();
         let adapter_limits = adapter.limits();
 
+        #[cfg(target_arch = "wasm32")]
         let mut limits = wgpu::Limits::downlevel_webgl2_defaults();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut limits = wgpu::Limits::downlevel_defaults();
+
         if options.uses_level {
             let desired_height = 16 << 10;
             limits.max_texture_dimension_2d =
@@ -102,8 +120,10 @@ impl Harness {
                     desired_height
                 };
         }
-        let (device, queue) = task_pool
-            .run_until(adapter.request_device(
+
+        info!("Initializing the device:request");
+        let (device, queue) = adapter
+            .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
                     features: wgpu::Features::empty(),
@@ -114,8 +134,9 @@ impl Harness {
                 } else {
                     Some(std::path::Path::new(&settings.render.wgpu_trace_path))
                 },
-            ))
-            .unwrap();
+            )
+            .await
+            .expect("Unable to initialize GPU via the selected backend (request).");
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -141,7 +162,7 @@ impl Harness {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         let harness = Harness {
-            task_pool,
+            task_pool: LocalPool::new(),
             event_loop,
             window,
             device,
@@ -157,10 +178,18 @@ impl Harness {
         (harness, settings)
     }
 
-    pub fn main_loop<A: 'static + Application>(self, mut app: A) {
+    pub fn main_loop<A: Application + 'static>(self, app: A) {
+        #[cfg(not(target_arch = "wasm32"))]
         use std::time;
 
+        let app = Rc::new(RefCell::new(app));
+
+        #[cfg(target_arch = "wasm32")]
+        let mut last_time = web::now();
+
+        #[cfg(not(target_arch = "wasm32"))]
         let mut last_time = time::Instant::now();
+
         let mut needs_reload = false;
         let Harness {
             mut task_pool,
@@ -180,6 +209,9 @@ impl Harness {
             let _ = window;
             *control_flow = ControlFlow::Poll;
             task_pool.run_until_stalled();
+
+            #[cfg(target_arch = "wasm32")]
+            web::bind_once(Rc::clone(&app));
 
             match event {
                 event::Event::WindowEvent {
@@ -211,7 +243,7 @@ impl Harness {
                             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                         })
                         .create_view(&wgpu::TextureViewDescriptor::default());
-                    app.resize(&device, extent);
+                    app.borrow_mut().resize(&device, extent);
                 }
                 event::Event::WindowEvent { event, .. } => match event {
                     event::WindowEvent::Focused(false) => {
@@ -219,35 +251,50 @@ impl Harness {
                     }
                     event::WindowEvent::Focused(true) if needs_reload => {
                         info!("Reloading shaders");
-                        app.reload(&device);
+                        app.borrow_mut().reload(&device);
                         needs_reload = false;
                     }
                     event::WindowEvent::CloseRequested => {
                         *control_flow = ControlFlow::Exit;
                     }
                     event::WindowEvent::KeyboardInput { input, .. } => {
-                        if !app.on_key(input) {
+                        if !app.borrow_mut().on_key(input) {
                             *control_flow = ControlFlow::Exit;
                         }
                     }
-                    event::WindowEvent::MouseWheel { delta, .. } => app.on_mouse_wheel(delta),
+                    event::WindowEvent::MouseWheel { delta, .. } => app.borrow_mut().on_mouse_wheel(delta),
                     event::WindowEvent::CursorMoved { position, .. } => {
-                        app.on_cursor_move(position.into())
+                        app.borrow_mut().on_cursor_move(position.into())
                     }
                     event::WindowEvent::MouseInput { state, button, .. } => {
-                        app.on_mouse_button(state, button)
+                        app.borrow_mut().on_mouse_button(state, button)
                     }
                     _ => {}
                 },
                 event::Event::MainEventsCleared => {
                     let spawner = task_pool.spawner();
-                    let duration = time::Instant::now() - last_time;
-                    last_time += duration;
-                    let delta = duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1.0e-9;
 
-                    let update_command_buffers = app.update(&device, delta, &spawner);
-                    if !update_command_buffers.is_empty() {
-                        queue.submit(update_command_buffers);
+                    let delta: f32;
+
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let duration = web::now() - last_time;
+                        last_time += duration;
+                        delta = (duration / 1000.0) as f32;
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let duration = time::Instant::now() - last_time;
+                        last_time += duration;
+                        delta = duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1.0e-9;
+                    }
+
+                    if delta > 0.0 {
+                        let update_command_buffers = app.borrow_mut().update(&device, delta, &spawner);
+                        if !update_command_buffers.is_empty() {
+                            queue.submit(update_command_buffers);
+                        }
                     }
 
                     match surface.get_current_texture() {
@@ -260,7 +307,7 @@ impl Harness {
                                 color: &view,
                                 depth: &depth_target,
                             };
-                            let render_command_buffer = app.draw(&device, targets, &spawner);
+                            let render_command_buffer = app.borrow_mut().draw(&device, targets, &spawner);
                             queue.submit(Some(render_command_buffer));
                             frame.present();
                         }
