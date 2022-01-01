@@ -127,8 +127,8 @@ impl MaxMipper {
 
     pub fn update(
         &self,
-        rects: &[Rect],
         encoder: &mut wgpu::CommandEncoder,
+        rects: &[Rect],
         device: &wgpu::Device,
     ) {
         let mut vertex_data = Vec::with_capacity(rects.len() * 6);

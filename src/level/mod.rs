@@ -22,10 +22,10 @@ pub const HEIGHT_SCALE: u32 = 128;
 
 pub struct Level {
     pub size: (i32, i32),
-    pub flood_map: Vec<u8>,
+    pub flood_map: Box<[u8]>,
     pub flood_section_power: usize,
-    pub height: Vec<u8>,
-    pub meta: Vec<u8>,
+    pub height: Box<[u8]>,
+    pub meta: Box<[u8]>,
     pub palette: [[u8; 4]; 0x100],
     pub terrains: Box<[TerrainConfig]>,
 }
@@ -91,10 +91,10 @@ impl Level {
         };
         Level {
             size: (2, 1),
-            flood_map: vec![0],
+            flood_map: vec![0].into_boxed_slice(),
             flood_section_power: 0,
-            height: vec![0, 0],
-            meta: vec![0, 0],
+            height: vec![0, 0].into_boxed_slice(),
+            meta: vec![0, 0].into_boxed_slice(),
             palette: [[0xFF; 4]; 0x100],
             terrains: (0..8).map(|_| tc.clone()).collect(),
         }
@@ -206,14 +206,14 @@ pub fn read_palette(input: File, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 
     data
 }
 
-pub fn load_flood(config: &LevelConfig) -> Vec<u8> {
+pub fn load_flood(config: &LevelConfig) -> Box<[u8]> {
     profiling::scope!("Flood Map");
     let size = (config.size.0.as_value(), config.size.1.as_value());
     let flood_size = size.1 >> config.section.as_power();
 
     let vpr_file = match File::open(&config.path_data.with_extension("vpr")) {
         Ok(file) => file,
-        Err(_) => return vec![0; flood_size as usize],
+        Err(_) => return vec![0; flood_size as usize].into_boxed_slice(),
     };
 
     info!("Loading flood map...");
@@ -232,8 +232,8 @@ pub fn load_flood(config: &LevelConfig) -> Vec<u8> {
 }
 
 pub struct LevelData {
-    pub height: Vec<u8>,
-    pub meta: Vec<u8>,
+    pub height: Box<[u8]>,
+    pub meta: Box<[u8]>,
     pub size: (i32, i32),
 }
 
@@ -289,8 +289,8 @@ impl LevelData {
         let total = (size.0 * size.1) as usize;
         assert_eq!(data.len(), total * 4);
         let mut level = LevelData {
-            height: vec![0u8; total],
-            meta: vec![0u8; total],
+            height: vec![0u8; total].into_boxed_slice(),
+            meta: vec![0u8; total].into_boxed_slice(),
             size,
         };
 
@@ -330,8 +330,8 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
     info!("Loading height map...");
     let total = (size.0 * size.1) as usize;
     let mut level = LevelData {
-        height: vec![0u8; total],
-        meta: vec![0u8; total],
+        height: vec![0u8; total].into_boxed_slice(),
+        meta: vec![0u8; total].into_boxed_slice(),
         size,
     };
 
@@ -381,8 +381,8 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
 pub fn load_vmp(path: &Path, size: (i32, i32)) -> LevelData {
     let total = (size.0 * size.1) as usize;
     let mut level = LevelData {
-        height: vec![0u8; total],
-        meta: vec![0u8; total],
+        height: vec![0u8; total].into_boxed_slice(),
+        meta: vec![0u8; total].into_boxed_slice(),
         size,
     };
 

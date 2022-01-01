@@ -1,5 +1,6 @@
 //! Rusty Vangers FFI bindings.
 //! Matches "lib/renderer/src/renderer/scene/rust/vange_rs.h"
+//! See https://github.com/KranX/Vangers/pull/517
 
 use futures::executor::LocalPool;
 use std::ptr;
@@ -46,6 +47,7 @@ pub struct CameraDescription {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct MapDescription {
     width: i32,
     height: i32,
@@ -61,8 +63,14 @@ struct Camera {
     transform: Transform,
 }
 
+struct LevelContext {
+    desc: MapDescription,
+    render: vangers::render::Render,
+    level: vangers::level::Level,
+}
+
 pub struct Context {
-    renderer: Option<vangers::render::Render>,
+    level: Option<LevelContext>,
     render_config: vangers::config::settings::Render,
     color_format: wgpu::TextureFormat,
     queue: wgpu::Queue,
@@ -72,6 +80,7 @@ pub struct Context {
     camera: Camera,
 }
 
+#[no_mangle]
 pub extern "C" fn rv_init() -> Option<ptr::NonNull<Context>> {
     use vangers::config::settings as st;
 
@@ -95,7 +104,7 @@ pub extern "C" fn rv_init() -> Option<ptr::NonNull<Context>> {
         .ok()?;
 
     let ctx = Context {
-        renderer: None,
+        level: None,
         render_config: st::Render {
             wgpu_trace_path: String::new(),
             light: st::Light {
@@ -124,18 +133,22 @@ pub extern "C" fn rv_init() -> Option<ptr::NonNull<Context>> {
     ptr::NonNull::new(ptr)
 }
 
+#[no_mangle]
 pub unsafe extern "C" fn rv_exit(ctx: *mut Context) {
     let _ctx = Box::from_raw(ctx);
 }
 
+#[no_mangle]
 pub extern "C" fn rv_camera_init(ctx: &mut Context, desc: CameraDescription) {
     ctx.camera.desc = desc;
 }
 
+#[no_mangle]
 pub extern "C" fn rv_camera_set_transform(ctx: &mut Context, transform: Transform) {
     ctx.camera.transform = transform;
 }
 
+#[no_mangle]
 pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
     let terrains = (0..desc.material_count)
         .map(|i| unsafe {
@@ -149,10 +162,10 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
     let total = (desc.width * desc.height) as usize;
     let level = vangers::level::Level {
         size: (desc.width, desc.height),
-        flood_map: vec![],
+        flood_map: vec![].into_boxed_slice(),
         flood_section_power: 0, //TODO
-        height: vec![0; total],
-        meta: vec![0; total],
+        height: vec![0; total].into_boxed_slice(),
+        meta: vec![0; total].into_boxed_slice(),
         palette: [[0; 4]; 0x100], //TODO
         terrains,
     };
@@ -162,7 +175,7 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
         &ctx.queue,
         &ctx.downlevel_caps,
         &level,
-        &[], //TODO: objects palette
+        &[[0; 4]; 0x100], //TODO: objects palette
         &ctx.render_config,
         ctx.color_format,
         // extent only matters for "scatter" style rendering
@@ -172,9 +185,19 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
             depth_or_array_layers: 0,
         },
     );
-    ctx.renderer = Some(render);
+    ctx.level = Some(LevelContext {
+        desc,
+        render,
+        level,
+    });
 }
 
+#[no_mangle]
 pub extern "C" fn rv_map_exit(ctx: &mut Context) {
-    ctx.renderer = None;
+    ctx.level = None;
+}
+
+#[no_mangle]
+pub extern "C" fn rv_map_request_update(ctx: &mut Context, region: Rect) {
+    //TODO
 }

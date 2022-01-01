@@ -22,7 +22,7 @@ enum Input {
 
 pub struct LevelView {
     render: Render,
-    _level: level::Level,
+    level: level::Level,
     cam: space::Camera,
     input: Input,
 
@@ -123,7 +123,7 @@ impl LevelView {
 
         LevelView {
             render,
-            _level: level,
+            level,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, 0.0, 400.0),
                 rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
@@ -372,6 +372,7 @@ impl Application for LevelView {
         self.render.draw_world(
             &mut encoder,
             &mut Batcher::new(),
+            &self.level,
             &self.cam,
             targets,
             device,
