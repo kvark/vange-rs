@@ -134,8 +134,8 @@ impl LevelLayers {
 
         LevelData {
             size: (self.size.0 as i32, self.size.1 as i32),
-            meta,
-            height,
+            meta: meta.into_boxed_slice(),
+            height: height.into_boxed_slice(),
         }
     }
 }

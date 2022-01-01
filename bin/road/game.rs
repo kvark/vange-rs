@@ -923,8 +923,14 @@ impl Application for Game {
             label: Some("Draw"),
         });
 
-        self.render
-            .draw_world(&mut encoder, &mut self.batcher, &self.cam, targets, device);
+        self.render.draw_world(
+            &mut encoder,
+            &mut self.batcher,
+            &self.level,
+            &self.cam,
+            targets,
+            device,
+        );
 
         /*
         self.render.debug.draw_lines(

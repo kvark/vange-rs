@@ -190,6 +190,8 @@ pub struct Context {
     raytrace_geo: Geometry,
     kind: Kind,
     shadow_kind: Kind,
+    height_texture: wgpu::Texture,
+    meta_texture: wgpu::Texture,
     dirty_rects: Vec<Rect>,
 }
 
@@ -499,26 +501,6 @@ impl Context {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
 
-        queue.write_texture(
-            height_texture.as_image_copy(),
-            bytemuck::cast_slice(&level.height),
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: NonZeroU32::new(level.size.0 as u32),
-                rows_per_image: None,
-            },
-            extent,
-        );
-        queue.write_texture(
-            meta_texture.as_image_copy(),
-            bytemuck::cast_slice(&level.meta),
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: NonZeroU32::new(level.size.0 as u32),
-                rows_per_image: None,
-            },
-            extent,
-        );
         queue.write_texture(
             flood_texture.as_image_copy(),
             bytemuck::cast_slice(&level.flood_map),
@@ -931,6 +913,8 @@ impl Context {
             raytrace_geo,
             kind,
             shadow_kind,
+            height_texture,
+            meta_texture,
             dirty_rects: vec![Rect {
                 x: 0,
                 y: 0,
@@ -1027,6 +1011,88 @@ impl Context {
         }
     }
 
+    pub fn update_dirty(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        level: &level::Level,
+        device: &wgpu::Device,
+    ) {
+        if self.dirty_rects.is_empty() {
+            return;
+        }
+
+        for rect in self.dirty_rects.iter() {
+            let origin = wgpu::Origin3d {
+                x: rect.x as u32,
+                y: rect.y as u32,
+                z: 0,
+            };
+            let extent = wgpu::Extent3d {
+                width: rect.w as u32,
+                height: rect.h as u32,
+                depth_or_array_layers: 1,
+            };
+
+            let staging_stride = rect.w as u32 * 2;
+            let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("staging level update"),
+                size: staging_stride as wgpu::BufferAddress * rect.h as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
+                mapped_at_creation: true,
+            });
+            {
+                let mut mapping = staging_buf.slice(..).get_mapped_range_mut();
+                for (row, y) in mapping
+                    .chunks_mut(staging_stride as usize)
+                    .zip(rect.y as usize..)
+                {
+                    let level_offset = y * level.size.0 as usize;
+                    row[..rect.w as usize]
+                        .copy_from_slice(&level.height[level_offset..][..rect.w as usize]);
+                    row[rect.w as usize..]
+                        .copy_from_slice(&level.meta[level_offset..][..rect.w as usize]);
+                }
+            }
+            staging_buf.unmap();
+
+            encoder.copy_buffer_to_texture(
+                wgpu::ImageCopyBuffer {
+                    buffer: &staging_buf,
+                    layout: wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: NonZeroU32::new(staging_stride),
+                        rows_per_image: None,
+                    },
+                },
+                wgpu::ImageCopyTexture {
+                    origin,
+                    ..self.height_texture.as_image_copy()
+                },
+                extent,
+            );
+            encoder.copy_buffer_to_texture(
+                wgpu::ImageCopyBuffer {
+                    buffer: &staging_buf,
+                    layout: wgpu::ImageDataLayout {
+                        offset: rect.w as wgpu::BufferAddress,
+                        bytes_per_row: NonZeroU32::new(staging_stride),
+                        rows_per_image: None,
+                    },
+                },
+                wgpu::ImageCopyTexture {
+                    origin,
+                    ..self.meta_texture.as_image_copy()
+                },
+                extent,
+            );
+        }
+
+        if let Kind::RayMip { ref mipper, .. } = self.kind {
+            mipper.update(encoder, &self.dirty_rects, device);
+        }
+        self.dirty_rects.clear();
+    }
+
     pub fn prepare(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -1036,13 +1102,6 @@ impl Context {
         cam: &Camera,
         screen_size: wgpu::Extent3d,
     ) {
-        if !self.dirty_rects.is_empty() {
-            if let Kind::RayMip { ref mipper, .. } = self.kind {
-                mipper.update(&self.dirty_rects, encoder, device);
-            }
-            self.dirty_rects.clear();
-        }
-
         let params = match self.kind {
             Kind::RayMip { params, .. } => params,
             _ => [0; 4],

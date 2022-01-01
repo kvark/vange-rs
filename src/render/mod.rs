@@ -583,12 +583,15 @@ impl Render {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         batcher: &mut Batcher,
+        level: &level::Level,
         cam: &Camera,
         targets: ScreenTargets<'_>,
         device: &wgpu::Device,
     ) {
         profiling::scope!("draw_world");
         batcher.prepare(device);
+        self.terrain.update_dirty(encoder, level, device);
+
         //TODO: common routine for draw passes
         //TODO: use `write_buffer`
 
@@ -610,11 +613,9 @@ impl Render {
                 mem::size_of::<global::Constants>() as wgpu::BufferAddress,
             );
 
-            self.terrain.prepare(
+            self.terrain.prepare_shadow(
                 encoder,
                 device,
-                &self.global,
-                &self.fog_config,
                 cam,
                 wgpu::Extent3d {
                     width: shadow.size,
