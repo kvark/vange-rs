@@ -57,12 +57,6 @@ pub struct MapDescription {
     material_count: i32,
 }
 
-#[derive(Default)]
-struct Camera {
-    desc: CameraDescription,
-    transform: Transform,
-}
-
 struct LevelContext {
     desc: MapDescription,
     render: vangers::render::Render,
@@ -75,11 +69,12 @@ pub struct Context {
     color_format: wgpu::TextureFormat,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
+    extent: wgpu::Extent3d,
     queue: wgpu::Queue,
     device: wgpu::Device,
     downlevel_caps: wgpu::DownlevelCapabilities,
     _instance: wgpu::Instance,
-    camera: Camera,
+    camera: vangers::space::Camera,
 }
 
 pub type GlFunctionDiscovery = unsafe extern "C" fn(*const raw::c_char) -> *const raw::c_void;
@@ -93,6 +88,7 @@ pub struct InitDescriptor {
 
 #[no_mangle]
 pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>> {
+    use cgmath::Zero as _;
     use vangers::config::settings as st;
 
     let mut task_pool = LocalPool::new();
@@ -119,13 +115,14 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         ))
         .ok()?;
 
+    let extent = wgpu::Extent3d {
+        width: desc.width,
+        height: desc.height,
+        depth_or_array_layers: 1,
+    };
     let mut texture_desc = wgpu::TextureDescriptor {
         label: None,
-        size: wgpu::Extent3d {
-            width: desc.width,
-            height: desc.height,
-            depth_or_array_layers: 1,
-        },
+        size: extent,
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -176,11 +173,21 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         color_format,
         color_view,
         depth_view,
+        extent,
         queue,
         device,
         downlevel_caps: adapter.get_downlevel_properties(),
         _instance: instance,
-        camera: Default::default(),
+        camera: vangers::space::Camera {
+            loc: cgmath::Vector3::zero(),
+            rot: cgmath::Quaternion::zero(),
+            proj: vangers::space::Projection::Perspective(cgmath::PerspectiveFov {
+                aspect: 1.0,
+                near: 1.0,
+                far: 100.0,
+                fovy: cgmath::Deg(45.0).into(),
+            }),
+        },
     };
     let ptr = Box::into_raw(Box::new(ctx));
     ptr::NonNull::new(ptr)
@@ -193,12 +200,19 @@ pub unsafe extern "C" fn rv_exit(ctx: *mut Context) {
 
 #[no_mangle]
 pub extern "C" fn rv_camera_init(ctx: &mut Context, desc: CameraDescription) {
-    ctx.camera.desc = desc;
+    ctx.camera.proj = vangers::space::Projection::Perspective(cgmath::PerspectiveFov {
+        aspect: desc.aspect,
+        near: desc.near,
+        far: desc.far,
+        fovy: cgmath::Rad(desc.fov),
+    });
 }
 
 #[no_mangle]
-pub extern "C" fn rv_camera_set_transform(ctx: &mut Context, transform: Transform) {
-    ctx.camera.transform = transform;
+pub extern "C" fn rv_camera_set_transform(ctx: &mut Context, t: Transform) {
+    ctx.camera.loc = cgmath::vec3(t.position.x, t.position.y, t.position.z);
+    ctx.camera.rot =
+        cgmath::Quaternion::new(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z);
 }
 
 #[no_mangle]
@@ -253,4 +267,29 @@ pub extern "C" fn rv_map_exit(ctx: &mut Context) {
 #[no_mangle]
 pub extern "C" fn rv_map_request_update(ctx: &mut Context, region: Rect) {
     //TODO
+}
+
+#[no_mangle]
+pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
+    let level = ctx.level.as_mut().unwrap();
+    let targets = vangers::render::ScreenTargets {
+        extent: ctx.extent,
+        depth: &ctx.depth_view,
+        color: &ctx.color_view,
+    };
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    let mut batcher = vangers::render::Batcher::new();
+
+    level.render.draw_world(
+        &mut encoder,
+        &mut batcher,
+        &level.level,
+        &ctx.camera,
+        targets,
+        &ctx.device,
+    );
+
+    ctx.queue.submit(Some(encoder.finish()));
 }
