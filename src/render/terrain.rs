@@ -172,14 +172,6 @@ enum Kind {
     },
 }
 
-#[derive(Copy, Clone)]
-pub struct Rect {
-    pub x: u16,
-    pub y: u16,
-    pub w: u16,
-    pub h: u16,
-}
-
 pub struct Context {
     pub surface_uni_buf: wgpu::Buffer,
     pub uniform_buf: wgpu::Buffer,
@@ -192,7 +184,7 @@ pub struct Context {
     shadow_kind: Kind,
     height_texture: wgpu::Texture,
     meta_texture: wgpu::Texture,
-    dirty_rects: Vec<Rect>,
+    pub dirty_rects: Vec<super::Rect>,
 }
 
 impl Context {
@@ -915,7 +907,7 @@ impl Context {
             shadow_kind,
             height_texture,
             meta_texture,
-            dirty_rects: vec![Rect {
+            dirty_rects: vec![super::Rect {
                 x: 0,
                 y: 0,
                 w: level.size.0 as u16,

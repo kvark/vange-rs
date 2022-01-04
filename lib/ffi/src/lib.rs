@@ -37,6 +37,17 @@ pub struct Rect {
     height: i32,
 }
 
+impl Rect {
+    fn to_native(&self) -> vangers::render::Rect {
+        vangers::render::Rect {
+            x: self.x as u16,
+            y: self.y as u16,
+            w: self.width as u16,
+            h: self.height as u16,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Default)]
 pub struct CameraDescription {
@@ -265,13 +276,33 @@ pub extern "C" fn rv_map_exit(ctx: &mut Context) {
 }
 
 #[no_mangle]
-pub extern "C" fn rv_map_request_update(ctx: &mut Context, region: Rect) {
-    //TODO
+pub unsafe extern "C" fn rv_map_request_update(ctx: &mut Context, region: Rect) {
+    let lc = ctx.level.as_mut().unwrap();
+    let line_width = lc.level.size.0 as usize;
+
+    for y in region.y..region.y + region.height {
+        // In the source data, each line contains N height values followed by N meta values.
+        // We copy them into separate height and meta data arrays.
+        let dst_offset = y as usize * line_width + region.x as usize;
+        let line = *lc.desc.lines.add(y as usize);
+        ptr::copy_nonoverlapping(
+            line.add(region.x as usize),
+            lc.level.height[dst_offset..].as_mut_ptr(),
+            region.width as usize,
+        );
+        ptr::copy_nonoverlapping(
+            line.add(region.x as usize + line_width),
+            lc.level.meta[dst_offset..].as_mut_ptr(),
+            region.width as usize,
+        );
+    }
+
+    lc.render.terrain.dirty_rects.push(region.to_native());
 }
 
 #[no_mangle]
 pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
-    let level = ctx.level.as_mut().unwrap();
+    let lc = ctx.level.as_mut().unwrap();
     let targets = vangers::render::ScreenTargets {
         extent: ctx.extent,
         depth: &ctx.depth_view,
@@ -282,10 +313,11 @@ pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
         .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     let mut batcher = vangers::render::Batcher::new();
 
-    level.render.draw_world(
+    lc.render.custom_viewport = Some(viewport.to_native());
+    lc.render.draw_world(
         &mut encoder,
         &mut batcher,
-        &level.level,
+        &lc.level,
         &ctx.camera,
         targets,
         &ctx.device,

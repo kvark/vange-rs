@@ -516,6 +516,14 @@ impl PipelineSet {
     }
 }
 
+#[derive(Copy, Clone)]
+pub struct Rect {
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+}
+
 pub struct Render {
     global: global::Context,
     pub object: object::Context,
@@ -525,6 +533,7 @@ pub struct Render {
     pub light_config: settings::Light,
     pub fog_config: settings::Fog,
     screen_size: wgpu::Extent3d,
+    pub custom_viewport: Option<Rect>,
 }
 
 impl Render {
@@ -576,6 +585,7 @@ impl Render {
             light_config: settings.light,
             fog_config: settings.fog,
             screen_size,
+            custom_viewport: None,
         }
     }
 
@@ -702,6 +712,10 @@ impl Render {
                     stencil_ops: None,
                 }),
             });
+
+            if let Some(ref r) = self.custom_viewport {
+                pass.set_viewport(r.x as f32, r.y as f32, r.w as f32, r.h as f32, 0.0, 1.0);
+            }
 
             pass.set_bind_group(0, &self.global.bind_group, &[]);
             self.terrain.draw(&mut pass);
