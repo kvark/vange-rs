@@ -3,7 +3,7 @@
 //! See https://github.com/KranX/Vangers/pull/517
 
 use futures::executor::LocalPool;
-use std::ptr;
+use std::{ffi::CString, os::raw, ptr};
 
 #[repr(C)]
 #[derive(Default)]
@@ -73,6 +73,8 @@ pub struct Context {
     level: Option<LevelContext>,
     render_config: vangers::config::settings::Render,
     color_format: wgpu::TextureFormat,
+    color_view: wgpu::TextureView,
+    depth_view: wgpu::TextureView,
     queue: wgpu::Queue,
     device: wgpu::Device,
     downlevel_caps: wgpu::DownlevelCapabilities,
@@ -80,18 +82,32 @@ pub struct Context {
     camera: Camera,
 }
 
+pub type GlFunctionDiscovery = unsafe extern "C" fn(*const raw::c_char) -> *const raw::c_void;
+
+#[repr(C)]
+pub struct InitDescriptor {
+    width: u32,
+    height: u32,
+    gl_functor: GlFunctionDiscovery,
+}
+
 #[no_mangle]
-pub extern "C" fn rv_init() -> Option<ptr::NonNull<Context>> {
+pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>> {
     use vangers::config::settings as st;
 
     let mut task_pool = LocalPool::new();
 
-    let instance = wgpu::Instance::new(wgpu::Backends::all());
-    let adapter = task_pool.run_until(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None, //TODO
-        force_fallback_adapter: false,
-    }))?;
+    let exposed = unsafe {
+        <hal::api::Gles as hal::Api>::Adapter::new_external(|name| {
+            let cstr = CString::new(name).unwrap();
+            (desc.gl_functor)(cstr.as_ptr())
+        })
+    }
+    .expect("GL adapter can't be initialized");
+
+    let instance = wgpu::Instance::new(wgpu::Backends::empty());
+    let adapter = unsafe { instance.create_adapter_from_hal(exposed) };
+
     let (device, queue) = task_pool
         .run_until(adapter.request_device(
             &wgpu::DeviceDescriptor {
@@ -102,6 +118,41 @@ pub extern "C" fn rv_init() -> Option<ptr::NonNull<Context>> {
             None,
         ))
         .ok()?;
+
+    let mut texture_desc = wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width: desc.width,
+            height: desc.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R8Uint, //dummy
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+    };
+    let color_format = wgpu::TextureFormat::Rgba8UnormSrgb;
+
+    let color_view = {
+        let hal_texture_color =
+            <hal::api::Gles as hal::Api>::Texture::default_framebuffer(color_format);
+        texture_desc.format = color_format;
+        let color_texture = unsafe {
+            device.create_texture_from_hal::<hal::api::Gles>(hal_texture_color, &texture_desc)
+        };
+        color_texture.create_view(&wgpu::TextureViewDescriptor::default())
+    };
+    let depth_view = {
+        let depth_format = wgpu::TextureFormat::Depth24Plus;
+        let hal_texture_depth =
+            <hal::api::Gles as hal::Api>::Texture::default_framebuffer(depth_format);
+        texture_desc.format = depth_format;
+        let depth_texture = unsafe {
+            device.create_texture_from_hal::<hal::api::Gles>(hal_texture_depth, &texture_desc)
+        };
+        depth_texture.create_view(&wgpu::TextureViewDescriptor::default())
+    };
 
     let ctx = Context {
         level: None,
@@ -122,7 +173,9 @@ pub extern "C" fn rv_init() -> Option<ptr::NonNull<Context>> {
             },
             debug: st::DebugRender::default(),
         },
-        color_format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        color_format,
+        color_view,
+        depth_view,
         queue,
         device,
         downlevel_caps: adapter.get_downlevel_properties(),
