@@ -1,4 +1,4 @@
-use crate::render::terrain::{Rect, HEIGHT_FORMAT};
+use crate::render::terrain::HEIGHT_FORMAT;
 use bytemuck::{Pod, Zeroable};
 use std::{mem, num::NonZeroU32};
 use wgpu::util::DeviceExt as _;
@@ -128,7 +128,7 @@ impl MaxMipper {
     pub fn update(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        rects: &[Rect],
+        rects: &[super::Rect],
         device: &wgpu::Device,
     ) {
         let mut vertex_data = Vec::with_capacity(rects.len() * 6);
