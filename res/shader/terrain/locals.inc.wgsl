@@ -1,4 +1,3 @@
-[[block]]
 struct Locals {
     screen_size: vec4<u32>;      // XY = size
     params: vec4<u32>;

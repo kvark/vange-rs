@@ -61,7 +61,8 @@ rust-ini = "0.17"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.4"
-wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "c8d572a", features = [] }
+# keep in sync with `lib/ffi/Cargo.toml`
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "75b885b", features = [] }
 # binaries
 env_logger = "0.8"
 getopts = "0.2"
@@ -70,8 +71,7 @@ png = "0.16"
 winit = "0.26"
 
 [dev-dependencies]
-naga = { git = "https://github.com/gfx-rs/naga", rev = "c69f676", features = ["wgsl-in"] }
-#naga = { version = "0.6", features = ["wgsl-in"] }
+naga = { git = "https://github.com/gfx-rs/naga", rev = "8df5421", features = ["wgsl-in"] }
 
 [dependencies.profiling]
 version = "1.0.1"

@@ -2,7 +2,6 @@
 
 let c_BodyColorId: u32 = 1u;
 
-[[block]]
 struct Storage {
     bodies: array<Body>;
 };

@@ -1,6 +1,5 @@
 // Common routines for fetching the level surface data.
 
-[[block]]
 struct SurfaceConstants {
     texture_scale: vec4<f32>;    // XY = size, Z = height scale, w = number of layers
 };
