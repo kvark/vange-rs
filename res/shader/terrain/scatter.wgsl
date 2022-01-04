@@ -1,6 +1,5 @@
 //!include globals.inc terrain/locals.inc surface.inc color.inc
 
-[[block]]
 struct Storage {
     data: array<atomic<u32>>;
 };

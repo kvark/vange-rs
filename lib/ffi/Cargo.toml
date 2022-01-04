@@ -12,5 +12,5 @@ crate-type = ["staticlib"]
 vangers = { path = "../.." }
 futures = "0.3"
 cgmath = "0.18"
-wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "c8d572a", features = [] }
-hal = { package = "wgpu-hal", git = "https://github.com/gfx-rs/wgpu", rev = "c8d572a", features = ["gles"] }
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "75b885b", features = [] }
+hal = { package = "wgpu-hal", git = "https://github.com/gfx-rs/wgpu", rev = "75b885b", features = ["gles"] }
