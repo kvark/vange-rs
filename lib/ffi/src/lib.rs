@@ -116,12 +116,29 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     let instance = wgpu::Instance::new(wgpu::Backends::empty());
     let adapter = unsafe { instance.create_adapter_from_hal(exposed) };
 
+    let limits = {
+        let adapter_limits = adapter.limits();
+        let desired_height = 16 << 10;
+        wgpu::Limits {
+            max_texture_dimension_2d: if adapter_limits.max_texture_dimension_2d < desired_height {
+                println!(
+                    "Adapter only supports {} texutre size, main levels are not compatible",
+                    adapter_limits.max_texture_dimension_2d
+                );
+                adapter_limits.max_texture_dimension_2d
+            } else {
+                desired_height
+            },
+            ..wgpu::Limits::downlevel_webgl2_defaults()
+        }
+    };
+
     let (device, queue) = task_pool
         .run_until(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: None,
                 features: wgpu::Features::empty(),
-                limits: wgpu::Limits::default(),
+                limits,
             },
             None,
         ))
