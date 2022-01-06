@@ -170,10 +170,10 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         color_texture.create_view(&wgpu::TextureViewDescriptor::default())
     };
     let depth_view = {
-        let depth_format = wgpu::TextureFormat::Depth24Plus;
-        let hal_texture_depth =
-            <hal::api::Gles as hal::Api>::Texture::default_framebuffer(depth_format);
-        texture_desc.format = depth_format;
+        let hal_texture_depth = <hal::api::Gles as hal::Api>::Texture::default_framebuffer(
+            vangers::render::DEPTH_FORMAT,
+        );
+        texture_desc.format = vangers::render::DEPTH_FORMAT;
         let depth_texture = unsafe {
             device.create_texture_from_hal::<hal::api::Gles>(hal_texture_depth, &texture_desc)
         };
@@ -233,7 +233,7 @@ pub extern "C" fn rv_camera_init(ctx: &mut Context, desc: CameraDescription) {
         aspect: desc.aspect,
         near: desc.near,
         far: desc.far,
-        fovy: cgmath::Rad(desc.fov),
+        fovy: cgmath::Deg(desc.fov).into(),
     });
 }
 
@@ -258,7 +258,7 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
     let total = (desc.width * desc.height) as usize;
     let level = vangers::level::Level {
         size: (desc.width, desc.height),
-        flood_map: vec![].into_boxed_slice(),
+        flood_map: vec![0; 128].into_boxed_slice(),
         flood_section_power: 0, //TODO
         height: vec![0; total].into_boxed_slice(),
         meta: vec![0; total].into_boxed_slice(),
