@@ -102,6 +102,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     use cgmath::Zero as _;
     use vangers::config::settings as st;
 
+    env_logger::init();
     let mut task_pool = LocalPool::new();
 
     let exposed = unsafe {
