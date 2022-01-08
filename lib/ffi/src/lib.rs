@@ -259,7 +259,7 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
     let level = vangers::level::Level {
         size: (desc.width, desc.height),
         flood_map: vec![0; 128].into_boxed_slice(),
-        flood_section_power: 0, //TODO
+        flood_section_power: 7, //TODO
         height: vec![0; total].into_boxed_slice(),
         meta: vec![0; total].into_boxed_slice(),
         palette: [[0; 4]; 0x100], //TODO
