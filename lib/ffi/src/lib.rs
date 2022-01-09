@@ -66,6 +66,7 @@ pub struct MapDescription {
     material_begin_offsets: *const u8,
     material_end_offsets: *const u8,
     material_count: i32,
+    palette: *const u8,
 }
 
 struct LevelContext {
@@ -256,13 +257,19 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
         .collect::<Box<[_]>>();
 
     let total = (desc.width * desc.height) as usize;
+    let mut palette = [[0xFFu8; 4]; 0x100];
+    for (i, color) in palette.iter_mut().enumerate() {
+        unsafe {
+            ptr::copy_nonoverlapping(desc.palette.add(i*3), color.first_mut().unwrap(), 3);
+        }
+    }
     let level = vangers::level::Level {
         size: (desc.width, desc.height),
         flood_map: vec![0; 128].into_boxed_slice(),
         flood_section_power: 7, //TODO
         height: vec![0; total].into_boxed_slice(),
         meta: vec![0; total].into_boxed_slice(),
-        palette: [[0; 4]; 0x100], //TODO
+        palette,
         terrains,
     };
 
