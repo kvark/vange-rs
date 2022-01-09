@@ -281,12 +281,7 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
         &[[0; 4]; 0x100], //TODO: objects palette
         &ctx.render_config,
         ctx.color_format,
-        // extent only matters for "scatter" style rendering
-        wgpu::Extent3d {
-            width: 0,
-            height: 0,
-            depth_or_array_layers: 0,
-        },
+        ctx.extent, //Note: needs update on window resize
     );
     ctx.level = Some(LevelContext {
         desc,
