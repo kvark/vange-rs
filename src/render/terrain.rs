@@ -1026,7 +1026,8 @@ impl Context {
                     depth_or_array_layers: 1,
                 };
 
-                let staging_stride = rect.w as u32 * 2;
+                let staging_stride =
+                    super::align_to(rect.w as u32 * 2, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
                 let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("staging level update"),
                     size: staging_stride as wgpu::BufferAddress * rect.h as wgpu::BufferAddress,
@@ -1107,7 +1108,7 @@ impl Context {
                     depth_or_array_layers: 1,
                 },
             );
-            self.dirty_palette = 0 .. 0;
+            self.dirty_palette = 0..0;
         }
     }
 
