@@ -17,10 +17,11 @@ unsafe impl Zeroable for Constants {}
 
 impl Constants {
     pub fn new(cam: &Camera, light: &settings::Light, shadow_cam: Option<&Camera>) -> Self {
-        use cgmath::SquareMatrix;
+        use cgmath::{SquareMatrix, Zero};
 
+        //Note: zero matrix is handled specially in `fetch_shadow` shader
         let m_light_vp = shadow_cam
-            .map_or_else(cgmath::Matrix4::identity, |sc| sc.get_view_proj())
+            .map_or_else(cgmath::Matrix4::zero, |sc| sc.get_view_proj())
             .into();
         let mx_vp = cam.get_view_proj();
         Constants {
