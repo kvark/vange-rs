@@ -300,7 +300,9 @@ impl Context {
             Err(VertexStorageNotSupported)
         };
 
-        let palette = Palette::new(device, queue, palette_data);
+        let palette = Palette::new(device);
+        palette.init(queue, palette_data);
+
         let (color_table_view, color_table_sampler) = Self::create_color_table(device, queue);
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Object"),

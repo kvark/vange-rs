@@ -12,7 +12,6 @@ use std::{
     fs::File,
     io::{BufReader, Error as IoError, Read},
     mem,
-    num::NonZeroU32,
     path::PathBuf,
     sync::Arc,
 };
@@ -326,13 +325,13 @@ impl Shaders {
 }
 
 pub struct Palette {
+    pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
 }
 
 impl Palette {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, data: &[[u8; 4]]) -> Self {
+    pub fn new(device: &wgpu::Device) -> Self {
         profiling::scope!("Create Palette");
-
         let extent = wgpu::Extent3d {
             width: 0x100,
             height: 1,
@@ -348,20 +347,23 @@ impl Palette {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
 
-        queue.write_texture(
-            texture.as_image_copy(),
-            bytemuck::cast_slice(data),
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: NonZeroU32::new(0x100 * 4),
-                rows_per_image: None,
-            },
-            extent,
-        );
-
         Palette {
             view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            texture,
         }
+    }
+
+    pub fn init(&self, queue: &wgpu::Queue, data: &[[u8; 4]]) {
+        queue.write_texture(
+            self.texture.as_image_copy(),
+            bytemuck::cast_slice(data),
+            wgpu::ImageDataLayout::default(),
+            wgpu::Extent3d {
+                width: 0x100,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 }
 
