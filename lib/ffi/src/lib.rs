@@ -5,6 +5,10 @@
 use futures::executor::LocalPool;
 use std::{ffi::CString, os::raw, ptr};
 
+// Update this whenever C header changes
+#[no_mangle]
+pub static rv_api_1: i32 = 0;
+
 #[repr(C)]
 #[derive(Default)]
 pub struct Vector3 {
@@ -257,19 +261,13 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
         .collect::<Box<[_]>>();
 
     let total = (desc.width * desc.height) as usize;
-    let mut palette = [[0xFFu8; 4]; 0x100];
-    for (i, color) in palette.iter_mut().enumerate() {
-        unsafe {
-            ptr::copy_nonoverlapping(desc.palette.add(i*3), color.first_mut().unwrap(), 3);
-        }
-    }
     let level = vangers::level::Level {
         size: (desc.width, desc.height),
         flood_map: vec![0; 128].into_boxed_slice(),
         flood_section_power: 7, //TODO
         height: vec![0; total].into_boxed_slice(),
         meta: vec![0; total].into_boxed_slice(),
-        palette,
+        palette: [[0; 4]; 0x100],
         terrains,
     };
 
@@ -296,7 +294,7 @@ pub extern "C" fn rv_map_exit(ctx: &mut Context) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rv_map_request_update(ctx: &mut Context, region: Rect) {
+pub unsafe extern "C" fn rv_map_update_data(ctx: &mut Context, region: Rect) {
     let lc = ctx.level.as_mut().unwrap();
     let line_width = lc.level.size.0 as usize;
 
@@ -318,6 +316,31 @@ pub unsafe extern "C" fn rv_map_request_update(ctx: &mut Context, region: Rect) 
     }
 
     lc.render.terrain.dirty_rects.push(region.to_native());
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rv_map_update_palette(
+    ctx: &mut Context,
+    first_entry: u32,
+    entries_count: u32,
+    palette: *const u8,
+) {
+    let lc = ctx.level.as_mut().unwrap();
+    let end = first_entry + entries_count;
+
+    for (i, color) in lc.level.palette[first_entry as usize..end as usize]
+        .iter_mut()
+        .enumerate()
+    {
+        ptr::copy_nonoverlapping(palette.add(i * 3), color.first_mut().unwrap(), 3);
+    }
+
+    let dp = lc.render.terrain.dirty_palette.clone();
+    lc.render.terrain.dirty_palette = if dp != (0..0) {
+        dp.start.min(first_entry)..dp.end.max(end)
+    } else {
+        first_entry..end
+    };
 }
 
 #[no_mangle]

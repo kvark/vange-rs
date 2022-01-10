@@ -184,7 +184,9 @@ pub struct Context {
     shadow_kind: Kind,
     height_texture: wgpu::Texture,
     meta_texture: wgpu::Texture,
+    palette_texture: wgpu::Texture,
     pub dirty_rects: Vec<super::Rect>,
+    pub dirty_palette: Range<u32>,
 }
 
 impl Context {
@@ -514,7 +516,7 @@ impl Context {
             table_extent,
         );
 
-        let palette = Palette::new(device, queue, &level.palette);
+        let palette = Palette::new(device);
 
         let repeat_nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -907,12 +909,14 @@ impl Context {
             shadow_kind,
             height_texture,
             meta_texture,
+            palette_texture: palette.texture,
             dirty_rects: vec![super::Rect {
                 x: 0,
                 y: 0,
                 w: level.size.0 as u16,
                 h: level.size.1 as u16,
             }],
+            dirty_palette: 0..0x100,
         }
     }
 
@@ -1009,80 +1013,102 @@ impl Context {
         level: &level::Level,
         device: &wgpu::Device,
     ) {
-        if self.dirty_rects.is_empty() {
-            return;
-        }
+        if !self.dirty_rects.is_empty() {
+            for rect in self.dirty_rects.iter() {
+                let origin = wgpu::Origin3d {
+                    x: rect.x as u32,
+                    y: rect.y as u32,
+                    z: 0,
+                };
+                let extent = wgpu::Extent3d {
+                    width: rect.w as u32,
+                    height: rect.h as u32,
+                    depth_or_array_layers: 1,
+                };
 
-        for rect in self.dirty_rects.iter() {
-            let origin = wgpu::Origin3d {
-                x: rect.x as u32,
-                y: rect.y as u32,
-                z: 0,
-            };
-            let extent = wgpu::Extent3d {
-                width: rect.w as u32,
-                height: rect.h as u32,
-                depth_or_array_layers: 1,
-            };
-
-            let staging_stride = rect.w as u32 * 2;
-            let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("staging level update"),
-                size: staging_stride as wgpu::BufferAddress * rect.h as wgpu::BufferAddress,
-                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
-                mapped_at_creation: true,
-            });
-            {
-                let mut mapping = staging_buf.slice(..).get_mapped_range_mut();
-                for (row, y) in mapping
-                    .chunks_mut(staging_stride as usize)
-                    .zip(rect.y as usize..)
+                let staging_stride = rect.w as u32 * 2;
+                let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("staging level update"),
+                    size: staging_stride as wgpu::BufferAddress * rect.h as wgpu::BufferAddress,
+                    usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
+                    mapped_at_creation: true,
+                });
                 {
-                    let level_offset = y * level.size.0 as usize;
-                    row[..rect.w as usize]
-                        .copy_from_slice(&level.height[level_offset..][..rect.w as usize]);
-                    row[rect.w as usize..]
-                        .copy_from_slice(&level.meta[level_offset..][..rect.w as usize]);
+                    let mut mapping = staging_buf.slice(..).get_mapped_range_mut();
+                    for (row, y) in mapping
+                        .chunks_mut(staging_stride as usize)
+                        .zip(rect.y as usize..)
+                    {
+                        let level_offset = y * level.size.0 as usize;
+                        row[..rect.w as usize]
+                            .copy_from_slice(&level.height[level_offset..][..rect.w as usize]);
+                        row[rect.w as usize..]
+                            .copy_from_slice(&level.meta[level_offset..][..rect.w as usize]);
+                    }
                 }
+                staging_buf.unmap();
+
+                encoder.copy_buffer_to_texture(
+                    wgpu::ImageCopyBuffer {
+                        buffer: &staging_buf,
+                        layout: wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: NonZeroU32::new(staging_stride),
+                            rows_per_image: None,
+                        },
+                    },
+                    wgpu::ImageCopyTexture {
+                        origin,
+                        ..self.height_texture.as_image_copy()
+                    },
+                    extent,
+                );
+                encoder.copy_buffer_to_texture(
+                    wgpu::ImageCopyBuffer {
+                        buffer: &staging_buf,
+                        layout: wgpu::ImageDataLayout {
+                            offset: rect.w as wgpu::BufferAddress,
+                            bytes_per_row: NonZeroU32::new(staging_stride),
+                            rows_per_image: None,
+                        },
+                    },
+                    wgpu::ImageCopyTexture {
+                        origin,
+                        ..self.meta_texture.as_image_copy()
+                    },
+                    extent,
+                );
             }
-            staging_buf.unmap();
+
+            if let Kind::RayMip { ref mipper, .. } = self.kind {
+                mipper.update(encoder, &self.dirty_rects, device);
+            }
+            self.dirty_rects.clear();
+        }
+
+        if self.dirty_palette.start != self.dirty_palette.end {
+            let staging_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&level.palette[self.dirty_palette.start as usize..]),
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+            let mut img_copy = self.palette_texture.as_image_copy();
+            img_copy.origin.x = self.dirty_palette.start;
 
             encoder.copy_buffer_to_texture(
                 wgpu::ImageCopyBuffer {
                     buffer: &staging_buf,
-                    layout: wgpu::ImageDataLayout {
-                        offset: 0,
-                        bytes_per_row: NonZeroU32::new(staging_stride),
-                        rows_per_image: None,
-                    },
+                    layout: wgpu::ImageDataLayout::default(),
                 },
-                wgpu::ImageCopyTexture {
-                    origin,
-                    ..self.height_texture.as_image_copy()
+                img_copy,
+                wgpu::Extent3d {
+                    width: self.dirty_palette.end - self.dirty_palette.start,
+                    height: 1,
+                    depth_or_array_layers: 1,
                 },
-                extent,
             );
-            encoder.copy_buffer_to_texture(
-                wgpu::ImageCopyBuffer {
-                    buffer: &staging_buf,
-                    layout: wgpu::ImageDataLayout {
-                        offset: rect.w as wgpu::BufferAddress,
-                        bytes_per_row: NonZeroU32::new(staging_stride),
-                        rows_per_image: None,
-                    },
-                },
-                wgpu::ImageCopyTexture {
-                    origin,
-                    ..self.meta_texture.as_image_copy()
-                },
-                extent,
-            );
+            self.dirty_palette = 0 .. 0;
         }
-
-        if let Kind::RayMip { ref mipper, .. } = self.kind {
-            mipper.update(encoder, &self.dirty_rects, device);
-        }
-        self.dirty_rects.clear();
     }
 
     pub fn prepare(
