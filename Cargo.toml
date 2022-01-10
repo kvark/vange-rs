@@ -2,7 +2,7 @@
 name = "vangers"
 version = "0.1.0"
 authors = ["kvark"]
-edition = "2018"
+edition = "2021"
 resolver = "2"
 default-run = "road"
 publish = false
@@ -21,6 +21,9 @@ members = [
 default = []
 glsl = ["glsl-to-spirv", "wgpu/spirv"]
 profile = ["profiling/profile-with-tracy"]
+
+[profile.release]
+panic = "abort"
 
 [[bin]]
 name = "road"

@@ -3,7 +3,8 @@ name = "tiff"
 version = "0.1.0"
 workspace = "../.."
 authors = ["Dzmitry Malyshau <kvarkus@gmail.com>"]
-edition = "2018"
+edition = "2021"
+publish = false
 
 [dependencies]
 byteorder = "1.0"
