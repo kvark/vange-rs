@@ -38,6 +38,14 @@ pub mod body {
 pub use shadow::FORMAT as SHADOW_FORMAT;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+#[inline]
+fn align_to(value: u32, alignment: u32) -> u32 {
+    match value % alignment {
+        0 => value,
+        other => value - other + alignment,
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct VertexStorageNotSupported;
 
