@@ -1040,10 +1040,10 @@ impl Context {
                         .chunks_mut(staging_stride as usize)
                         .zip(rect.y as usize..)
                     {
-                        let level_offset = y * level.size.0 as usize;
+                        let level_offset = y * level.size.0 as usize + rect.x as usize;
                         row[..rect.w as usize]
                             .copy_from_slice(&level.height[level_offset..][..rect.w as usize]);
-                        row[rect.w as usize..]
+                        row[rect.w as usize..rect.w as usize * 2]
                             .copy_from_slice(&level.meta[level_offset..][..rect.w as usize]);
                     }
                 }
