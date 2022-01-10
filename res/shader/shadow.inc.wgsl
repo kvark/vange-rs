@@ -8,10 +8,16 @@ let c_Ambient: f32 = 0.25;
 fn fetch_shadow(pos: vec3<f32>) -> f32 {
     let flip_correction = vec2<f32>(1.0, -1.0);
 
+    if (u_Globals.light_view_proj[3][3] == 0.0) {
+        // shadow is disabled
+        return 1.0;
+    }
     let homogeneous_coords = u_Globals.light_view_proj * vec4<f32>(pos, 1.0);
     if (homogeneous_coords.w <= 0.0) {
+        // outside of shadow projection
         return 0.0;
     }
+
     let light_local = 0.5 * (homogeneous_coords.xy * flip_correction/homogeneous_coords.w + 1.0);
     let shadow = textureSampleCompareLevel(
         t_Shadow, s_Shadow,
