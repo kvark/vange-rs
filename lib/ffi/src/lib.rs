@@ -1,13 +1,19 @@
-//! Rusty Vangers FFI bindings.
-//! Matches "lib/renderer/src/renderer/scene/rust/vange_rs.h"
-//! See https://github.com/KranX/Vangers/pull/517
+/*! Rusty Vangers FFI bindings.
+
+Matches "lib/renderer/src/renderer/scene/rust/vange_rs.h"
+See https://github.com/KranX/Vangers/pull/517
+
+Changelog:
+  1. Add `rv_resize()`.
+  0. Basic version.
+!*/
 
 use futures::executor::LocalPool;
 use std::{ffi::CString, os::raw, ptr};
 
 // Update this whenever C header changes
 #[no_mangle]
-pub static rv_api_1: i32 = 0;
+pub static rv_api_1: i32 = 1;
 
 #[repr(C)]
 #[derive(Default)]
@@ -102,12 +108,49 @@ pub struct InitDescriptor {
     gl_functor: GlFunctionDiscovery,
 }
 
+fn crate_main_views(
+    device: &wgpu::Device,
+    extent: wgpu::Extent3d,
+    color_format: wgpu::TextureFormat,
+) -> (wgpu::TextureView, wgpu::TextureView) {
+    let mut texture_desc = wgpu::TextureDescriptor {
+        label: None,
+        size: extent,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R8Uint, //dummy
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+    };
+    let color_view = {
+        let hal_texture_color =
+            <hal::api::Gles as hal::Api>::Texture::default_framebuffer(color_format);
+        texture_desc.format = color_format;
+        let color_texture = unsafe {
+            device.create_texture_from_hal::<hal::api::Gles>(hal_texture_color, &texture_desc)
+        };
+        color_texture.create_view(&wgpu::TextureViewDescriptor::default())
+    };
+    let depth_view = {
+        let hal_texture_depth = <hal::api::Gles as hal::Api>::Texture::default_framebuffer(
+            vangers::render::DEPTH_FORMAT,
+        );
+        texture_desc.format = vangers::render::DEPTH_FORMAT;
+        let depth_texture = unsafe {
+            device.create_texture_from_hal::<hal::api::Gles>(hal_texture_depth, &texture_desc)
+        };
+        depth_texture.create_view(&wgpu::TextureViewDescriptor::default())
+    };
+    (color_view, depth_view)
+}
+
 #[no_mangle]
 pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>> {
     use cgmath::Zero as _;
     use vangers::config::settings as st;
 
-    env_logger::init();
+    #[cfg(feature = "env_logger")]
+    let _ = env_logger::try_init();
     let mut task_pool = LocalPool::new();
 
     let exposed = unsafe {
@@ -154,36 +197,8 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         height: desc.height,
         depth_or_array_layers: 1,
     };
-    let mut texture_desc = wgpu::TextureDescriptor {
-        label: None,
-        size: extent,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R8Uint, //dummy
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-    };
     let color_format = wgpu::TextureFormat::Rgba8UnormSrgb;
-
-    let color_view = {
-        let hal_texture_color =
-            <hal::api::Gles as hal::Api>::Texture::default_framebuffer(color_format);
-        texture_desc.format = color_format;
-        let color_texture = unsafe {
-            device.create_texture_from_hal::<hal::api::Gles>(hal_texture_color, &texture_desc)
-        };
-        color_texture.create_view(&wgpu::TextureViewDescriptor::default())
-    };
-    let depth_view = {
-        let hal_texture_depth = <hal::api::Gles as hal::Api>::Texture::default_framebuffer(
-            vangers::render::DEPTH_FORMAT,
-        );
-        texture_desc.format = vangers::render::DEPTH_FORMAT;
-        let depth_texture = unsafe {
-            device.create_texture_from_hal::<hal::api::Gles>(hal_texture_depth, &texture_desc)
-        };
-        depth_texture.create_view(&wgpu::TextureViewDescriptor::default())
-    };
+    let (color_view, depth_view) = crate_main_views(&device, extent, color_format);
 
     let ctx = Context {
         level: None,
@@ -230,6 +245,18 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
 #[no_mangle]
 pub unsafe extern "C" fn rv_exit(ctx: *mut Context) {
     let _ctx = Box::from_raw(ctx);
+}
+
+#[no_mangle]
+pub extern "C" fn rv_resize(ctx: &mut Context, width: u32, height: u32) {
+    ctx.extent = wgpu::Extent3d {
+        width,
+        height,
+        depth_or_array_layers: 1,
+    };
+    let (color_view, depth_view) = crate_main_views(&ctx.device, ctx.extent, ctx.color_format);
+    ctx.color_view = color_view;
+    ctx.depth_view = depth_view;
 }
 
 #[no_mangle]

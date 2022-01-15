@@ -11,7 +11,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 vangers = { path = "../.." }
-env_logger = "0.9"
+env_logger = { version = "0.9", optional = true }
 futures = "0.3"
 cgmath = "0.18"
 wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "f8a63c4", features = ["angle"] }
