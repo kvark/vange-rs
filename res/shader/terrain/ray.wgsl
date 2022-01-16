@@ -206,11 +206,11 @@ fn cast_ray_mip(base_point: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
                 break;
             }
             if (surface.low_alt == surface.high_alt) {
-                lod = lod + 1u; //try to escape the low level and LOD
+                lod += 1u; //try to escape the low level and LOD
             }
             point = point + c_Step * dir;
             ipos = vec2<i32>(floor(point.xy));
-            num_steps = num_steps - 1u;
+            num_steps -= 1u;
             if (num_steps == 0u) {
                 break;
             }
@@ -220,7 +220,7 @@ fn cast_ray_mip(base_point: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
         // step 1: get the LOD height and early out
         let height = get_lod_height(ipos, lod);
         if (point.z <= height) {
-            lod = lod - 1u;
+            lod -= 1u;
             continue;
         }
         // assumption: point.z >= height
@@ -234,18 +234,18 @@ fn cast_ray_mip(base_point: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
         let min_side_unit = min(units.x, units.y);
 
         // advance the point
-        point = point + min(units.z, min_side_unit) * dir;
+        point += min(units.z, min_side_unit) * dir;
         ipos = vec2<i32>(floor(point.xy));
-        num_jumps = num_jumps - 1u;
+        num_jumps -= 1u;
 
         if (units.z < min_side_unit) {
-            lod = lod - 1u;
+            lod -= 1u;
         } else {
             // adjust the integer position on cell boundary
             // figure out if we hit the higher LOD bound and switch to it
             var affinity = 0.0;
-            //TODO: this "%" is incorrect, it takes the sign of `cell_id`
-            let proximity = cell_id % 2.0 - vec2<f32>(0.5);
+            let proximity = abs(cell_id % 2.0) - vec2<f32>(0.5);
+
             if (units.x <= units.y) {
                 ipos.x = select(cell_tl.x - 1, cell_tl.x + (1 << lod), dir.x >= 0.0);
                 affinity = dir.x * proximity.x;
@@ -255,7 +255,7 @@ fn cast_ray_mip(base_point: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
                 affinity = dir.y * proximity.y;
             }
             if (lod < u_Locals.params.x && affinity > 0.0) {
-                lod = lod + 1u;
+                lod += 1u;
             }
         }
         if (num_jumps == 0u) {
