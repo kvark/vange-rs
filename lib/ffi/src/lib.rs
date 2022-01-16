@@ -208,7 +208,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
                 pos: [1.0, 2.0, 4.0, 0.0],
                 color: [1.0, 1.0, 1.0, 1.0],
                 shadow: st::Shadow {
-                    size: 0,
+                    size: 1024,
                     terrain: st::ShadowTerrain::RayTraced,
                 },
             },
@@ -330,6 +330,9 @@ pub unsafe extern "C" fn rv_map_update_data(ctx: &mut Context, region: Rect) {
         // We copy them into separate height and meta data arrays.
         let dst_offset = y as usize * line_width + region.x as usize;
         let line = *lc.desc.lines.add(y as usize);
+        if line.is_null() {
+            continue;
+        }
         ptr::copy_nonoverlapping(
             line.add(region.x as usize),
             lc.level.height[dst_offset..].as_mut_ptr(),
