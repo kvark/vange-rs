@@ -135,6 +135,9 @@ pub enum Terrain {
 }
 
 #[derive(Copy, Clone, Deserialize)]
+pub struct Water {}
+
+#[derive(Copy, Clone, Deserialize)]
 pub struct Fog {
     pub color: [f32; 4],
     pub depth: f32,
@@ -145,6 +148,7 @@ pub struct Render {
     pub wgpu_trace_path: String,
     pub light: Light,
     pub terrain: Terrain,
+    pub water: Water,
     pub fog: Fog,
     pub debug: DebugRender,
 }

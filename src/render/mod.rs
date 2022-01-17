@@ -29,6 +29,7 @@ pub mod mipmap;
 pub mod object;
 mod shadow;
 pub mod terrain;
+mod water;
 
 #[cfg(not(feature = "glsl"))]
 pub mod body {
@@ -538,6 +539,7 @@ pub struct Render {
     global: global::Context,
     pub object: object::Context,
     pub terrain: terrain::Context,
+    pub water: water::Context,
     pub debug: debug::Context,
     pub shadow: Option<shadow::Shadow>,
     pub light_config: settings::Light,
@@ -584,12 +586,14 @@ impl Render {
             &settings.light.shadow.terrain,
             screen_size,
         );
+        let water = water::Context::new(device, &settings.water, &global, &terrain);
         let debug = debug::Context::new(device, &settings.debug, &global, &object);
 
         Render {
             global,
             object,
             terrain,
+            water,
             debug,
             shadow,
             light_config: settings.light,
@@ -658,12 +662,15 @@ impl Render {
             });
 
             pass.set_bind_group(0, &self.global.shadow_bind_group, &[]);
+            pass.push_debug_group("terrain");
             self.terrain.draw_shadow(&mut pass);
+            pass.pop_debug_group();
 
-            // draw vehicle models
+            pass.push_debug_group("vehicles");
             pass.set_pipeline(&self.object.pipelines.shadow);
             pass.set_bind_group(1, &self.object.bind_group, &[]);
             batcher.draw(&mut pass);
+            pass.pop_debug_group();
         }
         // main pass
         {
@@ -694,6 +701,7 @@ impl Render {
                 cam,
                 self.screen_size,
             );
+            self.water.prepare(encoder, device, cam);
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main"),
@@ -728,12 +736,17 @@ impl Render {
             }
 
             pass.set_bind_group(0, &self.global.bind_group, &[]);
+            pass.push_debug_group("terrain");
             self.terrain.draw(&mut pass);
+            pass.pop_debug_group();
 
-            // draw vehicle models
             pass.set_pipeline(&self.object.pipelines.main);
             pass.set_bind_group(1, &self.object.bind_group, &[]);
             batcher.draw(&mut pass);
+
+            pass.push_debug_group("water");
+            self.water.draw(&mut pass);
+            pass.pop_debug_group();
         }
     }
 
@@ -741,6 +754,7 @@ impl Render {
         info!("Reloading shaders");
         self.object.reload(device);
         self.terrain.reload(device);
+        self.water.reload(device);
     }
 
     pub fn resize(&mut self, extent: wgpu::Extent3d, device: &wgpu::Device) {

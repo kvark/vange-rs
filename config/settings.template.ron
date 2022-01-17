@@ -63,6 +63,7 @@
 		// Scattered( density: (2, 2, 2) ),
 		// Sliced,
 		// Painted,
+		water: (),
 		debug: (
 			max_vertices: 512,
 			collision_shapes: false,

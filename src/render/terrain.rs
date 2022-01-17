@@ -172,6 +172,12 @@ enum Kind {
     },
 }
 
+pub struct Flood {
+    pub texture: wgpu::Texture,
+    pub texture_size: u32,
+    pub section_size: (u32, u32),
+}
+
 pub struct Context {
     pub surface_uni_buf: wgpu::Buffer,
     pub uniform_buf: wgpu::Buffer,
@@ -185,6 +191,7 @@ pub struct Context {
     height_texture: wgpu::Texture,
     meta_texture: wgpu::Texture,
     palette_texture: wgpu::Texture,
+    pub flood: Flood,
     pub dirty_rects: Vec<super::Rect>,
     pub dirty_palette: Range<u32>,
 }
@@ -426,8 +433,9 @@ impl Context {
             height: level.size.1 as u32,
             depth_or_array_layers: 1,
         };
+        let flood_section_count = level.size.1 as u32 >> level.flood_section_power;
         let flood_extent = wgpu::Extent3d {
-            width: level.size.1 as u32 >> level.flood_section_power,
+            width: flood_section_count,
             height: 1,
             depth_or_array_layers: 1,
         };
@@ -910,6 +918,11 @@ impl Context {
             height_texture,
             meta_texture,
             palette_texture: palette.texture,
+            flood: Flood {
+                texture: flood_texture,
+                texture_size: flood_section_count,
+                section_size: (level.size.0 as u32, 1 << level.flood_section_power),
+            },
             dirty_rects: vec![super::Rect {
                 x: 0,
                 y: 0,

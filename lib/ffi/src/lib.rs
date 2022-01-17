@@ -213,6 +213,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
                 },
             },
             terrain: st::Terrain::RayTraced,
+            water: st::Water {},
             fog: st::Fog {
                 color: [0.1, 0.2, 0.3, 1.0],
                 depth: 50.0,
