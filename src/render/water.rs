@@ -1,6 +1,5 @@
 use crate::{
     config::settings,
-    level,
     render::{global::Context as GlobalContext, terrain::Context as TerrainContext, DEPTH_FORMAT},
     space::Camera,
 };
@@ -17,17 +16,7 @@ pub struct Vertex {
 unsafe impl Pod for Vertex {}
 unsafe impl Zeroable for Vertex {}
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Locals {
-    height_scale: f32,
-}
-unsafe impl Pod for Locals {}
-unsafe impl Zeroable for Locals {}
-
 pub struct Context {
-    pub bind_group: wgpu::BindGroup,
-    pub bind_group_layout: wgpu::BindGroupLayout,
     pub pipeline_layout: wgpu::PipelineLayout,
     pub pipeline: wgpu::RenderPipeline,
     pub color_format: wgpu::TextureFormat,
@@ -89,66 +78,11 @@ impl Context {
         device: &wgpu::Device,
         _settings: &settings::Water,
         global: &GlobalContext,
-        //TODO: remove or reverse this dependency on terrain
         terrain: &TerrainContext,
     ) -> Self {
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Water"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(mem::size_of::<Locals>() as _),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Texture {
-                        view_dimension: wgpu::TextureViewDimension::D1,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let locals = Locals {
-            height_scale: level::HEIGHT_SCALE as f32,
-        };
-        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Water uniforms"),
-            contents: bytemuck::bytes_of(&locals),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Water"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(
-                        &terrain
-                            .flood
-                            .texture
-                            .create_view(&wgpu::TextureViewDescriptor::default()),
-                    ),
-                },
-            ],
-        });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("water"),
-            bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout],
+            bind_group_layouts: &[&global.bind_group_layout, &terrain.bind_group_layout],
             push_constant_ranges: &[],
         });
         let pipeline = Self::create_pipeline(&pipeline_layout, device, global.color_format);
@@ -162,8 +96,6 @@ impl Context {
         });
 
         Context {
-            bind_group,
-            bind_group_layout,
             pipeline_layout,
             pipeline,
             color_format: global.color_format,
@@ -241,7 +173,8 @@ impl Context {
     }
 
     pub fn draw<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
-        pass.set_bind_group(1, &self.bind_group, &[]);
+        // needs to be set up by the terrain context
+        //pass.set_bind_group(1, &self.bind_group, &[]);
         pass.set_pipeline(&self.pipeline);
         pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
         pass.draw(0..self.vertices.len() as u32, 0..1);
