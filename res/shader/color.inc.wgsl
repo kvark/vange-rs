@@ -26,11 +26,7 @@ fn evaluate_light(material: vec3<f32>, height_diff: f32) -> f32 {
 fn evaluate_palette(ty: u32, value_in: f32, ycoord: f32) -> f32 {
     var value = clamp(value_in, 0.0, 1.0);
     let terr = vec4<f32>(textureLoad(t_Table, i32(ty), 0));
-    if (ty == 0u && value > 0.0) { // water
-        let flood = textureSampleLevel(t_Flood, s_Flood, ycoord, 0.0).x;
-        let d = c_HorFactor * (1.0 - flood);
-        value = clamp(value * 1.25 / (1.0 - d) - 0.25, 0.0, 1.0);
-    }
+    //Note: the original game had specific logic here to process water
     return (mix(terr.z, terr.w, value) + 0.5) / 256.0;
 }
 

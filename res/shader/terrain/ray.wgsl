@@ -13,10 +13,6 @@ fn main([[location(0)]] pos: vec4<i32>) -> [[builtin(position)]] vec4<f32> {
 
 //imported: Surface, u_Surface, get_surface, evaluate_color
 
-let c_ReflectionVariance: f32 = 0.5;
-let c_ReflectionPower: f32 = 0.2;
-let c_TerrainWater: u32 = 0u;
-
 fn cast_ray_to_plane(level: f32, base: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     let t = (level - base.z) / dir.z;
     return t * dir + base;
@@ -168,20 +164,6 @@ fn ray_color(in: RayInput) -> FragOutput {
 
     let lit_factor = fetch_shadow(pt.pos);
     var frag_color = color_point(pt, lit_factor);
-
-    if (pt.ty == c_TerrainWater) {
-        let a = pt.pos;
-        let variance = abs(a.xy) % c_ReflectionVariance;
-        let reflected = normalize(view * vec3<f32>(1.0 + variance, -1.0));
-        let outside = cast_ray_to_plane(u_Surface.texture_scale.z, a, reflected);
-
-        let cr = cast_ray_impl(a, outside, true, 4, 4);
-        if (any(cr.b != outside)) {
-            let other = CastPoint(cr.b, cr.surface.high_type, cr.surface.tex_coord, false);
-            let ref_color = color_point(other, 0.8);
-            frag_color = frag_color + c_ReflectionPower * ref_color;
-        }
-    }
 
     let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
     let depth = target_ndc.z / target_ndc.w;

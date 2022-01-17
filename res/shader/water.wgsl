@@ -1,5 +1,12 @@
 //!include globals.inc surface.inc shadow.inc
 
+// Flood map has the water level per Y.
+[[group(1), binding(4)]] var t_Flood: texture_1d<f32>;
+[[group(1), binding(8)]] var s_Flood: sampler;
+
+let c_TerrainWater = 0u;
+let c_WaterColor = vec3<f32>(0.0, 0.1, 0.4);
+
 struct Varyings {
     [[builtin(position)]] clip_pos: vec4<f32>;
     [[location(0)]] world_pos: vec3<f32>;
@@ -17,6 +24,14 @@ fn main_fs(in: Varyings) -> [[location(0)]] vec4<f32> {
     // cut off the least bit of X coordiante to always point to the low end
     let tci = get_map_coordinates(in.world_pos.xy) & vec2<i32>(-2, -1);
     let meta_low = textureLoad(t_Meta, tci, 0).x;
-    let alpha = select(0.0, 0.5, get_terrain_type(meta_low) == 0u);
-    return vec4<f32>(0.1, 0.2, 1.0, alpha);
+    if (get_terrain_type(meta_low) != c_TerrainWater) {
+        return vec4<f32>(0.0);
+    }
+
+    let shadow = fetch_shadow(in.world_pos);
+
+    let view = normalize(in.world_pos - u_Globals.camera_pos.xyz);
+    //TODO: screen-space reflections
+    //TODO: read the depth texture to find out actual transparency
+    return vec4<f32>(shadow * c_WaterColor, 1.0 + 0.9*view.z);
 }
