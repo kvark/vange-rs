@@ -604,7 +604,7 @@ impl Context {
                 // flood map
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::Texture {
                         view_dimension: wgpu::TextureViewDimension::D1,
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },

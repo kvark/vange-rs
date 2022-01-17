@@ -745,6 +745,7 @@ impl Render {
             batcher.draw(&mut pass);
 
             pass.push_debug_group("water");
+            pass.set_bind_group(1, &self.terrain.bind_group, &[]);
             self.water.draw(&mut pass);
             pass.pop_debug_group();
         }

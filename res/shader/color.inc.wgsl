@@ -1,13 +1,10 @@
 // Common FS routines for evaluating terrain color.
 
 //uniform sampler2D t_Height;
-// Flood map has the water level per Y.
-[[group(1), binding(4)]] var t_Flood: texture_1d<f32>;
 // Terrain parameters per type: shadow offset, height shift, palette start, palette end
 [[group(1), binding(5)]] var t_Table: texture_1d<u32>;
 // corresponds to SDL palette
 [[group(1), binding(6)]] var t_Palette: texture_1d<f32>;
-[[group(1), binding(8)]] var s_Flood: sampler;
 
 [[group(0), binding(1)]] var s_Palette: sampler;
 

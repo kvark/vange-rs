@@ -9,6 +9,9 @@ struct SurfaceConstants {
 [[group(1), binding(2)]] var t_Height: texture_2d<f32>;
 [[group(1), binding(3)]] var t_Meta: texture_2d<u32>;
 [[group(1), binding(7)]] var s_Main: sampler;
+// Flood map has the water level per Y.
+[[group(1), binding(4)]] var t_Flood: texture_1d<f32>;
+[[group(1), binding(8)]] var s_Flood: sampler;
 
 let c_DoubleLevelMask: u32 = 64u;
 let c_ShadowMask: u32 = 128u;
@@ -48,11 +51,15 @@ fn get_lod_height(ipos: vec2<i32>, lod: u32) -> f32 {
     return alt * u_Surface.texture_scale.z;
 }
 
+fn get_map_coordinates(pos: vec2<f32>) -> vec2<i32> {
+    return vec2<i32>(pos - floor(pos / u_Surface.texture_scale.xy) * u_Surface.texture_scale.xy);
+}
+
 fn get_surface(pos: vec2<f32>) -> Surface {
     var suf: Surface;
 
     let tc = pos / u_Surface.texture_scale.xy;
-    let tci = vec2<i32>(pos - floor(pos / u_Surface.texture_scale.xy) * u_Surface.texture_scale.xy);
+    let tci = get_map_coordinates(pos);
     suf.tex_coord = tc;
 
     let meta = textureLoad(t_Meta, tci, 0).x;
