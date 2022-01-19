@@ -1,5 +1,5 @@
 [package]
-name = "vangers-ffi"
+name = "rusty-vangers"
 version = "0.1.0"
 workspace = "../.."
 authors = ["Dzmitry Malyshau <kvarkus@gmail.com>"]
