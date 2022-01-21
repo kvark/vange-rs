@@ -14,5 +14,5 @@ vangers = { path = "../.." }
 env_logger = { version = "0.9", optional = true }
 futures = "0.3"
 cgmath = "0.18"
-wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "0183e7d", features = ["angle"] }
-hal = { package = "wgpu-hal", git = "https://github.com/gfx-rs/wgpu", rev = "0183e7d", features = ["gles"] }
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "f3891fe", features = ["angle"] }
+hal = { package = "wgpu-hal", git = "https://github.com/gfx-rs/wgpu", rev = "f3891fe", features = ["gles"] }
