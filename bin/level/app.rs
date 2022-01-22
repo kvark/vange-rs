@@ -34,6 +34,7 @@ pub struct LevelView {
 impl LevelView {
     pub fn new(
         settings: &config::settings::Settings,
+        override_path: Option<&String>,
         color_format: wgpu::TextureFormat,
         screen_extent: wgpu::Extent3d,
         device: &wgpu::Device,
@@ -43,6 +44,11 @@ impl LevelView {
         let level = if settings.game.level.is_empty() {
             info!("Using test level");
             level::Level::new_test()
+        } else if let Some(ini_path) = override_path {
+            info!("Using level at {}", ini_path);
+            let full_path = settings.data_path.join(ini_path);
+            let level_config = level::LevelConfig::load(&full_path);
+            level::load(&level_config)
         } else {
             let escaves = config::escaves::load(settings.open_relative("escaves.prm"));
             let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
@@ -126,7 +132,7 @@ impl LevelView {
             level,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, 0.0, 400.0),
-                rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
+                rot: cgmath::One::one(),
                 proj: match settings.game.view {
                     config::settings::View::Perspective => {
                         let pf = cgmath::PerspectiveFov {

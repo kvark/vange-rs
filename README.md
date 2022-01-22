@@ -68,6 +68,7 @@ Controls:
 `level` binary allows to fly over a level with free camera. Useful for debugging the level rendering shader.
 ```bash
 cargo run --bin level
+cargo run --bin level -- resource/iscreen/ldata/l0/escave.ini # load menu
 ```
 Controls:
   - `WSAD`: move the camera along X-Y plane
