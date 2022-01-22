@@ -347,7 +347,10 @@ impl Game {
                 .filter(|e| e.world == settings.game.level)
                 .map(|e| e.coordinates)
                 .collect::<Vec<_>>();
-            let coordinates = *local_escave_coords.choose(&mut rng).unwrap();
+            let coordinates = match local_escave_coords.choose(&mut rng) {
+                Some(coords) => *coords,
+                None => (0, 0),
+            };
 
             let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
             let ini_name = match worlds.get(&settings.game.level) {
