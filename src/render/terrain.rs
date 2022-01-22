@@ -28,6 +28,7 @@ unsafe impl Zeroable for Vertex {}
 #[derive(Clone, Copy)]
 struct SurfaceConstants {
     _tex_scale: [f32; 4],
+    _terrain_bits: [u32; 4],
 }
 unsafe impl Pod for SurfaceConstants {}
 unsafe impl Zeroable for SurfaceConstants {}
@@ -658,6 +659,7 @@ impl Context {
             ],
         });
 
+        let bits = level.terrain_bits();
         let surface_uni_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("surface-uniforms"),
             contents: bytemuck::bytes_of(&SurfaceConstants {
@@ -667,6 +669,7 @@ impl Context {
                     level::HEIGHT_SCALE as f32,
                     0.0,
                 ],
+                _terrain_bits: [bits.shift as u32 | ((bits.mask as u32) << 4), 0, 0, 0],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });

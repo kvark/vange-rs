@@ -2,6 +2,7 @@
 
 struct SurfaceConstants {
     texture_scale: vec4<f32>;    // XY = size, Z = height scale, w = number of layers
+    terrain_bits: vec4<u32>;     // X_low = shift, X_high = mask
 };
 
 [[group(1), binding(0)]] var<uniform> u_Surface: SurfaceConstants;
@@ -12,8 +13,6 @@ struct SurfaceConstants {
 
 let c_DoubleLevelMask: u32 = 64u;
 let c_ShadowMask: u32 = 128u;
-let c_TerrainShift: u32 = 3u;
-let c_TerrainBits: u32 = 3u;
 let c_DeltaShift: u32 = 0u;
 let c_DeltaBits: u32 = 2u;
 let c_DeltaScale: f32 = 0.03137254901; //8.0 / 255.0;
@@ -29,7 +28,8 @@ struct Surface {
 };
 
 fn get_terrain_type(meta: u32) -> u32 {
-    return (meta >> c_TerrainShift) & ((1u << c_TerrainBits) - 1u);
+    let bits = u_Surface.terrain_bits.x;
+    return (meta >> (bits & 0xFu)) & (bits >> 4u);
 }
 fn get_delta(meta: u32) -> u32 {
     return (meta >> c_DeltaShift) & ((1u << c_DeltaBits) - 1u);
