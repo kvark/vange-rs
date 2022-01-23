@@ -494,7 +494,7 @@ impl Game {
             agents,
             cam: space::Camera {
                 loc: cgmath::vec3(coords.0 as f32, coords.1 as f32, 200.0),
-                rot: cgmath::Quaternion::new(0.0, 0.0, 1.0, 0.0),
+                rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
                 proj: match settings.game.view {
                     config::settings::View::Perspective => {
                         let pf = cgmath::PerspectiveFov {

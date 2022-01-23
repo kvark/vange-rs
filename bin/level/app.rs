@@ -132,7 +132,7 @@ impl LevelView {
             level,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, 0.0, 400.0),
-                rot: cgmath::One::one(),
+                rot: cgmath::Quaternion::new(0.0, 0.0, 0.0, 1.0),
                 proj: match settings.game.view {
                     config::settings::View::Perspective => {
                         let pf = cgmath::PerspectiveFov {
