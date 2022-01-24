@@ -26,6 +26,18 @@ impl ResourceView {
         downlevel_caps: &wgpu::DownlevelCapabilities,
         color_format: wgpu::TextureFormat,
     ) -> Self {
+        let cam = space::Camera {
+            loc: cgmath::vec3(0.0, -200.0, 100.0),
+            rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(cgmath::Angle::turn_div_6()),
+            scale: cgmath::vec3(1.0, -1.0, 1.0),
+            proj: space::Projection::Perspective(cgmath::PerspectiveFov {
+                fovy: cgmath::Deg(45.0).into(),
+                aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
+                near: 5.0,
+                far: 400.0,
+            }),
+        };
+
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
         #[cfg(feature = "glsl")]
@@ -38,8 +50,14 @@ impl ResourceView {
             store_init.resource(),
             None,
         );
-        let object =
-            render::object::Context::new(device, queue, downlevel_caps, &pal_data, &global);
+        let object = render::object::Context::new(
+            device,
+            queue,
+            downlevel_caps,
+            cam.front_face(),
+            &pal_data,
+            &global,
+        );
 
         info!("Loading model {}", path);
         let file = settings.open_relative(path);
@@ -54,17 +72,7 @@ impl ResourceView {
                 disp: cgmath::Vector3::unit_z(),
                 rot: cgmath::One::one(),
             },
-            cam: space::Camera {
-                loc: cgmath::vec3(0.0, -200.0, 100.0),
-                rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(cgmath::Angle::turn_div_6()),
-                scale: cgmath::vec3(1.0, -1.0, 1.0),
-                proj: space::Projection::Perspective(cgmath::PerspectiveFov {
-                    fovy: cgmath::Deg(45.0).into(),
-                    aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
-                    near: 5.0,
-                    far: 400.0,
-                }),
-            },
+            cam,
             rotation: cgmath::Rad(0.),
             light_config: settings.render.light,
         }

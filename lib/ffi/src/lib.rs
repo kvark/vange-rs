@@ -309,6 +309,7 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
         &ctx.render_config,
         ctx.color_format,
         ctx.extent, //Note: needs update on window resize
+        ctx.camera.front_face(),
     );
     ctx.level = Some(LevelContext {
         desc,

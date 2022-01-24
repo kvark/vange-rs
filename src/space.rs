@@ -275,4 +275,12 @@ impl Camera {
         self.loc = view.disp;
         self.rot = view.rot;
     }
+
+    pub fn front_face(&self) -> wgpu::FrontFace {
+        if self.scale.x * self.scale.y > 0.0 {
+            wgpu::FrontFace::Cw
+        } else {
+            wgpu::FrontFace::Ccw
+        }
+    }
 }

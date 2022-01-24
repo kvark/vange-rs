@@ -109,6 +109,7 @@ pub struct Context {
     pub pipeline_layout: wgpu::PipelineLayout,
     pub pipelines: PipelineSet,
     pub color_format: wgpu::TextureFormat,
+    front_face: wgpu::FrontFace,
 }
 
 impl Context {
@@ -116,6 +117,7 @@ impl Context {
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
         color_format: wgpu::TextureFormat,
+        front_face: wgpu::FrontFace,
     ) -> PipelineSet {
         let vertex_descriptor = wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
@@ -140,7 +142,7 @@ impl Context {
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
+                front_face,
                 // original was not drawn with rasterizer, used no culling
                 ..Default::default()
             },
@@ -237,6 +239,7 @@ impl Context {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         downlevel_caps: &wgpu::DownlevelCapabilities,
+        front_face: wgpu::FrontFace,
         palette_data: &[[u8; 4]],
         global: &GlobalContext,
     ) -> Self {
@@ -327,7 +330,8 @@ impl Context {
             bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout],
             push_constant_ranges: &[],
         });
-        let pipelines = Self::create_pipelines(&pipeline_layout, device, global.color_format);
+        let pipelines =
+            Self::create_pipelines(&pipeline_layout, device, global.color_format, front_face);
 
         Context {
             bind_group,
@@ -335,10 +339,16 @@ impl Context {
             pipeline_layout,
             pipelines,
             color_format: global.color_format,
+            front_face,
         }
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {
-        self.pipelines = Self::create_pipelines(&self.pipeline_layout, device, self.color_format);
+        self.pipelines = Self::create_pipelines(
+            &self.pipeline_layout,
+            device,
+            self.color_format,
+            self.front_face,
+        );
     }
 }
