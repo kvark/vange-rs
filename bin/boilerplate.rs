@@ -1,6 +1,6 @@
 #![allow(clippy::single_match)]
 use vangers::{
-    config,
+    config::{settings::Terrain, Settings},
     render::{ScreenTargets, DEPTH_FORMAT},
 };
 
@@ -53,12 +53,12 @@ pub struct HarnessOptions {
 }
 
 impl Harness {
-    pub fn init(options: HarnessOptions) -> (Self, config::Settings) {
+    pub fn init(options: HarnessOptions) -> (Self, Settings) {
         env_logger::init();
         let mut task_pool = LocalPool::new();
 
         info!("Loading the settings");
-        let settings = config::Settings::load("config/settings.ron");
+        let settings = Settings::load("config/settings.ron");
         let extent = wgpu::Extent3d {
             width: settings.window.size[0],
             height: settings.window.size[1],
@@ -88,7 +88,13 @@ impl Harness {
         let downlevel_caps = adapter.get_downlevel_properties();
         let adapter_limits = adapter.limits();
 
-        let mut limits = wgpu::Limits::downlevel_webgl2_defaults();
+        let mut limits = match settings.render.terrain {
+            Terrain::RayTraced { .. }
+            | Terrain::RayMipTraced { .. }
+            | Terrain::Sliced { .. }
+            | Terrain::Painted { .. } => wgpu::Limits::downlevel_webgl2_defaults(),
+            Terrain::Scattered { .. } => wgpu::Limits::default(),
+        };
         if options.uses_level {
             let desired_height = 16 << 10;
             limits.max_texture_dimension_2d =
@@ -102,6 +108,7 @@ impl Harness {
                     desired_height
                 };
         }
+
         let (device, queue) = task_pool
             .run_until(adapter.request_device(
                 &wgpu::DeviceDescriptor {
