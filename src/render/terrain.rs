@@ -53,6 +53,8 @@ struct ScatterConstants {
     sample_x: Range<f32>,
 }
 
+//Note: this is very similar to `visible_bounds_at()`
+// but it searches in a different parameter space
 fn compute_scatter_constants(cam: &Camera) -> ScatterConstants {
     use cgmath::{prelude::*, Point2, Point3, Vector2, Vector3};
 
@@ -87,12 +89,13 @@ fn compute_scatter_constants(cam: &Camera) -> ScatterConstants {
     let mut y_range = y_center..y_center;
     let mut x0 = 0f32..0.0;
     let mut x1 = 0f32..0.0;
+    let v = 1.0; // set to smaller for debugging
 
     let local_positions = [
-        Point3::new(1.0, 1.0, 0.0),
-        Point3::new(-1.0, 1.0, 0.0),
-        Point3::new(1.0, -1.0, 0.0),
-        Point3::new(-1.0, -1.0, 0.0),
+        Point3::new(v, v, 0.0),
+        Point3::new(-v, v, 0.0),
+        Point3::new(v, -v, 0.0),
+        Point3::new(-v, -v, 0.0),
     ];
 
     for &lp in &local_positions {

@@ -61,6 +61,8 @@ impl Projection {
 pub struct Camera {
     pub loc: cgmath::Vector3<f32>,
     pub rot: cgmath::Quaternion<f32>,
+    // this non-uniform scale is used to make the camera left-handed
+    pub scale: cgmath::Vector3<f32>,
     pub proj: Projection,
 }
 
@@ -78,6 +80,14 @@ pub struct Direction {
 }
 
 impl Camera {
+    fn _scale_vec(&self, vec: cgmath::Vector3<f32>) -> cgmath::Vector3<f32> {
+        cgmath::Vector3::new(
+            self.scale.x * vec.x,
+            self.scale.y * vec.y,
+            self.scale.z * vec.z,
+        )
+    }
+
     pub fn dir(&self) -> cgmath::Vector3<f32> {
         self.rot * -cgmath::Vector3::unit_z()
     }
@@ -107,10 +117,14 @@ impl Camera {
         }
     }
 
+    fn scale_matrix(&self) -> cgmath::Matrix4<f32> {
+        cgmath::Matrix4::from_nonuniform_scale(self.scale.x, self.scale.y, self.scale.z)
+    }
+
     pub fn get_view_proj(&self) -> cgmath::Matrix4<f32> {
         let view = self.view_transform();
         let view_mx = cgmath::Matrix4::from(view.inverse_transform().unwrap());
-        self.get_proj_matrix() * view_mx
+        self.get_proj_matrix() * self.scale_matrix() * view_mx
     }
 
     fn intersect_ray_height(&self, dir: cgmath::Vector3<f32>, height: f32) -> cgmath::Point3<f32> {
@@ -131,7 +145,8 @@ impl Camera {
 
         let proj = self.get_proj_matrix();
         let view = self.view_transform();
-        let mx = cgmath::Matrix4::from(view) * proj.inverse_transform().unwrap();
+        let mx =
+            cgmath::Matrix4::from(view) * self.scale_matrix() * proj.inverse_transform().unwrap();
         // Scale vectors in a way that makes their Z footprint to be -1 in local space.
         let scaler = 1.0 / self.depth_range().end;
         let ndc_points = [
@@ -186,13 +201,14 @@ impl Camera {
             *target
         };
 
-        let result = new_target.concat(&follow.transform);
+        let offset = cgmath::Point3::origin() + follow.transform.disp;
+        let result = new_target.transform_point(offset) - cgmath::Point3::origin();
         let k = (dt * -follow.speed).exp();
 
-        self.loc = result.disp * (1.0 - k) + self.loc * k;
+        self.loc = result * (1.0 - k) + self.loc * k;
         self.rot = cgmath::Quaternion::look_at(
             (self.loc - target.disp).normalize(),
-            cgmath::Vector3::unit_z(),
+            self.scale.y * cgmath::Vector3::unit_z(),
         )
         .invert();
     }

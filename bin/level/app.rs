@@ -132,7 +132,8 @@ impl LevelView {
             level,
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, 0.0, 400.0),
-                rot: cgmath::Quaternion::new(0.0, 0.0, 0.0, 1.0),
+                rot: cgmath::One::one(),
+                scale: cgmath::vec3(1.0, -1.0, 1.0),
                 proj: match settings.game.view {
                     config::settings::View::Perspective => {
                         let pf = cgmath::PerspectiveFov {
@@ -211,41 +212,41 @@ impl Application for LevelView {
                 Key::Escape => return false,
                 Key::W => {
                     *i = Input::Ver {
-                        dir: 1.0,
+                        dir: self.cam.scale.y,
                         alt: modifiers.alt(),
                         shift: modifiers.shift(),
                     }
                 }
                 Key::S => {
                     *i = Input::Ver {
-                        dir: -1.0,
+                        dir: -self.cam.scale.y,
                         alt: modifiers.alt(),
                         shift: modifiers.shift(),
                     }
                 }
                 Key::A => {
                     *i = Input::Hor {
-                        dir: -1.0,
+                        dir: -self.cam.scale.x,
                         alt: modifiers.alt(),
                         shift: modifiers.shift(),
                     }
                 }
                 Key::D => {
                     *i = Input::Hor {
-                        dir: 1.0,
+                        dir: self.cam.scale.x,
                         alt: modifiers.alt(),
                         shift: modifiers.shift(),
                     }
                 }
                 Key::Z => {
                     *i = Input::Dep {
-                        dir: -1.0,
+                        dir: -self.cam.scale.z,
                         alt: modifiers.alt(),
                     }
                 }
                 Key::X => {
                     *i = Input::Dep {
-                        dir: 1.0,
+                        dir: self.cam.scale.z,
                         alt: modifiers.alt(),
                     }
                 }
@@ -279,7 +280,8 @@ impl Application for LevelView {
         delta: f32,
         _spawner: &LocalSpawner,
     ) -> Vec<wgpu::CommandBuffer> {
-        use cgmath::{InnerSpace, Rotation3, Zero};
+        use cgmath::{InnerSpace as _, Rotation3 as _};
+
         let move_speed = match self.cam.proj {
             space::Projection::Perspective(_) => 100.0,
             space::Projection::Ortho { .. } => 500.0,
@@ -301,14 +303,10 @@ impl Application for LevelView {
                 alt: false,
                 shift,
             } if dir != 0.0 => {
-                let mut vec = self.cam.rot * cgmath::Vector3::unit_z();
+                let mut vec = self.cam.rot * cgmath::Vector3::unit_y();
                 vec.z = 0.0;
-                if vec == cgmath::Vector3::zero() {
-                    vec = self.cam.rot * -cgmath::Vector3::unit_y();
-                    vec.z = 0.0;
-                }
                 let speed = if shift { fast_move_speed } else { move_speed };
-                self.cam.loc -= speed * delta * dir * vec.normalize();
+                self.cam.loc += speed * delta * dir * vec.normalize();
             }
             Input::Dep { dir, alt: false } if dir != 0.0 => {
                 let vec = cgmath::Vector3::unit_z();

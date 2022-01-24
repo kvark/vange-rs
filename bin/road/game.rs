@@ -283,7 +283,7 @@ impl Clipper {
     fn new(cam: &space::Camera) -> Self {
         Clipper {
             mx_vp: cam.get_view_proj(),
-            threshold: 1.05,
+            threshold: 1.1,
         }
     }
 
@@ -494,7 +494,8 @@ impl Game {
             agents,
             cam: space::Camera {
                 loc: cgmath::vec3(coords.0 as f32, coords.1 as f32, 200.0),
-                rot: cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
+                rot: cgmath::One::one(),
+                scale: cgmath::vec3(1.0, -1.0, 1.0),
                 proj: match settings.game.view {
                     config::settings::View::Perspective => {
                         let pf = cgmath::PerspectiveFov {
@@ -575,8 +576,8 @@ impl Application for Game {
                 Key::Period => self.tick = Some(1.0),
                 Key::LShift => self.turbo = true,
                 Key::LAlt => self.jump = Some(0.0),
-                Key::W => self.spin_ver = 1.0,
-                Key::S => self.spin_ver = -1.0,
+                Key::W => self.spin_ver = self.cam.scale.x,
+                Key::S => self.spin_ver = -self.cam.scale.x,
                 Key::R => {
                     if let Physics::Cpu {
                         ref mut transform,
@@ -588,17 +589,17 @@ impl Application for Game {
                         dynamo.angular_velocity = cgmath::Vector3::zero();
                     }
                 }
-                Key::A => self.spin_hor = -1.0,
-                Key::D => self.spin_hor = 1.0,
+                Key::A => self.spin_hor = -self.cam.scale.y,
+                Key::D => self.spin_hor = self.cam.scale.y,
                 Key::Q => {
                     self.roll = Some(Roll {
-                        dir: -1.0,
+                        dir: -self.cam.scale.y,
                         time: 0.0,
                     })
                 }
                 Key::E => {
                     self.roll = Some(Roll {
-                        dir: 1.0,
+                        dir: self.cam.scale.y,
                         time: 0.0,
                     })
                 }

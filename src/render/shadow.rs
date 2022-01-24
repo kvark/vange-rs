@@ -44,6 +44,7 @@ impl Shadow {
             cam: Camera {
                 loc: cgmath::Zero::zero(),
                 rot: cgmath::Quaternion::look_at(dir, up),
+                scale: cgmath::Vector3::new(1.0, 1.0, 1.0),
                 proj: Projection::ortho(1, 1, 0.0..1.0),
             },
             size,

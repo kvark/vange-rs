@@ -740,9 +740,11 @@ impl Render {
             self.terrain.draw(&mut pass);
             pass.pop_debug_group();
 
+            pass.push_debug_group("vehicles");
             pass.set_pipeline(&self.object.pipelines.main);
             pass.set_bind_group(1, &self.object.bind_group, &[]);
             batcher.draw(&mut pass);
+            pass.pop_debug_group();
 
             pass.push_debug_group("water");
             pass.set_bind_group(1, &self.terrain.bind_group, &[]);

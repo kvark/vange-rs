@@ -82,6 +82,7 @@ impl CarView {
             cam: space::Camera {
                 loc: cgmath::vec3(0.0, -64.0, 32.0),
                 rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(cgmath::Angle::turn_div_6()),
+                scale: cgmath::vec3(1.0, -1.0, 1.0),
                 proj: space::Projection::Perspective(cgmath::PerspectiveFov {
                     fovy: cgmath::Deg(45.0).into(),
                     aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
