@@ -231,6 +231,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         camera: vangers::space::Camera {
             loc: cgmath::Vector3::zero(),
             rot: cgmath::Quaternion::zero(),
+            scale: cgmath::vec3(1.0, 1.0, 1.0),
             proj: vangers::space::Projection::Perspective(cgmath::PerspectiveFov {
                 aspect: 1.0,
                 near: 1.0,

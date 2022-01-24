@@ -17,4 +17,4 @@ jobs:
     - run: cargo check
     - if: matrix.os == 'ubuntu-latest'
       run: cargo check --features glsl
-    - run: cargo test
+    - run: cargo test --all

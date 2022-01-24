@@ -171,7 +171,10 @@ impl Application for LevelView {
             return;
         }
 
-        let shift = position_vec - self.last_mouse_pos;
+        let mut shift = position_vec - self.last_mouse_pos;
+        shift.x *= self.cam.scale.x;
+        shift.y *= self.cam.scale.y;
+
         self.input = if self.alt_button_pressed {
             Input::RotQuant(shift)
         } else {
