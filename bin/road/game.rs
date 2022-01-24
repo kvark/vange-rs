@@ -371,8 +371,30 @@ impl Game {
         };
         let coords = settings.car.pos.unwrap_or(default_coords);
 
-        log::info!("Initializing the render");
         let depth = settings.game.camera.depth_range;
+        let cam = space::Camera {
+            loc: cgmath::vec3(coords.0 as f32, coords.1 as f32, 200.0),
+            rot: cgmath::One::one(),
+            scale: cgmath::vec3(1.0, -1.0, 1.0),
+            proj: match settings.game.view {
+                config::settings::View::Perspective => {
+                    let pf = cgmath::PerspectiveFov {
+                        fovy: cgmath::Deg(45.0).into(),
+                        aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
+                        near: depth.0,
+                        far: depth.1,
+                    };
+                    space::Projection::Perspective(pf)
+                }
+                config::settings::View::Flat => space::Projection::ortho(
+                    settings.window.size[0] as u16,
+                    settings.window.size[1] as u16,
+                    depth.0..depth.1,
+                ),
+            },
+        };
+
+        log::info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
         #[cfg(feature = "glsl")]
         let store_init = match settings.game.physics.gpu_collision {
@@ -388,6 +410,7 @@ impl Game {
             &settings.render,
             color_format,
             screen_extent,
+            cam.front_face(),
             #[cfg(feature = "glsl")]
             store_init.resource(),
         );
@@ -492,27 +515,7 @@ impl Game {
             line_buffer: LineBuffer::new(),
             level,
             agents,
-            cam: space::Camera {
-                loc: cgmath::vec3(coords.0 as f32, coords.1 as f32, 200.0),
-                rot: cgmath::One::one(),
-                scale: cgmath::vec3(1.0, -1.0, 1.0),
-                proj: match settings.game.view {
-                    config::settings::View::Perspective => {
-                        let pf = cgmath::PerspectiveFov {
-                            fovy: cgmath::Deg(45.0).into(),
-                            aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
-                            near: depth.0,
-                            far: depth.1,
-                        };
-                        space::Projection::Perspective(pf)
-                    }
-                    config::settings::View::Flat => space::Projection::ortho(
-                        settings.window.size[0] as u16,
-                        settings.window.size[1] as u16,
-                        depth.0..depth.1,
-                    ),
-                },
-            },
+            cam,
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
             //debug_collision_map: settings.render.debug.collision_map,

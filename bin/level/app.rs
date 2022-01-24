@@ -110,8 +110,30 @@ impl LevelView {
             level
         };
 
-        let objects_palette = level::read_palette(settings.open_palette(), None);
         let depth = settings.game.camera.depth_range;
+        let cam = space::Camera {
+            loc: cgmath::vec3(0.0, 0.0, 400.0),
+            rot: cgmath::One::one(),
+            scale: cgmath::vec3(1.0, -1.0, 1.0),
+            proj: match settings.game.view {
+                config::settings::View::Perspective => {
+                    let pf = cgmath::PerspectiveFov {
+                        fovy: cgmath::Deg(45.0).into(),
+                        aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
+                        near: depth.0,
+                        far: depth.1,
+                    };
+                    space::Projection::Perspective(pf)
+                }
+                config::settings::View::Flat => space::Projection::ortho(
+                    settings.window.size[0] as u16,
+                    settings.window.size[1] as u16,
+                    depth.0..depth.1,
+                ),
+            },
+        };
+
+        let objects_palette = level::read_palette(settings.open_palette(), None);
         #[cfg(feature = "glsl")]
         let store_init = vangers::render::body::GpuStoreInit::new_dummy(device);
         let render = Render::new(
@@ -123,6 +145,7 @@ impl LevelView {
             &settings.render,
             color_format,
             screen_extent,
+            cam.front_face(),
             #[cfg(feature = "glsl")]
             store_init.resource(),
         );
@@ -130,27 +153,7 @@ impl LevelView {
         LevelView {
             render,
             level,
-            cam: space::Camera {
-                loc: cgmath::vec3(0.0, 0.0, 400.0),
-                rot: cgmath::One::one(),
-                scale: cgmath::vec3(1.0, -1.0, 1.0),
-                proj: match settings.game.view {
-                    config::settings::View::Perspective => {
-                        let pf = cgmath::PerspectiveFov {
-                            fovy: cgmath::Deg(45.0).into(),
-                            aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
-                            near: depth.0,
-                            far: depth.1,
-                        };
-                        space::Projection::Perspective(pf)
-                    }
-                    config::settings::View::Flat => space::Projection::ortho(
-                        settings.window.size[0] as u16,
-                        settings.window.size[1] as u16,
-                        depth.0..depth.1,
-                    ),
-                },
-            },
+            cam,
             input: Input::Empty,
             last_mouse_pos: cgmath::vec2(-1.0, -1.0),
             alt_button_pressed: false,

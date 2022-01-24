@@ -29,6 +29,18 @@ impl CarView {
         downlevel_caps: &wgpu::DownlevelCapabilities,
         color_format: wgpu::TextureFormat,
     ) -> Self {
+        let cam = space::Camera {
+            loc: cgmath::vec3(0.0, -64.0, 32.0),
+            rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(cgmath::Angle::turn_div_6()),
+            scale: cgmath::vec3(1.0, -1.0, 1.0),
+            proj: space::Projection::Perspective(cgmath::PerspectiveFov {
+                fovy: cgmath::Deg(45.0).into(),
+                aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
+                near: 1.0,
+                far: 100.0,
+            }),
+        };
+
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
         #[cfg(feature = "glsl")]
@@ -41,8 +53,14 @@ impl CarView {
             store_init.resource(),
             None,
         );
-        let object =
-            render::object::Context::new(device, queue, downlevel_caps, &pal_data, &global);
+        let object = render::object::Context::new(
+            device,
+            queue,
+            downlevel_caps,
+            cam.front_face(),
+            &pal_data,
+            &global,
+        );
 
         info!("Loading car registry");
         let game_reg = config::game::Registry::load(settings);
@@ -79,17 +97,7 @@ impl CarView {
             ),
             global,
             object,
-            cam: space::Camera {
-                loc: cgmath::vec3(0.0, -64.0, 32.0),
-                rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(cgmath::Angle::turn_div_6()),
-                scale: cgmath::vec3(1.0, -1.0, 1.0),
-                proj: space::Projection::Perspective(cgmath::PerspectiveFov {
-                    fovy: cgmath::Deg(45.0).into(),
-                    aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
-                    near: 1.0,
-                    far: 100.0,
-                }),
-            },
+            cam,
             rotation: (cgmath::Rad(0.), cgmath::Rad(0.)),
             light_config: settings.render.light,
         }

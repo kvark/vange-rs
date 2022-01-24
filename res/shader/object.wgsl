@@ -86,7 +86,7 @@ fn color_vs(
 [[stage(fragment)]]
 fn color_fs(in: Varyings, [[builtin(front_facing)]] is_front: bool) -> [[location(0)]] vec4<f32> {
     let lit_factor = fetch_shadow(in.position);
-    let normal = normalize(in.normal) * select(1.0, -1.0, is_front);
+    let normal = normalize(in.normal) * select(-1.0, 1.0, is_front);
     let light = normalize(u_Globals.light_pos.xyz - in.position * u_Globals.light_pos.w);
     let n_dot_l = lit_factor * max(0.0, dot(normal, light));
     let tc_raw = mix(in.palette_range.x, in.palette_range.y, n_dot_l);

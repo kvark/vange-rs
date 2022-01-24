@@ -558,6 +558,7 @@ impl Render {
         settings: &settings::Render,
         color_format: wgpu::TextureFormat,
         screen_size: wgpu::Extent3d,
+        front_face: wgpu::FrontFace,
         #[cfg(feature = "glsl")] store_buffer: wgpu::BindingResource<'_>,
     ) -> Self {
         profiling::scope!("Init Renderer");
@@ -576,7 +577,14 @@ impl Render {
             store_buffer,
             shadow.as_ref().map(|shadow| &shadow.view),
         );
-        let object = object::Context::new(device, queue, downlevel_caps, object_palette, &global);
+        let object = object::Context::new(
+            device,
+            queue,
+            downlevel_caps,
+            front_face,
+            object_palette,
+            &global,
+        );
         let terrain = terrain::Context::new(
             device,
             queue,
