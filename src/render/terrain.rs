@@ -130,7 +130,7 @@ struct Geometry {
 
 impl Geometry {
     fn new(vertices: &[Vertex], indices: &[u16], device: &wgpu::Device) -> Self {
-        Geometry {
+        Self {
             vertex_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("terrain-vertex"),
                 contents: bytemuck::cast_slice(vertices),
@@ -142,6 +142,25 @@ impl Geometry {
                 usage: wgpu::BufferUsages::INDEX,
             }),
             num_indices: indices.len() as u32,
+        }
+    }
+
+    #[cfg(feature = "density-mesh-core")]
+    fn with_capacity(vertex_count: usize, index_count: usize, device: &wgpu::Device) -> Self {
+        Self {
+            vertex_buf: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("terrain-vertex"),
+                size: (vertex_count * mem::size_of::<Vertex>()) as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            index_buf: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("terrain-index"),
+                size: index_count as wgpu::BufferAddress * 2,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            num_indices: index_count as u32,
         }
     }
 }
@@ -174,7 +193,15 @@ enum Kind {
         compute_groups: [u32; 3],
         density: [u32; 3],
     },
-    Mesh {},
+    #[cfg(feature = "density-mesh-core")]
+    Mesh {
+        pipeline: wgpu::RenderPipeline,
+        geo: Geometry,
+        vertex_capacity: usize,
+        index_capacity: usize,
+        is_dirty: bool,
+        generator: density_mesh_core::generator::DensityMeshGenerator,
+    },
 }
 
 pub struct Flood {
@@ -324,6 +351,50 @@ impl Context {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face: wgpu::FrontFace::Cw,
                 cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        })
+    }
+
+    #[cfg(feature = "density-mesh-core")]
+    fn create_mesh_pipeline(
+        layout: &wgpu::PipelineLayout,
+        device: &wgpu::Device,
+        color_format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
+        let shader = super::load_shader("terrain/mesh", device).unwrap();
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("terrain-mesh"),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "main_vs",
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        offset: 0,
+                        format: wgpu::VertexFormat::Float32x2,
+                        shader_location: 0,
+                    }],
+                }],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "main_fs",
+                targets: &[color_format.into()],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -896,6 +967,11 @@ impl Context {
                     density,
                 }
             }
+            #[cfg(not(feature = "density-mesh-core"))]
+            settings::Terrain::Mesh => {
+                panic!("Feature 'density-mesh-core' is not enabled");
+            }
+            #[cfg(feature = "density-mesh-core")]
             settings::Terrain::Mesh => {
                 use density_mesh_core::prelude::*;
                 let mut raw_data =
@@ -912,14 +988,43 @@ impl Context {
                 let map =
                     DensityMap::new(extent.width as usize, extent.height as usize, 1, raw_data)
                         .unwrap();
-                let settings = GenerateDensityMeshSettings::default();
+                let settings = GenerateDensityMeshSettings {
+                    points_separation: PointsSeparation::Constant(16.0),
+                    visibility_threshold: 0.5,
+                    steepness_threshold: 0.5,
+                    max_iterations: 8,
+                    extrude_size: None,
+                    keep_invisible_triangles: false,
+                };
                 // create density mesh.
-                let mut generator = DensityMeshGenerator::new(Vec::new(), map, settings);
-                // perform initial processing.
-                generator
-                    .process_wait_tracked(|progress, limit, _| println!("\t{}/{}", progress, limit))
-                    .unwrap();
-                Kind::Mesh {}
+                let generator = DensityMeshGenerator::new(Vec::new(), map, settings);
+
+                /*{
+                    generator.process_wait().unwrap();
+                    let mut image = image::DynamicImage::ImageRgba8(
+                        density_mesh_image::generate_image_from_densitymap(generator.map(), false),
+                    );
+                    density_mesh_image::apply_mesh_on_map(&mut image, generator.mesh().unwrap());
+                    image
+                        .save("heightmap.live.png")
+                        .expect("Cannot save output image");
+                }*/
+
+                let pipeline =
+                    Self::create_mesh_pipeline(&pipeline_layout, device, global.color_format);
+
+                let vertex_capacity = 4;
+                let index_capacity = 4;
+                let geo = Geometry::with_capacity(vertex_capacity, index_capacity, device);
+
+                Kind::Mesh {
+                    pipeline,
+                    geo,
+                    vertex_capacity,
+                    index_capacity,
+                    is_dirty: true,
+                    generator,
+                }
             }
         };
 
@@ -1019,7 +1124,13 @@ impl Context {
                 *clear_pipeline = clear;
                 *copy_pipeline = copy;
             }
-            Kind::Mesh {} => {}
+            #[cfg(feature = "density-mesh-core")]
+            Kind::Mesh {
+                ref mut pipeline, ..
+            } => {
+                *pipeline =
+                    Self::create_mesh_pipeline(&self.pipeline_layout, device, self.color_format);
+            }
         }
 
         match self.shadow_kind {
@@ -1252,6 +1363,85 @@ impl Context {
                     density[2],
                 );
             }
+            #[cfg(feature = "density-mesh-core")]
+            Kind::Mesh {
+                ref mut geo,
+                ref mut vertex_capacity,
+                ref mut index_capacity,
+                ref mut is_dirty,
+                pipeline: _,
+                ref mut generator,
+            } => {
+                if *is_dirty {
+                    *is_dirty = false;
+                    generator.process_wait().unwrap();
+                    let mesh = generator.mesh().unwrap();
+
+                    if mesh.points.len() > *vertex_capacity {
+                        *vertex_capacity = mesh.points.len() * 5 / 4;
+                        geo.vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("terrain-vertex"),
+                            size: (*vertex_capacity * mem::size_of::<Vertex>())
+                                as wgpu::BufferAddress,
+                            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        });
+                    }
+                    if mesh.triangles.len() * 3 > *index_capacity {
+                        *index_capacity = mesh.triangles.len() * 3 * 5 / 4;
+                        geo.index_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("terrain-index"),
+                            size: *index_capacity as wgpu::BufferAddress * 2,
+                            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        });
+                    }
+                    geo.num_indices = mesh.triangles.len() as u32 * 3;
+
+                    //TODO: avoid heap alloc
+                    let temp_vert = mesh
+                        .points
+                        .iter()
+                        .map(|coord| [coord.x, coord.y])
+                        .collect::<Vec<_>>();
+                    let staging_vert =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: None,
+                            contents: bytemuck::cast_slice(&temp_vert),
+                            usage: wgpu::BufferUsages::COPY_SRC,
+                        });
+                    encoder.copy_buffer_to_buffer(
+                        &staging_vert,
+                        0,
+                        &geo.vertex_buf,
+                        0,
+                        (mesh.points.len() * mem::size_of::<Vertex>()) as wgpu::BufferAddress,
+                    );
+
+                    let mut temp_ind = mesh
+                        .triangles
+                        .iter()
+                        .map(|tri| [tri.a as u16, tri.b as u16, tri.c as u16])
+                        .collect::<Vec<_>>();
+                    // make sure the copy size is aligned to 4
+                    if temp_ind.len() & 1 == 1 {
+                        temp_ind.push([0, 0, 0]);
+                    }
+                    let staging_ind =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: None,
+                            contents: bytemuck::cast_slice(&temp_ind),
+                            usage: wgpu::BufferUsages::COPY_SRC,
+                        });
+                    encoder.copy_buffer_to_buffer(
+                        &staging_ind,
+                        0,
+                        &geo.index_buf,
+                        0,
+                        2 * temp_ind.len() as wgpu::BufferAddress,
+                    );
+                }
+            }
             _ => {}
         }
     }
@@ -1344,8 +1534,16 @@ impl Context {
                 pass.set_bind_group(2, bind_group, &[]);
                 pass.draw(0..4, 0..1);
             }
-            Kind::Mesh {} => {
-                //TODO
+            #[cfg(feature = "density-mesh-core")]
+            Kind::Mesh {
+                ref pipeline,
+                ref geo,
+                ..
+            } => {
+                pass.set_pipeline(pipeline);
+                pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
+                pass.draw_indexed(0..geo.num_indices, 0, 0..1);
             }
         }
     }
