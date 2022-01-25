@@ -1488,6 +1488,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "progress"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17b820305721858696053a7fd0215cfeeee16ecaaf96b7a209945428e02f1c44"
+dependencies = [
+ "terminal_size",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1845,6 +1854,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "terminal_size"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "633c1a546cee861a1a6d0dc69ebeca693bf4296661ba7852b9d21d159e0506df"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2037,6 +2056,7 @@ dependencies = [
  "egui_wgpu_backend",
  "egui_winit_platform",
  "env_logger",
+ "fnv",
  "futures",
  "getopts",
  "log",
@@ -2045,6 +2065,7 @@ dependencies = [
  "obj",
  "png 0.16.8",
  "profiling",
+ "progress",
  "rand",
  "rayon",
  "ron",
