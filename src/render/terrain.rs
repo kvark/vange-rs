@@ -379,7 +379,7 @@ impl Context {
                 module: &shader,
                 entry_point: "main_vs",
                 buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    array_stride: 2 * 4,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &[wgpu::VertexAttribute {
                         offset: 0,
@@ -990,11 +990,11 @@ impl Context {
                         .unwrap();
                 let settings = GenerateDensityMeshSettings {
                     points_separation: PointsSeparation::Constant(16.0),
-                    visibility_threshold: 0.5,
-                    steepness_threshold: 0.5,
+                    visibility_threshold: 0.3,
+                    steepness_threshold: 0.3,
                     max_iterations: 8,
                     extrude_size: None,
-                    keep_invisible_triangles: false,
+                    keep_invisible_triangles: true,
                 };
                 // create density mesh.
                 let generator = DensityMeshGenerator::new(Vec::new(), map, settings);
@@ -1010,8 +1010,11 @@ impl Context {
                         .expect("Cannot save output image");
                 }*/
 
-                let pipeline =
-                    Self::create_mesh_pipeline(&pipeline_layout, device, global.color_format);
+                let pipeline = Self::create_mesh_pipeline(
+                    &pipeline_layout,
+                    device,
+                    global.color_format,
+                );
 
                 let vertex_capacity = 4;
                 let index_capacity = 4;
@@ -1125,11 +1128,12 @@ impl Context {
                 *copy_pipeline = copy;
             }
             #[cfg(feature = "density-mesh-core")]
-            Kind::Mesh {
-                ref mut pipeline, ..
-            } => {
-                *pipeline =
-                    Self::create_mesh_pipeline(&self.pipeline_layout, device, self.color_format);
+            Kind::Mesh { ref mut pipeline, .. } => {
+                *pipeline = Self::create_mesh_pipeline(
+                    &self.pipeline_layout,
+                    device,
+                    self.color_format,
+                );
             }
         }
 
@@ -1364,31 +1368,26 @@ impl Context {
                 );
             }
             #[cfg(feature = "density-mesh-core")]
-            Kind::Mesh {
-                ref mut geo,
-                ref mut vertex_capacity,
-                ref mut index_capacity,
-                ref mut is_dirty,
-                pipeline: _,
-                ref mut generator,
-            } => {
+            Kind::Mesh { ref mut geo, ref mut vertex_capacity, ref mut index_capacity, ref mut is_dirty, pipeline: _, ref mut generator } => {
                 if *is_dirty {
                     *is_dirty = false;
-                    generator.process_wait().unwrap();
+                    generator
+                        //.process_wait()
+                        .process_wait_tracked(|progress, limit, _| println!("{}/{}", progress, limit))
+                        .unwrap();
                     let mesh = generator.mesh().unwrap();
 
                     if mesh.points.len() > *vertex_capacity {
-                        *vertex_capacity = mesh.points.len() * 5 / 4;
+                        *vertex_capacity = mesh.points.len() * 6 / 4;
                         geo.vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
                             label: Some("terrain-vertex"),
-                            size: (*vertex_capacity * mem::size_of::<Vertex>())
-                                as wgpu::BufferAddress,
+                            size: *vertex_capacity as wgpu::BufferAddress * 2 * 4,
                             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                             mapped_at_creation: false,
                         });
                     }
                     if mesh.triangles.len() * 3 > *index_capacity {
-                        *index_capacity = mesh.triangles.len() * 3 * 5 / 4;
+                        *index_capacity = mesh.triangles.len() * 3 * 6 / 4;
                         geo.index_buf = device.create_buffer(&wgpu::BufferDescriptor {
                             label: Some("terrain-index"),
                             size: *index_capacity as wgpu::BufferAddress * 2,
@@ -1399,47 +1398,25 @@ impl Context {
                     geo.num_indices = mesh.triangles.len() as u32 * 3;
 
                     //TODO: avoid heap alloc
-                    let temp_vert = mesh
-                        .points
-                        .iter()
-                        .map(|coord| [coord.x, coord.y])
-                        .collect::<Vec<_>>();
-                    let staging_vert =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: None,
-                            contents: bytemuck::cast_slice(&temp_vert),
-                            usage: wgpu::BufferUsages::COPY_SRC,
-                        });
-                    encoder.copy_buffer_to_buffer(
-                        &staging_vert,
-                        0,
-                        &geo.vertex_buf,
-                        0,
-                        (mesh.points.len() * mem::size_of::<Vertex>()) as wgpu::BufferAddress,
-                    );
+                    let temp_vert = mesh.points.iter().map(|coord| [coord.x, coord.y]).collect::<Vec<_>>();
+                    let staging_vert = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: None,
+                        contents: bytemuck::cast_slice(&temp_vert),
+                        usage: wgpu::BufferUsages::COPY_SRC,
+                    });
+                    encoder.copy_buffer_to_buffer(&staging_vert, 0, &geo.vertex_buf, 0, 4 * 2 * temp_vert.len() as wgpu::BufferAddress);
 
-                    let mut temp_ind = mesh
-                        .triangles
-                        .iter()
-                        .map(|tri| [tri.a as u16, tri.b as u16, tri.c as u16])
-                        .collect::<Vec<_>>();
+                    let mut temp_ind = mesh.triangles.iter().map(|tri| [tri.a as u16, tri.b as u16, tri.c as u16]).collect::<Vec<_>>();
                     // make sure the copy size is aligned to 4
                     if temp_ind.len() & 1 == 1 {
                         temp_ind.push([0, 0, 0]);
                     }
-                    let staging_ind =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: None,
-                            contents: bytemuck::cast_slice(&temp_ind),
-                            usage: wgpu::BufferUsages::COPY_SRC,
-                        });
-                    encoder.copy_buffer_to_buffer(
-                        &staging_ind,
-                        0,
-                        &geo.index_buf,
-                        0,
-                        2 * temp_ind.len() as wgpu::BufferAddress,
-                    );
+                    let staging_ind = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: None,
+                        contents: bytemuck::cast_slice(&temp_ind),
+                        usage: wgpu::BufferUsages::COPY_SRC,
+                    });
+                    encoder.copy_buffer_to_buffer(&staging_ind, 0, &geo.index_buf, 0, 2 * 3 * temp_ind.len() as wgpu::BufferAddress);
                 }
             }
             _ => {}
@@ -1535,11 +1512,7 @@ impl Context {
                 pass.draw(0..4, 0..1);
             }
             #[cfg(feature = "density-mesh-core")]
-            Kind::Mesh {
-                ref pipeline,
-                ref geo,
-                ..
-            } => {
+            Kind::Mesh { ref pipeline, ref geo, .. } => {
                 pass.set_pipeline(pipeline);
                 pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
