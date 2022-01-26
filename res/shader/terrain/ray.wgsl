@@ -1,7 +1,7 @@
 //!include globals.inc terrain/locals.inc surface.inc shadow.inc color.inc
 
-[[stage(vertex)]]
-fn main([[location(0)]] pos: vec4<i32>) -> [[builtin(position)]] vec4<f32> {
+@stage(vertex)
+fn main(@location(0) pos: vec4<i32>) -> @builtin(position) vec4<f32> {
     // orhto projections don't like infinite values
     return select(
         u_Globals.view_proj * vec4<f32>(pos),
@@ -124,11 +124,11 @@ fn color_point(pt: CastPoint, lit_factor: f32) -> vec4<f32> {
 let c_DepthBias: f32 = 0.01;
 
 struct RayInput {
-    [[builtin(position)]] frag_coord: vec4<f32>;
+    @builtin(position) frag_coord: vec4<f32>;
 };
 
-[[stage(fragment)]]
-fn ray(in: RayInput) -> [[builtin(frag_depth)]] f32 {
+@stage(fragment)
+fn ray(in: RayInput) -> @builtin(frag_depth) f32 {
     let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
     let view = normalize(sp_far_world - sp_near_world);
@@ -139,11 +139,11 @@ fn ray(in: RayInput) -> [[builtin(frag_depth)]] f32 {
 }
 
 struct FragOutput {
-    [[location(0)]] color: vec4<f32>;
-    [[builtin(frag_depth)]] depth: f32;
+    @location(0) color: vec4<f32>;
+    @builtin(frag_depth) depth: f32;
 };
 
-[[stage(fragment)]]
+@stage(fragment)
 fn ray_color_debug(in: RayInput) -> FragOutput {
     let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
@@ -155,7 +155,7 @@ fn ray_color_debug(in: RayInput) -> FragOutput {
     return FragOutput(color, 1.0);
 }
 
-[[stage(fragment)]]
+@stage(fragment)
 fn ray_color(in: RayInput) -> FragOutput {
     let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
@@ -248,7 +248,7 @@ fn cast_ray_mip(base_point: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     return point;
 }
 
-[[stage(fragment)]]
+@stage(fragment)
 fn ray_mip_color(in: RayInput) -> FragOutput {
     let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);

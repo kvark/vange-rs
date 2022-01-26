@@ -5,11 +5,11 @@ struct SurfaceConstants {
     terrain_bits: vec4<u32>;     // X_low = shift, X_high = mask
 };
 
-[[group(1), binding(0)]] var<uniform> u_Surface: SurfaceConstants;
+@group(1) @binding(0) var<uniform> u_Surface: SurfaceConstants;
 
-[[group(1), binding(2)]] var t_Height: texture_2d<f32>;
-[[group(1), binding(3)]] var t_Meta: texture_2d<u32>;
-[[group(1), binding(7)]] var s_Main: sampler;
+@group(1) @binding(2) var t_Height: texture_2d<f32>;
+@group(1) @binding(3) var t_Meta: texture_2d<u32>;
+@group(1) @binding(7) var s_Main: sampler;
 
 let c_DoubleLevelMask: u32 = 64u;
 let c_ShadowMask: u32 = 128u;

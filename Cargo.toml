@@ -65,7 +65,7 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.4"
 # keep in sync with `lib/ffi/Cargo.toml`
-wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "f3891fe", features = [] }
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "77b2c25", features = [] }
 # binaries
 env_logger = "0.9"
 getopts = "0.2"
@@ -74,7 +74,7 @@ png = "0.16"
 winit = "0.26"
 
 [dev-dependencies]
-naga = { git = "https://github.com/gfx-rs/naga", rev = "a1840be", features = ["wgsl-in", "validate"] }
+naga = { git = "https://github.com/gfx-rs/naga", rev = "81dc674", features = ["wgsl-in", "validate"] }
 
 [dependencies.profiling]
 version = "1.0.1"

@@ -3,20 +3,20 @@
 struct Storage {
     data: array<atomic<u32>>;
 };
-[[group(2), binding(0)]] var<storage, read_write> s_Storage: Storage;
+@group(2) @binding(0) var<storage, read_write> s_Storage: Storage;
 
 // This has to match SCATTER_GROUP_SIZE
 //TODO: use specialization constants
-[[stage(compute), workgroup_size(16, 16, 1)]]
-fn clear([[builtin(global_invocation_id)]] pos: vec3<u32>) {
+@stage(compute), workgroup_size(16, 16, 1)
+fn clear(@builtin(global_invocation_id) pos: vec3<u32>) {
     if (pos.x < u_Locals.screen_size.x && pos.y < u_Locals.screen_size.y) {
         //TODO: 0xFFFFFF00U when hex is supported
         atomicStore(&s_Storage.data[pos.y * u_Locals.screen_size.x + pos.x], 4294967040u);
     }
 }
 
-[[stage(vertex)]]
-fn copy_vs([[builtin(vertex_index)]] index: u32) -> [[builtin(position)]] vec4<f32> {
+@stage(vertex)
+fn copy_vs(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(
         select(-1.0, 1.0, index < 2u),
         select(-1.0, 1.0, (index & 1u) == 1u),
@@ -25,12 +25,12 @@ fn copy_vs([[builtin(vertex_index)]] index: u32) -> [[builtin(position)]] vec4<f
 }
 
 struct CopyOutput {
-    [[location(0)]] color: vec4<f32>;
-    [[builtin(frag_depth)]] depth: f32;
+    @location(0) color: vec4<f32>;
+    @builtin(frag_depth) depth: f32;
 };
 
-[[stage(fragment)]]
-fn copy_fs([[builtin(position)]] pos: vec4<f32>) -> CopyOutput {
+@stage(fragment)
+fn copy_fs(@builtin(position) pos: vec4<f32>) -> CopyOutput {
     let value = atomicLoad(&s_Storage.data[u32(pos.y) * u_Locals.screen_size.x + u32(pos.x)]);
     let color = textureLoad(t_Palette, i32(value & 255u), 0);
     let depth = f32(value >> 8u) / 16777215.0; //TODO: 0xFFFFFFu
@@ -85,10 +85,10 @@ fn generate_scatter_pos(source_coord: vec2<f32>) -> vec2<f32> {
         vec2<f32>(u_Locals.cam_origin_dir.w, -u_Locals.cam_origin_dir.z) * x;
 }
 
-[[stage(compute), workgroup_size(16,16,1)]]
+@stage(compute), workgroup_size(16,16,1)
 fn main(
-    [[builtin(global_invocation_id)]] global_id: vec3<u32>,
-    [[builtin(num_workgroups)]] num_workgroups: vec3<u32>,
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>,
 ) {
     let wg_size: vec3<u32> = vec3<u32>(16u, 16u, 1u); // has to match SCATTER_GROUP_SIZE
     let source_coord = vec2<f32>(global_id.xy) /

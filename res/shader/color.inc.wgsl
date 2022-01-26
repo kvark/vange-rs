@@ -2,11 +2,11 @@
 
 //uniform sampler2D t_Height;
 // Terrain parameters per type: shadow offset, height shift, palette start, palette end
-[[group(1), binding(5)]] var t_Table: texture_1d<u32>;
+@group(1) @binding(5) var t_Table: texture_1d<u32>;
 // corresponds to SDL palette
-[[group(1), binding(6)]] var t_Palette: texture_1d<f32>;
+@group(1) @binding(6) var t_Palette: texture_1d<f32>;
 
-[[group(0), binding(1)]] var s_Palette: sampler;
+@group(0) @binding(1) var s_Palette: sampler;
 
 let c_HorFactor: f32 = 0.5; //H_CORRECTION
 let c_DiffuseScale: f32 = 8.0;

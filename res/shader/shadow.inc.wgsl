@@ -1,7 +1,7 @@
 // Shadow sampling.
 
-[[group(0), binding(3)]] var t_Shadow: texture_depth_2d;
-[[group(0), binding(4)]] var s_Shadow: sampler_comparison;
+@group(0) @binding(3) var t_Shadow: texture_depth_2d;
+@group(0) @binding(4) var s_Shadow: sampler_comparison;
 
 let c_Ambient: f32 = 0.25;
 

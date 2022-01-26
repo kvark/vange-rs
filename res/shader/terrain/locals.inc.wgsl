@@ -6,7 +6,7 @@ struct Locals {
     fog_color: vec4<f32>;
     fog_params: vec4<f32>;       // X=near, Y = far
 };
-[[group(1), binding(1)]] var<uniform> u_Locals: Locals;
+@group(1) @binding(1) var<uniform> u_Locals: Locals;
 
 fn get_frag_ndc(frag_coord: vec2<f32>, z: f32) -> vec4<f32> {
     // note the Y-flip here

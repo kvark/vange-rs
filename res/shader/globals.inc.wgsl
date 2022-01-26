@@ -7,4 +7,4 @@ struct Globals {
     light_color: vec4<f32>; // not used
 };
 
-[[group(0), binding(0)]] var<uniform> u_Globals: Globals;
+@group(0) @binding(0) var<uniform> u_Globals: Globals;

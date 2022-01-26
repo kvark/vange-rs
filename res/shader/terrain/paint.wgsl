@@ -10,16 +10,16 @@ fn generate_paint_pos(instance_index: u32) -> vec2<f32> {
 }
 
 struct Varyings {
-    [[builtin(position)]] position: vec4<f32>;
-    [[location(0)]] tex_coord: vec3<f32>;
-    [[location(1), interpolate(flat)]] ty: u32;
-    [[location(2)]] plane_pos: vec3<f32>;
+    @builtin(position) position: vec4<f32>;
+    @location(0) tex_coord: vec3<f32>;
+    @location(1) @interpolate(flat) ty: u32;
+    @location(2) plane_pos: vec3<f32>;
 };
 
-[[stage(vertex)]]
+@stage(vertex)
 fn vertex(
-    [[builtin(vertex_index)]] vertex_index: u32,
-    [[builtin(instance_index)]] instance_index: u32,
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
 ) -> Varyings {
     let pos_center = generate_paint_pos(instance_index);
 
@@ -53,8 +53,8 @@ fn vertex(
 
 //imported: Surface, u_Globals, get_surface, evaluate_color, apply_fog, fetch_shadow
 
-[[stage(fragment)]]
-fn fragment(in: Varyings) -> [[location(0)]] vec4<f32> {
+@stage(fragment)
+fn fragment(in: Varyings) -> @location(0) vec4<f32> {
     let lit_factor = fetch_shadow(in.plane_pos);
     let terrain_color = evaluate_color(in.ty, in.tex_coord.xy, in.tex_coord.z, lit_factor);
     return apply_fog(terrain_color, in.plane_pos.xy);
