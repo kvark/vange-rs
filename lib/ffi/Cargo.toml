@@ -11,9 +11,12 @@ crate-type = ["staticlib"]
 
 [dependencies]
 vangers = { path = "../.." }
+m3d = { path = "../m3d" }
+log = "0.4"
 env_logger = { version = "0.9", optional = true }
 futures = "0.3"
 cgmath = "0.18"
 ron = "0.6"
+slotmap = "1"
 wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "9219489", features = ["angle"] }
 hal = { package = "wgpu-hal", git = "https://github.com/gfx-rs/wgpu", rev = "9219489", features = ["gles"] }
