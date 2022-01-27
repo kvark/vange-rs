@@ -4,16 +4,24 @@ Matches "lib/renderer/src/renderer/scene/rust/vange_rs.h"
 See https://github.com/KranX/Vangers/pull/517
 
 Changelog:
+  2. Transform scales, model APIs.
   1. Add `rv_resize()`.
   0. Basic version.
 !*/
 
 use futures::executor::LocalPool;
-use std::{ffi::CString, fs::File, os::raw, ptr};
+use slotmap::{Key as _, SlotMap};
+use std::{
+    ffi::{CStr, CString},
+    fs::File,
+    mem,
+    os::raw,
+    ptr, slice,
+};
 
 // Update this whenever C header changes
 #[no_mangle]
-pub static rv_api_1: i32 = 1;
+pub static rv_api_2: i32 = 1;
 
 #[repr(C)]
 #[derive(Default)]
@@ -36,6 +44,7 @@ pub struct Quaternion {
 #[derive(Default)]
 pub struct Transform {
     position: Vector3,
+    scale: f32,
     rotation: Quaternion,
 }
 
@@ -79,6 +88,49 @@ pub struct MapDescription {
     palette: *const u8,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Vertex {
+    data: [i8; 3],
+    scr: [u8; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Normal {
+    data: [i8; 3],
+    i: u8,
+    n_power: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Polygon {
+    vertices: [*const Vertex; 3],
+    normals: [*const Normal; 3],
+    color_id: u8,
+    middle: [i8; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Model {
+    num_vert: i32,
+    vertices: *const Vertex,
+    num_norm: i32,
+    normals: *const Normal,
+    num_poly: i32,
+    polygons: *const Polygon,
+    max: [i32; 3],
+    min: [i32; 3],
+    off: [i32; 3],
+    rmax: i32,
+    memory_allocation_method: i32,
+    volume: f64,
+    rcm: [f64; 3],
+    jacobian: [f64; 9],
+}
+
 struct LevelContext {
     desc: MapDescription,
     render: vangers::render::Render,
@@ -97,6 +149,7 @@ pub struct Context {
     downlevel_caps: wgpu::DownlevelCapabilities,
     _instance: wgpu::Instance,
     camera: vangers::space::Camera,
+    meshes: SlotMap<slotmap::DefaultKey, vangers::model::Mesh>,
 }
 
 pub type GlFunctionDiscovery = unsafe extern "C" fn(*const raw::c_char) -> *const raw::c_void;
@@ -224,6 +277,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
                 fovy: cgmath::Deg(45.0).into(),
             }),
         },
+        meshes: SlotMap::new(),
     };
     let ptr = Box::into_raw(Box::new(ctx));
     ptr::NonNull::new(ptr)
@@ -385,4 +439,81 @@ pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
     );
 
     ctx.queue.submit(Some(encoder.finish()));
+}
+
+fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
+    [v[0] as f32, v[1] as f32, v[2] as f32]
+}
+
+#[no_mangle]
+pub extern "C" fn rn_add_model(ctx: &mut Context, name: *const raw::c_char, model: Model) -> u64 {
+    use vangers::render::object::Vertex as ObjectVertex;
+
+    let owned_name;
+    let label = if name.is_null() {
+        "_unknown_mesh_"
+    } else {
+        owned_name = unsafe { CStr::from_ptr(name) }.to_string_lossy();
+        &owned_name
+    };
+
+    let num_vertices = model.num_poly as usize * 3;
+    log::debug!("\tGot {} GPU vertices...", num_vertices);
+    let vertex_size = mem::size_of::<ObjectVertex>();
+    let vertex_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: (num_vertices * vertex_size) as wgpu::BufferAddress,
+        usage: wgpu::BufferUsages::VERTEX,
+        mapped_at_creation: true,
+    });
+    {
+        let polygons = unsafe { slice::from_raw_parts(model.polygons, model.num_poly as usize) };
+        let mut mapping = vertex_buf.slice(..).get_mapped_range_mut();
+        for (chunk, tri) in mapping.chunks_mut(3 * vertex_size).zip(polygons) {
+            let out_vertices =
+                unsafe { slice::from_raw_parts_mut(chunk.as_mut_ptr() as *mut ObjectVertex, 3) };
+            for ((vo, v_ptr), n_ptr) in out_vertices.iter_mut().zip(tri.vertices).zip(tri.normals) {
+                let p = unsafe { &(*v_ptr).data };
+                let n = unsafe { &(*n_ptr).data };
+                *vo = ObjectVertex {
+                    pos: [p[0], p[1], p[2], 1],
+                    color: tri.color_id as u32,
+                    normal: [n[0], n[1], n[2], 0],
+                };
+            }
+        }
+    }
+    vertex_buf.unmap();
+
+    let j = &model.jacobian;
+    let mesh = vangers::model::Mesh {
+        num_vertices,
+        vertex_buf,
+        offset: vec_i2f(model.off),
+        bbox: vangers::model::BoundingBox {
+            min: vec_i2f(model.min),
+            max: vec_i2f(model.max),
+            radius: model.rmax as f32,
+        },
+        physics: m3d::Physics {
+            volume: model.volume as f32,
+            rcm: [
+                model.rcm[0] as f32,
+                model.rcm[1] as f32,
+                model.rcm[2] as f32,
+            ],
+            jacobi: [
+                [j[0] as f32, j[1] as f32, j[2] as f32],
+                [j[3] as f32, j[4] as f32, j[5] as f32],
+                [j[6] as f32, j[7] as f32, j[8] as f32],
+            ],
+        },
+    };
+    let key = ctx.meshes.insert(mesh);
+    key.data().as_ffi()
+}
+
+#[no_mangle]
+pub extern "C" fn rn_remove_model(ctx: &mut Context, handle: u64) {
+    let _ = ctx.meshes.remove(slotmap::KeyData::from_ffi(handle).into());
 }
