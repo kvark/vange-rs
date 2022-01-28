@@ -76,7 +76,6 @@ pub struct MapDescription {
     material_begin_offsets: *const u8,
     material_end_offsets: *const u8,
     material_count: i32,
-    palette: *const u8,
 }
 
 struct LevelContext {
