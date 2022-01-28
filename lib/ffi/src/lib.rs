@@ -10,13 +10,14 @@ Changelog:
 !*/
 
 use futures::executor::LocalPool;
-use slotmap::{Key as _, SlotMap};
+use slotmap::{DefaultKey, Key as _, SlotMap};
 use std::{
     ffi::{CStr, CString},
     fs::File,
     mem,
     os::raw,
     ptr, slice,
+    sync::Arc,
 };
 
 // Update this whenever C header changes
@@ -131,6 +132,12 @@ pub struct Model {
     jacobian: [f64; 9],
 }
 
+struct MeshInstance {
+    mesh: Arc<vangers::model::Mesh>,
+    transform: vangers::space::Transform,
+    color_id: u8,
+}
+
 struct LevelContext {
     desc: MapDescription,
     render: vangers::render::Render,
@@ -149,7 +156,8 @@ pub struct Context {
     downlevel_caps: wgpu::DownlevelCapabilities,
     _instance: wgpu::Instance,
     camera: vangers::space::Camera,
-    meshes: SlotMap<slotmap::DefaultKey, vangers::model::Mesh>,
+    meshes: SlotMap<DefaultKey, Arc<vangers::model::Mesh>>,
+    instances: SlotMap<DefaultKey, MeshInstance>,
 }
 
 pub type GlFunctionDiscovery = unsafe extern "C" fn(*const raw::c_char) -> *const raw::c_void;
@@ -278,6 +286,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
             }),
         },
         meshes: SlotMap::new(),
+        instances: SlotMap::new(),
     };
     let ptr = Box::into_raw(Box::new(ctx));
     ptr::NonNull::new(ptr)
@@ -312,6 +321,7 @@ pub extern "C" fn rv_camera_init(ctx: &mut Context, desc: CameraDescription) {
 
 #[no_mangle]
 pub extern "C" fn rv_camera_set_transform(ctx: &mut Context, t: Transform) {
+    assert_eq!(t.scale, 1.0);
     ctx.camera.loc = cgmath::vec3(t.position.x, t.position.y, t.position.z);
     ctx.camera.rot =
         cgmath::Quaternion::new(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z);
@@ -426,7 +436,18 @@ pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
     let mut encoder = ctx
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
     let mut batcher = vangers::render::Batcher::new();
+    for (_, instance) in ctx.instances.iter() {
+        batcher.add_mesh(
+            &instance.mesh,
+            vangers::render::object::Instance::new_nobody(
+                &instance.transform,
+                1.0,
+                instance.color_id,
+            ),
+        );
+    }
 
     lc.render.draw_world(
         &mut encoder,
@@ -446,7 +467,11 @@ fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
 }
 
 #[no_mangle]
-pub extern "C" fn rn_add_model(ctx: &mut Context, name: *const raw::c_char, model: Model) -> u64 {
+pub extern "C" fn rv_model_create(
+    ctx: &mut Context,
+    name: *const raw::c_char,
+    model: &Model,
+) -> u64 {
     use vangers::render::object::Vertex as ObjectVertex;
 
     let owned_name;
@@ -509,11 +534,47 @@ pub extern "C" fn rn_add_model(ctx: &mut Context, name: *const raw::c_char, mode
             ],
         },
     };
-    let key = ctx.meshes.insert(mesh);
+    let key = ctx.meshes.insert(Arc::new(mesh));
     key.data().as_ffi()
 }
 
 #[no_mangle]
-pub extern "C" fn rn_remove_model(ctx: &mut Context, handle: u64) {
+pub extern "C" fn rv_model_destroy(ctx: &mut Context, handle: u64) {
     let _ = ctx.meshes.remove(slotmap::KeyData::from_ffi(handle).into());
+}
+
+#[no_mangle]
+pub extern "C" fn rv_model_instance_create(
+    ctx: &mut Context,
+    model_handle: u64,
+    color_id: u8,
+) -> u64 {
+    let mesh = &ctx.meshes[slotmap::KeyData::from_ffi(model_handle).into()];
+    let key = ctx.instances.insert(MeshInstance {
+        mesh: Arc::clone(mesh),
+        transform: cgmath::One::one(),
+        color_id,
+    });
+    key.data().as_ffi()
+}
+
+#[no_mangle]
+pub extern "C" fn rv_model_instance_set_transform(
+    ctx: &mut Context,
+    inst_handle: u64,
+    t: Transform,
+) {
+    let inst = &mut ctx.instances[slotmap::KeyData::from_ffi(inst_handle).into()];
+    inst.transform = vangers::space::Transform {
+        disp: cgmath::vec3(t.position.x, t.position.y, t.position.z),
+        scale: t.scale,
+        rot: cgmath::Quaternion::new(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z),
+    };
+}
+
+#[no_mangle]
+pub extern "C" fn rv_model_instance_destroy(ctx: &mut Context, handle: u64) {
+    let _ = ctx
+        .instances
+        .remove(slotmap::KeyData::from_ffi(handle).into());
 }
