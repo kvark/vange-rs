@@ -436,6 +436,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "density-mesh-core"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c3e6b108780d5d7db37b96f6bd9a0823359eb33c404dad9940a789f43f48839"
+dependencies = [
+ "serde",
+ "triangulation",
+]
+
+[[package]]
 name = "derivative"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1644,6 +1654,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "triangulation"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d42cd22cd79f86535bc4e3d92d24817a3a329cdccbc236885c3e493ad99b37a"
+
+[[package]]
 name = "typenum"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1668,6 +1684,7 @@ dependencies = [
  "bytemuck",
  "byteorder",
  "cgmath",
+ "density-mesh-core",
  "env_logger",
  "futures",
  "getopts",

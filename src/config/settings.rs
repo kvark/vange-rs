@@ -132,6 +132,7 @@ pub enum Terrain {
     Scattered {
         density: [u32; 3],
     },
+    Mesh,
 }
 
 #[derive(Copy, Clone, Deserialize)]
