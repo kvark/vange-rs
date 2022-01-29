@@ -9,7 +9,7 @@ Changelog:
 !*/
 
 use futures::executor::LocalPool;
-use std::{ffi::CString, os::raw, ptr};
+use std::{ffi::CString, fs::File, os::raw, ptr};
 
 // Update this whenever C header changes
 #[no_mangle]
@@ -146,9 +146,6 @@ fn crate_main_views(
 
 #[no_mangle]
 pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>> {
-    use cgmath::Zero as _;
-    use vangers::config::settings as st;
-
     #[cfg(feature = "env_logger")]
     let _ = env_logger::try_init();
     let mut task_pool = LocalPool::new();
@@ -200,26 +197,14 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     let color_format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let (color_view, depth_view) = crate_main_views(&device, extent, color_format);
 
+    let render_config = {
+        let file = File::open("res/ffi-config.ron").unwrap();
+        ron::de::from_reader(file).unwrap()
+    };
+
     let ctx = Context {
         level: None,
-        render_config: st::Render {
-            wgpu_trace_path: String::new(),
-            light: st::Light {
-                pos: [1.0, 2.0, 4.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-                shadow: st::Shadow {
-                    size: 1024,
-                    terrain: st::ShadowTerrain::RayTraced,
-                },
-            },
-            terrain: st::Terrain::RayTraced,
-            water: st::Water {},
-            fog: st::Fog {
-                color: [0.1, 0.2, 0.3, 1.0],
-                depth: 50.0,
-            },
-            debug: st::DebugRender::default(),
-        },
+        render_config,
         color_format,
         color_view,
         depth_view,
@@ -229,8 +214,8 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         downlevel_caps: adapter.get_downlevel_properties(),
         _instance: instance,
         camera: vangers::space::Camera {
-            loc: cgmath::Vector3::zero(),
-            rot: cgmath::Quaternion::zero(),
+            loc: cgmath::Zero::zero(),
+            rot: cgmath::Zero::zero(),
             scale: cgmath::vec3(1.0, 1.0, 1.0),
             proj: vangers::space::Projection::Perspective(cgmath::PerspectiveFov {
                 aspect: 1.0,
