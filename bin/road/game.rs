@@ -936,6 +936,7 @@ impl Application for Game {
             &self.level,
             &self.cam,
             targets,
+            None,
             device,
         );
 

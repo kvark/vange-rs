@@ -4,3 +4,4 @@
 .fuse_hidden*
 .DS_Store
 last-shader.wgsl
+res/data

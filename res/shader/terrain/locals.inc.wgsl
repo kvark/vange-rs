@@ -1,5 +1,5 @@
 struct Locals {
-    screen_size: vec4<u32>;      // XY = size
+    screen_rect: vec4<u32>;      // XY = offset, ZW = size
     params: vec4<u32>;
     cam_origin_dir: vec4<f32>;    // XY = origin, ZW = dir
     sample_range: vec4<f32>;     // XY = X range, ZW = y range
@@ -9,9 +9,10 @@ struct Locals {
 @group(1) @binding(1) var<uniform> u_Locals: Locals;
 
 fn get_frag_ndc(frag_coord: vec2<f32>, z: f32) -> vec4<f32> {
-    // note the Y-flip here
+    let normalized = (frag_coord.xy - vec2<f32>(u_Locals.screen_rect.xy)) / vec2<f32>(u_Locals.screen_rect.zw);
     return vec4<f32>(
-        ((frag_coord.xy / vec2<f32>(u_Locals.screen_size.xy)) * 2.0 - vec2<f32>(1.0)) * vec2<f32>(1.0, -1.0),
+        // note the Y-flip here
+        (normalized * 2.0 - vec2<f32>(1.0)) * vec2<f32>(1.0, -1.0),
         z,
         1.0,
     );

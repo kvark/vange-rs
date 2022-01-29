@@ -385,6 +385,7 @@ impl Application for LevelView {
             &self.level,
             &self.cam,
             targets,
+            None,
             device,
         );
         encoder.finish()

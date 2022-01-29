@@ -389,13 +389,13 @@ pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
         .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     let mut batcher = vangers::render::Batcher::new();
 
-    lc.render.custom_viewport = Some(viewport.to_native());
     lc.render.draw_world(
         &mut encoder,
         &mut batcher,
         &lc.level,
         &ctx.camera,
         targets,
+        Some(viewport.to_native()),
         &ctx.device,
     );
 

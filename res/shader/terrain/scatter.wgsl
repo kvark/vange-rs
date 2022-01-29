@@ -9,9 +9,10 @@ struct Storage {
 //TODO: use specialization constants
 @stage(compute), workgroup_size(16, 16, 1)
 fn clear(@builtin(global_invocation_id) pos: vec3<u32>) {
-    if (pos.x < u_Locals.screen_size.x && pos.y < u_Locals.screen_size.y) {
+    let r = u_Locals.screen_rect;
+    if (pos.x >= r.x && pos.y >= r.y && pos.x < r.x + r.z && pos.y < r.y + r.w) {
         //TODO: 0xFFFFFF00U when hex is supported
-        atomicStore(&s_Storage.data[pos.y * u_Locals.screen_size.x + pos.x], 4294967040u);
+        atomicStore(&s_Storage.data[pos.y * r.z + pos.x], 4294967040u);
     }
 }
 
@@ -31,7 +32,7 @@ struct CopyOutput {
 
 @stage(fragment)
 fn copy_fs(@builtin(position) pos: vec4<f32>) -> CopyOutput {
-    let value = atomicLoad(&s_Storage.data[u32(pos.y) * u_Locals.screen_size.x + u32(pos.x)]);
+    let value = atomicLoad(&s_Storage.data[u32(pos.y) * u_Locals.screen_rect.z + u32(pos.x)]);
     let color = textureLoad(t_Palette, i32(value & 255u), 0);
     let depth = f32(value >> 8u) / 16777215.0; //TODO: 0xFFFFFFu
     return CopyOutput(color, depth);
@@ -50,16 +51,18 @@ fn add_voxel(pos: vec2<f32>, altitude: f32, ty: u32, lit_factor: f32) {
         return;
     }
     var ndc = screen_pos.xyz / screen_pos.w;
-    ndc.y = -1.0 * ndc.y; // flip Y
+    ndc.y *= -1.0; // flip Y
     let color_id = evaluate_color_id(ty, pos / u_Surface.texture_scale.xy, altitude / u_Surface.texture_scale.z, lit_factor);
     let depth = clamp(ndc.z, 0.0, 1.0);
     let value = (u32(depth * 16777215.0) << 8u) | u32(color_id * 255.0); //TODO: 0xFFFFFF, 0xFF
-    let tc = clamp(
-        vec2<u32>(round((ndc.xy * 0.5 + 0.5) * vec2<f32>(u_Locals.screen_size.xy))),
+
+    let r = u_Locals.screen_rect;
+    let tc = r.xy + clamp(
+        vec2<u32>(round((ndc.xy * 0.5 + 0.5) * vec2<f32>(r.zw))),
         vec2<u32>(0u),
-        u_Locals.screen_size.xy - vec2<u32>(1u),
+        r.zw - vec2<u32>(1u),
     );
-    let _old = atomicMin(&s_Storage.data[tc.y * u_Locals.screen_size.x + tc.x], value);
+    let _old = atomicMin(&s_Storage.data[tc.y * r.z + tc.x], value);
 }
 
 fn generate_scatter_pos(source_coord: vec2<f32>) -> vec2<f32> {

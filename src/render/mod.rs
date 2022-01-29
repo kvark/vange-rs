@@ -545,7 +545,6 @@ pub struct Render {
     pub light_config: settings::Light,
     pub fog_config: settings::Fog,
     screen_size: wgpu::Extent3d,
-    pub custom_viewport: Option<Rect>,
 }
 
 impl Render {
@@ -607,7 +606,6 @@ impl Render {
             light_config: settings.light,
             fog_config: settings.fog,
             screen_size,
-            custom_viewport: None,
         }
     }
 
@@ -618,6 +616,7 @@ impl Render {
         level: &level::Level,
         cam: &Camera,
         targets: ScreenTargets<'_>,
+        viewport: Option<Rect>,
         device: &wgpu::Device,
     ) {
         profiling::scope!("draw_world");
@@ -707,7 +706,12 @@ impl Render {
                 &self.global,
                 &self.fog_config,
                 cam,
-                self.screen_size,
+                viewport.unwrap_or_else(|| Rect {
+                    x: 0,
+                    y: 0,
+                    w: self.screen_size.width as u16,
+                    h: self.screen_size.height as u16,
+                }),
             );
             self.water.prepare(encoder, device, cam);
 
@@ -739,7 +743,7 @@ impl Render {
                 }),
             });
 
-            if let Some(ref r) = self.custom_viewport {
+            if let Some(ref r) = viewport {
                 pass.set_viewport(r.x as f32, r.y as f32, r.w as f32, r.h as f32, 0.0, 1.0);
             }
 

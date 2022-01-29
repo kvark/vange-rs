@@ -36,7 +36,7 @@ unsafe impl Zeroable for SurfaceConstants {}
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Constants {
-    screen_size: [u32; 4],
+    screen_rect: [u32; 4], // x, y, w, h
     params: [u32; 4],
     cam_origin_dir: [f32; 4],
     sample_range: [f32; 4], // -x, +x, -y, +y
@@ -1138,7 +1138,7 @@ impl Context {
         global: &GlobalContext,
         fog: &settings::Fog,
         cam: &Camera,
-        screen_size: wgpu::Extent3d,
+        screen_rect: super::Rect,
     ) {
         let params = match self.kind {
             Kind::RayMip { params, .. } => params,
@@ -1164,7 +1164,12 @@ impl Context {
             let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-constants"),
                 contents: bytemuck::bytes_of(&Constants {
-                    screen_size: [screen_size.width, screen_size.height, 0, 0],
+                    screen_rect: [
+                        screen_rect.x as u32,
+                        screen_rect.y as u32,
+                        screen_rect.w as u32,
+                        screen_rect.h as u32,
+                    ],
                     params,
                     cam_origin_dir: [sc.origin.x, sc.origin.y, sc.dir.x, sc.dir.y],
                     sample_range: [
@@ -1255,7 +1260,7 @@ impl Context {
             let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-constants"),
                 contents: bytemuck::bytes_of(&Constants {
-                    screen_size: [screen_size.width, screen_size.height, 0, 0],
+                    screen_rect: [0, 0, screen_size.width, screen_size.height],
                     params,
                     cam_origin_dir: [sc.origin.x, sc.origin.y, sc.dir.x, sc.dir.y],
                     sample_range: [
