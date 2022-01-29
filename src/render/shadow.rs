@@ -4,7 +4,7 @@ use crate::{
     space::{Camera, Projection},
 };
 
-use cgmath::{EuclideanSpace as _, InnerSpace as _, Rotation as _};
+use cgmath::{EuclideanSpace as _, Rotation as _};
 
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 
@@ -43,7 +43,7 @@ impl Shadow {
             view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
             cam: Camera {
                 loc: cgmath::Zero::zero(),
-                rot: cgmath::Quaternion::look_at(dir, up),
+                rot: cgmath::Quaternion::look_at(dir, up).invert(),
                 scale: cgmath::Vector3::new(1.0, 1.0, 1.0),
                 proj: Projection::ortho(1, 1, 0.0..1.0),
             },
@@ -54,10 +54,7 @@ impl Shadow {
 
     fn get_local_point(&self, world_pt: cgmath::Point3<f32>) -> cgmath::Point3<f32> {
         let diff = world_pt.to_vec() - self.cam.loc;
-        let right = self.cam.rot * cgmath::Vector3::unit_x();
-        let up = self.cam.rot * cgmath::Vector3::unit_y();
-        let backward = self.cam.rot * cgmath::Vector3::unit_z();
-        cgmath::Point3::new(diff.dot(right), diff.dot(up), diff.dot(-backward))
+        cgmath::Point3::origin() + self.cam.rot.invert() * diff
     }
 
     pub(super) fn update_view(&mut self, cam: &Camera) {
@@ -73,7 +70,7 @@ impl Shadow {
 
         // in addition to the camera bound, we need to include
         // all the potential occluders nearby
-        let mut offset = -self.dir * (HEIGHT_SCALE as f32 / self.dir.z);
+        let mut offset = self.dir * (HEIGHT_SCALE as f32 / self.dir.z);
         offset.z = 0.0;
 
         let points_lo = cam.bound_points(0.0);
@@ -87,10 +84,10 @@ impl Shadow {
             let local = self.get_local_point(pt);
             p.left = p.left.min(local.x);
             p.bottom = p.bottom.min(local.y);
-            p.near = p.near.min(local.z);
+            p.near = p.near.min(-local.z);
             p.right = p.right.max(local.x);
             p.top = p.top.max(local.y);
-            p.far = p.far.max(local.z);
+            p.far = p.far.max(-local.z);
         }
 
         self.cam.proj = Projection::Ortho {

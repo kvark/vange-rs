@@ -1,7 +1,7 @@
 (
 	wgpu_trace_path: "",
 	light: (
-		pos: (1, 2, 4, 0), // w=0 for directional, w=1 for point light
+		pos: (1, 0, 1, 0), // w=0 for directional, w=1 for point light
 		color: (1, 1, 1, 1),
 		shadow: (
 			size: 1024,
