@@ -6,6 +6,6 @@ fn load_settings() {
 
 #[test]
 fn load_ffi_config() {
-    let file = std::fs::File::open("res/ffi-config.ron").unwrap();
+    let file = std::fs::File::open("res/ffi/config.ron").unwrap();
     ron::de::from_reader::<_, vangers::config::settings::Render>(file).unwrap();
 }

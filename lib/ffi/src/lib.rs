@@ -155,6 +155,7 @@ pub struct Context {
     downlevel_caps: wgpu::DownlevelCapabilities,
     _instance: wgpu::Instance,
     camera: vangers::space::Camera,
+    objects_palette: [[u8; 4]; 0x100],
     meshes: SlotMap<DefaultKey, Arc<vangers::model::Mesh>>,
     instances: SlotMap<DefaultKey, MeshInstance>,
 }
@@ -258,8 +259,12 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     let (color_view, depth_view) = crate_main_views(&device, extent, color_format);
 
     let render_config = {
-        let file = File::open("res/ffi-config.ron").unwrap();
+        let file = File::open("res/ffi/config.ron").unwrap();
         ron::de::from_reader(file).unwrap()
+    };
+    let objects_palette = {
+        let file = File::open("res/ffi/objects.pal").unwrap();
+        vangers::level::read_palette(file, None)
     };
 
     let ctx = Context {
@@ -284,6 +289,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
                 fovy: cgmath::Deg(45.0).into(),
             }),
         },
+        objects_palette,
         meshes: SlotMap::new(),
         instances: SlotMap::new(),
     };
@@ -353,7 +359,7 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
         &ctx.queue,
         &ctx.downlevel_caps,
         &level,
-        &[[0; 4]; 0x100], //TODO: objects palette
+        &ctx.objects_palette,
         &ctx.render_config,
         ctx.color_format,
         ctx.extent, //Note: needs update on window resize
