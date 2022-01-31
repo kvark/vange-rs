@@ -14,6 +14,13 @@ vangers = { path = "../.." }
 env_logger = { version = "0.9", optional = true }
 futures = "0.3"
 cgmath = "0.18"
-ron = "0.6"
+ron = "0.5.1"
+
+[target.'cfg(not(target_os = "emscripten"))'.dependencies]
 wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "9219489", features = ["angle"] }
 hal = { package = "wgpu-hal", git = "https://github.com/gfx-rs/wgpu", rev = "9219489", features = ["gles"] }
+
+[target.'cfg(target_os = "emscripten")'.dependencies]
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "9219489", features = ["emscripten", "webgl"] }
+hal = { package = "wgpu-hal", git = "https://github.com/gfx-rs/wgpu", rev = "9219489", features = ["emscripten"] }
+
