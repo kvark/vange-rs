@@ -169,6 +169,10 @@ pub struct InitDescriptor {
     gl_functor: GlFunctionDiscovery,
 }
 
+fn adjust_z(original: f32) -> f32 {
+    original * vangers::level::HEIGHT_SCALE as f32 / 256.0
+}
+
 fn crate_main_views(
     device: &wgpu::Device,
     extent: wgpu::Extent3d,
@@ -327,7 +331,7 @@ pub extern "C" fn rv_camera_init(ctx: &mut Context, desc: CameraDescription) {
 #[no_mangle]
 pub extern "C" fn rv_camera_set_transform(ctx: &mut Context, t: Transform) {
     assert_eq!(t.scale, 1.0);
-    ctx.camera.loc = cgmath::vec3(t.position.x, t.position.y, t.position.z);
+    ctx.camera.loc = cgmath::vec3(t.position.x, t.position.y, adjust_z(t.position.z));
     ctx.camera.rot =
         cgmath::Quaternion::new(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z);
 }
@@ -571,7 +575,7 @@ pub extern "C" fn rv_model_instance_set_transform(
 ) {
     let inst = &mut ctx.instances[slotmap::KeyData::from_ffi(inst_handle).into()];
     inst.transform = vangers::space::Transform {
-        disp: cgmath::vec3(t.position.x, t.position.y, t.position.z),
+        disp: cgmath::vec3(t.position.x, t.position.y, adjust_z(t.position.z)),
         scale: t.scale,
         rot: cgmath::Quaternion::new(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z),
     };
