@@ -143,7 +143,7 @@ fn main() {
         ("ini", "obj") => {
             println!("\tLoading the level...");
             let config = vangers::level::LevelConfig::load(&src_path);
-            let level = vangers::level::load(&config);
+            let level = vangers::level::load(&config, &geometry);
             println!("\tSaving OBJ...");
             level_obj::save(&dst_path, &level);
         }
