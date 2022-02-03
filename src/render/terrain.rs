@@ -157,7 +157,6 @@ enum Kind {
     },
     Slice {
         pipeline: wgpu::RenderPipeline,
-        geo: Geometry,
     },
     Paint {
         pipeline: wgpu::RenderPipeline,
@@ -269,15 +268,7 @@ impl Context {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "main_vs",
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[wgpu::VertexAttribute {
-                        offset: 0,
-                        format: wgpu::VertexFormat::Sint8x4,
-                        shader_location: 0,
-                    }],
-                }],
+                buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -285,7 +276,7 @@ impl Context {
                 targets: &[color_format.into()],
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -800,27 +791,10 @@ impl Context {
                 }
             }
             settings::Terrain::Sliced => {
-                let geo = Geometry::new(
-                    &[
-                        Vertex {
-                            _pos: [-1, -1, 0, 1],
-                        },
-                        Vertex {
-                            _pos: [1, -1, 0, 1],
-                        },
-                        Vertex { _pos: [1, 1, 0, 1] },
-                        Vertex {
-                            _pos: [-1, 1, 0, 1],
-                        },
-                    ],
-                    &[0u16, 1, 2, 0, 2, 3],
-                    device,
-                );
-
                 let pipeline =
                     Self::create_slice_pipeline(&pipeline_layout, device, global.color_format);
 
-                Kind::Slice { pipeline, geo }
+                Kind::Slice { pipeline }
             }
             settings::Terrain::Painted => {
                 let geo = Geometry::new(
@@ -1295,14 +1269,9 @@ impl Context {
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.draw_indexed(0..geo.num_indices, 0, 0..1);
             }
-            Kind::Slice {
-                ref pipeline,
-                ref geo,
-            } => {
+            Kind::Slice { ref pipeline } => {
                 pass.set_pipeline(pipeline);
-                pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
-                pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
-                pass.draw_indexed(0..geo.num_indices, 0, 0..level::HEIGHT_SCALE);
+                pass.draw(0..4, 0..level::HEIGHT_SCALE);
             }
             Kind::Paint {
                 ref pipeline,
