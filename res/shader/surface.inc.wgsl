@@ -123,7 +123,35 @@ fn get_surface_alt(pos: vec2<f32>) -> SurfaceAlt {
     }
 }
 
-fn get_surface_smooth(pos: vec2<f32>) -> SurfaceAlt {
+fn merge_alt(a: SurfaceAlt, b: SurfaceAlt, ratio: f32) -> SurfaceAlt {
     var suf: SurfaceAlt;
+    let mid = 0.5 * (b.low + b.high);
+    suf.low = mix(a.low, select(b.low, b.high, a.low >= mid), ratio);
+    suf.high = mix(a.high, select(b.low, b.high, a.high >= mid), ratio);
+    suf.delta = mix(a.delta, select(0.0, b.delta, a.high >= mid), ratio);
+    suf = a;
+    return suf;
+}
+
+fn get_surface_alt_smooth(pos: vec2<f32>) -> SurfaceAlt {
+    let tci = get_map_coordinates(pos);
+    let sub_pos = fract(pos);
+    let offsets = step(vec2<f32>(0.5), sub_pos) * 2.0 - vec2<f32>(1.0);
+    let s00 = get_surface_alt(pos);
+    let s10 = get_surface_alt(pos + vec2<f32>(offsets.x, 0.0));
+    let s01 = get_surface_alt(pos + vec2<f32>(0.0, offsets.y));
+    let s11 = get_surface_alt(pos + offsets);
+
+    let s00_10 = merge_alt(s00, s10, abs(sub_pos.x - 0.5));
+    let s01_11 = merge_alt(s01, s11, abs(sub_pos.x - 0.5));
+    return merge_alt(s00_10, s01_11, abs(sub_pos.y - 0.5));
+}
+
+fn get_surface_smooth(pos: vec2<f32>) -> Surface {
+    var suf = get_surface(pos);
+    let alt = get_surface_alt_smooth(pos);
+    suf.low_alt = alt.low;
+    suf.high_alt = alt.high;
+    suf.delta = alt.delta;
     return suf;
 }

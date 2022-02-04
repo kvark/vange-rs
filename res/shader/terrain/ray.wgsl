@@ -67,6 +67,49 @@ fn cast_ray_impl(
     return CastResult(result, a, b);
 }
 
+fn cast_ray_impl_smooth(
+    a_in: vec3<f32>, b_in: vec3<f32>,
+    high_in: bool, num_forward: i32, num_binary: i32
+) -> CastResult {
+    let step = (1.0 / f32(num_forward + 1)) * (b_in - a_in);
+    var a = a_in;
+    var b = b_in;
+    var high = high_in;
+
+    for (var i = 0; i < num_forward; i = i + 1) {
+        let c = a + step;
+        let suf = get_surface_alt_smooth(c.xy);
+
+        if (c.z > suf.high) {
+            high = true; // re-appear on the surface
+            a = c;
+        } else {
+            let height = select(suf.low, suf.high, high);
+            if (c.z <= height) {
+                b = c;
+                break;
+            } else {
+                a = c;
+            }
+        }
+    }
+
+    for (var i = 0; i < num_binary; i += 1) {
+        let c = mix(a, b, 0.5);
+        let suf = get_surface_alt_smooth(c.xy);
+
+        let height = select(suf.low, suf.high, high);
+        if (c.z <= height) {
+            b = c;
+        } else {
+            a = c;
+        }
+    }
+
+    let result = get_surface_smooth(b.xy);
+    return CastResult(result, a, b);
+}
+
 struct CastPoint {
     pos: vec3<f32>;
     ty: u32;
