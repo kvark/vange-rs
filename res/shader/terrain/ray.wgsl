@@ -35,13 +35,13 @@ fn cast_ray_impl(
 
     for (var i = 0; i < num_forward; i = i + 1) {
         let c = a + step;
-        let suf = get_surface(c.xy);
+        let suf = get_surface_alt(c.xy);
 
-        if (c.z > suf.high_alt) {
+        if (c.z > suf.high) {
             high = true; // re-appear on the surface
             a = c;
         } else {
-            let height = select(suf.low_alt, suf.high_alt, high);
+            let height = select(suf.low, suf.high, high);
             if (c.z <= height) {
                 b = c;
                 break;
@@ -51,21 +51,19 @@ fn cast_ray_impl(
         }
     }
 
-    var result = get_surface(b.xy);
-
-    for (var i = 0; i < num_binary; i = i + 1) {
+    for (var i = 0; i < num_binary; i += 1) {
         let c = mix(a, b, 0.5);
-        let suf = get_surface(c.xy);
+        let suf = get_surface_alt(c.xy);
 
-        let height = select(suf.low_alt, suf.high_alt, high);
+        let height = select(suf.low, suf.high, high);
         if (c.z <= height) {
             b = c;
-            result = suf;
         } else {
             a = c;
         }
     }
 
+    let result = get_surface(b.xy);
     return CastResult(result, a, b);
 }
 

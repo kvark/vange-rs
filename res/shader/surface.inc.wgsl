@@ -95,3 +95,35 @@ fn get_surface(pos: vec2<f32>) -> Surface {
 
     return suf;
 }
+
+struct SurfaceAlt {
+    low: f32;
+    high: f32;
+    delta: f32;
+};
+
+fn get_surface_alt(pos: vec2<f32>) -> SurfaceAlt {
+    let tci = get_map_coordinates(pos);
+    let meta = textureLoad(t_Meta, tci, 0).x;
+    let altitude = textureLoad(t_Height, tci, 0).x * u_Surface.texture_scale.z;
+
+    if ((meta & c_DoubleLevelMask) != 0u) {
+        let tci_other = tci ^ vec2<i32>(1, 0);
+        let meta_other = textureLoad(t_Meta, tci_other, 0).x;
+        let alt_other = textureLoad(t_Height, tci_other, 0).x * u_Surface.texture_scale.z;
+        let deltas = vec2<u32>(get_delta(meta), get_delta(meta_other));
+        let raw = select(
+            vec3<f32>(altitude, alt_other, f32((deltas.x << c_DeltaBits) + deltas.y)),
+            vec3<f32>(alt_other, altitude, f32((deltas.y << c_DeltaBits) + deltas.x)),
+            (tci.x & 1) != 0,
+        );
+        return SurfaceAlt(raw.x, raw.y, raw.z * c_DeltaScale * u_Surface.texture_scale.z);
+    } else {
+        return SurfaceAlt(altitude, altitude, 0.0);
+    }
+}
+
+fn get_surface_smooth(pos: vec2<f32>) -> SurfaceAlt {
+    var suf: SurfaceAlt;
+    return suf;
+}
