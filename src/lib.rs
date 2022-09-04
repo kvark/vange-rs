@@ -7,12 +7,12 @@
     rust_2018_idioms,
     future_incompatible,
     nonstandard_style,
-    missing_copy_implementations
 )]
 #![allow(
     clippy::identity_op,
     clippy::erasing_op,
     clippy::new_without_default,
+    missing_copy_implementations,
     missing_debug_implementations
 )]
 

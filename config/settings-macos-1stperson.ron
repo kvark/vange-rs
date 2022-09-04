@@ -1,17 +1,16 @@
 (
-	data_path: "",
-	// "/opt/gog/Vangers/game" #Linux (example)
-	// "/Applications/GOG/Vangers.app/Contents/Resources/game" #OSX
+	data_path: "/Users/kvark/Games/Vangers/data",
 	game: (
 		level: "Fostral", // see `wrlds.dat` for the list
 		cycle: "Eleerection", // see `bunches.prm` for the list, leave empty for bonus worlds
 		view: Perspective, // can be "Flat" or "Perspective"
 		camera: (
-			angle: 60,
-			height: 210,
-			offset: 140,
-			speed: 1,
-			depth_range: (10, 2000),
+			angle: 0,
+			height: 10,
+			offset: 0,
+			speed: 5,
+			depth_range: (10, 400),
+			fog_depth: 50,
 		),
 		other: (
 			count: 10, // number of NPC vangers
@@ -19,34 +18,32 @@
 		),
 		physics: (
 			max_quant: 0.1,
-			shape_sampling: 0,
-			gpu_collision: None,
-			//Some((
-			//	max_objects: 100,
-			//	max_polygons_total: 1000,
-			//	max_raster_size: (100, 100),
-			//)),
+			shape_sampling: 1,
+			gpu_collision: None/*Some(( // blocked by atomics
+				max_objects: 100,
+				max_polygons_total: 1000,
+				max_raster_size: (100, 100),
+			))*/,
 		),
 	),
 	car: (
 		id: "OxidizeMonk",
-		// "IronShadow",
+		//example: "IronShadow"
 		color: Green, // Dummy, Red, Blue, Yellow, Gray
 		slots: [],
-		//slots: ["HeavyLaser", "LightMissile", "LightFireBall"],
+		//example: ["HeavyLaser", "LightMissile", "LightFireBall"]
 		pos: None,
-		//pos: Some((1300, 450)),
 	),
 	window: (
 		title: "Rusty Road",
-		size: (1280, 800),
-		reload_on_focus: false,
+		size: (2280, 1800),
+		reload_on_focus: true,
 	),
-	backend: Auto, // Auto, Vulkan, Metal, DX12, GL
+	backend: Auto, // Vulkan, Metal, DX12, DX11
 	render: (
 		wgpu_trace_path: "",
 		light: (
-			pos: (1, 2, 4, 0), // w=0 for directional, w=1 for point light
+			pos: (1, 4, 4, 0), // w=0 for directional, w=1 for point light
 			color: (1, 1, 1, 1),
 			shadow: (
 				size: 1024,
@@ -57,12 +54,12 @@
 			color: (0.1, 0.2, 0.3, 1.0),
 			depth: 50,
 		),
-		terrain: RayTraced,
+		terrain:
 		// RayTraced,
 		// RayMipTraced (mip_count: 10, max_jumps: 25, max_steps: 100, debug: false),
-		// Scattered( density: (2, 2, 2) ),
+		// Scattered( density: (2, 2, 2) ), // blocked by NumWorkgroups builtin
 		// Sliced,
-		// Painted,
+		 Painted,
 		water: (),
 		debug: (
 			max_vertices: 512,

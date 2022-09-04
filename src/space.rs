@@ -1,4 +1,6 @@
-use cgmath::{EuclideanSpace as _, InnerSpace as _, Rotation as _, Rotation3 as _, Transform as _};
+use cgmath::{
+    Angle as _, EuclideanSpace as _, InnerSpace as _, Rotation as _, Rotation3 as _, Transform as _,
+};
 use std::ops::Range;
 
 pub type Transform = cgmath::Decomposed<cgmath::Vector3<f32>, cgmath::Quaternion<f32>>;
@@ -68,15 +70,23 @@ pub struct Camera {
 
 #[derive(Debug, Copy, Clone)]
 pub struct Follow {
-    pub transform: Transform,
+    pub angle_x: cgmath::Deg<f32>,
+    pub offset: cgmath::Vector3<f32>,
     pub speed: f32,
-    pub fix_z: bool,
 }
 
 #[derive(Copy, Clone)]
 pub struct Direction {
     pub view: cgmath::Vector3<f32>,
     pub height: f32,
+}
+
+pub fn compute_twist(
+    quat: cgmath::Quaternion<f32>,
+    direction: cgmath::Vector3<f32>,
+) -> cgmath::Quaternion<f32> {
+    let p = quat.v.project_on(direction);
+    cgmath::Quaternion::from_sv(quat.s, p).normalize()
 }
 
 impl Camera {
@@ -189,28 +199,20 @@ impl Camera {
     }
 
     pub fn follow(&mut self, target: &Transform, dt: f32, follow: &Follow) {
-        let new_target = if follow.fix_z {
-            let z_axis = target.rot * cgmath::Vector3::unit_z();
-            let adjust_quat = cgmath::Quaternion::from_arc(z_axis, cgmath::Vector3::unit_z(), None);
-            Transform {
-                disp: target.disp,
-                rot: adjust_quat * target.rot,
-                scale: 1.0,
-            }
-        } else {
-            *target
-        };
-
-        let offset = cgmath::Point3::origin() + follow.transform.disp;
-        let result = new_target.transform_point(offset) - cgmath::Point3::origin();
         let k = (dt * -follow.speed).exp();
 
-        self.loc = result * (1.0 - k) + self.loc * k;
-        self.rot = cgmath::Quaternion::look_at(
-            (self.loc - target.disp).normalize(),
-            self.scale.y * cgmath::Vector3::unit_z(),
-        )
-        .invert();
+        // Determine the Z axis rotation around the target
+        let swing = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), follow.angle_x);
+        let twist = compute_twist(target.rot, cgmath::Vector3::unit_z());
+        let patch = cgmath::Quaternion::from_axis_angle(
+            cgmath::Vector3::unit_z(),
+            cgmath::Deg::turn_div_2(),
+        );
+        let rotation = patch * twist * swing;
+        self.rot = (rotation * (1.0 - k) + self.rot * k).normalize();
+
+        let location = target.disp + (patch * twist).rotate_vector(follow.offset);
+        self.loc = location * (1.0 - k) + self.loc * k;
     }
 
     pub fn look_by(&mut self, target: &Transform, dir: &Direction) {

@@ -246,29 +246,31 @@ struct Gpu {
 
 enum CameraStyle {
     Simple(space::Direction),
-    Follow(space::Follow),
+    Follow {
+        follow: space::Follow,
+        // always track the ground level to make the jumps bearable
+        ground_anchor: bool,
+    },
 }
 
 impl CameraStyle {
     fn new(config: &config::settings::Camera) -> Self {
         // the new angle is relative to the surface perpendicular
         let angle = cgmath::Deg(config.angle as f32) - cgmath::Deg::turn_div_4();
-        let z = config.height + config.target_overhead;
         if config.speed > 0.0 {
-            CameraStyle::Follow(space::Follow {
-                transform: cgmath::Decomposed {
-                    disp: cgmath::vec3(0.0, angle.tan() * config.height, z),
-                    rot: cgmath::Quaternion::from_angle_x(angle),
-                    scale: 1.0,
+            CameraStyle::Follow {
+                follow: space::Follow {
+                    angle_x: angle,
+                    offset: cgmath::vec3(0.0, config.offset, config.height),
+                    speed: config.speed,
                 },
-                speed: config.speed,
-                fix_z: true,
-            })
+                ground_anchor: angle > cgmath::Deg(15.0),
+            }
         } else {
             //Note: this appears to be broken ATM
             CameraStyle::Simple(space::Direction {
                 view: cgmath::vec3(0.0, angle.sin(), -angle.cos()),
-                height: z,
+                height: config.height,
             })
         }
     }
@@ -663,7 +665,7 @@ impl Application for Game {
                 .iter_mut()
                 .find(|a| a.spirit == Spirit::Player)
                 .unwrap();
-            let target = match player.physics {
+            let mut target = match player.physics {
                 Physics::Cpu { ref transform, .. } => *transform,
                 #[cfg(feature = "glsl")]
                 Physics::Gpu { ref body, .. } => self
@@ -726,7 +728,17 @@ impl Application for Game {
                 CameraStyle::Simple(ref dir) => {
                     self.cam.look_by(&target, dir);
                 }
-                CameraStyle::Follow(ref follow) => {
+                CameraStyle::Follow {
+                    ref follow,
+                    ground_anchor,
+                } => {
+                    if ground_anchor {
+                        let altitude = self
+                            .level
+                            .get((target.disp.x as i32, target.disp.y as i32))
+                            .top();
+                        target.disp.z = physics::get_height(altitude);
+                    }
                     self.cam.follow(&target, delta, follow);
                 }
             }
