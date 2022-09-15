@@ -20,3 +20,8 @@ ron = "0.6"
 slotmap = "1"
 wgpu = { version = "0.13", features = ["angle"] }
 hal = { package = "wgpu-hal", version = "0.13", features = ["gles"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = { version = "0.11", optional = true }
+log = "0.4"
+log-panics = { version = "2" }

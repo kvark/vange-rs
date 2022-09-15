@@ -205,6 +205,15 @@ fn crate_main_views(
 pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>> {
     #[cfg(feature = "env_logger")]
     let _ = env_logger::try_init();
+
+    #[cfg(feature = "android_logger")]
+    log_panics::init();
+
+    #[cfg(feature = "android_logger")]
+    let _ = android_logger::init_once(
+        android_logger::Config::default().with_min_level(log::Level::Warn),
+    );
+
     let mut task_pool = LocalPool::new();
 
     let exposed = unsafe {
