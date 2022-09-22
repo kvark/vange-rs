@@ -41,8 +41,9 @@ fn vertex(
     let cy = select(0.0, 1.0, ((vertex_index + 1u) & 3u) >= 2u);
     let pos = floor(pos_center) + vec2<f32>(cx, cy);
 
+    let tex_coord = vec2<f32>(0.0); //TODO
     let ty = select(suf.low_type, suf.high_type, vertex_index >= 8u);
-    let tex_coord = vec3<f32>(suf.tex_coord, altitude / u_Surface.texture_scale.z);
+    let tex_coord = vec3<f32>(tex_coord, altitude / u_Surface.texture_scale.z);
     return Varyings(
         u_Globals.view_proj * vec4<f32>(pos, altitude, 1.0),
         tex_coord,

@@ -13,7 +13,6 @@ use wgpu::util::DeviceExt as _;
 
 use std::{mem, num::NonZeroU32, ops::Range};
 
-pub const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const SCATTER_GROUP_SIZE: [u32; 3] = [16, 16, 1];
 
 #[repr(C)]
@@ -191,8 +190,7 @@ pub struct Context {
     raytrace_geo: Geometry,
     kind: Kind,
     shadow_kind: Kind,
-    height_texture: wgpu::Texture,
-    meta_texture: wgpu::Texture,
+    terrain_buf: wgpu::Buffer,
     palette_texture: wgpu::Texture,
     pub flood: Flood,
     pub dirty_rects: Vec<super::Rect>,
@@ -439,12 +437,6 @@ impl Context {
             height: 1,
             depth_or_array_layers: 1,
         };
-        let (terrain_mip_count, terrain_extra_usage) = match *config {
-            settings::Terrain::RayMipTraced { mip_count, .. } => {
-                (mip_count, wgpu::TextureUsages::RENDER_ATTACHMENT)
-            }
-            _ => (1, wgpu::TextureUsages::empty()),
-        };
 
         let terrain_table = level
             .terrains
@@ -459,26 +451,24 @@ impl Context {
             })
             .collect::<Vec<_>>();
 
-        let height_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Terrain height"),
-            size: extent,
-            mip_level_count: terrain_mip_count,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: HEIGHT_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | terrain_extra_usage,
+        let terrain_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Terrain data"),
+            size: (extent.width * extent.height) as wgpu::BufferAddress * 2,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: true,
         });
-        let meta_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Terrain meta"),
-            size: extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Uint,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        });
+        {
+            let mut mapping = terrain_buf.slice(..).get_mapped_range_mut();
+            for y in 0..extent.height {
+                for x in 0..extent.width {
+                    let index = (y * extent.width + x) as usize;
+                    mapping[2 * index + 0] = level.height[index];
+                    mapping[2 * index + 1] = level.meta[index];
+                }
+            }
+        }
+        terrain_buf.unmap();
+
         let flood_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Terrain flood"),
             size: flood_extent,
@@ -521,15 +511,6 @@ impl Context {
 
         let palette = Palette::new(device);
 
-        let repeat_nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
         let flood_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -574,25 +555,14 @@ impl Context {
                     },
                     count: None,
                 },
-                // height map
+                // terrain data
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::all(),
-                    ty: wgpu::BindingType::Texture {
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // meta map
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::all(),
-                    ty: wgpu::BindingType::Texture {
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        multisampled: false,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
                     count: None,
                 },
@@ -627,13 +597,6 @@ impl Context {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         multisampled: false,
                     },
-                    count: None,
-                },
-                // main sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::all(),
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 // flood sampler
@@ -688,15 +651,7 @@ impl Context {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(
-                        &height_texture.create_view(&wgpu::TextureViewDescriptor::default()),
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(
-                        &meta_texture.create_view(&wgpu::TextureViewDescriptor::default()),
-                    ),
+                    resource: terrain_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
@@ -713,10 +668,6 @@ impl Context {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::TextureView(&palette.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: wgpu::BindingResource::Sampler(&repeat_nearest_sampler),
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
@@ -763,6 +714,7 @@ impl Context {
                 );
                 Kind::Ray { pipeline }
             }
+            #[allow(unreachable_code, unused_variables, dead_code)]
             settings::Terrain::RayMipTraced {
                 mip_count,
                 max_jumps,
@@ -777,7 +729,7 @@ impl Context {
                     PipelineKind::Main,
                     "ray_mip_color",
                 );
-                let mipper = MaxMipper::new(&height_texture, extent, mip_count, device);
+                let mipper = MaxMipper::new(unimplemented!(), extent, mip_count, device);
 
                 Kind::RayMip {
                     pipeline,
@@ -895,20 +847,14 @@ impl Context {
             raytrace_geo,
             kind,
             shadow_kind,
-            height_texture,
-            meta_texture,
+            terrain_buf,
             palette_texture: palette.texture,
             flood: Flood {
                 texture: flood_texture,
                 texture_size: flood_section_count,
                 section_size: (level.size.0 as u32, 1 << level.flood_section_power),
             },
-            dirty_rects: vec![super::Rect {
-                x: 0,
-                y: 0,
-                w: level.size.0 as u16,
-                h: level.size.1 as u16,
-            }],
+            dirty_rects: Vec::new(),
             dirty_palette: 0..0x100,
         }
     }
@@ -1008,12 +954,12 @@ impl Context {
     ) {
         if !self.dirty_rects.is_empty() {
             for rect in self.dirty_rects.iter() {
-                let origin = wgpu::Origin3d {
+                let _origin = wgpu::Origin3d {
                     x: rect.x as u32,
                     y: rect.y as u32,
                     z: 0,
                 };
-                let extent = wgpu::Extent3d {
+                let _extent = wgpu::Extent3d {
                     width: rect.w as u32,
                     height: rect.h as u32,
                     depth_or_array_layers: 1,
@@ -1042,6 +988,8 @@ impl Context {
                 }
                 staging_buf.unmap();
 
+                //TODO: updates
+                /*
                 encoder.copy_buffer_to_texture(
                     wgpu::ImageCopyBuffer {
                         buffer: &staging_buf,
@@ -1071,7 +1019,7 @@ impl Context {
                         ..self.meta_texture.as_image_copy()
                     },
                     extent,
-                );
+                );*/
             }
 
             if let Kind::RayMip { ref mipper, .. } = self.kind {
