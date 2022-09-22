@@ -152,7 +152,7 @@ fn cast_ray_to_map(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     }
 
     pt.pos = b;
-    pt.tex_coord = suf.tex_coord;
+    pt.tex_coord = vec2<f32>(0.0); //suf.tex_coord; TODO
     //pt.is_shadowed = suf.is_shadowed;
 
     return pt;
@@ -299,7 +299,8 @@ fn ray_mip_color(in: RayInput) -> FragOutput {
     let lit_factor = fetch_shadow(point);
     let surface = get_surface(point.xy);
     let ty = select(surface.low_type, surface.high_type, point.z > surface.low_alt);
-    let frag_color = evaluate_color(ty, surface.tex_coord, point.z / u_Surface.texture_scale.z, lit_factor);
+    let tex_coord = vec2<f32>(0.0); //TODO
+    let frag_color = evaluate_color(ty, tex_coord, point.z / u_Surface.texture_scale.z, lit_factor);
 
     let target_ndc = u_Globals.view_proj * vec4<f32>(point, 1.0);
     let depth = target_ndc.z / target_ndc.w;

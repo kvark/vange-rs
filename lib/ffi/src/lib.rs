@@ -235,6 +235,8 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
             } else {
                 desired_height
             },
+            max_storage_buffers_per_shader_stage: 1,
+            max_storage_buffer_binding_size: 1 << 26,
             ..wgpu::Limits::downlevel_webgl2_defaults()
         }
     };

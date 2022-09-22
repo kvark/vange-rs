@@ -95,6 +95,9 @@ impl Harness {
             | Terrain::Painted { .. } => wgpu::Limits::downlevel_webgl2_defaults(),
             Terrain::Scattered { .. } => wgpu::Limits::default(),
         };
+        limits.max_storage_buffers_per_shader_stage = 1;
+        limits.max_storage_buffer_binding_size = 1 << 26;
+
         if options.uses_level {
             let desired_height = 16 << 10;
             limits.max_texture_dimension_2d =

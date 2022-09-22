@@ -4,12 +4,12 @@ struct SurfaceConstants {
     texture_scale: vec4<f32>;    // XY = size, Z = height scale, w = number of layers
     terrain_bits: vec4<u32>;     // X_low = shift, X_high = mask
 };
+struct TerrainData {
+    inner: array<u32>;
+};
 
 @group(1) @binding(0) var<uniform> u_Surface: SurfaceConstants;
-
-@group(1) @binding(2) var t_Height: texture_2d<f32>;
-@group(1) @binding(3) var t_Meta: texture_2d<u32>;
-@group(1) @binding(7) var s_Main: sampler;
+@group(1) @binding(2) var<storage, read> b_Terrain: TerrainData;
 
 let c_DoubleLevelMask: u32 = 64u;
 let c_ShadowMask: u32 = 128u;
@@ -23,7 +23,6 @@ struct Surface {
     delta: f32;
     low_type: u32;
     high_type: u32;
-    tex_coord: vec2<f32>;
     is_shadowed: bool;
 };
 
@@ -41,11 +40,7 @@ fn modulo(a: i32, b: i32) -> i32 {
 }
 
 fn get_lod_height(ipos: vec2<i32>, lod: u32) -> f32 {
-    let x = modulo(ipos.x, i32(u_Surface.texture_scale.x));
-    let y = modulo(ipos.y, i32(u_Surface.texture_scale.y));
-    let tc = vec2<i32>(x, y) >> vec2<u32>(lod);
-    let alt = textureLoad(t_Height, tc, i32(lod)).x;
-    return alt * u_Surface.texture_scale.z;
+    return 0.0; //TODO
 }
 
 fn get_map_coordinates(pos: vec2<f32>) -> vec2<i32> {
@@ -55,41 +50,27 @@ fn get_map_coordinates(pos: vec2<f32>) -> vec2<i32> {
 fn get_surface(pos: vec2<f32>) -> Surface {
     var suf: Surface;
 
-    let tc = pos / u_Surface.texture_scale.xy;
     let tci = get_map_coordinates(pos);
-    suf.tex_coord = tc;
+    let tc_index = tci.y * i32(u_Surface.texture_scale.x) + tci.x;
+    let data_raw = b_Terrain.inner[tc_index / 2];
+    let data = (vec4<u32>(data_raw) >> vec4<u32>(0u, 8u, 16u, 24u)) & vec4<u32>(0xFFu);
+    suf.is_shadowed = (data.y & c_ShadowMask) != 0u;
 
-    let meta = textureLoad(t_Meta, tci, 0).x;
-    suf.is_shadowed = (meta & c_ShadowMask) != 0u;
-    suf.low_type = get_terrain_type(meta);
-
-    if ((meta & c_DoubleLevelMask) != 0u) {
-        //TODO: we need either low or high for the most part
-        // so this can be more efficient with a boolean param
-        var delta = 0u;
-        if (tci.x % 2 == 1) {
-            let meta_low = textureLoad(t_Meta, tci + vec2<i32>(-1, 0), 0).x;
-            suf.high_type = suf.low_type;
-            suf.low_type = get_terrain_type(meta_low);
-            delta = (get_delta(meta_low) << c_DeltaBits) + get_delta(meta);
-        } else {
-            let meta_high = textureLoad(t_Meta, tci + vec2<i32>(1, 0), 0).x;
-            suf.tex_coord.x = suf.tex_coord.x + 1.0 / u_Surface.texture_scale.x;
-            suf.high_type = get_terrain_type(meta_high);
-            delta = (get_delta(meta) << c_DeltaBits) + get_delta(meta_high);
-        }
-
-        suf.low_alt = //TODO: the `LodOffset` doesn't appear to work in Metal compute
-            //textureLodOffset(sampler2D(t_Height, s_Main), suf.tex_coord, 0.0, ivec2(-1, 0)).x
-            textureSampleLevel(t_Height, s_Main, suf.tex_coord - vec2<f32>(1.0 / u_Surface.texture_scale.x, 0.0), 0.0).x
-            * u_Surface.texture_scale.z;
-        suf.high_alt = textureSampleLevel(t_Height, s_Main, suf.tex_coord, 0.0).x * u_Surface.texture_scale.z;
+    if ((data.y & c_DoubleLevelMask) != 0u) {
+        let delta = (get_delta(data.y) << c_DeltaBits) + get_delta(data.w);
+        suf.low_type = get_terrain_type(data.y);
+        suf.high_type = get_terrain_type(data.w);
+        suf.low_alt = f32(data.x) / 255.0 * u_Surface.texture_scale.z;
+        suf.high_alt = f32(data.z) / 255.0 * u_Surface.texture_scale.z;
         suf.delta = f32(delta) * c_DeltaScale * u_Surface.texture_scale.z;
     } else {
-        suf.high_type = suf.low_type;
-
-        suf.low_alt = textureSampleLevel(t_Height, s_Main, tc, 0.0).x * u_Surface.texture_scale.z;
-        suf.high_alt = suf.low_alt;
+        let subdata = select(data.xy, data.zw, (tc_index & 1) != 0);
+        let altitude = f32(subdata.x) / 255.0 * u_Surface.texture_scale.z;
+        let ty = get_terrain_type(subdata.y);
+        suf.low_type = ty;
+        suf.high_type = ty;
+        suf.low_alt = altitude;
+        suf.high_alt = altitude;
         suf.delta = 0.0;
     }
 
@@ -103,24 +84,12 @@ struct SurfaceAlt {
 };
 
 fn get_surface_alt(pos: vec2<f32>) -> SurfaceAlt {
-    let tci = get_map_coordinates(pos);
-    let meta = textureLoad(t_Meta, tci, 0).x;
-    let altitude = textureLoad(t_Height, tci, 0).x * u_Surface.texture_scale.z;
-
-    if ((meta & c_DoubleLevelMask) != 0u) {
-        let tci_other = tci ^ vec2<i32>(1, 0);
-        let meta_other = textureLoad(t_Meta, tci_other, 0).x;
-        let alt_other = textureLoad(t_Height, tci_other, 0).x * u_Surface.texture_scale.z;
-        let deltas = vec2<u32>(get_delta(meta), get_delta(meta_other));
-        let raw = select(
-            vec3<f32>(altitude, alt_other, f32((deltas.x << c_DeltaBits) + deltas.y)),
-            vec3<f32>(alt_other, altitude, f32((deltas.y << c_DeltaBits) + deltas.x)),
-            (tci.x & 1) != 0,
-        );
-        return SurfaceAlt(raw.x, raw.y, raw.z * c_DeltaScale * u_Surface.texture_scale.z);
-    } else {
-        return SurfaceAlt(altitude, altitude, 0.0);
-    }
+    let surface = get_surface(pos);
+    var s: SurfaceAlt;
+    s.low = surface.low_alt;
+    s.high = surface.high_alt;
+    s.delta = surface.delta;
+    return s;
 }
 
 fn merge_alt(a: SurfaceAlt, b: SurfaceAlt, ratio: f32) -> SurfaceAlt {

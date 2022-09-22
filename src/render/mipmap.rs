@@ -1,4 +1,3 @@
-use crate::render::terrain::HEIGHT_FORMAT;
 use bytemuck::{Pod, Zeroable};
 use std::{mem, num::NonZeroU32};
 use wgpu::util::DeviceExt as _;
@@ -49,7 +48,7 @@ impl MaxMipper {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fragment",
-                targets: &[HEIGHT_FORMAT.into()],
+                targets: &[], //TODO
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
