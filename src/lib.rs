@@ -22,7 +22,6 @@ extern crate log;
 extern crate serde_derive;
 
 pub mod config;
-mod freelist;
 pub mod level;
 pub mod model;
 pub mod render;

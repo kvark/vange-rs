@@ -221,55 +221,6 @@ impl Context {
             ..Default::default()
         };
 
-        #[cfg(feature = "glsl")]
-        if self.settings.collision_shapes && self.pipeline_layout.is_ok() {
-            let shaders = super::Shaders::new("debug_shape", &[], device).unwrap();
-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("debug-shape"),
-                layout: self.pipeline_layout.as_ref().ok(),
-                vertex: wgpu::VertexState {
-                    module: &shaders.vs,
-                    entry_point: "main",
-                    buffers: &[
-                        super::ShapeVertexDesc::new().buffer_desc(),
-                        super::object::InstanceDesc::new().buffer_desc(),
-                    ],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shaders.fs,
-                    entry_point: "main",
-                    targets: &[wgpu::ColorTargetState {
-                        format: self.color_format,
-                        blend: Some(wgpu::BlendState {
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::One,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::SrcAlpha,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                        }),
-                        write_mask: wgpu::ColorWrites::all(),
-                    }],
-                }),
-                primitive,
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-            });
-            self.pipeline_face = Some(pipeline);
-            self.pipeline_edge = None; //TODO: line raster
-        }
-
         self.pipelines_line.clear();
         if self.settings.impulses {
             let shader = super::load_shader("debug", device).unwrap();

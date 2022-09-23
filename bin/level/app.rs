@@ -134,8 +134,6 @@ impl LevelView {
         };
 
         let objects_palette = level::read_palette(settings.open_palette(), None);
-        #[cfg(feature = "glsl")]
-        let store_init = vangers::render::body::GpuStoreInit::new_dummy(device);
         let render = Render::new(
             device,
             queue,
@@ -146,8 +144,6 @@ impl LevelView {
             color_format,
             screen_extent,
             cam.front_face(),
-            #[cfg(feature = "glsl")]
-            store_init.resource(),
         );
 
         LevelView {

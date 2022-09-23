@@ -448,11 +448,7 @@ pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
     for (_, instance) in ctx.instances.iter() {
         batcher.add_mesh(
             &instance.mesh,
-            vangers::render::object::Instance::new_nobody(
-                &instance.transform,
-                1.0,
-                instance.color_id,
-            ),
+            vangers::render::object::Instance::new(&instance.transform, 1.0, instance.color_id),
         );
     }
 

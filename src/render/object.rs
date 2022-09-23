@@ -1,6 +1,6 @@
 use crate::{
     render::{
-        body::GpuBody, global::Context as GlobalContext, GpuTransform, Palette, PipelineSet,
+        global::Context as GlobalContext, GpuTransform, Palette, PipelineSet,
         VertexStorageNotSupported, DEPTH_FORMAT, SHADOW_FORMAT,
     },
     space::Transform,
@@ -71,17 +71,7 @@ unsafe impl Pod for Instance {}
 unsafe impl Zeroable for Instance {}
 
 impl Instance {
-    pub fn new(transform: &Transform, shape_scale: f32, body: &GpuBody, color: BodyColor) -> Self {
-        let gt = GpuTransform::new(transform);
-        Instance {
-            pos_scale: gt.pos_scale,
-            orientation: gt.orientation,
-            shape_scale,
-            body_and_color_id: [body.index() as u32, color as u32],
-        }
-    }
-
-    pub fn new_nobody(transform: &Transform, shape_scale: f32, color_id: u8) -> Self {
+    pub fn new(transform: &Transform, shape_scale: f32, color_id: u8) -> Self {
         let gt = GpuTransform::new(transform);
         Instance {
             pos_scale: gt.pos_scale,
