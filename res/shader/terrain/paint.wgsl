@@ -1,4 +1,4 @@
-//!include globals.inc terrain/locals.inc surface.inc shadow.inc color.inc
+//!include globals.inc terrain/locals.inc surface.inc shadow.inc terrain/color.inc
 
 fn generate_paint_pos(instance_index: u32) -> vec2<f32> {
     let row_size = u32(ceil(u_Locals.sample_range.y - u_Locals.sample_range.x));
@@ -11,7 +11,7 @@ fn generate_paint_pos(instance_index: u32) -> vec2<f32> {
 
 struct Varyings {
     @builtin(position) position: vec4<f32>;
-    @location(0) tex_coord: vec3<f32>;
+    @location(0) world_pos: vec3<f32>;
     @location(1) @interpolate(flat) ty: u32;
     @location(2) plane_pos: vec3<f32>;
 };
@@ -41,12 +41,10 @@ fn vertex(
     let cy = select(0.0, 1.0, ((vertex_index + 1u) & 3u) >= 2u);
     let pos = floor(pos_center) + vec2<f32>(cx, cy);
 
-    let tex_coord = vec2<f32>(0.0); //TODO
     let ty = select(suf.low_type, suf.high_type, vertex_index >= 8u);
-    let tex_coord = vec3<f32>(tex_coord, altitude / u_Surface.texture_scale.z);
     return Varyings(
         u_Globals.view_proj * vec4<f32>(pos, altitude, 1.0),
-        tex_coord,
+        vec3<f32>(pos, altitude),
         ty,
         plane_pos,
     );
@@ -57,6 +55,6 @@ fn vertex(
 @stage(fragment)
 fn fragment(in: Varyings) -> @location(0) vec4<f32> {
     let lit_factor = fetch_shadow(in.plane_pos);
-    let terrain_color = evaluate_color(in.ty, in.tex_coord.xy, in.tex_coord.z, lit_factor);
+    let terrain_color = evaluate_color(in.ty, in.world_pos, lit_factor);
     return apply_fog(terrain_color, in.plane_pos.xy);
 }

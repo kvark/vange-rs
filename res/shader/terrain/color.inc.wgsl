@@ -22,27 +22,44 @@ fn evaluate_light(material: vec3<f32>, height_diff: f32) -> f32 {
     return clamp(v, 0.0, 1.0);
 }
 
-fn evaluate_palette(ty: u32, value_in: f32, ycoord: f32) -> f32 {
+fn evaluate_palette(ty: u32, value_in: f32) -> f32 {
     var value = clamp(value_in, 0.0, 1.0);
     let terr = vec4<f32>(textureLoad(t_Table, i32(ty), 0));
     //Note: the original game had specific logic here to process water
     return (mix(terr.z, terr.w, value) + 0.5) / 256.0;
 }
 
-fn evaluate_color_id(ty: u32, tex_coord: vec2<f32>, height_normalized: f32, lit_factor: f32) -> f32 {
+fn get_surface_height(pos: vec3<f32>) -> f32 {
+    let suf = get_surface(pos.xy);
+    return select(suf.low_alt, suf.high_alt, pos.z >= suf.low_alt + suf.delta);
+}
+
+fn get_surface_gradient(pos: vec3<f32>) -> vec2<f32> {
+    let vl = get_surface_height(pos + vec3<f32>(-1.0, 0.0, 0.0));
+    let vr = get_surface_height(pos + vec3<f32>(1.0, 0.0, 0.0));
+    let vt = get_surface_height(pos + vec3<f32>(0.0, 1.0, 0.0));
+    let vb = get_surface_height(pos + vec3<f32>(0.0, -1.0, 0.0));
+    return vec2<f32>(vr - vl, vt - vb);
+}
+
+fn evaluate_color_id(ty: u32, pos: vec3<f32>, lit_factor: f32) -> f32 {
     // See the original code in "land.cpp": `LINE_render()`
-    //Note: we could have a different code path for double level here
-    let diff = 0.0; //TODO
-        //textureSampleLevel(t_Height, s_Main, tex_coord, 0.0, vec2<i32>(0, 0)).x -
-        //textureSampleLevel(t_Height, s_Main, tex_coord, 0.0, vec2<i32>(-2, 0)).x;
+    //Note: the original always used horisontal difference only,
+    // presumably because it assumed the sun to be shining from the side.
+    // Here, we rely on surface gradient instead.
+
+    let light = u_Globals.light_pos.xyz - pos * u_Globals.light_pos.w;
+    let gradient = get_surface_gradient(pos);
+    let diff = dot(gradient / u_Surface.texture_scale.z, normalize(light.xy));
+
     // See the original code in "land.cpp": `TERRAIN_MATERIAL` etc
     let material = select(vec3<f32>(1.0), vec3<f32>(5.0, 1.25, 0.5), ty == 0u);
     let light_clr = evaluate_light(material, diff);
-    let tmp = light_clr - c_HorFactor * (1.0 - height_normalized);
-    return evaluate_palette(ty, lit_factor * tmp, tex_coord.y);
+    let tmp = light_clr - c_HorFactor * (1.0 - pos.z / u_Surface.texture_scale.z);
+    return evaluate_palette(ty, lit_factor * tmp);
 }
 
-fn evaluate_color(ty: u32, tex_coord: vec2<f32>, height_normalized: f32, lit_factor: f32) -> vec4<f32> {
-    let color_id = evaluate_color_id(ty, tex_coord, height_normalized, lit_factor);
+fn evaluate_color(ty: u32, pos: vec3<f32>, lit_factor: f32) -> vec4<f32> {
+    let color_id = evaluate_color_id(ty, pos, lit_factor);
     return textureSample(t_Palette, s_Palette, color_id);
 }

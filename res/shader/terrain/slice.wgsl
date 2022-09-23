@@ -1,4 +1,4 @@
-//!include globals.inc terrain/locals.inc surface.inc color.inc
+//!include globals.inc terrain/locals.inc surface.inc terrain/color.inc
 
 struct Varyings {
     @location(0) vpos: vec4<f32>;
@@ -37,5 +37,5 @@ fn main_fs(in: Varyings) -> @location(0) vec4<f32> {
     }
 
     let lit_factor = select(0.25, 1.0, in.vpos.z > surface.low_alt || surface.delta == 0.0);
-    return evaluate_color(ty, surface.tex_coord, in.vpos.z / u_Surface.texture_scale.z, lit_factor);
+    return evaluate_color(ty, in.vpos.xyz, lit_factor);
 }
