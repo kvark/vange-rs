@@ -88,29 +88,18 @@ impl Harness {
         let downlevel_caps = adapter.get_downlevel_properties();
         let adapter_limits = adapter.limits();
 
-        let mut limits = match settings.render.terrain {
+        let limits = match settings.render.terrain {
             Terrain::RayTraced { .. }
             | Terrain::RayMipTraced { .. }
             | Terrain::Sliced { .. }
-            | Terrain::Painted { .. } => wgpu::Limits::downlevel_webgl2_defaults(),
+            | Terrain::Painted { .. } => wgpu::Limits {
+                max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+                max_storage_buffers_per_shader_stage: 1,
+                max_storage_buffer_binding_size: 1 << 26,
+                ..wgpu::Limits::downlevel_webgl2_defaults()
+            },
             Terrain::Scattered { .. } => wgpu::Limits::default(),
         };
-        limits.max_storage_buffers_per_shader_stage = 1;
-        limits.max_storage_buffer_binding_size = 1 << 26;
-
-        if options.uses_level {
-            let desired_height = 16 << 10;
-            limits.max_texture_dimension_2d =
-                if adapter_limits.max_texture_dimension_2d < desired_height {
-                    log::warn!(
-                        "Adapter only supports {} texutre size",
-                        adapter_limits.max_texture_dimension_2d
-                    );
-                    adapter_limits.max_texture_dimension_2d
-                } else {
-                    desired_height
-                };
-        }
 
         let (device, queue) = task_pool
             .run_until(adapter.request_device(
