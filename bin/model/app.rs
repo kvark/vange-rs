@@ -40,16 +40,7 @@ impl ResourceView {
 
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
-        #[cfg(feature = "glsl")]
-        let store_init = render::body::GpuStoreInit::new_dummy(device);
-        let global = render::global::Context::new(
-            device,
-            queue,
-            color_format,
-            #[cfg(feature = "glsl")]
-            store_init.resource(),
-            None,
-        );
+        let global = render::global::Context::new(device, queue, color_format, None);
         let object = render::object::Context::new(
             device,
             queue,
@@ -151,7 +142,6 @@ impl Application for ResourceView {
             &self.model,
             &self.transform,
             None,
-            &render::body::GpuBody::ZERO,
             render::object::BodyColor::Dummy,
         );
         batcher.prepare(device);

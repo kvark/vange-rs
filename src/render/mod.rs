@@ -16,13 +16,6 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(feature = "glsl")]
-use std::io::Write as _;
-
-#[cfg(feature = "glsl")]
-pub mod body;
-#[cfg(feature = "glsl")]
-pub mod collision;
 pub mod debug;
 pub mod global;
 pub mod mipmap;
@@ -30,11 +23,6 @@ pub mod object;
 mod shadow;
 pub mod terrain;
 mod water;
-
-#[cfg(not(feature = "glsl"))]
-pub mod body {
-    pub type GpuBody = crate::freelist::Id<()>;
-}
 
 pub use shadow::FORMAT as SHADOW_FORMAT;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -146,185 +134,6 @@ pub fn load_shader(name: &str, device: &wgpu::Device) -> Result<wgpu::ShaderModu
     }))
 }
 
-#[cfg(feature = "glsl")]
-pub struct Shaders {
-    vs: wgpu::ShaderModule,
-    fs: wgpu::ShaderModule,
-}
-
-#[cfg(feature = "glsl")]
-impl Shaders {
-    fn fail(name: &str, source: &str, log: &str) -> ! {
-        println!("Generated shader:");
-        for (i, line) in source.lines().enumerate() {
-            println!("{:3}| {}", i + 1, line);
-        }
-        let msg = log.replace("\\n", "\n");
-        panic!("\nUnable to compile '{}': {}", name, msg);
-    }
-
-    pub fn new(
-        name: &str,
-        specialization: &[&str],
-        device: &wgpu::Device,
-    ) -> Result<Self, IoError> {
-        profiling::scope!("Load Shaders", name);
-
-        let base_path = PathBuf::from("res").join("shader");
-        let path = base_path.join(name).with_extension("glsl");
-        if !path.is_file() {
-            panic!("Shader not found: {:?}", path);
-        }
-
-        let mut buf_vs = b"#version 430\n#define SHADER_VS\n".to_vec();
-        let mut buf_fs = b"#version 430\n#define SHADER_FS\n".to_vec();
-
-        let mut code = String::new();
-        BufReader::new(File::open(&path)?).read_to_string(&mut code)?;
-        // parse meta-data
-        {
-            let mut lines = code.lines();
-            let first = lines.next().unwrap();
-            if first.starts_with("//!include") {
-                for include_pair in first.split_whitespace().skip(1) {
-                    let mut temp = include_pair.split(':');
-                    let target = match temp.next().unwrap() {
-                        "vs" => &mut buf_vs,
-                        "fs" => &mut buf_fs,
-                        other => panic!("Unknown target: {}", other),
-                    };
-                    let include = temp.next().unwrap();
-                    let inc_path = base_path.join(include).with_extension("inc.glsl");
-                    match File::open(&inc_path) {
-                        Ok(include) => BufReader::new(include).read_to_end(target)?,
-                        Err(e) => panic!("Unable to include {:?}: {:?}", inc_path, e),
-                    };
-                }
-            }
-            let second = lines.next().unwrap();
-            if second.starts_with("//!specialization") {
-                for define in second.split_whitespace().skip(1) {
-                    let value = if specialization.contains(&define) {
-                        1
-                    } else {
-                        0
-                    };
-                    writeln!(buf_vs, "#define {} {}", define, value)?;
-                    writeln!(buf_fs, "#define {} {}", define, value)?;
-                }
-            }
-        }
-
-        write!(
-            buf_vs,
-            "\n{}",
-            code.replace("attribute", "in").replace("varying", "out")
-        )?;
-        write!(buf_fs, "\n{}", code.replace("varying", "in"))?;
-
-        let str_vs = String::from_utf8_lossy(&buf_vs);
-        let str_fs = String::from_utf8_lossy(&buf_fs);
-        debug!("vs:\n{}", str_vs);
-        debug!("fs:\n{}", str_fs);
-
-        let (mut spv_vs, mut spv_fs) = (Vec::new(), Vec::new());
-        match glsl_to_spirv::compile(&str_vs, glsl_to_spirv::ShaderType::Vertex) {
-            Ok(mut file) => file.read_to_end(&mut spv_vs).unwrap(),
-            Err(ref e) => {
-                Self::fail(name, &str_vs, e);
-            }
-        };
-        match glsl_to_spirv::compile(&str_fs, glsl_to_spirv::ShaderType::Fragment) {
-            Ok(mut file) => file.read_to_end(&mut spv_fs).unwrap(),
-            Err(ref e) => {
-                Self::fail(name, &str_fs, e);
-            }
-        };
-
-        Ok(Shaders {
-            vs: device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-                label: Some(name),
-                source: wgpu::util::make_spirv(&spv_vs),
-            }),
-            fs: device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-                label: Some(name),
-                source: wgpu::util::make_spirv(&spv_fs),
-            }),
-        })
-    }
-
-    pub fn new_compute(
-        name: &str,
-        group_size: [u32; 3],
-        specialization: &[&str],
-        device: &wgpu::Device,
-    ) -> Result<wgpu::ShaderModule, IoError> {
-        profiling::scope!("Load Shader", name);
-
-        let base_path = PathBuf::from("res").join("shader");
-        let path = base_path.join(name).with_extension("glsl");
-        if !path.is_file() {
-            panic!("Shader not found: {:?}", path);
-        }
-
-        let mut buf = b"#version 430\n".to_vec();
-        writeln!(
-            buf,
-            "layout(local_size_x = {}, local_size_y = {}, local_size_z = {}) in;",
-            group_size[0], group_size[1], group_size[2]
-        )?;
-        writeln!(buf, "#define SHADER_CS")?;
-
-        let mut code = String::new();
-        BufReader::new(File::open(&path)?).read_to_string(&mut code)?;
-        // parse meta-data
-        {
-            let mut lines = code.lines();
-            let first = lines.next().unwrap();
-            if first.starts_with("//!include") {
-                for include_pair in first.split_whitespace().skip(1) {
-                    let mut temp = include_pair.split(':');
-                    let target = match temp.next().unwrap() {
-                        "cs" => &mut buf,
-                        other => panic!("Unknown target: {}", other),
-                    };
-                    let include = temp.next().unwrap();
-                    let inc_path = base_path.join(include).with_extension("inc.glsl");
-                    BufReader::new(File::open(inc_path)?).read_to_end(target)?;
-                }
-            }
-            let second = lines.next().unwrap();
-            if second.starts_with("//!specialization") {
-                for define in second.split_whitespace().skip(1) {
-                    let value = if specialization.contains(&define) {
-                        1
-                    } else {
-                        0
-                    };
-                    writeln!(buf, "#define {} {}", define, value)?;
-                }
-            }
-        }
-
-        write!(buf, "\n{}", code)?;
-        let str_cs = String::from_utf8_lossy(&buf);
-        debug!("cs:\n{}", str_cs);
-
-        let mut spv = Vec::new();
-        match glsl_to_spirv::compile(&str_cs, glsl_to_spirv::ShaderType::Compute) {
-            Ok(mut file) => file.read_to_end(&mut spv).unwrap(),
-            Err(ref e) => {
-                Self::fail(name, &str_cs, e);
-            }
-        };
-
-        Ok(device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-            label: Some(name),
-            source: wgpu::util::make_spirv(&spv),
-        }))
-    }
-}
-
 pub struct Palette {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -408,7 +217,6 @@ impl Batcher {
         model: &model::VisualModel,
         base_transform: &Transform,
         debug_shape_scale: Option<f32>,
-        gpu_body: &body::GpuBody,
         color: object::BodyColor,
     ) {
         use cgmath::{One as _, Rotation3 as _, Transform as _};
@@ -416,15 +224,14 @@ impl Batcher {
         // body
         self.add_mesh(
             &model.body,
-            object::Instance::new(base_transform, 0.0, gpu_body, color),
+            object::Instance::new(base_transform, 0.0, color as u8),
         );
         if let Some(shape_scale) = debug_shape_scale {
             self.debug_shapes.push(Arc::clone(&model.shape));
             self.debug_instances.push(object::Instance::new(
                 base_transform,
                 shape_scale,
-                gpu_body,
-                color,
+                color as u8,
             ));
         }
 
@@ -436,10 +243,7 @@ impl Batcher {
                     rot: cgmath::Quaternion::one(),
                     scale: 1.0,
                 });
-                self.add_mesh(
-                    mesh,
-                    object::Instance::new(&transform, 0.0, gpu_body, color),
-                );
+                self.add_mesh(mesh, object::Instance::new(&transform, 0.0, color as u8));
             }
         }
 
@@ -453,10 +257,7 @@ impl Batcher {
                 };
                 local.disp -= local.transform_vector(cgmath::Vector3::from(mesh.offset));
                 let transform = base_transform.concat(&local);
-                self.add_mesh(
-                    mesh,
-                    object::Instance::new(&transform, 0.0, gpu_body, color),
-                );
+                self.add_mesh(mesh, object::Instance::new(&transform, 0.0, color as u8));
             }
         }
     }
@@ -550,7 +351,6 @@ impl Render {
         color_format: wgpu::TextureFormat,
         screen_size: wgpu::Extent3d,
         front_face: wgpu::FrontFace,
-        #[cfg(feature = "glsl")] store_buffer: wgpu::BindingResource<'_>,
     ) -> Self {
         profiling::scope!("Init Renderer");
 
@@ -564,8 +364,6 @@ impl Render {
             device,
             queue,
             color_format,
-            #[cfg(feature = "glsl")]
-            store_buffer,
             shadow.as_ref().map(|shadow| &shadow.view),
         );
         let object = object::Context::new(

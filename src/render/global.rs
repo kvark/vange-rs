@@ -48,7 +48,6 @@ impl Context {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         color_format: wgpu::TextureFormat,
-        #[cfg(feature = "glsl")] store_buffer: wgpu::BindingResource<'_>,
         shadow_view: Option<&wgpu::TextureView>,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -69,18 +68,6 @@ impl Context {
                     binding: 1,
                     visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // GPU store
-                #[cfg(feature = "glsl")]
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
                     count: None,
                 },
                 // shadow texture
@@ -175,11 +162,6 @@ impl Context {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&palette_sampler),
                 },
-                #[cfg(feature = "glsl")]
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: store_buffer.clone(),
-                },
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(
@@ -203,11 +185,6 @@ impl Context {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&palette_sampler),
-                },
-                #[cfg(feature = "glsl")]
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: store_buffer,
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,

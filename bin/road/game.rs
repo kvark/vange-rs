@@ -1,13 +1,8 @@
 use crate::{boilerplate::Application, physics};
 use m3d::Mesh;
-#[cfg(feature = "glsl")]
-use vangers::render::{
-    body::{GpuStore, GpuStoreInit},
-    collision::{GpuCollider, GpuEpoch},
-};
 use vangers::{
     config, level, model,
-    render::{body::GpuBody, debug::LineBuffer, object::BodyColor, Batcher, Render, ScreenTargets},
+    render::{debug::LineBuffer, object::BodyColor, Batcher, Render, ScreenTargets},
     space,
 };
 
@@ -42,12 +37,6 @@ enum Physics {
         transform: space::Transform,
         dynamo: physics::Dynamo,
     },
-    #[cfg(feature = "glsl")]
-    Gpu {
-        body: GpuBody,
-        collision_epochs: HashMap<GpuEpoch, usize>,
-        last_control: Control,
-    },
 }
 
 enum SimulationStep<'a> {
@@ -76,7 +65,6 @@ impl Agent {
         coords: (i32, i32),
         orientation: cgmath::Rad<f32>,
         level: &level::Level,
-        #[cfg(feature = "glsl")] gpu_store: Option<&mut GpuStore>,
     ) -> Self {
         let height = physics::get_height(level.get(coords).top()) + 5.; //center offset
         let transform = cgmath::Decomposed {
@@ -95,19 +83,6 @@ impl Agent {
             color,
             control: Control::default(),
             jump: None,
-            #[cfg(feature = "glsl")]
-            physics: match gpu_store {
-                Some(store) => Physics::Gpu {
-                    body: store.alloc(&transform, &car.model, &car.physics),
-                    collision_epochs: HashMap::default(),
-                    last_control: Control::default(),
-                },
-                None => Physics::Cpu {
-                    transform,
-                    dynamo: physics::Dynamo::default(),
-                },
-            },
-            #[cfg(not(feature = "glsl"))]
             physics: Physics::Cpu {
                 transform,
                 dynamo: physics::Dynamo::default(),
@@ -118,8 +93,6 @@ impl Agent {
     fn cpu_apply_control(&mut self, dt: f32, common: &config::common::Common) {
         let dynamo = match self.physics {
             Physics::Cpu { ref mut dynamo, .. } => dynamo,
-            #[cfg(feature = "glsl")]
-            Physics::Gpu { .. } => return,
         };
         if self.control.rudder != 0.0 {
             let angle = dynamo.rudder.0 + common.car.rudder_step * 2.0 * dt * self.control.rudder;
@@ -145,8 +118,6 @@ impl Agent {
                 ref mut transform,
                 ref mut dynamo,
             } => (dynamo, transform),
-            #[cfg(feature = "glsl")]
-            Physics::Gpu { .. } => return,
         };
         let (jump, roll, focus_point, line_buffer) = match sim_step {
             SimulationStep::Intermediate => (None, 0.0, None, None),
@@ -203,8 +174,6 @@ impl Agent {
 
         let transform = match self.physics {
             Physics::Cpu { ref transform, .. } => transform,
-            #[cfg(feature = "glsl")]
-            Physics::Gpu { .. } => return, //TODO
         };
 
         if ai.roll_time > 0.0 {
@@ -224,8 +193,6 @@ impl Agent {
     fn position(&self) -> cgmath::Vector3<f32> {
         match self.physics {
             Physics::Cpu { ref transform, .. } => transform.disp,
-            #[cfg(feature = "glsl")]
-            Physics::Gpu { .. } => cgmath::Vector3::zero(), //TODO
         }
     }
 }
@@ -236,12 +203,6 @@ struct DataBase {
     common: config::common::Common,
     _escaves: Vec<config::escaves::Escave>,
     game: config::game::Registry,
-}
-
-#[cfg(feature = "glsl")]
-struct Gpu {
-    store: GpuStore,
-    collider: GpuCollider,
 }
 
 enum CameraStyle {
@@ -305,8 +266,6 @@ pub struct Game {
     db: DataBase,
     render: Render,
     batcher: Batcher,
-    #[cfg(feature = "glsl")]
-    gpu: Option<Gpu>,
     //debug_collision_map: bool,
     line_buffer: LineBuffer,
     level: level::Level,
@@ -398,11 +357,6 @@ impl Game {
 
         log::info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
-        #[cfg(feature = "glsl")]
-        let store_init = match settings.game.physics.gpu_collision {
-            Some(ref gc) => GpuStoreInit::new(device, gc),
-            None => GpuStoreInit::new_dummy(device),
-        };
         let render = Render::new(
             device,
             queue,
@@ -413,8 +367,6 @@ impl Game {
             color_format,
             screen_extent,
             cam.front_face(),
-            #[cfg(feature = "glsl")]
-            store_init.resource(),
         );
 
         log::info!("Loading world database");
@@ -428,22 +380,6 @@ impl Game {
                 game,
             }
         };
-
-        #[cfg(feature = "glsl")]
-        let mut gpu = settings.game.physics.gpu_collision.as_ref().map(|gc| {
-            log::info!("Initializing the GPU store and collider");
-            let collider = GpuCollider::new(
-                device,
-                gc,
-                &db.common,
-                &render.object,
-                &render.terrain,
-                #[cfg(feature = "glsl")]
-                store_init.resource(),
-            );
-            let store = GpuStore::new(device, &db.common, store_init, collider.collision_buffer());
-            Gpu { store, collider }
-        });
 
         log::info!("Spawning agents");
         let car_names = db.cars.keys().cloned().collect::<Vec<_>>();
@@ -460,8 +396,6 @@ impl Game {
             coords,
             cgmath::Rad::turn_div_2(),
             &level,
-            #[cfg(feature = "glsl")]
-            gpu.as_mut().map(|Gpu { ref mut store, .. }| store),
         );
         player_agent.spirit = Spirit::Player;
         for (ms, sid) in player_agent
@@ -502,8 +436,6 @@ impl Game {
                 (x, y),
                 rng.gen(),
                 &level,
-                #[cfg(feature = "glsl")]
-                gpu.as_mut().map(|Gpu { ref mut store, .. }| store),
             );
             agents.push(agent);
         }
@@ -512,8 +444,6 @@ impl Game {
             db,
             render,
             batcher: Batcher::new(),
-            #[cfg(feature = "glsl")]
-            gpu,
             line_buffer: LineBuffer::new(),
             level,
             agents,
@@ -557,15 +487,6 @@ impl Application for Game {
                 Key::P => {
                     let center = match player.physics {
                         Physics::Cpu { ref transform, .. } => *transform,
-                        #[cfg(feature = "glsl")]
-                        Physics::Gpu { ref body, .. } => *self
-                            .gpu
-                            .as_ref()
-                            .unwrap()
-                            .store
-                            .cpu_mirror()
-                            .get(body)
-                            .unwrap(),
                     };
                     self.tick = None;
                     if self.is_paused {
@@ -644,15 +565,12 @@ impl Application for Game {
 
     fn update(
         &mut self,
-        device: &wgpu::Device,
+        _device: &wgpu::Device,
         delta: f32,
-        spawner: &LocalSpawner,
+        _spawner: &LocalSpawner,
     ) -> Vec<wgpu::CommandBuffer> {
         profiling::scope!("Update");
         let focus_point = self.cam.intersect_height(level::HEIGHT_SCALE as f32 * 0.3);
-
-        #[cfg(not(feature = "glsl"))]
-        let _ = (device, spawner);
 
         if let Some(ref mut jump) = self.jump {
             let power = delta * (self.db.common.speed.standard_frame_rate as f32);
@@ -667,16 +585,6 @@ impl Application for Game {
                 .unwrap();
             let mut target = match player.physics {
                 Physics::Cpu { ref transform, .. } => *transform,
-                #[cfg(feature = "glsl")]
-                Physics::Gpu { ref body, .. } => self
-                    .gpu
-                    .as_ref()
-                    .unwrap()
-                    .store
-                    .cpu_mirror()
-                    .get(body)
-                    .cloned()
-                    .unwrap_or_else(space::Transform::one),
             };
 
             if self.is_paused {
@@ -756,87 +664,6 @@ impl Application for Game {
             fps * n.time_delta0 * n.num_calls_analysis as f32
         };
 
-        #[cfg(feature = "glsl")]
-        if let Some(ref mut gpu) = self.gpu {
-            let mut prep_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Preparation"),
-            });
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Update"),
-            });
-
-            // initialize new entries, update
-            for agent in self.agents.iter_mut() {
-                if let Physics::Gpu {
-                    ref body,
-                    ref mut last_control,
-                    ..
-                } = agent.physics
-                {
-                    if *last_control != agent.control {
-                        *last_control = agent.control.clone();
-                        let glob = &self.db.common.global;
-                        let c = [
-                            agent.control.rudder,
-                            agent.control.motor,
-                            if agent.control.turbo {
-                                glob.k_traction_turbo
-                            } else {
-                                1.0
-                            },
-                            if agent.control.brake {
-                                glob.f_brake_max
-                            } else {
-                                0.0
-                            },
-                        ];
-                        gpu.store.update_control(body, c);
-                    }
-                    if let Some(power) = agent.jump.take() {
-                        gpu.store.add_push(body, physics::jump_dir(power));
-                    }
-                };
-            }
-            gpu.store.update_entries(device, &mut encoder);
-
-            let mut dt = physics_dt;
-            while dt > self.max_quant {
-                let mut session = gpu
-                    .collider
-                    .begin(&mut encoder, &self.render.terrain, spawner);
-                for agent in &mut self.agents {
-                    if let Physics::Gpu { ref body, .. } = agent.physics {
-                        session.add(&agent.car.model.shape, body.index());
-                    }
-                }
-                let ranges = session.finish(&mut prep_encoder, device);
-
-                gpu.store.step(device, &mut encoder, self.max_quant, ranges);
-                dt -= self.max_quant;
-            }
-
-            let mut session = gpu
-                .collider
-                .begin(&mut encoder, &self.render.terrain, spawner);
-            for agent in &mut self.agents {
-                if let Physics::Gpu {
-                    ref body,
-                    ref mut collision_epochs,
-                    ..
-                } = agent.physics
-                {
-                    let start_index = session.add(&agent.car.model.shape, body.index());
-                    let old = collision_epochs.insert(session.epoch, start_index);
-                    assert_eq!(old, None);
-                }
-            }
-            let ranges = session.finish(&mut prep_encoder, device);
-            gpu.store.step(device, &mut encoder, physics_dt, ranges);
-            gpu.store.produce_gpu_results(device, &mut encoder);
-
-            return vec![prep_encoder.finish(), encoder.finish()];
-        }
-
         {
             use rayon::prelude::*;
 
@@ -883,59 +710,32 @@ impl Application for Game {
 
     fn reload(&mut self, device: &wgpu::Device) {
         self.render.reload(device);
-        #[cfg(feature = "glsl")]
-        if let Some(Gpu {
-            ref mut store,
-            ref mut collider,
-            ..
-        }) = self.gpu
-        {
-            store.reload(device);
-            collider.reload(device);
-        }
     }
 
     fn draw(
         &mut self,
         device: &wgpu::Device,
         targets: ScreenTargets,
-        spawner: &LocalSpawner,
+        _spawner: &LocalSpawner,
     ) -> wgpu::CommandBuffer {
-        #[cfg(feature = "glsl")]
-        if let Some(ref mut gpu) = self.gpu {
-            //Note: we rely on the fact that updates where submitted separately
-            gpu.store.consume_gpu_results(spawner);
-        }
-        #[cfg(not(feature = "glsl"))]
-        let _ = spawner;
-
-        #[cfg(feature = "glsl")]
-        let identity_transform = space::Transform::one();
         let clipper = Clipper::new(&self.cam);
         self.batcher.clear();
 
         for agent in self.agents.iter() {
-            let (gpu_body, transform) = match agent.physics {
+            let transform = match agent.physics {
                 Physics::Cpu { ref transform, .. } => {
                     if clipper.clip(&transform.disp) {
                         continue;
                     }
-                    (&GpuBody::ZERO, transform)
+                    transform
                 }
-                #[cfg(feature = "glsl")]
-                Physics::Gpu { ref body, .. } => (body, &identity_transform),
             };
             let debug_shape_scale = match agent.spirit {
                 Spirit::Player => Some(agent.car.physics.scale_bound),
                 Spirit::Other { .. } => None,
             };
-            self.batcher.add_model(
-                &agent.car.model,
-                transform,
-                debug_shape_scale,
-                gpu_body,
-                agent.color,
-            );
+            self.batcher
+                .add_model(&agent.car.model, transform, debug_shape_scale, agent.color);
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
