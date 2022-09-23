@@ -1,4 +1,4 @@
-//!include globals.inc terrain/locals.inc surface.inc color.inc
+//!include globals.inc terrain/locals.inc surface.inc terrain/color.inc
 
 struct Storage {
     data: array<atomic<u32>>;
@@ -52,7 +52,7 @@ fn add_voxel(pos: vec2<f32>, altitude: f32, ty: u32, lit_factor: f32) {
     }
     var ndc = screen_pos.xyz / screen_pos.w;
     ndc.y *= -1.0; // flip Y
-    let color_id = evaluate_color_id(ty, pos / u_Surface.texture_scale.xy, altitude / u_Surface.texture_scale.z, lit_factor);
+    let color_id = evaluate_color_id(ty, vec3<f32>(pos, altitude), lit_factor);
     let depth = clamp(ndc.z, 0.0, 1.0);
     let value = (u32(depth * 16777215.0) << 8u) | u32(color_id * 255.0); //TODO: 0xFFFFFF, 0xFF
 
