@@ -954,72 +954,32 @@ impl Context {
     ) {
         if !self.dirty_rects.is_empty() {
             for rect in self.dirty_rects.iter() {
-                let _origin = wgpu::Origin3d {
-                    x: rect.x as u32,
-                    y: rect.y as u32,
-                    z: 0,
-                };
-                let _extent = wgpu::Extent3d {
-                    width: rect.w as u32,
-                    height: rect.h as u32,
-                    depth_or_array_layers: 1,
-                };
-
-                let staging_stride =
-                    super::align_to(rect.w as u32 * 2, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+                let total_size =
+                    rect.h as wgpu::BufferAddress * level.size.0 as wgpu::BufferAddress * 2;
                 let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("staging level update"),
-                    size: staging_stride as wgpu::BufferAddress * rect.h as wgpu::BufferAddress,
+                    size: total_size,
                     usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
                     mapped_at_creation: true,
                 });
                 {
                     let mut mapping = staging_buf.slice(..).get_mapped_range_mut();
-                    for (row, y) in mapping
-                        .chunks_mut(staging_stride as usize)
-                        .zip(rect.y as usize..)
-                    {
-                        let level_offset = y * level.size.0 as usize + rect.x as usize;
-                        row[..rect.w as usize]
-                            .copy_from_slice(&level.height[level_offset..][..rect.w as usize]);
-                        row[rect.w as usize..rect.w as usize * 2]
-                            .copy_from_slice(&level.meta[level_offset..][..rect.w as usize]);
+                    for (y_off, line) in mapping.chunks_mut(level.size.0 as usize * 2).enumerate() {
+                        let base = (rect.y as usize + y_off) * level.size.0 as usize;
+                        for x in 0..level.size.0 as usize {
+                            line[2 * x + 0] = level.height[base + x];
+                            line[2 * x + 1] = level.meta[base + x];
+                        }
                     }
                 }
                 staging_buf.unmap();
-
-                //TODO: updates
-                /*
-                encoder.copy_buffer_to_texture(
-                    wgpu::ImageCopyBuffer {
-                        buffer: &staging_buf,
-                        layout: wgpu::ImageDataLayout {
-                            offset: 0,
-                            bytes_per_row: NonZeroU32::new(staging_stride),
-                            rows_per_image: None,
-                        },
-                    },
-                    wgpu::ImageCopyTexture {
-                        origin,
-                        ..self.height_texture.as_image_copy()
-                    },
-                    extent,
+                encoder.copy_buffer_to_buffer(
+                    &staging_buf,
+                    0,
+                    &self.terrain_buf,
+                    rect.y as wgpu::BufferAddress * level.size.0 as wgpu::BufferAddress * 2,
+                    total_size,
                 );
-                encoder.copy_buffer_to_texture(
-                    wgpu::ImageCopyBuffer {
-                        buffer: &staging_buf,
-                        layout: wgpu::ImageDataLayout {
-                            offset: rect.w as wgpu::BufferAddress,
-                            bytes_per_row: NonZeroU32::new(staging_stride),
-                            rows_per_image: None,
-                        },
-                    },
-                    wgpu::ImageCopyTexture {
-                        origin,
-                        ..self.meta_texture.as_image_copy()
-                    },
-                    extent,
-                );*/
             }
 
             if let Kind::RayMip { ref mipper, .. } = self.kind {
