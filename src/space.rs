@@ -203,7 +203,15 @@ impl Camera {
 
         // Determine the Z axis rotation around the target
         let swing = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), follow.angle_x);
-        let twist = compute_twist(target.rot, cgmath::Vector3::unit_z());
+        let is_up = target.rot.rotate_vector(cgmath::Vector3::unit_z()).z >= 0.0;
+        let twist = compute_twist(
+            target.rot,
+            if is_up {
+                cgmath::Vector3::unit_z()
+            } else {
+                -cgmath::Vector3::unit_z()
+            },
+        );
         let patch = cgmath::Quaternion::from_axis_angle(
             cgmath::Vector3::unit_z(),
             cgmath::Deg::turn_div_2(),
