@@ -21,10 +21,7 @@ impl ResourceView {
     pub fn new(
         path: &str,
         settings: &config::settings::Settings,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        downlevel_caps: &wgpu::DownlevelCapabilities,
-        color_format: wgpu::TextureFormat,
+        gfx: &render::GraphicsContext,
     ) -> Self {
         let cam = space::Camera {
             loc: cgmath::vec3(0.0, -200.0, 100.0),
@@ -40,19 +37,17 @@ impl ResourceView {
 
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
-        let global = render::global::Context::new(device, queue, color_format, None);
-        let object = render::object::Context::new(
-            device,
-            queue,
-            downlevel_caps,
-            cam.front_face(),
-            &pal_data,
-            &global,
-        );
+        let global = render::global::Context::new(gfx, None);
+        let object = render::object::Context::new(gfx, cam.front_face(), &pal_data, &global);
 
         info!("Loading model {}", path);
         let file = settings.open_relative(path);
-        let model = model::load_m3d(file, device, &object, settings.game.physics.shape_sampling);
+        let model = model::load_m3d(
+            file,
+            &gfx.device,
+            &object,
+            settings.game.physics.shape_sampling,
+        );
 
         ResourceView {
             model,

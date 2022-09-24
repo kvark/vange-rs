@@ -190,16 +190,13 @@ impl Context {
         PipelineSet { main, shadow }
     }
 
-    fn create_color_table(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) -> (wgpu::TextureView, wgpu::Sampler) {
+    fn create_color_table(gfx: &super::GraphicsContext) -> (wgpu::TextureView, wgpu::Sampler) {
         let extent = wgpu::Extent3d {
             width: NUM_COLOR_IDS,
             height: 1,
             depth_or_array_layers: 1,
         };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Color table"),
             size: extent,
             mip_level_count: 1,
@@ -209,7 +206,7 @@ impl Context {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
 
-        queue.write_texture(
+        gfx.queue.write_texture(
             texture.as_image_copy(),
             unsafe { slice::from_raw_parts(COLOR_TABLE[0].as_ptr(), NUM_COLOR_IDS as usize * 2) },
             wgpu::ImageDataLayout {
@@ -220,7 +217,7 @@ impl Context {
             extent,
         );
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = gfx.device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -236,78 +233,81 @@ impl Context {
     }
 
     pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        downlevel_caps: &wgpu::DownlevelCapabilities,
+        gfx: &super::GraphicsContext,
         front_face: wgpu::FrontFace,
         palette_data: &[[u8; 4]],
         global: &GlobalContext,
     ) -> Self {
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Object"),
-            entries: &[
-                // color map
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Texture {
-                        view_dimension: wgpu::TextureViewDimension::D1,
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // palette map
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        view_dimension: wgpu::TextureViewDimension::D1,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // color table sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                    count: None,
-                },
-            ],
-        });
-        let shape_bind_group_layout = if downlevel_caps
+        let bind_group_layout =
+            gfx.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Object"),
+                    entries: &[
+                        // color map
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::VERTEX,
+                            ty: wgpu::BindingType::Texture {
+                                view_dimension: wgpu::TextureViewDimension::D1,
+                                sample_type: wgpu::TextureSampleType::Uint,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        // palette map
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                view_dimension: wgpu::TextureViewDimension::D1,
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        // color table sampler
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::VERTEX,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                            count: None,
+                        },
+                    ],
+                });
+        let shape_bind_group_layout = if gfx
+            .downlevel_caps
             .flags
             .contains(wgpu::DownlevelFlags::VERTEX_STORAGE)
-            && device.limits().max_storage_buffers_per_shader_stage != 0
+            && gfx.device.limits().max_storage_buffers_per_shader_stage != 0
         {
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Shape"),
-                entries: &[
-                    // shape locals
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+            let bgl = gfx
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Shape"),
+                    entries: &[
+                        // shape locals
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::VERTEX,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                ],
-            });
+                    ],
+                });
             Ok(bgl)
         } else {
             Err(VertexStorageNotSupported)
         };
 
-        let palette = Palette::new(device);
-        palette.init(queue, palette_data);
+        let palette = Palette::new(&gfx.device);
+        palette.init(&gfx.queue, palette_data);
 
-        let (color_table_view, color_table_sampler) = Self::create_color_table(device, queue);
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let (color_table_view, color_table_sampler) = Self::create_color_table(gfx);
+        let bind_group = gfx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Object"),
             layout: &bind_group_layout,
             entries: &[
@@ -325,20 +325,22 @@ impl Context {
                 },
             ],
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("object"),
-            bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = gfx
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("object"),
+                bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout],
+                push_constant_ranges: &[],
+            });
         let pipelines =
-            Self::create_pipelines(&pipeline_layout, device, global.color_format, front_face);
+            Self::create_pipelines(&pipeline_layout, &gfx.device, gfx.color_format, front_face);
 
         Context {
             bind_group,
             shape_bind_group_layout,
             pipeline_layout,
             pipelines,
-            color_format: global.color_format,
+            color_format: gfx.color_format,
             front_face,
         }
     }

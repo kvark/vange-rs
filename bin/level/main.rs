@@ -25,15 +25,7 @@ fn main() {
     }
 
     let path = matches.free.first();
-    let app = app::LevelView::new(
-        &settings,
-        path.as_deref(),
-        harness.color_format,
-        harness.extent,
-        &harness.device,
-        &harness.queue,
-        &harness.downlevel_caps,
-    );
+    let app = app::LevelView::new(path.as_deref(), &settings, &harness.graphics_ctx);
 
     harness.main_loop(app);
 }

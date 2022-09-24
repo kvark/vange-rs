@@ -146,13 +146,9 @@ struct LevelContext {
 pub struct Context {
     level: Option<LevelContext>,
     render_config: vangers::config::settings::Render,
-    color_format: wgpu::TextureFormat,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
-    extent: wgpu::Extent3d,
-    queue: wgpu::Queue,
-    device: wgpu::Device,
-    downlevel_caps: wgpu::DownlevelCapabilities,
+    gfx: vangers::render::GraphicsContext,
     _instance: wgpu::Instance,
     camera: vangers::space::Camera,
     objects_palette: [[u8; 4]; 0x100],
@@ -170,13 +166,11 @@ pub struct InitDescriptor {
 }
 
 fn crate_main_views(
-    device: &wgpu::Device,
-    extent: wgpu::Extent3d,
-    color_format: wgpu::TextureFormat,
+    gfx: &vangers::render::GraphicsContext,
 ) -> (wgpu::TextureView, wgpu::TextureView) {
     let mut texture_desc = wgpu::TextureDescriptor {
         label: None,
-        size: extent,
+        size: gfx.screen_size,
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -185,10 +179,11 @@ fn crate_main_views(
     };
     let color_view = {
         let hal_texture_color =
-            <hal::api::Gles as hal::Api>::Texture::default_framebuffer(color_format);
-        texture_desc.format = color_format;
+            <hal::api::Gles as hal::Api>::Texture::default_framebuffer(gfx.color_format);
+        texture_desc.format = gfx.color_format;
         let color_texture = unsafe {
-            device.create_texture_from_hal::<hal::api::Gles>(hal_texture_color, &texture_desc)
+            gfx.device
+                .create_texture_from_hal::<hal::api::Gles>(hal_texture_color, &texture_desc)
         };
         color_texture.create_view(&wgpu::TextureViewDescriptor::default())
     };
@@ -198,7 +193,8 @@ fn crate_main_views(
         );
         texture_desc.format = vangers::render::DEPTH_FORMAT;
         let depth_texture = unsafe {
-            device.create_texture_from_hal::<hal::api::Gles>(hal_texture_depth, &texture_desc)
+            gfx.device
+                .create_texture_from_hal::<hal::api::Gles>(hal_texture_depth, &texture_desc)
         };
         depth_texture.create_view(&wgpu::TextureViewDescriptor::default())
     };
@@ -241,13 +237,18 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         ))
         .ok()?;
 
-    let extent = wgpu::Extent3d {
-        width: desc.width,
-        height: desc.height,
-        depth_or_array_layers: 1,
+    let gfx = vangers::render::GraphicsContext {
+        queue,
+        device,
+        downlevel_caps: adapter.get_downlevel_capabilities(),
+        screen_size: wgpu::Extent3d {
+            width: desc.width,
+            height: desc.height,
+            depth_or_array_layers: 1,
+        },
+        color_format: wgpu::TextureFormat::Rgba8UnormSrgb,
     };
-    let color_format = wgpu::TextureFormat::Rgba8UnormSrgb;
-    let (color_view, depth_view) = crate_main_views(&device, extent, color_format);
+    let (color_view, depth_view) = crate_main_views(&gfx);
 
     let render_config = {
         let file = File::open("res/ffi/config.ron").unwrap();
@@ -261,13 +262,9 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     let ctx = Context {
         level: None,
         render_config,
-        color_format,
+        gfx,
         color_view,
         depth_view,
-        extent,
-        queue,
-        device,
-        downlevel_caps: adapter.get_downlevel_capabilities(),
         _instance: instance,
         camera: vangers::space::Camera {
             loc: cgmath::Zero::zero(),
@@ -295,12 +292,12 @@ pub unsafe extern "C" fn rv_exit(ctx: *mut Context) {
 
 #[no_mangle]
 pub extern "C" fn rv_resize(ctx: &mut Context, width: u32, height: u32) {
-    ctx.extent = wgpu::Extent3d {
+    ctx.gfx.screen_size = wgpu::Extent3d {
         width,
         height,
         depth_or_array_layers: 1,
     };
-    let (color_view, depth_view) = crate_main_views(&ctx.device, ctx.extent, ctx.color_format);
+    let (color_view, depth_view) = crate_main_views(&ctx.gfx);
     ctx.color_view = color_view;
     ctx.depth_view = depth_view;
 }
@@ -346,14 +343,10 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
     };
 
     let render = vangers::render::Render::new(
-        &ctx.device,
-        &ctx.queue,
-        &ctx.downlevel_caps,
+        &ctx.gfx,
         &level,
         &ctx.objects_palette,
         &ctx.render_config,
-        ctx.color_format,
-        ctx.extent, //Note: needs update on window resize
         ctx.camera.front_face(),
     );
     ctx.level = Some(LevelContext {
@@ -425,11 +418,12 @@ pub unsafe extern "C" fn rv_map_update_palette(
 pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
     let lc = ctx.level.as_mut().unwrap();
     let targets = vangers::render::ScreenTargets {
-        extent: ctx.extent,
+        extent: ctx.gfx.screen_size,
         depth: &ctx.depth_view,
         color: &ctx.color_view,
     };
     let mut encoder = ctx
+        .gfx
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
@@ -448,10 +442,10 @@ pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
         &ctx.camera,
         targets,
         Some(viewport.to_native()),
-        &ctx.device,
+        &ctx.gfx.device,
     );
 
-    ctx.queue.submit(Some(encoder.finish()));
+    ctx.gfx.queue.submit(Some(encoder.finish()));
 }
 
 fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
@@ -477,7 +471,7 @@ pub extern "C" fn rv_model_create(
     let num_vertices = model.num_poly as usize * 3;
     log::debug!("\tGot {} GPU vertices...", num_vertices);
     let vertex_size = mem::size_of::<ObjectVertex>();
-    let vertex_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+    let vertex_buf = ctx.gfx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
         size: (num_vertices * vertex_size) as wgpu::BufferAddress,
         usage: wgpu::BufferUsages::VERTEX,

@@ -44,59 +44,56 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        color_format: wgpu::TextureFormat,
-        shadow_view: Option<&wgpu::TextureView>,
-    ) -> Self {
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Global"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::all(),
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // palette sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::all(),
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // shadow texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // shadow sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                    count: None,
-                },
-            ],
-        });
-        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+    pub fn new(gfx: &super::GraphicsContext, shadow_view: Option<&wgpu::TextureView>) -> Self {
+        let bind_group_layout =
+            gfx.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Global"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::all(),
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // palette sampler
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::all(),
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                        // shadow texture
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Depth,
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        // shadow sampler
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                            count: None,
+                        },
+                    ],
+                });
+        let uniform_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Uniform"),
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let palette_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let palette_sampler = gfx.device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -105,7 +102,7 @@ impl Context {
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
-        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let shadow_sampler = gfx.device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -121,7 +118,7 @@ impl Context {
                 height: 1,
                 depth_or_array_layers: 1,
             };
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
+            let texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("DummyShadow"),
                 size,
                 mip_level_count: 1,
@@ -133,7 +130,7 @@ impl Context {
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-            let mut cmd_encoder = device.create_command_encoder(&Default::default());
+            let mut cmd_encoder = gfx.device.create_command_encoder(&Default::default());
             cmd_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow clear"),
                 color_attachments: &[],
@@ -146,11 +143,11 @@ impl Context {
                     stencil_ops: None,
                 }),
             });
-            queue.submit(Some(cmd_encoder.finish()));
+            gfx.queue.submit(Some(cmd_encoder.finish()));
             view
         };
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = gfx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Global"),
             layout: &bind_group_layout,
             entries: &[
@@ -174,7 +171,7 @@ impl Context {
                 },
             ],
         });
-        let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let shadow_bind_group = gfx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("GlobalShadow"),
             layout: &bind_group_layout,
             entries: &[
@@ -202,7 +199,7 @@ impl Context {
             uniform_buf,
             bind_group,
             shadow_bind_group,
-            color_format,
+            color_format: gfx.color_format,
         }
     }
 }

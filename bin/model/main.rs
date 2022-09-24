@@ -25,14 +25,7 @@ fn main() {
     }
 
     let path = &matches.free[0];
-    let app = app::ResourceView::new(
-        path,
-        &settings,
-        &harness.device,
-        &harness.queue,
-        &harness.downlevel_caps,
-        harness.color_format,
-    );
+    let app = app::ResourceView::new(path, &settings, &harness.graphics_ctx);
 
     harness.main_loop(app);
 }
