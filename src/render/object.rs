@@ -138,7 +138,7 @@ impl Context {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "color_fs",
-                targets: &[color_format.into()],
+                targets: &[Some(color_format.into())],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,

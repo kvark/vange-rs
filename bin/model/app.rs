@@ -166,7 +166,7 @@ impl Application for ResourceView {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
-                color_attachments: &[wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: targets.color,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -178,7 +178,7 @@ impl Application for ResourceView {
                         }),
                         store: true,
                     },
-                }],
+                })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: targets.depth,
                     depth_ops: Some(wgpu::Operations {

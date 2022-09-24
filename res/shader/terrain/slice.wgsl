@@ -1,11 +1,11 @@
 //!include globals.inc terrain/locals.inc surface.inc terrain/color.inc
 
 struct Varyings {
-    @location(0) vpos: vec4<f32>;
-    @builtin(position) proj_pos: vec4<f32>;
+    @location(0) vpos: vec4<f32>,
+    @builtin(position) proj_pos: vec4<f32>,
 };
 
-@stage(vertex)
+@vertex
 fn main_vs(
     @builtin(vertex_index) vert_index: u32,
     @builtin(instance_index) inst_index: u32,
@@ -22,7 +22,7 @@ fn main_vs(
 
 //imported: Surface, u_TextureScale, get_surface, evaluate_color
 
-@stage(fragment)
+@fragment
 fn main_fs(in: Varyings) -> @location(0) vec4<f32> {
     let surface = get_surface(in.vpos.xy);
     var ty = 0u;

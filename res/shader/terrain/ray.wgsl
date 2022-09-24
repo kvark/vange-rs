@@ -1,6 +1,6 @@
 //!include globals.inc terrain/locals.inc surface.inc shadow.inc terrain/color.inc
 
-@stage(vertex)
+@vertex
 fn main(@location(0) pos: vec4<i32>) -> @builtin(position) vec4<f32> {
     // orhto projections don't like infinite values
     return select(
@@ -19,9 +19,9 @@ fn cast_ray_to_plane(level: f32, base: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
 }
 
 struct CastResult {
-    surface: Surface;
-    a: vec3<f32>;
-    b: vec3<f32>;
+    surface: Surface,
+    a: vec3<f32>,
+    b: vec3<f32>,
 };
 
 fn cast_ray_impl(
@@ -111,10 +111,10 @@ fn cast_ray_impl_smooth(
 }
 
 struct CastPoint {
-    pos: vec3<f32>;
-    ty: u32;
-    is_underground: bool;
-    //is_shadowed: bool;
+    pos: vec3<f32>,
+    ty: u32,
+    is_underground: bool,
+    //is_shadowed: bool,
 };
 
 fn cast_ray_to_map(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
@@ -163,10 +163,10 @@ fn color_point(pt: CastPoint, lit_factor: f32) -> vec4<f32> {
 let c_DepthBias: f32 = 0.01;
 
 struct RayInput {
-    @builtin(position) frag_coord: vec4<f32>;
+    @builtin(position) frag_coord: vec4<f32>,
 };
 
-@stage(fragment)
+@fragment
 fn ray(in: RayInput) -> @builtin(frag_depth) f32 {
     let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
@@ -178,23 +178,23 @@ fn ray(in: RayInput) -> @builtin(frag_depth) f32 {
 }
 
 struct FragOutput {
-    @location(0) color: vec4<f32>;
-    @builtin(frag_depth) depth: f32;
+    @location(0) color: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
 };
 
-@stage(fragment)
+@fragment
 fn ray_color_debug(in: RayInput) -> FragOutput {
     let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
     let view = normalize(sp_far_world - sp_near_world);
 
-    var point = cast_ray_to_plane(0.0, sp_near_world, view);
-    let surface = get_surface(point.xy);
+    let pos = cast_ray_to_plane(0.0, sp_near_world, view);
+    let surface = get_surface(pos.xy);
     let color = vec4<f32>(surface.low_alt, surface.high_alt, surface.delta, 0.0) / 255.0;
     return FragOutput(color, 1.0);
 }
 
-@stage(fragment)
+@fragment
 fn ray_color(in: RayInput) -> FragOutput {
     let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
@@ -214,23 +214,23 @@ let c_Step: f32 = 0.6;
 // Algorithm is based on "http://www.tevs.eu/project_i3d08.html"
 //"Maximum Mipmaps for Fast, Accurate, and Scalable Dynamic Height Field Rendering"
 fn cast_ray_mip(base_point: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
-    var point = base_point;
+    var pos = base_point;
     var lod = u_Locals.params.x;
-    var ipos = vec2<i32>(floor(point.xy)); // integer coordinate of the cell
+    var ipos = vec2<i32>(floor(pos.xy)); // integer coordinate of the cell
     var num_jumps = u_Locals.params.y;
     var num_steps = u_Locals.params.z;
     loop {
         // step 0: at lowest LOD, just advance
         if (lod == 0u) {
-            let surface = get_surface(point.xy);
-            if (point.z < surface.low_alt || (point.z < surface.high_alt && point.z >= surface.low_alt + surface.delta)) {
+            let surface = get_surface(pos.xy);
+            if (pos.z < surface.low_alt || (pos.z < surface.high_alt && pos.z >= surface.low_alt + surface.delta)) {
                 break;
             }
             if (surface.low_alt == surface.high_alt) {
                 lod += 1u; //try to escape the low level and LOD
             }
-            point = point + c_Step * dir;
-            ipos = vec2<i32>(floor(point.xy));
+            pos += c_Step * dir;
+            ipos = vec2<i32>(floor(pos.xy));
             num_steps -= 1u;
             if (num_steps == 0u) {
                 break;
@@ -240,23 +240,23 @@ fn cast_ray_mip(base_point: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
 
         // step 1: get the LOD height and early out
         let height = get_lod_height(ipos, lod);
-        if (point.z <= height) {
+        if (pos.z <= height) {
             lod -= 1u;
             continue;
         }
-        // assumption: point.z >= height
+        // assumption: pos.z >= height
 
         // step 2: figure out the closest intersection with the cell
         // it can be X axis, Y axis, or the depth
         let cell_id = floor(vec2<f32>(ipos) / f32(1 << lod)); // careful!
         let cell_tl = vec2<i32>(cell_id) << vec2<u32>(lod);
-        let cell_offset = vec2<f32>(cell_tl) + f32(1 << lod) * step(vec2<f32>(0.0), dir.xy) - point.xy;
-        let units = vec3<f32>(cell_offset, height - point.z) / dir;
+        let cell_offset = vec2<f32>(cell_tl) + f32(1 << lod) * step(vec2<f32>(0.0), dir.xy) - pos.xy;
+        let units = vec3<f32>(cell_offset, height - pos.z) / dir;
         let min_side_unit = min(units.x, units.y);
 
-        // advance the point
-        point += min(units.z, min_side_unit) * dir;
-        ipos = vec2<i32>(floor(point.xy));
+        // advance the pos
+        pos += min(units.z, min_side_unit) * dir;
+        ipos = vec2<i32>(floor(pos.xy));
         num_jumps -= 1u;
 
         if (units.z < min_side_unit) {
@@ -284,22 +284,22 @@ fn cast_ray_mip(base_point: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
         }
     }
 
-    return point;
+    return pos;
 }
 
-@stage(fragment)
+@fragment
 fn ray_mip_color(in: RayInput) -> FragOutput {
     let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
     let view = normalize(sp_far_world - sp_near_world);
-    let point = cast_ray_mip(sp_near_world, view);
+    let pos = cast_ray_mip(sp_near_world, view);
 
-    let lit_factor = fetch_shadow(point);
-    let surface = get_surface(point.xy);
-    let ty = select(surface.low_type, surface.high_type, point.z > surface.low_alt);
-    let frag_color = evaluate_color(ty, point, lit_factor);
+    let lit_factor = fetch_shadow(pos);
+    let surface = get_surface(pos.xy);
+    let ty = select(surface.low_type, surface.high_type, pos.z > surface.low_alt);
+    let frag_color = evaluate_color(ty, pos, lit_factor);
 
-    let target_ndc = u_Globals.view_proj * vec4<f32>(point, 1.0);
+    let target_ndc = u_Globals.view_proj * vec4<f32>(pos, 1.0);
     let depth = target_ndc.z / target_ndc.w;
     return FragOutput(frag_color, depth);
 }

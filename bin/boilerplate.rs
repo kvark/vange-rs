@@ -42,6 +42,7 @@ pub struct Harness {
     pub downlevel_caps: wgpu::DownlevelCapabilities,
     surface: wgpu::Surface,
     pub color_format: wgpu::TextureFormat,
+    present_mode: wgpu::PresentMode,
     pub extent: wgpu::Extent3d,
     reload_on_focus: bool,
     depth_target: wgpu::TextureView,
@@ -85,7 +86,7 @@ impl Harness {
             }))
             .expect("Unable to initialize GPU via the selected backend.");
 
-        let downlevel_caps = adapter.get_downlevel_properties();
+        let downlevel_caps = adapter.get_downlevel_capabilities();
         let adapter_limits = adapter.limits();
 
         let limits = match settings.render.terrain {
@@ -116,14 +117,23 @@ impl Harness {
             ))
             .unwrap();
 
+        let surface_formats = surface.get_supported_formats(&adapter);
+        let surface_modes = surface.get_supported_modes(&adapter);
+        let present_mode = if surface_modes.contains(&wgpu::PresentMode::Mailbox) {
+            wgpu::PresentMode::Mailbox
+        } else {
+            log::warn!(
+                "Mailbox present is not supported, defaulting to {:?}",
+                surface_modes[0]
+            );
+            surface_modes[0]
+        };
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface
-                .get_preferred_format(&adapter)
-                .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb),
+            format: surface_formats[0],
             width: extent.width,
             height: extent.height,
-            present_mode: wgpu::PresentMode::Mailbox,
+            present_mode,
         };
         surface.configure(&device, &config);
 
@@ -148,6 +158,7 @@ impl Harness {
             queue,
             surface,
             color_format: config.format,
+            present_mode,
             extent,
             reload_on_focus: settings.window.reload_on_focus,
             depth_target,
@@ -170,6 +181,7 @@ impl Harness {
             downlevel_caps: _,
             surface,
             color_format,
+            present_mode,
             mut extent,
             reload_on_focus,
             mut depth_target,
@@ -196,7 +208,7 @@ impl Harness {
                         format: color_format,
                         width: size.width,
                         height: size.height,
-                        present_mode: wgpu::PresentMode::Mailbox,
+                        present_mode,
                     };
                     surface.configure(&device, &config);
                     depth_target = device

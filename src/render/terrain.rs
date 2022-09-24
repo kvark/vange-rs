@@ -206,11 +206,11 @@ impl Context {
         kind: PipelineKind,
         entry_point: &str,
     ) -> wgpu::RenderPipeline {
-        let color_descs = [wgpu::ColorTargetState {
+        let color_descs = [Some(wgpu::ColorTargetState {
             format: color_format,
             blend: None,
             write_mask: wgpu::ColorWrites::all(),
-        }];
+        })];
         let (targets, depth_format) = match kind {
             PipelineKind::Main => (&color_descs[..], DEPTH_FORMAT),
             PipelineKind::Shadow => (&[][..], SHADOW_FORMAT),
@@ -271,7 +271,7 @@ impl Context {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "main_fs",
-                targets: &[color_format.into()],
+                targets: &[Some(color_format.into())],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleStrip,
@@ -306,7 +306,7 @@ impl Context {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fragment",
-                targets: &[color_format.into()],
+                targets: &[Some(color_format.into())],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -360,7 +360,7 @@ impl Context {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "copy_fs",
-                targets: &[color_format.into()],
+                targets: &[Some(color_format.into())],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleStrip,
@@ -1104,9 +1104,9 @@ impl Context {
                 pass.set_bind_group(1, &self.bind_group, &[]);
                 pass.set_bind_group(2, bind_group, &[]);
                 pass.set_pipeline(clear_pipeline);
-                pass.dispatch(compute_groups[0], compute_groups[1], compute_groups[2]);
+                pass.dispatch_workgroups(compute_groups[0], compute_groups[1], compute_groups[2]);
                 pass.set_pipeline(scatter_pipeline);
-                pass.dispatch(
+                pass.dispatch_workgroups(
                     compute_groups[0] * density[0],
                     compute_groups[1] * density[1],
                     density[2],

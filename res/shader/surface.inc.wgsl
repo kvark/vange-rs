@@ -1,11 +1,11 @@
 // Common routines for fetching the level surface data.
 
 struct SurfaceConstants {
-    texture_scale: vec4<f32>;    // XY = size, Z = height scale, w = number of layers
-    terrain_bits: vec4<u32>;     // X_low = shift, X_high = mask
+    texture_scale: vec4<f32>,    // XY = size, Z = height scale, w = number of layers
+    terrain_bits: vec4<u32>,     // X_low = shift, X_high = mask
 };
 struct TerrainData {
-    inner: array<u32>;
+    inner: array<u32>,
 };
 
 @group(1) @binding(0) var<uniform> u_Surface: SurfaceConstants;
@@ -18,20 +18,20 @@ let c_DeltaBits: u32 = 2u;
 let c_DeltaScale: f32 = 0.03137254901; //8.0 / 255.0;
 
 struct Surface {
-    low_alt: f32;
-    high_alt: f32;
-    delta: f32;
-    low_type: u32;
-    high_type: u32;
-    is_shadowed: bool;
+    low_alt: f32,
+    high_alt: f32,
+    delta: f32,
+    low_type: u32,
+    high_type: u32,
+    is_shadowed: bool,
 };
 
-fn get_terrain_type(meta: u32) -> u32 {
+fn get_terrain_type(meta_data: u32) -> u32 {
     let bits = u_Surface.terrain_bits.x;
-    return (meta >> (bits & 0xFu)) & (bits >> 4u);
+    return (meta_data >> (bits & 0xFu)) & (bits >> 4u);
 }
-fn get_delta(meta: u32) -> u32 {
-    return (meta >> c_DeltaShift) & ((1u << c_DeltaBits) - 1u);
+fn get_delta(meta_data: u32) -> u32 {
+    return (meta_data >> c_DeltaShift) & ((1u << c_DeltaBits) - 1u);
 }
 
 fn modulo(a: i32, b: i32) -> i32 {
@@ -78,9 +78,9 @@ fn get_surface(pos: vec2<f32>) -> Surface {
 }
 
 struct SurfaceAlt {
-    low: f32;
-    high: f32;
-    delta: f32;
+    low: f32,
+    high: f32,
+    delta: f32,
 };
 
 fn get_surface_alt(pos: vec2<f32>) -> SurfaceAlt {

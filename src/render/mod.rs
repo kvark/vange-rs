@@ -128,7 +128,7 @@ pub fn load_shader(name: &str, device: &wgpu::Device) -> Result<wgpu::ShaderModu
         std::fs::write("last-shader.wgsl", &code).unwrap();
     }
 
-    Ok(device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+    Ok(device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(name),
         source: wgpu::ShaderSource::Wgsl(code.into()),
     }))
@@ -507,7 +507,7 @@ impl Render {
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main"),
-                color_attachments: &[wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: targets.color,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -522,7 +522,7 @@ impl Render {
                         }),
                         store: true,
                     },
-                }],
+                })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: targets.depth,
                     depth_ops: Some(wgpu::Operations {

@@ -267,7 +267,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         extent,
         queue,
         device,
-        downlevel_caps: adapter.get_downlevel_properties(),
+        downlevel_caps: adapter.get_downlevel_capabilities(),
         _instance: instance,
         camera: vangers::space::Camera {
             loc: cgmath::Zero::zero(),

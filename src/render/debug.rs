@@ -264,14 +264,14 @@ impl Context {
                         fragment: Some(wgpu::FragmentState {
                             module: &shader,
                             entry_point: "main_fs",
-                            targets: &[wgpu::ColorTargetState {
+                            targets: &[Some(wgpu::ColorTargetState {
                                 format: self.color_format,
                                 blend: Some(wgpu::BlendState {
                                     color: blend,
                                     alpha: blend,
                                 }),
                                 write_mask: wgpu::ColorWrites::all(),
-                            }],
+                            })],
                         }),
                         primitive,
                         depth_stencil: Some(wgpu::DepthStencilState {

@@ -18,5 +18,5 @@ futures = "0.3"
 cgmath = "0.18"
 ron = "0.6"
 slotmap = "1"
-wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "9219489", features = ["angle"] }
-hal = { package = "wgpu-hal", git = "https://github.com/gfx-rs/wgpu", rev = "9219489", features = ["gles"] }
+wgpu = { version = "0.13", features = ["angle"] }
+hal = { package = "wgpu-hal", version = "0.13", features = ["gles"] }

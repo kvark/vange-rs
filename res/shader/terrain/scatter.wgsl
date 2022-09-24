@@ -1,13 +1,13 @@
 //!include globals.inc terrain/locals.inc surface.inc terrain/color.inc
 
 struct Storage {
-    data: array<atomic<u32>>;
+    data: array<atomic<u32>>,
 };
 @group(2) @binding(0) var<storage, read_write> s_Storage: Storage;
 
 // This has to match SCATTER_GROUP_SIZE
 //TODO: use specialization constants
-@stage(compute), workgroup_size(16, 16, 1)
+@compute @workgroup_size(16, 16, 1)
 fn clear(@builtin(global_invocation_id) pos: vec3<u32>) {
     let r = u_Locals.screen_rect;
     if (pos.x >= r.x && pos.y >= r.y && pos.x < r.x + r.z && pos.y < r.y + r.w) {
@@ -16,7 +16,7 @@ fn clear(@builtin(global_invocation_id) pos: vec3<u32>) {
     }
 }
 
-@stage(vertex)
+@vertex
 fn copy_vs(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(
         select(-1.0, 1.0, index < 2u),
@@ -26,11 +26,11 @@ fn copy_vs(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
 }
 
 struct CopyOutput {
-    @location(0) color: vec4<f32>;
-    @builtin(frag_depth) depth: f32;
+    @location(0) color: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
 };
 
-@stage(fragment)
+@fragment
 fn copy_fs(@builtin(position) pos: vec4<f32>) -> CopyOutput {
     let value = atomicLoad(&s_Storage.data[u32(pos.y) * u_Locals.screen_rect.z + u32(pos.x)]);
     let color = textureLoad(t_Palette, i32(value & 255u), 0);
@@ -88,7 +88,7 @@ fn generate_scatter_pos(source_coord: vec2<f32>) -> vec2<f32> {
         vec2<f32>(u_Locals.cam_origin_dir.w, -u_Locals.cam_origin_dir.z) * x;
 }
 
-@stage(compute), workgroup_size(16,16,1)
+@compute @workgroup_size(16,16,1)
 fn main(
     @builtin(global_invocation_id) global_id: vec3<u32>,
     @builtin(num_workgroups) num_workgroups: vec3<u32>,
