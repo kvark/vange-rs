@@ -22,13 +22,7 @@ pub struct CarView {
 }
 
 impl CarView {
-    pub fn new(
-        settings: &config::Settings,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        downlevel_caps: &wgpu::DownlevelCapabilities,
-        color_format: wgpu::TextureFormat,
-    ) -> Self {
+    pub fn new(settings: &config::Settings, gfx: &render::GraphicsContext) -> Self {
         let cam = space::Camera {
             loc: cgmath::vec3(0.0, -64.0, 32.0),
             rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(cgmath::Angle::turn_div_6()),
@@ -43,19 +37,12 @@ impl CarView {
 
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
-        let global = render::global::Context::new(device, queue, color_format, None);
-        let object = render::object::Context::new(
-            device,
-            queue,
-            downlevel_caps,
-            cam.front_face(),
-            &pal_data,
-            &global,
-        );
+        let global = render::global::Context::new(gfx, None);
+        let object = render::object::Context::new(gfx, cam.front_face(), &pal_data, &global);
 
         info!("Loading car registry");
         let game_reg = config::game::Registry::load(settings);
-        let car_reg = config::car::load_registry(settings, &game_reg, device, &object);
+        let car_reg = config::car::load_registry(settings, &game_reg, &gfx.device, &object);
         let cinfo = match car_reg.get(&settings.car.id) {
             Some(ci) => ci,
             None => {
@@ -67,7 +54,7 @@ impl CarView {
         for (ms, sid) in model.slots.iter_mut().zip(settings.car.slots.iter()) {
             let info = &game_reg.model_infos[sid];
             let raw = Mesh::load(&mut settings.open_relative(&info.path));
-            ms.mesh = Some(model::load_c3d(raw, device));
+            ms.mesh = Some(model::load_c3d(raw, &gfx.device));
             ms.scale = info.scale;
         }
 
@@ -81,7 +68,7 @@ impl CarView {
             physics: cinfo.physics.clone(),
             color: settings.car.color,
             debug_render: render::debug::Context::new(
-                device,
+                &gfx.device,
                 &settings.render.debug,
                 &global,
                 &object,

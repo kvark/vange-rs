@@ -30,14 +30,7 @@ fn main() {
         return;
     }
 
-    let game = game::Game::new(
-        &settings,
-        harness.color_format,
-        harness.extent,
-        &harness.device,
-        &harness.queue,
-        &harness.downlevel_caps,
-    );
+    let game = game::Game::new(&settings, &harness.graphics_ctx);
 
     harness.main_loop(game);
 }

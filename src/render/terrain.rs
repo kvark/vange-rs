@@ -411,13 +411,11 @@ impl Context {
     }
 
     pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        gfx: &super::GraphicsContext,
         level: &level::Level,
         global: &GlobalContext,
         config: &settings::Terrain,
         shadow_config: &settings::ShadowTerrain,
-        screen_extent: wgpu::Extent3d,
     ) -> Self {
         profiling::scope!("Init Terrain");
 
@@ -451,7 +449,7 @@ impl Context {
             })
             .collect::<Vec<_>>();
 
-        let terrain_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let terrain_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Terrain data"),
             size: (extent.width * extent.height) as wgpu::BufferAddress * 2,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
@@ -469,7 +467,7 @@ impl Context {
         }
         terrain_buf.unmap();
 
-        let flood_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let flood_texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Terrain flood"),
             size: flood_extent,
             mip_level_count: 1,
@@ -478,7 +476,7 @@ impl Context {
             format: wgpu::TextureFormat::R8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
-        let table_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let table_texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Terrain table"),
             size: table_extent,
             mip_level_count: 1,
@@ -488,7 +486,7 @@ impl Context {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
 
-        queue.write_texture(
+        gfx.queue.write_texture(
             flood_texture.as_image_copy(),
             bytemuck::cast_slice(&level.flood_map),
             wgpu::ImageDataLayout {
@@ -498,7 +496,7 @@ impl Context {
             },
             flood_extent,
         );
-        queue.write_texture(
+        gfx.queue.write_texture(
             table_texture.as_image_copy(),
             bytemuck::cast_slice(&terrain_table),
             wgpu::ImageDataLayout {
@@ -509,9 +507,9 @@ impl Context {
             table_extent,
         );
 
-        let palette = Palette::new(device);
+        let palette = Palette::new(&gfx.device);
 
-        let flood_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let flood_sampler = gfx.device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -520,7 +518,7 @@ impl Context {
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
-        let table_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let table_sampler = gfx.device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -530,114 +528,118 @@ impl Context {
             ..Default::default()
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Terrain"),
-            entries: &[
-                // surface uniforms
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::all(),
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // terrain locals
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::all(),
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // terrain data
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::all(),
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // flood map
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::all(),
-                    ty: wgpu::BindingType::Texture {
-                        view_dimension: wgpu::TextureViewDimension::D1,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // table map
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        view_dimension: wgpu::TextureViewDimension::D1,
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // palette map
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        view_dimension: wgpu::TextureViewDimension::D1,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // flood sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // table sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let bind_group_layout =
+            gfx.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Terrain"),
+                    entries: &[
+                        // surface uniforms
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::all(),
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // terrain locals
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::all(),
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // terrain data
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::all(),
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // flood map
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::all(),
+                            ty: wgpu::BindingType::Texture {
+                                view_dimension: wgpu::TextureViewDimension::D1,
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        // table map
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 5,
+                            visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Texture {
+                                view_dimension: wgpu::TextureViewDimension::D1,
+                                sample_type: wgpu::TextureSampleType::Uint,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        // palette map
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 6,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                view_dimension: wgpu::TextureViewDimension::D1,
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        // flood sampler
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 8,
+                            visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                        // table sampler
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 9,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
 
         let bits = level.terrain_bits();
-        let surface_uni_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("surface-uniforms"),
-            contents: bytemuck::bytes_of(&SurfaceConstants {
-                _tex_scale: [
-                    level.size.0 as f32,
-                    level.size.1 as f32,
-                    level::HEIGHT_SCALE as f32,
-                    0.0,
-                ],
-                _terrain_bits: [bits.shift as u32 | ((bits.mask as u32) << 4), 0, 0, 0],
-            }),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let surface_uni_buf = gfx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("surface-uniforms"),
+                contents: bytemuck::bytes_of(&SurfaceConstants {
+                    _tex_scale: [
+                        level.size.0 as f32,
+                        level.size.1 as f32,
+                        level::HEIGHT_SCALE as f32,
+                        0.0,
+                    ],
+                    _terrain_bits: [bits.shift as u32 | ((bits.mask as u32) << 4), 0, 0, 0],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let uniform_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Terrain uniforms"),
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = gfx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Terrain"),
             layout: &bind_group_layout,
             entries: &[
@@ -680,11 +682,13 @@ impl Context {
             ],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("terrain"),
-            bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = gfx
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("terrain"),
+                bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let raytrace_geo = Geometry::new(
             &[
@@ -699,15 +703,15 @@ impl Context {
                 Vertex { _pos: [0, 1, 0, 0] },
             ],
             &[0u16, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1],
-            device,
+            &gfx.device,
         );
 
         let kind = match *config {
             settings::Terrain::RayTraced => {
                 let pipeline = Self::create_ray_pipeline(
                     &pipeline_layout,
-                    device,
-                    global.color_format,
+                    &gfx.device,
+                    gfx.color_format,
                     "terrain/ray",
                     PipelineKind::Main,
                     "ray_color",
@@ -723,13 +727,13 @@ impl Context {
             } => {
                 let pipeline = Self::create_ray_pipeline(
                     &pipeline_layout,
-                    device,
-                    global.color_format,
+                    &gfx.device,
+                    gfx.color_format,
                     "terrain/ray",
                     PipelineKind::Main,
                     "ray_mip_color",
                 );
-                let mipper = MaxMipper::new(unimplemented!(), extent, mip_count, device);
+                let mipper = MaxMipper::new(unimplemented!(), extent, mip_count, &gfx.device);
 
                 Kind::RayMip {
                     pipeline,
@@ -744,7 +748,7 @@ impl Context {
             }
             settings::Terrain::Sliced => {
                 let pipeline =
-                    Self::create_slice_pipeline(&pipeline_layout, device, global.color_format);
+                    Self::create_slice_pipeline(&pipeline_layout, &gfx.device, gfx.color_format);
 
                 Kind::Slice { pipeline }
             }
@@ -760,11 +764,11 @@ impl Context {
                         8, 12, 15, 15, 11, 8, 9, 13, 12, 12, 8, 9, 10, 14, 13, 13, 9, 10, 11, 16,
                         14, 14, 10, 11, 12, 13, 14, 14, 15, 12,
                     ],
-                    device,
+                    &gfx.device,
                 );
 
                 let pipeline =
-                    Self::create_paint_pipeline(&pipeline_layout, device, global.color_format);
+                    Self::create_paint_pipeline(&pipeline_layout, &gfx.device, gfx.color_format);
 
                 Kind::Paint {
                     pipeline,
@@ -774,42 +778,44 @@ impl Context {
             }
             settings::Terrain::Scattered { density } => {
                 let local_bg_layout =
-                    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                        label: Some("Terrain locals"),
-                        entries: &[
-                            // output map
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 0,
-                                visibility: wgpu::ShaderStages::FRAGMENT
-                                    | wgpu::ShaderStages::COMPUTE,
-                                ty: wgpu::BindingType::Buffer {
-                                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                                    has_dynamic_offset: false,
-                                    min_binding_size: None,
+                    gfx.device
+                        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                            label: Some("Terrain locals"),
+                            entries: &[
+                                // output map
+                                wgpu::BindGroupLayoutEntry {
+                                    binding: 0,
+                                    visibility: wgpu::ShaderStages::FRAGMENT
+                                        | wgpu::ShaderStages::COMPUTE,
+                                    ty: wgpu::BindingType::Buffer {
+                                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                        has_dynamic_offset: false,
+                                        min_binding_size: None,
+                                    },
+                                    count: None,
                                 },
-                                count: None,
-                            },
-                        ],
-                    });
+                            ],
+                        });
                 let local_pipeline_layout =
-                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("scatter"),
-                        bind_group_layouts: &[
-                            &global.bind_group_layout,
-                            &bind_group_layout,
-                            &local_bg_layout,
-                        ],
-                        push_constant_ranges: &[],
-                    });
+                    gfx.device
+                        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                            label: Some("scatter"),
+                            bind_group_layouts: &[
+                                &global.bind_group_layout,
+                                &bind_group_layout,
+                                &local_bg_layout,
+                            ],
+                            push_constant_ranges: &[],
+                        });
 
                 let (scatter_pipeline, clear_pipeline, copy_pipeline) =
                     Self::create_scatter_pipelines(
                         &local_pipeline_layout,
-                        device,
-                        global.color_format,
+                        &gfx.device,
+                        gfx.color_format,
                     );
                 let (local_bg, compute_groups) =
-                    Self::create_scatter_resources(screen_extent, &local_bg_layout, device);
+                    Self::create_scatter_resources(gfx.screen_size, &local_bg_layout, &gfx.device);
                 Kind::Scatter {
                     pipeline_layout: local_pipeline_layout,
                     bg_layout: local_bg_layout,
@@ -827,8 +833,8 @@ impl Context {
             settings::ShadowTerrain::RayTraced => {
                 let pipeline = Self::create_ray_pipeline(
                     &pipeline_layout,
-                    device,
-                    global.color_format,
+                    &gfx.device,
+                    gfx.color_format,
                     "terrain/ray",
                     PipelineKind::Shadow,
                     "ray",
@@ -843,7 +849,7 @@ impl Context {
             bind_group,
             bind_group_layout,
             pipeline_layout,
-            color_format: global.color_format,
+            color_format: gfx.color_format,
             raytrace_geo,
             kind,
             shadow_kind,

@@ -1,7 +1,7 @@
 use crate::boilerplate::Application;
 use vangers::{
     config, level,
-    render::{Batcher, Render, ScreenTargets},
+    render::{Batcher, GraphicsContext, Render, ScreenTargets},
     space,
 };
 
@@ -33,13 +33,9 @@ pub struct LevelView {
 
 impl LevelView {
     pub fn new(
-        settings: &config::settings::Settings,
         override_path: Option<&String>,
-        color_format: wgpu::TextureFormat,
-        screen_extent: wgpu::Extent3d,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        downlevel_caps: &wgpu::DownlevelCapabilities,
+        settings: &config::settings::Settings,
+        gfx: &GraphicsContext,
     ) -> Self {
         let level = if settings.game.level.is_empty() {
             info!("Using test level");
@@ -135,14 +131,10 @@ impl LevelView {
 
         let objects_palette = level::read_palette(settings.open_palette(), None);
         let render = Render::new(
-            device,
-            queue,
-            downlevel_caps,
+            gfx,
             &level,
             &objects_palette,
             &settings.render,
-            color_format,
-            screen_extent,
             cam.front_face(),
         );
 

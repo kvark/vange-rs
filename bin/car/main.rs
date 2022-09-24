@@ -27,13 +27,7 @@ fn main() {
         return;
     }
 
-    let app = app::CarView::new(
-        &settings,
-        &harness.device,
-        &harness.queue,
-        &harness.downlevel_caps,
-        harness.color_format,
-    );
+    let app = app::CarView::new(&settings, &harness.graphics_ctx);
 
     harness.main_loop(app);
 }

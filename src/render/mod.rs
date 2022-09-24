@@ -328,6 +328,14 @@ pub struct Rect {
     pub h: u16,
 }
 
+pub struct GraphicsContext {
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub downlevel_caps: wgpu::DownlevelCapabilities,
+    pub color_format: wgpu::TextureFormat,
+    pub screen_size: wgpu::Extent3d,
+}
+
 pub struct Render {
     global: global::Context,
     pub object: object::Context,
@@ -342,49 +350,31 @@ pub struct Render {
 
 impl Render {
     pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        downlevel_caps: &wgpu::DownlevelCapabilities,
+        gfx: &GraphicsContext,
         level: &level::Level,
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
-        color_format: wgpu::TextureFormat,
-        screen_size: wgpu::Extent3d,
         front_face: wgpu::FrontFace,
     ) -> Self {
         profiling::scope!("Init Renderer");
 
         let shadow = if settings.light.shadow.size != 0 {
-            Some(shadow::Shadow::new(&settings.light, device))
+            Some(shadow::Shadow::new(&settings.light, &gfx.device))
         } else {
             None
         };
 
-        let global = global::Context::new(
-            device,
-            queue,
-            color_format,
-            shadow.as_ref().map(|shadow| &shadow.view),
-        );
-        let object = object::Context::new(
-            device,
-            queue,
-            downlevel_caps,
-            front_face,
-            object_palette,
-            &global,
-        );
+        let global = global::Context::new(gfx, shadow.as_ref().map(|shadow| &shadow.view));
+        let object = object::Context::new(gfx, front_face, object_palette, &global);
         let terrain = terrain::Context::new(
-            device,
-            queue,
+            gfx,
             level,
             &global,
             &settings.terrain,
             &settings.light.shadow.terrain,
-            screen_size,
         );
-        let water = water::Context::new(device, &settings.water, &global, &terrain);
-        let debug = debug::Context::new(device, &settings.debug, &global, &object);
+        let water = water::Context::new(&gfx.device, &settings.water, &global, &terrain);
+        let debug = debug::Context::new(&gfx.device, &settings.debug, &global, &object);
 
         Render {
             global,
@@ -395,7 +385,7 @@ impl Render {
             shadow,
             light_config: settings.light,
             fog_config: settings.fog,
-            screen_size,
+            screen_size: gfx.screen_size,
         }
     }
 

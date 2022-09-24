@@ -2,7 +2,9 @@ use crate::{boilerplate::Application, physics};
 use m3d::Mesh;
 use vangers::{
     config, level, model,
-    render::{debug::LineBuffer, object::BodyColor, Batcher, Render, ScreenTargets},
+    render::{
+        debug::LineBuffer, object::BodyColor, Batcher, GraphicsContext, Render, ScreenTargets,
+    },
     space,
 };
 
@@ -283,14 +285,7 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(
-        settings: &config::Settings,
-        color_format: wgpu::TextureFormat,
-        screen_extent: wgpu::Extent3d,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        downlevel_caps: &wgpu::DownlevelCapabilities,
-    ) -> Self {
+    pub fn new(settings: &config::Settings, gfx: &GraphicsContext) -> Self {
         let mut rng = rand::thread_rng();
         log::info!("Loading world parameters");
         let mut escaves = config::escaves::load(settings.open_relative("escaves.prm"));
@@ -357,24 +352,14 @@ impl Game {
 
         log::info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
-        let render = Render::new(
-            device,
-            queue,
-            downlevel_caps,
-            &level,
-            &pal_data,
-            &settings.render,
-            color_format,
-            screen_extent,
-            cam.front_face(),
-        );
+        let render = Render::new(gfx, &level, &pal_data, &settings.render, cam.front_face());
 
         log::info!("Loading world database");
         let db = {
             let game = config::game::Registry::load(settings);
             DataBase {
                 _bunches: config::bunches::load(settings.open_relative("bunches.prm")),
-                cars: config::car::load_registry(settings, &game, device, &render.object),
+                cars: config::car::load_registry(settings, &game, &gfx.device, &render.object),
                 common: config::common::load(settings.open_relative("common.prm")),
                 _escaves: escaves,
                 game,
@@ -407,7 +392,7 @@ impl Game {
         {
             let info = &db.game.model_infos[sid];
             let raw = Mesh::load(&mut settings.open_relative(&info.path));
-            ms.mesh = Some(model::load_c3d(raw, device));
+            ms.mesh = Some(model::load_c3d(raw, &gfx.device));
             ms.scale = info.scale;
         }
 

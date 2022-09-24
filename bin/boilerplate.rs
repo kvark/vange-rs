@@ -1,7 +1,7 @@
 #![allow(clippy::single_match)]
 use vangers::{
     config::{settings::Terrain, Settings},
-    render::{ScreenTargets, DEPTH_FORMAT},
+    render::{GraphicsContext, ScreenTargets, DEPTH_FORMAT},
 };
 
 use futures::executor::{LocalPool, LocalSpawner};
@@ -33,19 +33,19 @@ pub trait Application {
     ) -> wgpu::CommandBuffer;
 }
 
-pub struct Harness {
-    task_pool: LocalPool,
-    event_loop: EventLoop<()>,
+struct WindowContext {
     window: Window,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub downlevel_caps: wgpu::DownlevelCapabilities,
+    task_pool: LocalPool,
     surface: wgpu::Surface,
-    pub color_format: wgpu::TextureFormat,
     present_mode: wgpu::PresentMode,
-    pub extent: wgpu::Extent3d,
     reload_on_focus: bool,
     depth_target: wgpu::TextureView,
+}
+
+pub struct Harness {
+    event_loop: EventLoop<()>,
+    window_ctx: WindowContext,
+    pub graphics_ctx: GraphicsContext,
 }
 
 pub struct HarnessOptions {
@@ -150,18 +150,22 @@ impl Harness {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         let harness = Harness {
-            task_pool,
             event_loop,
-            window,
-            device,
-            downlevel_caps,
-            queue,
-            surface,
-            color_format: config.format,
-            present_mode,
-            extent,
-            reload_on_focus: settings.window.reload_on_focus,
-            depth_target,
+            window_ctx: WindowContext {
+                window,
+                task_pool,
+                surface,
+                present_mode,
+                reload_on_focus: settings.window.reload_on_focus,
+                depth_target,
+            },
+            graphics_ctx: GraphicsContext {
+                device,
+                downlevel_caps,
+                queue,
+                color_format: config.format,
+                screen_size: extent,
+            },
         };
 
         (harness, settings)
@@ -173,24 +177,15 @@ impl Harness {
         let mut last_time = time::Instant::now();
         let mut needs_reload = false;
         let Harness {
-            mut task_pool,
             event_loop,
-            window,
-            device,
-            queue,
-            downlevel_caps: _,
-            surface,
-            color_format,
-            present_mode,
-            mut extent,
-            reload_on_focus,
-            mut depth_target,
+            window_ctx: mut win,
+            graphics_ctx: mut gfx,
         } = self;
 
         event_loop.run(move |event, _, control_flow| {
-            let _ = window;
+            let _ = win.window;
             *control_flow = ControlFlow::Poll;
-            task_pool.run_until_stalled();
+            win.task_pool.run_until_stalled();
 
             match event {
                 event::Event::WindowEvent {
@@ -198,23 +193,24 @@ impl Harness {
                     ..
                 } => {
                     info!("Resizing to {:?}", size);
-                    extent = wgpu::Extent3d {
+                    gfx.screen_size = wgpu::Extent3d {
                         width: size.width,
                         height: size.height,
                         depth_or_array_layers: 1,
                     };
                     let config = wgpu::SurfaceConfiguration {
                         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                        format: color_format,
+                        format: gfx.color_format,
                         width: size.width,
                         height: size.height,
-                        present_mode,
+                        present_mode: win.present_mode,
                     };
-                    surface.configure(&device, &config);
-                    depth_target = device
+                    win.surface.configure(&gfx.device, &config);
+                    win.depth_target = gfx
+                        .device
                         .create_texture(&wgpu::TextureDescriptor {
                             label: Some("Depth"),
-                            size: extent,
+                            size: gfx.screen_size,
                             mip_level_count: 1,
                             sample_count: 1,
                             dimension: wgpu::TextureDimension::D2,
@@ -222,15 +218,15 @@ impl Harness {
                             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                         })
                         .create_view(&wgpu::TextureViewDescriptor::default());
-                    app.resize(&device, extent);
+                    app.resize(&gfx.device, gfx.screen_size);
                 }
                 event::Event::WindowEvent { event, .. } => match event {
                     event::WindowEvent::Focused(false) => {
-                        needs_reload = reload_on_focus;
+                        needs_reload = win.reload_on_focus;
                     }
                     event::WindowEvent::Focused(true) if needs_reload => {
                         info!("Reloading shaders");
-                        app.reload(&device);
+                        app.reload(&gfx.device);
                         needs_reload = false;
                     }
                     event::WindowEvent::CloseRequested => {
@@ -251,28 +247,28 @@ impl Harness {
                     _ => {}
                 },
                 event::Event::MainEventsCleared => {
-                    let spawner = task_pool.spawner();
+                    let spawner = win.task_pool.spawner();
                     let duration = time::Instant::now() - last_time;
                     last_time += duration;
                     let delta = duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1.0e-9;
 
-                    let update_command_buffers = app.update(&device, delta, &spawner);
+                    let update_command_buffers = app.update(&gfx.device, delta, &spawner);
                     if !update_command_buffers.is_empty() {
-                        queue.submit(update_command_buffers);
+                        gfx.queue.submit(update_command_buffers);
                     }
 
-                    match surface.get_current_texture() {
+                    match win.surface.get_current_texture() {
                         Ok(frame) => {
                             let view = frame
                                 .texture
                                 .create_view(&wgpu::TextureViewDescriptor::default());
                             let targets = ScreenTargets {
-                                extent,
+                                extent: gfx.screen_size,
                                 color: &view,
-                                depth: &depth_target,
+                                depth: &win.depth_target,
                             };
-                            let render_command_buffer = app.draw(&device, targets, &spawner);
-                            queue.submit(Some(render_command_buffer));
+                            let render_command_buffer = app.draw(&gfx.device, targets, &spawner);
+                            gfx.queue.submit(Some(render_command_buffer));
                             frame.present();
                         }
                         Err(_) => {}
