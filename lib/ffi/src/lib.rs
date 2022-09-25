@@ -422,10 +422,6 @@ pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
         depth: &ctx.depth_view,
         color: &ctx.color_view,
     };
-    let mut encoder = ctx
-        .gfx
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
     let mut batcher = vangers::render::Batcher::new();
     for (_, instance) in ctx.instances.iter() {
@@ -436,16 +432,15 @@ pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
     }
 
     lc.render.draw_world(
-        &mut encoder,
         &mut batcher,
         &lc.level,
         &ctx.camera,
         targets,
+        None,
         Some(viewport.to_native()),
         &ctx.gfx.device,
+        &ctx.gfx.queue,
     );
-
-    ctx.gfx.queue.submit(Some(encoder.finish()));
 }
 
 fn vec_i2f(v: [i32; 3]) -> [f32; 3] {

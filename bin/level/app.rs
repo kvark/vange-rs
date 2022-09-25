@@ -1,11 +1,10 @@
 use crate::boilerplate::Application;
 use vangers::{
     config, level,
-    render::{Batcher, GraphicsContext, Render, ScreenTargets},
+    render::{Batcher, GraphicsContext, Render, ScreenTargets, UiData},
     space,
 };
 
-use futures::executor::LocalSpawner;
 use log::info;
 use winit::event;
 
@@ -268,12 +267,7 @@ impl Application for LevelView {
         true
     }
 
-    fn update(
-        &mut self,
-        _device: &wgpu::Device,
-        delta: f32,
-        _spawner: &LocalSpawner,
-    ) -> Vec<wgpu::CommandBuffer> {
+    fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
         use cgmath::{InnerSpace as _, Rotation3 as _};
 
         let move_speed = match self.cam.proj {
@@ -343,8 +337,6 @@ impl Application for LevelView {
             }
             _ => {}
         }
-
-        Vec::new()
     }
 
     fn resize(&mut self, device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -358,24 +350,24 @@ impl Application for LevelView {
         self.render.reload(device);
     }
 
+    fn draw_ui(&mut self, _context: &egui::Context) {}
+
     fn draw(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         targets: ScreenTargets,
-        _spawner: &LocalSpawner,
-    ) -> wgpu::CommandBuffer {
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Draw"),
-        });
+        ui_data: UiData,
+    ) {
         self.render.draw_world(
-            &mut encoder,
             &mut Batcher::new(),
             &self.level,
             &self.cam,
             targets,
+            Some(ui_data),
             None,
             device,
+            queue,
         );
-        encoder.finish()
     }
 }

@@ -51,6 +51,12 @@ pub struct ScreenTargets<'a> {
     pub depth: &'a wgpu::TextureView,
 }
 
+pub struct UiData {
+    pub scale_factor: f32,
+    pub textures_delta: egui::TexturesDelta,
+    pub primitives: Vec<egui::ClippedPrimitive>,
+}
+
 pub struct SurfaceData {
     pub constants: wgpu::Buffer,
     pub height: (wgpu::TextureView, wgpu::Sampler),
@@ -346,6 +352,7 @@ pub struct Render {
     pub light_config: settings::Light,
     pub fog_config: settings::Fog,
     screen_size: wgpu::Extent3d,
+    egui_pass: egui_wgpu_backend::RenderPass,
 }
 
 impl Render {
@@ -376,6 +383,8 @@ impl Render {
         let water = water::Context::new(&gfx.device, &settings.water, &global, &terrain);
         let debug = debug::Context::new(&gfx.device, &settings.debug, &global, &object);
 
+        let egui_pass = egui_wgpu_backend::RenderPass::new(&gfx.device, gfx.color_format, 1);
+
         Render {
             global,
             object,
@@ -386,22 +395,42 @@ impl Render {
             light_config: settings.light,
             fog_config: settings.fog,
             screen_size: gfx.screen_size,
+            egui_pass,
         }
     }
 
     pub fn draw_world(
         &mut self,
-        encoder: &mut wgpu::CommandEncoder,
         batcher: &mut Batcher,
         level: &level::Level,
         cam: &Camera,
         targets: ScreenTargets<'_>,
+        ui_data: Option<UiData>,
         viewport: Option<Rect>,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
     ) {
         profiling::scope!("draw_world");
         batcher.prepare(device);
-        self.terrain.update_dirty(encoder, level, device);
+
+        let mut screen_descriptor = egui_wgpu_backend::ScreenDescriptor {
+            physical_width: self.screen_size.width,
+            physical_height: self.screen_size.height,
+            scale_factor: 1.0,
+        };
+        if let Some(ref ui) = ui_data {
+            screen_descriptor.scale_factor = ui.scale_factor;
+            self.egui_pass
+                .update_buffers(device, queue, &ui.primitives, &screen_descriptor);
+            self.egui_pass
+                .add_textures(device, queue, &ui.textures_delta)
+                .unwrap();
+        }
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Draw"),
+        });
+        self.terrain.update_dirty(&mut encoder, level, device);
 
         //TODO: common routine for draw passes
         //TODO: use `write_buffer`
@@ -425,7 +454,7 @@ impl Render {
             );
 
             self.terrain.prepare_shadow(
-                encoder,
+                &mut encoder,
                 device,
                 cam,
                 wgpu::Extent3d {
@@ -481,7 +510,7 @@ impl Render {
             );
 
             self.terrain.prepare(
-                encoder,
+                &mut encoder,
                 device,
                 &self.global,
                 &self.fog_config,
@@ -493,7 +522,7 @@ impl Render {
                     h: self.screen_size.height as u16,
                 }),
             );
-            self.water.prepare(encoder, device, cam);
+            self.water.prepare(&mut encoder, device, cam);
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main"),
@@ -543,6 +572,23 @@ impl Render {
             self.water.draw(&mut pass);
             pass.pop_debug_group();
         }
+
+        if let Some(ui) = ui_data {
+            //Note: we can't run this in the main render pass since it has
+            // a depth texture, and `egui` doesn't expect that.
+            self.egui_pass
+                .execute(
+                    &mut encoder,
+                    targets.color,
+                    &ui.primitives,
+                    &screen_descriptor,
+                    None,
+                )
+                .unwrap();
+            self.egui_pass.remove_textures(ui.textures_delta).unwrap();
+        }
+
+        queue.submit(Some(encoder.finish()));
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {

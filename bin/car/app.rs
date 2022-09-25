@@ -2,11 +2,7 @@ use crate::boilerplate::Application;
 use m3d::Mesh;
 use vangers::{config, level, model, render, space};
 
-use futures::executor::LocalSpawner;
 use log::info;
-use wgpu::util::DeviceExt as _;
-
-use std::mem;
 
 pub struct CarView {
     model: model::VisualModel,
@@ -135,12 +131,7 @@ impl Application for CarView {
         true
     }
 
-    fn update(
-        &mut self,
-        _device: &wgpu::Device,
-        delta: f32,
-        _spawner: &LocalSpawner,
-    ) -> Vec<wgpu::CommandBuffer> {
+    fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
         if self.rotation.0 != cgmath::Rad(0.) {
             let rot = self.rotation.0 * delta;
             self.rotate_z(rot);
@@ -149,7 +140,6 @@ impl Application for CarView {
             let rot = self.rotation.1 * delta;
             self.rotate_x(rot);
         }
-        Vec::new()
     }
 
     fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -162,12 +152,15 @@ impl Application for CarView {
         self.object.reload(device);
     }
 
+    fn draw_ui(&mut self, _context: &egui::Context) {}
+
     fn draw(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         targets: render::ScreenTargets,
-        _spawner: &LocalSpawner,
-    ) -> wgpu::CommandBuffer {
+        _ui_data: render::UiData,
+    ) {
         let mut batcher = render::Batcher::new();
         batcher.add_model(
             &self.model,
@@ -177,22 +170,16 @@ impl Application for CarView {
         );
         batcher.prepare(device);
 
+        let global_data = render::global::Constants::new(&self.cam, &self.light_config, None);
+        queue.write_buffer(
+            &self.global.uniform_buf,
+            0,
+            bytemuck::bytes_of(&global_data),
+        );
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Draw"),
         });
-        let global_data = render::global::Constants::new(&self.cam, &self.light_config, None);
-        let global_staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::bytes_of(&global_data),
-            usage: wgpu::BufferUsages::COPY_SRC,
-        });
-        encoder.copy_buffer_to_buffer(
-            &global_staging,
-            0,
-            &self.global.uniform_buf,
-            0,
-            mem::size_of::<render::global::Constants>() as wgpu::BufferAddress,
-        );
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -236,6 +223,6 @@ impl Application for CarView {
             );*/
         }
 
-        encoder.finish()
+        queue.submit(Some(encoder.finish()));
     }
 }

@@ -4,12 +4,12 @@ use vangers::{
     config, level, model,
     render::{
         debug::LineBuffer, object::BodyColor, Batcher, GraphicsContext, Render, ScreenTargets,
+        UiData,
     },
     space,
 };
 
 use cgmath::prelude::*;
-use futures::executor::LocalSpawner;
 
 use std::collections::HashMap;
 
@@ -548,12 +548,7 @@ impl Application for Game {
         true
     }
 
-    fn update(
-        &mut self,
-        _device: &wgpu::Device,
-        delta: f32,
-        _spawner: &LocalSpawner,
-    ) -> Vec<wgpu::CommandBuffer> {
+    fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
         profiling::scope!("Update");
         let focus_point = self.cam.intersect_height(level::HEIGHT_SCALE as f32 * 0.3);
 
@@ -594,7 +589,7 @@ impl Application for Game {
                     cgmath::Rad(delta * self.spin_ver),
                 );
 
-                return Vec::new();
+                return;
             }
 
             player.control.rudder = self.spin_hor;
@@ -681,8 +676,6 @@ impl Application for Game {
 
                 a.ai_behavior(delta);
             });
-
-            Vec::new()
         }
     }
 
@@ -697,12 +690,15 @@ impl Application for Game {
         self.render.reload(device);
     }
 
+    fn draw_ui(&mut self, _context: &egui::Context) {}
+
     fn draw(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         targets: ScreenTargets,
-        _spawner: &LocalSpawner,
-    ) -> wgpu::CommandBuffer {
+        ui_data: UiData,
+    ) {
         let clipper = Clipper::new(&self.cam);
         self.batcher.clear();
 
@@ -723,18 +719,15 @@ impl Application for Game {
                 .add_model(&agent.car.model, transform, debug_shape_scale, agent.color);
         }
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Draw"),
-        });
-
         self.render.draw_world(
-            &mut encoder,
             &mut self.batcher,
             &self.level,
             &self.cam,
             targets,
+            Some(ui_data),
             None,
             device,
+            queue,
         );
 
         /*
@@ -743,7 +736,5 @@ impl Application for Game {
             self.cam.get_view_proj().into(),
             encoder,
         );*/
-
-        encoder.finish()
     }
 }
