@@ -51,6 +51,7 @@ pub struct ScreenTargets<'a> {
     pub depth: &'a wgpu::TextureView,
 }
 
+#[derive(Default)]
 pub struct UiData {
     pub scale_factor: f32,
     pub textures_delta: egui::TexturesDelta,
@@ -397,6 +398,13 @@ impl Render {
             screen_size: gfx.screen_size,
             egui_pass,
         }
+    }
+
+    pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        let lpos = &mut self.light_config.pos;
+        ui.add(egui::Slider::new(&mut lpos[0], -10.0..=10.0).text("Sun.x"));
+        ui.add(egui::Slider::new(&mut lpos[1], -10.0..=10.0).text("Sun.y"));
+        ui.add(egui::Slider::new(&mut lpos[2], 0.0..=10.0).text("Sun.z"));
     }
 
     pub fn draw_world(

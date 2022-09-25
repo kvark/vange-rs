@@ -199,6 +199,11 @@ impl Agent {
     }
 }
 
+#[derive(Default)]
+struct Stats {
+    frame_deltas: Vec<f32>,
+}
+
 struct DataBase {
     _bunches: Vec<config::bunches::Bunch>,
     cars: HashMap<String, config::car::CarInfo>,
@@ -272,6 +277,7 @@ pub struct Game {
     line_buffer: LineBuffer,
     level: level::Level,
     agents: Vec<Agent>,
+    stats: Stats,
     cam: space::Camera,
     cam_style: CameraStyle,
     max_quant: f32,
@@ -432,6 +438,7 @@ impl Game {
             line_buffer: LineBuffer::new(),
             level,
             agents,
+            stats: Stats::default(),
             cam,
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
@@ -550,6 +557,12 @@ impl Application for Game {
 
     fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
         profiling::scope!("Update");
+
+        self.stats.frame_deltas.push(delta);
+        if self.stats.frame_deltas.len() > 64 {
+            self.stats.frame_deltas.remove(0);
+        }
+
         let focus_point = self.cam.intersect_height(level::HEIGHT_SCALE as f32 * 0.3);
 
         if let Some(ref mut jump) = self.jump {
@@ -690,7 +703,19 @@ impl Application for Game {
         self.render.reload(device);
     }
 
-    fn draw_ui(&mut self, _context: &egui::Context) {}
+    fn draw_ui(&mut self, context: &egui::Context) {
+        let fd_points = egui::plot::PlotPoints::from_ys_f32(&self.stats.frame_deltas);
+        let fd_line = egui::plot::Line::new(fd_points);
+
+        egui::SidePanel::right("Tweaks").show(context, |ui| {
+            ui.label("Renderer:");
+            ui.group(|ui| self.render.draw_ui(ui));
+            egui::plot::Plot::new("Frame time").show(ui, |plot_ui| {
+                plot_ui.line(fd_line);
+                plot_ui.hline(egui::plot::HLine::new(1.0 / 60.0).name("smooth"));
+            });
+        });
+    }
 
     fn draw(
         &mut self,
