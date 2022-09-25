@@ -4,7 +4,6 @@ use vangers::{
     config, level, model,
     render::{
         debug::LineBuffer, object::BodyColor, Batcher, GraphicsContext, Render, ScreenTargets,
-        UiData,
     },
     space,
 };
@@ -717,13 +716,7 @@ impl Application for Game {
         });
     }
 
-    fn draw(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        targets: ScreenTargets,
-        ui_data: UiData,
-    ) {
+    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) {
         let clipper = Clipper::new(&self.cam);
         self.batcher.clear();
 
@@ -749,7 +742,6 @@ impl Application for Game {
             &self.level,
             &self.cam,
             targets,
-            Some(ui_data),
             None,
             device,
             queue,

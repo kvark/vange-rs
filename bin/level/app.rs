@@ -1,7 +1,7 @@
 use crate::boilerplate::Application;
 use vangers::{
     config, level,
-    render::{Batcher, GraphicsContext, Render, ScreenTargets, UiData},
+    render::{Batcher, GraphicsContext, Render, ScreenTargets},
     space,
 };
 
@@ -352,19 +352,12 @@ impl Application for LevelView {
 
     fn draw_ui(&mut self, _context: &egui::Context) {}
 
-    fn draw(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        targets: ScreenTargets,
-        ui_data: UiData,
-    ) {
+    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) {
         self.render.draw_world(
             &mut Batcher::new(),
             &self.level,
             &self.cam,
             targets,
-            Some(ui_data),
             None,
             device,
             queue,
