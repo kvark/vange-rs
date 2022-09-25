@@ -1,10 +1,9 @@
 #![allow(clippy::single_match)]
 use vangers::{
     config::{settings::Terrain, Settings},
-    render::{GraphicsContext, ScreenTargets, UiData, DEPTH_FORMAT},
+    render::{GraphicsContext, ScreenTargets, DEPTH_FORMAT},
 };
 
-use egui_winit_platform as egui_wp;
 use futures::executor::LocalPool;
 use log::info;
 use winit::{
@@ -22,13 +21,7 @@ pub trait Application {
     fn reload(&mut self, device: &wgpu::Device);
     fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, delta: f32);
     fn draw_ui(&mut self, context: &egui::Context);
-    fn draw(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        targets: ScreenTargets,
-        ui_data: UiData,
-    );
+    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets);
 }
 
 struct WindowContext {
@@ -37,7 +30,7 @@ struct WindowContext {
     surface: wgpu::Surface,
     present_mode: wgpu::PresentMode,
     reload_on_focus: bool,
-    egui_platform: egui_wp::Platform,
+    egui_platform: egui_winit_platform::Platform,
     depth_target: wgpu::TextureView,
 }
 
@@ -136,13 +129,14 @@ impl Harness {
         };
         surface.configure(&device, &config);
 
-        let egui_platform = egui_wp::Platform::new(egui_wp::PlatformDescriptor {
-            physical_width: extent.width,
-            physical_height: extent.height,
-            scale_factor: window.scale_factor(),
-            font_definitions: egui::FontDefinitions::default(),
-            style: Default::default(),
-        });
+        let egui_platform =
+            egui_winit_platform::Platform::new(egui_winit_platform::PlatformDescriptor {
+                physical_width: extent.width,
+                physical_height: extent.height,
+                scale_factor: window.scale_factor(),
+                font_definitions: egui::FontDefinitions::default(),
+                style: Default::default(),
+            });
 
         let depth_target = device
             .create_texture(&wgpu::TextureDescriptor {
@@ -190,6 +184,8 @@ impl Harness {
             window_ctx: mut win,
             graphics_ctx: mut gfx,
         } = self;
+
+        let mut egui_pass = egui_wgpu_backend::RenderPass::new(&gfx.device, gfx.color_format, 1);
 
         event_loop.run(move |event, _, control_flow| {
             let _ = win.window;
@@ -263,36 +259,66 @@ impl Harness {
 
                     app.update(&gfx.device, &gfx.queue, duration.as_secs_f32());
 
-                    match win.surface.get_current_texture() {
-                        Ok(frame) => {
-                            win.egui_platform
-                                .update_time(start_time.elapsed().as_secs_f64());
-                            win.egui_platform.begin_frame();
-                            app.draw_ui(&win.egui_platform.context());
-                            let egui_output = win.egui_platform.end_frame(Some(&win.window));
-                            let ui_data = UiData {
-                                scale_factor: win.window.scale_factor() as f32,
-                                textures_delta: egui_output.textures_delta,
-                                primitives: win
-                                    .egui_platform
-                                    .context()
-                                    .tessellate(egui_output.shapes),
-                            };
-
-                            let view = frame
-                                .texture
-                                .create_view(&wgpu::TextureViewDescriptor::default());
-                            let targets = ScreenTargets {
-                                extent: gfx.screen_size,
-                                color: &view,
-                                depth: &win.depth_target,
-                            };
-                            app.draw(&gfx.device, &gfx.queue, targets, ui_data);
-                            frame.present();
-                        }
-                        Err(_) => {}
+                    let frame = match win.surface.get_current_texture() {
+                        Ok(frame) => frame,
+                        Err(_) => return,
                     };
 
+                    win.egui_platform
+                        .update_time(start_time.elapsed().as_secs_f64());
+                    win.egui_platform.begin_frame();
+                    app.draw_ui(&win.egui_platform.context());
+                    let egui_output = win.egui_platform.end_frame(Some(&win.window));
+
+                    let egui_primitives =
+                        win.egui_platform.context().tessellate(egui_output.shapes);
+                    let screen_descriptor = egui_wgpu_backend::ScreenDescriptor {
+                        physical_width: gfx.screen_size.width,
+                        physical_height: gfx.screen_size.height,
+                        scale_factor: win.window.scale_factor() as f32,
+                    };
+                    egui_pass.update_buffers(
+                        &gfx.device,
+                        &gfx.queue,
+                        &egui_primitives,
+                        &screen_descriptor,
+                    );
+                    egui_pass
+                        .add_textures(&gfx.device, &gfx.queue, &egui_output.textures_delta)
+                        .unwrap();
+
+                    let view = frame
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default());
+                    let targets = ScreenTargets {
+                        extent: gfx.screen_size,
+                        color: &view,
+                        depth: &win.depth_target,
+                    };
+                    app.draw(&gfx.device, &gfx.queue, targets);
+
+                    let mut egui_encoder =
+                        gfx.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("UI"),
+                            });
+                    //Note: we can't run this in the main render pass since it has
+                    // a depth texture, and `egui` doesn't expect that.
+                    egui_pass
+                        .execute(
+                            &mut egui_encoder,
+                            &view,
+                            &egui_primitives,
+                            &screen_descriptor,
+                            None,
+                        )
+                        .unwrap();
+                    gfx.queue.submit(Some(egui_encoder.finish()));
+                    egui_pass
+                        .remove_textures(egui_output.textures_delta)
+                        .unwrap();
+
+                    frame.present();
                     profiling::finish_frame!();
                 }
                 _ => (),

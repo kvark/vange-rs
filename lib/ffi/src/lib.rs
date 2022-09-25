@@ -436,7 +436,6 @@ pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
         &lc.level,
         &ctx.camera,
         targets,
-        None,
         Some(viewport.to_native()),
         &ctx.gfx.device,
         &ctx.gfx.queue,

@@ -117,13 +117,7 @@ impl Application for ResourceView {
 
     fn draw_ui(&mut self, _context: &egui::Context) {}
 
-    fn draw(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        targets: render::ScreenTargets,
-        _ui_data: render::UiData,
-    ) {
+    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: render::ScreenTargets) {
         let mut batcher = render::Batcher::new();
         batcher.add_model(
             &self.model,
