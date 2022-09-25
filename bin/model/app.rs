@@ -1,11 +1,7 @@
 use crate::boilerplate::Application;
 use vangers::{config, level, model, render, space};
 
-use futures::executor::LocalSpawner;
 use log::info;
-use wgpu::util::DeviceExt as _;
-
-use std::mem;
 
 pub struct ResourceView {
     model: model::VisualModel,
@@ -95,12 +91,7 @@ impl Application for ResourceView {
         true
     }
 
-    fn update(
-        &mut self,
-        _device: &wgpu::Device,
-        delta: f32,
-        _spawner: &LocalSpawner,
-    ) -> Vec<wgpu::CommandBuffer> {
+    fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
         use cgmath::Transform;
 
         if self.rotation != cgmath::Rad(0.) {
@@ -112,8 +103,6 @@ impl Application for ResourceView {
             };
             self.transform = other.concat(&self.transform);
         }
-
-        Vec::new()
     }
 
     fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -126,12 +115,15 @@ impl Application for ResourceView {
         self.object.reload(device);
     }
 
+    fn draw_ui(&mut self, _context: &egui::Context) {}
+
     fn draw(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         targets: render::ScreenTargets,
-        _spawner: &LocalSpawner,
-    ) -> wgpu::CommandBuffer {
+        _ui_data: render::UiData,
+    ) {
         let mut batcher = render::Batcher::new();
         batcher.add_model(
             &self.model,
@@ -141,22 +133,16 @@ impl Application for ResourceView {
         );
         batcher.prepare(device);
 
+        let global_data = render::global::Constants::new(&self.cam, &self.light_config, None);
+        queue.write_buffer(
+            &self.global.uniform_buf,
+            0,
+            bytemuck::bytes_of(&global_data),
+        );
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Draw"),
         });
-        let global_data = render::global::Constants::new(&self.cam, &self.light_config, None);
-        let global_staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::bytes_of(&global_data),
-            usage: wgpu::BufferUsages::COPY_SRC,
-        });
-        encoder.copy_buffer_to_buffer(
-            &global_staging,
-            0,
-            &self.global.uniform_buf,
-            0,
-            mem::size_of::<render::global::Constants>() as wgpu::BufferAddress,
-        );
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -191,6 +177,6 @@ impl Application for ResourceView {
             batcher.draw(&mut pass);
         }
 
-        encoder.finish()
+        queue.submit(Some(encoder.finish()));
     }
 }

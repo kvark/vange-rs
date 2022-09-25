@@ -1,10 +1,11 @@
 #![allow(clippy::single_match)]
 use vangers::{
     config::{settings::Terrain, Settings},
-    render::{GraphicsContext, ScreenTargets, DEPTH_FORMAT},
+    render::{GraphicsContext, ScreenTargets, UiData, DEPTH_FORMAT},
 };
 
-use futures::executor::{LocalPool, LocalSpawner};
+use egui_winit_platform as egui_wp;
+use futures::executor::LocalPool;
 use log::info;
 use winit::{
     event,
@@ -19,18 +20,15 @@ pub trait Application {
     fn on_mouse_button(&mut self, _state: event::ElementState, _button: event::MouseButton) {}
     fn resize(&mut self, _device: &wgpu::Device, _extent: wgpu::Extent3d) {}
     fn reload(&mut self, device: &wgpu::Device);
-    fn update(
-        &mut self,
-        device: &wgpu::Device,
-        delta: f32,
-        spawner: &LocalSpawner,
-    ) -> Vec<wgpu::CommandBuffer>;
+    fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, delta: f32);
+    fn draw_ui(&mut self, context: &egui::Context);
     fn draw(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         targets: ScreenTargets,
-        spawner: &LocalSpawner,
-    ) -> wgpu::CommandBuffer;
+        ui_data: UiData,
+    );
 }
 
 struct WindowContext {
@@ -39,6 +37,7 @@ struct WindowContext {
     surface: wgpu::Surface,
     present_mode: wgpu::PresentMode,
     reload_on_focus: bool,
+    egui_platform: egui_wp::Platform,
     depth_target: wgpu::TextureView,
 }
 
@@ -137,6 +136,14 @@ impl Harness {
         };
         surface.configure(&device, &config);
 
+        let egui_platform = egui_wp::Platform::new(egui_wp::PlatformDescriptor {
+            physical_width: extent.width,
+            physical_height: extent.height,
+            scale_factor: window.scale_factor(),
+            font_definitions: egui::FontDefinitions::default(),
+            style: Default::default(),
+        });
+
         let depth_target = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("Depth"),
@@ -157,6 +164,7 @@ impl Harness {
                 surface,
                 present_mode,
                 reload_on_focus: settings.window.reload_on_focus,
+                egui_platform,
                 depth_target,
             },
             graphics_ctx: GraphicsContext {
@@ -174,6 +182,7 @@ impl Harness {
     pub fn main_loop<A: 'static + Application>(self, mut app: A) {
         use std::time;
 
+        let start_time = time::Instant::now();
         let mut last_time = time::Instant::now();
         let mut needs_reload = false;
         let Harness {
@@ -186,6 +195,8 @@ impl Harness {
             let _ = win.window;
             *control_flow = ControlFlow::Poll;
             win.task_pool.run_until_stalled();
+
+            win.egui_platform.handle_event(&event);
 
             match event {
                 event::Event::WindowEvent {
@@ -247,18 +258,28 @@ impl Harness {
                     _ => {}
                 },
                 event::Event::MainEventsCleared => {
-                    let spawner = win.task_pool.spawner();
                     let duration = time::Instant::now() - last_time;
                     last_time += duration;
                     let delta = duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1.0e-9;
 
-                    let update_command_buffers = app.update(&gfx.device, delta, &spawner);
-                    if !update_command_buffers.is_empty() {
-                        gfx.queue.submit(update_command_buffers);
-                    }
+                    app.update(&gfx.device, &gfx.queue, delta);
 
                     match win.surface.get_current_texture() {
                         Ok(frame) => {
+                            win.egui_platform
+                                .update_time(start_time.elapsed().as_secs_f64());
+                            win.egui_platform.begin_frame();
+                            app.draw_ui(&win.egui_platform.context());
+                            let egui_output = win.egui_platform.end_frame(Some(&win.window));
+                            let ui_data = UiData {
+                                scale_factor: win.window.scale_factor() as f32,
+                                textures_delta: egui_output.textures_delta,
+                                primitives: win
+                                    .egui_platform
+                                    .context()
+                                    .tessellate(egui_output.shapes),
+                            };
+
                             let view = frame
                                 .texture
                                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -267,8 +288,7 @@ impl Harness {
                                 color: &view,
                                 depth: &win.depth_target,
                             };
-                            let render_command_buffer = app.draw(&gfx.device, targets, &spawner);
-                            gfx.queue.submit(Some(render_command_buffer));
+                            app.draw(&gfx.device, &gfx.queue, targets, ui_data);
                             frame.present();
                         }
                         Err(_) => {}
