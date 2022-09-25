@@ -260,9 +260,8 @@ impl Harness {
                 event::Event::MainEventsCleared => {
                     let duration = time::Instant::now() - last_time;
                     last_time += duration;
-                    let delta = duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1.0e-9;
 
-                    app.update(&gfx.device, &gfx.queue, delta);
+                    app.update(&gfx.device, &gfx.queue, duration.as_secs_f32());
 
                     match win.surface.get_current_texture() {
                         Ok(frame) => {
