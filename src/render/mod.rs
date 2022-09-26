@@ -398,21 +398,18 @@ impl Render {
 
     pub fn draw_world(
         &mut self,
+        encoder: &mut wgpu::CommandEncoder,
         batcher: &mut Batcher,
         level: &level::Level,
         cam: &Camera,
         targets: ScreenTargets<'_>,
         viewport: Option<Rect>,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
     ) {
         profiling::scope!("draw_world");
         batcher.prepare(device);
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Draw"),
-        });
-        self.terrain.update_dirty(&mut encoder, level, device);
+        self.terrain.update_dirty(encoder, level, device);
 
         //TODO: common routine for draw passes
         //TODO: use `write_buffer`
@@ -436,7 +433,7 @@ impl Render {
             );
 
             self.terrain.prepare_shadow(
-                &mut encoder,
+                encoder,
                 device,
                 cam,
                 wgpu::Extent3d {
@@ -492,7 +489,7 @@ impl Render {
             );
 
             self.terrain.prepare(
-                &mut encoder,
+                encoder,
                 device,
                 &self.global,
                 &self.fog_config,
@@ -504,7 +501,7 @@ impl Render {
                     h: self.screen_size.height as u16,
                 }),
             );
-            self.water.prepare(&mut encoder, device, cam);
+            self.water.prepare(encoder, device, cam);
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main"),
@@ -554,8 +551,6 @@ impl Render {
             self.water.draw(&mut pass);
             pass.pop_debug_group();
         }
-
-        queue.submit(Some(encoder.finish()));
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {

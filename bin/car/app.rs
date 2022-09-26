@@ -131,7 +131,7 @@ impl Application for CarView {
         true
     }
 
-    fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
+    fn update(&mut self, _device: &wgpu::Device, queue: &wgpu::Queue, delta: f32) {
         if self.rotation.0 != cgmath::Rad(0.) {
             let rot = self.rotation.0 * delta;
             self.rotate_z(rot);
@@ -140,6 +140,13 @@ impl Application for CarView {
             let rot = self.rotation.1 * delta;
             self.rotate_x(rot);
         }
+
+        let global_data = render::global::Constants::new(&self.cam, &self.light_config, None);
+        queue.write_buffer(
+            &self.global.uniform_buf,
+            0,
+            bytemuck::bytes_of(&global_data),
+        );
     }
 
     fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -154,7 +161,11 @@ impl Application for CarView {
 
     fn draw_ui(&mut self, _context: &egui::Context) {}
 
-    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: render::ScreenTargets) {
+    fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        targets: render::ScreenTargets,
+    ) -> wgpu::CommandBuffer {
         let mut batcher = render::Batcher::new();
         batcher.add_model(
             &self.model,
@@ -163,13 +174,6 @@ impl Application for CarView {
             self.color,
         );
         batcher.prepare(device);
-
-        let global_data = render::global::Constants::new(&self.cam, &self.light_config, None);
-        queue.write_buffer(
-            &self.global.uniform_buf,
-            0,
-            bytemuck::bytes_of(&global_data),
-        );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Draw"),
@@ -217,6 +221,6 @@ impl Application for CarView {
             );*/
         }
 
-        queue.submit(Some(encoder.finish()));
+        encoder.finish()
     }
 }
