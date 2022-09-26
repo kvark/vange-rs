@@ -114,7 +114,7 @@ pub struct Shadow {
 #[derive(Copy, Clone, Deserialize)]
 pub struct Light {
     pub pos: [f32; 4],
-    pub color: [f32; 4],
+    pub color: [f32; 3],
     pub shadow: Shadow,
 }
 
@@ -139,7 +139,7 @@ pub struct Water {}
 
 #[derive(Copy, Clone, Deserialize)]
 pub struct Fog {
-    pub color: [f32; 4],
+    pub color: [f32; 3],
     pub depth: f32,
 }
 

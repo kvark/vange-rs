@@ -4,7 +4,7 @@ use crate::{
     space::{Camera, Projection},
 };
 
-use cgmath::{EuclideanSpace as _, Rotation as _};
+use cgmath::{EuclideanSpace as _, One as _, Rotation as _};
 
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 
@@ -12,12 +12,11 @@ pub struct Shadow {
     pub(super) view: wgpu::TextureView,
     pub(super) cam: Camera,
     pub(super) size: u32,
-    dir: cgmath::Vector3<f32>,
 }
 
 impl Shadow {
-    pub(super) fn new(light: &settings::Light, device: &wgpu::Device) -> Self {
-        let size = light.shadow.size;
+    pub(super) fn new(settings: &settings::Shadow, device: &wgpu::Device) -> Self {
+        let size = settings.size;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Shadow"),
             size: wgpu::Extent3d {
@@ -32,23 +31,15 @@ impl Shadow {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
         });
 
-        let dir = cgmath::Vector4::from(light.pos).truncate();
-        let up = if dir.x == 0.0 && dir.y == 0.0 {
-            cgmath::Vector3::unit_y()
-        } else {
-            cgmath::Vector3::unit_z()
-        };
-
         Shadow {
             view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
             cam: Camera {
                 loc: cgmath::Zero::zero(),
-                rot: cgmath::Quaternion::look_at(dir, up).invert(),
+                rot: cgmath::Quaternion::one(),
                 scale: cgmath::Vector3::new(1.0, 1.0, 1.0),
                 proj: Projection::ortho(1, 1, 0.0..1.0),
             },
             size,
-            dir,
         }
     }
 
@@ -57,8 +48,17 @@ impl Shadow {
         cgmath::Point3::origin() + self.cam.rot.invert() * diff
     }
 
-    pub(super) fn update_view(&mut self, cam: &Camera) {
+    pub(super) fn update_view(&mut self, light_pos: &[f32; 4], cam: &Camera) {
+        let dir = cgmath::Vector4::from(*light_pos).truncate();
+        let up = if dir.x == 0.0 && dir.y == 0.0 {
+            cgmath::Vector3::unit_y()
+        } else {
+            cgmath::Vector3::unit_z()
+        };
+
+        self.cam.rot = cgmath::Quaternion::look_at(dir, up).invert();
         self.cam.loc = cam.intersect_height(0.0).to_vec();
+
         let mut p = cgmath::Ortho {
             left: 0.0f32,
             right: 0.0,
@@ -70,7 +70,7 @@ impl Shadow {
 
         // in addition to the camera bound, we need to include
         // all the potential occluders nearby
-        let mut offset = self.dir * (HEIGHT_SCALE as f32 / self.dir.z);
+        let mut offset = dir * (HEIGHT_SCALE as f32 / dir.z);
         offset.z = 0.0;
 
         let points_lo = cam.bound_points(0.0);
