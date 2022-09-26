@@ -359,7 +359,7 @@ impl Render {
         profiling::scope!("Init Renderer");
 
         let shadow = if settings.light.shadow.size != 0 {
-            Some(shadow::Shadow::new(&settings.light, &gfx.device))
+            Some(shadow::Shadow::new(&settings.light.shadow, &gfx.device))
         } else {
             None
         };
@@ -391,9 +391,21 @@ impl Render {
 
     pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
         let lpos = &mut self.light_config.pos;
-        ui.add(egui::Slider::new(&mut lpos[0], -10.0..=10.0).text("Sun.x"));
-        ui.add(egui::Slider::new(&mut lpos[1], -10.0..=10.0).text("Sun.y"));
-        ui.add(egui::Slider::new(&mut lpos[2], 0.0..=10.0).text("Sun.z"));
+        ui.horizontal(|ui| {
+            ui.label("Sun pos");
+            ui.add(egui::DragValue::new(&mut lpos[0]).speed(1.0).prefix("x:"));
+            ui.add(egui::DragValue::new(&mut lpos[1]).speed(1.0).prefix("y:"));
+            ui.add(egui::DragValue::new(&mut lpos[2]).speed(1.0).prefix("z:"));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Sun color");
+            ui.color_edit_button_rgb(&mut self.light_config.color);
+        });
+        ui.horizontal(|ui| {
+            ui.label("Fog color");
+            ui.color_edit_button_rgb(&mut self.fog_config.color);
+        });
+        ui.add(egui::Slider::new(&mut self.fog_config.depth, 0.0..=100.0).text("Fog depth"));
     }
 
     pub fn draw_world(
@@ -416,7 +428,7 @@ impl Render {
 
         if let Some(ref mut shadow) = self.shadow {
             profiling::scope!("Shadow Pass");
-            shadow.update_view(cam);
+            shadow.update_view(&self.light_config.pos, cam);
 
             let constants = global::Constants::new(&shadow.cam, &self.light_config, None);
             let global_staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -515,7 +527,7 @@ impl Render {
                                 r: c[0] as f64,
                                 g: c[1] as f64,
                                 b: c[2] as f64,
-                                a: c[3] as f64,
+                                a: 1.0,
                             }
                         }),
                         store: true,

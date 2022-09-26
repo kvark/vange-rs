@@ -10,7 +10,8 @@ pub struct Constants {
     m_inv_vp: [[f32; 4]; 4],
     m_light_vp: [[f32; 4]; 4],
     light_pos: [f32; 4],
-    light_color: [f32; 4],
+    light_color: [f32; 3],
+    pad: f32,
 }
 unsafe impl Pod for Constants {}
 unsafe impl Zeroable for Constants {}
@@ -31,6 +32,7 @@ impl Constants {
             m_light_vp,
             light_pos: light.pos,
             light_color: light.color,
+            pad: 1.0,
         }
     }
 }

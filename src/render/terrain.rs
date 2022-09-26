@@ -39,7 +39,8 @@ struct Constants {
     params: [u32; 4],
     cam_origin_dir: [f32; 4],
     sample_range: [f32; 4], // -x, +x, -y, +y
-    fog_color: [f32; 4],
+    fog_color: [f32; 3],
+    pad: f32,
     fog_params: [f32; 4],
 }
 unsafe impl Pod for Constants {}
@@ -1067,6 +1068,7 @@ impl Context {
                         sc.sample_y.end,
                     ],
                     fog_color: fog.color,
+                    pad: 1.0,
                     fog_params: [depth_range.end - fog.depth, depth_range.end, 0.0, 0.0],
                 }),
                 usage: wgpu::BufferUsages::COPY_SRC,
@@ -1157,7 +1159,8 @@ impl Context {
                         sc.sample_y.start,
                         sc.sample_y.end,
                     ],
-                    fog_color: [0.0; 4],
+                    fog_color: [0.0; 3],
+                    pad: 1.0,
                     fog_params: [10000000.0, 10000000.0, 0.0, 0.0],
                 }),
                 usage: wgpu::BufferUsages::COPY_SRC,

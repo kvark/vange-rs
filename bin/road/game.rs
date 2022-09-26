@@ -52,6 +52,7 @@ pub struct Agent {
     _name: String,
     spirit: Spirit,
     car: config::car::CarInfo,
+    car_name: String,
     color: BodyColor,
     control: Control,
     jump: Option<f32>,
@@ -62,6 +63,7 @@ impl Agent {
     fn spawn(
         name: String,
         car: &config::car::CarInfo,
+        car_name: String,
         color: BodyColor,
         coords: (i32, i32),
         orientation: cgmath::Rad<f32>,
@@ -81,6 +83,7 @@ impl Agent {
                 roll_time: 0.0,
             }),
             car: car.clone(),
+            car_name,
             color,
             control: Control::default(),
             jump: None,
@@ -88,6 +91,19 @@ impl Agent {
                 transform,
                 dynamo: physics::Dynamo::default(),
             },
+        }
+    }
+
+    fn change_car(&mut self, car: &config::car::CarInfo, car_name: String) {
+        self.car = car.clone();
+        self.car_name = car_name;
+        match self.physics {
+            Physics::Cpu {
+                ref mut transform,
+                dynamo: _,
+            } => {
+                transform.scale = car.scale;
+            }
         }
     }
 
@@ -376,12 +392,13 @@ impl Game {
         let mut player_agent = Agent::spawn(
             "Player".to_string(),
             match db.cars.get(&settings.car.id) {
-                Some(name) => name,
+                Some(info) => info,
                 None => panic!(
                     "Unknown car '{}', valid names are: {:?}",
                     settings.car.id, car_names
                 ),
             },
+            settings.car.id.clone(),
             settings.car.color,
             coords,
             cgmath::Rad::turn_div_2(),
@@ -422,6 +439,7 @@ impl Game {
             let agent = Agent::spawn(
                 format!("Other-{}", i),
                 &db.cars[car_id],
+                car_id.clone(),
                 color,
                 (x, y),
                 rng.gen(),
@@ -557,7 +575,7 @@ impl Application for Game {
     fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
         profiling::scope!("Update");
 
-        self.stats.frame_deltas.push(delta);
+        self.stats.frame_deltas.push(delta * 1000.0);
         if self.stats.frame_deltas.len() > 64 {
             self.stats.frame_deltas.remove(0);
         }
@@ -704,16 +722,104 @@ impl Application for Game {
 
     fn draw_ui(&mut self, context: &egui::Context) {
         let fd_points = egui::plot::PlotPoints::from_ys_f32(&self.stats.frame_deltas);
-        let fd_line = egui::plot::Line::new(fd_points);
+        let fd_line = egui::plot::Line::new(fd_points).name("last");
+
+        let player = self
+            .agents
+            .iter_mut()
+            .find(|agent| agent.spirit == Spirit::Player)
+            .unwrap();
+        let mut selected_car = &player.car_name;
 
         egui::SidePanel::right("Tweaks").show(context, |ui| {
-            ui.label("Renderer:");
-            ui.group(|ui| self.render.draw_ui(ui));
-            egui::plot::Plot::new("Frame time").show(ui, |plot_ui| {
-                plot_ui.line(fd_line);
-                plot_ui.hline(egui::plot::HLine::new(1.0 / 60.0).name("smooth"));
+            ui.group(|ui| {
+                ui.label("Player:");
+                egui::ComboBox::from_label("Mechous")
+                    .selected_text(&player.car_name)
+                    .show_ui(ui, |ui| {
+                        for car_name in self.db.cars.keys() {
+                            ui.selectable_value(&mut selected_car, car_name, car_name);
+                        }
+                    });
+                egui::ComboBox::from_label("Color")
+                    .selected_text(player.color.name())
+                    .show_ui(ui, |ui| {
+                        for &color in &[
+                            BodyColor::Green,
+                            BodyColor::Red,
+                            BodyColor::Blue,
+                            BodyColor::Yellow,
+                            BodyColor::Gray,
+                        ] {
+                            ui.selectable_value(&mut player.color, color, color.name());
+                        }
+                    });
+                if let Physics::Cpu {
+                    ref mut transform,
+                    dynamo: _,
+                } = player.physics
+                {
+                    ui.horizontal(|ui| {
+                        ui.label("Position");
+                        ui.add(
+                            egui::DragValue::new(&mut transform.disp.x)
+                                .speed(1.0)
+                                .prefix("x:"),
+                        );
+                        ui.add(
+                            egui::DragValue::new(&mut transform.disp.y)
+                                .speed(1.0)
+                                .prefix("y:"),
+                        );
+                    });
+                }
             });
+            if let CameraStyle::Follow {
+                ref mut follow,
+                ref mut ground_anchor,
+            } = self.cam_style
+            {
+                ui.group(|ui| {
+                    ui.label("Camera:");
+                    ui.add(egui::Slider::new(&mut follow.angle_x.0, -90.0..=0.0).text("Angle"));
+                    ui.horizontal(|ui| {
+                        ui.label("Offset x:0.0");
+                        ui.add(
+                            egui::DragValue::new(&mut follow.offset.y)
+                                .speed(1.0)
+                                .prefix("y:"),
+                        );
+                        ui.add(
+                            egui::DragValue::new(&mut follow.offset.z)
+                                .speed(1.0)
+                                .prefix("z:"),
+                        );
+                    });
+                    ui.add(egui::Slider::new(&mut follow.speed, 0.1..=10.0).text("Speed"));
+                    ui.checkbox(ground_anchor, "Ground anchor");
+                });
+            }
+            ui.group(|ui| {
+                ui.label("Renderer:");
+                self.render.draw_ui(ui);
+            });
+            egui::plot::Plot::new("Frame time")
+                .allow_zoom(false)
+                .allow_scroll(false)
+                .allow_drag(false)
+                .show_x(false)
+                .include_y(0.0)
+                .show_axes([false, true])
+                .show(ui, |plot_ui| {
+                    plot_ui.line(fd_line);
+                    plot_ui.hline(egui::plot::HLine::new(1.0 / 60.0).name("smooth"));
+                });
         });
+
+        if selected_car != &player.car_name {
+            let name = selected_car.clone();
+            player.change_car(&self.db.cars[&name], name);
+        }
     }
 
     fn draw(&mut self, device: &wgpu::Device, targets: ScreenTargets) -> wgpu::CommandBuffer {

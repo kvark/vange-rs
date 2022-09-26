@@ -39,7 +39,7 @@ const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
 ];
 
 #[repr(u32)]
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 pub enum BodyColor {
     Dummy = 1,
     Green = 21,
@@ -47,6 +47,19 @@ pub enum BodyColor {
     Blue = 8,
     Yellow = 9,
     Gray = 10,
+}
+
+impl BodyColor {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Dummy => "dummy",
+            Self::Green => "green",
+            Self::Red => "red",
+            Self::Blue => "blue",
+            Self::Yellow => "yellow",
+            Self::Gray => "gray",
+        }
+    }
 }
 
 #[repr(C)]

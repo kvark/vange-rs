@@ -47,14 +47,14 @@
 		wgpu_trace_path: "",
 		light: (
 			pos: (1, 2, 4, 0), // w=0 for directional, w=1 for point light
-			color: (1, 1, 1, 1),
+			color: (1, 1, 1),
 			shadow: (
 				size: 1024,
 				terrain: RayTraced,
 			),
 		),
 		fog: (
-			color: (0.1, 0.2, 0.3, 1.0),
+			color: (0.1, 0.2, 0.3),
 			depth: 50,
 		),
 		terrain: RayTraced,
