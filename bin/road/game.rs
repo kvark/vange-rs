@@ -716,7 +716,7 @@ impl Application for Game {
         });
     }
 
-    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) {
+    fn draw(&mut self, device: &wgpu::Device, targets: ScreenTargets) -> wgpu::CommandBuffer {
         let clipper = Clipper::new(&self.cam);
         self.batcher.clear();
 
@@ -737,14 +737,18 @@ impl Application for Game {
                 .add_model(&agent.car.model, transform, debug_shape_scale, agent.color);
         }
 
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("World"),
+        });
+
         self.render.draw_world(
+            &mut encoder,
             &mut self.batcher,
             &self.level,
             &self.cam,
             targets,
             None,
             device,
-            queue,
         );
 
         /*
@@ -753,5 +757,7 @@ impl Application for Game {
             self.cam.get_view_proj().into(),
             encoder,
         );*/
+
+        encoder.finish()
     }
 }

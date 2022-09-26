@@ -91,7 +91,7 @@ impl Application for ResourceView {
         true
     }
 
-    fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
+    fn update(&mut self, _device: &wgpu::Device, queue: &wgpu::Queue, delta: f32) {
         use cgmath::Transform;
 
         if self.rotation != cgmath::Rad(0.) {
@@ -103,6 +103,13 @@ impl Application for ResourceView {
             };
             self.transform = other.concat(&self.transform);
         }
+
+        let global_data = render::global::Constants::new(&self.cam, &self.light_config, None);
+        queue.write_buffer(
+            &self.global.uniform_buf,
+            0,
+            bytemuck::bytes_of(&global_data),
+        );
     }
 
     fn resize(&mut self, _device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -117,7 +124,11 @@ impl Application for ResourceView {
 
     fn draw_ui(&mut self, _context: &egui::Context) {}
 
-    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: render::ScreenTargets) {
+    fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        targets: render::ScreenTargets,
+    ) -> wgpu::CommandBuffer {
         let mut batcher = render::Batcher::new();
         batcher.add_model(
             &self.model,
@@ -126,13 +137,6 @@ impl Application for ResourceView {
             render::object::BodyColor::Dummy,
         );
         batcher.prepare(device);
-
-        let global_data = render::global::Constants::new(&self.cam, &self.light_config, None);
-        queue.write_buffer(
-            &self.global.uniform_buf,
-            0,
-            bytemuck::bytes_of(&global_data),
-        );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Draw"),
@@ -171,6 +175,6 @@ impl Application for ResourceView {
             batcher.draw(&mut pass);
         }
 
-        queue.submit(Some(encoder.finish()));
+        encoder.finish()
     }
 }

@@ -352,15 +352,21 @@ impl Application for LevelView {
 
     fn draw_ui(&mut self, _context: &egui::Context) {}
 
-    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) {
+    fn draw(&mut self, device: &wgpu::Device, targets: ScreenTargets) -> wgpu::CommandBuffer {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("World"),
+        });
+
         self.render.draw_world(
+            &mut encoder,
             &mut Batcher::new(),
             &self.level,
             &self.cam,
             targets,
             None,
             device,
-            queue,
         );
+
+        encoder.finish()
     }
 }

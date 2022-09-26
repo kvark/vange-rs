@@ -21,7 +21,7 @@ pub trait Application {
     fn reload(&mut self, device: &wgpu::Device);
     fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, delta: f32);
     fn draw_ui(&mut self, context: &egui::Context);
-    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets);
+    fn draw(&mut self, device: &wgpu::Device, targets: ScreenTargets) -> wgpu::CommandBuffer;
 }
 
 struct WindowContext {
@@ -295,7 +295,7 @@ impl Harness {
                         color: &view,
                         depth: &win.depth_target,
                     };
-                    app.draw(&gfx.device, &gfx.queue, targets);
+                    let command_buffer = app.draw(&gfx.device, targets);
 
                     let mut egui_encoder =
                         gfx.device
@@ -313,7 +313,9 @@ impl Harness {
                             None,
                         )
                         .unwrap();
-                    gfx.queue.submit(Some(egui_encoder.finish()));
+
+                    gfx.queue
+                        .submit(vec![command_buffer, egui_encoder.finish()]);
                     egui_pass
                         .remove_textures(egui_output.textures_delta)
                         .unwrap();
