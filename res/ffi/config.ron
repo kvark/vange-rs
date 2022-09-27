@@ -1,5 +1,6 @@
 (
 	wgpu_trace_path: "",
+	allow_tearing: false,
 	light: (
 		pos: (1, 0, 1, 0), // w=0 for directional, w=1 for point light
 		color: (1, 1, 1),

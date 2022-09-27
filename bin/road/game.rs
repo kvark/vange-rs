@@ -288,11 +288,11 @@ pub struct Game {
     db: DataBase,
     render: Render,
     batcher: Batcher,
-    //debug_collision_map: bool,
     line_buffer: LineBuffer,
     level: level::Level,
     agents: Vec<Agent>,
     stats: Stats,
+    ui: config::settings::Ui,
     cam: space::Camera,
     cam_style: CameraStyle,
     max_quant: f32,
@@ -456,6 +456,7 @@ impl Game {
             level,
             agents,
             stats: Stats::default(),
+            ui: settings.ui.clone(),
             cam,
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
@@ -576,7 +577,7 @@ impl Application for Game {
         profiling::scope!("Update");
 
         self.stats.frame_deltas.push(delta * 1000.0);
-        if self.stats.frame_deltas.len() > 64 {
+        if self.stats.frame_deltas.len() > self.ui.frame_history {
             self.stats.frame_deltas.remove(0);
         }
 
@@ -721,6 +722,10 @@ impl Application for Game {
     }
 
     fn draw_ui(&mut self, context: &egui::Context) {
+        if !self.ui.enabled {
+            return;
+        }
+
         let fd_points = egui::plot::PlotPoints::from_ys_f32(&self.stats.frame_deltas);
         let fd_line = egui::plot::Line::new(fd_points).name("last");
 
@@ -812,7 +817,7 @@ impl Application for Game {
                 .show_axes([false, true])
                 .show(ui, |plot_ui| {
                     plot_ui.line(fd_line);
-                    plot_ui.hline(egui::plot::HLine::new(1.0 / 60.0).name("smooth"));
+                    plot_ui.hline(egui::plot::HLine::new(1000.0 / 60.0).name("smooth"));
                 });
         });
 
