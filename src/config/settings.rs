@@ -146,11 +146,18 @@ pub struct Fog {
 #[derive(Clone, Deserialize)]
 pub struct Render {
     pub wgpu_trace_path: String,
+    pub allow_tearing: bool,
     pub light: Light,
     pub terrain: Terrain,
     pub water: Water,
     pub fog: Fog,
     pub debug: DebugRender,
+}
+
+#[derive(Copy, Clone, Default, Deserialize)]
+pub struct Ui {
+    pub enabled: bool,
+    pub frame_history: usize,
 }
 
 #[derive(Deserialize)]
@@ -161,6 +168,7 @@ pub struct Settings {
     pub window: Window,
     pub backend: Backend,
     pub render: Render,
+    pub ui: Ui,
 }
 
 impl Settings {

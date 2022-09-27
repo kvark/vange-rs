@@ -114,11 +114,12 @@ impl Harness {
         let present_mode = if surface_modes.contains(&wgpu::PresentMode::Mailbox) {
             wgpu::PresentMode::Mailbox
         } else {
-            log::warn!(
-                "Mailbox present is not supported, defaulting to {:?}",
-                surface_modes[0]
-            );
-            surface_modes[0]
+            log::warn!("Mailbox present is not supported");
+            if settings.render.allow_tearing {
+                wgpu::PresentMode::Immediate
+            } else {
+                wgpu::PresentMode::Fifo
+            }
         };
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,

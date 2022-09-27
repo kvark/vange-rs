@@ -45,6 +45,7 @@
 	backend: Auto, // Auto, Vulkan, Metal, DX12, GL
 	render: (
 		wgpu_trace_path: "",
+		allow_tearing: false,
 		light: (
 			pos: (1, 2, 4, 0), // w=0 for directional, w=1 for point light
 			color: (1, 1, 1),
@@ -70,5 +71,9 @@
 			collision_map: false,
 			impulses: false,
 		),
+	),
+	ui: (
+		enabled: true,
+		frame_history: 50,
 	),
 )
