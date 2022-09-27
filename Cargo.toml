@@ -29,10 +29,6 @@ name = "road"
 path = "bin/road/main.rs"
 
 [[bin]]
-name = "car"
-path = "bin/car/main.rs"
-
-[[bin]]
 name = "model"
 path = "bin/model/main.rs"
 

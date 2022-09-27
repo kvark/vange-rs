@@ -42,17 +42,6 @@ Controls:
 
 <img alt="game" src="etc/shots/Road11-pause.png" width="25%">
 
-### Mechous viewer/debugger
-`car` binary allows to see the mechos with items selected by the configuration. It also shows the debug collision info.
-```bash
-cargo run --bin car
-```
-Controls:
-  - `WSAD`: rotate the camera
-  - `Esc`: exit
-
-<img alt="mechous debugging" src="etc/shots/Road10-debug-shape.png" width="25%">
-
 ### 3D model viewer
 `model` binary loads a selected "m3d" from games resource to observe.
 ```bash
@@ -63,6 +52,10 @@ Controls:
   - `Esc`: exit
 
 <img alt="item view" src="etc/shots/Road6a-item.png" width="20%">
+
+Without the argument, the viewer shows configured car and debug collision info:
+
+<img alt="mechous debugging" src="etc/shots/Road10-debug-shape.png" width="25%">
 
 ### Level viewer
 `level` binary allows to fly over a level with free camera. Useful for debugging the level rendering shader.

@@ -17,14 +17,14 @@ fn main() {
         .optflag("h", "help", "print this help menu");
 
     let matches = options.parse(&args[1..]).unwrap();
-    if matches.opt_present("h") || matches.free.len() != 1 {
+    if matches.opt_present("h") || matches.free.len() > 1 {
         println!("Vangers model viewer");
-        let brief = format!("Usage: {} [options] <path_to_model>", args[0]);
+        let brief = format!("Usage: {} [options] [path_to_model]", args[0]);
         println!("{}", options.usage(&brief));
         return;
     }
 
-    let path = &matches.free[0];
+    let path = matches.free.first();
     let app = app::ResourceView::new(path, &settings, &harness.graphics_ctx);
 
     harness.main_loop(app);
