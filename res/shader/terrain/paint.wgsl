@@ -24,27 +24,21 @@ fn vertex(
     let pos_center = generate_paint_pos(instance_index);
 
     let suf = get_surface(pos_center);
-    let altitude = select(0.0,
-        select(suf.low_alt,
-            select(
-                suf.low_alt + suf.delta,
-                suf.high_alt,
-                vertex_index >= 12u,
-            ),
-            vertex_index >= 8u,
-        ),
-        vertex_index >= 4u,
-    );
-    let plane_pos = vec3<f32>(pos_center, altitude);
-        
-    let cx = select(0.0, 1.0, ((vertex_index + 0u) & 3u) >= 2u);
-    let cy = select(0.0, 1.0, ((vertex_index + 1u) & 3u) >= 2u);
-    let pos = floor(pos_center) + vec2<f32>(cx, cy);
 
-    let ty = select(suf.low_type, suf.high_type, vertex_index >= 8u);
+    let axis = (vec3<u32>(vertex_index) & vec3<u32>(1u, 2u, 4u)) != vec3<u32>(0u);
+    let is_high = vertex_index > 10u;
+    let heights = vec4<f32>(0.0, suf.low_alt, suf.low_alt + suf.delta, suf.high_alt);
+    let shift = (u_Globals.camera_pos.xyz > vec3<f32>(pos_center, heights.z)) != axis;
+    let h2 = select(heights.xy, heights.zw, is_high);
+    let altitude = select(h2.x, h2.y, shift.z);
+    let plane_pos = vec3<f32>(pos_center, altitude);
+
+    let pos = vec3<f32>(floor(pos_center) + vec2<f32>(shift.xy), altitude);
+    let ty = select(suf.low_type, suf.high_type, is_high);
+
     return Varyings(
-        u_Globals.view_proj * vec4<f32>(pos, altitude, 1.0),
-        vec3<f32>(pos, altitude),
+        u_Globals.view_proj * vec4<f32>(pos, 1.0),
+        pos,
         ty,
         plane_pos,
     );
