@@ -312,7 +312,7 @@ impl Context {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face: wgpu::FrontFace::Cw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -759,11 +759,13 @@ impl Context {
                         Vertex { _pos: [0; 4] }, //dummy
                     ],
                     &[
+                        // Bit 0 = shift in X away from the camera
+                        // Bits 1=Y and 2=Z in the same way
                         // lower half
-                        0, 4, 7, 7, 3, 0, 1, 5, 4, 4, 0, 1, 2, 6, 5, 5, 1, 2, 3, 7, 6, 6, 2, 3, 4,
-                        5, 6, 6, 7, 4, // higher half
-                        8, 12, 15, 15, 11, 8, 9, 13, 12, 12, 8, 9, 10, 14, 13, 13, 9, 10, 11, 16,
-                        14, 14, 10, 11, 12, 13, 14, 14, 15, 12,
+                        0, 1, 3, 3, 2, 0, 0, 2, 6, 6, 4, 0, 0, 4, 5, 5, 1, 0,
+                        // higher half
+                        0x10, 0x11, 0x13, 0x13, 0x12, 0x10, 0x10, 0x12, 0x16, 0x16, 0x14, 0x10,
+                        0x10, 0x14, 0x15, 0x15, 0x11, 0x10,
                     ],
                     &gfx.device,
                 );
