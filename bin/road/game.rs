@@ -284,6 +284,17 @@ struct Roll {
     time: f32,
 }
 
+#[derive(Default)]
+struct Input {
+    is_paused: bool,
+    spin_hor: f32,
+    spin_ver: f32,
+    turbo: bool,
+    jump: Option<f32>,
+    roll: Option<Roll>,
+    tick: Option<f32>,
+}
+
 pub struct Game {
     db: DataBase,
     render: Render,
@@ -296,13 +307,7 @@ pub struct Game {
     cam: space::Camera,
     cam_style: CameraStyle,
     max_quant: f32,
-    spin_hor: f32,
-    spin_ver: f32,
-    turbo: bool,
-    jump: Option<f32>,
-    roll: Option<Roll>,
-    is_paused: bool,
-    tick: Option<f32>,
+    input: Input,
 }
 
 impl Game {
@@ -460,14 +465,7 @@ impl Game {
             cam,
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
-            //debug_collision_map: settings.render.debug.collision_map,
-            spin_hor: 0.0,
-            spin_ver: 0.0,
-            turbo: false,
-            jump: None,
-            roll: None,
-            is_paused: false,
-            tick: None,
+            input: Input::default(),
         }
     }
 
@@ -498,22 +496,22 @@ impl Application for Game {
                     let center = match player.physics {
                         Physics::Cpu { ref transform, .. } => *transform,
                     };
-                    self.tick = None;
-                    if self.is_paused {
-                        self.is_paused = false;
+                    self.input.tick = None;
+                    if self.input.is_paused {
+                        self.input.is_paused = false;
                         self.cam.loc = center.disp + cgmath::vec3(0.0, 0.0, 200.0);
                         self.cam.rot = cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0);
                     } else {
-                        self.is_paused = true;
+                        self.input.is_paused = true;
                         self.cam.focus_on(&center);
                     }
                 }
-                Key::Comma => self.tick = Some(-1.0),
-                Key::Period => self.tick = Some(1.0),
-                Key::LShift => self.turbo = true,
-                Key::LAlt => self.jump = Some(0.0),
-                Key::W => self.spin_ver = self.cam.scale.x,
-                Key::S => self.spin_ver = -self.cam.scale.x,
+                Key::Comma => self.input.tick = Some(-1.0),
+                Key::Period => self.input.tick = Some(1.0),
+                Key::LShift => self.input.turbo = true,
+                Key::LAlt => self.input.jump = Some(0.0),
+                Key::W => self.input.spin_ver = self.cam.scale.x,
+                Key::S => self.input.spin_ver = -self.cam.scale.x,
                 Key::R => {
                     if let Physics::Cpu {
                         ref mut transform,
@@ -525,16 +523,16 @@ impl Application for Game {
                         dynamo.angular_velocity = cgmath::Vector3::zero();
                     }
                 }
-                Key::A => self.spin_hor = -self.cam.scale.y,
-                Key::D => self.spin_hor = self.cam.scale.y,
+                Key::A => self.input.spin_hor = -self.cam.scale.y,
+                Key::D => self.input.spin_hor = self.cam.scale.y,
                 Key::Q => {
-                    self.roll = Some(Roll {
+                    self.input.roll = Some(Roll {
                         dir: -self.cam.scale.y,
                         time: 0.0,
                     })
                 }
                 Key::E => {
-                    self.roll = Some(Roll {
+                    self.input.roll = Some(Roll {
                         dir: self.cam.scale.y,
                         time: 0.0,
                     })
@@ -546,11 +544,11 @@ impl Application for Game {
                 virtual_keycode: Some(key),
                 ..
             } => match key {
-                Key::W | Key::S => self.spin_ver = 0.0,
-                Key::A | Key::D => self.spin_hor = 0.0,
-                Key::Q | Key::E => self.roll = None,
-                Key::LShift => self.turbo = false,
-                Key::LAlt => player.jump = self.jump.take(),
+                Key::W | Key::S => self.input.spin_ver = 0.0,
+                Key::A | Key::D => self.input.spin_hor = 0.0,
+                Key::Q | Key::E => self.input.roll = None,
+                Key::LShift => self.input.turbo = false,
+                Key::LAlt => player.jump = self.input.jump.take(),
                 _ => (),
             },
             /*
@@ -583,7 +581,7 @@ impl Application for Game {
 
         let focus_point = self.cam.intersect_height(level::HEIGHT_SCALE as f32 * 0.3);
 
-        if let Some(ref mut jump) = self.jump {
+        if let Some(ref mut jump) = self.input.jump {
             let power = delta * (self.db.common.speed.standard_frame_rate as f32);
             *jump = (*jump + power).min(self.db.common.force.max_jump_power);
         }
@@ -598,8 +596,8 @@ impl Application for Game {
                 Physics::Cpu { ref transform, .. } => *transform,
             };
 
-            if self.is_paused {
-                if let Some(tick) = self.tick.take() {
+            if self.input.is_paused {
+                if let Some(tick) = self.input.tick.take() {
                     self.line_buffer.clear();
                     player.control.roll = 0.0;
 
@@ -616,17 +614,17 @@ impl Application for Game {
 
                 self.cam.rotate_focus(
                     &target,
-                    cgmath::Rad(2.0 * delta * self.spin_hor),
-                    cgmath::Rad(delta * self.spin_ver),
+                    cgmath::Rad(2.0 * delta * self.input.spin_hor),
+                    cgmath::Rad(delta * self.input.spin_ver),
                 );
 
                 return;
             }
 
-            player.control.rudder = self.spin_hor;
-            player.control.motor = 1.0 * self.spin_ver;
-            player.control.turbo = self.turbo;
-            player.control.roll = match self.roll {
+            player.control.rudder = self.input.spin_hor;
+            player.control.motor = 1.0 * self.input.spin_ver;
+            player.control.turbo = self.input.turbo;
+            player.control.roll = match self.input.roll {
                 Some(ref mut roll) => {
                     let roll_count = (roll.time * self.db.common.speed.standard_frame_rate as f32)
                         .min(100.0) as u8;
