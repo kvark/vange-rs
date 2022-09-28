@@ -138,7 +138,7 @@ impl Context {
             attributes: &wgpu::vertex_attr_array![0 => Sint8x4, 1 => Uint32, 2 => Snorm8x4],
         };
         let instance_desc = InstanceDesc::new();
-        let shader = super::load_shader("object", device).unwrap();
+        let shader = super::load_shader("object", &[], device).unwrap();
 
         let main = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("object"),

@@ -127,6 +127,9 @@ pub enum Terrain {
         max_steps: u32,
         debug: bool,
     },
+    RayVoxelTraced {
+        voxel_size: [u32; 3],
+    },
     Sliced,
     Painted,
     Scattered {

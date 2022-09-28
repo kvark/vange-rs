@@ -28,7 +28,7 @@ impl MaxMipper {
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
     ) -> wgpu::RenderPipeline {
-        let shader = super::load_shader("terrain/mip", device).unwrap();
+        let shader = super::load_shader("terrain/mip", &[], device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("mipmap"),
             layout: Some(layout),
@@ -127,11 +127,12 @@ impl MaxMipper {
     pub fn update(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        rects: &[super::Rect],
+        rects: &[super::DirtyRect],
         device: &wgpu::Device,
     ) {
         let mut vertex_data = Vec::with_capacity(rects.len() * 6);
-        for r in rects.iter() {
+        for dr in rects.iter() {
+            let r = &dr.rect;
             let v_abs = [
                 (r.x, r.y),
                 (r.x + r.w, r.y),

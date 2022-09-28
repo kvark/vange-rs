@@ -400,7 +400,13 @@ pub unsafe extern "C" fn rv_map_update_data(ctx: &mut Context, region: Rect) {
         );
     }
 
-    lc.render.terrain.dirty_rects.push(region.to_native());
+    lc.render
+        .terrain
+        .dirty_rects
+        .push(vangers::render::DirtyRect {
+            rect: region.to_native(),
+            need_upload: true,
+        });
 }
 
 #[no_mangle]

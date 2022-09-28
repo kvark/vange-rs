@@ -53,6 +53,17 @@ struct ScatterConstants {
     sample_x: Range<f32>,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct VoxelConstants {
+    voxel_size: [u32; 4],
+    max_depth: f32,
+    pad: [f32; 3],
+}
+
+unsafe impl Pod for VoxelConstants {}
+unsafe impl Zeroable for VoxelConstants {}
+
 //Note: this is very similar to `visible_bounds_at()`
 // but it searches in a different parameter space
 fn compute_scatter_constants(cam: &Camera) -> ScatterConstants {
@@ -146,6 +157,11 @@ impl Geometry {
     }
 }
 
+struct VoxelMip {
+    extent: wgpu::Extent3d,
+    bake_bind_group: wgpu::BindGroup,
+}
+
 enum Kind {
     Ray {
         pipeline: wgpu::RenderPipeline,
@@ -154,6 +170,16 @@ enum Kind {
         pipeline: wgpu::RenderPipeline,
         mipper: MaxMipper,
         params: [u32; 4],
+    },
+    RayVoxel {
+        bake_pipeline_layout: wgpu::PipelineLayout,
+        draw_pipeline_layout: wgpu::PipelineLayout,
+        init_pipeline: wgpu::ComputePipeline,
+        mip_pipeline: wgpu::ComputePipeline,
+        draw_pipeline: wgpu::RenderPipeline,
+        draw_bind_group: wgpu::BindGroup,
+        voxel_size: [u32; 3],
+        mips: Vec<VoxelMip>,
     },
     Slice {
         pipeline: wgpu::RenderPipeline,
@@ -194,7 +220,7 @@ pub struct Context {
     terrain_buf: wgpu::Buffer,
     palette_texture: wgpu::Texture,
     pub flood: Flood,
-    pub dirty_rects: Vec<super::Rect>,
+    pub dirty_rects: Vec<super::DirtyRect>,
     pub dirty_flood: bool,
     pub dirty_palette: Range<u32>,
 }
@@ -218,7 +244,7 @@ impl Context {
             PipelineKind::Shadow => (&[][..], SHADOW_FORMAT),
         };
 
-        let shader = super::load_shader(name, device).unwrap();
+        let shader = super::load_shader(name, &[], device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain-ray"),
             layout: Some(layout),
@@ -256,12 +282,80 @@ impl Context {
         })
     }
 
+    fn create_voxel_pipelines(
+        bake_layout: &wgpu::PipelineLayout,
+        draw_layout: &wgpu::PipelineLayout,
+        device: &wgpu::Device,
+        color_format: wgpu::TextureFormat,
+        voxel_size: [u32; 3],
+    ) -> (
+        wgpu::ComputePipeline,
+        wgpu::ComputePipeline,
+        wgpu::RenderPipeline,
+    ) {
+        let substitutes = [
+            ("group_w", format!("{}", voxel_size[0])),
+            ("group_h", format!("{}", voxel_size[1])),
+            ("group_d", format!("{}", voxel_size[2])),
+        ];
+        let bake_shader = super::load_shader("terrain/voxel-bake", &substitutes, device).unwrap();
+        let init_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Voxel init"),
+            layout: Some(bake_layout),
+            module: &bake_shader,
+            entry_point: "init",
+        });
+        let mip_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Voxel mip"),
+            layout: Some(bake_layout),
+            module: &bake_shader,
+            entry_point: "mip",
+        });
+
+        let draw_shader = super::load_shader("terrain/voxel-draw", &[], device).unwrap();
+        let color_descs = [Some(wgpu::ColorTargetState {
+            format: color_format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::all(),
+        })];
+
+        let draw_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("terrain-ray-voxel"),
+            layout: Some(draw_layout),
+            vertex: wgpu::VertexState {
+                module: &draw_shader,
+                entry_point: "main",
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &draw_shader,
+                entry_point: "draw",
+                targets: &color_descs,
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+
+        (init_pipeline, mip_pipeline, draw_pipeline)
+    }
+
     fn create_slice_pipeline(
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
         color_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
-        let shader = super::load_shader("terrain/slice", device).unwrap();
+        let shader = super::load_shader("terrain/slice", &[], device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain-slice"),
             layout: Some(layout),
@@ -296,7 +390,7 @@ impl Context {
         device: &wgpu::Device,
         color_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
-        let shader = super::load_shader("terrain/paint", device).unwrap();
+        let shader = super::load_shader("terrain/paint", &[], device).unwrap();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain-paint"),
             layout: Some(layout),
@@ -337,7 +431,7 @@ impl Context {
         wgpu::ComputePipeline,
         wgpu::RenderPipeline,
     ) {
-        let shader = super::load_shader("terrain/scatter", device).unwrap();
+        let shader = super::load_shader("terrain/scatter", &[], device).unwrap();
         let scatter_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("terrain-scatter"),
             layout: Some(layout),
@@ -538,7 +632,7 @@ impl Context {
                         // terrain data
                         wgpu::BindGroupLayoutEntry {
                             binding: 2,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Storage { read_only: true },
                                 has_dynamic_offset: false,
@@ -726,6 +820,193 @@ impl Context {
                     ],
                 }
             }
+            settings::Terrain::RayVoxelTraced { voxel_size } => {
+                let bake_bg_layout =
+                    gfx.device
+                        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                            label: Some("Voxel bake"),
+                            entries: &[
+                                // source layer
+                                wgpu::BindGroupLayoutEntry {
+                                    binding: 0,
+                                    visibility: wgpu::ShaderStages::COMPUTE,
+                                    ty: wgpu::BindingType::Texture {
+                                        sample_type: wgpu::TextureSampleType::Uint,
+                                        view_dimension: wgpu::TextureViewDimension::D3,
+                                        multisampled: false,
+                                    },
+                                    count: None,
+                                },
+                                // target layer
+                                wgpu::BindGroupLayoutEntry {
+                                    binding: 1,
+                                    visibility: wgpu::ShaderStages::COMPUTE,
+                                    ty: wgpu::BindingType::StorageTexture {
+                                        access: wgpu::StorageTextureAccess::WriteOnly,
+                                        format: wgpu::TextureFormat::R32Uint,
+                                        view_dimension: wgpu::TextureViewDimension::D3,
+                                    },
+                                    count: None,
+                                },
+                            ],
+                        });
+                let bake_pipeline_layout =
+                    gfx.device
+                        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                            label: Some("Voxel bake"),
+                            bind_group_layouts: &[&bake_bg_layout, &bind_group_layout],
+                            push_constant_ranges: &[],
+                        });
+
+                let draw_bg_layout =
+                    gfx.device
+                        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                            label: Some("Voxel draw"),
+                            entries: &[
+                                // source voxel map
+                                wgpu::BindGroupLayoutEntry {
+                                    binding: 0,
+                                    visibility: wgpu::ShaderStages::all(),
+                                    ty: wgpu::BindingType::Texture {
+                                        sample_type: wgpu::TextureSampleType::Uint,
+                                        view_dimension: wgpu::TextureViewDimension::D3,
+                                        multisampled: false,
+                                    },
+                                    count: None,
+                                },
+                                // uniform buffer
+                                wgpu::BindGroupLayoutEntry {
+                                    binding: 1,
+                                    visibility: wgpu::ShaderStages::FRAGMENT,
+                                    ty: wgpu::BindingType::Buffer {
+                                        ty: wgpu::BufferBindingType::Uniform,
+                                        has_dynamic_offset: false,
+                                        min_binding_size: wgpu::BufferSize::new(mem::size_of::<
+                                            VoxelConstants,
+                                        >(
+                                        )
+                                            as _),
+                                    },
+                                    count: None,
+                                },
+                            ],
+                        });
+                let draw_pipeline_layout =
+                    gfx.device
+                        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                            label: Some("voxel"),
+                            bind_group_layouts: &[
+                                &global.bind_group_layout,
+                                &bind_group_layout,
+                                &draw_bg_layout,
+                            ],
+                            push_constant_ranges: &[],
+                        });
+
+                let (init_pipeline, mip_pipeline, draw_pipeline) = Self::create_voxel_pipelines(
+                    &bake_pipeline_layout,
+                    &draw_pipeline_layout,
+                    &gfx.device,
+                    gfx.color_format,
+                    voxel_size,
+                );
+
+                let grid_extent = wgpu::Extent3d {
+                    width: (extent.width - 1) / voxel_size[0] + 1,
+                    height: (extent.height - 1) / voxel_size[1] + 1,
+                    depth_or_array_layers: (level::HEIGHT_SCALE - 1) / voxel_size[2] + 1,
+                };
+                let mip_level_count = 32
+                    - grid_extent
+                        .width
+                        .min(grid_extent.height)
+                        .min(grid_extent.depth_or_array_layers)
+                        .leading_zeros();
+                let grid = gfx.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("Grid"),
+                    size: grid_extent,
+                    mip_level_count,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D3,
+                    format: wgpu::TextureFormat::R32Uint,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::STORAGE_BINDING,
+                });
+                let grid_view = grid.create_view(&wgpu::TextureViewDescriptor::default());
+                let constants = VoxelConstants {
+                    voxel_size: [voxel_size[0], voxel_size[1], voxel_size[2], 0],
+                    max_depth: 1000.0,
+                    pad: [0.0; 3],
+                };
+                let voxel_constants =
+                    gfx.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("Voxel constants"),
+                            contents: bytemuck::bytes_of(&constants),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+                let draw_bind_group = gfx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Voxel draw"),
+                    layout: &draw_bg_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&grid_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: voxel_constants.as_entire_binding(),
+                        },
+                    ],
+                });
+
+                let mut mips = Vec::new();
+                let mut src_view = grid.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("dummy grid"),
+                    base_mip_level: 1,
+                    ..Default::default()
+                });
+                for base_mip_level in 0..mip_level_count {
+                    let label = format!("Voxel mip-{}", base_mip_level);
+                    let dst_view = grid.create_view(&wgpu::TextureViewDescriptor {
+                        label: Some(&label),
+                        base_mip_level,
+                        mip_level_count: NonZeroU32::new(1),
+                        ..Default::default()
+                    });
+                    let bake_bind_group =
+                        gfx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some(&label),
+                            layout: &bake_bg_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(&src_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::TextureView(&dst_view),
+                                },
+                            ],
+                        });
+                    src_view = dst_view;
+                    mips.push(VoxelMip {
+                        extent: grid_extent.mip_level_size(base_mip_level, true),
+                        bake_bind_group,
+                    });
+                }
+
+                Kind::RayVoxel {
+                    bake_pipeline_layout,
+                    draw_pipeline_layout,
+                    init_pipeline,
+                    mip_pipeline,
+                    draw_pipeline,
+                    draw_bind_group,
+                    voxel_size,
+                    mips,
+                }
+            }
             settings::Terrain::Sliced => {
                 let pipeline =
                     Self::create_slice_pipeline(&pipeline_layout, &gfx.device, gfx.color_format);
@@ -845,11 +1126,14 @@ impl Context {
                     1 << level.section.as_power(),
                 ),
             },
-            dirty_rects: vec![super::Rect {
-                x: 0,
-                y: 0,
-                w: level.size.0.as_value() as u16,
-                h: level.size.1.as_value() as u16,
+            dirty_rects: vec![super::DirtyRect {
+                rect: super::Rect {
+                    x: 0,
+                    y: 0,
+                    w: extent.width as _,
+                    h: extent.height as _,
+                },
+                need_upload: true,
             }],
             dirty_flood: true,
             dirty_palette: 0..0x100,
@@ -884,6 +1168,26 @@ impl Context {
                     "ray_mip_color",
                 );
                 mipper.reload(device);
+            }
+            Kind::RayVoxel {
+                ref bake_pipeline_layout,
+                ref draw_pipeline_layout,
+                ref mut init_pipeline,
+                ref mut mip_pipeline,
+                ref mut draw_pipeline,
+                voxel_size,
+                ..
+            } => {
+                let (init, mip, draw) = Self::create_voxel_pipelines(
+                    bake_pipeline_layout,
+                    draw_pipeline_layout,
+                    device,
+                    self.color_format,
+                    voxel_size,
+                );
+                *init_pipeline = init;
+                *mip_pipeline = mip;
+                *draw_pipeline = draw;
             }
             Kind::Slice {
                 ref mut pipeline, ..
@@ -950,9 +1254,13 @@ impl Context {
         device: &wgpu::Device,
     ) {
         if !self.dirty_rects.is_empty() {
-            for rect in self.dirty_rects.iter() {
+            for dr in self.dirty_rects.iter() {
+                if !dr.need_upload {
+                    continue;
+                }
+
                 let total_size =
-                    rect.h as wgpu::BufferAddress * level.size.0 as wgpu::BufferAddress * 2;
+                    dr.rect.h as wgpu::BufferAddress * level.size.0 as wgpu::BufferAddress * 2;
                 let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("staging level update"),
                     size: total_size,
@@ -962,7 +1270,7 @@ impl Context {
                 {
                     let mut mapping = staging_buf.slice(..).get_mapped_range_mut();
                     for (y_off, line) in mapping.chunks_mut(level.size.0 as usize * 2).enumerate() {
-                        let base = (rect.y as usize + y_off) * level.size.0 as usize;
+                        let base = (dr.rect.y as usize + y_off) * level.size.0 as usize;
                         for x in 0..level.size.0 as usize {
                             line[2 * x + 0] = level.height[base + x];
                             line[2 * x + 1] = level.meta[base + x];
@@ -974,13 +1282,44 @@ impl Context {
                     &staging_buf,
                     0,
                     &self.terrain_buf,
-                    rect.y as wgpu::BufferAddress * level.size.0 as wgpu::BufferAddress * 2,
+                    dr.rect.y as wgpu::BufferAddress * level.size.0 as wgpu::BufferAddress * 2,
                     total_size,
                 );
             }
 
-            if let Kind::RayMip { ref mipper, .. } = self.kind {
-                mipper.update(encoder, &self.dirty_rects, device);
+            match self.kind {
+                Kind::RayMip { ref mipper, .. } => {
+                    mipper.update(encoder, &self.dirty_rects, device);
+                }
+                Kind::RayVoxel {
+                    ref init_pipeline,
+                    ref mip_pipeline,
+                    ref mips,
+                    ..
+                } => {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Voxel bake"),
+                    });
+                    pass.set_pipeline(init_pipeline);
+                    let (head, tail) = mips.split_first().unwrap();
+                    pass.set_bind_group(1, &self.bind_group, &[]);
+                    pass.set_bind_group(0, &head.bake_bind_group, &[]);
+                    pass.dispatch_workgroups(
+                        head.extent.width,
+                        head.extent.height,
+                        head.extent.depth_or_array_layers,
+                    );
+                    pass.set_pipeline(mip_pipeline);
+                    for mip in tail {
+                        pass.set_bind_group(0, &mip.bake_bind_group, &[]);
+                        pass.dispatch_workgroups(
+                            mip.extent.width,
+                            mip.extent.height,
+                            mip.extent.depth_or_array_layers,
+                        );
+                    }
+                }
+                _ => {}
             }
             self.dirty_rects.clear();
         }
@@ -1202,6 +1541,15 @@ impl Context {
                 pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.draw_indexed(0..geo.num_indices, 0, 0..1);
+            }
+            Kind::RayVoxel {
+                ref draw_pipeline,
+                ref draw_bind_group,
+                ..
+            } => {
+                pass.set_pipeline(draw_pipeline);
+                pass.set_bind_group(2, draw_bind_group, &[]);
+                pass.draw(0..3, 0..1);
             }
             Kind::Slice { ref pipeline } => {
                 pass.set_pipeline(pipeline);
