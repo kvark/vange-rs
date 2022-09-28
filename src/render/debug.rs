@@ -223,7 +223,7 @@ impl Context {
 
         self.pipelines_line.clear();
         if self.settings.impulses {
-            let shader = super::load_shader("debug", device).unwrap();
+            let shader = super::load_shader("debug", &[], device).unwrap();
             for &visibility in &[Visibility::Front, Visibility::Behind] {
                 let (blend, depth_write_enabled, depth_compare) = match visibility {
                     Visibility::Front => (BLEND_FRONT, true, wgpu::CompareFunction::LessEqual),

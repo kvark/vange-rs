@@ -47,10 +47,9 @@ fn get_map_coordinates(pos: vec2<f32>) -> vec2<i32> {
     return vec2<i32>(pos - floor(pos / u_Surface.texture_scale.xy) * u_Surface.texture_scale.xy);
 }
 
-fn get_surface(pos: vec2<f32>) -> Surface {
+fn get_surface_impl(tci: vec2<i32>) -> Surface {
     var suf: Surface;
 
-    let tci = get_map_coordinates(pos);
     let tc_index = tci.y * i32(u_Surface.texture_scale.x) + tci.x;
     let data_raw = b_Terrain.inner[tc_index / 2];
     let data = (vec4<u32>(data_raw) >> vec4<u32>(0u, 8u, 16u, 24u)) & vec4<u32>(0xFFu);
@@ -75,6 +74,11 @@ fn get_surface(pos: vec2<f32>) -> Surface {
     }
 
     return suf;
+}
+
+fn get_surface(pos: vec2<f32>) -> Surface {
+    let tci = get_map_coordinates(pos);
+    return get_surface_impl(tci);
 }
 
 struct SurfaceAlt {

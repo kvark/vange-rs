@@ -57,6 +57,11 @@ pub struct SurfaceData {
     pub meta: (wgpu::TextureView, wgpu::Sampler),
 }
 
+pub struct DirtyRect {
+    pub rect: Rect,
+    pub need_upload: bool,
+}
+
 pub type ShapeVertex = [f32; 4];
 
 #[repr(C)]
@@ -90,7 +95,7 @@ impl ShapeVertexDesc {
     }
 }
 
-pub fn make_shader_code(name: &str) -> Result<String, IoError> {
+pub fn make_shader_code(name: &str, substitutions: &[(&str, String)]) -> Result<String, IoError> {
     let base_path = PathBuf::from("res").join("shader");
     let path = base_path.join(name).with_extension("wgsl");
     if !path.is_file() {
@@ -115,14 +120,22 @@ pub fn make_shader_code(name: &str) -> Result<String, IoError> {
         }
     }
 
+    for &(key_inner, ref value) in substitutions {
+        let key = format!("`{}`", key_inner);
+        source = source.replace(&key, value);
+    }
     buf.push_str(&source);
     Ok(buf)
 }
 
-pub fn load_shader(name: &str, device: &wgpu::Device) -> Result<wgpu::ShaderModule, IoError> {
+pub fn load_shader(
+    name: &str,
+    substitutions: &[(&str, String)],
+    device: &wgpu::Device,
+) -> Result<wgpu::ShaderModule, IoError> {
     profiling::scope!("Load Shaders", name);
 
-    let code = make_shader_code(name)?;
+    let code = make_shader_code(name, substitutions)?;
     debug!("shader '{}':\n{}", name, code);
     if cfg!(debug_assertions) {
         std::fs::write("last-shader.wgsl", &code).unwrap();

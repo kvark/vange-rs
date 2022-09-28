@@ -37,7 +37,7 @@ impl Context {
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Sint32],
         };
-        let shader = super::load_shader("water", device).unwrap();
+        let shader = super::load_shader("water", &[], device).unwrap();
 
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("water"),
