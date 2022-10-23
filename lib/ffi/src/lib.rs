@@ -331,33 +331,38 @@ pub extern "C" fn rv_camera_set_transform(ctx: &mut Context, t: Transform) {
 
 #[no_mangle]
 pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
-    let terrains = (0..desc.material_count)
-        .map(|i| unsafe {
-            let mut tc = vangers::level::TerrainConfig::default();
-            tc.colors.start = *desc.material_begin_offsets.offset(i as isize);
-            tc.colors.end = *desc.material_end_offsets.offset(i as isize);
-            tc
-        })
-        .collect::<Box<[_]>>();
+    use vangers::level::Power;
 
-    let total = (desc.width * desc.height) as usize;
-    let level = vangers::level::Level {
-        size: (desc.width, desc.height),
-        flood_map: vec![0; 128].into_boxed_slice(),
-        flood_section_power: 7, //TODO
-        height: vec![0; total].into_boxed_slice(),
-        meta: vec![0; total].into_boxed_slice(),
-        palette: [[0; 4]; 0x100],
-        terrains,
+    let level_config = vangers::level::LevelConfig {
+        path_palette: Default::default(),
+        path_data: Default::default(),
+        is_compressed: false,
+        size: (
+            Power::from_value(desc.width as i32),
+            Power::from_value(desc.height as i32),
+        ),
+        geo: Power(0),
+        section: Power(8),
+        min_square: Power(0),
+        terrains: (0..desc.material_count)
+            .map(|i| unsafe {
+                let mut tc = vangers::level::TerrainConfig::default();
+                tc.colors.start = *desc.material_begin_offsets.offset(i as isize);
+                tc.colors.end = *desc.material_end_offsets.offset(i as isize);
+                tc
+            })
+            .collect(),
     };
 
     let render = vangers::render::Render::new(
         &ctx.gfx,
-        &level,
+        &level_config,
         &ctx.objects_palette,
         &ctx.render_config,
         ctx.camera.front_face(),
     );
+
+    let level = vangers::level::load(&level_config);
     ctx.level = Some(LevelContext {
         desc,
         render,

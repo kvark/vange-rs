@@ -3,12 +3,12 @@ use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 use std::{
     fs::File,
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 mod config;
 
-pub use self::config::{LevelConfig, TerrainConfig};
+pub use self::config::{LevelConfig, Power, TerrainConfig};
 
 pub type TerrainType = u8;
 
@@ -23,7 +23,6 @@ pub const HEIGHT_SCALE: u32 = 128;
 pub struct Level {
     pub size: (i32, i32),
     pub flood_map: Box<[u8]>,
-    pub flood_section_power: usize,
     pub height: Box<[u8]>,
     pub meta: Box<[u8]>,
     pub palette: [[u8; 4]; 0x100],
@@ -83,29 +82,8 @@ impl Texel {
 }
 
 impl Level {
-    pub fn new_test() -> Self {
-        let tc = TerrainConfig {
-            shadow_offset: 0,
-            height_shift: 0,
-            colors: 0..1,
-        };
-        Level {
-            size: (2, 1),
-            flood_map: vec![0].into_boxed_slice(),
-            flood_section_power: 0,
-            height: vec![0, 0].into_boxed_slice(),
-            meta: vec![0, 0].into_boxed_slice(),
-            palette: [[0xFF; 4]; 0x100],
-            terrains: (0..8).map(|_| tc.clone()).collect(),
-        }
-    }
-
-    pub fn terrain_bits(&self) -> TerrainBits {
-        TerrainBits::new(self.terrains.len() as u8)
-    }
-
     pub fn get(&self, mut coord: (i32, i32)) -> Texel {
-        let bits = self.terrain_bits();
+        let bits = TerrainBits::new(self.terrains.len() as u8);
         while coord.0 < 0 {
             coord.0 += self.size.0;
         }
@@ -403,27 +381,49 @@ pub fn load_vmp(path: &Path, size: (i32, i32)) -> LevelData {
     level
 }
 
+fn path_empty(path_buf: &PathBuf) -> bool {
+    path_buf.as_path().to_str() == Some("")
+}
+
 pub fn load(config: &LevelConfig) -> Level {
     profiling::scope!("Load Level");
+
     info!("Loading data map...");
     let size = (config.size.0.as_value(), config.size.1.as_value());
-    let LevelData { height, meta, size } = if config.is_compressed {
+    let LevelData { height, meta, size } = if path_empty(&config.path_data) {
+        let total = size.0 as usize * size.1 as usize;
+        LevelData {
+            height: vec![0; total].into_boxed_slice(),
+            meta: vec![0; total].into_boxed_slice(),
+            size,
+        }
+    } else if config.is_compressed {
         load_vmc(&config.path_data.with_extension("vmc"), size)
     } else {
         load_vmp(&config.path_data.with_extension("vmp"), size)
     };
 
     info!("Loading flood map...");
-    let flood_map = load_flood(config);
-    let palette = File::open(&config.path_palette).expect("Unable to open the palette file");
+    let flood_map = if path_empty(&config.path_data) {
+        let sections = size.1 as usize >> config.section.as_power();
+        vec![0; sections].into_boxed_slice()
+    } else {
+        load_flood(config)
+    };
+
+    let palette = if path_empty(&config.path_palette) {
+        [[0xFF; 4]; 0x100]
+    } else {
+        let file = File::open(&config.path_palette).expect("Unable to open the palette file");
+        read_palette(file, Some(&config.terrains))
+    };
 
     Level {
         size,
         flood_map,
-        flood_section_power: config.section.as_power() as usize,
         height,
         meta,
-        palette: read_palette(palette, Some(&config.terrains)),
+        palette,
         terrains: config.terrains.clone(),
     }
 }

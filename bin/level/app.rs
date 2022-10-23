@@ -36,14 +36,14 @@ impl LevelView {
         settings: &config::settings::Settings,
         gfx: &GraphicsContext,
     ) -> Self {
-        let level = if settings.game.level.is_empty() {
+        let mut override_palette = None;
+        let level_config = if settings.game.level.is_empty() {
             info!("Using test level");
-            level::Level::new_test()
+            level::LevelConfig::new_test()
         } else if let Some(ini_path) = override_path {
             info!("Using level at {}", ini_path);
             let full_path = settings.data_path.join(ini_path);
-            let level_config = level::LevelConfig::load(&full_path);
-            level::load(&level_config)
+            level::LevelConfig::load(&full_path)
         } else {
             let escaves = config::escaves::load(settings.open_relative("escaves.prm"));
             let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
@@ -56,9 +56,6 @@ impl LevelView {
             });
             let ini_path = settings.data_path.join(ini_name);
             info!("Using level {}", ini_name);
-
-            let level_config = level::LevelConfig::load(&ini_path);
-            let mut override_palette = None;
 
             if !settings.game.cycle.is_empty() {
                 let escave = escaves
@@ -98,11 +95,7 @@ impl LevelView {
                 override_palette = Some(settings.open_relative(&cycle.palette_path));
             }
 
-            let mut level = level::load(&level_config);
-            if let Some(pal_file) = override_palette {
-                level.palette = level::read_palette(pal_file, Some(&level_config.terrains));
-            }
-            level
+            level::LevelConfig::load(&ini_path)
         };
 
         let depth = settings.game.camera.depth_range;
@@ -131,11 +124,16 @@ impl LevelView {
         let objects_palette = level::read_palette(settings.open_palette(), None);
         let render = Render::new(
             gfx,
-            &level,
+            &level_config,
             &objects_palette,
             &settings.render,
             cam.front_face(),
         );
+
+        let mut level = level::load(&level_config);
+        if let Some(pal_file) = override_palette {
+            level.palette = level::read_palette(pal_file, Some(&level_config.terrains));
+        }
 
         LevelView {
             render,

@@ -5,6 +5,10 @@ use std::path::{Path, PathBuf};
 #[derive(Copy, Clone)]
 pub struct Power(pub i32);
 impl Power {
+    pub fn from_value(value: i32) -> Self {
+        assert_eq!(value & (value - 1), 0);
+        Power(value.trailing_zeros() as _)
+    }
     pub fn as_value(&self) -> i32 {
         1 << self.0
     }
@@ -33,6 +37,24 @@ pub struct LevelConfig {
 }
 
 impl LevelConfig {
+    pub fn new_test() -> Self {
+        let tc = TerrainConfig {
+            shadow_offset: 0,
+            height_shift: 0,
+            colors: 0..1,
+        };
+        LevelConfig {
+            path_palette: PathBuf::default(),
+            path_data: PathBuf::default(),
+            is_compressed: false,
+            size: (Power(1), Power(0)),
+            geo: Power(0),
+            section: Power(8),
+            min_square: Power(0),
+            terrains: (0..8).map(|_| tc.clone()).collect(),
+        }
+    }
+
     pub fn load(ini_path: &Path) -> Self {
         let ini = Ini::load_from_file(ini_path).unwrap_or_else(|_| {
             panic!("Unable to read the level's INI description: {:?}", ini_path)
@@ -88,5 +110,9 @@ impl LevelConfig {
             min_square: Power(global["Minimal Square Power"].parse().unwrap()),
             terrains,
         }
+    }
+
+    pub fn terrain_bits(&self) -> super::TerrainBits {
+        super::TerrainBits::new(self.terrains.len() as u8)
     }
 }
