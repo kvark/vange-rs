@@ -318,9 +318,9 @@ impl Game {
         let mut escaves_secondary = config::escaves::load(settings.open_relative("spots.prm"));
         escaves.append(&mut escaves_secondary);
 
-        let (level, default_coords) = if settings.game.level.is_empty() {
+        let (level_config, default_coords) = if settings.game.level.is_empty() {
             log::info!("Using test level");
-            (level::Level::new_test(), (0, 0))
+            (level::LevelConfig::new_test(), (0, 0))
         } else {
             use rand::seq::SliceRandom as _;
 
@@ -346,10 +346,7 @@ impl Game {
             let ini_path = settings.data_path.join(ini_name);
             log::info!("Using level {}", ini_name);
 
-            let config = level::LevelConfig::load(&ini_path);
-            let level = level::load(&config);
-
-            (level, coordinates)
+            (level::LevelConfig::load(&ini_path), coordinates)
         };
         let coords = settings.car.pos.unwrap_or(default_coords);
 
@@ -377,8 +374,14 @@ impl Game {
         };
 
         log::info!("Initializing the render");
-        let pal_data = level::read_palette(settings.open_palette(), Some(&level.terrains));
-        let render = Render::new(gfx, &level, &pal_data, &settings.render, cam.front_face());
+        let pal_data = level::read_palette(settings.open_palette(), Some(&level_config.terrains));
+        let render = Render::new(
+            gfx,
+            &level_config,
+            &pal_data,
+            &settings.render,
+            cam.front_face(),
+        );
 
         log::info!("Loading world database");
         let db = {
@@ -391,6 +394,9 @@ impl Game {
                 game,
             }
         };
+
+        log::info!("Loading the level");
+        let level = level::load(&level_config);
 
         log::info!("Spawning agents");
         let car_names = db.cars.keys().cloned().collect::<Vec<_>>();

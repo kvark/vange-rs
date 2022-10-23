@@ -351,7 +351,7 @@ pub struct Render {
 impl Render {
     pub fn new(
         gfx: &GraphicsContext,
-        level: &level::Level,
+        level: &level::LevelConfig,
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
         front_face: wgpu::FrontFace,
