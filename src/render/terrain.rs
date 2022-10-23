@@ -195,6 +195,7 @@ pub struct Context {
     palette_texture: wgpu::Texture,
     pub flood: Flood,
     pub dirty_rects: Vec<super::Rect>,
+    pub dirty_flood: bool,
     pub dirty_palette: Range<u32>,
 }
 
@@ -413,7 +414,7 @@ impl Context {
 
     pub fn new(
         gfx: &super::GraphicsContext,
-        level: &level::Level,
+        level: &level::LevelConfig,
         global: &GlobalContext,
         config: &settings::Terrain,
         shadow_config: &settings::ShadowTerrain,
@@ -421,16 +422,11 @@ impl Context {
         profiling::scope!("Init Terrain");
 
         let extent = wgpu::Extent3d {
-            width: level.size.0 as u32,
-            height: level.size.1 as u32,
+            width: level.size.0.as_value() as u32,
+            height: level.size.1.as_value() as u32,
             depth_or_array_layers: 1,
         };
-        let flood_section_count = level.size.1 as u32 >> level.flood_section_power;
-        let flood_extent = wgpu::Extent3d {
-            width: flood_section_count,
-            height: 1,
-            depth_or_array_layers: 1,
-        };
+        let flood_section_count = extent.height >> level.section.as_power();
         let table_extent = wgpu::Extent3d {
             width: level.terrains.len() as u32,
             height: 1,
@@ -454,23 +450,16 @@ impl Context {
             label: Some("Terrain data"),
             size: (extent.width * extent.height) as wgpu::BufferAddress * 2,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: true,
+            mapped_at_creation: false,
         });
-        {
-            let mut mapping = terrain_buf.slice(..).get_mapped_range_mut();
-            for y in 0..extent.height {
-                for x in 0..extent.width {
-                    let index = (y * extent.width + x) as usize;
-                    mapping[2 * index + 0] = level.height[index];
-                    mapping[2 * index + 1] = level.meta[index];
-                }
-            }
-        }
-        terrain_buf.unmap();
 
         let flood_texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Terrain flood"),
-            size: flood_extent,
+            size: wgpu::Extent3d {
+                width: flood_section_count,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
@@ -487,16 +476,6 @@ impl Context {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
 
-        gfx.queue.write_texture(
-            flood_texture.as_image_copy(),
-            bytemuck::cast_slice(&level.flood_map),
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: NonZeroU32::new(flood_extent.width),
-                rows_per_image: None,
-            },
-            flood_extent,
-        );
         gfx.queue.write_texture(
             table_texture.as_image_copy(),
             bytemuck::cast_slice(&terrain_table),
@@ -624,8 +603,8 @@ impl Context {
                 label: Some("surface-uniforms"),
                 contents: bytemuck::bytes_of(&SurfaceConstants {
                     _tex_scale: [
-                        level.size.0 as f32,
-                        level.size.1 as f32,
+                        level.size.0.as_value() as f32,
+                        level.size.1.as_value() as f32,
                         level::HEIGHT_SCALE as f32,
                         0.0,
                     ],
@@ -861,9 +840,18 @@ impl Context {
             flood: Flood {
                 texture: flood_texture,
                 texture_size: flood_section_count,
-                section_size: (level.size.0 as u32, 1 << level.flood_section_power),
+                section_size: (
+                    level.size.0.as_value() as u32,
+                    1 << level.section.as_power(),
+                ),
             },
-            dirty_rects: Vec::new(),
+            dirty_rects: vec![super::Rect {
+                x: 0,
+                y: 0,
+                w: level.size.0.as_value() as u16,
+                h: level.size.1.as_value() as u16,
+            }],
+            dirty_flood: true,
             dirty_palette: 0..0x100,
         }
     }
@@ -968,7 +956,7 @@ impl Context {
                 let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("staging level update"),
                     size: total_size,
-                    usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
+                    usage: wgpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: true,
                 });
                 {
@@ -997,9 +985,36 @@ impl Context {
             self.dirty_rects.clear();
         }
 
+        if self.dirty_flood {
+            let staging_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("staging flood update"),
+                contents: &level.flood_map,
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+
+            encoder.copy_buffer_to_texture(
+                wgpu::ImageCopyBuffer {
+                    buffer: &staging_buf,
+                    layout: wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: NonZeroU32::new(0x100),
+                        rows_per_image: None,
+                    },
+                },
+                self.flood.texture.as_image_copy(),
+                wgpu::Extent3d {
+                    width: self.flood.texture_size,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+
+            self.dirty_flood = false;
+        }
+
         if self.dirty_palette.start != self.dirty_palette.end {
             let staging_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
+                label: Some("staging palette update"),
                 contents: bytemuck::cast_slice(&level.palette[self.dirty_palette.start as usize..]),
                 usage: wgpu::BufferUsages::COPY_SRC,
             });
