@@ -14,6 +14,7 @@ use wgpu::util::DeviceExt as _;
 use std::{mem, num::NonZeroU32, ops::Range};
 
 const SCATTER_GROUP_SIZE: [u32; 3] = [16, 16, 1];
+const VOXEL_DEBUG_LOD: Option<Range<usize>> = None;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -58,7 +59,8 @@ struct ScatterConstants {
 struct VoxelConstants {
     voxel_size: [u32; 4],
     max_depth: f32,
-    pad: [f32; 3],
+    debug_lod_start: u32,
+    pad: [f32; 2],
 }
 
 unsafe impl Pod for VoxelConstants {}
@@ -177,7 +179,9 @@ enum Kind {
         init_pipeline: wgpu::ComputePipeline,
         mip_pipeline: wgpu::ComputePipeline,
         draw_pipeline: wgpu::RenderPipeline,
+        debug_pipeline: wgpu::RenderPipeline,
         draw_bind_group: wgpu::BindGroup,
+        debug_geo: Geometry,
         voxel_size: [u32; 3],
         mips: Vec<VoxelMip>,
     },
@@ -292,6 +296,7 @@ impl Context {
         wgpu::ComputePipeline,
         wgpu::ComputePipeline,
         wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
     ) {
         let substitutes = [
             ("group_w", format!("{}", voxel_size[0])),
@@ -347,7 +352,40 @@ impl Context {
             multiview: None,
         });
 
-        (init_pipeline, mip_pipeline, draw_pipeline)
+        let debug_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("voxel-visualizer"),
+            layout: Some(draw_layout),
+            vertex: wgpu::VertexState {
+                module: &draw_shader,
+                entry_point: "vert_bound",
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &draw_shader,
+                entry_point: "draw_bound",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::all(),
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+
+        (init_pipeline, mip_pipeline, draw_pipeline, debug_pipeline)
     }
 
     fn create_slice_pipeline(
@@ -877,7 +915,8 @@ impl Context {
                                 // uniform buffer
                                 wgpu::BindGroupLayoutEntry {
                                     binding: 1,
-                                    visibility: wgpu::ShaderStages::FRAGMENT,
+                                    visibility: wgpu::ShaderStages::VERTEX
+                                        | wgpu::ShaderStages::FRAGMENT,
                                     ty: wgpu::BindingType::Buffer {
                                         ty: wgpu::BufferBindingType::Uniform,
                                         has_dynamic_offset: false,
@@ -903,13 +942,14 @@ impl Context {
                             push_constant_ranges: &[],
                         });
 
-                let (init_pipeline, mip_pipeline, draw_pipeline) = Self::create_voxel_pipelines(
-                    &bake_pipeline_layout,
-                    &draw_pipeline_layout,
-                    &gfx.device,
-                    gfx.color_format,
-                    voxel_size,
-                );
+                let (init_pipeline, mip_pipeline, draw_pipeline, debug_pipeline) =
+                    Self::create_voxel_pipelines(
+                        &bake_pipeline_layout,
+                        &draw_pipeline_layout,
+                        &gfx.device,
+                        gfx.color_format,
+                        voxel_size,
+                    );
 
                 let grid_extent = wgpu::Extent3d {
                     width: (extent.width - 1) / voxel_size[0] + 1,
@@ -936,7 +976,8 @@ impl Context {
                 let constants = VoxelConstants {
                     voxel_size: [voxel_size[0], voxel_size[1], voxel_size[2], 0],
                     max_depth: 1000.0,
-                    pad: [0.0; 3],
+                    debug_lod_start: VOXEL_DEBUG_LOD.clone().map_or(0, |r| r.start as u32),
+                    pad: [0.0; 2],
                 };
                 let voxel_constants =
                     gfx.device
@@ -959,6 +1000,19 @@ impl Context {
                         },
                     ],
                 });
+
+                let debug_geo = Geometry::new(
+                    &[
+                        Vertex { _pos: [0; 4] }, //dummy
+                    ],
+                    &[
+                        // Bit 0 = shift in X away from the camera
+                        // Bits 1=Y and 2=Z in the same way
+                        // lower half
+                        0, 1, 3, 3, 2, 0, 0, 2, 6, 6, 4, 0, 0, 4, 5, 5, 1, 0,
+                    ],
+                    &gfx.device,
+                );
 
                 let mut mips = Vec::new();
                 let mut src_view = grid.create_view(&wgpu::TextureViewDescriptor {
@@ -1002,7 +1056,9 @@ impl Context {
                     init_pipeline,
                     mip_pipeline,
                     draw_pipeline,
+                    debug_pipeline,
                     draw_bind_group,
+                    debug_geo,
                     voxel_size,
                     mips,
                 }
@@ -1175,10 +1231,11 @@ impl Context {
                 ref mut init_pipeline,
                 ref mut mip_pipeline,
                 ref mut draw_pipeline,
+                ref mut debug_pipeline,
                 voxel_size,
                 ..
             } => {
-                let (init, mip, draw) = Self::create_voxel_pipelines(
+                let (init, mip, draw, debug) = Self::create_voxel_pipelines(
                     bake_pipeline_layout,
                     draw_pipeline_layout,
                     device,
@@ -1188,6 +1245,7 @@ impl Context {
                 *init_pipeline = init;
                 *mip_pipeline = mip;
                 *draw_pipeline = draw;
+                *debug_pipeline = debug;
             }
             Kind::Slice {
                 ref mut pipeline, ..
@@ -1302,8 +1360,8 @@ impl Context {
                     });
                     pass.set_pipeline(init_pipeline);
                     let (head, tail) = mips.split_first().unwrap();
-                    pass.set_bind_group(1, &self.bind_group, &[]);
                     pass.set_bind_group(0, &head.bake_bind_group, &[]);
+                    pass.set_bind_group(1, &self.bind_group, &[]);
                     pass.dispatch_workgroups(
                         head.extent.width,
                         head.extent.height,
@@ -1544,12 +1602,25 @@ impl Context {
             }
             Kind::RayVoxel {
                 ref draw_pipeline,
+                ref debug_pipeline,
                 ref draw_bind_group,
+                ref mips,
+                ref debug_geo,
                 ..
             } => {
                 pass.set_pipeline(draw_pipeline);
                 pass.set_bind_group(2, draw_bind_group, &[]);
                 pass.draw(0..3, 0..1);
+                if let Some(lod_range) = VOXEL_DEBUG_LOD {
+                    pass.set_pipeline(debug_pipeline);
+                    let mut num_instances = 0;
+                    for mip in mips[lod_range].iter() {
+                        num_instances +=
+                            mip.extent.width * mip.extent.height * mip.extent.depth_or_array_layers;
+                    }
+                    pass.set_index_buffer(debug_geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
+                    pass.draw_indexed(0..debug_geo.num_indices, 0, 0..num_instances);
+                }
             }
             Kind::Slice { ref pipeline } => {
                 pass.set_pipeline(pipeline);

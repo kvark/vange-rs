@@ -59,12 +59,12 @@ fn get_surface_impl(tci: vec2<i32>) -> Surface {
         let delta = (get_delta(data.y) << c_DeltaBits) + get_delta(data.w);
         suf.low_type = get_terrain_type(data.y);
         suf.high_type = get_terrain_type(data.w);
-        suf.low_alt = f32(data.x) / 255.0 * u_Surface.texture_scale.z;
-        suf.high_alt = f32(data.z) / 255.0 * u_Surface.texture_scale.z;
-        suf.delta = f32(delta) * c_DeltaScale * u_Surface.texture_scale.z;
+        suf.low_alt = f32(data.x) / 256.0 * u_Surface.texture_scale.z;
+        suf.high_alt = f32(data.z) / 256.0 * u_Surface.texture_scale.z;
+        suf.delta = f32(delta) * 8.0 / 256.0 * u_Surface.texture_scale.z;
     } else {
         let subdata = select(data.xy, data.zw, (tc_index & 1) != 0);
-        let altitude = f32(subdata.x) / 255.0 * u_Surface.texture_scale.z;
+        let altitude = f32(subdata.x) / 256.0 * u_Surface.texture_scale.z;
         let ty = get_terrain_type(subdata.y);
         suf.low_type = ty;
         suf.high_type = ty;

@@ -3,6 +3,7 @@
 struct VoxelConstants {
     voxel_size: vec4<i32>,
     max_depth: f32,
+    debug_lod_start: u32,
 };
 
 @group(2) @binding(0) var voxel_grid: texture_3d<u32>;
@@ -179,6 +180,7 @@ fn draw(@builtin(position) frag_coord: vec4<f32>,) -> FragOutput {
     let sp_far_world = get_frag_world(frag_coord.xy, 1.0);
     let view = normalize(sp_far_world - sp_near_world);
     let pt = cast_ray_through_voxels(sp_near_world, view);
+    //let pt = cast_ray_fallback(sp_near_world, view);
     if (debug_color.a > 0.0) {
         return FragOutput(debug_color, 1.0);
     }
@@ -192,4 +194,51 @@ fn draw(@builtin(position) frag_coord: vec4<f32>,) -> FragOutput {
     let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
     let depth = target_ndc.z / target_ndc.w;
     return FragOutput(frag_color, depth);
+}
+
+struct DebugOutput {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) lod: u32,
+}
+
+@vertex
+fn vert_bound(
+    @builtin(vertex_index) vert_index: u32,
+    @builtin(instance_index) inst_index: u32,
+) -> DebugOutput {
+    let lod_count = u32(textureNumLevels(voxel_grid));
+    var lod = u_Constants.debug_lod_start;
+    var index = i32(inst_index);
+    var coord = vec3<i32>(0);
+    while (lod < lod_count) {
+        let dim = textureDimensions(voxel_grid, lod);
+        let total = i32(dim.x * dim.y * dim.z);
+        if (index < total) {
+            coord = vec3<i32>(index % dim.x, (index / dim.x) % dim.y, index / (dim.x * dim.y));
+            break;
+        }
+        index -= total;
+        lod += 1u;
+    }
+
+    let texel = textureLoad(voxel_grid, coord, i32(lod)).x;
+    if (lod == lod_count || texel == 0u) {
+        return DebugOutput(vec4<f32>(0.0, 0.0, 0.0, 1.0), 0u);
+    };
+
+    let lod_voxel_size = u_Constants.voxel_size.xyz << vec3<u32>(lod);
+    let origin = vec3<f32>(coord * lod_voxel_size);
+    let axis = (vec3<u32>(vert_index) & vec3<u32>(1u, 2u, 4u)) != vec3<u32>(0u);
+    let shift = (u_Globals.camera_pos.xyz > origin) != axis;
+    let world_pos = origin + vec3<f32>(shift) * vec3<f32>(lod_voxel_size);
+
+    var out: DebugOutput;
+    out.pos = u_Globals.view_proj * vec4<f32>(world_pos, 1.0);
+    out.lod = lod;
+    return out;
+}
+
+@fragment
+fn draw_bound(in: DebugOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(1.0, 0.0, 0.0, 0.5);
 }

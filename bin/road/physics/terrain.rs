@@ -47,7 +47,7 @@ impl HitAccumulator {
 }
 
 pub fn get_height(altitude: u8) -> f32 {
-    altitude as f32 * (level::HEIGHT_SCALE as f32) / 255.0
+    altitude as f32 * (level::HEIGHT_SCALE as f32) / 256.0
 }
 
 // see `GET_MIDDLE_HIGHT` macro

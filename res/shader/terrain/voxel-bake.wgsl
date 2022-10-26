@@ -6,7 +6,13 @@ var mip_src: texture_3d<u32>;
 @group(0) @binding(1)
 var mip_dst: texture_storage_3d<r32uint, write>;
 
-var<workgroup> result: u32;
+var<workgroup> result: atomic<u32>;
+
+//TODO: we can avoid running an invocation per Z, and instead
+// just iterate the affected Z values and write the data out.
+// This would require storing a 128-bit mask of the occupied height layers.
+// We could go even further and store this mask in a 2D texture instead
+// of the full 3D grid.
 
 @compute @workgroup_size(`group_w`,`group_h`,`group_d`)
 fn init(
@@ -15,7 +21,7 @@ fn init(
     @builtin(local_invocation_index) local_index: u32,
 ) {
     if (local_index == 0u) {
-        result = 0u;
+        atomicStore(&result, 0u);
     }
     var suf: Surface;
     if (global_id.x < u32(u_Surface.texture_scale.x) && global_id.y < u32(u_Surface.texture_scale.y)) {
@@ -27,12 +33,12 @@ fn init(
     let c0 = vec3<f32>(workgroup_id + vec3<u32>(0u)) * group_size;
     let c1 = vec3<f32>(workgroup_id + vec3<u32>(1u)) * group_size;
     if (suf.low_alt > c0.z || (suf.high_alt > c0.z && suf.low_alt + suf.delta < c1.z)) {
-        result += 1u;
+        atomicAdd(&result, 1u);
     }
 
     workgroupBarrier();
     if (local_index == 0u) {
-        textureStore(mip_dst, vec3<i32>(workgroup_id), vec4<u32>(result));
+        textureStore(mip_dst, vec3<i32>(workgroup_id), vec4<u32>(atomicLoad(&result)));
     }
 }
 
@@ -43,7 +49,7 @@ fn mip(
     @builtin(local_invocation_index) local_index: u32,
 ) {
     if (local_index == 0u) {
-        result = 0u;
+        atomicStore(&result, 0u);
     }
     let tex_size = vec3<u32>(textureDimensions(mip_src, 0));
     var value = 0u;
@@ -53,10 +59,10 @@ fn mip(
     }
 
     workgroupBarrier();
-    result += value;
+    atomicAdd(&result, value);
 
     workgroupBarrier();
     if (local_index == 0u) {
-        textureStore(mip_dst, vec3<i32>(workgroup_id), vec4<u32>(result));
+        textureStore(mip_dst, vec3<i32>(workgroup_id), vec4<u32>(atomicLoad(&result)));
     }
 }
