@@ -56,8 +56,8 @@ fn check_hit(pos: vec3<f32>) -> u32 {
 
 fn cast_ray_linear(a: vec3<f32>, b: vec3<f32>, num_steps: u32) -> CastPoint {
     var pt: CastPoint;
-    for (var i: u32 = 0u; i < num_steps; i += 1u) {
-        let c = mix(a, b, f32(i) / f32(num_steps));
+    for (var i: u32 = 1u; i <= num_steps; i += 1u) {
+        let c = mix(a, b, f32(i) / f32(num_steps + 1u));
         pt.ty = check_hit(c);
         if (pt.ty != TYPE_MISS) {
             pt.pos = c;
@@ -101,8 +101,11 @@ fn cast_ray_fallback(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     return cast_ray_linear(base + tr.x * dir, base + tr.y * dir, 10u);
 }
 
+let enable_unzoom = true;
+
 fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
-    let num_steps: u32 = 10u;
+    var num_outer_steps: u32 = 30u;
+    var num_inner_steps: u32 = 10u;
 
     var pos = base;
     if (dir.z >= 0.0 && base.z >= u_Surface.texture_scale.z) {
@@ -117,14 +120,9 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     let tci = get_map_coordinates(pos.xy);
     var lod = lod_count - 1u;
     var lod_voxel_pos = vec3<i32>(tci, i32(pos.z)) / (u_Constants.voxel_size.xyz << vec3<u32>(lod));
-    var cur_step = 0u;
     loop {
         let occupancy = textureLoad(voxel_grid, lod_voxel_pos, i32(lod)).x;
-        if (occupancy != 0u) {
-            if (lod == 0u) {
-                //debug_color = vec4<f32>(1.0, 0.0, 0.0, 1.0);
-                break;
-            }
+        if (occupancy != 0u && lod != 0u) {
             lod -= 1u;
             // Now that we descended to a LOD level below,
             // we need to clarify, which of the octants contains our position.
@@ -133,39 +131,59 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
             // Get the middle of the old voxel
             let mid = vec3<f32>((lod_voxel_pos + 1) * lod_voxel_size);
             lod_voxel_pos += vec3<i32>(step(mid, pos));
-        } else {
-            let lod_voxel_size = u_Constants.voxel_size.xyz << vec3<u32>(lod);
-            // find a place where the ray hits the current voxel boundary
-            // "a" and "b" define the corners of the current LOD box
-            let a = vec3<f32>((lod_voxel_pos + 0) * lod_voxel_size);
-            let b = vec3<f32>((lod_voxel_pos + 1) * lod_voxel_size);
-            // "tc" is the distance to each of the walls of the box
-            let tc = (select(a, b, dir > vec3<f32>(0.0)) - pos) / dir;
-            // "t" is the closest distance to the boundary
-            let t = min(tc.x, min(tc.y, tc.z));
-            pos += t * dir;
+            continue;
+        }
 
-            let boundary_exit = lod_voxel_pos + select(vec3<i32>(-1), vec3<i32>(1), dir > vec3<f32>(0.0));
-            lod_voxel_pos = select(lod_voxel_pos, boundary_exit, vec3<f32>(t) >= tc);
-            /*
-            let can_raise = (lod_voxel_pos & vec3<i32>(1)) == vec3<i32>(step(vec3<f32>(0.0), dir)) || vec3<f32>(t) < tc;
-            if (lod + 1u < lod_count && all(can_raise)) {
-                lod += 1u;
-            }*/
+        let lod_voxel_size = u_Constants.voxel_size.xyz << vec3<u32>(lod);
+        // find a place where the ray hits the current voxel boundary
+        // "a" and "b" define the corners of the current LOD box
+        let a = vec3<f32>((lod_voxel_pos + 0) * lod_voxel_size);
+        let b = vec3<f32>((lod_voxel_pos + 1) * lod_voxel_size);
+        // "tc" is the distance to each of the walls of the box
+        let tc = (select(a, b, dir > vec3<f32>(0.0)) - pos) / dir;
+        // "t" is the closest distance to the boundary
+        let t = min(tc.x, min(tc.y, tc.z));
+        let new_pos = pos + t * dir;
 
-            cur_step += 1u;
-            if (cur_step >= num_steps) {
-                debug_color = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+        // If we reached the lowest level, and we know the cell is occupied,
+        // try stepping through the cell.
+        if (occupancy !=0u && lod == 0u) {
+            let num_linear_steps = u32(t / 1.5);
+            if (num_inner_steps < num_linear_steps) {
                 break;
             }
+            num_inner_steps -= num_linear_steps;
+            let cp = cast_ray_linear(pos, new_pos, num_linear_steps);
+            if (cp.ty != TYPE_MISS) {
+                return cp;
+            }
         }
+        pos = new_pos;
+
+        let voxel_shift_dir = select(vec3<i32>(-1), vec3<i32>(1), dir > vec3<f32>(0.0));
+        let voxel_shift = select(vec3<i32>(0), voxel_shift_dir, vec3(t) == tc);
+        let can_raise = (lod_voxel_pos & vec3<i32>(1)) == vec3<i32>(step(vec3<f32>(0.0), dir)) || (vec3<f32>(t) < tc);
+        if (enable_unzoom && lod + 1u < lod_count && all(can_raise)) {
+            lod += 1u;
+            lod_voxel_pos = lod_voxel_pos / 2;
+        }
+        lod_voxel_pos += voxel_shift;
+
+        if (num_outer_steps == 0u) {
+            //debug_color = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+            break;
+        }
+        num_outer_steps -= 1u;
     }
 
-    //let voxel_cross_size = length(vec3<f32>(u_Constants.voxel_size.xyz));
-    //return cast_ray_binary(pos, pos + dir * voxel_cross_size, 4u);
+    //let t = select(1.0-pos.z / dir.z, 10.0, dir.z > 0.0);
+    //return cast_ray_binary(pos, pos + t * dir, 20u);
     //return cast_miss();
+    //pos += t * dir;
+    //let ty = check_hit(pos);
     let suf = get_surface(pos.xy);
     let ty = select(suf.low_type, suf.high_type, pos.z > suf.low_alt);
+    //debug_color = vec4(1.0, 0.0, 0.0, (pos.z - suf.high_alt) * 0.01);
     return CastPoint(pos, ty);
 }
 
@@ -181,7 +199,7 @@ fn draw(@builtin(position) frag_coord: vec4<f32>,) -> FragOutput {
     let view = normalize(sp_far_world - sp_near_world);
     let pt = cast_ray_through_voxels(sp_near_world, view);
     //let pt = cast_ray_fallback(sp_near_world, view);
-    if (debug_color.a > 0.0) {
+    if (debug_color.a == 1.0) {
         return FragOutput(debug_color, 1.0);
     }
     if (pt.ty == TYPE_MISS) {
@@ -190,10 +208,11 @@ fn draw(@builtin(position) frag_coord: vec4<f32>,) -> FragOutput {
 
     let lit_factor = fetch_shadow(pt.pos);
     let frag_color = evaluate_color(pt.ty, pt.pos, lit_factor);
+    let actual_color = mix(frag_color, debug_color, debug_color.a);
 
     let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
     let depth = target_ndc.z / target_ndc.w;
-    return FragOutput(frag_color, depth);
+    return FragOutput(actual_color, depth);
 }
 
 struct DebugOutput {
