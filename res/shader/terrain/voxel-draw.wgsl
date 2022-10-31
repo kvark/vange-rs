@@ -12,6 +12,7 @@ struct VoxelConstants {
 @group(2) @binding(1) var<uniform> u_Constants: VoxelConstants;
 
 let enable_unzoom = true;
+let step_scale = 1.0;
 
 var<private> debug_color: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
@@ -60,8 +61,8 @@ fn check_hit(pos: vec3<f32>) -> u32 {
 
 fn cast_ray_linear(a: vec3<f32>, b: vec3<f32>, num_steps: u32) -> CastPoint {
     var pt: CastPoint;
-    for (var i: u32 = 1u; i <= num_steps; i += 1u) {
-        let c = mix(a, b, f32(i) / f32(num_steps + 1u));
+    for (var i: u32 = 0u; i < num_steps; i += 1u) {
+        let c = mix(a, b, (f32(i) + 0.5) / f32(num_steps));
         pt.ty = check_hit(c);
         if (pt.ty != TYPE_MISS) {
             pt.pos = c;
@@ -129,7 +130,7 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
         pos += (t + 0.01) * dir;
     }
 
-    let tpu = 1.0 / abs(dir); // "t" step per unit of distance
+    let tpu = step_scale / abs(dir); // "t" step per unit of distance
     let t_step = min(tpu.x, min(tpu.y, tpu.y));
 
     let lod_count = u32(textureNumLevels(voxel_grid));
