@@ -790,9 +790,13 @@ impl Application for Game {
             {
                 ui.group(|ui| {
                     ui.label("Camera:");
-                    ui.add(egui::Slider::new(&mut follow.angle_x.0, -90.0..=0.0).text("Angle"));
+                    ui.add(egui::Slider::new(&mut follow.angle_x.0, -105.0..=0.0).text("Angle"));
                     ui.horizontal(|ui| {
-                        ui.label("Offset x:0.0");
+                        ui.add(
+                            egui::DragValue::new(&mut follow.offset.x)
+                                .speed(1.0)
+                                .prefix("x:"),
+                        );
                         ui.add(
                             egui::DragValue::new(&mut follow.offset.y)
                                 .speed(1.0)
