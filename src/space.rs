@@ -278,4 +278,20 @@ impl Camera {
             wgpu::FrontFace::Ccw
         }
     }
+
+    pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        match self.proj {
+            Projection::Ortho {
+                ref mut p,
+                original: _,
+            } => {
+                ui.add(egui::Slider::new(&mut p.near, 0.1..=50.0).text("Depth near"));
+                ui.add(egui::Slider::new(&mut p.far, 50.0..=10000.0).text("Depth far"));
+            }
+            Projection::Perspective(ref mut p) => {
+                ui.add(egui::Slider::new(&mut p.near, 0.1..=50.0).text("Depth near"));
+                ui.add(egui::Slider::new(&mut p.far, 50.0..=10000.0).text("Depth far"));
+            }
+        }
+    }
 }

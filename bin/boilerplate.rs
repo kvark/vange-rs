@@ -194,6 +194,9 @@ impl Harness {
             win.task_pool.run_until_stalled();
 
             win.egui_platform.handle_event(&event);
+            if win.egui_platform.captures_event(&event) {
+                return;
+            }
 
             match event {
                 event::Event::WindowEvent {
