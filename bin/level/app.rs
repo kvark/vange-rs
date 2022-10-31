@@ -24,6 +24,7 @@ pub struct LevelView {
     level: level::Level,
     cam: space::Camera,
     input: Input,
+    ui: config::settings::Ui,
 
     last_mouse_pos: cgmath::Vector2<f32>,
     alt_button_pressed: bool,
@@ -140,6 +141,7 @@ impl LevelView {
             level,
             cam,
             input: Input::Empty,
+            ui: settings.ui.clone(),
             last_mouse_pos: cgmath::vec2(-1.0, -1.0),
             alt_button_pressed: false,
             mouse_button_pressed: false,
@@ -272,6 +274,7 @@ impl Application for LevelView {
             space::Projection::Perspective(_) => 100.0,
             space::Projection::Ortho { .. } => 500.0,
         };
+        let rotation_speed = 1.0;
         let fast_move_speed = 5.0 * move_speed;
         match self.input {
             Input::Hor {
@@ -299,11 +302,13 @@ impl Application for LevelView {
                 self.cam.loc += move_speed * delta * dir * vec.normalize();
             }
             Input::Hor { dir, alt: true, .. } if dir != 0.0 => {
-                let rot = cgmath::Quaternion::from_angle_z(cgmath::Rad(-1.0 * delta * dir));
+                let rot =
+                    cgmath::Quaternion::from_angle_z(cgmath::Rad(rotation_speed * delta * dir));
                 self.cam.rot = rot * self.cam.rot;
             }
             Input::Ver { dir, alt: true, .. } if dir != 0.0 => {
-                let rot = cgmath::Quaternion::from_angle_x(cgmath::Rad(1.0 * delta * dir));
+                let rot =
+                    cgmath::Quaternion::from_angle_x(cgmath::Rad(rotation_speed * delta * dir));
                 self.cam.rot = self.cam.rot * rot;
             }
             Input::DepQuant(dir) => {
@@ -318,18 +323,18 @@ impl Application for LevelView {
                 let mut vec = vec_x + vec_y;
 
                 let norm1 = vec.magnitude();
-                vec.z = 0.0;
-                let norm = vec.magnitude();
-                vec *= norm1 / norm;
-
-                self.cam.loc += self.cam.loc.z * 0.2 * delta * vec;
+                if norm1 > 0.0 {
+                    vec.z = 0.0;
+                    let norm = vec.magnitude();
+                    vec *= norm1 / norm;
+                    self.cam.loc += self.cam.loc.z * 0.2 * delta * vec;
+                }
                 self.input = Input::Empty;
             }
             Input::RotQuant(dir) => {
-                let rot_x =
-                    cgmath::Quaternion::from_angle_z(cgmath::Rad(0.3 * 1.0 * delta * dir.x));
-                let rot_y =
-                    cgmath::Quaternion::from_angle_x(cgmath::Rad(0.3 * 1.0 * delta * dir.y));
+                let speed = 0.3;
+                let rot_x = cgmath::Quaternion::from_angle_z(cgmath::Rad(speed * delta * dir.x));
+                let rot_y = cgmath::Quaternion::from_angle_x(cgmath::Rad(-speed * delta * dir.y));
                 self.cam.rot = rot_x * self.cam.rot * rot_y;
                 self.input = Input::Empty;
             }
@@ -348,7 +353,21 @@ impl Application for LevelView {
         self.render.reload(device);
     }
 
-    fn draw_ui(&mut self, _context: &egui::Context) {}
+    fn draw_ui(&mut self, context: &egui::Context) {
+        if !self.ui.enabled {
+            return;
+        }
+        egui::SidePanel::right("Tweaks").show(context, |ui| {
+            ui.group(|ui| {
+                ui.label("Camera:");
+                self.cam.draw_ui(ui);
+            });
+            ui.group(|ui| {
+                ui.label("Renderer:");
+                self.render.draw_ui(ui);
+            });
+        });
+    }
 
     fn draw(&mut self, device: &wgpu::Device, targets: ScreenTargets) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

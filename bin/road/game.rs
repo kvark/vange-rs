@@ -783,13 +783,14 @@ impl Application for Game {
                     });
                 }
             });
-            if let CameraStyle::Follow {
-                ref mut follow,
-                ref mut ground_anchor,
-            } = self.cam_style
-            {
-                ui.group(|ui| {
-                    ui.label("Camera:");
+            ui.group(|ui| {
+                ui.label("Camera:");
+                self.cam.draw_ui(ui);
+                if let CameraStyle::Follow {
+                    ref mut follow,
+                    ref mut ground_anchor,
+                } = self.cam_style
+                {
                     ui.add(egui::Slider::new(&mut follow.angle_x.0, -105.0..=0.0).text("Angle"));
                     ui.horizontal(|ui| {
                         ui.add(
@@ -810,8 +811,8 @@ impl Application for Game {
                     });
                     ui.add(egui::Slider::new(&mut follow.speed, 0.1..=10.0).text("Speed"));
                     ui.checkbox(ground_anchor, "Ground anchor");
-                });
-            }
+                }
+            });
             ui.group(|ui| {
                 ui.label("Renderer:");
                 self.render.draw_ui(ui);
