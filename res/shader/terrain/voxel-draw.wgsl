@@ -11,6 +11,8 @@ struct VoxelConstants {
 @group(2) @binding(0) var voxel_grid: texture_3d<u32>;
 @group(2) @binding(1) var<uniform> u_Constants: VoxelConstants;
 
+let enable_unzoom = true;
+
 var<private> debug_color: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
 @vertex
@@ -67,7 +69,7 @@ fn cast_ray_linear(a: vec3<f32>, b: vec3<f32>, num_steps: u32) -> CastPoint {
         }
     }
 
-    pt.ty = check_hit(b);
+    pt.ty = TYPE_MISS;
     pt.pos = b;
     return pt;
 }
@@ -103,8 +105,6 @@ fn cast_ray_fallback(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     return cast_ray_linear(base + tr.x * dir, base + tr.y * dir, 10u);
 }
 
-let enable_unzoom = true;
-
 fn set_debug_color(num_outer_steps: u32, num_inner_steps: u32, extra_height: f32) {
     if (u_Constants.debug_alpha > 0.0) {
         debug_color = vec4<f32>(
@@ -128,6 +128,9 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
         let t = (u_Surface.texture_scale.z - base.z) / dir.z;
         pos += (t + 0.01) * dir;
     }
+
+    let tpu = 1.0 / abs(dir); // "t" step per unit of distance
+    let t_step = min(tpu.x, min(tpu.y, tpu.y));
 
     let lod_count = u32(textureNumLevels(voxel_grid));
     let tci = get_map_coordinates(pos.xy);
@@ -161,7 +164,7 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
         // If we reached the lowest level, and we know the cell is occupied,
         // try stepping through the cell.
         if (occupancy !=0u && lod == 0u) {
-            let num_linear_steps = min(u32(t / 1.5), num_inner_steps);
+            let num_linear_steps = min(u32(ceil(t / t_step)), num_inner_steps);
             num_inner_steps -= num_linear_steps;
             let cp = cast_ray_linear(pos, new_pos, num_linear_steps);
             if (cp.ty != TYPE_MISS) {
@@ -189,6 +192,9 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
         num_outer_steps -= 1u;
     }
 
+    if (dir.z >= 0.0) {
+        return CastPoint(pos, TYPE_MISS);
+    }
     let suf = get_surface(pos.xy);
     set_debug_color(num_outer_steps, num_inner_steps, pos.z - suf.high_alt);
     let ty = select(suf.low_type, suf.high_type, pos.z > suf.low_alt);
@@ -211,7 +217,7 @@ fn draw(@builtin(position) frag_coord: vec4<f32>,) -> FragOutput {
         return FragOutput(debug_color, 1.0);
     }
     if (pt.ty == TYPE_MISS) {
-        return FragOutput(vec4<f32>(0.1, 0.2, 0.3, 1.0), 1.0);
+        return FragOutput(u_Locals.fog_color, 1.0);
     }
 
     let lit_factor = fetch_shadow(pt.pos);
