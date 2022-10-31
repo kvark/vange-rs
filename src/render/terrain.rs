@@ -14,7 +14,6 @@ use wgpu::util::DeviceExt as _;
 use std::{mem, num::NonZeroU32, ops::Range};
 
 const SCATTER_GROUP_SIZE: [u32; 3] = [16, 16, 1];
-const VOXEL_DEBUG_LOD: Option<Range<usize>> = None;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -59,8 +58,9 @@ struct ScatterConstants {
 struct VoxelConstants {
     voxel_size: [u32; 4],
     max_depth: f32,
-    debug_lod_start: u32,
-    pad: [f32; 2],
+    debug_alpha: f32,
+    max_outer_steps: u32,
+    max_inner_steps: u32,
 }
 
 unsafe impl Pod for VoxelConstants {}
@@ -181,8 +181,13 @@ enum Kind {
         draw_pipeline: wgpu::RenderPipeline,
         debug_pipeline: wgpu::RenderPipeline,
         draw_bind_group: wgpu::BindGroup,
-        debug_geo: Geometry,
+        constant_buffer: wgpu::Buffer,
         voxel_size: [u32; 3],
+        max_outer_steps: u32,
+        max_inner_steps: u32,
+        debug_alpha: f32,
+        debug_geo: Geometry,
+        debug_lod_range: Option<Range<usize>>,
         mips: Vec<VoxelMip>,
     },
     Slice {
@@ -858,7 +863,11 @@ impl Context {
                     ],
                 }
             }
-            settings::Terrain::RayVoxelTraced { voxel_size } => {
+            settings::Terrain::RayVoxelTraced {
+                voxel_size,
+                max_outer_steps,
+                max_inner_steps,
+            } => {
                 let bake_bg_layout =
                     gfx.device
                         .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -973,19 +982,12 @@ impl Context {
                         | wgpu::TextureUsages::STORAGE_BINDING,
                 });
                 let grid_view = grid.create_view(&wgpu::TextureViewDescriptor::default());
-                let constants = VoxelConstants {
-                    voxel_size: [voxel_size[0], voxel_size[1], voxel_size[2], 0],
-                    max_depth: 1000.0,
-                    debug_lod_start: VOXEL_DEBUG_LOD.clone().map_or(0, |r| r.start as u32),
-                    pad: [0.0; 2],
-                };
-                let voxel_constants =
-                    gfx.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("Voxel constants"),
-                            contents: bytemuck::bytes_of(&constants),
-                            usage: wgpu::BufferUsages::UNIFORM,
-                        });
+                let constant_buffer = gfx.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Voxel constants"),
+                    size: mem::size_of::<VoxelConstants>() as _,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
                 let draw_bind_group = gfx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Voxel draw"),
                     layout: &draw_bg_layout,
@@ -996,7 +998,7 @@ impl Context {
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
-                            resource: voxel_constants.as_entire_binding(),
+                            resource: constant_buffer.as_entire_binding(),
                         },
                     ],
                 });
@@ -1058,8 +1060,13 @@ impl Context {
                     draw_pipeline,
                     debug_pipeline,
                     draw_bind_group,
-                    debug_geo,
+                    constant_buffer,
                     voxel_size,
+                    max_outer_steps,
+                    max_inner_steps,
+                    debug_alpha: 0.0,
+                    debug_geo,
+                    debug_lod_range: None,
                     mips,
                 }
             }
@@ -1492,11 +1499,40 @@ impl Context {
                 0,
                 &self.uniform_buf,
                 0,
-                mem::size_of::<Constants>() as wgpu::BufferAddress,
+                mem::size_of::<Constants>() as _,
             );
         }
 
         match self.kind {
+            Kind::RayVoxel {
+                ref constant_buffer,
+                voxel_size,
+                max_outer_steps,
+                max_inner_steps,
+                debug_alpha,
+                ..
+            } => {
+                let constants = VoxelConstants {
+                    voxel_size: [voxel_size[0], voxel_size[1], voxel_size[2], 0],
+                    max_depth: cam.depth_range().end,
+                    debug_alpha,
+                    max_outer_steps,
+                    max_inner_steps,
+                };
+                let constant_update =
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("ray-voxel constants"),
+                        contents: bytemuck::bytes_of(&constants),
+                        usage: wgpu::BufferUsages::COPY_SRC,
+                    });
+                encoder.copy_buffer_to_buffer(
+                    &constant_update,
+                    0,
+                    constant_buffer,
+                    0,
+                    mem::size_of::<VoxelConstants>() as _,
+                );
+            }
             Kind::Paint {
                 ref mut bar_count, ..
             } => {
@@ -1604,22 +1640,27 @@ impl Context {
                 ref draw_pipeline,
                 ref debug_pipeline,
                 ref draw_bind_group,
-                ref mips,
                 ref debug_geo,
+                ref debug_lod_range,
+                ref mips,
                 ..
             } => {
                 pass.set_pipeline(draw_pipeline);
                 pass.set_bind_group(2, draw_bind_group, &[]);
                 pass.draw(0..3, 0..1);
-                if let Some(lod_range) = VOXEL_DEBUG_LOD {
+                if let Some(ref lod_range) = *debug_lod_range {
                     pass.set_pipeline(debug_pipeline);
-                    let mut num_instances = 0;
-                    for mip in mips[lod_range].iter() {
-                        num_instances +=
+                    let mut instances = 0..0;
+                    for (i, mip) in mips[..lod_range.end.min(mips.len())].iter().enumerate() {
+                        let count =
                             mip.extent.width * mip.extent.height * mip.extent.depth_or_array_layers;
+                        if i < lod_range.start {
+                            instances.start += count;
+                        }
+                        instances.end += count;
                     }
                     pass.set_index_buffer(debug_geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
-                    pass.draw_indexed(0..debug_geo.num_indices, 0, 0..num_instances);
+                    pass.draw_indexed(0..debug_geo.num_indices, 0, instances);
                 }
             }
             Kind::Slice { ref pipeline } => {
@@ -1659,6 +1700,36 @@ impl Context {
                 pass.draw_indexed(0..geo.num_indices, 0, 0..1);
             }
             _ => unreachable!(),
+        }
+    }
+
+    pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        match self.kind {
+            Kind::RayVoxel {
+                ref mut max_outer_steps,
+                ref mut max_inner_steps,
+                ref mut debug_alpha,
+                ref mut debug_lod_range,
+                ..
+            } => {
+                ui.add(egui::Slider::new(max_outer_steps, 0..=50).text("Max outer steps"));
+                ui.add(egui::Slider::new(max_inner_steps, 0..=50).text("Max inner steps"));
+                ui.add(egui::Slider::new(debug_alpha, 0.0..=1.0).text("Debug alpha"));
+                let mut debug_voxels = debug_lod_range.is_some();
+                ui.checkbox(&mut debug_voxels, "Debug voxels");
+                let mut lod_start = debug_lod_range.clone().map_or(4, |r| r.start);
+                let mut lod_count = debug_lod_range.clone().map_or(1, |r| r.end - r.start);
+                ui.add_enabled_ui(debug_voxels, |ui| {
+                    ui.add(egui::Slider::new(&mut lod_start, 1..=8).text("LOD start"));
+                    ui.add(egui::Slider::new(&mut lod_count, 1..=8).text("LOD count"));
+                });
+                *debug_lod_range = if debug_voxels {
+                    Some(lod_start..lod_start + lod_count)
+                } else {
+                    None
+                };
+            }
+            _ => {}
         }
     }
 }

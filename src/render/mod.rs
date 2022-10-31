@@ -419,6 +419,10 @@ impl Render {
             ui.color_edit_button_rgb(&mut self.fog_config.color);
         });
         ui.add(egui::Slider::new(&mut self.fog_config.depth, 0.0..=100.0).text("Fog depth"));
+        ui.group(|ui| {
+            ui.label("Terrain:");
+            self.terrain.draw_ui(ui);
+        });
     }
 
     pub fn draw_world(
