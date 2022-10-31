@@ -133,11 +133,15 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     let t_step = min(tpu.x, min(tpu.y, tpu.y));
 
     let lod_count = u32(textureNumLevels(voxel_grid));
-    let tci = get_map_coordinates(pos.xy);
     var lod = lod_count - 1u;
-    var lod_voxel_pos = vec3<i32>(tci, i32(pos.z)) / (u_Constants.voxel_size.xyz << vec3<u32>(lod));
+    let base_lod_voxel_size = vec3<f32>(u_Constants.voxel_size.xyz << vec3<u32>(lod));
+    var lod_voxel_pos = vec3<i32>(floor(pos / base_lod_voxel_size));
     loop {
-        let occupancy = textureLoad(voxel_grid, lod_voxel_pos, i32(lod)).x;
+        //TODO: alternatively, can compute manually based on the level dimensions
+        let lod_dim = textureDimensions(voxel_grid, i32(lod));
+        let load_pos_sanitized = (lod_voxel_pos % lod_dim) + select(lod_dim, vec3<i32>(0), lod_voxel_pos >= vec3<i32>(0));
+        let occupancy = textureLoad(voxel_grid, load_pos_sanitized, i32(lod)).x;
+
         if (occupancy != 0u && lod != 0u) {
             lod -= 1u;
             // Now that we descended to a LOD level below,
@@ -181,12 +185,11 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
         let can_raise = (lod_voxel_pos & vec3<i32>(1)) == vec3<i32>(step(vec3<f32>(0.0), dir)) || (vec3<f32>(t) < tc);
         if (enable_unzoom && lod + 1u < lod_count && all(can_raise)) {
             lod += 1u;
-            lod_voxel_pos = lod_voxel_pos / 2;
+            lod_voxel_pos = (lod_voxel_pos + select(vec3<i32>(0), vec3<i32>(-1), lod_voxel_pos < vec3<i32>(0))) / 2;
         }
         lod_voxel_pos += voxel_shift;
 
-        if (num_outer_steps == 0u) {
-            //debug_color = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+        if (num_outer_steps == 0u || lod_voxel_pos.z < 0) {
             break;
         }
         num_outer_steps -= 1u;
