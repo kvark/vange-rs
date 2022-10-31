@@ -3,7 +3,9 @@
 struct VoxelConstants {
     voxel_size: vec4<i32>,
     max_depth: f32,
-    debug_lod_start: u32,
+    debug_alpha: f32,
+    max_outer_steps: u32,
+    max_inner_steps: u32,
 };
 
 @group(2) @binding(0) var voxel_grid: texture_3d<u32>;
@@ -103,9 +105,20 @@ fn cast_ray_fallback(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
 
 let enable_unzoom = true;
 
+fn set_debug_color(num_outer_steps: u32, num_inner_steps: u32, extra_height: f32) {
+    if (u_Constants.debug_alpha > 0.0) {
+        debug_color = vec4<f32>(
+            extra_height * 0.1,
+            1.0 - f32(num_outer_steps) / f32(u_Constants.max_outer_steps),
+            1.0 - f32(num_inner_steps) / f32(u_Constants.max_inner_steps),
+            u_Constants.debug_alpha,
+        );
+    }
+}
+
 fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
-    var num_outer_steps: u32 = 30u;
-    var num_inner_steps: u32 = 10u;
+    var num_outer_steps: u32 = u_Constants.max_outer_steps;
+    var num_inner_steps: u32 = u_Constants.max_inner_steps;
 
     var pos = base;
     if (dir.z >= 0.0 && base.z >= u_Surface.texture_scale.z) {
@@ -148,14 +161,14 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
         // If we reached the lowest level, and we know the cell is occupied,
         // try stepping through the cell.
         if (occupancy !=0u && lod == 0u) {
-            let num_linear_steps = u32(t / 1.5);
-            if (num_inner_steps < num_linear_steps) {
-                break;
-            }
+            let num_linear_steps = min(u32(t / 1.5), num_inner_steps);
             num_inner_steps -= num_linear_steps;
             let cp = cast_ray_linear(pos, new_pos, num_linear_steps);
             if (cp.ty != TYPE_MISS) {
+                set_debug_color(num_outer_steps, num_inner_steps, 0.0);
                 return cp;
+            } else if (num_inner_steps == 0u) {
+                break;
             }
         }
         pos = new_pos;
@@ -176,14 +189,9 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
         num_outer_steps -= 1u;
     }
 
-    //let t = select(1.0-pos.z / dir.z, 10.0, dir.z > 0.0);
-    //return cast_ray_binary(pos, pos + t * dir, 20u);
-    //return cast_miss();
-    //pos += t * dir;
-    //let ty = check_hit(pos);
     let suf = get_surface(pos.xy);
+    set_debug_color(num_outer_steps, num_inner_steps, pos.z - suf.high_alt);
     let ty = select(suf.low_type, suf.high_type, pos.z > suf.low_alt);
-    //debug_color = vec4(1.0, 0.0, 0.0, (pos.z - suf.high_alt) * 0.01);
     return CastPoint(pos, ty);
 }
 
@@ -226,7 +234,7 @@ fn vert_bound(
     @builtin(instance_index) inst_index: u32,
 ) -> DebugOutput {
     let lod_count = u32(textureNumLevels(voxel_grid));
-    var lod = u_Constants.debug_lod_start;
+    var lod = 0u;
     var index = i32(inst_index);
     var coord = vec3<i32>(0);
     while (lod < lod_count) {

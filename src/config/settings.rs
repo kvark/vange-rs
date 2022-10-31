@@ -129,6 +129,8 @@ pub enum Terrain {
     },
     RayVoxelTraced {
         voxel_size: [u32; 3],
+        max_outer_steps: u32,
+        max_inner_steps: u32,
     },
     Sliced,
     Painted,
