@@ -12,6 +12,7 @@ use std::{
     fs::File,
     io::{BufReader, Error as IoError, Read},
     mem,
+    ops::Range,
     path::PathBuf,
     sync::Arc,
 };
@@ -59,6 +60,7 @@ pub struct SurfaceData {
 
 pub struct DirtyRect {
     pub rect: Rect,
+    pub z_range: Range<u16>,
     pub need_upload: bool,
 }
 
@@ -120,11 +122,11 @@ pub fn make_shader_code(name: &str, substitutions: &[(&str, String)]) -> Result<
         }
     }
 
+    buf.push_str(&source);
     for &(key_inner, ref value) in substitutions {
         let key = format!("`{}`", key_inner);
-        source = source.replace(&key, value);
+        buf = buf.replace(&key, value);
     }
-    buf.push_str(&source);
     Ok(buf)
 }
 

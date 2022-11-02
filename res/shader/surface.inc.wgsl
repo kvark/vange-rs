@@ -15,7 +15,6 @@ let c_DoubleLevelMask: u32 = 64u;
 let c_ShadowMask: u32 = 128u;
 let c_DeltaShift: u32 = 0u;
 let c_DeltaBits: u32 = 2u;
-let c_DeltaScale: f32 = 0.03137254901; //8.0 / 255.0;
 
 struct Surface {
     low_alt: f32,
