@@ -1,4 +1,4 @@
-//!include globals.inc terrain/locals.inc surface.inc shadow.inc terrain/color.inc
+//!include globals.inc morton.inc terrain/locals.inc surface.inc shadow.inc terrain/color.inc terrain/voxel.inc
 
 struct VoxelConstants {
     voxel_size: vec4<i32>,
@@ -6,10 +6,23 @@ struct VoxelConstants {
     debug_alpha: f32,
     max_outer_steps: u32,
     max_inner_steps: u32,
-};
+}
 
-@group(2) @binding(0) var voxel_grid: texture_3d<u32>;
+struct VoxelData {
+    lod_count: vec4<u32>,
+    lods: array<VoxelLod, 16>,
+    occupancy: array<u32>,
+}
+
+@group(2) @binding(0) var<storage, read> b_VoxelGrid: VoxelData;
 @group(2) @binding(1) var<uniform> u_Constants: VoxelConstants;
+
+fn check_occupancy(coordinates: vec3<i32>, lod: u32) -> bool {
+    let lod_info = b_VoxelGrid.lods[lod];
+    let sanitized = (coordinates % lod_info.dim) + select(lod_info.dim, vec3<i32>(0), coordinates >= vec3<i32>(0));
+    let addr = linearize(vec3<u32>(sanitized), lod_info);
+    return (b_VoxelGrid.occupancy[addr.offset] & addr.mask) != 0u;
+}
 
 let enable_unzoom = true;
 let step_scale = 1.0;
@@ -133,17 +146,12 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     let tpu = step_scale / abs(dir); // "t" step per unit of distance
     let t_step = min(tpu.x, min(tpu.y, tpu.y));
 
-    let lod_count = u32(textureNumLevels(voxel_grid));
-    var lod = lod_count - 1u;
+    var lod = b_VoxelGrid.lod_count.x - 1u;
     let base_lod_voxel_size = vec3<f32>(u_Constants.voxel_size.xyz << vec3<u32>(lod));
     var lod_voxel_pos = vec3<i32>(floor(pos / base_lod_voxel_size));
     loop {
-        //TODO: alternatively, can compute manually based on the level dimensions
-        let lod_dim = textureDimensions(voxel_grid, i32(lod));
-        let load_pos_sanitized = (lod_voxel_pos % lod_dim) + select(lod_dim, vec3<i32>(0), lod_voxel_pos >= vec3<i32>(0));
-        let occupancy = textureLoad(voxel_grid, load_pos_sanitized, i32(lod)).x;
-
-        if (occupancy != 0u && lod != 0u) {
+        let is_occupied = check_occupancy(lod_voxel_pos, lod);
+        if (is_occupied && lod != 0u) {
             lod -= 1u;
             // Now that we descended to a LOD level below,
             // we need to clarify, which of the octants contains our position.
@@ -168,7 +176,7 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
 
         // If we reached the lowest level, and we know the cell is occupied,
         // try stepping through the cell.
-        if (occupancy !=0u && lod == 0u) {
+        if (is_occupied && lod == 0u) {
             let num_linear_steps = min(u32(ceil(t / t_step)), num_inner_steps);
             num_inner_steps -= num_linear_steps;
             let cp = cast_ray_linear(pos, new_pos, num_linear_steps);
@@ -184,7 +192,7 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
         let voxel_shift_dir = select(vec3<i32>(-1), vec3<i32>(1), dir > vec3<f32>(0.0));
         let voxel_shift = select(vec3<i32>(0), voxel_shift_dir, vec3(t) == tc);
         let can_raise = (lod_voxel_pos & vec3<i32>(1)) == vec3<i32>(step(vec3<f32>(0.0), dir)) || (vec3<f32>(t) < tc);
-        if (enable_unzoom && lod + 1u < lod_count && all(can_raise)) {
+        if (enable_unzoom && lod + 1u < b_VoxelGrid.lod_count.x && all(can_raise)) {
             lod += 1u;
             lod_voxel_pos = (lod_voxel_pos + select(vec3<i32>(0), vec3<i32>(-1), lod_voxel_pos < vec3<i32>(0))) / 2;
         }
@@ -243,12 +251,11 @@ fn vert_bound(
     @builtin(vertex_index) vert_index: u32,
     @builtin(instance_index) inst_index: u32,
 ) -> DebugOutput {
-    let lod_count = u32(textureNumLevels(voxel_grid));
     var lod = 0u;
     var index = i32(inst_index);
     var coord = vec3<i32>(0);
-    while (lod < lod_count) {
-        let dim = textureDimensions(voxel_grid, lod);
+    while (lod < b_VoxelGrid.lod_count.x) {
+        let dim = b_VoxelGrid.lods[lod].dim;
         let total = i32(dim.x * dim.y * dim.z);
         if (index < total) {
             coord = vec3<i32>(index % dim.x, (index / dim.x) % dim.y, index / (dim.x * dim.y));
@@ -258,8 +265,8 @@ fn vert_bound(
         lod += 1u;
     }
 
-    let texel = textureLoad(voxel_grid, coord, i32(lod)).x;
-    if (lod == lod_count || texel == 0u) {
+    let is_occupied = check_occupancy(coord, lod);
+    if (lod == b_VoxelGrid.lod_count.x || !is_occupied) {
         return DebugOutput(vec4<f32>(0.0, 0.0, 0.0, 1.0), 0u);
     };
 

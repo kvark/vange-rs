@@ -405,6 +405,7 @@ pub unsafe extern "C" fn rv_map_update_data(ctx: &mut Context, region: Rect) {
         .dirty_rects
         .push(vangers::render::DirtyRect {
             rect: region.to_native(),
+            z_range: 0..0x100,
             need_upload: true,
         });
 }
