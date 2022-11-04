@@ -1880,8 +1880,8 @@ impl Context {
                 ref mut debug_lod_range,
                 ..
             } => {
-                ui.add(egui::Slider::new(max_outer_steps, 0..=50).text("Max outer steps"));
-                ui.add(egui::Slider::new(max_inner_steps, 0..=50).text("Max inner steps"));
+                ui.add(egui::Slider::new(max_outer_steps, 0..=100).text("Max outer steps"));
+                ui.add(egui::Slider::new(max_inner_steps, 0..=100).text("Max inner steps"));
                 ui.add(egui::Slider::new(debug_alpha, 0.0..=1.0).text("Debug alpha"));
                 let mut debug_voxels = debug_lod_range.is_some();
                 ui.checkbox(&mut debug_voxels, "Debug voxels");

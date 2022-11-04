@@ -18,7 +18,7 @@ pub const DOUBLE_LEVEL: u8 = 1 << 6;
 pub const DELTA_SHIFT0: u8 = 2 + 3;
 pub const DELTA_SHIFT1: u8 = 0 + 3;
 pub const DELTA_MASK: u8 = 0x3;
-pub const HEIGHT_SCALE: u32 = 128;
+pub const HEIGHT_SCALE: u32 = 256;
 
 pub struct Level {
     pub size: (i32, i32),
