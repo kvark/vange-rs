@@ -61,7 +61,7 @@
 		terrain: RayTraced,
 		// RayTraced,
 		// RayMipTraced (mip_count: 10, max_jumps: 25, max_steps: 100, debug: false),
-		// RayVoxelTraced(voxel_size: (2, 8, 1), max_outer_steps: 25, max_inner_steps: 20),
+		// RayVoxelTraced(voxel_size: (1, 4, 1), max_outer_steps: 40, max_inner_steps: 40),
 		// Scattered( density: (2, 2, 2) ),
 		// Sliced,
 		// Painted,

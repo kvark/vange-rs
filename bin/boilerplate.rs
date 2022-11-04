@@ -91,7 +91,11 @@ impl Harness {
                 max_storage_buffer_binding_size: 1 << 26,
                 ..wgpu::Limits::downlevel_webgl2_defaults()
             },
-            Terrain::RayVoxelTraced { .. } | Terrain::Scattered { .. } => wgpu::Limits::default(),
+            Terrain::RayVoxelTraced { .. } => wgpu::Limits {
+                max_storage_buffer_binding_size: 1 << 29,
+                ..wgpu::Limits::default()
+            },
+            Terrain::Scattered { .. } => wgpu::Limits::default(),
         };
 
         let (device, queue) = task_pool
