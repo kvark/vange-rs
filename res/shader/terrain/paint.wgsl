@@ -27,7 +27,7 @@ fn vertex(
 
     let axis = (vec3<u32>(vertex_index) & vec3<u32>(1u, 2u, 4u)) != vec3<u32>(0u);
     let is_high = vertex_index > 10u;
-    let heights = vec4<f32>(0.0, suf.low_alt, suf.low_alt + suf.delta, suf.high_alt);
+    let heights = vec4<f32>(0.0, suf.low_alt, suf.mid_alt, suf.high_alt);
     let shift = (u_Globals.camera_pos.xyz > vec3<f32>(pos_center, heights.z)) != axis;
     let h2 = select(heights.xy, heights.zw, is_high);
     let altitude = select(h2.x, h2.y, shift.z);

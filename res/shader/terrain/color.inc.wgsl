@@ -31,7 +31,7 @@ fn evaluate_palette(ty: u32, value_in: f32) -> f32 {
 
 fn get_surface_height(pos: vec3<f32>) -> f32 {
     let suf = get_surface(pos.xy);
-    return select(suf.low_alt, suf.high_alt, pos.z >= suf.low_alt + suf.delta);
+    return select(suf.low_alt, suf.high_alt, pos.z >= suf.mid_alt);
 }
 
 fn get_surface_gradient(pos: vec3<f32>) -> vec2<f32> {

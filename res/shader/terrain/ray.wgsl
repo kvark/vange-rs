@@ -134,14 +134,14 @@ fn cast_ray_to_map(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     pt.ty = suf.high_type;
     pt.is_underground = false;
 
-    if (suf.delta != 0.0 && b.z < suf.low_alt + suf.delta) {
+    if (suf.low_alt < suf.high_alt && b.z < suf.mid_alt) {
         // continue the cast underground, but reserve
         // the right to re-appear above the surface.
         let cr = cast_ray_impl(b, c, false, 6, 3);
         a = cr.a;
         b = cr.b;
         suf = cr.surface;
-        if (b.z >= suf.low_alt + suf.delta) {
+        if (b.z >= suf.mid_alt) {
             pt.ty = suf.high_type;
         } else {
             pt.ty = suf.low_type;
@@ -190,7 +190,7 @@ fn ray_color_debug(in: RayInput) -> FragOutput {
 
     let pos = cast_ray_to_plane(0.0, sp_near_world, view);
     let surface = get_surface(pos.xy);
-    let color = vec4<f32>(surface.low_alt, surface.high_alt, surface.delta, 0.0) / 255.0;
+    let color = vec4<f32>(surface.low_alt, surface.mid_alt, surface.high_alt, 0.0) / 255.0;
     return FragOutput(color, 1.0);
 }
 
@@ -223,7 +223,7 @@ fn cast_ray_mip(base_point: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
         // step 0: at lowest LOD, just advance
         if (lod == 0u) {
             let surface = get_surface(pos.xy);
-            if (pos.z < surface.low_alt || (pos.z < surface.high_alt && pos.z >= surface.low_alt + surface.delta)) {
+            if (pos.z < surface.low_alt || (pos.z < surface.high_alt && pos.z >= surface.mid_alt)) {
                 break;
             }
             if (surface.low_alt == surface.high_alt) {
