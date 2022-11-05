@@ -102,10 +102,10 @@ fn main(
     var base = 0.0;
     let t = f32(global_id.z) / f32(num_workgroups.z * wg_size.z);
 
-    if (suf.delta != 0.0) {
+    if (suf.low_alt < suf.high_alt) {
         let alt = mix(suf.low_alt, 0.0, t);
         add_voxel(pos, alt, suf.low_type, 0.25);
-        base = suf.low_alt + suf.delta;
+        base = suf.mid_alt;
     }
     if (true) {
         let alt = mix(suf.high_alt, base, t);

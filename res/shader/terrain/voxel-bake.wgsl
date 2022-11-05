@@ -55,7 +55,7 @@ fn init(
         // Do a range intersection with the terrain
         let z0 = f32(z);
         let z1 = f32(z + u_Constants.voxel_size.z);
-        if (z1 <= suf.low_alt || (z1 > suf.low_alt + suf.delta && z0 < suf.high_alt)) {
+        if (z1 <= suf.low_alt || (z1 > suf.mid_alt && z0 < suf.high_alt)) {
             let voxel_coords = vec3<i32>(flat_coords, z) / u_Constants.voxel_size.xyz;
             set_bit(linearize(vec3<u32>(voxel_coords), vlod));
         }

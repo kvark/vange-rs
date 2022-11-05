@@ -274,8 +274,15 @@ pub struct Flood {
     pub section_size: (u32, u32),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum DeltaModel {
+    CaveHeight,
+    Thickness,
+    Ignored,
+}
+
 pub struct Context {
-    pub surface_uni_buf: wgpu::Buffer,
+    surface_uni_buf: wgpu::Buffer,
     pub uniform_buf: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
     pub bind_group_layout: wgpu::BindGroupLayout,
@@ -286,10 +293,12 @@ pub struct Context {
     shadow_kind: Kind,
     terrain_buf: wgpu::Buffer,
     palette_texture: wgpu::Texture,
+    delta_model: DeltaModel,
     pub flood: Flood,
     pub dirty_rects: Vec<super::DirtyRect>,
     pub dirty_flood: bool,
     pub dirty_palette: Range<u32>,
+    pub dirty_surface_constants: bool,
 }
 
 impl Context {
@@ -786,22 +795,12 @@ impl Context {
                     ],
                 });
 
-        let bits = level.terrain_bits();
-        let surface_uni_buf = gfx
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("surface-uniforms"),
-                contents: bytemuck::bytes_of(&SurfaceConstants {
-                    _tex_scale: [
-                        level.size.0.as_value() as f32,
-                        level.size.1.as_value() as f32,
-                        level::HEIGHT_SCALE as f32,
-                        0.0,
-                    ],
-                    _terrain_bits: [bits.shift as u32 | ((bits.mask as u32) << 4), 0, 0, 0],
-                }),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
+        let surface_uni_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("surface-uniforms"),
+            size: mem::size_of::<SurfaceConstants>() as _,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let uniform_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Terrain uniforms"),
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
@@ -1290,6 +1289,7 @@ impl Context {
             shadow_kind,
             terrain_buf,
             palette_texture: palette.texture,
+            delta_model: DeltaModel::CaveHeight,
             flood: Flood {
                 texture: flood_texture,
                 texture_size: flood_section_count,
@@ -1310,6 +1310,7 @@ impl Context {
             }],
             dirty_flood: true,
             dirty_palette: 0..0x100,
+            dirty_surface_constants: true,
         }
     }
 
@@ -1426,6 +1427,41 @@ impl Context {
         level: &level::Level,
         device: &wgpu::Device,
     ) {
+        if self.dirty_surface_constants {
+            let bits = level.terrain_bits();
+            let delta_model = match self.delta_model {
+                DeltaModel::CaveHeight => 0,
+                DeltaModel::Thickness => 1,
+                DeltaModel::Ignored => 2,
+            };
+            let staging_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("temp-surface-uniforms"),
+                contents: bytemuck::bytes_of(&SurfaceConstants {
+                    _tex_scale: [
+                        level.size.0 as f32,
+                        level.size.1 as f32,
+                        level::HEIGHT_SCALE as f32,
+                        0.0,
+                    ],
+                    _terrain_bits: [
+                        bits.shift as u32 | ((bits.mask as u32) << 4),
+                        delta_model,
+                        0,
+                        0,
+                    ],
+                }),
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+            encoder.copy_buffer_to_buffer(
+                &staging_buf,
+                0,
+                &self.surface_uni_buf,
+                0,
+                mem::size_of::<SurfaceConstants>() as _,
+            );
+            self.dirty_surface_constants = false;
+        }
+
         if !self.dirty_rects.is_empty() {
             for dr in self.dirty_rects.iter_mut() {
                 if !dr.need_upload {
@@ -1872,6 +1908,22 @@ impl Context {
     }
 
     pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        let old_model = self.delta_model;
+        egui::ComboBox::from_label("Delta model")
+            .selected_text(&format!("{:?}", self.delta_model))
+            .show_ui(ui, |ui| {
+                for model in [
+                    DeltaModel::CaveHeight,
+                    DeltaModel::Thickness,
+                    DeltaModel::Ignored,
+                ] {
+                    ui.selectable_value(&mut self.delta_model, model, format!("{:?}", model));
+                }
+            });
+        if self.delta_model != old_model {
+            self.dirty_surface_constants = true;
+        }
+
         match self.kind {
             Kind::RayVoxel {
                 ref mut max_outer_steps,

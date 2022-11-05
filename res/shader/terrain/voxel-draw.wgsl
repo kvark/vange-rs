@@ -65,7 +65,7 @@ fn check_hit(pos: vec3<f32>) -> u32 {
     if (pos.z < suf.low_alt) {
         return suf.low_type;
     } else
-    if (pos.z >= suf.low_alt + suf.delta && pos.z < suf.high_alt) {
+    if (pos.z >= suf.mid_alt && pos.z < suf.high_alt) {
         return suf.high_type;
     } else {
         return TYPE_MISS;

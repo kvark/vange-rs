@@ -111,8 +111,4 @@ impl LevelConfig {
             terrains,
         }
     }
-
-    pub fn terrain_bits(&self) -> super::TerrainBits {
-        super::TerrainBits::new(self.terrains.len() as u8)
-    }
 }

@@ -82,8 +82,12 @@ impl Texel {
 }
 
 impl Level {
+    pub fn terrain_bits(&self) -> TerrainBits {
+        TerrainBits::new(self.terrains.len() as u8)
+    }
+
     pub fn get(&self, mut coord: (i32, i32)) -> Texel {
-        let bits = TerrainBits::new(self.terrains.len() as u8);
+        let bits = self.terrain_bits();
         while coord.0 < 0 {
             coord.0 += self.size.0;
         }

@@ -2,7 +2,7 @@
 
 struct SurfaceConstants {
     texture_scale: vec4<f32>,    // XY = size, Z = height scale, w = number of layers
-    terrain_bits: vec4<u32>,     // X_low = shift, X_high = mask
+    terrain_bits: vec4<u32>,     // X_low = shift, X_high = mask, Y = use thickness notation for delta
 };
 struct TerrainData {
     inner: array<u32>,
@@ -19,7 +19,7 @@ let c_DeltaBits: u32 = 2u;
 struct Surface {
     low_alt: f32,
     high_alt: f32,
-    delta: f32,
+    mid_alt: f32,
     low_type: u32,
     high_type: u32,
     is_shadowed: bool,
@@ -55,12 +55,15 @@ fn get_surface_impl(tci: vec2<i32>) -> Surface {
     suf.is_shadowed = (data.y & c_ShadowMask) != 0u;
 
     if ((data.y & c_DoubleLevelMask) != 0u) {
-        let delta = (get_delta(data.y) << c_DeltaBits) + get_delta(data.w);
+        let model = u_Surface.terrain_bits.y;
+        let delta_orig = ((get_delta(data.y) << c_DeltaBits) + get_delta(data.w)) << 3u;
+        let delta = select(delta_orig, 16u, model == 2u); // `Ignored`
+        let mid = select(data.x + delta, data.z - delta, model != 0u); // `Thickness`?
         suf.low_type = get_terrain_type(data.y);
         suf.high_type = get_terrain_type(data.w);
         suf.low_alt = f32(data.x) / 256.0 * u_Surface.texture_scale.z;
         suf.high_alt = f32(data.z) / 256.0 * u_Surface.texture_scale.z;
-        suf.delta = f32(delta) * 8.0 / 256.0 * u_Surface.texture_scale.z;
+        suf.mid_alt = f32(mid) / 256.0 * u_Surface.texture_scale.z;
     } else {
         let subdata = select(data.xy, data.zw, (tc_index & 1) != 0);
         let altitude = f32(subdata.x) / 256.0 * u_Surface.texture_scale.z;
@@ -69,7 +72,7 @@ fn get_surface_impl(tci: vec2<i32>) -> Surface {
         suf.high_type = ty;
         suf.low_alt = altitude;
         suf.high_alt = altitude;
-        suf.delta = 0.0;
+        suf.mid_alt = altitude;
     }
 
     return suf;
@@ -83,7 +86,7 @@ fn get_surface(pos: vec2<f32>) -> Surface {
 struct SurfaceAlt {
     low: f32,
     high: f32,
-    delta: f32,
+    mid: f32,
 };
 
 fn get_surface_alt(pos: vec2<f32>) -> SurfaceAlt {
@@ -91,7 +94,7 @@ fn get_surface_alt(pos: vec2<f32>) -> SurfaceAlt {
     var s: SurfaceAlt;
     s.low = surface.low_alt;
     s.high = surface.high_alt;
-    s.delta = surface.delta;
+    s.mid = surface.mid_alt;
     return s;
 }
 
@@ -100,7 +103,7 @@ fn merge_alt(a: SurfaceAlt, b: SurfaceAlt, ratio: f32) -> SurfaceAlt {
     let mid = 0.5 * (b.low + b.high);
     suf.low = mix(a.low, select(b.low, b.high, a.low >= mid), ratio);
     suf.high = mix(a.high, select(b.low, b.high, a.high >= mid), ratio);
-    suf.delta = mix(a.delta, select(0.0, b.delta, a.high >= mid), ratio);
+    suf.mid = mix(a.mid, select(b.low, b.mid, a.high >= mid), ratio);
     suf = a;
     return suf;
 }
@@ -124,6 +127,6 @@ fn get_surface_smooth(pos: vec2<f32>) -> Surface {
     let alt = get_surface_alt_smooth(pos);
     suf.low_alt = alt.low;
     suf.high_alt = alt.high;
-    suf.delta = alt.delta;
+    suf.mid_alt = alt.mid;
     return suf;
 }
