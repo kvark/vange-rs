@@ -12,7 +12,7 @@ pub struct Car {
 }
 
 #[derive(Copy, Clone, Deserialize)]
-pub enum View {
+pub enum Projection {
     Flat,
     Perspective,
 }
@@ -24,6 +24,7 @@ pub struct Camera {
     pub offset: f32,
     pub speed: f32,
     pub depth_range: (f32, f32),
+    pub projection: Projection,
 }
 
 #[derive(Copy, Clone, Deserialize)]
@@ -39,24 +40,47 @@ pub struct Other {
 }
 
 #[derive(Copy, Clone, Deserialize)]
-pub struct GpuCollision {
-    pub max_objects: usize,
-    pub max_polygons_total: usize,
-    pub max_raster_size: (u32, u32),
-}
-
-#[derive(Copy, Clone, Deserialize)]
 pub struct Physics {
     pub max_quant: f32,
     pub shape_sampling: u8,
-    pub gpu_collision: Option<GpuCollision>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+pub enum DeltaModel {
+    Cave,
+    Thickness,
+    Ignored,
+}
+
+impl Default for DeltaModel {
+    fn default() -> Self {
+        Self::Cave
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Geometry {
+    pub height: u32,
+    pub delta_model: DeltaModel,
+    pub delta_power: u8,
+}
+
+impl Default for Geometry {
+    fn default() -> Self {
+        // Note: these values match the original game logic
+        Self {
+            height: 0x100,
+            delta_model: DeltaModel::Cave,
+            delta_power: 3,
+        }
+    }
 }
 
 #[derive(Deserialize)]
 pub struct Game {
     pub level: String,
     pub cycle: String,
-    pub view: View,
+    pub geometry: Geometry,
     pub camera: Camera,
     pub other: Other,
     pub physics: Physics,
@@ -235,4 +259,10 @@ impl Settings {
             .with_extension("m3d");
         File::open(path).unwrap_or_else(|_| panic!("Unable to open vehicle {}", name))
     }
+}
+
+#[derive(Deserialize)]
+pub struct LibConfig {
+    pub geometry: Geometry,
+    pub render: Render,
 }

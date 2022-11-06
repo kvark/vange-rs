@@ -9,16 +9,13 @@ use std::{
 mod config;
 
 pub use self::config::{LevelConfig, Power, TerrainConfig};
+use crate::config::settings;
 
 pub type TerrainType = u8;
 
-pub type Altitude = u8;
-pub type Delta = Altitude;
 pub const DOUBLE_LEVEL: u8 = 1 << 6;
-pub const DELTA_SHIFT0: u8 = 2 + 3;
-pub const DELTA_SHIFT1: u8 = 0 + 3;
+pub const DELTA_BITS: u8 = 2;
 pub const DELTA_MASK: u8 = 0x3;
-pub const HEIGHT_SCALE: u32 = 256;
 
 pub struct Level {
     pub size: (i32, i32),
@@ -27,10 +24,11 @@ pub struct Level {
     pub meta: Box<[u8]>,
     pub palette: [[u8; 4]; 0x100],
     pub terrains: Box<[TerrainConfig]>,
+    pub geometry: settings::Geometry,
 }
 
 #[derive(Copy, Clone)]
-pub struct Point(pub Altitude, pub TerrainType);
+pub struct Point(pub f32, pub TerrainType);
 
 #[derive(Copy, Clone)]
 pub struct TerrainBits {
@@ -65,15 +63,11 @@ impl TerrainBits {
 #[derive(Copy, Clone)]
 pub enum Texel {
     Single(Point),
-    Dual {
-        low: Point,
-        high: Point,
-        delta: Delta,
-    },
+    Dual { low: Point, mid: f32, high: Point },
 }
 
 impl Texel {
-    pub fn top(&self) -> Altitude {
+    pub fn top(&self) -> f32 {
         match *self {
             Texel::Single(ref p) => p.0,
             Texel::Dual { ref high, .. } => high.0,
@@ -86,28 +80,42 @@ impl Level {
         TerrainBits::new(self.terrains.len() as u8)
     }
 
-    pub fn get(&self, mut coord: (i32, i32)) -> Texel {
+    fn get_mid_altitude(&self, low: u8, high: u8, delta: u8) -> u8 {
+        let power = self.geometry.delta_power;
+        match self.geometry.delta_model {
+            settings::DeltaModel::Cave => low.saturating_add(delta << power).min(high),
+            settings::DeltaModel::Thickness => high.saturating_sub(delta << power).max(low),
+            settings::DeltaModel::Ignored => high.saturating_sub(1 << power).max(low),
+        }
+    }
+
+    pub fn get(&self, coord: (i32, i32)) -> Texel {
         let bits = self.terrain_bits();
-        while coord.0 < 0 {
-            coord.0 += self.size.0;
-        }
-        while coord.1 < 0 {
-            coord.1 += self.size.1;
-        }
-        let i = ((coord.1 % self.size.1) * self.size.0 + (coord.0 % self.size.0)) as usize;
+        let i = (coord.1.rem_euclid(self.size.1) * self.size.0 + coord.0.rem_euclid(self.size.0))
+            as usize;
         let meta = self.meta[i];
+        let altitude_scale = self.geometry.height as f32 / 256.0;
         if meta & DOUBLE_LEVEL != 0 {
             let meta0 = self.meta[i & !1];
             let meta1 = self.meta[i | 1];
-            let d0 = (meta0 & DELTA_MASK) << DELTA_SHIFT0;
-            let d1 = (meta1 & DELTA_MASK) << DELTA_SHIFT1;
+            let delta = ((meta0 & DELTA_MASK) << DELTA_BITS) | (meta1 & DELTA_MASK);
             Texel::Dual {
-                low: Point(self.height[i & !1], bits.read(meta0)),
-                high: Point(self.height[i | 1], bits.read(meta1)),
-                delta: d0 + d1,
+                low: Point(
+                    self.height[i & !1] as f32 * altitude_scale,
+                    bits.read(meta0),
+                ),
+                mid: {
+                    let altitude =
+                        self.get_mid_altitude(self.height[i & !1], self.height[i | 1], delta);
+                    altitude as f32 * altitude_scale
+                },
+                high: Point(self.height[i | 1] as f32 * altitude_scale, bits.read(meta1)),
             }
         } else {
-            Texel::Single(Point(self.height[i], bits.read(meta)))
+            Texel::Single(Point(
+                self.height[i] as f32 * altitude_scale,
+                bits.read(meta),
+            ))
         }
     }
 
@@ -119,26 +127,45 @@ impl Level {
                 let base_x = base_y + x as usize * 4;
                 let color = &mut data[base_x..base_x + 4];
                 match self.get((x, y)) {
-                    Texel::Single(Point(alt, ty)) => {
-                        color[0] = alt;
-                        color[1] = alt;
+                    Texel::Single(Point(height, ty)) => {
+                        color[0] = height as u8;
+                        color[1] = height as u8;
                         color[2] = 0;
                         color[3] = ty | (ty << 4);
                     }
                     Texel::Dual {
-                        low: Point(low_alt, low_ty),
-                        high: Point(high_alt, high_ty),
-                        delta,
+                        low: Point(low, low_ty),
+                        mid,
+                        high: Point(high, high_ty),
                     } => {
-                        color[0] = low_alt;
-                        color[1] = high_alt;
-                        color[2] = delta;
+                        color[0] = low as u8;
+                        color[1] = high as u8;
+                        color[2] = (mid - low) as u8;
                         color[3] = low_ty | (high_ty << 4);
                     }
                 }
             }
         }
         data
+    }
+
+    pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        egui::ComboBox::from_label("Delta model")
+            .selected_text(&format!("{:?}", self.geometry.delta_model))
+            .show_ui(ui, |ui| {
+                for model in [
+                    settings::DeltaModel::Cave,
+                    settings::DeltaModel::Thickness,
+                    settings::DeltaModel::Ignored,
+                ] {
+                    ui.selectable_value(
+                        &mut self.geometry.delta_model,
+                        model,
+                        format!("{:?}", model),
+                    );
+                }
+            });
+        ui.add(egui::Slider::new(&mut self.geometry.delta_power, 0..=4).text("Delta power"));
     }
 }
 
@@ -228,13 +255,9 @@ impl From<Level> for LevelData {
         LevelData {
             height: level.height,
             meta: level.meta,
-            size: level.size,
+            size: (level.size.0, level.size.1),
         }
     }
-}
-
-fn avg(a: u8, b: u8) -> u8 {
-    (a >> 1) + (b >> 1) + (a & b & 1)
 }
 
 impl LevelData {
@@ -269,43 +292,6 @@ impl LevelData {
             .for_each(|(h_row, m_row)| {
                 Splay::compress_trivial(h_row, m_row, &mut vmc);
             });
-    }
-
-    pub fn import(data: &[u8], size: (i32, i32), terrain_shift: u8) -> Self {
-        let total = (size.0 * size.1) as usize;
-        assert_eq!(data.len(), total * 4);
-        let mut level = LevelData {
-            height: vec![0u8; total].into_boxed_slice(),
-            meta: vec![0u8; total].into_boxed_slice(),
-            size,
-        };
-
-        for y in 0..size.1 as usize {
-            let row = y * size.0 as usize * 4..(y + 1) * size.0 as usize * 4;
-            for (xd2, color) in data[row].chunks(8).enumerate() {
-                let i = y * size.0 as usize + xd2 * 2;
-                let delta = (avg(color[2], color[6]) >> DELTA_SHIFT1).min(0xF);
-                // check if this is double layer
-                if delta != 0 {
-                    // average between two texels
-                    let mat = avg(color[3], color[7]);
-                    level.meta[i + 0] =
-                        DOUBLE_LEVEL | ((mat & 0xF) << terrain_shift) | (delta >> 2);
-                    level.meta[i + 1] =
-                        DOUBLE_LEVEL | ((mat >> 4) << terrain_shift) | (delta & DELTA_MASK);
-                    level.height[i + 0] = avg(color[0], color[4]);
-                    level.height[i + 1] = avg(color[1], color[5]);
-                } else {
-                    // average between low and high
-                    level.meta[i + 0] = (color[3] & 0xF) << terrain_shift;
-                    level.meta[i + 1] = (color[7] & 0xF) << terrain_shift;
-                    level.height[i + 0] = avg(color[0], color[1]);
-                    level.height[i + 1] = avg(color[4], color[5]);
-                }
-            }
-        }
-
-        level
     }
 }
 
@@ -389,7 +375,7 @@ fn path_empty(path_buf: &PathBuf) -> bool {
     path_buf.as_path().to_str() == Some("")
 }
 
-pub fn load(config: &LevelConfig) -> Level {
+pub fn load(config: &LevelConfig, geometry: &settings::Geometry) -> Level {
     profiling::scope!("Load Level");
 
     info!("Loading data map...");
@@ -429,5 +415,6 @@ pub fn load(config: &LevelConfig) -> Level {
         meta,
         palette,
         terrains: config.terrains.clone(),
+        geometry: geometry.clone(),
     }
 }

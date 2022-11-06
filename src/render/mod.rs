@@ -369,6 +369,7 @@ impl Render {
         level: &level::LevelConfig,
         object_palette: &[[u8; 4]],
         settings: &settings::Render,
+        geometry: &settings::Geometry,
         front_face: wgpu::FrontFace,
     ) -> Self {
         profiling::scope!("Init Renderer");
@@ -384,6 +385,7 @@ impl Render {
         let terrain = terrain::Context::new(
             gfx,
             level,
+            geometry.height,
             &global,
             &settings.terrain,
             &settings.light.shadow.terrain,
@@ -447,7 +449,7 @@ impl Render {
 
         if let Some(ref mut shadow) = self.shadow {
             profiling::scope!("Shadow Pass");
-            shadow.update_view(&self.light_config.pos, cam);
+            shadow.update_view(&self.light_config.pos, cam, level.geometry.height as f32);
 
             let constants = global::Constants::new(&shadow.cam, &self.light_config, None);
             let global_staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -524,6 +526,7 @@ impl Render {
                 device,
                 &self.global,
                 &self.fog_config,
+                level.geometry.height,
                 cam,
                 viewport.unwrap_or_else(|| Rect {
                     x: 0,

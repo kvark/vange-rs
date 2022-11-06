@@ -145,7 +145,7 @@ struct LevelContext {
 
 pub struct Context {
     level: Option<LevelContext>,
-    render_config: vangers::config::settings::Render,
+    config: vangers::config::settings::LibConfig,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
     gfx: vangers::render::GraphicsContext,
@@ -259,7 +259,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     };
     let (color_view, depth_view) = crate_main_views(&gfx);
 
-    let render_config = {
+    let config = {
         let file = File::open("res/ffi/config.ron").unwrap();
         ron::de::from_reader(file).unwrap()
     };
@@ -270,7 +270,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
 
     let ctx = Context {
         level: None,
-        render_config,
+        config,
         gfx,
         color_view,
         depth_view,
@@ -358,11 +358,12 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
         &ctx.gfx,
         &level_config,
         &ctx.objects_palette,
-        &ctx.render_config,
+        &ctx.config.render,
+        &ctx.config.geometry,
         ctx.camera.front_face(),
     );
 
-    let level = vangers::level::load(&level_config);
+    let level = vangers::level::load(&level_config, &ctx.config.geometry);
     ctx.level = Some(LevelContext {
         desc,
         render,

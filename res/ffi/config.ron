@@ -1,30 +1,37 @@
 (
-	wgpu_trace_path: "",
-	allow_tearing: false,
-	light: (
-		pos: (1, 0, 1, 0), // w=0 for directional, w=1 for point light
-		color: (1, 1, 1),
-		shadow: (
-			size: 1024,
-			terrain: RayTraced,
+	geometry: (
+		height: 256,
+		delta_model: Cave,
+		delta_power: 3,
+	),
+	render: (
+		wgpu_trace_path: "",
+		allow_tearing: false,
+		light: (
+			pos: (1, 0, 1, 0), // w=0 for directional, w=1 for point light
+			color: (1, 1, 1),
+			shadow: (
+				size: 1024,
+				terrain: RayTraced,
+			),
 		),
-	),
-	fog: (
-		color: (0.1, 0.2, 0.3),
-		depth: 50,
-	),
-	terrain:
-	 RayTraced,
-	// RayMipTraced (mip_count: 10, max_jumps: 25, max_steps: 100, debug: false),
-	// Scattered( density: (2, 2, 2) ),
-	// Sliced,
-	// Painted,
-	//Mesh,
-	water: (),
-	debug: (
-		max_vertices: 512,
-		collision_shapes: false,
-		collision_map: false,
-		impulses: false,
+		fog: (
+			color: (0.1, 0.2, 0.3),
+			depth: 50,
+		),
+		terrain:
+		 RayTraced,
+		// RayMipTraced (mip_count: 10, max_jumps: 25, max_steps: 100, debug: false),
+		// Scattered( density: (2, 2, 2) ),
+		// Sliced,
+		// Painted,
+		//Mesh,
+		water: (),
+		debug: (
+			max_vertices: 512,
+			collision_shapes: false,
+			collision_map: false,
+			impulses: false,
+		),
 	),
 )

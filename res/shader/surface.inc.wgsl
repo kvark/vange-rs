@@ -2,7 +2,8 @@
 
 struct SurfaceConstants {
     texture_scale: vec4<f32>,    // XY = size, Z = height scale, w = number of layers
-    terrain_bits: vec4<u32>,     // X_low = shift, X_high = mask, Y = use thickness notation for delta
+    terrain_bits: u32, // low 4 bits = shift, high 4 bits = mask
+    delta_mode: u32, // low 8 bits = power, high 8 bits = model
 };
 struct TerrainData {
     inner: array<u32>,
@@ -26,7 +27,7 @@ struct Surface {
 };
 
 fn get_terrain_type(meta_data: u32) -> u32 {
-    let bits = u_Surface.terrain_bits.x;
+    let bits = u_Surface.terrain_bits;
     return (meta_data >> (bits & 0xFu)) & (bits >> 4u);
 }
 fn get_delta(meta_data: u32) -> u32 {
@@ -53,20 +54,22 @@ fn get_surface_impl(tci: vec2<i32>) -> Surface {
     let data_raw = b_Terrain.inner[tc_index / 2];
     let data = (vec4<u32>(data_raw) >> vec4<u32>(0u, 8u, 16u, 24u)) & vec4<u32>(0xFFu);
     suf.is_shadowed = (data.y & c_ShadowMask) != 0u;
+    let scale = u_Surface.texture_scale.z / 256.0;
 
     if ((data.y & c_DoubleLevelMask) != 0u) {
-        let model = u_Surface.terrain_bits.y;
-        let delta_orig = ((get_delta(data.y) << c_DeltaBits) + get_delta(data.w)) << 3u;
-        let delta = select(delta_orig, 16u, model == 2u); // `Ignored`
-        let mid = select(data.x + delta, data.z - delta, model != 0u); // `Thickness`?
+        let model = (u_Surface.delta_mode >> 8u) & 3u;
+        let delta_power = u_Surface.delta_mode & 0xFFu;
+        let delta_orig = (get_delta(data.y) << c_DeltaBits) + get_delta(data.w);
+        let delta = select(delta_orig, 1u, model == 2u) << delta_power; // `Ignored`?
+        let mid = select(min(data.x + delta, data.z), max(data.z - delta, data.x), model != 0u); // `Thickness`?
         suf.low_type = get_terrain_type(data.y);
         suf.high_type = get_terrain_type(data.w);
-        suf.low_alt = f32(data.x) / 256.0 * u_Surface.texture_scale.z;
-        suf.high_alt = f32(data.z) / 256.0 * u_Surface.texture_scale.z;
-        suf.mid_alt = f32(mid) / 256.0 * u_Surface.texture_scale.z;
+        suf.low_alt = f32(data.x) * scale;
+        suf.high_alt = f32(data.z) * scale;
+        suf.mid_alt = f32(mid) * scale;
     } else {
         let subdata = select(data.xy, data.zw, (tc_index & 1) != 0);
-        let altitude = f32(subdata.x) / 256.0 * u_Surface.texture_scale.z;
+        let altitude = f32(subdata.x) * scale;
         let ty = get_terrain_type(subdata.y);
         suf.low_type = ty;
         suf.high_type = ty;

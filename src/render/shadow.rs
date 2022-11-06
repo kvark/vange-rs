@@ -1,6 +1,5 @@
 use crate::{
     config::settings,
-    level::HEIGHT_SCALE,
     space::{Camera, Projection},
 };
 
@@ -48,7 +47,7 @@ impl Shadow {
         cgmath::Point3::origin() + self.cam.rot.invert() * diff
     }
 
-    pub(super) fn update_view(&mut self, light_pos: &[f32; 4], cam: &Camera) {
+    pub(super) fn update_view(&mut self, light_pos: &[f32; 4], cam: &Camera, max_height: f32) {
         let dir = cgmath::Vector4::from(*light_pos).truncate();
         let up = if dir.x == 0.0 && dir.y == 0.0 {
             cgmath::Vector3::unit_y()
@@ -70,11 +69,11 @@ impl Shadow {
 
         // in addition to the camera bound, we need to include
         // all the potential occluders nearby
-        let mut offset = dir * (HEIGHT_SCALE as f32 / dir.z);
+        let mut offset = dir * (max_height / dir.z);
         offset.z = 0.0;
 
         let points_lo = cam.bound_points(0.0);
-        let points_hi = cam.bound_points(HEIGHT_SCALE as f32);
+        let points_hi = cam.bound_points(max_height);
         for pt in points_lo
             .iter()
             .cloned()
