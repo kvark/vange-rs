@@ -104,8 +104,8 @@ impl LevelView {
             loc: cgmath::vec3(0.0, 0.0, 400.0),
             rot: cgmath::One::one(),
             scale: cgmath::vec3(1.0, -1.0, 1.0),
-            proj: match settings.game.view {
-                config::settings::View::Perspective => {
+            proj: match settings.game.camera.projection {
+                config::settings::Projection::Perspective => {
                     let pf = cgmath::PerspectiveFov {
                         fovy: cgmath::Deg(45.0).into(),
                         aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
@@ -114,7 +114,7 @@ impl LevelView {
                     };
                     space::Projection::Perspective(pf)
                 }
-                config::settings::View::Flat => space::Projection::ortho(
+                config::settings::Projection::Flat => space::Projection::ortho(
                     settings.window.size[0] as u16,
                     settings.window.size[1] as u16,
                     depth.0..depth.1,
@@ -128,10 +128,11 @@ impl LevelView {
             &level_config,
             &objects_palette,
             &settings.render,
+            &settings.game.geometry,
             cam.front_face(),
         );
 
-        let mut level = level::load(&level_config);
+        let mut level = level::load(&level_config, &settings.game.geometry);
         if let Some(pal_file) = override_palette {
             level.palette = level::read_palette(pal_file, Some(&level_config.terrains));
         }
@@ -361,6 +362,10 @@ impl Application for LevelView {
             ui.group(|ui| {
                 ui.label("Camera:");
                 self.cam.draw_ui(ui);
+            });
+            ui.group(|ui| {
+                ui.label("Level:");
+                self.level.draw_ui(ui);
             });
             ui.group(|ui| {
                 ui.label("Renderer:");

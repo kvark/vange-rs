@@ -69,7 +69,7 @@ impl Agent {
         orientation: cgmath::Rad<f32>,
         level: &level::Level,
     ) -> Self {
-        let height = physics::get_height(level.get(coords).top()) + 5.; //center offset
+        let height = level.get(coords).top() + 5.; //center offset
         let transform = cgmath::Decomposed {
             scale: car.scale,
             disp: cgmath::vec3(coords.0 as f32, coords.1 as f32, height),
@@ -355,8 +355,8 @@ impl Game {
             loc: cgmath::vec3(coords.0 as f32, coords.1 as f32, 200.0),
             rot: cgmath::One::one(),
             scale: cgmath::vec3(1.0, -1.0, 1.0),
-            proj: match settings.game.view {
-                config::settings::View::Perspective => {
+            proj: match settings.game.camera.projection {
+                config::settings::Projection::Perspective => {
                     let pf = cgmath::PerspectiveFov {
                         fovy: cgmath::Deg(45.0).into(),
                         aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
@@ -365,7 +365,7 @@ impl Game {
                     };
                     space::Projection::Perspective(pf)
                 }
-                config::settings::View::Flat => space::Projection::ortho(
+                config::settings::Projection::Flat => space::Projection::ortho(
                     settings.window.size[0] as u16,
                     settings.window.size[1] as u16,
                     depth.0..depth.1,
@@ -380,6 +380,7 @@ impl Game {
             &level_config,
             &pal_data,
             &settings.render,
+            &settings.game.geometry,
             cam.front_face(),
         );
 
@@ -396,7 +397,7 @@ impl Game {
         };
 
         log::info!("Loading the level");
-        let level = level::load(&level_config);
+        let level = level::load(&level_config, &settings.game.geometry);
 
         log::info!("Spawning agents");
         let car_names = db.cars.keys().cloned().collect::<Vec<_>>();
@@ -585,7 +586,9 @@ impl Application for Game {
             self.stats.frame_deltas.remove(0);
         }
 
-        let focus_point = self.cam.intersect_height(level::HEIGHT_SCALE as f32 * 0.3);
+        let focus_point = self
+            .cam
+            .intersect_height(self.level.geometry.height as f32 * 0.3);
 
         if let Some(ref mut jump) = self.input.jump {
             let power = delta * (self.db.common.speed.standard_frame_rate as f32);
@@ -656,11 +659,10 @@ impl Application for Game {
                     ground_anchor,
                 } => {
                     if ground_anchor {
-                        let altitude = self
+                        target.disp.z = self
                             .level
                             .get((target.disp.x as i32, target.disp.y as i32))
                             .top();
-                        target.disp.z = physics::get_height(altitude);
                     }
                     self.cam.follow(&target, delta, follow);
                 }
@@ -812,6 +814,10 @@ impl Application for Game {
                     ui.add(egui::Slider::new(&mut follow.speed, 0.1..=10.0).text("Speed"));
                     ui.checkbox(ground_anchor, "Ground anchor");
                 }
+            });
+            ui.group(|ui| {
+                ui.label("Level:");
+                self.level.draw_ui(ui);
             });
             ui.group(|ui| {
                 ui.label("Renderer:");

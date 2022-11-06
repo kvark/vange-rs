@@ -4,14 +4,19 @@
 	// "/Applications/GOG/Vangers.app/Contents/Resources/game" #OSX
 	game: (
 		level: "Fostral", // see `wrlds.dat` for the list
-		cycle: "Eleerection", // see `bunches.prm` for the list, leave empty for bonus worlds
-		view: Perspective, // can be "Flat" or "Perspective"
+		cycle: "", // see `bunches.prm` for the list, leave empty for bonus worlds
+		geometry: (
+			height: 256,
+			delta_model: Cave, // can be "Cave", "Thickness", or "Ignored"
+			delta_power: 3,
+		),
 		camera: (
 			angle: 60,
 			height: 210,
 			offset: 140,
 			speed: 1,
 			depth_range: (10, 2000),
+			projection: Perspective, // can be "Flat" or "Perspective"
 		),
 		other: (
 			count: 10, // number of NPC vangers
@@ -20,12 +25,6 @@
 		physics: (
 			max_quant: 0.1,
 			shape_sampling: 0,
-			gpu_collision: None,
-			//Some((
-			//	max_objects: 100,
-			//	max_polygons_total: 1000,
-			//	max_raster_size: (100, 100),
-			//)),
 		),
 	),
 	car: (

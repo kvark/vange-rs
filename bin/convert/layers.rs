@@ -1,8 +1,7 @@
-use vangers::level::{
-    Level, LevelData, TerrainBits, DELTA_MASK, DELTA_SHIFT0, DELTA_SHIFT1, DOUBLE_LEVEL,
-};
+use vangers::level::{Level, LevelData, TerrainBits, DELTA_BITS, DELTA_MASK, DOUBLE_LEVEL};
 
-const DELTA_MAX: u8 = (0x3 << DELTA_SHIFT0) + (0x3 << DELTA_SHIFT1);
+const DEFAULT_DELTA_POWER: u8 = 3;
+const DELTA_MAX: u8 = ((0x3 << DELTA_BITS) + 0x3) << DEFAULT_DELTA_POWER;
 
 fn avg(a: u8, b: u8) -> u8 {
     (a >> 1) + (b >> 1) + (a & b & 1)
@@ -66,8 +65,8 @@ impl LevelLayers {
                 let t0 = terrain_bits.read(m0);
                 let t1 = terrain_bits.read(m1);
                 if m0 & DOUBLE_LEVEL != 0 {
-                    let d =
-                        ((m0 & DELTA_MASK) << DELTA_SHIFT0) + ((m1 & DELTA_MASK) << DELTA_SHIFT1);
+                    let d = (((m0 & DELTA_MASK) << DELTA_BITS) + (m1 & DELTA_MASK))
+                        << DEFAULT_DELTA_POWER;
                     //assert!(h0 + d <= h1); //TODO: figure out why this isn't true
                     self.het0.push(h0);
                     self.het0.push(h0);
@@ -117,8 +116,8 @@ impl LevelLayers {
             let delta = avg(da, db).min(DELTA_MAX);
             if delta != 0 {
                 let _ = (m0b, m1a); // assuming the same as mat0a and mat1b respectively
-                let rda = (delta >> DELTA_SHIFT0) & DELTA_MASK;
-                let rdb = (delta >> DELTA_SHIFT1) & DELTA_MASK;
+                let rda = (delta >> (DELTA_BITS + DEFAULT_DELTA_POWER)) & DELTA_MASK;
+                let rdb = (delta >> DEFAULT_DELTA_POWER) & DELTA_MASK;
                 meta.push(DOUBLE_LEVEL | terrain_bits.write(m0a) | rda);
                 meta.push(DOUBLE_LEVEL | terrain_bits.write(m1b) | rdb);
                 height.push(avg(h0a, h0b));
@@ -150,7 +149,7 @@ fn test_roundtrip() {
 
     for _ in 0..size {
         for _ in 0..size / 2 {
-            let delta = rng.gen_range(0..16) << DELTA_SHIFT1;
+            let delta = rng.gen_range(0..16) << DEFAULT_DELTA_POWER;
             let h0 = rng.gen();
             let h1 = rng.gen();
             let t0 = rng.gen_range(0..num_terrains);

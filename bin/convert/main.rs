@@ -71,6 +71,7 @@ fn main() {
 
     let src_path = PathBuf::from(matches.free[0].as_str());
     let dst_path = PathBuf::from(matches.free[1].as_str());
+    let geometry = vangers::config::settings::Geometry::default();
 
     match (
         src_path
@@ -111,7 +112,7 @@ fn main() {
         ("ini", "ron") => {
             println!("\tLoading the level...");
             let config = vangers::level::LevelConfig::load(&src_path);
-            let level = vangers::level::load(&config);
+            let level = vangers::level::load(&config, &geometry);
             let palette = layers::extract_palette(&level);
             let layers = layers::LevelLayers::from_level_data(
                 &vangers::level::LevelData::from(level),
@@ -123,7 +124,7 @@ fn main() {
         ("ini", "tiff") => {
             println!("\tLoading the level...");
             let config = vangers::level::LevelConfig::load(&src_path);
-            let level = vangers::level::load(&config);
+            let level = vangers::level::load(&config, &geometry);
             let layers = layers::LevelLayers::from_level_data(
                 &vangers::level::LevelData::from(level),
                 config.terrains.len() as u8,
@@ -134,7 +135,7 @@ fn main() {
         ("ini", "vmp") => {
             println!("\tLoading the VMC...");
             let config = vangers::level::LevelConfig::load(&src_path);
-            let level = vangers::level::load(&config);
+            let level = vangers::level::load(&config, &geometry);
             println!("\tSaving VMP...");
             vangers::level::LevelData::from(level).save_vmp(&dst_path);
         }

@@ -31,10 +31,13 @@ unsafe impl Pod for Vertex {}
 unsafe impl Zeroable for Vertex {}
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct SurfaceConstants {
-    _tex_scale: [f32; 4],
-    _terrain_bits: [u32; 4],
+    texture_scale: [f32; 4],
+    terrain_bits: u32,
+    delta_mode: u32,
+    pad0: u32,
+    pad1: u32,
 }
 unsafe impl Pod for SurfaceConstants {}
 unsafe impl Zeroable for SurfaceConstants {}
@@ -109,7 +112,7 @@ impl BakeConstants {
 
 //Note: this is very similar to `visible_bounds_at()`
 // but it searches in a different parameter space
-fn compute_scatter_constants(cam: &Camera) -> ScatterConstants {
+fn compute_scatter_constants(cam: &Camera, height_scale: u32) -> ScatterConstants {
     use cgmath::{prelude::*, Point2, Point3, Vector2, Vector3};
 
     let cam_origin = Point2::new(cam.loc.x, cam.loc.y);
@@ -155,7 +158,7 @@ fn compute_scatter_constants(cam: &Camera) -> ScatterConstants {
     for &lp in &local_positions {
         let wp = mx_invp.transform_point(lp);
         let pa = intersect(&cam.loc, wp, 0);
-        let pb = intersect(&cam.loc, wp, level::HEIGHT_SCALE);
+        let pb = intersect(&cam.loc, wp, height_scale);
         for p in &[pa, pb] {
             let dir = *p - cam_origin;
             let y = dir.dot(cam_dir);
@@ -250,6 +253,7 @@ enum Kind {
     },
     Slice {
         pipeline: wgpu::RenderPipeline,
+        layer_count: u32,
     },
     Paint {
         pipeline: wgpu::RenderPipeline,
@@ -274,13 +278,6 @@ pub struct Flood {
     pub section_size: (u32, u32),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum DeltaModel {
-    CaveHeight,
-    Thickness,
-    Ignored,
-}
-
 pub struct Context {
     surface_uni_buf: wgpu::Buffer,
     pub uniform_buf: wgpu::Buffer,
@@ -293,12 +290,11 @@ pub struct Context {
     shadow_kind: Kind,
     terrain_buf: wgpu::Buffer,
     palette_texture: wgpu::Texture,
-    delta_model: DeltaModel,
     pub flood: Flood,
     pub dirty_rects: Vec<super::DirtyRect>,
     pub dirty_flood: bool,
     pub dirty_palette: Range<u32>,
-    pub dirty_surface_constants: bool,
+    active_surface_constants: SurfaceConstants,
 }
 
 impl Context {
@@ -614,6 +610,7 @@ impl Context {
     pub fn new(
         gfx: &super::GraphicsContext,
         level: &level::LevelConfig,
+        level_height: u32,
         global: &GlobalContext,
         config: &settings::Terrain,
         shadow_config: &settings::ShadowTerrain,
@@ -1029,7 +1026,7 @@ impl Context {
                 let grid_extent = wgpu::Extent3d {
                     width: (extent.width - 1) / voxel_size[0] + 1,
                     height: (extent.height - 1) / voxel_size[1] + 1,
-                    depth_or_array_layers: (level::HEIGHT_SCALE - 1) / voxel_size[2] + 1,
+                    depth_or_array_layers: (level_height - 1) / voxel_size[2] + 1,
                 };
                 let mip_level_count = 32
                     - grid_extent
@@ -1182,7 +1179,10 @@ impl Context {
                 let pipeline =
                     Self::create_slice_pipeline(&pipeline_layout, &gfx.device, gfx.color_format);
 
-                Kind::Slice { pipeline }
+                Kind::Slice {
+                    pipeline,
+                    layer_count: level_height,
+                }
             }
             settings::Terrain::Painted => {
                 let geo = Geometry::new(
@@ -1289,7 +1289,6 @@ impl Context {
             shadow_kind,
             terrain_buf,
             palette_texture: palette.texture,
-            delta_model: DeltaModel::CaveHeight,
             flood: Flood {
                 texture: flood_texture,
                 texture_size: flood_section_count,
@@ -1305,12 +1304,18 @@ impl Context {
                     w: extent.width as _,
                     h: extent.height as _,
                 },
-                z_range: 0..level::HEIGHT_SCALE as _,
+                z_range: 0..level_height as _,
                 need_upload: true,
             }],
             dirty_flood: true,
             dirty_palette: 0..0x100,
-            dirty_surface_constants: true,
+            active_surface_constants: SurfaceConstants {
+                texture_scale: [0.0; 4],
+                terrain_bits: 0,
+                delta_mode: 0,
+                pad0: 0,
+                pad1: 0,
+            },
         }
     }
 
@@ -1427,29 +1432,31 @@ impl Context {
         level: &level::Level,
         device: &wgpu::Device,
     ) {
-        if self.dirty_surface_constants {
+        let surface_constants = {
             let bits = level.terrain_bits();
-            let delta_model = match self.delta_model {
-                DeltaModel::CaveHeight => 0,
-                DeltaModel::Thickness => 1,
-                DeltaModel::Ignored => 2,
+            let delta_model = match level.geometry.delta_model {
+                settings::DeltaModel::Cave => 0,
+                settings::DeltaModel::Thickness => 1,
+                settings::DeltaModel::Ignored => 2,
             };
+            SurfaceConstants {
+                texture_scale: [
+                    level.size.0 as f32,
+                    level.size.1 as f32,
+                    level.geometry.height as f32,
+                    0.0,
+                ],
+                terrain_bits: bits.shift as u32 | ((bits.mask as u32) << 4),
+                delta_mode: (delta_model << 8) | level.geometry.delta_power as u32,
+                pad0: 0,
+                pad1: 0,
+            }
+        };
+        if surface_constants != self.active_surface_constants {
+            self.active_surface_constants = surface_constants;
             let staging_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-surface-uniforms"),
-                contents: bytemuck::bytes_of(&SurfaceConstants {
-                    _tex_scale: [
-                        level.size.0 as f32,
-                        level.size.1 as f32,
-                        level::HEIGHT_SCALE as f32,
-                        0.0,
-                    ],
-                    _terrain_bits: [
-                        bits.shift as u32 | ((bits.mask as u32) << 4),
-                        delta_model,
-                        0,
-                        0,
-                    ],
-                }),
+                contents: bytemuck::bytes_of(&surface_constants),
                 usage: wgpu::BufferUsages::COPY_SRC,
             });
             encoder.copy_buffer_to_buffer(
@@ -1459,7 +1466,17 @@ impl Context {
                 0,
                 mem::size_of::<SurfaceConstants>() as _,
             );
-            self.dirty_surface_constants = false;
+            // Update acceleration structures
+            self.dirty_rects.push(super::DirtyRect {
+                rect: super::Rect {
+                    x: 0,
+                    y: 0,
+                    w: level.size.0 as _,
+                    h: level.size.1 as _,
+                },
+                z_range: 0..level.geometry.height as _,
+                need_upload: false,
+            });
         }
 
         if !self.dirty_rects.is_empty() {
@@ -1650,6 +1667,7 @@ impl Context {
         device: &wgpu::Device,
         global: &GlobalContext,
         fog: &settings::Fog,
+        level_height: u32,
         cam: &Camera,
         screen_rect: super::Rect,
     ) {
@@ -1659,7 +1677,7 @@ impl Context {
         };
 
         let sc = if let Kind::Scatter { .. } = self.kind {
-            compute_scatter_constants(cam)
+            compute_scatter_constants(cam, level_height)
         } else {
             use cgmath::EuclideanSpace;
             let bounds = cam.visible_bounds();
@@ -1867,9 +1885,12 @@ impl Context {
                     pass.draw_indexed(0..debug_geo.num_indices, 0, instances);
                 }
             }
-            Kind::Slice { ref pipeline } => {
+            Kind::Slice {
+                ref pipeline,
+                layer_count,
+            } => {
                 pass.set_pipeline(pipeline);
-                pass.draw(0..4, 0..level::HEIGHT_SCALE);
+                pass.draw(0..4, 0..layer_count);
             }
             Kind::Paint {
                 ref pipeline,
@@ -1908,22 +1929,6 @@ impl Context {
     }
 
     pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
-        let old_model = self.delta_model;
-        egui::ComboBox::from_label("Delta model")
-            .selected_text(&format!("{:?}", self.delta_model))
-            .show_ui(ui, |ui| {
-                for model in [
-                    DeltaModel::CaveHeight,
-                    DeltaModel::Thickness,
-                    DeltaModel::Ignored,
-                ] {
-                    ui.selectable_value(&mut self.delta_model, model, format!("{:?}", model));
-                }
-            });
-        if self.delta_model != old_model {
-            self.dirty_surface_constants = true;
-        }
-
         match self.kind {
             Kind::RayVoxel {
                 ref mut max_outer_steps,

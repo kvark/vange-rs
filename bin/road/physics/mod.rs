@@ -10,8 +10,6 @@ use std::f32::EPSILON;
 mod rigid;
 mod terrain;
 
-pub use terrain::get_height;
-
 const MAX_TRACTION: config::common::Traction = 4.0;
 
 #[derive(Debug)]

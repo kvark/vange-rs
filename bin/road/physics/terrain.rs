@@ -46,33 +46,18 @@ impl HitAccumulator {
     }
 }
 
-pub fn get_height(altitude: u8) -> f32 {
-    altitude as f32 * (level::HEIGHT_SCALE as f32) / 256.0
-}
-
-// see `GET_MIDDLE_HIGHT` macro
-fn get_middle(low: u8, high: u8) -> f32 {
-    let extra_room = if high.saturating_sub(low) > 130 {
-        110
-    } else {
-        48
-    };
-    get_height(low.saturating_add(extra_room))
-}
-
 pub fn get_distance_to_terrain(level: &level::Level, point: cgmath::Point3<f32>) -> f32 {
-    let altitude = match level.get((point.x as i32, point.y as i32)) {
-        level::Texel::Single(p) => p.0,
-        level::Texel::Dual { high, low, .. } => {
-            let middle = get_middle(low.0, high.0);
-            if point.z > middle {
-                high.0
-            } else {
-                low.0
+    point.z
+        - match level.get((point.x as i32, point.y as i32)) {
+            level::Texel::Single(p) => p.0,
+            level::Texel::Dual { high, low, mid } => {
+                if point.z > mid {
+                    high.0
+                } else {
+                    low.0
+                }
             }
         }
-    };
-    point.z - get_height(altitude)
 }
 
 impl CollisionData {
@@ -90,18 +75,16 @@ impl CollisionData {
             let pos = transform.transform_point(sp * scale).to_vec();
             let texel = level.get((pos.x as i32, pos.y as i32));
             let height = match texel {
-                level::Texel::Single(point) => get_height(point.0),
-                level::Texel::Dual { high, low, .. } => {
-                    let middle = get_middle(low.0, high.0);
-                    if pos.z > middle {
-                        let top = get_height(high.0);
-                        if pos.z - middle > top - pos.z {
-                            top
+                level::Texel::Single(point) => point.0,
+                level::Texel::Dual { high, low, mid } => {
+                    if pos.z > mid {
+                        if pos.z - mid > high.0 - pos.z {
+                            high.0
                         } else {
                             continue;
                         }
                     } else {
-                        get_height(low.0)
+                        low.0
                     }
                 }
             };
