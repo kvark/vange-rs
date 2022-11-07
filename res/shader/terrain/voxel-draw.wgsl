@@ -191,8 +191,10 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
 
         let voxel_shift_dir = select(vec3<i32>(-1), vec3<i32>(1), dir > vec3<f32>(0.0));
         let voxel_shift = select(vec3<i32>(0), voxel_shift_dir, vec3(t) == tc);
-        let can_raise = (lod_voxel_pos & vec3<i32>(1)) == vec3<i32>(step(vec3<f32>(0.0), dir)) || (vec3<f32>(t) < tc);
-        if (enable_unzoom && lod + 1u < b_VoxelGrid.lod_count.x && all(can_raise)) {
+        let can_raise = (lod_voxel_pos & vec3<i32>(1)) == vec3<i32>(step(vec3<f32>(0.0), dir));
+        //TODO: this should just use "||", but currently GLSL backend doesn't handle it
+        let will_raise = select(vec3<bool>(true), can_raise, vec3<f32>(t) == tc);
+        if (enable_unzoom && lod + 1u < b_VoxelGrid.lod_count.x && all(will_raise)) {
             lod += 1u;
             lod_voxel_pos = (lod_voxel_pos + select(vec3<i32>(0), vec3<i32>(-1), lod_voxel_pos < vec3<i32>(0))) / 2;
         }
