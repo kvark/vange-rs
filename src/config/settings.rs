@@ -145,12 +145,6 @@ pub struct Light {
 #[derive(Copy, Clone, Deserialize)]
 pub enum Terrain {
     RayTraced,
-    RayMipTraced {
-        mip_count: u32,
-        max_jumps: u32,
-        max_steps: u32,
-        debug: bool,
-    },
     RayVoxelTraced {
         voxel_size: [u32; 3],
         max_outer_steps: u32,

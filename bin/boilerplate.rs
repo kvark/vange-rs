@@ -82,15 +82,14 @@ impl Harness {
         let adapter_limits = adapter.limits();
 
         let limits = match settings.render.terrain {
-            Terrain::RayTraced { .. }
-            | Terrain::RayMipTraced { .. }
-            | Terrain::Sliced { .. }
-            | Terrain::Painted { .. } => wgpu::Limits {
-                max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
-                max_storage_buffers_per_shader_stage: 1,
-                max_storage_buffer_binding_size: 1 << 26,
-                ..wgpu::Limits::downlevel_webgl2_defaults()
-            },
+            Terrain::RayTraced { .. } | Terrain::Sliced { .. } | Terrain::Painted { .. } => {
+                wgpu::Limits {
+                    max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+                    max_storage_buffers_per_shader_stage: 1,
+                    max_storage_buffer_binding_size: 1 << 26,
+                    ..wgpu::Limits::downlevel_webgl2_defaults()
+                }
+            }
             Terrain::RayVoxelTraced { .. } => wgpu::Limits {
                 max_storage_buffer_binding_size: 1 << 29,
                 ..wgpu::Limits::default()

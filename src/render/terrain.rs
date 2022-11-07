@@ -2,8 +2,7 @@ use crate::{
     config::settings,
     level,
     render::{
-        global::Context as GlobalContext, mipmap::MaxMipper, Palette, PipelineKind, DEPTH_FORMAT,
-        SHADOW_FORMAT,
+        global::Context as GlobalContext, Palette, PipelineKind, DEPTH_FORMAT, SHADOW_FORMAT,
     },
     space::Camera,
 };
@@ -46,7 +45,6 @@ unsafe impl Zeroable for SurfaceConstants {}
 #[derive(Clone, Copy)]
 struct Constants {
     screen_rect: [u32; 4], // x, y, w, h
-    params: [u32; 4],
     cam_origin_dir: [f32; 4],
     sample_range: [f32; 4], // -x, +x, -y, +y
     fog_color: [f32; 3],
@@ -225,11 +223,6 @@ unsafe impl Zeroable for VoxelHeader {}
 enum Kind {
     Ray {
         pipeline: wgpu::RenderPipeline,
-    },
-    RayMip {
-        pipeline: wgpu::RenderPipeline,
-        mipper: MaxMipper,
-        params: [u32; 4],
     },
     RayVoxel {
         bake_pipeline_layout: wgpu::PipelineLayout,
@@ -885,34 +878,6 @@ impl Context {
                 );
                 Kind::Ray { pipeline }
             }
-            #[allow(unreachable_code, unused_variables, dead_code)]
-            settings::Terrain::RayMipTraced {
-                mip_count,
-                max_jumps,
-                max_steps,
-                debug,
-            } => {
-                let pipeline = Self::create_ray_pipeline(
-                    &pipeline_layout,
-                    &gfx.device,
-                    gfx.color_format,
-                    "terrain/ray",
-                    PipelineKind::Main,
-                    "ray_mip_color",
-                );
-                let mipper = MaxMipper::new(unimplemented!(), extent, mip_count, &gfx.device);
-
-                Kind::RayMip {
-                    pipeline,
-                    mipper,
-                    params: [
-                        mip_count - 1,
-                        max_jumps,
-                        max_steps,
-                        if debug { 1 } else { 0 },
-                    ],
-                }
-            }
             settings::Terrain::RayVoxelTraced {
                 voxel_size,
                 max_outer_steps,
@@ -1336,21 +1301,6 @@ impl Context {
                     "ray_color",
                 );
             }
-            Kind::RayMip {
-                ref mut pipeline,
-                ref mut mipper,
-                ..
-            } => {
-                *pipeline = Self::create_ray_pipeline(
-                    &self.pipeline_layout,
-                    device,
-                    self.color_format,
-                    "terrain/ray",
-                    PipelineKind::Main,
-                    "ray_mip_color",
-                );
-                mipper.reload(device);
-            }
             Kind::RayVoxel {
                 ref bake_pipeline_layout,
                 ref draw_pipeline_layout,
@@ -1519,10 +1469,6 @@ impl Context {
             }
 
             match self.kind {
-                Kind::RayMip { ref mipper, .. } => {
-                    mipper.update(encoder, &self.dirty_rects, device);
-                    self.dirty_rects.clear();
-                }
                 Kind::RayVoxel {
                     ref init_pipeline,
                     ref mip_pipeline,
@@ -1708,11 +1654,6 @@ impl Context {
         cam: &Camera,
         screen_rect: super::Rect,
     ) {
-        let params = match self.kind {
-            Kind::RayMip { params, .. } => params,
-            _ => [0; 4],
-        };
-
         let sc = if let Kind::Scatter { .. } = self.kind {
             compute_scatter_constants(cam, level_height)
         } else {
@@ -1738,7 +1679,6 @@ impl Context {
                         screen_rect.w as u32,
                         screen_rect.h as u32,
                     ],
-                    params,
                     cam_origin_dir: [sc.origin.x, sc.origin.y, sc.dir.x, sc.dir.y],
                     sample_range: [
                         sc.sample_x.start,
@@ -1841,10 +1781,6 @@ impl Context {
         screen_size: wgpu::Extent3d,
     ) {
         use cgmath::EuclideanSpace;
-        let params = match self.shadow_kind {
-            Kind::RayMip { params, .. } => params,
-            _ => [0; 4],
-        };
 
         let bounds = cam.visible_bounds();
         let sc = ScatterConstants {
@@ -1860,7 +1796,6 @@ impl Context {
                 label: Some("temp-constants"),
                 contents: bytemuck::bytes_of(&Constants {
                     screen_rect: [0, 0, screen_size.width, screen_size.height],
-                    params,
                     cam_origin_dir: [sc.origin.x, sc.origin.y, sc.dir.x, sc.dir.y],
                     sample_range: [
                         sc.sample_x.start,
@@ -1888,7 +1823,7 @@ impl Context {
         pass.set_bind_group(1, &self.bind_group, &[]);
         // draw terrain
         match self.kind {
-            Kind::Ray { ref pipeline } | Kind::RayMip { ref pipeline, .. } => {
+            Kind::Ray { ref pipeline } => {
                 let geo = &self.raytrace_geo;
                 pass.set_pipeline(pipeline);
                 pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
@@ -1954,7 +1889,7 @@ impl Context {
         pass.set_bind_group(1, &self.bind_group, &[]);
         // draw terrain
         match self.shadow_kind {
-            Kind::Ray { ref pipeline } | Kind::RayMip { ref pipeline, .. } => {
+            Kind::Ray { ref pipeline } => {
                 let geo = &self.raytrace_geo;
                 pass.set_pipeline(pipeline);
                 pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
