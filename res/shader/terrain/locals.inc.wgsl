@@ -1,6 +1,5 @@
 struct Locals {
     screen_rect: vec4<u32>,      // XY = offset, ZW = size
-    params: vec4<u32>,
     cam_origin_dir: vec4<f32>,   // XY = origin, ZW = dir
     sample_range: vec4<f32>,     // XY = X range, ZW = y range
     fog_color: vec4<f32>,

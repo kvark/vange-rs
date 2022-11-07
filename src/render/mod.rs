@@ -19,7 +19,6 @@ use std::{
 
 pub mod debug;
 pub mod global;
-pub mod mipmap;
 pub mod object;
 mod shadow;
 pub mod terrain;
