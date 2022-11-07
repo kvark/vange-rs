@@ -155,6 +155,7 @@ pub enum Terrain {
         voxel_size: [u32; 3],
         max_outer_steps: u32,
         max_inner_steps: u32,
+        max_update_texels: usize,
     },
     Sliced,
     Painted,
