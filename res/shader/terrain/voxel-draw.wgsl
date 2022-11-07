@@ -19,7 +19,9 @@ struct VoxelData {
 
 fn check_occupancy(coordinates: vec3<i32>, lod: u32) -> bool {
     let lod_info = b_VoxelGrid.lods[lod];
-    let sanitized = (coordinates % lod_info.dim) + select(lod_info.dim, vec3<i32>(0), coordinates >= vec3<i32>(0));
+    let ramainder = coordinates % lod_info.dim;
+    // see https://github.com/gfx-rs/naga/issues/2122
+    let sanitized = ramainder + select(lod_info.dim, vec3<i32>(0), ramainder >= vec3<i32>(0));
     let addr = linearize(vec3<u32>(sanitized), lod_info);
     return (b_VoxelGrid.occupancy[addr.offset] & addr.mask) != 0u;
 }
