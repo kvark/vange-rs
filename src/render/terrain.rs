@@ -246,6 +246,7 @@ enum Kind {
         max_outer_steps: u32,
         max_inner_steps: u32,
         max_update_rects: usize,
+        max_update_texels: usize,
         debug_alpha: f32,
         debug_geo: Geometry,
         debug_lod_range: Option<Range<usize>>,
@@ -916,6 +917,7 @@ impl Context {
                 voxel_size,
                 max_outer_steps,
                 max_inner_steps,
+                max_update_texels,
             } => {
                 let bake_bg_layout =
                     gfx.device
@@ -1169,6 +1171,7 @@ impl Context {
                     max_outer_steps,
                     max_inner_steps,
                     max_update_rects,
+                    max_update_texels,
                     debug_alpha: 0.0,
                     debug_geo,
                     debug_lod_range: None,
@@ -1528,6 +1531,7 @@ impl Context {
                     ref update_buffer,
                     voxel_size,
                     max_update_rects,
+                    max_update_texels,
                     ..
                 } => {
                     fn align_down(v: u16, tile: u32) -> i32 {
@@ -1538,27 +1542,61 @@ impl Context {
                         ((v as u32 + tile - 1) & !(tile - 1)) as i32
                     }
 
-                    let update_buffer_contents = self
-                        .dirty_rects
-                        .iter()
-                        .map(|dr| BakeConstants {
-                            voxel_size,
-                            pad: 0,
-                            update_start: [
-                                align_down(dr.rect.x, voxel_size[0]),
-                                align_down(dr.rect.y, voxel_size[1]),
-                                align_down(dr.z_range.start, voxel_size[2]),
-                                0,
-                            ],
-                            update_end: [
-                                align_up(dr.rect.x + dr.rect.w, voxel_size[0]),
-                                align_up(dr.rect.y + dr.rect.h, voxel_size[1]),
-                                align_up(dr.z_range.end, voxel_size[2]),
-                                0,
-                            ],
-                        })
-                        .take(max_update_rects)
-                        .collect::<Vec<_>>();
+                    let mut texels_to_update = max_update_texels;
+                    let mut update_buffer_contents = Vec::new();
+                    while let Some(dr) = self.dirty_rects.pop() {
+                        let num_texels = dr.rect.w as usize * dr.rect.h as usize;
+                        if num_texels > max_update_texels {
+                            // split into 2 rectangles
+                            let mid_x = dr.rect.x + dr.rect.w / 2;
+                            let mid_y = dr.rect.y + dr.rect.h / 2;
+                            for (xb, yb) in
+                                [(false, false), (true, false), (false, true), (true, true)]
+                            {
+                                self.dirty_rects.push(super::DirtyRect {
+                                    rect: super::Rect {
+                                        x: if xb { mid_x } else { dr.rect.x },
+                                        y: if yb { mid_y } else { dr.rect.y },
+                                        w: if xb {
+                                            dr.rect.x + dr.rect.w - mid_x
+                                        } else {
+                                            mid_x - dr.rect.x
+                                        },
+                                        h: if yb {
+                                            dr.rect.y + dr.rect.h - mid_y
+                                        } else {
+                                            mid_y - dr.rect.y
+                                        },
+                                    },
+                                    z_range: dr.z_range.clone(),
+                                    need_upload: false,
+                                });
+                            }
+                        } else if num_texels > texels_to_update
+                            || update_buffer_contents.len() == max_update_rects
+                        {
+                            self.dirty_rects.push(dr);
+                            break;
+                        } else {
+                            update_buffer_contents.push(BakeConstants {
+                                voxel_size,
+                                pad: 0,
+                                update_start: [
+                                    align_down(dr.rect.x, voxel_size[0]),
+                                    align_down(dr.rect.y, voxel_size[1]),
+                                    align_down(dr.z_range.start, voxel_size[2]),
+                                    0,
+                                ],
+                                update_end: [
+                                    align_up(dr.rect.x + dr.rect.w, voxel_size[0]),
+                                    align_up(dr.rect.y + dr.rect.h, voxel_size[1]),
+                                    align_up(dr.z_range.end, voxel_size[2]),
+                                    0,
+                                ],
+                            });
+                            texels_to_update -= texels_to_update;
+                        }
+                    }
 
                     let staging_buf =
                         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1601,7 +1639,6 @@ impl Context {
                             pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
                         }
                     }
-                    self.dirty_rects.drain(..update_buffer_contents.len());
                 }
                 _ => {
                     self.dirty_rects.clear();
