@@ -91,7 +91,7 @@ impl Harness {
                 }
             }
             Terrain::RayVoxelTraced { .. } => wgpu::Limits {
-                max_storage_buffer_binding_size: 1 << 29,
+                max_storage_buffer_binding_size: 1 << 28,
                 ..wgpu::Limits::default()
             },
             Terrain::Scattered { .. } => wgpu::Limits::default(),
