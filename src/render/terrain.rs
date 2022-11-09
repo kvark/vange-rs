@@ -233,6 +233,7 @@ enum Kind {
     RayVoxel {
         bake_pipeline_layout: wgpu::PipelineLayout,
         draw_pipeline_layout: wgpu::PipelineLayout,
+        draw_shader: wgpu::ShaderModule,
         init_pipeline: wgpu::ComputePipeline,
         mip_pipeline: wgpu::ComputePipeline,
         draw_pipeline: wgpu::RenderPipeline,
@@ -270,6 +271,17 @@ enum Kind {
     },
 }
 
+enum ShadowKind {
+    Ray {
+        pipeline: wgpu::RenderPipeline,
+    },
+    InheritRayVoxel {
+        pipeline: wgpu::RenderPipeline,
+        max_outer_steps: u32,
+        max_inner_steps: u32,
+    },
+}
+
 pub struct Flood {
     pub texture: wgpu::Texture,
     pub texture_size: u32,
@@ -285,7 +297,7 @@ pub struct Context {
     color_format: wgpu::TextureFormat,
     raytrace_geo: Geometry,
     kind: Kind,
-    shadow_kind: Kind,
+    shadow_kind: ShadowKind,
     terrain_buf: wgpu::Buffer,
     palette_texture: wgpu::Texture,
     pub flood: Flood,
@@ -395,7 +407,7 @@ impl Context {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &draw_shader,
-                entry_point: "draw",
+                entry_point: "draw_color",
                 targets: &color_descs,
             }),
             primitive: wgpu::PrimitiveState {
@@ -414,6 +426,40 @@ impl Context {
         });
 
         (init_pipeline, mip_pipeline, draw_pipeline, draw_shader)
+    }
+
+    fn create_voxel_shadow_pipeline(
+        pipeline_layout: &wgpu::PipelineLayout,
+        draw_shader: &wgpu::ShaderModule,
+        device: &wgpu::Device,
+    ) -> wgpu::RenderPipeline {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("terrain-ray-voxel"),
+            layout: Some(pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &draw_shader,
+                entry_point: "main",
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &draw_shader,
+                entry_point: "draw_depth",
+                targets: &[],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: SHADOW_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        })
     }
 
     fn create_voxel_debug_pipeline(
@@ -1157,6 +1203,7 @@ impl Context {
                 Kind::RayVoxel {
                     bake_pipeline_layout,
                     draw_pipeline_layout,
+                    draw_shader,
                     init_pipeline,
                     mip_pipeline,
                     draw_pipeline,
@@ -1270,10 +1317,29 @@ impl Context {
                     gfx.color_format,
                     "terrain/ray",
                     PipelineKind::Shadow,
-                    "ray",
+                    "ray_depth",
                 );
-                Kind::Ray { pipeline }
+                ShadowKind::Ray { pipeline }
             }
+            settings::ShadowTerrain::RayVoxelTraced {
+                max_outer_steps,
+                max_inner_steps,
+            } => match kind {
+                Kind::RayVoxel {
+                    ref draw_pipeline_layout,
+                    ref draw_shader,
+                    ..
+                } => ShadowKind::InheritRayVoxel {
+                    pipeline: Self::create_voxel_shadow_pipeline(
+                        draw_pipeline_layout,
+                        draw_shader,
+                        &gfx.device,
+                    ),
+                    max_outer_steps,
+                    max_inner_steps,
+                },
+                _ => panic!("Unable to inherit the voxel context from the main renderer"),
+            },
         };
 
         Context {
@@ -1335,13 +1401,14 @@ impl Context {
             Kind::RayVoxel {
                 ref bake_pipeline_layout,
                 ref draw_pipeline_layout,
+                ref mut draw_shader,
                 ref mut init_pipeline,
                 ref mut mip_pipeline,
                 ref mut draw_pipeline,
                 ref mut debug_render,
                 ..
             } => {
-                let (init, mip, draw, draw_shader) = Self::create_voxel_pipelines(
+                let (init, mip, draw, shader) = Self::create_voxel_pipelines(
                     bake_pipeline_layout,
                     draw_pipeline_layout,
                     device,
@@ -1350,7 +1417,7 @@ impl Context {
                 if let Some(ref mut debug) = *debug_render {
                     debug.pipeline = Self::create_voxel_debug_pipeline(
                         draw_pipeline_layout,
-                        &draw_shader,
+                        &shader,
                         device,
                         self.color_format,
                     );
@@ -1358,6 +1425,7 @@ impl Context {
                 *init_pipeline = init;
                 *mip_pipeline = mip;
                 *draw_pipeline = draw;
+                *draw_shader = shader;
             }
             Kind::Slice {
                 ref mut pipeline, ..
@@ -1387,7 +1455,7 @@ impl Context {
         }
 
         match self.shadow_kind {
-            Kind::Ray {
+            ShadowKind::Ray {
                 ref mut pipeline, ..
             } => {
                 *pipeline = Self::create_ray_pipeline(
@@ -1399,7 +1467,22 @@ impl Context {
                     "ray",
                 );
             }
-            _ => unreachable!(),
+            ShadowKind::InheritRayVoxel {
+                ref mut pipeline, ..
+            } => match self.kind {
+                Kind::RayVoxel {
+                    ref draw_pipeline_layout,
+                    ref draw_shader,
+                    ..
+                } => {
+                    *pipeline = Self::create_voxel_shadow_pipeline(
+                        draw_pipeline_layout,
+                        draw_shader,
+                        device,
+                    );
+                }
+                _ => unreachable!(),
+            },
         }
     }
 
@@ -1855,6 +1938,45 @@ impl Context {
                 mem::size_of::<Constants>() as wgpu::BufferAddress,
             );
         }
+
+        match self.shadow_kind {
+            ShadowKind::InheritRayVoxel {
+                max_outer_steps,
+                max_inner_steps,
+                ..
+            } => match self.kind {
+                Kind::RayVoxel {
+                    ref constant_buffer,
+                    voxel_size,
+                    debug_alpha,
+                    ..
+                } => {
+                    let constants = VoxelConstants {
+                        voxel_size,
+                        pad: 0,
+                        max_depth: cam.depth_range().end,
+                        debug_alpha,
+                        max_outer_steps,
+                        max_inner_steps,
+                    };
+                    let constant_update =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("ray-voxel shadow constants"),
+                            contents: bytemuck::bytes_of(&constants),
+                            usage: wgpu::BufferUsages::COPY_SRC,
+                        });
+                    encoder.copy_buffer_to_buffer(
+                        &constant_update,
+                        0,
+                        constant_buffer,
+                        0,
+                        mem::size_of::<VoxelConstants>() as _,
+                    );
+                }
+                _ => unreachable!(),
+            },
+            _ => {}
+        }
     }
 
     pub fn draw<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
@@ -1930,14 +2052,24 @@ impl Context {
         pass.set_bind_group(1, &self.bind_group, &[]);
         // draw terrain
         match self.shadow_kind {
-            Kind::Ray { ref pipeline } => {
+            ShadowKind::Ray { ref pipeline } => {
                 let geo = &self.raytrace_geo;
                 pass.set_pipeline(pipeline);
                 pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.draw_indexed(0..geo.num_indices, 0, 0..1);
             }
-            _ => unreachable!(),
+            ShadowKind::InheritRayVoxel { ref pipeline, .. } => match self.kind {
+                Kind::RayVoxel {
+                    ref draw_bind_group,
+                    ..
+                } => {
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(2, draw_bind_group, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+                _ => unreachable!(),
+            },
         }
     }
 

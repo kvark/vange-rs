@@ -217,13 +217,28 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     return CastPoint(pos, ty);
 }
 
+@fragment
+fn draw_depth(@builtin(position) frag_coord: vec4<f32>) -> @builtin(frag_depth) f32 {
+    let sp_near_world = get_frag_world(frag_coord.xy, 0.0);
+    let sp_far_world = get_frag_world(frag_coord.xy, 1.0);
+    let view = normalize(sp_far_world - sp_near_world);
+    let pt = cast_ray_through_voxels(sp_near_world, view);
+    //let pt = cast_ray_fallback(sp_near_world, view);
+    if (pt.ty == TYPE_MISS) {
+        return 1.0;
+    }
+
+    let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
+    return target_ndc.z / target_ndc.w + c_DepthBias;
+}
+
 struct FragOutput {
     @location(0) color: vec4<f32>,
     @builtin(frag_depth) depth: f32,
 };
 
 @fragment
-fn draw(@builtin(position) frag_coord: vec4<f32>,) -> FragOutput {
+fn draw_color(@builtin(position) frag_coord: vec4<f32>) -> FragOutput {
     let sp_near_world = get_frag_world(frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(frag_coord.xy, 1.0);
     let view = normalize(sp_far_world - sp_near_world);

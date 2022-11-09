@@ -127,6 +127,10 @@ pub struct DebugRender {
 #[derive(Copy, Clone, Deserialize)]
 pub enum ShadowTerrain {
     RayTraced,
+    RayVoxelTraced {
+        max_outer_steps: u32,
+        max_inner_steps: u32,
+    },
 }
 
 #[derive(Copy, Clone, Deserialize)]
