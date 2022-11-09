@@ -160,14 +160,12 @@ fn color_point(pt: CastPoint, lit_factor: f32) -> vec4<f32> {
     return evaluate_color(pt.ty, pt.pos, lit_factor);
 }
 
-let c_DepthBias: f32 = 0.01;
-
 struct RayInput {
     @builtin(position) frag_coord: vec4<f32>,
 };
 
 @fragment
-fn ray(in: RayInput) -> @builtin(frag_depth) f32 {
+fn ray_depth(in: RayInput) -> @builtin(frag_depth) f32 {
     let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
     let view = normalize(sp_far_world - sp_near_world);

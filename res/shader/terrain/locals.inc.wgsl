@@ -1,3 +1,5 @@
+let c_DepthBias: f32 = 0.01;
+
 struct Locals {
     screen_rect: vec4<u32>,      // XY = offset, ZW = size
     cam_origin_dir: vec4<f32>,   // XY = origin, ZW = dir

@@ -50,7 +50,9 @@
 			color: (1, 1, 1),
 			shadow: (
 				size: 1024,
-				terrain: RayTraced,
+				terrain:
+					RayTraced,
+					// RayVoxelTraced( max_outer_steps: 20, max_inner_steps: 20 ),
 			),
 		),
 		fog: (
@@ -59,7 +61,7 @@
 		),
 		terrain: RayTraced,
 		// RayTraced,
-		// RayVoxelTraced(voxel_size: (1, 4, 1), max_outer_steps: 40, max_inner_steps: 40, max_update_texels: 1_000_000),
+		// RayVoxelTraced( voxel_size: (2, 4, 1), max_outer_steps: 40, max_inner_steps: 40, max_update_texels: 1_000_000 ),
 		// Scattered( density: (2, 2, 2) ),
 		// Sliced,
 		// Painted,
