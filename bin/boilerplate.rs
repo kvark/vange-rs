@@ -80,20 +80,32 @@ impl Harness {
 
         let downlevel_caps = adapter.get_downlevel_capabilities();
         let adapter_limits = adapter.limits();
+        let terrain_buffer_size = 1 << 26; // 2048 (X) * 16384 (Y) * 2 (height+meta)
 
         let limits = match settings.render.terrain {
             Terrain::RayTraced { .. } | Terrain::Sliced { .. } | Terrain::Painted { .. } => {
                 wgpu::Limits {
                     max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
                     max_storage_buffers_per_shader_stage: 1,
-                    max_storage_buffer_binding_size: 1 << 26,
+                    max_storage_buffer_binding_size: terrain_buffer_size,
                     ..wgpu::Limits::downlevel_webgl2_defaults()
                 }
             }
-            Terrain::RayVoxelTraced { .. } => wgpu::Limits {
-                max_storage_buffer_binding_size: 1 << 28,
-                ..wgpu::Limits::default()
-            },
+            Terrain::RayVoxelTraced { voxel_size, .. } => {
+                let max_3d_points = (terrain_buffer_size as usize / 2) * 256;
+                let voxel_points = voxel_size[0] * voxel_size[1] * voxel_size[2];
+                // Note: 5/32 is roughly the number of bytes per voxel if we include the LOD chain
+                let voxel_storage_size = (max_3d_points / voxel_points as usize * 5) / 32;
+                info!(
+                    "Estimating {} MB for voxel storage",
+                    voxel_storage_size >> 20
+                );
+                wgpu::Limits {
+                    max_storage_buffer_binding_size: terrain_buffer_size
+                        .max(voxel_storage_size as u32),
+                    ..wgpu::Limits::default()
+                }
+            }
             Terrain::Scattered { .. } => wgpu::Limits::default(),
         };
 

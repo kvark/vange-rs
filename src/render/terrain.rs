@@ -1121,6 +1121,10 @@ impl Context {
                         * count_tiles(mip_extent.depth_or_array_layers);
                     data_offset_in_words += tile_count * VOXEL_TILE_SIZE.pow(3) / 32;
                 }
+                log::info!(
+                    "Allocating {} MB storage buffer for the voxel grid",
+                    data_offset_in_words >> 18
+                );
 
                 let grid = gfx.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Grid"),
