@@ -668,6 +668,11 @@ impl Context {
     ) -> Self {
         profiling::scope!("Init Terrain");
 
+        let supports_vertex_storage = gfx
+            .downlevel_caps
+            .flags
+            .contains(wgpu::DownlevelFlags::VERTEX_STORAGE);
+
         let extent = wgpu::Extent3d {
             width: level.size.0.as_value() as u32,
             height: level.size.1.as_value() as u32,
@@ -785,7 +790,11 @@ impl Context {
                         // terrain data
                         wgpu::BindGroupLayoutEntry {
                             binding: 2,
-                            visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                            visibility: if supports_vertex_storage {
+                                wgpu::ShaderStages::all()
+                            } else {
+                                wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE
+                            },
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Storage { read_only: true },
                                 has_dynamic_offset: false,
@@ -993,11 +1002,6 @@ impl Context {
                             push_constant_ranges: &[],
                         });
 
-                let supports_debug = gfx
-                    .downlevel_caps
-                    .flags
-                    .contains(wgpu::DownlevelFlags::VERTEX_STORAGE);
-
                 let draw_bg_layout =
                     gfx.device
                         .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1006,7 +1010,7 @@ impl Context {
                                 // voxel grid
                                 wgpu::BindGroupLayoutEntry {
                                     binding: 0,
-                                    visibility: if supports_debug {
+                                    visibility: if supports_vertex_storage {
                                         wgpu::ShaderStages::all()
                                     } else {
                                         wgpu::ShaderStages::FRAGMENT
@@ -1056,7 +1060,7 @@ impl Context {
                         gfx.color_format,
                     );
 
-                let debug_render = if supports_debug {
+                let debug_render = if supports_vertex_storage {
                     Some(VoxelDebugRender {
                         pipeline: Self::create_voxel_debug_pipeline(
                             &draw_pipeline_layout,
@@ -1231,6 +1235,8 @@ impl Context {
                 }
             }
             settings::Terrain::Painted => {
+                assert!(supports_vertex_storage);
+
                 let geo = Geometry::new(
                     &[
                         Vertex { _pos: [0; 4] }, //dummy
@@ -1338,7 +1344,7 @@ impl Context {
                     max_outer_steps,
                     max_inner_steps,
                 },
-                _ => panic!("Unable to inherit the voxel context from the main renderer"),
+                _ => panic!("Unable to inherit the shadow voxel context"),
             },
         };
 

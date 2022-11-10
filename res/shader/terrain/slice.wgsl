@@ -28,13 +28,11 @@ fn main_fs(in: Varyings) -> @location(0) vec4<f32> {
     var ty = 0u;
     if (in.vpos.z <= surface.low_alt) {
         ty = surface.low_type;
+    } else if (in.vpos.z >= surface.mid_alt && in.vpos.z <= surface.high_alt) {
+        ty = surface.high_type;
     } else {
-        if (in.vpos.z >= surface.mid_alt && in.vpos.z <= surface.high_alt) {
-            ty = surface.high_type;
-        } else {
-            discard;
-        };
-    }
+        discard;
+    };
 
     let lit_factor = select(0.25, 1.0, in.vpos.z > surface.low_alt || surface.low_alt == surface.high_alt);
     return evaluate_color(ty, in.vpos.xyz, lit_factor);
