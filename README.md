@@ -11,9 +11,12 @@ You need the **original game** in order to try out `vange-rs`. The path to resou
 
 ## Technology
 
-The game uses [wgpu-rs](https://github.com/gfx-rs/wgpu-rs) for graphics and [winit](https://github.com/tomaka/winit) for windowing.
+The game uses:
+  - [wgpu](https://github.com/gfx-rs/wgpu) for graphics
+  - [winit](https://github.com/rust-windowing/winit) for windowing
+  - [egui](https://github.com/emilk/egui) for debug UI
 
-The level is drawn in a single full-screen draw call with a bit of ray tracing magic. There is also an experimental tessellation-based renderer, but neither produce results of sufficient quality. See the [dedicated wiki page](https://github.com/kvark/vange-rs/wiki/Rendering-Techniques) for our rendering technologies.
+The level can be rendered in a variety of ways, see [dedicated wiki page](https://github.com/kvark/vange-rs/wiki/Rendering-Techniques). The best of all is a voxelized ray tracing method, described [in our blog](https://vange.rs/2022/11/08/voxels.html).
 
 ## Instructions
 
@@ -35,6 +38,7 @@ Note: with `backend="Auto"` the engine tries the available backends in this orde
 Controls:
   - `WSAD`: movement in the game, rotating the camera around the car during the pause
   - left shift: turbo
+  - left alt: jump
   - `P`: enter/exit pause for debugging
   - `R`: reset forces and orientation of the mechous
   - `<>`: step physics frame back/forward during the pause
