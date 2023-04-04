@@ -69,7 +69,7 @@ impl Agent {
         orientation: cgmath::Rad<f32>,
         level: &level::Level,
     ) -> Self {
-        let height = level.get(coords).top() + 5.; //center offset
+        let height = level.get(coords).high() + 5.; //center offset
         let transform = cgmath::Decomposed {
             scale: car.scale,
             disp: cgmath::vec3(coords.0 as f32, coords.1 as f32, height),
@@ -662,7 +662,7 @@ impl Application for Game {
                         target.disp.z = self
                             .level
                             .get((target.disp.x as i32, target.disp.y as i32))
-                            .top();
+                            .high();
                     }
                     self.cam.follow(&target, delta, follow);
                 }

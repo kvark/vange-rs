@@ -1,4 +1,5 @@
 mod layers;
+mod level_obj;
 mod level_png;
 mod model_obj;
 
@@ -138,6 +139,13 @@ fn main() {
             let level = vangers::level::load(&config, &geometry);
             println!("\tSaving VMP...");
             vangers::level::LevelData::from(level).save_vmp(&dst_path);
+        }
+        ("ini", "obj") => {
+            println!("\tLoading the level...");
+            let config = vangers::level::LevelConfig::load(&src_path);
+            let level = vangers::level::load(&config, &geometry);
+            println!("\tSaving OBJ...");
+            level_obj::save(&dst_path, &level);
         }
         ("ron", "vmp") => {
             println!("\tLoading multiple PNGs...");
