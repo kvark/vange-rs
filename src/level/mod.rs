@@ -137,25 +137,6 @@ impl Level {
         self.height[i] as f32 * altitude_scale
     }
 
-    /// A faster version of query that only returns the lowest level altitude,
-    /// while taking the highest of 2 neighboring single levels, if needed.
-    pub fn get_low_fast_dual(&self, coord: (i32, i32)) -> f32 {
-        assert!(coord.0 >= 0 && coord.1 >= 0);
-        let i = ((coord.1 % self.size.1) * self.size.0 + (coord.0 % self.size.0)) as usize;
-        let altitude_scale = self.geometry.height as f32 / 256.0;
-        self.height[i].max(self.height[i ^ 1]) as f32 * altitude_scale
-    }
-
-    /// A faster version of query that only returns the lowest level altitude,
-    /// while possibly taking the highest of 2 neighboring single levels, if the width is 2.
-    pub fn get_low_fast_switch(&self, coord: (i32, i32), dual: bool) -> f32 {
-        if dual {
-            self.get_low_fast_dual(coord)
-        } else {
-            self.get_low_fast(coord)
-        }
-    }
-
     pub fn export(&self) -> Vec<u8> {
         let mut data = vec![0; self.size.0 as usize * self.size.1 as usize * 4];
         for y in 0..self.size.1 {

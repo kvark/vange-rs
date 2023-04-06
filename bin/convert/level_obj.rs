@@ -108,6 +108,7 @@ pub fn save(path: &Path, level: &Level, optimization: &Optimization) {
                 // Cut out unexpected/invalid cases
                 Texel::Dual { low, mid, high } if mid > high.0 => (low, 2),
                 Texel::Dual { low, mid, high } => {
+                    let w = 2;
                     let g = &mut groups[high.1 as usize];
                     let lo = c.add_quad(x, 2, y, mid as i32);
                     let hi = c.add_quad(x, 2, y, high.0 as i32);
@@ -121,24 +122,23 @@ pub fn save(path: &Path, level: &Level, optimization: &Optimization) {
                         g.push([lo[3], lo[0], hi[0], hi[3]]);
                     }
                     // right
-                    if x + 1 == level.size.0 || high.0 > level.get_low_fast((x + 1, y)) + threshold
+                    if x + w == level.size.0 || high.0 > level.get_low_fast((x + w, y)) + threshold
                     {
                         g.push([lo[1], lo[2], hi[2], hi[1]]);
                     }
                     // near
-                    if y == 0 || high.0 > level.get_low_fast_dual((x, y - 1)) + threshold {
+                    if y == 0 || high.0 > level.get_low_fast((x, y - 1)) + threshold {
                         g.push([lo[0], lo[1], hi[1], hi[0]]);
                     }
                     // far
-                    if y + 1 == level.size.1
-                        || high.0 > level.get_low_fast_dual((x, y + 1)) + threshold
+                    if y + 1 == level.size.1 || high.0 > level.get_low_fast((x, y + 1)) + threshold
                     {
                         g.push([lo[2], lo[3], hi[3], hi[2]]);
                     }
                     // done
                     num_vertices_total += 16;
                     num_quads_total += 10;
-                    (low, 2)
+                    (low, w)
                 }
             };
 
@@ -147,11 +147,9 @@ pub fn save(path: &Path, level: &Level, optimization: &Optimization) {
                 // determine conditions
                 let c_left = x == 0 || p.0 > level.get_low_fast((x - 1, y)) + threshold;
                 let c_right =
-                    x + 1 == level.size.0 || p.0 > level.get_low_fast((x + 1, y)) + threshold;
-                let c_near =
-                    y == 0 || p.0 > level.get_low_fast_switch((x, y - 1), w > 1) + threshold;
-                let c_far =
-                    y + 1 == level.size.1 || p.0 > level.get_low_fast_switch((x, y + 1), w > 1);
+                    x + w == level.size.0 || p.0 > level.get_low_fast((x + w, y)) + threshold;
+                let c_near = y == 0 || p.0 > level.get_low_fast((x, y - 1)) + threshold;
+                let c_far = y + 1 == level.size.1 || p.0 > level.get_low_fast((x, y + 1));
                 // top and bottom
                 let hi = c.add_quad(x, w, y, p.0 as i32);
                 let lo = if c_left || c_right || c_near || c_far {
