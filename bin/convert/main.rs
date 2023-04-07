@@ -60,12 +60,6 @@ fn main() {
     let mut options = getopts::Options::new();
     options
         .parsing_style(getopts::ParsingStyle::StopAtFirstFree)
-        .optopt(
-            "w",
-            "weld",
-            "height radius for welding vertices",
-            "default is lossless",
-        )
         .optflag("h", "help", "print this help menu");
 
     let matches = options.parse(&args[1..]).unwrap();
@@ -148,9 +142,7 @@ fn main() {
         }
         ("ini", "obj") => {
             println!("\tLoading the level...");
-            let optimization = level_obj::Optimization {
-                weld_height_diff: matches.opt_get_default("w", 0).unwrap(),
-            };
+            let optimization = level_obj::Optimization {};
             let config = vangers::level::LevelConfig::load(&src_path);
             let level = vangers::level::load(&config, &geometry);
             println!("\tSaving OBJ...");
