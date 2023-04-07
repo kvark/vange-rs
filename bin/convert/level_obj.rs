@@ -10,7 +10,10 @@ const MAX_COLUMN_VERTICES: usize = 4 * 4;
 const EXTREME_HEIGHT: i32 = i32::max_value();
 
 #[derive(Debug)]
-pub struct Optimization {}
+pub struct Config {
+    pub xr: Range<i32>,
+    pub yr: Range<i32>,
+}
 
 #[derive(Clone)]
 struct Vertex {
@@ -31,7 +34,7 @@ struct VertexColumn {
     data: [Vertex; MAX_COLUMN_VERTICES + 1],
 }
 impl VertexColumn {
-    fn add(&mut self, height: i32, _optimization: &Optimization) -> &mut Vertex {
+    fn add(&mut self, height: i32) -> &mut Vertex {
         let order_index = self.data.iter().position(|v| v.height > height).unwrap();
 
         if height < self.data[order_index].height {
@@ -155,14 +158,16 @@ struct VertexCollector<'p> {
     final_vertices: Vec<[i32; 3]>,
     vertex_columns: Vec<Vec<VertexColumn>>,
     face_columns: Vec<Vec<FaceColumn>>,
-    optimization: &'p Optimization,
+    config: &'p Config,
     initial_vertices: usize,
     initial_quads: usize,
 }
 
 impl VertexCollector<'_> {
     fn add(&mut self, x: i32, y: i32, z: i32) -> u32 {
-        let vertex = self.vertex_columns[y as usize][x as usize].add(z, &self.optimization);
+        let vertex = self.vertex_columns[(y - self.config.yr.start) as usize]
+            [(x - self.config.xr.start) as usize]
+            .add(z);
         if vertex.index == !0 {
             vertex.index = self.final_vertices.len() as u32;
             self.final_vertices.push([x, y, z]);
@@ -184,54 +189,56 @@ impl VertexCollector<'_> {
     }
 }
 
-pub fn save(path: &Path, level: &Level, optimization: &Optimization) {
-    let mut dest = BufWriter::new(File::create(&path).unwrap());
+pub fn save(path: &Path, level: &Level, config: &Config) {
     let mut groups: [Vec<[u32; 4]>; 16] = Default::default();
     let mut bar = progress::Bar::new();
 
+    let x_total = config.xr.end - config.xr.start;
+    let y_total = config.yr.end - config.yr.start;
     bar.set_job_title("Processing top/bottom:");
     let mut c = VertexCollector {
         final_vertices: Vec::new(),
-        vertex_columns: (0..=level.size.1)
-            .map(|_| vec![VertexColumn::default(); level.size.0 as usize + 1])
+        vertex_columns: (config.yr.start..=config.yr.end)
+            .map(|_| vec![VertexColumn::default(); x_total as usize + 1])
             .collect(),
-        face_columns: (0..level.size.1)
-            .map(|_| vec![FaceColumn::default(); level.size.0 as usize])
+        face_columns: (config.yr.start..config.yr.end)
+            .map(|_| vec![FaceColumn::default(); x_total as usize])
             .collect(),
-        optimization,
+        config,
         initial_vertices: 0,
         initial_quads: 0,
     };
 
     // first, fill out the face columns
-    for y in 0..level.size.1 {
-        for x in 0..level.size.0 {
-            c.face_columns[y as usize][x as usize] = match level.get((x, y)) {
-                Texel::Single(p) => {
-                    let quad = c.add_quad(x, y, p.0 as i32);
-                    FaceColumn {
-                        high: quad.clone(),
-                        mid: quad.clone(),
-                        low: quad,
+    for y in config.yr.clone() {
+        for x in config.xr.clone() {
+            c.face_columns[(y - config.yr.start) as usize][(x - config.xr.start) as usize] =
+                match level.get((x, y)) {
+                    Texel::Single(p) => {
+                        let quad = c.add_quad(x, y, p.0 as i32);
+                        FaceColumn {
+                            high: quad.clone(),
+                            mid: quad.clone(),
+                            low: quad,
+                        }
                     }
-                }
-                // Cut out unexpected/invalid cases
-                Texel::Dual { low, mid, high } if mid > high.0 => {
-                    let quad = c.add_quad(x, y, low.0 as i32);
-                    FaceColumn {
-                        high: quad.clone(),
-                        mid: quad.clone(),
-                        low: quad,
+                    // Cut out unexpected/invalid cases
+                    Texel::Dual { low, mid, high } if mid > high.0 => {
+                        let quad = c.add_quad(x, y, low.0 as i32);
+                        FaceColumn {
+                            high: quad.clone(),
+                            mid: quad.clone(),
+                            low: quad,
+                        }
                     }
-                }
-                Texel::Dual { low, mid, high } => FaceColumn {
-                    high: c.add_quad(x, y, high.0 as i32),
-                    mid: c.add_quad(x, y, mid as i32),
-                    low: c.add_quad(x, y, low.0 as i32),
-                },
-            };
+                    Texel::Dual { low, mid, high } => FaceColumn {
+                        high: c.add_quad(x, y, high.0 as i32),
+                        mid: c.add_quad(x, y, mid as i32),
+                        low: c.add_quad(x, y, low.0 as i32),
+                    },
+                };
         }
-        bar.reach_percent(y * 100 / level.size.1);
+        bar.reach_percent((y - config.yr.start) * 100 / y_total);
     }
 
     bar.set_job_title("Processing sides:");
@@ -246,26 +253,28 @@ pub fn save(path: &Path, level: &Level, optimization: &Optimization) {
         high: dummy_quad.clone(),
     };
 
-    for y in 0..level.size.1 {
-        for x in 0..level.size.0 {
-            let fc = &c.face_columns[y as usize][x as usize];
-            let fx0 = if x != 0 {
-                &c.face_columns[y as usize][x as usize - 1]
+    for y in config.yr.clone() {
+        for x in config.xr.clone() {
+            let yrel = (y - config.yr.start) as usize;
+            let xrel = (x - config.xr.start) as usize;
+            let fc = &c.face_columns[yrel][xrel];
+            let fx0 = if x != config.xr.start {
+                &c.face_columns[yrel][xrel - 1]
             } else {
                 &dummy_face
             };
-            let fx1 = if x + 1 != level.size.0 {
-                &c.face_columns[y as usize][x as usize + 1]
+            let fx1 = if x + 1 != config.xr.end {
+                &c.face_columns[yrel][xrel + 1]
             } else {
                 &dummy_face
             };
-            let fy0 = if y != 0 {
-                &c.face_columns[y as usize - 1][x as usize]
+            let fy0 = if y != config.yr.start {
+                &c.face_columns[yrel - 1][xrel]
             } else {
                 &dummy_face
             };
-            let fy1 = if y + 1 != level.size.1 {
-                &c.face_columns[y as usize + 1][x as usize]
+            let fy1 = if y + 1 != config.yr.end {
+                &c.face_columns[yrel + 1][xrel]
             } else {
                 &dummy_face
             };
@@ -317,7 +326,7 @@ pub fn save(path: &Path, level: &Level, optimization: &Optimization) {
                 c.initial_quads += 4;
             }
         }
-        bar.reach_percent(y * 100 / level.size.1);
+        bar.reach_percent((y - config.yr.start) * 100 / y_total);
     }
 
     bar.jobs_done();
@@ -333,6 +342,7 @@ pub fn save(path: &Path, level: &Level, optimization: &Optimization) {
         unit(c.initial_quads),
     );
 
+    let mut dest = BufWriter::new(File::create(&path).unwrap());
     bar.set_job_title("Vertices:");
     for v in c.final_vertices {
         writeln!(dest, "v {} {} {}", v[0], v[1], v[2]).unwrap();
@@ -354,4 +364,5 @@ pub fn save(path: &Path, level: &Level, optimization: &Optimization) {
         }
         bar.reach_percent((i as i32 + 1) * 100 / 16);
     }
+    bar.jobs_done();
 }

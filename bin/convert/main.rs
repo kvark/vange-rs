@@ -60,7 +60,13 @@ fn main() {
     let mut options = getopts::Options::new();
     options
         .parsing_style(getopts::ParsingStyle::StopAtFirstFree)
-        .optflag("h", "help", "print this help menu");
+        .optflag("h", "help", "print this help menu")
+        .optopt(
+            "c",
+            "chunks",
+            "number of chunks to split into",
+            "big levels can be split into 8",
+        );
 
     let matches = options.parse(&args[1..]).unwrap();
     if matches.opt_present("h") || matches.free.len() != 2 {
@@ -142,11 +148,31 @@ fn main() {
         }
         ("ini", "obj") => {
             println!("\tLoading the level...");
-            let optimization = level_obj::Optimization {};
             let config = vangers::level::LevelConfig::load(&src_path);
             let level = vangers::level::load(&config, &geometry);
-            println!("\tSaving OBJ...");
-            level_obj::save(&dst_path, &level, &optimization);
+            if let Some(chunks) = matches.opt_get::<i32>("c").unwrap() {
+                for i in 0..chunks {
+                    let file_name = format!(
+                        "{}{}.obj",
+                        dst_path.file_stem().unwrap().to_string_lossy(),
+                        i
+                    );
+                    println!("\tExporting {file_name}...");
+                    let chunk_y = ((level.size.1 - 1) / chunks) + 1;
+                    let export_config = level_obj::Config {
+                        xr: 0..level.size.0,
+                        yr: i * chunk_y..level.size.1.min((i + 1) * chunk_y),
+                    };
+                    level_obj::save(&dst_path.with_file_name(file_name), &level, &export_config);
+                }
+            } else {
+                println!("\tExporting OBJ...");
+                let export_config = level_obj::Config {
+                    xr: 0..level.size.0,
+                    yr: 0..level.size.1,
+                };
+                level_obj::save(&dst_path, &level, &export_config);
+            }
         }
         ("ron", "vmp") => {
             println!("\tLoading multiple PNGs...");
