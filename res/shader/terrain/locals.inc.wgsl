@@ -1,4 +1,4 @@
-let c_DepthBias: f32 = 0.01;
+const c_DepthBias: f32 = 0.01;
 
 struct Locals {
     screen_rect: vec4<u32>,      // XY = offset, ZW = size

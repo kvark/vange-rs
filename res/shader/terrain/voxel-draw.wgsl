@@ -26,8 +26,8 @@ fn check_occupancy(coordinates: vec3<i32>, lod: u32) -> bool {
     return (b_VoxelGrid.occupancy[addr.offset] & addr.mask) != 0u;
 }
 
-let enable_unzoom = true;
-let step_scale = 1.0;
+const enable_unzoom = true;
+const step_scale = 1.0;
 
 var<private> debug_color: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
@@ -41,7 +41,7 @@ fn main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     );
 }
 
-let TYPE_MISS: u32 = 0xFFu;
+const TYPE_MISS: u32 = 0xFFu;
 
 struct CastPoint {
     pos: vec3<f32>,

@@ -27,6 +27,7 @@ impl Shadow {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: FORMAT,
+            view_formats: &[],
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
         });
 

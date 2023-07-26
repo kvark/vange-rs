@@ -7,9 +7,9 @@
 
 @group(0) @binding(1) var s_Palette: sampler;
 
-let c_HorFactor: f32 = 0.5; //H_CORRECTION
-let c_DiffuseScale: f32 = 8.0;
-let c_ShadowDepthScale: f32 = 0.6; //~ 2.0 / 3.0;
+const c_HorFactor: f32 = 0.5; //H_CORRECTION
+const c_DiffuseScale: f32 = 8.0;
+const c_ShadowDepthScale: f32 = 0.6; //~ 2.0 / 3.0;
 
 // see `RenderPrepare` in `land.cpp` for the original game logic
 

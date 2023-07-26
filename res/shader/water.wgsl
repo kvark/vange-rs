@@ -4,8 +4,8 @@
 @group(1) @binding(4) var t_Flood: texture_1d<f32>;
 @group(1) @binding(8) var s_Flood: sampler;
 
-let c_TerrainWater = 0u;
-let c_WaterColor = vec3<f32>(0.0, 0.1, 0.4);
+const c_TerrainWater = 0u;
+const c_WaterColor = vec3<f32>(0.0, 0.1, 0.4);
 
 struct Varyings {
     @builtin(position) clip_pos: vec4<f32>,

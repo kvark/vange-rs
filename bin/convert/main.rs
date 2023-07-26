@@ -186,7 +186,7 @@ fn main() {
             let data = fs_read(&src_path).unwrap();
             let file = File::create(&dst_path).unwrap();
             let mut encoder = png::Encoder::new(file, 0x100, 1);
-            encoder.set_color(png::ColorType::RGB);
+            encoder.set_color(png::ColorType::Rgb);
             encoder
                 .write_header()
                 .unwrap()
@@ -197,16 +197,17 @@ fn main() {
             println!("Converting PNG to palette...");
             let file = File::open(&src_path).unwrap();
             let decoder = png::Decoder::new(file);
-            let (info, mut reader) = decoder.read_info().unwrap();
+            let mut reader = decoder.read_info().unwrap();
+            let info = reader.info();
             assert_eq!((info.width, info.height), (0x100, 1));
             let stride = match info.color_type {
-                png::ColorType::RGB => 3,
-                png::ColorType::RGBA => 4,
+                png::ColorType::Rgb => 3,
+                png::ColorType::Rgba => 4,
                 _ => panic!("non-RGB image provided"),
             };
             let mut data = vec![0u8; stride * 0x100];
             assert_eq!(info.bit_depth, png::BitDepth::Eight);
-            assert_eq!(info.buffer_size(), data.len());
+            assert_eq!(reader.output_buffer_size(), data.len());
             reader.next_frame(&mut data).unwrap();
             let mut output = File::create(&dst_path).unwrap();
             for chunk in data.chunks(stride) {

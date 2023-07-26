@@ -12,10 +12,10 @@ struct TerrainData {
 @group(1) @binding(0) var<uniform> u_Surface: SurfaceConstants;
 @group(1) @binding(2) var<storage, read> b_Terrain: TerrainData;
 
-let c_DoubleLevelMask: u32 = 64u;
-let c_ShadowMask: u32 = 128u;
-let c_DeltaShift: u32 = 0u;
-let c_DeltaBits: u32 = 2u;
+const c_DoubleLevelMask: u32 = 64u;
+const c_ShadowMask: u32 = 128u;
+const c_DeltaShift: u32 = 0u;
+const c_DeltaBits: u32 = 2u;
 
 struct Surface {
     low_alt: f32,

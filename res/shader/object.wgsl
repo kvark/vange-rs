@@ -1,6 +1,6 @@
 //!include body.inc globals.inc quat.inc shadow.inc
 
-let c_BodyColorId: u32 = 1u;
+const c_BodyColorId: u32 = 1u;
 
 struct Storage {
     bodies: array<Body>,
