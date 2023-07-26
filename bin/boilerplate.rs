@@ -59,7 +59,10 @@ impl Harness {
         };
 
         info!("Initializing the window");
-        let instance = wgpu::Instance::new(settings.backend.to_wgpu());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: settings.backend.to_wgpu(),
+            ..Default::default()
+        });
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
             .with_title(options.title)
@@ -67,7 +70,8 @@ impl Harness {
             .with_resizable(true)
             .build(&event_loop)
             .unwrap();
-        let surface = unsafe { instance.create_surface(&window) };
+        let surface =
+            unsafe { instance.create_surface(&window) }.expect("Unable to create surface.");
 
         info!("Initializing the device");
         let adapter = task_pool
@@ -124,9 +128,11 @@ impl Harness {
             ))
             .unwrap();
 
-        let surface_formats = surface.get_supported_formats(&adapter);
-        let surface_modes = surface.get_supported_modes(&adapter);
-        let present_mode = if surface_modes.contains(&wgpu::PresentMode::Mailbox) {
+        let surface_caps = surface.get_capabilities(&adapter);
+        let present_mode = if surface_caps
+            .present_modes
+            .contains(&wgpu::PresentMode::Mailbox)
+        {
             wgpu::PresentMode::Mailbox
         } else {
             log::warn!("Mailbox present is not supported");
@@ -138,10 +144,12 @@ impl Harness {
         };
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_formats[0],
+            format: surface_caps.formats[0],
             width: extent.width,
             height: extent.height,
             present_mode,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: Vec::new(),
         };
         surface.configure(&device, &config);
 
@@ -163,6 +171,7 @@ impl Harness {
                 dimension: wgpu::TextureDimension::D2,
                 format: DEPTH_FORMAT,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
             })
             .create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -230,6 +239,8 @@ impl Harness {
                         width: size.width,
                         height: size.height,
                         present_mode: win.present_mode,
+                        alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                        view_formats: Vec::new(),
                     };
                     win.surface.configure(&gfx.device, &config);
                     win.depth_target = gfx
@@ -242,6 +253,7 @@ impl Harness {
                             dimension: wgpu::TextureDimension::D2,
                             format: DEPTH_FORMAT,
                             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                            view_formats: &[],
                         })
                         .create_view(&wgpu::TextureViewDescriptor::default());
                     app.resize(&gfx.device, gfx.screen_size);

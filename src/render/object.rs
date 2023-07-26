@@ -8,7 +8,7 @@ use crate::{
 use bytemuck::{Pod, Zeroable};
 use m3d::NUM_COLOR_IDS;
 
-use std::{mem, num::NonZeroU32, slice};
+use std::{mem, slice};
 
 const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
     [0, 0],   // reserved
@@ -216,6 +216,7 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::Rg8Uint,
+            view_formats: &[],
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
 
@@ -224,7 +225,7 @@ impl Context {
             unsafe { slice::from_raw_parts(COLOR_TABLE[0].as_ptr(), NUM_COLOR_IDS as usize * 2) },
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: NonZeroU32::new(NUM_COLOR_IDS * 2),
+                bytes_per_row: Some(NUM_COLOR_IDS * 2),
                 rows_per_image: None,
             },
             extent,

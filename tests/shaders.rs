@@ -1,7 +1,7 @@
 fn parse(name: &str, substitutions: &[(&str, String)]) {
     println!("Parsing {}", name);
     let code = vangers::render::make_shader_code(name, substitutions).unwrap();
-    naga::front::wgsl::Parser::new().parse(&code).unwrap();
+    naga::front::wgsl::Frontend::new().parse(&code).unwrap();
 }
 
 #[test]

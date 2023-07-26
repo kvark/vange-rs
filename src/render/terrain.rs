@@ -10,7 +10,7 @@ use crate::{
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt as _;
 
-use std::{mem, num::NonZeroU32, ops::Range};
+use std::{mem, ops::Range};
 
 const SCATTER_GROUP_SIZE: [u32; 3] = [16, 16, 1];
 // Has to agree with the shader
@@ -716,6 +716,7 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::R8Unorm,
+            view_formats: &[],
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
         let table_texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
@@ -725,6 +726,7 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D1,
             format: wgpu::TextureFormat::Rgba8Uint,
+            view_formats: &[],
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
 
@@ -733,7 +735,7 @@ impl Context {
             bytemuck::cast_slice(&terrain_table),
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: NonZeroU32::new(table_extent.width * 4),
+                bytes_per_row: Some(table_extent.width * 4),
                 rows_per_image: None,
             },
             table_extent,
@@ -1107,7 +1109,8 @@ impl Context {
                 let mut data_offset_in_words = 0;
                 let mut mips = Vec::new();
                 for base_mip_level in 0..mip_level_count {
-                    let mip_extent = grid_extent.mip_level_size(base_mip_level, true);
+                    let mip_extent =
+                        grid_extent.mip_level_size(base_mip_level, wgpu::TextureDimension::D3);
                     mips.push(VoxelMip {
                         extent: mip_extent,
                         data_offset_in_words,
@@ -1735,7 +1738,7 @@ impl Context {
                     buffer: &staging_buf,
                     layout: wgpu::ImageDataLayout {
                         offset: 0,
-                        bytes_per_row: NonZeroU32::new(0x100),
+                        bytes_per_row: Some(0x100),
                         rows_per_image: None,
                     },
                 },

@@ -9,6 +9,6 @@ publish = false
 [dependencies]
 byteorder = "1.0"
 log = "0.4"
-ron = "0.6"
+ron = "0.8"
 profiling = "1.0"
 serde = { version = "1.0", features = ["serde_derive"] }

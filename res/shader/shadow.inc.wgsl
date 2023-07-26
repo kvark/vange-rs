@@ -3,7 +3,7 @@
 @group(0) @binding(3) var t_Shadow: texture_depth_2d;
 @group(0) @binding(4) var s_Shadow: sampler_comparison;
 
-let c_Ambient: f32 = 0.25;
+const c_Ambient: f32 = 0.25;
 
 fn fetch_shadow(pos: vec3<f32>) -> f32 {
     let flip_correction = vec2<f32>(1.0, -1.0);

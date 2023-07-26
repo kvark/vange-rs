@@ -55,26 +55,27 @@ log = "0.4"
 progress = "0.2"
 rand = "0.8"
 rayon = "1"
-ron = "0.6"
-rust-ini = "0.17"
+ron = "0.8"
+rust-ini = "0.19"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.4"
 # keep in sync with `lib/ffi/Cargo.toml`
-wgpu = { version = "0.13", features = [] }
+wgpu = { version = "0.17", features = [] }
 # binaries
-env_logger = "0.9"
+env_logger = "0.10"
 getopts = "0.2"
 obj = "0.10"
-png = "0.16"
-winit = "0.27"
+png = "0.17"
+winit = "0.28"
 # gui
-egui = "0.19"
-egui_winit_platform = "0.16"
-egui_wgpu_backend = "0.19"
+egui = "0.22"
+egui_winit_platform = "0.19"
+#egui_wgpu_backend = "0.24"
+egui_wgpu_backend = { git = "https://github.com/kvark/egui_wgpu_backend", branch = "wgpu-0.17" }
 
 [dev-dependencies]
-naga = { version = "0.9", features = ["wgsl-in", "validate"] }
+naga = { version = "0.13", features = ["wgsl-in", "validate"] }
 
 [dependencies.profiling]
 version = "1.0.1"

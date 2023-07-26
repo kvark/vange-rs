@@ -32,7 +32,7 @@ pub fn save(path: &Path, layers: LevelLayers, palette: &[u8]) {
         println!("\t\t{}...", mp.height);
         let file = File::create(path.with_file_name(mp.height)).unwrap();
         let mut encoder = png::Encoder::new(file, layers.size.0 as u32, layers.size.1 as u32);
-        encoder.set_color(png::ColorType::RGB);
+        encoder.set_color(png::ColorType::Rgb);
         data.clear();
         for ((&h0, &h1), &delta) in layers.het0.iter().zip(&layers.het1).zip(&layers.delta) {
             data.extend_from_slice(&[h0, h1, delta]);
@@ -79,16 +79,17 @@ pub fn load(path: &Path) -> LevelLayers {
         println!("\t\t{}...", mp.height);
         let file = File::open(path.with_file_name(mp.height)).unwrap();
         let decoder = png::Decoder::new(file);
-        let (info, mut reader) = decoder.read_info().unwrap();
+        let mut reader = decoder.read_info().unwrap();
+        let info = reader.info();
         assert_eq!((info.width, info.height), mp.size);
         let stride = match info.color_type {
-            png::ColorType::RGB => 3,
-            png::ColorType::RGBA => 4,
+            png::ColorType::Rgb => 3,
+            png::ColorType::Rgba => 4,
             _ => panic!("non-RGB image provided"),
         };
         let mut data = vec![0u8; stride * (layers.size.0 as usize) * (layers.size.1 as usize)];
         assert_eq!(info.bit_depth, png::BitDepth::Eight);
-        assert_eq!(info.buffer_size(), data.len());
+        assert_eq!(reader.output_buffer_size(), data.len());
         reader.next_frame(&mut data).unwrap();
         for chunk in data.chunks(stride) {
             layers.het0.push(chunk[0]);
@@ -101,13 +102,14 @@ pub fn load(path: &Path) -> LevelLayers {
         let file = File::open(path.with_file_name(mp.material_lo)).unwrap();
         let mut decoder = png::Decoder::new(file);
         decoder.set_transformations(png::Transformations::empty());
-        let (info, mut reader) = decoder.read_info().unwrap();
+        let mut reader = decoder.read_info().unwrap();
+        let info = reader.info();
         assert_eq!((info.width, info.height), mp.size);
         assert_eq!(info.bit_depth, png::BitDepth::Four);
         layers
             .mat0
             .resize(info.width as usize * info.height as usize / 2, 0);
-        assert_eq!(info.buffer_size(), layers.mat0.len());
+        assert_eq!(reader.output_buffer_size(), layers.mat0.len());
         reader.next_frame(&mut layers.mat0).unwrap();
     }
     {
@@ -115,13 +117,14 @@ pub fn load(path: &Path) -> LevelLayers {
         let file = File::open(path.with_file_name(mp.material_hi)).unwrap();
         let mut decoder = png::Decoder::new(file);
         decoder.set_transformations(png::Transformations::empty());
-        let (info, mut reader) = decoder.read_info().unwrap();
+        let mut reader = decoder.read_info().unwrap();
+        let info = reader.info();
         assert_eq!((info.width, info.height), mp.size);
         assert_eq!(info.bit_depth, png::BitDepth::Four);
         layers
             .mat1
             .resize(info.width as usize * info.height as usize / 2, 0);
-        assert_eq!(info.buffer_size(), layers.mat1.len());
+        assert_eq!(reader.output_buffer_size(), layers.mat1.len());
         reader.next_frame(&mut layers.mat1).unwrap();
     }
 
