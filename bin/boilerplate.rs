@@ -105,9 +105,8 @@ impl Harness {
                     voxel_storage_size >> 20
                 );
                 wgpu::Limits {
-                    max_storage_buffer_binding_size: terrain_buffer_size
-                        .max(voxel_storage_size as u32),
-                    ..wgpu::Limits::default()
+                    max_storage_buffer_binding_size: voxel_storage_size as u32,
+                    ..wgpu::Limits::downlevel_defaults()
                 }
             }
             Terrain::Scattered { .. } => wgpu::Limits::default(),

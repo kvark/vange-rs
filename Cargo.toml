@@ -71,8 +71,7 @@ winit = "0.28"
 # gui
 egui = "0.22"
 egui_winit_platform = "0.19"
-#egui_wgpu_backend = "0.24"
-egui_wgpu_backend = { git = "https://github.com/kvark/egui_wgpu_backend", branch = "wgpu-0.17" }
+egui_wgpu_backend = "0.25"
 
 [dev-dependencies]
 naga = { version = "0.13", features = ["wgsl-in", "validate"] }
@@ -81,7 +80,7 @@ naga = { version = "0.13", features = ["wgsl-in", "validate"] }
 version = "1.0.1"
 default-features = false
 
-[patch."https://github.com/gfx-rs/wgpu"]
+[patch.crates-io]
 #wgpu = { path = "../wgpu/wgpu" }
 #wgpu-hal = { path = "../wgpu/wgpu-hal" }
 #wgpu-core = { path = "../wgpu/wgpu-core" }
