@@ -1521,11 +1521,9 @@ impl Context {
     ) {
         let surface_constants = {
             let bits = level.terrain_bits();
-            let delta_model = match level.geometry.delta_model {
-                settings::DeltaModel::Cave => 0,
-                settings::DeltaModel::Thickness => 1,
-                settings::DeltaModel::Ignored => 2,
-            };
+            let delta_mode = (level.geometry.delta_mask << 16)
+                | ((level.geometry.delta_const as u32) << 8)
+                | level.geometry.delta_power as u32;
             SurfaceConstants {
                 texture_scale: [
                     level.size.0 as f32,
@@ -1534,7 +1532,7 @@ impl Context {
                     0.0,
                 ],
                 terrain_bits: bits.shift as u32 | ((bits.mask as u32) << 4),
-                delta_mode: (delta_model << 8) | level.geometry.delta_power as u32,
+                delta_mode,
                 pad0: 0,
                 pad1: 0,
             }

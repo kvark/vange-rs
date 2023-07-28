@@ -1,21 +1,19 @@
 (
-	data_path: "",
-	// "/opt/gog/Vangers/game" #Linux (example)
-	// "/Applications/GOG/Vangers.app/Contents/Resources/game" #OSX
+	data_path: "C:\\Program Files (x86)\\GOG Galaxy\\Games\\Vangers\\data",
 	game: (
 		level: "Fostral", // see `wrlds.dat` for the list
 		cycle: "", // see `bunches.prm` for the list, leave empty for bonus worlds
 		geometry: (
 			height: 0x100,
-			delta_mask: 0xFF,
+			delta_mask: 239,
 			delta_power: 3,
 			delta_const: 4,
 		),
 		camera: (
-			angle: 60,
+			angle: 45,
 			height: 210,
 			offset: 140,
-			speed: 1,
+			speed: 3,
 			depth_range: (10, 2000),
 			projection: Perspective, // can be "Flat" or "Perspective"
 		),
@@ -52,17 +50,22 @@
 			shadow: (
 				size: 1024,
 				terrain:
-					RayTraced,
-					// RayVoxelTraced( max_outer_steps: 20, max_inner_steps: 20 ),
+					//RayTraced,
+					RayVoxelTraced( max_outer_steps: 20, max_inner_steps: 20 ),
 			),
 		),
 		fog: (
 			color: (0.1, 0.2, 0.3),
 			depth: 50,
 		),
-		terrain: RayTraced,
+		//terrain: RayTraced,
 		// RayTraced,
-		// RayVoxelTraced( voxel_size: (2, 4, 1), max_outer_steps: 40, max_inner_steps: 40, max_update_texels: 1_000_000 ),
+		terrain: RayVoxelTraced(
+			voxel_size: (2, 4, 1),
+			max_outer_steps: 40,
+			max_inner_steps: 40,
+			max_update_texels: 1_000_000,
+		),
 		// Scattered( density: (2, 2, 2) ),
 		// Sliced,
 		// Painted,
