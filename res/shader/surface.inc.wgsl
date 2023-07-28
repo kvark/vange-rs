@@ -3,7 +3,7 @@
 struct SurfaceConstants {
     texture_scale: vec4<f32>,    // XY = size, Z = height scale, w = number of layers
     terrain_bits: u32, // low 4 bits = shift, high 4 bits = mask
-    delta_mode: u32, // low 8 bits = power, high 8 bits = model
+    delta_mode: u32, // low 8 bits = power, higher 16 bits = mask
 };
 struct TerrainData {
     inner: array<u32>,
@@ -57,15 +57,21 @@ fn get_surface_impl(tci: vec2<i32>) -> Surface {
     let scale = u_Surface.texture_scale.z / 256.0;
 
     if ((data.y & c_DoubleLevelMask) != 0u) {
-        let model = (u_Surface.delta_mode >> 8u) & 3u;
-        let delta_power = u_Surface.delta_mode & 0xFFu;
-        let delta_orig = (get_delta(data.y) << c_DeltaBits) + get_delta(data.w);
-        let delta = select(delta_orig, 1u, model == 2u) << delta_power; // `Ignored`?
-        let mid = select(min(data.x + delta, data.z), max(data.z - delta, data.x), model != 0u); // `Thickness`?
         suf.low_type = get_terrain_type(data.y);
         suf.high_type = get_terrain_type(data.w);
         suf.low_alt = f32(data.x) * scale;
         suf.high_alt = f32(data.z) * scale;
+
+        var mid: u32;
+        if ((u_Surface.delta_mode & (1u << (16u + suf.high_type))) != 0u) {
+            let delta_power = u_Surface.delta_mode & 0xFFu;
+            let delta_orig = (get_delta(data.y) << c_DeltaBits) + get_delta(data.w);
+            let delta = delta_orig << delta_power;
+            mid = min(data.x + delta, data.z);
+        } else {
+            let delta_const = (u_Surface.delta_mode >> 8u) & 0xFFu;
+            mid = max(data.z, data.x + delta_const) - delta_const;
+        }
         suf.mid_alt = f32(mid) * scale;
     } else {
         let subdata = select(data.xy, data.zw, (tc_index & 1) != 0);

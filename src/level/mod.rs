@@ -89,11 +89,8 @@ impl Level {
 
     fn get_mid_altitude(&self, low: u8, high: u8, delta: u8) -> u8 {
         let power = self.geometry.delta_power;
-        match self.geometry.delta_model {
-            settings::DeltaModel::Cave => low.saturating_add(delta << power).min(high),
-            settings::DeltaModel::Thickness => high.saturating_sub(delta << power).max(low),
-            settings::DeltaModel::Ignored => high.saturating_sub(1 << power).max(low),
-        }
+        //Note: this is subject to interpretation in the shaders
+        low.saturating_add(delta << power).min(high)
     }
 
     pub fn get(&self, coord: (i32, i32)) -> Texel {
@@ -168,22 +165,20 @@ impl Level {
     }
 
     pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
-        egui::ComboBox::from_label("Delta model")
-            .selected_text(&format!("{:?}", self.geometry.delta_model))
-            .show_ui(ui, |ui| {
-                for model in [
-                    settings::DeltaModel::Cave,
-                    settings::DeltaModel::Thickness,
-                    settings::DeltaModel::Ignored,
-                ] {
-                    ui.selectable_value(
-                        &mut self.geometry.delta_model,
-                        model,
-                        format!("{:?}", model),
-                    );
+        ui.label(format!("Delta mask: {}", self.geometry.delta_mask));
+        ui.horizontal(|ui| {
+            for terrain_id in 0..8 {
+                let mask = 1 << terrain_id;
+                let mut checked = self.geometry.delta_mask & mask != 0;
+                ui.add(egui::Checkbox::without_text(&mut checked));
+                self.geometry.delta_mask &= !mask;
+                if checked {
+                    self.geometry.delta_mask |= mask;
                 }
-            });
+            }
+        });
         ui.add(egui::Slider::new(&mut self.geometry.delta_power, 0..=4).text("Delta power"));
+        ui.add(egui::Slider::new(&mut self.geometry.delta_const, 1..=15).text("Delta const"));
     }
 }
 

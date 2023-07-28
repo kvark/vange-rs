@@ -45,24 +45,12 @@ pub struct Physics {
     pub shape_sampling: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
-pub enum DeltaModel {
-    Cave,
-    Thickness,
-    Ignored,
-}
-
-impl Default for DeltaModel {
-    fn default() -> Self {
-        Self::Cave
-    }
-}
-
 #[derive(Clone, Debug, Deserialize)]
 pub struct Geometry {
     pub height: u32,
-    pub delta_model: DeltaModel,
+    pub delta_mask: u32,
     pub delta_power: u8,
+    pub delta_const: u8,
 }
 
 impl Default for Geometry {
@@ -70,8 +58,9 @@ impl Default for Geometry {
         // Note: these values match the original game logic
         Self {
             height: 0x100,
-            delta_model: DeltaModel::Cave,
+            delta_mask: 0xFFFF,
             delta_power: 3,
+            delta_const: 1,
         }
     }
 }
