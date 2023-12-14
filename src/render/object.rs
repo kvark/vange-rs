@@ -10,7 +10,7 @@ use m3d::NUM_COLOR_IDS;
 
 use std::{mem, slice};
 
-const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
+pub const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
     [0, 0],   // reserved
     [128, 3], // body
     [176, 4], // window
