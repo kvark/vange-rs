@@ -10,9 +10,10 @@ const MAX_COLUMN_VERTICES: usize = 4 * 4;
 const EXTREME_HEIGHT: i32 = i32::max_value();
 
 #[derive(Debug)]
-pub struct Config {
+pub struct Config<'a> {
     pub xr: Range<i32>,
     pub yr: Range<i32>,
+    pub palette: Option<&'a [u8]>,
 }
 
 #[derive(Clone)]
@@ -158,7 +159,7 @@ struct VertexCollector<'p> {
     final_vertices: Vec<[i32; 3]>,
     vertex_columns: Vec<Vec<VertexColumn>>,
     face_columns: Vec<Vec<FaceColumn>>,
-    config: &'p Config,
+    config: &'p Config<'p>,
     initial_vertices: usize,
     initial_quads: usize,
 }
@@ -190,6 +191,22 @@ impl VertexCollector<'_> {
 }
 
 pub fn save(path: &Path, level: &Level, config: &Config) {
+    if let Some(palette) = config.palette {
+        let mat_path = path.with_extension("mtl");
+        let mut dest = BufWriter::new(File::create(&mat_path).unwrap());
+        for (i, color) in palette.chunks(3).enumerate() {
+            writeln!(dest, "newmtl t{}", i).unwrap();
+            writeln!(
+                dest,
+                "\tKd {} {} {}",
+                color[0] as f32 / 255.0,
+                color[1] as f32 / 255.0,
+                color[2] as f32 / 255.0,
+            )
+            .unwrap();
+        }
+    }
+
     let mut groups: [Vec<[u32; 4]>; 16] = Default::default();
     let mut bar = progress::Bar::new();
 
@@ -330,7 +347,10 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
     }
 
     bar.jobs_done();
-    let num_quads: usize = groups.iter().map(|g| g.len()).sum();
+    let num_quads: usize = groups
+        .iter()
+        .flat_map(|g| g.iter().map(|plane| plane.len()))
+        .sum();
     fn unit(count: usize) -> f32 {
         count as f32 / 1_000_000.0
     }
@@ -349,9 +369,9 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
     }
     bar.set_job_title("Faces:");
     writeln!(dest).unwrap();
-    for (i, g) in groups.iter().enumerate() {
-        writeln!(dest, "g m{}", i).unwrap();
-        for t in g {
+    for (i, group) in groups.iter().enumerate() {
+        writeln!(dest, "usemtl t{}", i).unwrap();
+        for t in group {
             writeln!(
                 dest,
                 "f {} {} {} {}",

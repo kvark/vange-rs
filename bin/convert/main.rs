@@ -150,6 +150,8 @@ fn main() {
             println!("\tLoading the level...");
             let config = vangers::level::LevelConfig::load(&src_path);
             let level = vangers::level::load(&config, &geometry);
+            let pal_owned = layers::extract_palette(&level);
+            let palette = Some(pal_owned.as_slice());
             if let Some(chunks) = matches.opt_get::<i32>("c").unwrap() {
                 for i in 0..chunks {
                     let file_name = format!(
@@ -162,6 +164,7 @@ fn main() {
                     let export_config = level_obj::Config {
                         xr: 0..level.size.0,
                         yr: i * chunk_y..level.size.1.min((i + 1) * chunk_y),
+                        palette,
                     };
                     level_obj::save(&dst_path.with_file_name(file_name), &level, &export_config);
                 }
@@ -170,6 +173,7 @@ fn main() {
                 let export_config = level_obj::Config {
                     xr: 0..level.size.0,
                     yr: 0..level.size.1,
+                    palette,
                 };
                 level_obj::save(&dst_path, &level, &export_config);
             }
