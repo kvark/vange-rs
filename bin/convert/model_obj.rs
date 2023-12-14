@@ -8,13 +8,15 @@ use obj::{IndexTuple, Obj};
 use std::path::Path;
 use std::{
     fs,
-    io::{Result as IoResult, Write},
+    io::{Result as IoResult, Write as _},
     path::PathBuf,
 };
 
 type RefModel = Model<Mesh<String>, Mesh<String>>;
 type RefAnimatedMesh = AnimatedMesh<String>;
 type DrawAnimatedMesh = AnimatedMesh<Geometry<DrawTriangle>>;
+
+const MAT_NAME: &'static str = "object.mtl";
 
 pub fn export_m3d(full: FullModel, model_path: &Path) {
     const BODY_PATH: &str = "body.obj";
@@ -191,8 +193,26 @@ fn flatten_pos(poly: &[IndexTuple], positions: &[[f32; 3]]) -> [i8; 3] {
     ]
 }
 
+pub fn save_palette(path: PathBuf, palette: &[u8]) -> IoResult<()> {
+    if path.file_name().unwrap() != MAT_NAME {
+        log::warn!("Saved material is different from the expected {}", MAT_NAME);
+    }
+    let mut dest = fs::File::create(&path)?;
+    for (color_id, color) in palette.chunks(3).enumerate() {
+        writeln!(dest, "newmtl {:?}", map_color_id(color_id as u32))?;
+        writeln!(
+            dest,
+            "\tKd {} {} {}",
+            color[0] as f32 / 255.0,
+            color[1] as f32 / 255.0,
+            color[2] as f32 / 255.0,
+        )?;
+    }
+    Ok(())
+}
+
 pub fn save_draw_geometry(geom: &Geometry<DrawTriangle>, path: PathBuf) -> IoResult<()> {
-    let mut dest = fs::File::create(&path).unwrap();
+    let mut dest = fs::File::create(&path)?;
     for p in geom.positions.iter() {
         writeln!(dest, "v {} {} {}", p[0], p[1], p[2])?;
     }
@@ -208,6 +228,7 @@ pub fn save_draw_geometry(geom: &Geometry<DrawTriangle>, path: PathBuf) -> IoRes
     }
     writeln!(dest)?;
 
+    writeln!(dest, "mtllib {}", MAT_NAME)?;
     let mut mask = 0u32;
     for p in &geom.polygons {
         mask |= 1 << p.material[0];
@@ -216,7 +237,7 @@ pub fn save_draw_geometry(geom: &Geometry<DrawTriangle>, path: PathBuf) -> IoRes
         if mask & (1 << color_id) == 0 {
             continue;
         }
-        writeln!(dest, "g {:?}", map_color_id(color_id))?;
+        writeln!(dest, "usemtl {:?}", map_color_id(color_id))?;
         for p in &geom.polygons {
             if p.material[0] != color_id {
                 continue;

@@ -185,6 +185,18 @@ fn main() {
             let level_data = layers.export();
             level_data.save_vmp(&dst_path);
         }
+        ("pal", "mtl") => {
+            println!("\tConverting object palette to MTL...");
+            let palette_raw = fs_read(src_path).expect("Unable to open palette");
+            let palette: Vec<u8> = vangers::render::object::COLOR_TABLE
+                .iter()
+                .flat_map(|&range| {
+                    let texel = range[0] as usize + (128 >> range[1]) as usize;
+                    palette_raw[texel * 3 - 3..texel * 3].iter().cloned()
+                })
+                .collect();
+            model_obj::save_palette(dst_path, &palette).unwrap();
+        }
         ("pal", "png") => {
             println!("Converting palette to PNG...");
             let data = fs_read(&src_path).unwrap();
