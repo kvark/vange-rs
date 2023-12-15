@@ -369,6 +369,11 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
     }
     bar.set_job_title("Faces:");
     writeln!(dest).unwrap();
+    if config.palette.is_some() {
+        let mtl_path = path.with_extension("mtl");
+        let mat_name = mtl_path.file_name().unwrap().to_str().unwrap();
+        writeln!(dest, "mtllib {}", mat_name).unwrap();
+    }
     for (i, group) in groups.iter().enumerate() {
         writeln!(dest, "usemtl t{}", i).unwrap();
         for t in group {
