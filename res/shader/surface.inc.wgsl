@@ -5,12 +5,9 @@ struct SurfaceConstants {
     terrain_bits: u32, // low 4 bits = shift, high 4 bits = mask
     delta_mode: u32, // low 8 bits = power, higher 16 bits = mask
 };
-struct TerrainData {
-    inner: array<u32>,
-};
 
 @group(1) @binding(0) var<uniform> u_Surface: SurfaceConstants;
-@group(1) @binding(2) var<storage, read> b_Terrain: TerrainData;
+@group(1) @binding(2) var t_Terrain: texture_2d<u32>;
 
 const c_DoubleLevelMask: u32 = 64u;
 const c_ShadowMask: u32 = 128u;
@@ -50,9 +47,7 @@ fn get_map_coordinates(pos: vec2<f32>) -> vec2<i32> {
 fn get_surface_impl(tci: vec2<i32>) -> Surface {
     var suf: Surface;
 
-    let tc_index = tci.y * i32(u_Surface.texture_scale.x) + tci.x;
-    let data_raw = b_Terrain.inner[tc_index / 2];
-    let data = (vec4<u32>(data_raw) >> vec4<u32>(0u, 8u, 16u, 24u)) & vec4<u32>(0xFFu);
+    let data = textureLoad(t_Terrain, vec2<i32>(tci.x/2, tci.y), 0);
     suf.is_shadowed = (data.y & c_ShadowMask) != 0u;
     let scale = u_Surface.texture_scale.z / 256.0;
 
@@ -74,7 +69,7 @@ fn get_surface_impl(tci: vec2<i32>) -> Surface {
         }
         suf.mid_alt = f32(mid) * scale;
     } else {
-        let subdata = select(data.xy, data.zw, (tc_index & 1) != 0);
+        let subdata = select(data.xy, data.zw, (tci.x & 1) != 0);
         let altitude = f32(subdata.x) * scale;
         let ty = get_terrain_type(subdata.y);
         suf.low_type = ty;

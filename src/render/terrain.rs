@@ -298,7 +298,7 @@ pub struct Context {
     raytrace_geo: Geometry,
     kind: Kind,
     shadow_kind: ShadowKind,
-    terrain_buf: wgpu::Buffer,
+    terrain_texture: wgpu::Texture,
     palette_texture: wgpu::Texture,
     pub flood: Flood,
     pub dirty_rects: Vec<super::DirtyRect>,
@@ -698,11 +698,18 @@ impl Context {
             })
             .collect::<Vec<_>>();
 
-        let terrain_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
+        let terrain_texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Terrain data"),
-            size: (extent.width * extent.height) as wgpu::BufferAddress * 2,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
+            size: wgpu::Extent3d {
+                width: extent.width / 2,
+                ..extent
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Uint,
+            view_formats: &[],
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
 
         let flood_texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
@@ -792,15 +799,11 @@ impl Context {
                         // terrain data
                         wgpu::BindGroupLayoutEntry {
                             binding: 2,
-                            visibility: if supports_vertex_storage {
-                                wgpu::ShaderStages::all()
-                            } else {
-                                wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE
-                            },
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
+                            visibility: wgpu::ShaderStages::all(),
+                            ty: wgpu::BindingType::Texture {
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                sample_type: wgpu::TextureSampleType::Uint,
+                                multisampled: false,
                             },
                             count: None,
                         },
@@ -881,7 +884,9 @@ impl Context {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: terrain_buf.as_entire_binding(),
+                    resource: wgpu::BindingResource::TextureView(
+                        &terrain_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+                    ),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
@@ -1365,7 +1370,7 @@ impl Context {
             raytrace_geo,
             kind,
             shadow_kind,
-            terrain_buf,
+            terrain_texture,
             palette_texture: palette.texture,
             flood: Flood {
                 texture: flood_texture,
@@ -1569,6 +1574,8 @@ impl Context {
                 if !dr.need_upload {
                     continue;
                 }
+                //Note: we are uploading the whole rows currently. We could instead upload
+                // only the relevant sub-rectangle, but managing `bytes_per_row` becomes annoying.
 
                 let total_size =
                     dr.rect.h as wgpu::BufferAddress * level.size.0 as wgpu::BufferAddress * 2;
@@ -1588,15 +1595,34 @@ impl Context {
                         }
                     }
                 }
-                staging_buf.unmap();
-                encoder.copy_buffer_to_buffer(
-                    &staging_buf,
-                    0,
-                    &self.terrain_buf,
-                    dr.rect.y as wgpu::BufferAddress * level.size.0 as wgpu::BufferAddress * 2,
-                    total_size,
+
+                encoder.copy_buffer_to_texture(
+                    wgpu::ImageCopyBuffer {
+                        buffer: &staging_buf,
+                        layout: wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(level.size.0 as u32 * 2),
+                            rows_per_image: None,
+                        },
+                    },
+                    wgpu::ImageCopyTexture {
+                        texture: &self.terrain_texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: dr.rect.y as u32,
+                            z: 0,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: level.size.0 as u32 / 2,
+                        height: dr.rect.h as u32,
+                        depth_or_array_layers: 1,
+                    },
                 );
 
+                staging_buf.unmap();
                 dr.need_upload = false;
             }
 
