@@ -126,6 +126,7 @@ impl Harness {
             .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
+        log::info!("Supported surface formats: {:?}", surface_caps.formats);
         let present_mode = if surface_caps
             .present_modes
             .contains(&wgpu::PresentMode::Mailbox)

@@ -196,7 +196,7 @@ fn print_palette(data: &[[u8; 4]], info: &str) {
 
 pub fn read_palette(input: File, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 0x100] {
     let mut file = BufReader::new(input);
-    let mut data = [[0; 4]; 0x100];
+    let mut data = [[0xFF; 4]; 0x100];
     for p in data.iter_mut() {
         file.read_exact(&mut p[..3]).unwrap();
         //p[0] <<= 2; p[1] <<= 2; p[2] <<= 2;
@@ -214,7 +214,7 @@ pub fn read_palette(input: File, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 
 
         for i in 0..16 {
             let mut value = [(i * 4) as u8; 4];
-            value[3] = 0;
+            value[3] = 0xFF;
             data[224 + i] = value;
         }
 
