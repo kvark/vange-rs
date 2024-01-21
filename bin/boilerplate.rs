@@ -90,8 +90,6 @@ impl Harness {
             Terrain::RayTraced { .. } | Terrain::Sliced { .. } | Terrain::Painted { .. } => {
                 wgpu::Limits {
                     max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
-                    max_storage_buffers_per_shader_stage: 1,
-                    max_storage_buffer_binding_size: terrain_buffer_size,
                     ..wgpu::Limits::downlevel_webgl2_defaults()
                 }
             }
