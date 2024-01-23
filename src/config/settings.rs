@@ -162,13 +162,44 @@ pub struct Fog {
 
 #[derive(Clone, Deserialize)]
 pub struct Render {
+    #[serde(default)]
     pub wgpu_trace_path: String,
     pub allow_tearing: bool,
     pub light: Light,
     pub terrain: Terrain,
     pub water: Water,
     pub fog: Fog,
+    #[serde(default)]
     pub debug: DebugRender,
+}
+
+impl Render {
+    pub fn get_device_limits(&self, adapter_limits: &wgpu::Limits) -> wgpu::Limits {
+        let terrain_buffer_size = 1 << 26; // 2048 (X) * 16384 (Y) * 2 (height+meta)
+        match self.terrain {
+            Terrain::RayTraced { .. } | Terrain::Sliced { .. } | Terrain::Painted { .. } => {
+                wgpu::Limits {
+                    max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+                    ..wgpu::Limits::downlevel_webgl2_defaults()
+                }
+            }
+            Terrain::RayVoxelTraced { voxel_size, .. } => {
+                let max_3d_points = (terrain_buffer_size as usize / 2) * 256;
+                let voxel_points = voxel_size[0] * voxel_size[1] * voxel_size[2];
+                // Note: 5/32 is roughly the number of bytes per voxel if we include the LOD chain
+                let voxel_storage_size = (max_3d_points / voxel_points as usize * 5) / 32;
+                info!(
+                    "Estimating {} MB for voxel storage",
+                    voxel_storage_size >> 20
+                );
+                wgpu::Limits {
+                    max_storage_buffer_binding_size: voxel_storage_size as u32,
+                    ..wgpu::Limits::downlevel_defaults()
+                }
+            }
+            Terrain::Scattered { .. } => wgpu::Limits::default(),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Default, Deserialize)]
@@ -247,10 +278,4 @@ impl Settings {
             .with_extension("m3d");
         File::open(path).unwrap_or_else(|_| panic!("Unable to open vehicle {}", name))
     }
-}
-
-#[derive(Deserialize)]
-pub struct LibConfig {
-    pub geometry: Geometry,
-    pub render: Render,
 }
