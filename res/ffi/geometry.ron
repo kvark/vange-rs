@@ -1,0 +1,6 @@
+(
+	height: 0x80,
+	delta_mask: 239,
+	delta_power: 3,
+	delta_const: 4,
+)

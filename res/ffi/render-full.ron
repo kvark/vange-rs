@@ -1,0 +1,17 @@
+(
+	allow_tearing: false,
+	light: (
+		pos: (1, 0, 1, 0),
+		color: (1, 1, 1),
+		shadow: (
+			size: 1024,
+			terrain: RayVoxelTraced( max_outer_steps: 20, max_inner_steps: 20 ),
+		),
+	),
+	fog: (
+		color: (0.1, 0.2, 0.3),
+		depth: 50,
+	),
+	terrain: RayVoxelTraced( voxel_size: (2, 4, 1), max_outer_steps: 40, max_inner_steps: 40, max_update_texels: 1_000_000 ),
+	water: (),
+)

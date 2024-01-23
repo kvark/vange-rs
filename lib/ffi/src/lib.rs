@@ -4,6 +4,7 @@ Matches "lib/renderer/src/renderer/scene/rust/vange_rs.h"
 See https://github.com/KranX/Vangers/pull/517
 
 Changelog:
+  3. Expose config path.
   2. Transform scales, model APIs.
   1. Add `rv_resize()`.
   0. Basic version.
@@ -22,7 +23,7 @@ use std::{
 
 // Update this whenever C header changes
 #[no_mangle]
-pub static rv_api_2: i32 = 1;
+pub static rv_api_3: i32 = 1;
 
 #[repr(C)]
 #[derive(Default)]
@@ -145,7 +146,8 @@ struct LevelContext {
 
 pub struct Context {
     level: Option<LevelContext>,
-    config: vangers::config::settings::LibConfig,
+    geometry_config: vangers::config::settings::Geometry,
+    render_config: vangers::config::settings::Render,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
     gfx: vangers::render::GraphicsContext,
@@ -162,6 +164,7 @@ pub type GlFunctionDiscovery = unsafe extern "C" fn(*const raw::c_char) -> *cons
 pub struct InitDescriptor {
     width: u32,
     height: u32,
+    render_config: *const raw::c_char,
     gl_functor: GlFunctionDiscovery,
 }
 
@@ -215,6 +218,28 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         android_logger::Config::default().with_min_level(log::Level::Warn),
     );
 
+    let geometry_config = {
+        let file = File::open("res/ffi/geometry.ron").unwrap();
+        ron::de::from_reader(file).unwrap()
+    };
+    let render_config: vangers::config::settings::Render = {
+        let config_path = if desc.render_config.is_null() {
+            log::info!("Null render config path");
+            "res/ffi/render-compat.ron".to_string()
+        } else {
+            unsafe { CStr::from_ptr(desc.render_config) }
+                .to_string_lossy()
+                .to_string()
+        };
+        log::info!("Using render: {}", config_path);
+        let file = File::open(&config_path).unwrap();
+        ron::de::from_reader(file).unwrap()
+    };
+    let objects_palette = {
+        let file = File::open("res/ffi/objects.pal").unwrap();
+        vangers::level::read_palette(file, None)
+    };
+
     let mut task_pool = LocalPool::new();
 
     let exposed = unsafe {
@@ -230,12 +255,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         ..Default::default()
     });
     let adapter = unsafe { instance.create_adapter_from_hal(exposed) };
-    let adapter_limits = adapter.limits();
-
-    let limits = wgpu::Limits {
-        max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
-        ..wgpu::Limits::downlevel_webgl2_defaults()
-    };
+    let limits = render_config.get_device_limits(&adapter.limits());
 
     let (device, queue) = task_pool
         .run_until(adapter.request_device(
@@ -261,18 +281,10 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     };
     let (color_view, depth_view) = crate_main_views(&gfx);
 
-    let config = {
-        let file = File::open("res/ffi/config.ron").unwrap();
-        ron::de::from_reader(file).unwrap()
-    };
-    let objects_palette = {
-        let file = File::open("res/ffi/objects.pal").unwrap();
-        vangers::level::read_palette(file, None)
-    };
-
     let ctx = Context {
         level: None,
-        config,
+        geometry_config,
+        render_config,
         gfx,
         color_view,
         depth_view,
@@ -311,6 +323,10 @@ pub extern "C" fn rv_resize(ctx: &mut Context, width: u32, height: u32) {
     let (color_view, depth_view) = crate_main_views(&ctx.gfx);
     ctx.color_view = color_view;
     ctx.depth_view = depth_view;
+
+    //if let vangers::space::Projection::Perspective(ref mut p) = ctx.camera.proj {
+    //    p.aspect = width as f32 / height as f32;
+    //}
 }
 
 #[no_mangle]
@@ -360,12 +376,12 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
         &ctx.gfx,
         &level_config,
         &ctx.objects_palette,
-        &ctx.config.render,
-        &ctx.config.geometry,
+        &ctx.render_config,
+        &ctx.geometry_config,
         ctx.camera.front_face(),
     );
 
-    let level = vangers::level::load(&level_config, &ctx.config.geometry);
+    let level = vangers::level::load(&level_config, &ctx.geometry_config);
     ctx.level = Some(LevelContext {
         desc,
         render,

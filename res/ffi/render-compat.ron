@@ -1,0 +1,17 @@
+(
+	allow_tearing: false,
+	light: (
+		pos: (1, 0, 1, 0),
+		color: (1, 1, 1),
+		shadow: (
+			size: 1024,
+			terrain: RayTraced,
+		),
+	),
+	fog: (
+		color: (0.1, 0.2, 0.3),
+		depth: 50,
+	),
+	terrain: RayTraced,
+	water: (),
+)
