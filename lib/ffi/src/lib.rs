@@ -4,10 +4,11 @@ Matches "lib/renderer/src/renderer/scene/rust/vange_rs.h"
 See https://github.com/KranX/Vangers/pull/517
 
 Changelog:
-  3. Expose config path.
-  2. Transform scales, model APIs.
-  1. Add `rv_resize()`.
-  0. Basic version.
+  3.2: Control model visibility.
+  3.1: Expose render config path.
+  2.1: Transform scales, model APIs.
+  1.1: Add `rv_resize()`.
+  0.1: Basic version.
 !*/
 
 use futures::executor::LocalPool;
@@ -23,7 +24,7 @@ use std::{
 
 // Update this whenever C header changes
 #[no_mangle]
-pub static rv_api_3: i32 = 1;
+pub static rv_api_3: i32 = 2;
 
 #[repr(C)]
 #[derive(Default)]
@@ -136,6 +137,7 @@ struct MeshInstance {
     mesh: Arc<vangers::model::Mesh>,
     transform: vangers::space::Transform,
     color_id: u8,
+    visible: bool,
 }
 
 struct LevelContext {
@@ -465,6 +467,9 @@ pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
 
     let mut batcher = vangers::render::Batcher::new();
     for (_, instance) in ctx.instances.iter() {
+        if !instance.visible {
+            continue;
+        }
         batcher.add_mesh(
             &instance.mesh,
             vangers::render::object::Instance::new(&instance.transform, 1.0, instance.color_id),
@@ -583,6 +588,7 @@ pub extern "C" fn rv_model_instance_create(
         mesh: Arc::clone(mesh),
         transform: cgmath::One::one(),
         color_id,
+        visible: true,
     });
     key.data().as_ffi()
 }
@@ -599,6 +605,16 @@ pub extern "C" fn rv_model_instance_set_transform(
         scale: t.scale,
         rot: cgmath::Quaternion::new(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z),
     };
+}
+
+#[no_mangle]
+pub extern "C" fn rv_model_instance_set_visible(
+    ctx: &mut Context,
+    inst_handle: u64,
+    visible: bool,
+) {
+    let inst = &mut ctx.instances[slotmap::KeyData::from_ffi(inst_handle).into()];
+    inst.visible = visible;
 }
 
 #[no_mangle]
