@@ -10,7 +10,7 @@ struct VoxelConstants {
 
 struct VoxelData {
     lod_count: vec4<u32>,
-    lods: array<VoxelLod, 16>,
+    lods: array<vec4<u32>, 16>,
     occupancy: array<u32>,
 }
 
@@ -18,11 +18,12 @@ struct VoxelData {
 @group(2) @binding(1) var<uniform> u_Constants: VoxelConstants;
 
 fn check_occupancy(coordinates: vec3<i32>, lod: u32) -> bool {
-    let lod_info = b_VoxelGrid.lods[lod];
-    let ramainder = coordinates % lod_info.dim;
+    let vlod = b_VoxelGrid.lods[lod];
+    let dim = make_vlod(vlod).dim;
+    let ramainder = coordinates % dim;
     // see https://github.com/gfx-rs/naga/issues/2122
-    let sanitized = ramainder + select(lod_info.dim, vec3<i32>(0), ramainder >= vec3<i32>(0));
-    let addr = linearize(vec3<u32>(sanitized), lod_info);
+    let sanitized = ramainder + select(dim, vec3<i32>(0), ramainder >= vec3<i32>(0));
+    let addr = linearize(vec3<u32>(sanitized), vlod);
     return (b_VoxelGrid.occupancy[addr.offset] & addr.mask) != 0u;
 }
 
@@ -274,7 +275,7 @@ fn vert_bound(
     var index = i32(inst_index);
     var coord = vec3<i32>(0);
     while (lod < b_VoxelGrid.lod_count.x) {
-        let dim = b_VoxelGrid.lods[lod].dim;
+        let dim = make_vlod(b_VoxelGrid.lods[lod]).dim;
         let total = i32(dim.x * dim.y * dim.z);
         if (index < total) {
             coord = vec3<i32>(index % dim.x, (index / dim.x) % dim.y, index / (dim.x * dim.y));

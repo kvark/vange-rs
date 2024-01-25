@@ -2,7 +2,7 @@
 
 struct VoxelData {
     lod_count: vec4<u32>,
-    lods: array<VoxelLod, 16>,
+    lods: array<vec4<u32>, 16>,
     occupancy: array<atomic<u32>>,
 }
 @group(0) @binding(0) var<storage, read_write> b_VoxelGrid: VoxelData;

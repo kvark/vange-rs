@@ -8,7 +8,14 @@ struct BitAddress {
     mask: u32,
 }
 
-fn linearize(coords: vec3<u32>, vlod: VoxelLod) -> BitAddress {
+// Note: we could just declare `VertexLod` in the storage buffer,
+// but Angle + D3D11 choke on this.
+fn make_vlod(data: vec4<u32>) -> VoxelLod {
+    return VoxelLod(vec3<i32>(data.xyz), data.w);
+}
+
+fn linearize(coords: vec3<u32>, vlod_raw: vec4<u32>) -> BitAddress {
+    let vlod = make_vlod(vlod_raw);
     let words_per_tile = `morton_tile_size` * `morton_tile_size` * `morton_tile_size` / 32u;
     let tile_counts = vec3<u32>(vlod.dim - 1) / vec3<u32>(`morton_tile_size`) + 1u;
     let bit_index = encode_morton3(coords % vec3<u32>(`morton_tile_size`));
