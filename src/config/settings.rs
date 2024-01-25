@@ -192,6 +192,7 @@ impl Render {
                     voxel_storage_size >> 20
                 );
                 wgpu::Limits {
+                    max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
                     max_storage_buffer_binding_size: voxel_storage_size as u32,
                     ..wgpu::Limits::downlevel_defaults()
                 }
