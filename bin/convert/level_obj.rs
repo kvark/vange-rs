@@ -6,7 +6,6 @@ use std::{
 };
 use vangers::level::{Level, Texel};
 
-const MAX_COLUMN_VERTICES: usize = 4 * 4;
 const EXTREME_HEIGHT: i32 = i32::max_value();
 
 #[derive(Debug)]
@@ -32,11 +31,11 @@ impl Default for Vertex {
 
 #[derive(Clone, Default)]
 struct VertexColumn {
-    data: [Vertex; MAX_COLUMN_VERTICES + 1],
+    data: [Vertex; 16],
 }
 impl VertexColumn {
     fn add(&mut self, height: i32) -> &mut Vertex {
-        let order_index = self.data.iter().position(|v| v.height > height).unwrap();
+        let order_index = self.data.iter().position(|v| v.height >= height).unwrap();
 
         if height < self.data[order_index].height {
             self.data[order_index..].rotate_right(1);
@@ -47,6 +46,14 @@ impl VertexColumn {
             v_new.height = height;
         }
         v_new
+    }
+
+    fn check(&self) {
+        let mut height = 0;
+        for v in self.data.iter() {
+            assert!(v.height >= height);
+            height = v.height;
+        }
     }
 }
 
@@ -75,6 +82,11 @@ impl Default for Boundary<'_> {
 impl Quad {
     fn as_boundary(&self) -> Boundary {
         Boundary::Other(self)
+    }
+
+    fn flip(mut self) -> Self {
+        self.indices.reverse();
+        self
     }
 }
 
@@ -111,16 +123,24 @@ impl<'a> Intersection<'a> {
 const SKIP: (u32, u32) = (!0, !0);
 
 impl FaceColumn {
+    fn from_quad(quad: Quad) -> Self {
+        Self {
+            low: quad.clone(),
+            mid: quad.clone(),
+            high: quad,
+        }
+    }
+
     fn intersect(&self, range: Range<i32>) -> Intersection {
         let mut i = Intersection::default();
         // consider the interval between the low and the middle
         if range.start < self.mid.z && range.end > self.low.z && self.low.z < self.mid.z {
-            let start = if range.start < self.low.z {
+            let start = if range.start <= self.low.z {
                 self.low.as_boundary()
             } else {
                 Boundary::Bottom
             };
-            let end = if range.end > self.mid.z {
+            let end = if range.end >= self.mid.z {
                 self.mid.as_boundary()
             } else {
                 Boundary::Top
@@ -129,7 +149,7 @@ impl FaceColumn {
         }
         // consider the interval from the high level and up
         if range.end > self.high.z {
-            let start = if range.start < self.high.z {
+            let start = if range.start <= self.high.z {
                 self.high.as_boundary()
             } else {
                 Boundary::Bottom
@@ -176,16 +196,34 @@ impl VertexCollector<'_> {
         vertex.index
     }
 
-    fn add_quad(&mut self, x: i32, y: i32, z: i32) -> Quad {
-        self.initial_vertices += 4;
+    fn add_quad_custom(
+        &mut self,
+        expected_vertices: usize,
+        x: Range<i32>,
+        y: Range<i32>,
+        z: i32,
+    ) -> Quad {
+        self.initial_vertices += expected_vertices;
         Quad {
             z,
             indices: [
-                self.add(x, y, z),
-                self.add(x + 1, y, z),
-                self.add(x + 1, y + 1, z),
-                self.add(x, y + 1, z),
+                self.add(x.start, y.start, z),
+                self.add(x.end, y.start, z),
+                self.add(x.end, y.end, z),
+                self.add(x.start, y.end, z),
             ],
+        }
+    }
+
+    fn add_quad(&mut self, x: i32, y: i32, z: i32) -> Quad {
+        self.add_quad_custom(4, x..x + 1, y..y + 1, z)
+    }
+
+    fn check(&self) {
+        for col_line in self.vertex_columns.iter() {
+            for column in col_line.iter() {
+                column.check();
+            }
         }
     }
 }
@@ -231,22 +269,10 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
         for x in config.xr.clone() {
             c.face_columns[(y - config.yr.start) as usize][(x - config.xr.start) as usize] =
                 match level.get((x, y)) {
-                    Texel::Single(p) => {
-                        let quad = c.add_quad(x, y, p.0 as i32);
-                        FaceColumn {
-                            high: quad.clone(),
-                            mid: quad.clone(),
-                            low: quad,
-                        }
-                    }
+                    Texel::Single(p) => FaceColumn::from_quad(c.add_quad(x, y, p.0 as i32)),
                     // Cut out unexpected/invalid cases
                     Texel::Dual { low, mid, high } if mid > high.0 => {
-                        let quad = c.add_quad(x, y, low.0 as i32);
-                        FaceColumn {
-                            high: quad.clone(),
-                            mid: quad.clone(),
-                            low: quad,
-                        }
+                        FaceColumn::from_quad(c.add_quad(x, y, low.0 as i32))
                     }
                     Texel::Dual { low, mid, high } => FaceColumn {
                         high: c.add_quad(x, y, high.0 as i32),
@@ -258,42 +284,43 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
         bar.reach_percent((y - config.yr.start) * 100 / y_total);
     }
 
+    c.check();
+
     bar.set_job_title("Processing sides:");
     bar.reach_percent(0);
-    let dummy_quad = Quad {
-        z: EXTREME_HEIGHT,
-        indices: [0; 4],
-    };
-    let dummy_face = FaceColumn {
-        low: dummy_quad.clone(),
-        mid: dummy_quad.clone(),
-        high: dummy_quad.clone(),
-    };
+
+    // add the bottom
+    let bottom_quad = c
+        .add_quad_custom(4, config.xr.clone(), config.yr.clone(), 0)
+        .flip();
+    c.initial_quads += 1;
+    groups[0].push(bottom_quad.indices);
 
     for y in config.yr.clone() {
         for x in config.xr.clone() {
             let yrel = (y - config.yr.start) as usize;
             let xrel = (x - config.xr.start) as usize;
-            let fc = &c.face_columns[yrel][xrel];
+            let fc = c.face_columns[yrel][xrel].clone();
+
             let fx0 = if x != config.xr.start {
-                &c.face_columns[yrel][xrel - 1]
+                c.face_columns[yrel][xrel - 1].clone()
             } else {
-                &dummy_face
+                FaceColumn::from_quad(c.add_quad_custom(2, x..x, y..y + 1, 0))
             };
             let fx1 = if x + 1 != config.xr.end {
-                &c.face_columns[yrel][xrel + 1]
+                c.face_columns[yrel][xrel + 1].clone()
             } else {
-                &dummy_face
+                FaceColumn::from_quad(c.add_quad_custom(2, x + 1..x + 1, y..y + 1, 0))
             };
             let fy0 = if y != config.yr.start {
-                &c.face_columns[yrel - 1][xrel]
+                c.face_columns[yrel - 1][xrel].clone()
             } else {
-                &dummy_face
+                FaceColumn::from_quad(c.add_quad_custom(2, x..x + 1, y..y, 0))
             };
             let fy1 = if y + 1 != config.yr.end {
-                &c.face_columns[yrel + 1][xrel]
+                c.face_columns[yrel + 1][xrel].clone()
             } else {
-                &dummy_face
+                FaceColumn::from_quad(c.add_quad_custom(2, x..x + 1, y + 1..y + 1, 0))
             };
 
             let p = match level.get((x, y)) {
@@ -305,8 +332,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     // top + bottom
                     g.push(fc.high.indices);
                     if mid >= low.0 {
-                        let m = &fc.mid.indices;
-                        g.push([m[3], m[2], m[1], m[0]]);
+                        g.push(fc.mid.clone().flip().indices);
                     }
                     // sides
                     g.extend(
@@ -336,10 +362,10 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
             c.initial_quads += 1;
             let z = p.0 as i32;
             if z > 0 {
-                g.extend(fx0.intersect(-1..z).polygonize(fc.low_indices(3)));
-                g.extend(fx1.intersect(-1..z).polygonize(fc.low_indices(1)));
-                g.extend(fy0.intersect(-1..z).polygonize(fc.low_indices(0)));
-                g.extend(fy1.intersect(-1..z).polygonize(fc.low_indices(2)));
+                g.extend(fx0.intersect(0..z).polygonize(fc.low_indices(3)));
+                g.extend(fx1.intersect(0..z).polygonize(fc.low_indices(1)));
+                g.extend(fy0.intersect(0..z).polygonize(fc.low_indices(0)));
+                g.extend(fy1.intersect(0..z).polygonize(fc.low_indices(2)));
                 c.initial_quads += 4;
             }
         }
