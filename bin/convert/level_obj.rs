@@ -15,6 +15,40 @@ pub struct Config<'a> {
     pub palette: Option<&'a [u8]>,
 }
 
+#[derive(Clone, Default)]
+struct Quad {
+    z: i32,
+    indices: [u32; 4],
+}
+
+impl Quad {
+    fn flip(mut self) -> Self {
+        self.indices.reverse();
+        self
+    }
+}
+
+#[derive(Clone, Default)]
+struct FaceColumn {
+    low: Quad,
+    mid: Quad,
+    high: Quad,
+}
+
+impl FaceColumn {
+    fn from_quad(quad: Quad) -> Self {
+        Self {
+            low: quad.clone(),
+            mid: quad.clone(),
+            high: quad,
+        }
+    }
+
+    fn contains(&self, z: i32) -> bool {
+        z < self.low.z || (z >= self.mid.z && z < self.high.z)
+    }
+}
+
 #[derive(Clone)]
 struct Vertex {
     index: u32,
@@ -31,7 +65,7 @@ impl Default for Vertex {
 
 #[derive(Clone, Default)]
 struct VertexColumn {
-    data: [Vertex; 16],
+    data: [Vertex; 32],
 }
 impl VertexColumn {
     fn add(&mut self, height: i32) -> &mut Vertex {
@@ -48,129 +82,17 @@ impl VertexColumn {
         v_new
     }
 
+    fn add_faces(&mut self, fc: &FaceColumn) {
+        for z in [fc.low.z, fc.mid.z, fc.high.z] {
+            self.add(z);
+        }
+    }
+
     fn check(&self) {
         let mut height = 0;
         for v in self.data.iter() {
             assert!(v.height >= height);
             height = v.height;
-        }
-    }
-}
-
-#[derive(Clone, Default)]
-struct Quad {
-    z: i32,
-    indices: [u32; 4],
-}
-#[derive(Clone, Default)]
-struct FaceColumn {
-    low: Quad,
-    mid: Quad,
-    high: Quad,
-}
-
-enum Boundary<'a> {
-    Bottom,
-    Top,
-    Other(&'a Quad),
-}
-impl Default for Boundary<'_> {
-    fn default() -> Self {
-        Self::Bottom
-    }
-}
-impl Quad {
-    fn as_boundary(&self) -> Boundary {
-        Boundary::Other(self)
-    }
-
-    fn flip(mut self) -> Self {
-        self.indices.reverse();
-        self
-    }
-}
-
-#[derive(Default)]
-struct Intersection<'a> {
-    ranges: [Range<Boundary<'a>>; 2],
-    count: usize,
-}
-impl<'a> Intersection<'a> {
-    fn push(&mut self, range: Range<Boundary<'a>>) {
-        self.ranges[self.count] = range;
-        self.count += 1;
-    }
-
-    fn polygonize(
-        self,
-        mapper: impl Fn(Boundary<'a>) -> (u32, u32) + 'a,
-    ) -> impl Iterator<Item = [u32; 4]> + 'a {
-        self.ranges
-            .into_iter()
-            .take(self.count)
-            .filter_map(move |br| {
-                let (i0, i1) = mapper(br.start);
-                let (i3, i2) = mapper(br.end);
-                if i0 == !0 || i3 == !0 {
-                    None
-                } else {
-                    Some([i0, i1, i2, i3])
-                }
-            })
-    }
-}
-
-const SKIP: (u32, u32) = (!0, !0);
-
-impl FaceColumn {
-    fn from_quad(quad: Quad) -> Self {
-        Self {
-            low: quad.clone(),
-            mid: quad.clone(),
-            high: quad,
-        }
-    }
-
-    fn intersect(&self, range: Range<i32>) -> Intersection {
-        let mut i = Intersection::default();
-        // consider the interval between the low and the middle
-        if range.start < self.mid.z && range.end > self.low.z && self.low.z < self.mid.z {
-            let start = if range.start <= self.low.z {
-                self.low.as_boundary()
-            } else {
-                Boundary::Bottom
-            };
-            let end = if range.end >= self.mid.z {
-                self.mid.as_boundary()
-            } else {
-                Boundary::Top
-            };
-            i.push(start..end);
-        }
-        // consider the interval from the high level and up
-        if range.end > self.high.z {
-            let start = if range.start <= self.high.z {
-                self.high.as_boundary()
-            } else {
-                Boundary::Bottom
-            };
-            i.push(start..Boundary::Top);
-        }
-        i
-    }
-
-    fn low_indices<'a>(&'a self, start: usize) -> impl Fn(Boundary) -> (u32, u32) + 'a {
-        move |b| match b {
-            Boundary::Bottom => SKIP,
-            Boundary::Top => (self.low.indices[start], self.low.indices[(start + 1) & 3]),
-            Boundary::Other(quad) => (quad.indices[(start + 3) & 3], quad.indices[(start + 2) & 3]),
-        }
-    }
-    fn high_indices<'a>(&'a self, start: usize) -> impl Fn(Boundary) -> (u32, u32) + 'a {
-        move |b| match b {
-            Boundary::Bottom => (self.mid.indices[start], self.mid.indices[(start + 1) & 3]),
-            Boundary::Top => (self.high.indices[start], self.high.indices[(start + 1) & 3]),
-            Boundary::Other(quad) => (quad.indices[(start + 3) & 3], quad.indices[(start + 2) & 3]),
         }
     }
 }
@@ -226,6 +148,19 @@ impl VertexCollector<'_> {
             }
         }
     }
+}
+
+// Vertical slicing map:
+// -X: 3, 0, 0, 3
+// +X: 1, 2, 2, 1
+// -Y: 0, 1, 1, 0
+// +Y: 2, 3, 3, 2
+fn vertical_slice(a: &Quad, b: &Quad, start: usize) -> [u32; 4] {
+    let i0 = a.indices[start];
+    let i1 = a.indices[(start + 1) & 3];
+    let i2 = b.indices[(start + 1) & 3];
+    let i3 = b.indices[start];
+    [i0, i1, i2, i3]
 }
 
 pub fn save(path: &Path, level: &Level, config: &Config) {
@@ -323,7 +258,56 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                 FaceColumn::from_quad(c.add_quad_custom(2, x..x + 1, y + 1..y + 1, 0))
             };
 
-            let p = match level.get((x, y)) {
+            // Build a list of all Z levels participating in this column
+            let mut vc = VertexColumn::default();
+            vc.add_faces(&fc);
+            vc.add_faces(&fx0);
+            vc.add_faces(&fx1);
+            vc.add_faces(&fy0);
+            vc.add_faces(&fy1);
+
+            let mut base = c.add_quad(x, y, 0);
+            for next in vc.data.iter() {
+                if next.height == base.z {
+                    continue;
+                }
+                if next.height == EXTREME_HEIGHT {
+                    break;
+                }
+                let cur = c.add_quad(x, y, next.height);
+                if fc.contains(base.z) {
+                    // first, determine the material type
+                    let mat_type = match level.get((x, y)) {
+                        Texel::Single(p) => p.1,
+                        Texel::Dual { low, mid, high } => {
+                            if base.z >= mid as i32 {
+                                high.1
+                            } else {
+                                low.1
+                            }
+                        }
+                    };
+
+                    // generate the side faces
+                    let g = &mut groups[mat_type as usize];
+                    if !fx0.contains(base.z) {
+                        g.push(vertical_slice(&base, &cur, 3));
+                    }
+                    if !fx1.contains(base.z) {
+                        g.push(vertical_slice(&base, &cur, 1));
+                    }
+                    if !fy0.contains(base.z) {
+                        g.push(vertical_slice(&base, &cur, 0));
+                    }
+                    if !fy1.contains(base.z) {
+                        g.push(vertical_slice(&base, &cur, 2));
+                    }
+                    c.initial_quads += 4;
+                }
+                base = cur;
+            }
+
+            let low = match level.get((x, y)) {
                 Texel::Single(p) => p,
                 // Cut out unexpected/invalid cases
                 Texel::Dual { low, mid, high } if mid > high.0 => low,
@@ -334,40 +318,14 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     if mid >= low.0 {
                         g.push(fc.mid.clone().flip().indices);
                     }
-                    // sides
-                    g.extend(
-                        fx0.intersect(mid as i32..high.0 as i32)
-                            .polygonize(fc.high_indices(3)),
-                    );
-                    g.extend(
-                        fx1.intersect(mid as i32..high.0 as i32)
-                            .polygonize(fc.high_indices(1)),
-                    );
-                    g.extend(
-                        fy0.intersect(mid as i32..high.0 as i32)
-                            .polygonize(fc.high_indices(0)),
-                    );
-                    g.extend(
-                        fy1.intersect(mid as i32..high.0 as i32)
-                            .polygonize(fc.high_indices(2)),
-                    );
-                    // done
-                    c.initial_quads += 6;
+                    c.initial_quads += 2;
                     low
                 }
             };
 
-            let g = &mut groups[p.1 as usize];
+            let g = &mut groups[low.1 as usize];
             g.push(fc.low.indices);
             c.initial_quads += 1;
-            let z = p.0 as i32;
-            if z > 0 {
-                g.extend(fx0.intersect(0..z).polygonize(fc.low_indices(3)));
-                g.extend(fx1.intersect(0..z).polygonize(fc.low_indices(1)));
-                g.extend(fy0.intersect(0..z).polygonize(fc.low_indices(0)));
-                g.extend(fy1.intersect(0..z).polygonize(fc.low_indices(2)));
-                c.initial_quads += 4;
-            }
         }
         bar.reach_percent((y - config.yr.start) * 100 / y_total);
     }
