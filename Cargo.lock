@@ -2107,6 +2107,7 @@ checksum = "830b7e5d4d90034032940e4ace0d9a9a057e7a45cd94e6c007832e39edb82f6d"
 name = "vangers"
 version = "0.3.0"
 dependencies = [
+ "bitflags 2.3.3",
  "bytemuck",
  "byteorder",
  "cgmath",
