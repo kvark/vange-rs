@@ -1,7 +1,7 @@
 use std::{
     fs::File,
     io::{BufWriter, Write as _},
-    ops::Range,
+    ops,
     path::Path,
 };
 use vangers::level::{Level, Texel};
@@ -10,8 +10,8 @@ const EXTREME_HEIGHT: i32 = i32::max_value();
 
 #[derive(Debug)]
 pub struct Config<'a> {
-    pub xr: Range<i32>,
-    pub yr: Range<i32>,
+    pub xr: ops::Range<i32>,
+    pub yr: ops::Range<i32>,
     pub palette: Option<&'a [u8]>,
 }
 
@@ -50,52 +50,57 @@ impl FaceColumn {
 }
 
 #[derive(Clone)]
-struct Vertex {
-    index: u32,
+struct Spot<T> {
     height: i32,
+    payload: T,
 }
-impl Default for Vertex {
+impl<T: Default> Default for Spot<T> {
     fn default() -> Self {
         Self {
-            index: !0,
             height: EXTREME_HEIGHT,
+            payload: T::default(),
         }
     }
 }
 
 #[derive(Clone, Default)]
-struct VertexColumn {
-    data: [Vertex; 32],
+struct Column<T> {
+    spots: [Spot<T>; 24],
 }
-impl VertexColumn {
-    fn add(&mut self, height: i32) -> &mut Vertex {
-        let order_index = self.data.iter().position(|v| v.height >= height).unwrap();
+impl<T> Column<T> {
+    fn add(&mut self, height: i32) -> (&mut T, bool) {
+        let order_index = self.spots.iter().position(|v| v.height >= height).unwrap();
 
-        if height < self.data[order_index].height {
-            self.data[order_index..].rotate_right(1);
+        if height < self.spots[order_index].height {
+            self.spots[order_index..].rotate_right(1);
         }
 
-        let v_new = &mut self.data[order_index];
-        if v_new.height == EXTREME_HEIGHT {
+        let v_new = &mut self.spots[order_index];
+        let is_new = v_new.height == EXTREME_HEIGHT;
+        if is_new {
             v_new.height = height;
         }
-        v_new
-    }
-
-    fn add_faces(&mut self, fc: &FaceColumn) {
-        for z in [fc.low.z, fc.mid.z, fc.high.z] {
-            self.add(z);
-        }
+        (&mut v_new.payload, is_new)
     }
 
     fn check(&self) {
         let mut height = 0;
-        for v in self.data.iter() {
+        for v in self.spots.iter() {
             assert!(v.height >= height);
             height = v.height;
         }
     }
 }
+impl<T: Copy + ops::BitOrAssign<T>> Column<T> {
+    fn add_faces(&mut self, fc: &FaceColumn, value: T) {
+        for z in [fc.low.z, fc.mid.z, fc.high.z] {
+            let (payload, _) = self.add(z);
+            *payload |= value;
+        }
+    }
+}
+
+type VertexColumn = Column<u32>;
 
 struct VertexCollector<'p> {
     final_vertices: Vec<[i32; 3]>,
@@ -108,21 +113,21 @@ struct VertexCollector<'p> {
 
 impl VertexCollector<'_> {
     fn add(&mut self, x: i32, y: i32, z: i32) -> u32 {
-        let vertex = self.vertex_columns[(y - self.config.yr.start) as usize]
+        let (payload, is_new) = self.vertex_columns[(y - self.config.yr.start) as usize]
             [(x - self.config.xr.start) as usize]
             .add(z);
-        if vertex.index == !0 {
-            vertex.index = self.final_vertices.len() as u32;
+        if is_new {
+            *payload = self.final_vertices.len() as u32;
             self.final_vertices.push([x, y, z]);
         }
-        vertex.index
+        *payload
     }
 
     fn add_quad_custom(
         &mut self,
         expected_vertices: usize,
-        x: Range<i32>,
-        y: Range<i32>,
+        x: ops::Range<i32>,
+        y: ops::Range<i32>,
         z: i32,
     ) -> Quad {
         self.initial_vertices += expected_vertices;
@@ -150,18 +155,23 @@ impl VertexCollector<'_> {
     }
 }
 
-// Vertical slicing map:
-// -X: 3, 0, 0, 3
-// +X: 1, 2, 2, 1
-// -Y: 0, 1, 1, 0
-// +Y: 2, 3, 3, 2
-fn vertical_slice(a: &Quad, b: &Quad, start: usize) -> [u32; 4] {
-    let i0 = a.indices[start];
-    let i1 = a.indices[(start + 1) & 3];
-    let i2 = b.indices[(start + 1) & 3];
-    let i3 = b.indices[start];
-    [i0, i1, i2, i3]
+#[derive(Default)]
+struct Group {
+    quads: Vec<[u32; 4]>,
+    tris: Vec<[u32; 3]>,
 }
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Default)]
+    struct Connection: u32 {
+        const INNER = 0x10;
+        const LEFT = 0x01;
+        const RIGHT = 0x02;
+        const BOTTOM = 0x04;
+        const TOP = 0x08;
+    }
+}
+type ConnectionColumn = Column<Connection>;
 
 pub fn save(path: &Path, level: &Level, config: &Config) {
     if let Some(palette) = config.palette {
@@ -180,7 +190,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
         }
     }
 
-    let mut groups: [Vec<[u32; 4]>; 16] = Default::default();
+    let mut groups: [Group; 16] = Default::default();
     let mut bar = progress::Bar::new();
 
     let x_total = config.xr.end - config.xr.start;
@@ -229,7 +239,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
         .add_quad_custom(4, config.xr.clone(), config.yr.clone(), 0)
         .flip();
     c.initial_quads += 1;
-    groups[0].push(bottom_quad.indices);
+    groups[0].quads.push(bottom_quad.indices);
 
     for y in config.yr.clone() {
         for x in config.xr.clone() {
@@ -237,74 +247,101 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
             let xrel = (x - config.xr.start) as usize;
             let fc = c.face_columns[yrel][xrel].clone();
 
-            let fx0 = if x != config.xr.start {
-                c.face_columns[yrel][xrel - 1].clone()
-            } else {
-                FaceColumn::from_quad(c.add_quad_custom(2, x..x, y..y + 1, 0))
-            };
-            let fx1 = if x + 1 != config.xr.end {
-                c.face_columns[yrel][xrel + 1].clone()
-            } else {
-                FaceColumn::from_quad(c.add_quad_custom(2, x + 1..x + 1, y..y + 1, 0))
-            };
-            let fy0 = if y != config.yr.start {
-                c.face_columns[yrel - 1][xrel].clone()
-            } else {
-                FaceColumn::from_quad(c.add_quad_custom(2, x..x + 1, y..y, 0))
-            };
-            let fy1 = if y + 1 != config.yr.end {
-                c.face_columns[yrel + 1][xrel].clone()
-            } else {
-                FaceColumn::from_quad(c.add_quad_custom(2, x..x + 1, y + 1..y + 1, 0))
-            };
+            struct Side {
+                connection: Connection,
+                face_column: FaceColumn,
+                x_offset: ops::Range<i32>,
+                y_offset: ops::Range<i32>,
+            }
+            let sides = [
+                Side {
+                    connection: Connection::LEFT,
+                    face_column: if x != config.xr.start {
+                        c.face_columns[yrel][xrel - 1].clone()
+                    } else {
+                        FaceColumn::from_quad(c.add_quad_custom(2, x..x, y..y + 1, 0))
+                    },
+                    x_offset: 0..0,
+                    y_offset: 1..0,
+                },
+                Side {
+                    connection: Connection::RIGHT,
+                    face_column: if x + 1 != config.xr.end {
+                        c.face_columns[yrel][xrel + 1].clone()
+                    } else {
+                        FaceColumn::from_quad(c.add_quad_custom(2, x + 1..x + 1, y..y + 1, 0))
+                    },
+                    x_offset: 1..1,
+                    y_offset: 0..1,
+                },
+                Side {
+                    connection: Connection::BOTTOM,
+                    face_column: if y != config.yr.start {
+                        c.face_columns[yrel - 1][xrel].clone()
+                    } else {
+                        FaceColumn::from_quad(c.add_quad_custom(2, x..x + 1, y..y, 0))
+                    },
+                    x_offset: 0..1,
+                    y_offset: 0..0,
+                },
+                Side {
+                    connection: Connection::TOP,
+                    face_column: if y + 1 != config.yr.end {
+                        c.face_columns[yrel + 1][xrel].clone()
+                    } else {
+                        FaceColumn::from_quad(c.add_quad_custom(2, x..x + 1, y + 1..y + 1, 0))
+                    },
+                    x_offset: 1..0,
+                    y_offset: 1..1,
+                },
+            ];
 
             // Build a list of all Z levels participating in this column
-            let mut vc = VertexColumn::default();
-            vc.add_faces(&fc);
-            vc.add_faces(&fx0);
-            vc.add_faces(&fx1);
-            vc.add_faces(&fy0);
-            vc.add_faces(&fy1);
+            let mut column = ConnectionColumn::default();
+            column.add_faces(&fc, Connection::INNER);
 
-            let mut base = c.add_quad(x, y, 0);
-            for next in vc.data.iter() {
-                if next.height == base.z {
-                    continue;
-                }
-                if next.height == EXTREME_HEIGHT {
-                    break;
-                }
-                let cur = c.add_quad(x, y, next.height);
-                if fc.contains(base.z) {
-                    // first, determine the material type
-                    let mat_type = match level.get((x, y)) {
-                        Texel::Single(p) => p.1,
-                        Texel::Dual { low, mid, high } => {
-                            if base.z >= mid as i32 {
-                                high.1
-                            } else {
-                                low.1
+            for side in sides {
+                column.add_faces(&side.face_column, side.connection);
+                let mut base_z = 0;
+                for next in column.spots.iter() {
+                    if next.height == EXTREME_HEIGHT {
+                        break;
+                    }
+                    if next.height == base_z
+                        || !next.payload.intersects(side.connection | Connection::INNER)
+                    {
+                        continue;
+                    }
+                    if fc.contains(base_z) && !side.face_column.contains(base_z) {
+                        // first, determine the material type
+                        let mat_type = match level.get((x, y)) {
+                            Texel::Single(p) => p.1,
+                            Texel::Dual { low, mid, high } => {
+                                if base_z >= mid as i32 {
+                                    high.1
+                                } else {
+                                    low.1
+                                }
                             }
-                        }
-                    };
+                        };
 
-                    // generate the side faces
-                    let g = &mut groups[mat_type as usize];
-                    if !fx0.contains(base.z) {
-                        g.push(vertical_slice(&base, &cur, 3));
+                        // generate the side face
+                        let g = &mut groups[mat_type as usize];
+                        c.initial_vertices += 4;
+                        c.initial_quads += 1;
+                        g.quads.push([
+                            c.add(x + side.x_offset.start, y + side.y_offset.start, base_z),
+                            c.add(x + side.x_offset.end, y + side.y_offset.end, base_z),
+                            c.add(x + side.x_offset.end, y + side.y_offset.end, next.height),
+                            c.add(
+                                x + side.x_offset.start,
+                                y + side.y_offset.start,
+                                next.height,
+                            ),
+                        ]);
                     }
-                    if !fx1.contains(base.z) {
-                        g.push(vertical_slice(&base, &cur, 1));
-                    }
-                    if !fy0.contains(base.z) {
-                        g.push(vertical_slice(&base, &cur, 0));
-                    }
-                    if !fy1.contains(base.z) {
-                        g.push(vertical_slice(&base, &cur, 2));
-                    }
-                    c.initial_quads += 4;
+                    base_z = next.height;
                 }
-                base = cur;
             }
 
             let low = match level.get((x, y)) {
@@ -312,7 +349,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                 // Cut out unexpected/invalid cases
                 Texel::Dual { low, mid, high } if mid > high.0 => low,
                 Texel::Dual { low, mid, high } => {
-                    let g = &mut groups[high.1 as usize];
+                    let g = &mut groups[high.1 as usize].quads;
                     // top + bottom
                     g.push(fc.high.indices);
                     if mid >= low.0 {
@@ -323,7 +360,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                 }
             };
 
-            let g = &mut groups[low.1 as usize];
+            let g = &mut groups[low.1 as usize].quads;
             g.push(fc.low.indices);
             c.initial_quads += 1;
         }
@@ -331,19 +368,18 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
     }
 
     bar.jobs_done();
-    let num_quads: usize = groups
-        .iter()
-        .flat_map(|g| g.iter().map(|plane| plane.len()))
-        .sum();
+    let num_quads: usize = groups.iter().map(|g| g.quads.len()).sum();
+    let num_tris: usize = groups.iter().map(|g| g.tris.len()).sum();
     fn unit(count: usize) -> f32 {
         count as f32 / 1_000_000.0
     }
     println!(
-        "Exporting {:.1}M (of {:.1}M) vertices, {:.1}M (of {:.1}M) quads",
+        "Exporting {:.1}M (of {:.1}M) vertices, {:.1}M (of {:.1}M) quads, {:.1}M tris",
         unit(c.final_vertices.len()),
         unit(c.initial_vertices),
         unit(num_quads),
         unit(c.initial_quads),
+        unit(num_tris),
     );
 
     let mut dest = BufWriter::new(File::create(&path).unwrap());
@@ -360,7 +396,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
     }
     for (i, group) in groups.iter().enumerate() {
         writeln!(dest, "usemtl t{}", i).unwrap();
-        for t in group {
+        for t in group.quads.iter() {
             writeln!(
                 dest,
                 "f {} {} {} {}",
@@ -371,7 +407,10 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
             )
             .unwrap();
         }
-        bar.reach_percent((i as i32 + 1) * 100 / 16);
+        for t in group.tris.iter() {
+            writeln!(dest, "f {} {} {}", t[0] + 1, t[1] + 1, t[2] + 1,).unwrap();
+        }
+        bar.reach_percent(((i + 1) * 100 / groups.len()) as i32);
     }
     bar.jobs_done();
 }
