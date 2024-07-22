@@ -164,7 +164,6 @@ struct Group {
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     struct Connection: u32 {
-        const INNER = 0x10;
         const LEFT = 0x01;
         const RIGHT = 0x02;
         const BOTTOM = 0x04;
@@ -298,7 +297,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
 
             // Build a list of all Z levels participating in this column
             let mut column = ConnectionColumn::default();
-            column.add_faces(&fc, Connection::INNER);
+            column.add_faces(&fc, Connection::all());
 
             for side in sides {
                 column.add_faces(&side.face_column, side.connection);
@@ -307,9 +306,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     if next.height == EXTREME_HEIGHT {
                         break;
                     }
-                    if next.height == base_z
-                        || !next.payload.intersects(side.connection | Connection::INNER)
-                    {
+                    if next.height == base_z || !next.payload.intersects(side.connection) {
                         continue;
                     }
                     if fc.contains(base_z) && !side.face_column.contains(base_z) {
@@ -341,6 +338,82 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                         ]);
                     }
                     base_z = next.height;
+                }
+            }
+
+            struct Corner {
+                connection: ops::Range<Connection>,
+                x_off: i32,
+                y_off: i32,
+            }
+            let corners = [
+                Corner {
+                    connection: Connection::LEFT..Connection::BOTTOM,
+                    x_off: 0,
+                    y_off: 0,
+                },
+                Corner {
+                    connection: Connection::BOTTOM..Connection::RIGHT,
+                    x_off: 1,
+                    y_off: 0,
+                },
+                Corner {
+                    connection: Connection::RIGHT..Connection::TOP,
+                    x_off: 1,
+                    y_off: 1,
+                },
+                Corner {
+                    connection: Connection::TOP..Connection::LEFT,
+                    x_off: 0,
+                    y_off: 1,
+                },
+            ];
+
+            for corner in corners {
+                let mut base_z = 0..0;
+                for next in column.spots.iter() {
+                    if next.height == EXTREME_HEIGHT {
+                        break;
+                    }
+                    if next.height == 0
+                        || !next
+                            .payload
+                            .intersects(corner.connection.start | corner.connection.end)
+                    {
+                        continue;
+                    }
+
+                    let is_inside = fc.contains(base_z.start);
+                    if is_inside && base_z.start != base_z.end {
+                        debug_assert!(fc.contains(base_z.end));
+                        // first, determine the material type
+                        let mat_type = match level.get((x, y)) {
+                            Texel::Single(p) => p.1,
+                            Texel::Dual { low, mid, high } => {
+                                if base_z.start >= mid as i32 {
+                                    high.1
+                                } else {
+                                    low.1
+                                }
+                            }
+                        };
+                        let g = &mut groups[mat_type as usize];
+                        let xc = x + corner.x_off;
+                        let yc = y + corner.y_off;
+
+                        g.tris.push([
+                            c.add(xc, yc, base_z.end),
+                            c.add(xc, yc, base_z.start),
+                            c.add(xc, yc, next.height),
+                        ]);
+                    }
+
+                    if next.payload.intersects(corner.connection.start) {
+                        base_z.start = next.height;
+                    }
+                    if next.payload.intersects(corner.connection.end) {
+                        base_z.end = next.height;
+                    }
                 }
             }
 
