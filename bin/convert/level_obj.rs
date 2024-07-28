@@ -237,15 +237,43 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
             let xrel = (x - config.xr.start) as usize;
             let fc = c.face_columns[yrel][xrel].clone();
 
+            struct Diagonal {
+                corner: u32,
+                x_offset: i32,
+                y_offset: i32,
+            }
+            let diagonals = [
+                Diagonal {
+                    corner: 0x1,
+                    x_offset: -1,
+                    y_offset: -1,
+                },
+                Diagonal {
+                    corner: 0x2,
+                    x_offset: 1,
+                    y_offset: -1,
+                },
+                Diagonal {
+                    corner: 0x4,
+                    x_offset: 1,
+                    y_offset: 1,
+                },
+                Diagonal {
+                    corner: 0x8,
+                    x_offset: -1,
+                    y_offset: 1,
+                },
+            ];
+
             struct Side {
-                connection: u32,
+                corners: ops::Range<u32>,
                 face_column: FaceColumn,
                 x_offset: ops::Range<i32>,
                 y_offset: ops::Range<i32>,
             }
             let sides = [
                 Side {
-                    connection: 0x1,
+                    corners: 0x8..0x1,
                     face_column: if x != config.xr.start {
                         c.face_columns[yrel][xrel - 1].clone()
                     } else {
@@ -255,7 +283,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     y_offset: 1..0,
                 },
                 Side {
-                    connection: 0x2,
+                    corners: 0x2..0x4,
                     face_column: if x + 1 != config.xr.end {
                         c.face_columns[yrel][xrel + 1].clone()
                     } else {
@@ -265,7 +293,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     y_offset: 0..1,
                 },
                 Side {
-                    connection: 0x4,
+                    corners: 0x1..0x2,
                     face_column: if y != config.yr.start {
                         c.face_columns[yrel - 1][xrel].clone()
                     } else {
@@ -275,7 +303,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     y_offset: 0..0,
                 },
                 Side {
-                    connection: 0x8,
+                    corners: 0x4..0x8,
                     face_column: if y + 1 != config.yr.end {
                         c.face_columns[yrel + 1][xrel].clone()
                     } else {
@@ -288,95 +316,43 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
 
             // Build a list of all Z levels participating in this column
             let mut column = ConnectionColumn::default();
+            // Central column breaks all corners
             column.add_faces(&fc, !0);
-
-            for side in sides {
-                column.add_faces(&side.face_column, side.connection);
-                let mut base_z = 0;
-                for next in column.spots.iter() {
-                    if next.height == EXTREME_HEIGHT {
-                        break;
-                    }
-                    if next.height == base_z || next.payload & side.connection == 0 {
-                        continue;
-                    }
-                    if fc.contains(base_z) && !side.face_column.contains(base_z) {
-                        // first, determine the material type
-                        let mat_type = match level.get((x, y)) {
-                            Texel::Single(p) => p.1,
-                            Texel::Dual { low, mid, high } => {
-                                if base_z >= mid as i32 {
-                                    high.1
-                                } else {
-                                    low.1
-                                }
-                            }
-                        };
-
-                        // generate the side face
-                        let g = &mut groups[mat_type as usize];
-                        c.initial_vertices += 4;
-                        c.initial_quads += 1;
-                        g.quads.push([
-                            c.add(x + side.x_offset.start, y + side.y_offset.start, base_z),
-                            c.add(x + side.x_offset.end, y + side.y_offset.end, base_z),
-                            c.add(x + side.x_offset.end, y + side.y_offset.end, next.height),
-                            c.add(
-                                x + side.x_offset.start,
-                                y + side.y_offset.start,
-                                next.height,
-                            ),
-                        ]);
-                    }
-                    base_z = next.height;
+            // Sides each break 2 corners
+            for side in sides.iter() {
+                column.add_faces(&side.face_column, side.corners.start | side.corners.end);
+            }
+            // Each diagonal breaks 1 corner
+            for diagonal in diagonals.iter() {
+                let dx = x + diagonal.x_offset;
+                let dy = y + diagonal.y_offset;
+                if dx >= config.xr.start
+                    && dx < config.xr.end
+                    && dy >= config.yr.start
+                    && dy < config.yr.end
+                {
+                    let diag_column = &c.face_columns[(dy - config.yr.start) as usize]
+                        [(dx - config.xr.start) as usize];
+                    column.add_faces(&diag_column, diagonal.corner);
                 }
             }
 
-            struct Corner {
-                connection: ops::Range<u32>,
-                x_off: i32,
-                y_off: i32,
-            }
-            let corners = [
-                Corner {
-                    connection: 0x1..0x2,
-                    x_off: 0,
-                    y_off: 0,
-                },
-                Corner {
-                    connection: 0x2..0x4,
-                    x_off: 1,
-                    y_off: 0,
-                },
-                Corner {
-                    connection: 0x4..0x8,
-                    x_off: 1,
-                    y_off: 1,
-                },
-                Corner {
-                    connection: 0x8..0x1,
-                    x_off: 0,
-                    y_off: 1,
-                },
-            ];
-
-            for corner in corners {
+            // Now that we know the corners triangulate the sides
+            for side in sides.iter() {
                 let mut base_z = 0..0;
                 for next in column.spots.iter() {
                     if next.height == EXTREME_HEIGHT {
                         break;
                     }
-                    if next.height == 0
-                        || next.payload & (corner.connection.start | corner.connection.end) == 0
-                    {
+                    if (next.payload & (side.corners.start | side.corners.end)) == 0 {
                         continue;
                     }
 
-                    let is_inside = fc.contains(base_z.start);
-                    if is_inside && base_z.start != base_z.end {
-                        debug_assert!(fc.contains(base_z.end));
+                    let this_inside = fc.contains(base_z.start);
+                    let other_inside = side.face_column.contains(base_z.start);
+                    let mat_type = if this_inside && !other_inside {
                         // first, determine the material type
-                        let mat_type = match level.get((x, y)) {
+                        Some(match level.get((x, y)) {
                             Texel::Single(p) => p.1,
                             Texel::Dual { low, mid, high } => {
                                 if base_z.start >= mid as i32 {
@@ -385,27 +361,48 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                                     low.1
                                 }
                             }
-                        };
-                        let g = &mut groups[mat_type as usize];
-                        let xc = x + corner.x_off;
-                        let yc = y + corner.y_off;
+                        })
+                    } else {
+                        None
+                    };
 
-                        g.tris.push([
-                            c.add(xc, yc, base_z.end),
-                            c.add(xc, yc, base_z.start),
-                            c.add(xc, yc, next.height),
-                        ]);
-                    }
-
-                    if next.payload & corner.connection.start != 0 {
+                    // now, advance along the edges and generate side triangles
+                    if (next.payload & side.corners.start) != 0 && base_z.start != next.height {
+                        if let Some(mt) = mat_type {
+                            groups[mt as usize].tris.push([
+                                c.add(
+                                    x + side.x_offset.start,
+                                    y + side.y_offset.start,
+                                    base_z.start,
+                                ),
+                                c.add(x + side.x_offset.end, y + side.y_offset.end, base_z.end),
+                                c.add(
+                                    x + side.x_offset.start,
+                                    y + side.y_offset.start,
+                                    next.height,
+                                ),
+                            ]);
+                        }
                         base_z.start = next.height;
                     }
-                    if next.payload & corner.connection.end != 0 {
+                    if (next.payload & side.corners.end) != 0 && base_z.end != next.height {
+                        if let Some(mt) = mat_type {
+                            groups[mt as usize].tris.push([
+                                c.add(
+                                    x + side.x_offset.start,
+                                    y + side.y_offset.start,
+                                    base_z.start,
+                                ),
+                                c.add(x + side.x_offset.end, y + side.y_offset.end, base_z.end),
+                                c.add(x + side.x_offset.end, y + side.y_offset.end, next.height),
+                            ]);
+                        }
                         base_z.end = next.height;
                     }
                 }
             }
 
+            // Finally, generate top/down faces
             let low = match level.get((x, y)) {
                 Texel::Single(p) => p,
                 // Cut out unexpected/invalid cases
