@@ -91,14 +91,6 @@ impl<T> Column<T> {
         }
     }
 }
-impl<T: Copy + ops::BitOrAssign<T>> Column<T> {
-    fn add_faces(&mut self, fc: &FaceColumn, value: T) {
-        for z in [fc.low.z, fc.mid.z, fc.high.z] {
-            let (payload, _) = self.add(z);
-            *payload |= value;
-        }
-    }
-}
 
 type VertexColumn = Column<u32>;
 
@@ -161,16 +153,15 @@ struct Group {
     tris: Vec<[u32; 3]>,
 }
 
-bitflags::bitflags! {
-    #[derive(Clone, Copy, Default)]
-    struct Connection: u32 {
-        const LEFT = 0x01;
-        const RIGHT = 0x02;
-        const BOTTOM = 0x04;
-        const TOP = 0x08;
+type ConnectionColumn = Column<u32>;
+impl ConnectionColumn {
+    fn add_faces(&mut self, fc: &FaceColumn, value: u32) {
+        for z in [fc.low.z, fc.mid.z, fc.high.z] {
+            let (payload, _) = self.add(z);
+            *payload |= value;
+        }
     }
 }
-type ConnectionColumn = Column<Connection>;
 
 pub fn save(path: &Path, level: &Level, config: &Config) {
     if let Some(palette) = config.palette {
@@ -247,14 +238,14 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
             let fc = c.face_columns[yrel][xrel].clone();
 
             struct Side {
-                connection: Connection,
+                connection: u32,
                 face_column: FaceColumn,
                 x_offset: ops::Range<i32>,
                 y_offset: ops::Range<i32>,
             }
             let sides = [
                 Side {
-                    connection: Connection::LEFT,
+                    connection: 0x1,
                     face_column: if x != config.xr.start {
                         c.face_columns[yrel][xrel - 1].clone()
                     } else {
@@ -264,7 +255,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     y_offset: 1..0,
                 },
                 Side {
-                    connection: Connection::RIGHT,
+                    connection: 0x2,
                     face_column: if x + 1 != config.xr.end {
                         c.face_columns[yrel][xrel + 1].clone()
                     } else {
@@ -274,7 +265,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     y_offset: 0..1,
                 },
                 Side {
-                    connection: Connection::BOTTOM,
+                    connection: 0x4,
                     face_column: if y != config.yr.start {
                         c.face_columns[yrel - 1][xrel].clone()
                     } else {
@@ -284,7 +275,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     y_offset: 0..0,
                 },
                 Side {
-                    connection: Connection::TOP,
+                    connection: 0x8,
                     face_column: if y + 1 != config.yr.end {
                         c.face_columns[yrel + 1][xrel].clone()
                     } else {
@@ -297,7 +288,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
 
             // Build a list of all Z levels participating in this column
             let mut column = ConnectionColumn::default();
-            column.add_faces(&fc, Connection::all());
+            column.add_faces(&fc, !0);
 
             for side in sides {
                 column.add_faces(&side.face_column, side.connection);
@@ -306,7 +297,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     if next.height == EXTREME_HEIGHT {
                         break;
                     }
-                    if next.height == base_z || !next.payload.intersects(side.connection) {
+                    if next.height == base_z || next.payload & side.connection == 0 {
                         continue;
                     }
                     if fc.contains(base_z) && !side.face_column.contains(base_z) {
@@ -342,28 +333,28 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
             }
 
             struct Corner {
-                connection: ops::Range<Connection>,
+                connection: ops::Range<u32>,
                 x_off: i32,
                 y_off: i32,
             }
             let corners = [
                 Corner {
-                    connection: Connection::LEFT..Connection::BOTTOM,
+                    connection: 0x1..0x2,
                     x_off: 0,
                     y_off: 0,
                 },
                 Corner {
-                    connection: Connection::BOTTOM..Connection::RIGHT,
+                    connection: 0x2..0x4,
                     x_off: 1,
                     y_off: 0,
                 },
                 Corner {
-                    connection: Connection::RIGHT..Connection::TOP,
+                    connection: 0x4..0x8,
                     x_off: 1,
                     y_off: 1,
                 },
                 Corner {
-                    connection: Connection::TOP..Connection::LEFT,
+                    connection: 0x8..0x1,
                     x_off: 0,
                     y_off: 1,
                 },
@@ -376,9 +367,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                         break;
                     }
                     if next.height == 0
-                        || !next
-                            .payload
-                            .intersects(corner.connection.start | corner.connection.end)
+                        || next.payload & (corner.connection.start | corner.connection.end) == 0
                     {
                         continue;
                     }
@@ -408,10 +397,10 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                         ]);
                     }
 
-                    if next.payload.intersects(corner.connection.start) {
+                    if next.payload & corner.connection.start != 0 {
                         base_z.start = next.height;
                     }
-                    if next.payload.intersects(corner.connection.end) {
+                    if next.payload & corner.connection.end != 0 {
                         base_z.end = next.height;
                     }
                 }

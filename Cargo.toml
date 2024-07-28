@@ -46,7 +46,6 @@ m3d = { path = "lib/m3d" }
 splay = { path = "lib/splay" }
 tiff = { path = "lib/tiff" }
 # library
-bitflags = "2"
 bytemuck = "1"
 byteorder = "1.0"
 cgmath = { version = "0.18", features = ["rand"] }
