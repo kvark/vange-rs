@@ -11,7 +11,7 @@ use crate::{
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt as _;
 
-use std::{collections::HashMap, mem, num::NonZeroU64};
+use std::{collections::HashMap, num::NonZeroU64};
 
 const BLEND_FRONT: wgpu::BlendComponent = wgpu::BlendComponent::REPLACE;
 const BLEND_BEHIND: wgpu::BlendComponent = wgpu::BlendComponent {
@@ -157,7 +157,7 @@ impl Context {
             ]),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let locals_size = mem::size_of::<Locals>() as wgpu::BufferAddress;
+        let locals_size = size_of::<Locals>() as wgpu::BufferAddress;
         let bind_group_line = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Debug line"),
             layout: &bind_group_layout,
@@ -242,7 +242,7 @@ impl Context {
                             entry_point: "main_vs",
                             buffers: &[
                                 wgpu::VertexBufferLayout {
-                                    array_stride: mem::size_of::<Position>() as wgpu::BufferAddress,
+                                    array_stride: size_of::<Position>() as wgpu::BufferAddress,
                                     step_mode: wgpu::VertexStepMode::Vertex,
                                     attributes: &[wgpu::VertexAttribute {
                                         offset: 0,
@@ -251,7 +251,7 @@ impl Context {
                                     }],
                                 },
                                 wgpu::VertexBufferLayout {
-                                    array_stride: mem::size_of::<Color>() as wgpu::BufferAddress,
+                                    array_stride: size_of::<Color>() as wgpu::BufferAddress,
                                     step_mode: color_rate,
                                     attributes: &[wgpu::VertexAttribute {
                                         offset: 0,
@@ -327,14 +327,14 @@ impl Context {
 
         //TODO: this is broken - both regular rendering and debug one
         // require instancing now, one has to yield and be refactored.
-        let instance_offset = instance_id * mem::size_of::<ObjectInstance>();
+        let instance_offset = instance_id * size_of::<ObjectInstance>();
         pass.set_bind_group(2, shape_bg, &[]);
         pass.set_vertex_buffer(0, shape.polygon_buf.slice(..));
         pass.set_vertex_buffer(
             1,
             instance_buf.slice(
                 instance_offset as wgpu::BufferAddress
-                    ..mem::size_of::<ObjectInstance>() as wgpu::BufferAddress,
+                    ..size_of::<ObjectInstance>() as wgpu::BufferAddress,
             ),
         );
 

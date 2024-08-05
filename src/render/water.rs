@@ -4,7 +4,7 @@ use crate::{
     space::Camera,
 };
 use bytemuck::{Pod, Zeroable};
-use std::{mem, ops};
+use std::ops;
 use wgpu::util::DeviceExt as _;
 
 #[repr(C)]
@@ -33,7 +33,7 @@ impl Context {
         color_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
         let vertex_descriptor = wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            array_stride: size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Sint32],
         };
@@ -90,7 +90,7 @@ impl Context {
         let max_vertices = 1000;
         let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("water-vertex"),
-            size: (max_vertices * mem::size_of::<Vertex>()) as wgpu::BufferAddress,
+            size: (max_vertices * size_of::<Vertex>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -162,7 +162,7 @@ impl Context {
             contents: bytemuck::cast_slice(&self.vertices),
             usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
         });
-        let total_size = self.vertices.len() * mem::size_of::<Vertex>();
+        let total_size = self.vertices.len() * size_of::<Vertex>();
         encoder.copy_buffer_to_buffer(
             &staging,
             0,

@@ -1,6 +1,6 @@
 #![allow(clippy::single_match)]
 use vangers::{
-    config::{settings::Terrain, Settings},
+    config::Settings,
     render::{GraphicsContext, ScreenTargets, DEPTH_FORMAT},
 };
 
