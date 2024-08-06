@@ -8,7 +8,7 @@ use crate::{
 use bytemuck::{Pod, Zeroable};
 use m3d::NUM_COLOR_IDS;
 
-use std::{mem, slice};
+use std::slice;
 
 pub const COLOR_TABLE: [[u8; 2]; NUM_COLOR_IDS as usize] = [
     [0, 0],   // reserved
@@ -109,7 +109,7 @@ impl InstanceDesc {
 
     pub fn buffer_desc(&self) -> wgpu::VertexBufferLayout<'_> {
         wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<Instance>() as wgpu::BufferAddress,
+            array_stride: size_of::<Instance>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &self.attributes,
         }
@@ -133,7 +133,7 @@ impl Context {
         front_face: wgpu::FrontFace,
     ) -> PipelineSet {
         let vertex_descriptor = wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            array_stride: size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![0 => Sint8x4, 1 => Uint32, 2 => Snorm8x4],
         };

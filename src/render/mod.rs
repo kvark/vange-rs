@@ -11,7 +11,6 @@ use std::{
     collections::HashMap,
     fs::File,
     io::{BufReader, Error as IoError, Read},
-    mem,
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -89,7 +88,7 @@ impl ShapeVertexDesc {
 
     pub fn buffer_desc(&self) -> wgpu::VertexBufferLayout<'_> {
         wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<ShapePolygon>() as wgpu::BufferAddress,
+            array_stride: size_of::<ShapePolygon>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &self.attributes,
         }
@@ -462,7 +461,7 @@ impl Render {
                 0,
                 &self.global.uniform_buf,
                 0,
-                mem::size_of::<global::Constants>() as wgpu::BufferAddress,
+                size_of::<global::Constants>() as wgpu::BufferAddress,
             );
 
             self.terrain.prepare_shadow(
@@ -518,7 +517,7 @@ impl Render {
                 0,
                 &self.global.uniform_buf,
                 0,
-                mem::size_of::<global::Constants>() as wgpu::BufferAddress,
+                size_of::<global::Constants>() as wgpu::BufferAddress,
             );
 
             self.terrain.prepare(
@@ -528,7 +527,7 @@ impl Render {
                 &self.fog_config,
                 level.geometry.height,
                 cam,
-                viewport.unwrap_or_else(|| Rect {
+                viewport.unwrap_or(Rect {
                     x: 0,
                     y: 0,
                     w: self.screen_size.width as u16,

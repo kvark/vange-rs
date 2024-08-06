@@ -1,6 +1,5 @@
 use crate::{config::settings, space::Camera};
 use bytemuck::{Pod, Zeroable};
-use std::mem;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -91,7 +90,7 @@ impl Context {
                 });
         let uniform_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Uniform"),
-            size: mem::size_of::<Constants>() as wgpu::BufferAddress,
+            size: size_of::<Constants>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });

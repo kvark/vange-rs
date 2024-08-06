@@ -237,7 +237,7 @@ pub fn load_flood(config: &LevelConfig) -> Box<[u8]> {
     let size = (config.size.0.as_value(), config.size.1.as_value());
     let flood_size = size.1 >> config.section.as_power();
 
-    let vpr_file = match File::open(&config.path_data.with_extension("vpr")) {
+    let vpr_file = match File::open(config.path_data.with_extension("vpr")) {
         Ok(file) => file,
         Err(_) => return vec![0; flood_size as usize].into_boxed_slice(),
     };
@@ -297,7 +297,7 @@ impl LevelData {
         }
 
         Splay::write_trivial(&mut vmc);
-        assert_eq!(vmc.seek(SeekFrom::Current(0)).unwrap(), base_offset);
+        assert_eq!(vmc.stream_position().unwrap(), base_offset);
 
         self.height
             .chunks(self.size.0 as _)
