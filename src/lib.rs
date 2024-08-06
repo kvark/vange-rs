@@ -2,7 +2,7 @@
     trivial_casts,
     trivial_numeric_casts,
     //unused,
-    unused_qualifications,
+    //unused_qualifications, // required for `mem::size_of`
     rust_2018_compatibility,
     rust_2018_idioms,
     future_incompatible,
