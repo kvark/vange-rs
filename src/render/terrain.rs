@@ -1720,6 +1720,7 @@ impl Context {
 
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                         label: Some("Voxel bake"),
+                        ..Default::default()
                     });
                     pass.set_pipeline(init_pipeline);
                     pass.set_bind_group(1, &self.bind_group, &[]);
@@ -1914,6 +1915,7 @@ impl Context {
             } => {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("scatter"),
+                    ..Default::default()
                 });
                 pass.set_bind_group(0, &global.bind_group, &[]);
                 pass.set_bind_group(1, &self.bind_group, &[]);

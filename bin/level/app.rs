@@ -191,69 +191,78 @@ impl Application for LevelView {
         }
     }
 
-    fn on_key(&mut self, input: event::KeyboardInput) -> bool {
-        use winit::event::{ElementState, KeyboardInput, VirtualKeyCode as Key};
+    fn on_key(&mut self, input: event::KeyEvent, modifiers: event::Modifiers) -> bool {
+        use winit::{
+            event::ElementState,
+            keyboard::{KeyCode, ModifiersKeyState, PhysicalKey},
+        };
 
         let i = &mut self.input;
+        let alt = modifiers.lalt_state() == ModifiersKeyState::Pressed;
+        let shift = modifiers.lshift_state() == ModifiersKeyState::Pressed;
         #[allow(deprecated)]
         match input {
-            KeyboardInput {
+            event::KeyEvent {
                 state: ElementState::Pressed,
-                virtual_keycode: Some(key),
-                ref modifiers,
+                physical_key: PhysicalKey::Code(key),
                 ..
             } => match key {
-                Key::Escape => return false,
-                Key::W => {
+                KeyCode::Escape => return false,
+                KeyCode::KeyW => {
                     *i = Input::Ver {
                         dir: self.cam.scale.y,
-                        alt: modifiers.alt(),
-                        shift: modifiers.shift(),
+                        alt,
+                        shift,
                     }
                 }
-                Key::S => {
+                KeyCode::KeyS => {
                     *i = Input::Ver {
                         dir: -self.cam.scale.y,
-                        alt: modifiers.alt(),
-                        shift: modifiers.shift(),
+                        alt,
+                        shift,
                     }
                 }
-                Key::A => {
+                KeyCode::KeyA => {
                     *i = Input::Hor {
                         dir: -self.cam.scale.x,
-                        alt: modifiers.alt(),
-                        shift: modifiers.shift(),
+                        alt,
+                        shift,
                     }
                 }
-                Key::D => {
+                KeyCode::KeyD => {
                     *i = Input::Hor {
                         dir: self.cam.scale.x,
-                        alt: modifiers.alt(),
-                        shift: modifiers.shift(),
+                        alt,
+                        shift,
                     }
                 }
-                Key::Z => {
+                KeyCode::KeyZ => {
                     *i = Input::Dep {
                         dir: -self.cam.scale.z,
-                        alt: modifiers.alt(),
+                        alt,
                     }
                 }
-                Key::X => {
+                KeyCode::KeyX => {
                     *i = Input::Dep {
                         dir: self.cam.scale.z,
-                        alt: modifiers.alt(),
+                        alt,
                     }
                 }
-                Key::LAlt => self.alt_button_pressed = true,
+                KeyCode::AltLeft => self.alt_button_pressed = true,
                 _ => (),
             },
-            KeyboardInput {
+            event::KeyEvent {
                 state: ElementState::Released,
-                virtual_keycode: Some(key),
+                physical_key: PhysicalKey::Code(key),
                 ..
             } => match key {
-                Key::W | Key::S | Key::A | Key::D | Key::Z | Key::X => *i = Input::Empty,
-                Key::LAlt => self.alt_button_pressed = false,
+                KeyCode::KeyW
+                | KeyCode::KeyS
+                | KeyCode::KeyA
+                | KeyCode::KeyD
+                | KeyCode::KeyZ
+                | KeyCode::KeyX => *i = Input::Empty,
+                KeyCode::AltLeft => self.alt_button_pressed = false,
                 _ => (),
             },
             /*

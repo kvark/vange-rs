@@ -1,6 +1,6 @@
 #![allow(clippy::single_match)]
 use vangers::{
-    config::{settings::Terrain, Settings},
+    config::Settings,
     render::{GraphicsContext, ScreenTargets, DEPTH_FORMAT},
 };
 
@@ -8,12 +8,12 @@ use futures::executor::LocalPool;
 use log::info;
 use winit::{
     event,
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::EventLoop,
     window::{Window, WindowBuilder},
 };
 
 pub trait Application {
-    fn on_key(&mut self, input: event::KeyboardInput) -> bool;
+    fn on_key(&mut self, input: event::KeyEvent, modifiers: event::Modifiers) -> bool;
     fn on_mouse_wheel(&mut self, _delta: event::MouseScrollDelta) {}
     fn on_cursor_move(&mut self, _position: (f64, f64)) {}
     fn on_mouse_button(&mut self, _state: event::ElementState, _button: event::MouseButton) {}
@@ -24,28 +24,27 @@ pub trait Application {
     fn draw(&mut self, device: &wgpu::Device, targets: ScreenTargets) -> wgpu::CommandBuffer;
 }
 
-struct WindowContext {
+struct WindowContext<'a> {
     window: Window,
     task_pool: LocalPool,
-    surface: wgpu::Surface,
+    surface: wgpu::Surface<'a>,
     present_mode: wgpu::PresentMode,
     reload_on_focus: bool,
     egui_platform: egui_winit_platform::Platform,
     depth_target: wgpu::TextureView,
 }
 
-pub struct Harness {
+pub struct Harness<'a> {
     event_loop: EventLoop<()>,
-    window_ctx: WindowContext,
+    window_ctx: WindowContext<'a>,
     pub graphics_ctx: GraphicsContext,
 }
 
 pub struct HarnessOptions {
     pub title: &'static str,
-    pub uses_level: bool,
 }
 
-impl Harness {
+impl Harness<'_> {
     pub fn init(options: HarnessOptions) -> (Self, Settings) {
         env_logger::init();
         let mut task_pool = LocalPool::new();
@@ -61,17 +60,22 @@ impl Harness {
         info!("Initializing the window");
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: settings.backend.to_wgpu(),
+            gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
             ..Default::default()
         });
-        let event_loop = EventLoop::new();
+        let event_loop = EventLoop::new().unwrap();
         let window = WindowBuilder::new()
             .with_title(options.title)
             .with_inner_size(winit::dpi::PhysicalSize::new(extent.width, extent.height))
             .with_resizable(true)
             .build(&event_loop)
             .unwrap();
-        let surface =
-            unsafe { instance.create_surface(&window) }.expect("Unable to create surface.");
+
+        //TODO: use safe `create_surface`. Problematic given our return type.
+        let surface = unsafe {
+            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(&window).unwrap())
+        }
+        .expect("Unable to create surface.");
 
         info!("Initializing the device");
         let adapter = task_pool
@@ -83,14 +87,16 @@ impl Harness {
             .expect("Unable to initialize GPU via the selected backend.");
 
         let downlevel_caps = adapter.get_downlevel_capabilities();
-        let limits = settings.render.get_device_limits(&adapter.limits());
+        let required_limits = settings
+            .render
+            .get_device_limits(&adapter.limits(), settings.game.geometry.height);
 
         let (device, queue) = task_pool
             .run_until(adapter.request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    features: wgpu::Features::empty(),
-                    limits,
+                    required_features: wgpu::Features::empty(),
+                    required_limits,
                 },
                 if settings.render.wgpu_trace_path.is_empty() {
                     None
@@ -123,6 +129,7 @@ impl Harness {
             present_mode,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: Vec::new(),
+            desired_maximum_frame_latency: 1,
         };
         surface.configure(&device, &config);
 
@@ -177,6 +184,7 @@ impl Harness {
         let start_time = time::Instant::now();
         let mut last_time = time::Instant::now();
         let mut needs_reload = false;
+        let mut modifiers = event::Modifiers::default();
         let Harness {
             event_loop,
             window_ctx: mut win,
@@ -185,9 +193,8 @@ impl Harness {
 
         let mut egui_pass = egui_wgpu_backend::RenderPass::new(&gfx.device, gfx.color_format, 1);
 
-        event_loop.run(move |event, _, control_flow| {
+        let _ = event_loop.run(move |event, target_window| {
             let _ = win.window;
-            *control_flow = ControlFlow::Poll;
             win.task_pool.run_until_stalled();
 
             win.egui_platform.handle_event(&event);
@@ -214,6 +221,7 @@ impl Harness {
                         present_mode: win.present_mode,
                         alpha_mode: wgpu::CompositeAlphaMode::Auto,
                         view_formats: Vec::new(),
+                        desired_maximum_frame_latency: 1,
                     };
                     win.surface.configure(&gfx.device, &config);
                     win.depth_target = gfx
@@ -241,11 +249,14 @@ impl Harness {
                         needs_reload = false;
                     }
                     event::WindowEvent::CloseRequested => {
-                        *control_flow = ControlFlow::Exit;
+                        target_window.exit();
                     }
-                    event::WindowEvent::KeyboardInput { input, .. } => {
-                        if !app.on_key(input) {
-                            *control_flow = ControlFlow::Exit;
+                    event::WindowEvent::ModifiersChanged(mods) => {
+                        modifiers = mods;
+                    }
+                    event::WindowEvent::KeyboardInput { event, .. } => {
+                        if !app.on_key(event, modifiers) {
+                            target_window.exit();
                         }
                     }
                     event::WindowEvent::MouseWheel { delta, .. } => app.on_mouse_wheel(delta),
@@ -257,7 +268,7 @@ impl Harness {
                     }
                     _ => {}
                 },
-                event::Event::MainEventsCleared => {
+                event::Event::AboutToWait => {
                     let duration = time::Instant::now() - last_time;
                     last_time += duration;
 
@@ -274,8 +285,10 @@ impl Harness {
                     app.draw_ui(&win.egui_platform.context());
                     let egui_output = win.egui_platform.end_frame(Some(&win.window));
 
-                    let egui_primitives =
-                        win.egui_platform.context().tessellate(egui_output.shapes);
+                    let egui_primitives = win
+                        .egui_platform
+                        .context()
+                        .tessellate(egui_output.shapes, 1.0);
                     let screen_descriptor = egui_wgpu_backend::ScreenDescriptor {
                         physical_width: gfx.screen_size.width,
                         physical_height: gfx.screen_size.height,

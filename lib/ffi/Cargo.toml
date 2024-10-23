@@ -13,13 +13,13 @@ crate-type = ["staticlib"]
 vangers = { path = "../.." }
 m3d = { path = "../m3d" }
 log = "0.4"
-env_logger = { version = "0.9", optional = true }
+env_logger = { version = "0.10", optional = true }
 futures = "0.3"
 cgmath = "0.18"
 ron = "0.8"
 slotmap = "1"
-wgpu = { version = "0.17", features = ["angle"] }
-hal = { package = "wgpu-hal", version = "0.17", features = ["gles"] }
+wgpu = { version = "0.19", features = ["angle"] }
+hal = { package = "wgpu-hal", version = "0.19", features = ["gles"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = { version = "0.13", optional = true }

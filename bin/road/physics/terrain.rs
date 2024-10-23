@@ -11,6 +11,7 @@ pub struct CollisionPoint {
 #[derive(Debug)]
 pub struct CollisionData {
     pub soft: Option<CollisionPoint>,
+    #[allow(unused)]
     pub hard_dominant: bool,
     pub hard: Option<CollisionPoint>,
 }
