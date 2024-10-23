@@ -220,7 +220,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         android_logger::Config::default().with_min_level(log::Level::Warn),
     );
 
-    let geometry_config = {
+    let geometry_config: vangers::config::settings::Geometry = {
         let file = File::open("res/ffi/geometry.ron").unwrap();
         ron::de::from_reader(file).unwrap()
     };
@@ -257,7 +257,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         ..Default::default()
     });
     let adapter = unsafe { instance.create_adapter_from_hal(exposed) };
-    let limits = render_config.get_device_limits(&adapter.limits());
+    let limits = render_config.get_device_limits(&adapter.limits(), geometry_config.height);
 
     let (device, queue) = task_pool
         .run_until(adapter.request_device(

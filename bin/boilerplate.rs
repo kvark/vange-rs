@@ -83,7 +83,9 @@ impl Harness {
             .expect("Unable to initialize GPU via the selected backend.");
 
         let downlevel_caps = adapter.get_downlevel_capabilities();
-        let limits = settings.render.get_device_limits(&adapter.limits());
+        let limits = settings
+            .render
+            .get_device_limits(&adapter.limits(), settings.game.geometry.height);
 
         let (device, queue) = task_pool
             .run_until(adapter.request_device(
