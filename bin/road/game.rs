@@ -484,8 +484,15 @@ impl Game {
 }
 
 impl Application for Game {
-    fn on_key(&mut self, input: winit::event::KeyboardInput) -> bool {
-        use winit::event::{ElementState, KeyboardInput, VirtualKeyCode as Key};
+    fn on_key(
+        &mut self,
+        input: winit::event::KeyEvent,
+        _modifiers: winit::event::Modifiers,
+    ) -> bool {
+        use winit::{
+            event::{ElementState, KeyEvent},
+            keyboard::{KeyCode, PhysicalKey},
+        };
 
         let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
             Some(agent) => agent,
@@ -493,13 +500,13 @@ impl Application for Game {
         };
 
         match input {
-            KeyboardInput {
+            KeyEvent {
                 state: ElementState::Pressed,
-                virtual_keycode: Some(key),
+                physical_key: PhysicalKey::Code(key),
                 ..
             } => match key {
-                Key::Escape => return false,
-                Key::P => {
+                KeyCode::Escape => return false,
+                KeyCode::KeyP => {
                     let center = match player.physics {
                         Physics::Cpu { ref transform, .. } => *transform,
                     };
@@ -513,13 +520,13 @@ impl Application for Game {
                         self.cam.focus_on(&center);
                     }
                 }
-                Key::Comma => self.input.tick = Some(-1.0),
-                Key::Period => self.input.tick = Some(1.0),
-                Key::LShift => self.input.turbo = true,
-                Key::LAlt => self.input.jump = Some(0.0),
-                Key::W => self.input.spin_ver = self.cam.scale.x,
-                Key::S => self.input.spin_ver = -self.cam.scale.x,
-                Key::R => {
+                KeyCode::Comma => self.input.tick = Some(-1.0),
+                KeyCode::Period => self.input.tick = Some(1.0),
+                KeyCode::ShiftLeft => self.input.turbo = true,
+                KeyCode::AltLeft => self.input.jump = Some(0.0),
+                KeyCode::KeyW => self.input.spin_ver = self.cam.scale.x,
+                KeyCode::KeyS => self.input.spin_ver = -self.cam.scale.x,
+                KeyCode::KeyR => {
                     if let Physics::Cpu {
                         ref mut transform,
                         ref mut dynamo,
@@ -530,15 +537,15 @@ impl Application for Game {
                         dynamo.angular_velocity = cgmath::Vector3::zero();
                     }
                 }
-                Key::A => self.input.spin_hor = -self.cam.scale.y,
-                Key::D => self.input.spin_hor = self.cam.scale.y,
-                Key::Q => {
+                KeyCode::KeyA => self.input.spin_hor = -self.cam.scale.y,
+                KeyCode::KeyD => self.input.spin_hor = self.cam.scale.y,
+                KeyCode::KeyQ => {
                     self.input.roll = Some(Roll {
                         dir: -self.cam.scale.y,
                         time: 0.0,
                     })
                 }
-                Key::E => {
+                KeyCode::KeyE => {
                     self.input.roll = Some(Roll {
                         dir: self.cam.scale.y,
                         time: 0.0,
@@ -546,16 +553,16 @@ impl Application for Game {
                 }
                 _ => (),
             },
-            KeyboardInput {
+            KeyEvent {
                 state: ElementState::Released,
-                virtual_keycode: Some(key),
+                physical_key: PhysicalKey::Code(key),
                 ..
             } => match key {
-                Key::W | Key::S => self.input.spin_ver = 0.0,
-                Key::A | Key::D => self.input.spin_hor = 0.0,
-                Key::Q | Key::E => self.input.roll = None,
-                Key::LShift => self.input.turbo = false,
-                Key::LAlt => player.jump = self.input.jump.take(),
+                KeyCode::KeyW | KeyCode::KeyS => self.input.spin_ver = 0.0,
+                KeyCode::KeyA | KeyCode::KeyD => self.input.spin_hor = 0.0,
+                KeyCode::KeyQ | KeyCode::KeyE => self.input.roll = None,
+                KeyCode::ShiftLeft => self.input.turbo = false,
+                KeyCode::AltLeft => player.jump = self.input.jump.take(),
                 _ => (),
             },
             /*
@@ -732,9 +739,6 @@ impl Application for Game {
             return;
         }
 
-        let fd_points = egui::plot::PlotPoints::from_ys_f32(&self.stats.frame_deltas);
-        let fd_line = egui::plot::Line::new(fd_points).name("last");
-
         let player = self
             .agents
             .iter_mut()
@@ -823,17 +827,6 @@ impl Application for Game {
                 ui.label("Renderer:");
                 self.render.draw_ui(ui);
             });
-            egui::plot::Plot::new("Frame time")
-                .allow_zoom(false)
-                .allow_scroll(false)
-                .allow_drag(false)
-                .show_x(false)
-                .include_y(0.0)
-                .show_axes([false, true])
-                .show(ui, |plot_ui| {
-                    plot_ui.line(fd_line);
-                    plot_ui.hline(egui::plot::HLine::new(1000.0 / 60.0).name("smooth"));
-                });
         });
 
         if selected_car != &player.car_name {

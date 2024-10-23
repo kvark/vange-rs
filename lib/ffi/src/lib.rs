@@ -245,7 +245,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     let mut task_pool = LocalPool::new();
 
     let exposed = unsafe {
-        <hal::api::Gles as hal::Api>::Adapter::new_external(|name| {
+        hal::gles::Adapter::new_external(|name| {
             let cstr = CString::new(name).unwrap();
             (desc.gl_functor)(cstr.as_ptr())
         })
@@ -257,18 +257,23 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         ..Default::default()
     });
     let adapter = unsafe { instance.create_adapter_from_hal(exposed) };
-    let limits = render_config.get_device_limits(&adapter.limits());
+    let required_limits =
+        render_config.get_device_limits(&adapter.limits(), geometry_config.height);
 
-    let (device, queue) = task_pool
-        .run_until(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: None,
-                features: wgpu::Features::empty(),
-                limits,
-            },
-            None,
-        ))
-        .ok()?;
+    let (device, queue) = match task_pool.run_until(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: None,
+            required_features: wgpu::Features::empty(),
+            required_limits,
+        },
+        None,
+    )) {
+        Ok(pair) => pair,
+        Err(e) => {
+            log::error!("Unable to create device: {}", e);
+            return None;
+        }
+    };
 
     let gfx = vangers::render::GraphicsContext {
         queue,

@@ -483,10 +483,11 @@ impl Render {
                     view: &shadow.view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
+                ..Default::default()
             });
 
             pass.set_bind_group(0, &self.global.shadow_bind_group, &[]);
@@ -552,17 +553,18 @@ impl Render {
                                 a: 1.0,
                             }
                         }),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: targets.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
+                ..Default::default()
             });
 
             if let Some(ref r) = viewport {

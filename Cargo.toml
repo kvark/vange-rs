@@ -8,12 +8,7 @@ default-run = "road"
 publish = false
 
 [workspace]
-members = [
-    "lib/ffi",
-    "lib/m3d",
-    "lib/splay",
-    "lib/tiff",
-]
+members = ["lib/ffi", "lib/m3d", "lib/splay", "lib/tiff"]
 
 [lib]
 
@@ -61,20 +56,20 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.4"
 # keep in sync with `lib/ffi/Cargo.toml`
-wgpu = { version = "0.17", features = [] }
+wgpu = { version = "0.19", features = [] }
 # binaries
 env_logger = "0.10"
 getopts = "0.2"
 obj = "0.10"
 png = "0.17"
-winit = "0.28"
+winit = "0.29"
 # gui
-egui = "0.22"
-egui_winit_platform = "0.19"
-egui_wgpu_backend = "0.25"
+egui = "0.26"
+egui_winit_platform = "0.21"
+egui_wgpu_backend = "0.28"
 
 [dev-dependencies]
-naga = { version = "0.13", features = ["wgsl-in", "validate"] }
+naga = { version = "0.19", features = ["wgsl-in"] }
 
 [dependencies.profiling]
 version = "1.0.1"

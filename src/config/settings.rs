@@ -88,7 +88,6 @@ pub enum Backend {
     Metal,
     Vulkan,
     DX12,
-    DX11,
     GL,
 }
 
@@ -99,7 +98,6 @@ impl Backend {
             Backend::Metal => wgpu::Backends::METAL,
             Backend::Vulkan => wgpu::Backends::VULKAN,
             Backend::DX12 => wgpu::Backends::DX12,
-            Backend::DX11 => wgpu::Backends::DX11,
             Backend::GL => wgpu::Backends::GL,
         }
     }
@@ -174,8 +172,8 @@ pub struct Render {
 }
 
 impl Render {
-    pub fn get_device_limits(&self, adapter_limits: &wgpu::Limits) -> wgpu::Limits {
-        let terrain_buffer_size = 1 << 26; // 2048 (X) * 16384 (Y) * 2 (height+meta)
+    pub fn get_device_limits(&self, adapter_limits: &wgpu::Limits, height: u32) -> wgpu::Limits {
+        let terrain_area = 2048 * 16384;
         match self.terrain {
             Terrain::RayTraced { .. } | Terrain::Sliced { .. } | Terrain::Painted { .. } => {
                 wgpu::Limits {
@@ -184,16 +182,19 @@ impl Render {
                 }
             }
             Terrain::RayVoxelTraced { voxel_size, .. } => {
-                let max_3d_points = (terrain_buffer_size as usize / 2) * 256;
                 let voxel_points = voxel_size[0] * voxel_size[1] * voxel_size[2];
-                // Note: 5/32 is roughly the number of bytes per voxel if we include the LOD chain
-                let voxel_storage_size = (max_3d_points / voxel_points as usize * 5) / 32;
+                let max_voxels = terrain_area * height as usize / voxel_points as usize;
+                // Note: 1/7 is roughly the sum size of all the mips
+                // Division by 8 is because we have 8 bits per byte.
+                // The extra space is for rounding and such.
+                let voxel_storage_size = (max_voxels * 8 / 7) / 8 + 1500;
                 info!(
                     "Estimating {} MB for voxel storage",
                     voxel_storage_size >> 20
                 );
                 wgpu::Limits {
                     max_storage_buffer_binding_size: voxel_storage_size as u32,
+                    max_texture_dimension_2d: 1 << 14,
                     ..wgpu::Limits::downlevel_defaults()
                 }
             }

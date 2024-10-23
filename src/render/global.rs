@@ -141,10 +141,11 @@ impl Context {
                     view: &view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
+                ..Default::default()
             });
             gfx.queue.submit(Some(cmd_encoder.finish()));
             view
