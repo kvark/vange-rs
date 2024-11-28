@@ -10,10 +10,8 @@ mod physics;
 fn main() {
     use std::env;
 
-    let (harness, settings) = boilerplate::Harness::init(boilerplate::HarnessOptions {
-        title: "road",
-        uses_level: true,
-    });
+    let (harness, settings) =
+        boilerplate::Harness::init(boilerplate::HarnessOptions { title: "road" });
 
     info!("Parsing command line");
     let args: Vec<_> = env::args().collect();

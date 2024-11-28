@@ -1,11 +1,10 @@
 #![allow(clippy::single_match)]
 use vangers::{
-    config::{settings::Terrain, Settings},
+    config::Settings,
     render::{GraphicsContext, ScreenTargets, DEPTH_FORMAT},
 };
 
 use futures::executor::LocalPool;
-use log::info;
 use winit::{
     event,
     event_loop::{ControlFlow, EventLoop},
@@ -42,7 +41,6 @@ pub struct Harness {
 
 pub struct HarnessOptions {
     pub title: &'static str,
-    pub uses_level: bool,
 }
 
 impl Harness {
@@ -50,7 +48,7 @@ impl Harness {
         env_logger::init();
         let mut task_pool = LocalPool::new();
 
-        info!("Loading the settings");
+        log::info!("Loading the settings");
         let settings = Settings::load("config/settings.ron");
         let extent = wgpu::Extent3d {
             width: settings.window.size[0],
@@ -58,7 +56,7 @@ impl Harness {
             depth_or_array_layers: 1,
         };
 
-        info!("Initializing the window");
+        log::info!("Initializing the window");
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: settings.backend.to_wgpu(),
             ..Default::default()
@@ -73,7 +71,7 @@ impl Harness {
         let surface =
             unsafe { instance.create_surface(&window) }.expect("Unable to create surface.");
 
-        info!("Initializing the device");
+        log::info!("Initializing the device");
         let adapter = task_pool
             .run_until(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -201,8 +199,9 @@ impl Harness {
                 event::Event::WindowEvent {
                     event: event::WindowEvent::Resized(size),
                     ..
-                } => {
-                    info!("Resizing to {:?}", size);
+                } if size.width != !0 => {
+                    //Note: on macOS 14 this can happen ^
+                    log::info!("Resizing to {:?}", size);
                     gfx.screen_size = wgpu::Extent3d {
                         width: size.width,
                         height: size.height,
@@ -233,12 +232,18 @@ impl Harness {
                         .create_view(&wgpu::TextureViewDescriptor::default());
                     app.resize(&gfx.device, gfx.screen_size);
                 }
+                event::Event::WindowEvent {
+                    event: event::WindowEvent::Resized(size),
+                    ..
+                } => {
+                    log::warn!("Ignoring invalid resize request: {:?}", size)
+                }
                 event::Event::WindowEvent { event, .. } => match event {
                     event::WindowEvent::Focused(false) => {
                         needs_reload = win.reload_on_focus;
                     }
                     event::WindowEvent::Focused(true) if needs_reload => {
-                        info!("Reloading shaders");
+                        log::info!("Reloading shaders");
                         app.reload(&gfx.device);
                         needs_reload = false;
                     }
