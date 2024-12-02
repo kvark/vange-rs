@@ -6,7 +6,7 @@ use crate::render::{
 use m3d;
 use wgpu::util::DeviceExt as _;
 
-use std::{fs::File, mem, ops::Range, slice, sync::Arc};
+use std::{fs::File, ops::Range, slice, sync::Arc};
 
 #[derive(Copy, Clone)]
 pub struct BoundingBox {
@@ -127,7 +127,7 @@ pub fn load_c3d(
 ) -> Arc<Mesh> {
     let num_vertices = raw.geometry.polygons.len() * 3;
     debug!("\tGot {} GPU vertices...", num_vertices);
-    let vertex_size = mem::size_of::<ObjectVertex>();
+    let vertex_size = size_of::<ObjectVertex>();
     let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("C3D"),
         size: (num_vertices * vertex_size) as wgpu::BufferAddress,
@@ -251,7 +251,7 @@ pub fn load_c3d_shape(
 
     let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Shape"),
-        size: (raw.geometry.positions.len() * mem::size_of::<ShapeVertex>()) as wgpu::BufferAddress,
+        size: (raw.geometry.positions.len() * size_of::<ShapeVertex>()) as wgpu::BufferAddress,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
         mapped_at_creation: true,
     });

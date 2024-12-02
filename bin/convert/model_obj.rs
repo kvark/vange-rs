@@ -16,7 +16,7 @@ type RefModel = Model<Mesh<String>, Mesh<String>>;
 type RefAnimatedMesh = AnimatedMesh<String>;
 type DrawAnimatedMesh = AnimatedMesh<Geometry<DrawTriangle>>;
 
-const MAT_NAME: &'static str = "object.mtl";
+const MAT_NAME: &str = "object.mtl";
 
 pub fn export_m3d(full: FullModel, model_path: &Path) {
     const BODY_PATH: &str = "body.obj";
@@ -87,11 +87,11 @@ pub fn import_m3d(model_path: &Path) -> FullModel {
     let resolve_geom_draw = |name| -> Geometry<DrawTriangle> { load_geometry(dir_path.join(name)) };
     let resolve_geom_coll =
         |name| -> Geometry<CollisionQuad> { load_geometry(dir_path.join(name)) };
-    let resolve_mesh = |mesh: Mesh<String>| mesh.map(&resolve_geom_draw);
+    let resolve_mesh = |mesh: Mesh<String>| mesh.map(resolve_geom_draw);
 
     FullModel {
-        body: model.body.map(&resolve_geom_draw),
-        shape: model.shape.map(&resolve_geom_coll),
+        body: model.body.map(resolve_geom_draw),
+        shape: model.shape.map(resolve_geom_coll),
         bound: model.bound,
         color: model.color,
         wheels: model
@@ -103,8 +103,8 @@ pub fn import_m3d(model_path: &Path) -> FullModel {
             .debris
             .into_iter()
             .map(|debrie| Debrie {
-                mesh: debrie.mesh.map(&resolve_geom_draw),
-                shape: debrie.shape.map(&resolve_geom_coll),
+                mesh: debrie.mesh.map(resolve_geom_draw),
+                shape: debrie.shape.map(resolve_geom_coll),
             })
             .collect(),
         slots: Slot::map_all(model.slots, |mesh, _| resolve_mesh(mesh)),

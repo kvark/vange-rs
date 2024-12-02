@@ -31,7 +31,7 @@ pub fn save(path: &Path, layers: LevelLayers, palette: &[u8]) {
     {
         println!("\t\t{}...", mp.height);
         let file = File::create(path.with_file_name(mp.height)).unwrap();
-        let mut encoder = png::Encoder::new(file, layers.size.0 as u32, layers.size.1 as u32);
+        let mut encoder = png::Encoder::new(file, layers.size.0, layers.size.1);
         encoder.set_color(png::ColorType::Rgb);
         data.clear();
         for ((&h0, &h1), &delta) in layers.het0.iter().zip(&layers.het1).zip(&layers.delta) {
@@ -46,7 +46,7 @@ pub fn save(path: &Path, layers: LevelLayers, palette: &[u8]) {
     {
         println!("\t\t{}...", mp.material_lo);
         let file = File::create(path.with_file_name(mp.material_lo)).unwrap();
-        let mut encoder = png::Encoder::new(file, layers.size.0 as u32, layers.size.1 as u32);
+        let mut encoder = png::Encoder::new(file, layers.size.0, layers.size.1);
         encoder.set_color(png::ColorType::Indexed);
         encoder.set_palette(palette.to_vec());
         encoder.set_depth(png::BitDepth::Four);
@@ -59,7 +59,7 @@ pub fn save(path: &Path, layers: LevelLayers, palette: &[u8]) {
     {
         println!("\t\t{}...", mp.material_hi);
         let file = File::create(path.with_file_name(mp.material_hi)).unwrap();
-        let mut encoder = png::Encoder::new(file, layers.size.0 as u32, layers.size.1 as u32);
+        let mut encoder = png::Encoder::new(file, layers.size.0, layers.size.1);
         encoder.set_color(png::ColorType::Indexed);
         encoder.set_palette(palette.to_vec());
         encoder.set_depth(png::BitDepth::Four);

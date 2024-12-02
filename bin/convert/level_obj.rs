@@ -333,7 +333,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                 {
                     let diag_column = &c.face_columns[(dy - config.yr.start) as usize]
                         [(dx - config.xr.start) as usize];
-                    column.add_faces(&diag_column, diagonal.corner);
+                    column.add_faces(diag_column, diagonal.corner);
                 }
             }
 
@@ -441,7 +441,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
         unit(num_tris),
     );
 
-    let mut dest = BufWriter::new(File::create(&path).unwrap());
+    let mut dest = BufWriter::new(File::create(path).unwrap());
     bar.set_job_title("Vertices:");
     for v in c.final_vertices {
         writeln!(dest, "v {} {} {}", v[0], v[1], v[2]).unwrap();

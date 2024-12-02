@@ -23,7 +23,7 @@ fn main() {
     }
 
     let path = matches.free.first();
-    let app = app::LevelView::new(path.as_deref(), &settings, &harness.graphics_ctx);
+    let app = app::LevelView::new(path, &settings, &harness.graphics_ctx);
 
     harness.main_loop(app);
 }

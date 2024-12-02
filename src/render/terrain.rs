@@ -10,7 +10,7 @@ use crate::{
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt as _;
 
-use std::{mem, ops::Range};
+use std::ops::Range;
 
 const SCATTER_GROUP_SIZE: [u32; 3] = [16, 16, 1];
 // Has to agree with the shader
@@ -334,7 +334,7 @@ impl Context {
                 module: &shader,
                 entry_point: "main",
                 buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    array_stride: size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &[wgpu::VertexAttribute {
                         offset: 0,
@@ -437,12 +437,12 @@ impl Context {
             label: Some("terrain-ray-voxel"),
             layout: Some(pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &draw_shader,
+                module: draw_shader,
                 entry_point: "main",
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &draw_shader,
+                module: draw_shader,
                 entry_point: "draw_depth",
                 targets: &[],
             }),
@@ -859,13 +859,13 @@ impl Context {
 
         let surface_uni_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("surface-uniforms"),
-            size: mem::size_of::<SurfaceConstants>() as _,
+            size: size_of::<SurfaceConstants>() as _,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let uniform_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Terrain uniforms"),
-            size: mem::size_of::<Constants>() as wgpu::BufferAddress,
+            size: size_of::<Constants>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -980,7 +980,7 @@ impl Context {
                                     ty: wgpu::BindingType::Buffer {
                                         ty: wgpu::BufferBindingType::Uniform,
                                         has_dynamic_offset: true,
-                                        min_binding_size: wgpu::BufferSize::new(mem::size_of::<
+                                        min_binding_size: wgpu::BufferSize::new(size_of::<
                                             BakeConstants,
                                         >(
                                         )
@@ -1037,7 +1037,7 @@ impl Context {
                                     ty: wgpu::BindingType::Buffer {
                                         ty: wgpu::BufferBindingType::Uniform,
                                         has_dynamic_offset: false,
-                                        min_binding_size: wgpu::BufferSize::new(mem::size_of::<
+                                        min_binding_size: wgpu::BufferSize::new(size_of::<
                                             VoxelConstants,
                                         >(
                                         )
@@ -1105,7 +1105,7 @@ impl Context {
                         .min(grid_extent.depth_or_array_layers)
                         .leading_zeros();
 
-                assert_eq!(mem::size_of::<VoxelMip>(), 16);
+                assert_eq!(size_of::<VoxelMip>(), 16);
                 let mut header = VoxelHeader {
                     lod_count: mip_level_count,
                     pad: [0; 3],
@@ -1136,7 +1136,7 @@ impl Context {
 
                 let grid = gfx.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Grid"),
-                    size: (mem::size_of::<VoxelHeader>() + data_offset_in_words as usize * 4) as _,
+                    size: (size_of::<VoxelHeader>() + data_offset_in_words as usize * 4) as _,
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -1145,7 +1145,7 @@ impl Context {
 
                 let constant_buffer = gfx.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Voxel constants"),
-                    size: mem::size_of::<VoxelConstants>() as _,
+                    size: size_of::<VoxelConstants>() as _,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -1165,7 +1165,7 @@ impl Context {
                 });
 
                 let max_update_rects = 10usize;
-                assert!(mem::size_of::<BakeConstants>() <= MAXIMUM_UNIFORM_BUFFER_ALIGNMENT);
+                assert!(size_of::<BakeConstants>() <= MAXIMUM_UNIFORM_BUFFER_ALIGNMENT);
                 let update_buffer = gfx.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Bake constants"),
                     size: (MAXIMUM_UNIFORM_BUFFER_ALIGNMENT * max_update_rects)
@@ -1202,7 +1202,7 @@ impl Context {
                             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                                 buffer: &update_buffer,
                                 offset: 0,
-                                size: wgpu::BufferSize::new(mem::size_of::<BakeConstants>() as _),
+                                size: wgpu::BufferSize::new(size_of::<BakeConstants>() as _),
                             }),
                         },
                         wgpu::BindGroupEntry {
@@ -1554,7 +1554,7 @@ impl Context {
                 0,
                 &self.surface_uni_buf,
                 0,
-                mem::size_of::<SurfaceConstants>() as _,
+                size_of::<SurfaceConstants>() as _,
             );
             // Update acceleration structures
             self.dirty_rects.push(super::DirtyRect {
@@ -1711,10 +1711,10 @@ impl Context {
                     for i in 0..update_buffer_contents.len() {
                         encoder.copy_buffer_to_buffer(
                             &staging_buf,
-                            (i * mem::size_of::<BakeConstants>()) as _,
+                            (i * size_of::<BakeConstants>()) as _,
                             update_buffer,
                             (i * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT) as _,
-                            mem::size_of::<BakeConstants>() as _,
+                            size_of::<BakeConstants>() as _,
                         );
                     }
 
@@ -1855,7 +1855,7 @@ impl Context {
                 0,
                 &self.uniform_buf,
                 0,
-                mem::size_of::<Constants>() as _,
+                size_of::<Constants>() as _,
             );
         }
 
@@ -1887,7 +1887,7 @@ impl Context {
                     0,
                     constant_buffer,
                     0,
-                    mem::size_of::<VoxelConstants>() as _,
+                    size_of::<VoxelConstants>() as _,
                 );
             }
             Kind::Paint {
@@ -1972,48 +1972,45 @@ impl Context {
                 0,
                 &self.uniform_buf,
                 0,
-                mem::size_of::<Constants>() as wgpu::BufferAddress,
+                size_of::<Constants>() as wgpu::BufferAddress,
             );
         }
 
-        match self.shadow_kind {
-            ShadowKind::InheritRayVoxel {
+        if let ShadowKind::InheritRayVoxel {
                 max_outer_steps,
                 max_inner_steps,
                 ..
-            } => match self.kind {
-                Kind::RayVoxel {
-                    ref constant_buffer,
+            } = self.shadow_kind { match self.kind {
+            Kind::RayVoxel {
+                ref constant_buffer,
+                voxel_size,
+                debug_alpha,
+                ..
+            } => {
+                let constants = VoxelConstants {
                     voxel_size,
+                    pad: 0,
+                    max_depth: cam.depth_range().end,
                     debug_alpha,
-                    ..
-                } => {
-                    let constants = VoxelConstants {
-                        voxel_size,
-                        pad: 0,
-                        max_depth: cam.depth_range().end,
-                        debug_alpha,
-                        max_outer_steps,
-                        max_inner_steps,
-                    };
-                    let constant_update =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("ray-voxel shadow constants"),
-                            contents: bytemuck::bytes_of(&constants),
-                            usage: wgpu::BufferUsages::COPY_SRC,
-                        });
-                    encoder.copy_buffer_to_buffer(
-                        &constant_update,
-                        0,
-                        constant_buffer,
-                        0,
-                        mem::size_of::<VoxelConstants>() as _,
-                    );
-                }
-                _ => unreachable!(),
-            },
-            _ => {}
-        }
+                    max_outer_steps,
+                    max_inner_steps,
+                };
+                let constant_update =
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("ray-voxel shadow constants"),
+                        contents: bytemuck::bytes_of(&constants),
+                        usage: wgpu::BufferUsages::COPY_SRC,
+                    });
+                encoder.copy_buffer_to_buffer(
+                    &constant_update,
+                    0,
+                    constant_buffer,
+                    0,
+                    size_of::<VoxelConstants>() as _,
+                );
+            }
+            _ => unreachable!(),
+        } }
     }
 
     pub fn draw<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
@@ -2111,34 +2108,31 @@ impl Context {
     }
 
     pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
-        match self.kind {
-            Kind::RayVoxel {
+        if let Kind::RayVoxel {
                 ref mut max_outer_steps,
                 ref mut max_inner_steps,
                 ref mut debug_alpha,
                 ref mut debug_render,
                 ..
-            } => {
-                ui.add(egui::Slider::new(max_outer_steps, 0..=100).text("Max outer steps"));
-                ui.add(egui::Slider::new(max_inner_steps, 0..=100).text("Max inner steps"));
-                ui.add(egui::Slider::new(debug_alpha, 0.0..=1.0).text("Debug alpha"));
-                if let Some(ref mut debug) = *debug_render {
-                    let mut debug_voxels = debug.lod_range.is_some();
-                    ui.checkbox(&mut debug_voxels, "Debug voxels");
-                    let mut lod_start = debug.lod_range.clone().map_or(4, |r| r.start);
-                    let mut lod_count = debug.lod_range.clone().map_or(1, |r| r.end - r.start);
-                    ui.add_enabled_ui(debug_voxels, |ui| {
-                        ui.add(egui::Slider::new(&mut lod_start, 1..=8).text("LOD start"));
-                        ui.add(egui::Slider::new(&mut lod_count, 1..=8).text("LOD count"));
-                    });
-                    debug.lod_range = if debug_voxels {
-                        Some(lod_start..lod_start + lod_count)
-                    } else {
-                        None
-                    };
-                }
+            } = self.kind {
+            ui.add(egui::Slider::new(max_outer_steps, 0..=100).text("Max outer steps"));
+            ui.add(egui::Slider::new(max_inner_steps, 0..=100).text("Max inner steps"));
+            ui.add(egui::Slider::new(debug_alpha, 0.0..=1.0).text("Debug alpha"));
+            if let Some(ref mut debug) = *debug_render {
+                let mut debug_voxels = debug.lod_range.is_some();
+                ui.checkbox(&mut debug_voxels, "Debug voxels");
+                let mut lod_start = debug.lod_range.clone().map_or(4, |r| r.start);
+                let mut lod_count = debug.lod_range.clone().map_or(1, |r| r.end - r.start);
+                ui.add_enabled_ui(debug_voxels, |ui| {
+                    ui.add(egui::Slider::new(&mut lod_start, 1..=8).text("LOD start"));
+                    ui.add(egui::Slider::new(&mut lod_count, 1..=8).text("LOD count"));
+                });
+                debug.lod_range = if debug_voxels {
+                    Some(lod_start..lod_start + lod_count)
+                } else {
+                    None
+                };
             }
-            _ => {}
         }
     }
 }
