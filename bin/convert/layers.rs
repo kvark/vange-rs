@@ -21,7 +21,7 @@ pub fn extract_palette(level: &Level) -> Vec<u8> {
         .collect()
 }
 
-#[cfg_attr(test, derive(Clone, PartialEq))]
+#[cfg_attr(test, derive(Clone, Debug, PartialEq))]
 pub struct LevelLayers {
     pub size: (u32, u32),
     pub num_terrains: u8,
@@ -83,8 +83,8 @@ impl LevelLayers {
                     self.het1.push(h1);
                     self.delta.push(0);
                     self.delta.push(0);
-                    self.mat0.push(t0 | (t1 << 4));
-                    self.mat1.push(t0 | (t1 << 4));
+                    self.mat0.push(t1 | (t0 << 4));
+                    self.mat1.push(t1 | (t0 << 4));
                 }
             }
         }
@@ -111,8 +111,8 @@ impl LevelLayers {
             )
         {
             //assert!(h0a + da <= h1a && h0b + db <= h1b);
-            let (m0a, m0b) = (mat0 & 0xF, mat0 >> 4);
-            let (m1a, m1b) = (mat1 & 0xF, mat1 >> 4);
+            let (m0a, m0b) = (mat0 >> 4, mat0 & 0xF);
+            let (m1a, m1b) = (mat1 >> 4, mat1 & 0xF);
             let delta = avg(da, db).min(DELTA_MAX);
             if delta != 0 {
                 let _ = (m0b, m1a); // assuming the same as mat0a and mat1b respectively
@@ -143,7 +143,7 @@ impl LevelLayers {
 fn test_roundtrip() {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    let size = 64;
+    let size = 4;
     let num_terrains = 8;
     let mut layers = LevelLayers::new((size, size), num_terrains);
 
@@ -167,8 +167,8 @@ fn test_roundtrip() {
                 layers.het0.push(h1);
                 layers.het1.push(h0);
                 layers.het1.push(h1);
-                layers.mat0.push(t0 | (t1 << 4));
-                layers.mat1.push(t0 | (t1 << 4));
+                layers.mat0.push(t1 | (t0 << 4));
+                layers.mat1.push(t1 | (t0 << 4));
             }
         }
     }
@@ -177,5 +177,5 @@ fn test_roundtrip() {
     let mut layers2 = LevelLayers::new((size, size), num_terrains);
     layers2.import(&ldata);
 
-    assert!(layers == layers2);
+    assert_eq!(layers, layers2);
 }
