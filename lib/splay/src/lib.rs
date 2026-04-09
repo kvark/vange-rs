@@ -1,15 +1,21 @@
-#![deny(
+#![allow(
+    clippy::match_like_matches_macro,
+    clippy::redundant_pattern_matching,
+    clippy::needless_lifetimes,
+    clippy::new_without_default,
+    clippy::single_match,
+    clippy::vec_init_then_push,
+    clippy::too_many_arguments,
+)]
+#![warn(
     trivial_casts,
     trivial_numeric_casts,
-    unused,
-    unused_qualifications,
-    rust_2018_compatibility,
+    unused_extern_crates,
     rust_2018_idioms,
     future_incompatible,
     nonstandard_style,
-    missing_copy_implementations
+    clippy::pattern_type_mismatch,
 )]
-#![allow(missing_debug_implementations, clippy::new_without_default)]
 
 use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 use std::io::{Read, Write};

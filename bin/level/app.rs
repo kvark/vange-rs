@@ -6,7 +6,7 @@ use vangers::{
 };
 
 use log::info;
-use winit::event;
+use winit::{event, keyboard::KeyCode};
 
 #[derive(Debug)]
 enum Input {
@@ -191,78 +191,64 @@ impl Application for LevelView {
         }
     }
 
-    fn on_key(&mut self, input: event::KeyboardInput) -> bool {
-        use winit::event::{ElementState, KeyboardInput, VirtualKeyCode as Key};
+    fn on_key(&mut self, key: KeyCode, state: event::ElementState) -> bool {
+        use winit::event::ElementState;
 
         let i = &mut self.input;
-        #[allow(deprecated)]
-        match input {
-            KeyboardInput {
-                state: ElementState::Pressed,
-                virtual_keycode: Some(key),
-                ref modifiers,
-                ..
-            } => match key {
-                Key::Escape => return false,
-                Key::W => {
+        let alt = self.alt_button_pressed;
+        match state {
+            ElementState::Pressed => match key {
+                KeyCode::Escape => return false,
+                KeyCode::KeyW => {
                     *i = Input::Ver {
                         dir: self.cam.scale.y,
-                        alt: modifiers.alt(),
-                        shift: modifiers.shift(),
+                        alt,
+                        shift: false,
                     }
                 }
-                Key::S => {
+                KeyCode::KeyS => {
                     *i = Input::Ver {
                         dir: -self.cam.scale.y,
-                        alt: modifiers.alt(),
-                        shift: modifiers.shift(),
+                        alt,
+                        shift: false,
                     }
                 }
-                Key::A => {
+                KeyCode::KeyA => {
                     *i = Input::Hor {
                         dir: -self.cam.scale.x,
-                        alt: modifiers.alt(),
-                        shift: modifiers.shift(),
+                        alt,
+                        shift: false,
                     }
                 }
-                Key::D => {
+                KeyCode::KeyD => {
                     *i = Input::Hor {
                         dir: self.cam.scale.x,
-                        alt: modifiers.alt(),
-                        shift: modifiers.shift(),
+                        alt,
+                        shift: false,
                     }
                 }
-                Key::Z => {
+                KeyCode::KeyZ => {
                     *i = Input::Dep {
                         dir: -self.cam.scale.z,
-                        alt: modifiers.alt(),
+                        alt,
                     }
                 }
-                Key::X => {
+                KeyCode::KeyX => {
                     *i = Input::Dep {
                         dir: self.cam.scale.z,
-                        alt: modifiers.alt(),
+                        alt,
                     }
                 }
-                Key::LAlt => self.alt_button_pressed = true,
+                KeyCode::AltLeft => self.alt_button_pressed = true,
                 _ => (),
             },
-            KeyboardInput {
-                state: ElementState::Released,
-                virtual_keycode: Some(key),
-                ..
-            } => match key {
-                Key::W | Key::S | Key::A | Key::D | Key::Z | Key::X => *i = Input::Empty,
-                Key::LAlt => self.alt_button_pressed = false,
+            ElementState::Released => match key {
+                KeyCode::KeyW | KeyCode::KeyS | KeyCode::KeyA | KeyCode::KeyD | KeyCode::KeyZ | KeyCode::KeyX => {
+                    *i = Input::Empty
+                }
+                KeyCode::AltLeft => self.alt_button_pressed = false,
                 _ => (),
             },
-            /*
-            Event::KeyboardInput(_, _, Some(Key::R)) =>
-                self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), angle),
-            Event::KeyboardInput(_, _, Some(Key::F)) =>
-                self.cam.rot = self.cam.rot * cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), -angle),
-            */
-            _ => {}
         }
 
         true
@@ -358,6 +344,7 @@ impl Application for LevelView {
         if !self.ui.enabled {
             return;
         }
+        #[allow(deprecated)]
         egui::SidePanel::right("Tweaks").show(context, |ui| {
             ui.group(|ui| {
                 ui.label("Camera:");

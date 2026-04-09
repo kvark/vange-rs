@@ -116,33 +116,24 @@ impl ResourceView {
 }
 
 impl Application for ResourceView {
-    fn on_key(&mut self, input: winit::event::KeyboardInput) -> bool {
-        use winit::event::{ElementState, KeyboardInput, VirtualKeyCode as Key};
+    fn on_key(&mut self, key: winit::keyboard::KeyCode, state: winit::event::ElementState) -> bool {
+        use winit::{event::ElementState, keyboard::KeyCode};
 
         let angle = cgmath::Rad(2.0);
-        match input {
-            KeyboardInput {
-                state: ElementState::Pressed,
-                virtual_keycode: Some(key),
-                ..
-            } => match key {
-                Key::Escape => return false,
-                Key::A => self.rotation.0 = -angle,
-                Key::D => self.rotation.0 = angle,
-                Key::W => self.rotation.1 = -angle,
-                Key::S => self.rotation.1 = angle,
+        match state {
+            ElementState::Pressed => match key {
+                KeyCode::Escape => return false,
+                KeyCode::KeyA => self.rotation.0 = -angle,
+                KeyCode::KeyD => self.rotation.0 = angle,
+                KeyCode::KeyW => self.rotation.1 = -angle,
+                KeyCode::KeyS => self.rotation.1 = angle,
                 _ => (),
             },
-            KeyboardInput {
-                state: ElementState::Released,
-                virtual_keycode: Some(key),
-                ..
-            } => match key {
-                Key::A | Key::D => self.rotation.0 = cgmath::Rad(0.0),
-                Key::W | Key::S => self.rotation.1 = cgmath::Rad(0.0),
+            ElementState::Released => match key {
+                KeyCode::KeyA | KeyCode::KeyD => self.rotation.0 = cgmath::Rad(0.0),
+                KeyCode::KeyW | KeyCode::KeyS => self.rotation.1 = cgmath::Rad(0.0),
                 _ => (),
             },
-            _ => {}
         }
 
         true
@@ -202,6 +193,7 @@ impl Application for ResourceView {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: targets.color,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.1,
@@ -209,17 +201,18 @@ impl Application for ResourceView {
                             b: 0.3,
                             a: 1.0,
                         }),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: targets.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
+                ..Default::default()
             });
 
             pass.set_pipeline(self.object.pipelines.select(render::PipelineKind::Main));

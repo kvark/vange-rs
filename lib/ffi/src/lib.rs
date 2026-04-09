@@ -245,29 +245,31 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     let mut task_pool = LocalPool::new();
 
     let exposed = unsafe {
-        <hal::api::Gles as hal::Api>::Adapter::new_external(|name| {
-            let cstr = CString::new(name).unwrap();
-            (desc.gl_functor)(cstr.as_ptr())
-        })
+        <hal::api::Gles as hal::Api>::Adapter::new_external(
+            |name| {
+                let cstr = CString::new(name).unwrap();
+                (desc.gl_functor)(cstr.as_ptr())
+            },
+            Default::default(),
+        )
     }
     .expect("GL adapter can't be initialized");
 
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::empty(),
-        ..Default::default()
-    });
+    let instance = wgpu::Instance::new(
+        wgpu::InstanceDescriptor::new_without_display_handle(),
+    );
     let adapter = unsafe { instance.create_adapter_from_hal(exposed) };
     let limits = render_config.get_device_limits(&adapter.limits(), geometry_config.height);
 
     let (device, queue) = task_pool
-        .run_until(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: None,
-                features: wgpu::Features::empty(),
-                limits,
-            },
-            None,
-        ))
+        .run_until(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: None,
+            required_features: wgpu::Features::empty(),
+            required_limits: limits,
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::Off,
+            experimental_features: Default::default(),
+        }))
         .ok()?;
 
     let gfx = vangers::render::GraphicsContext {
@@ -518,31 +520,25 @@ pub extern "C" fn rv_model_create(
 
     let num_vertices = model.num_poly as usize * 3;
     log::debug!("\tGot {} GPU vertices...", num_vertices);
-    let vertex_size = mem::size_of::<ObjectVertex>();
-    let vertex_buf = ctx.gfx.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size: (num_vertices * vertex_size) as wgpu::BufferAddress,
-        usage: wgpu::BufferUsages::VERTEX,
-        mapped_at_creation: true,
-    });
-    {
-        let polygons = unsafe { slice::from_raw_parts(model.polygons, model.num_poly as usize) };
-        let mut mapping = vertex_buf.slice(..).get_mapped_range_mut();
-        for (chunk, tri) in mapping.chunks_mut(3 * vertex_size).zip(polygons) {
-            let out_vertices =
-                unsafe { slice::from_raw_parts_mut(chunk.as_mut_ptr() as *mut ObjectVertex, 3) };
-            for ((vo, v_ptr), n_ptr) in out_vertices.iter_mut().zip(tri.vertices).zip(tri.normals) {
-                let p = unsafe { &(*v_ptr).data };
-                let n = unsafe { &(*n_ptr).data };
-                *vo = ObjectVertex {
-                    pos: [p[0], p[1], p[2], 1],
-                    color: tri.color_id as u32,
-                    normal: [n[0], n[1], n[2], 0],
-                };
-            }
+    use wgpu::util::DeviceExt as _;
+    let polygons = unsafe { slice::from_raw_parts(model.polygons, model.num_poly as usize) };
+    let mut vertex_data: Vec<ObjectVertex> = Vec::with_capacity(num_vertices);
+    for tri in polygons {
+        for (v_ptr, n_ptr) in tri.vertices.iter().zip(tri.normals.iter()) {
+            let p = unsafe { &(*(*v_ptr)).data };
+            let n = unsafe { &(*(*n_ptr)).data };
+            vertex_data.push(ObjectVertex {
+                pos: [p[0], p[1], p[2], 1],
+                color: tri.color_id as u32,
+                normal: [n[0], n[1], n[2], 0],
+            });
         }
     }
-    vertex_buf.unmap();
+    let vertex_buf = ctx.gfx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: bytemuck::cast_slice(&vertex_data),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
 
     let j = &model.jacobian;
     let mesh = vangers::model::Mesh {

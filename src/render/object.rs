@@ -145,12 +145,14 @@ impl Context {
             layout: Some(layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "color_vs",
+                entry_point: Some("color_vs"),
+                compilation_options: Default::default(),
                 buffers: &[vertex_descriptor.clone(), instance_desc.buffer_desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "color_fs",
+                entry_point: Some("color_fs"),
+                compilation_options: Default::default(),
                 targets: &[Some(color_format.into())],
             }),
             primitive: wgpu::PrimitiveState {
@@ -161,13 +163,14 @@ impl Context {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
+            cache: None,
         });
 
         let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -175,7 +178,8 @@ impl Context {
             layout: Some(layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "geometry_vs",
+                entry_point: Some("geometry_vs"),
+                compilation_options: Default::default(),
                 buffers: &[vertex_descriptor, instance_desc.buffer_desc()],
             },
             fragment: None,
@@ -187,8 +191,8 @@ impl Context {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: SHADOW_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: Default::default(),
                 bias: wgpu::DepthBiasState {
                     constant: 2,
@@ -197,7 +201,8 @@ impl Context {
                 },
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
+            cache: None,
         });
 
         PipelineSet { main, shadow }
@@ -223,7 +228,7 @@ impl Context {
         gfx.queue.write_texture(
             texture.as_image_copy(),
             unsafe { slice::from_raw_parts(COLOR_TABLE[0].as_ptr(), NUM_COLOR_IDS as usize * 2) },
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(NUM_COLOR_IDS * 2),
                 rows_per_image: None,
@@ -237,7 +242,7 @@ impl Context {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
         (
@@ -343,8 +348,8 @@ impl Context {
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("object"),
-                bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&global.bind_group_layout), Some(&bind_group_layout)],
+                immediate_size: 0,
             });
         let pipelines =
             Self::create_pipelines(&pipeline_layout, &gfx.device, gfx.color_format, front_face);
