@@ -49,7 +49,6 @@ tiff = { path = "lib/tiff" }
 bytemuck = "1"
 byteorder = "1.0"
 cgmath = { version = "0.18", features = ["rand"] }
-futures = "0.3"
 fnv = "1"
 log = "0.4"
 pollster = "0.4"

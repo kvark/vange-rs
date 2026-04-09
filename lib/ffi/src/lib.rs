@@ -11,7 +11,6 @@ Changelog:
   0.1: Basic version.
 !*/
 
-use futures::executor::LocalPool;
 use slotmap::{DefaultKey, Key as _, SlotMap};
 use std::{
     ffi::{CStr, CString},
@@ -241,8 +240,6 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         vangers::level::read_palette(file, None)
     };
 
-    let mut task_pool = LocalPool::new();
-
     let exposed = unsafe {
         <hal::api::Gles as hal::Api>::Adapter::new_external(
             |name| {
@@ -260,8 +257,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     let adapter = unsafe { instance.create_adapter_from_hal(exposed) };
     let limits = render_config.get_device_limits(&adapter.limits(), geometry_config.height);
 
-    let (device, queue) = task_pool
-        .run_until(adapter.request_device(&wgpu::DeviceDescriptor {
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: None,
             required_features: wgpu::Features::empty(),
             required_limits: limits,
@@ -361,8 +357,8 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
         path_data: Default::default(),
         is_compressed: false,
         size: (
-            Power::from_value(desc.width as i32),
-            Power::from_value(desc.height as i32),
+            Power::from_value(desc.width),
+            Power::from_value(desc.height),
         ),
         geo: Power(0),
         section: Power(8),
@@ -507,8 +503,10 @@ fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
     [v[0] as f32, v[1] as f32, v[2] as f32]
 }
 
+/// # Safety
+/// Raw FFI - caller must ensure valid pointers.
 #[no_mangle]
-pub extern "C" fn rv_model_create(
+pub unsafe extern "C" fn rv_model_create(
     ctx: &mut Context,
     name: *const raw::c_char,
     model: &Model,
