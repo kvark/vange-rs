@@ -1,4 +1,6 @@
+#[allow(dead_code)]
 mod pipeline;
+#[allow(dead_code)]
 mod types;
 
 use crate::{

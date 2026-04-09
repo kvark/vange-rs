@@ -289,14 +289,14 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         depth_view,
         _instance: instance,
         camera: vangers::space::Camera {
-            loc: cgmath::Zero::zero(),
-            rot: cgmath::Zero::zero(),
-            scale: cgmath::vec3(1.0, 1.0, 1.0),
-            proj: vangers::space::Projection::Perspective(cgmath::PerspectiveFov {
+            loc: glam::Vec3::ZERO,
+            rot: glam::Quat::IDENTITY,
+            scale: glam::Vec3::new(1.0, 1.0, 1.0),
+            proj: vangers::space::Projection::Perspective(vangers::space::PerspectiveParams {
                 aspect: 1.0,
                 near: 1.0,
                 far: 100.0,
-                fovy: cgmath::Deg(45.0).into(),
+                fovy: 45.0f32.to_radians(),
             }),
         },
         objects_palette,
@@ -332,20 +332,20 @@ pub extern "C" fn rv_resize(ctx: &mut Context, width: u32, height: u32) {
 
 #[no_mangle]
 pub extern "C" fn rv_camera_init(ctx: &mut Context, desc: CameraDescription) {
-    ctx.camera.proj = vangers::space::Projection::Perspective(cgmath::PerspectiveFov {
+    ctx.camera.proj = vangers::space::Projection::Perspective(vangers::space::PerspectiveParams {
         aspect: desc.aspect,
         near: desc.near,
         far: desc.far,
-        fovy: cgmath::Deg(desc.fov).into(),
+        fovy: desc.fov.to_radians(),
     });
 }
 
 #[no_mangle]
 pub extern "C" fn rv_camera_set_transform(ctx: &mut Context, t: Transform) {
     assert_eq!(t.scale, 1.0);
-    ctx.camera.loc = cgmath::vec3(t.position.x, t.position.y, t.position.z);
+    ctx.camera.loc = glam::Vec3::new(t.position.x, t.position.y, t.position.z);
     ctx.camera.rot =
-        cgmath::Quaternion::new(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z);
+        glam::Quat::from_xyzw(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w);
 }
 
 #[no_mangle]
@@ -585,7 +585,7 @@ pub extern "C" fn rv_model_instance_create(
     let mesh = &ctx.meshes[slotmap::KeyData::from_ffi(model_handle).into()];
     let key = ctx.instances.insert(MeshInstance {
         mesh: Arc::clone(mesh),
-        transform: cgmath::One::one(),
+        transform: vangers::space::Transform::IDENTITY,
         color_id,
         visible: true,
     });
@@ -600,9 +600,9 @@ pub extern "C" fn rv_model_instance_set_transform(
 ) {
     let inst = &mut ctx.instances[slotmap::KeyData::from_ffi(inst_handle).into()];
     inst.transform = vangers::space::Transform {
-        disp: cgmath::vec3(t.position.x, t.position.y, t.position.z),
+        disp: glam::Vec3::new(t.position.x, t.position.y, t.position.z),
         scale: t.scale,
-        rot: cgmath::Quaternion::new(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z),
+        rot: glam::Quat::from_xyzw(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w),
     };
 }
 

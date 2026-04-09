@@ -1,10 +1,10 @@
 use vangers::{config, level, model, space};
 
-use cgmath::prelude::*;
+use glam::Vec3;
 
 #[derive(Debug)]
 pub struct CollisionPoint {
-    pub pos: cgmath::Vector3<f32>,
+    pub pos: Vec3,
     pub depth: f32,
 }
 
@@ -16,7 +16,7 @@ pub struct CollisionData {
 }
 
 struct HitAccumulator {
-    pos: cgmath::Vector3<f32>,
+    pos: Vec3,
     depth: f32,
     count: f32,
 }
@@ -24,12 +24,12 @@ struct HitAccumulator {
 impl HitAccumulator {
     fn new() -> Self {
         HitAccumulator {
-            pos: cgmath::vec3(0.0, 0.0, 0.0),
+            pos: Vec3::ZERO,
             depth: 0.0,
             count: 0.0,
         }
     }
-    fn add(&mut self, pos: cgmath::Vector3<f32>, depth: f32) {
+    fn add(&mut self, pos: Vec3, depth: f32) {
         self.pos += pos;
         self.depth += depth;
         self.count += 1.0;
@@ -46,7 +46,7 @@ impl HitAccumulator {
     }
 }
 
-pub fn get_distance_to_terrain(level: &level::Level, point: cgmath::Point3<f32>) -> f32 {
+pub fn get_distance_to_terrain(level: &level::Level, point: Vec3) -> f32 {
     point.z
         - match level.get((point.x as i32, point.y as i32)) {
             level::Texel::Single(p) => p.0,
@@ -71,8 +71,8 @@ impl CollisionData {
     ) -> Self {
         let (mut soft, mut hard) = (HitAccumulator::new(), HitAccumulator::new());
         for s in samples[poly.samples.clone()].iter() {
-            let sp = cgmath::Point3::from(*s).cast::<f32>().unwrap();
-            let pos = transform.transform_point(sp * scale).to_vec();
+            let sp = Vec3::new(s[0] as f32, s[1] as f32, s[2] as f32);
+            let pos = transform.transform_point(sp * scale);
             let texel = level.get((pos.x as i32, pos.y as i32));
             let height = match texel {
                 level::Texel::Single(point) => point.0,
