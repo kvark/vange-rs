@@ -213,6 +213,9 @@ pub fn render_snapshot(
 
     // Save as PNG
     info!("Saving snapshot to {}", output_path);
+    if let Some(parent) = std::path::Path::new(output_path).parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
     let file = std::fs::File::create(output_path).expect("Failed to create output PNG file");
     let w = std::io::BufWriter::new(file);
     let mut encoder = png::Encoder::new(w, width, height);

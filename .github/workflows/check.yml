@@ -26,7 +26,12 @@ jobs:
     - name: Install lavapipe
       run: |
         sudo apt-get update
-        sudo apt-get install -y mesa-vulkan-drivers
+        sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
+    - name: Verify Vulkan
+      run: |
+        VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json vulkaninfo --summary || \
+        VK_ICD_FILENAMES=$(find /usr -name "lvp_icd*" 2>/dev/null | head -1) vulkaninfo --summary || \
+        echo "WARNING: vulkaninfo failed, lavapipe may not work"
     - name: Build level binary
       run: cargo build --release --bin level
     - name: Snapshot RayTraced
@@ -46,6 +51,7 @@ jobs:
         cargo run --release --bin level -- --snapshot snapshots/painted.png --terrain Painted
     - name: Upload snapshots
       uses: actions/upload-artifact@v4
+      if: always()
       with:
         name: terrain-snapshots
         path: snapshots/
