@@ -1,9 +1,16 @@
+use vangers::{
+    config::{self, settings},
+    level,
+    physics::{self, CarPhysicsData, Dynamo},
+    space,
+};
 use vangers_net::{
     decode, encode, AgentState, ClientMessage, NetControl, NetDynamo, NetTransform, PlayerId,
     ServerMessage,
 };
 
 use clap::Parser;
+use glam::Vec3;
 use log::{error, info, warn};
 use std::collections::HashMap;
 use tokio::{
@@ -28,7 +35,7 @@ struct Cli {
     #[arg(long, default_value = "20")]
     tick_rate: u32,
 
-    /// Level name to host
+    /// Level name to host (use "test" for procedural test level)
     #[arg(short, long, default_value = "test")]
     level: String,
 }
@@ -48,14 +55,67 @@ enum SessionEvent {
     },
 }
 
-struct PlayerState {
+/// Server-side agent with full physics state.
+struct ServerAgent {
     name: String,
     car_name: String,
     color: u8,
     control: NetControl,
-    transform: NetTransform,
-    dynamo: NetDynamo,
+    transform: space::Transform,
+    dynamo: Dynamo,
+    phys_data: CarPhysicsData,
     sender: mpsc::UnboundedSender<Vec<u8>>,
+    joined: bool,
+}
+
+impl ServerAgent {
+    fn to_agent_state(&self, player_id: PlayerId) -> AgentState {
+        AgentState {
+            player_id,
+            transform: NetTransform {
+                position: self.transform.disp.into(),
+                rotation: [
+                    self.transform.rot.x,
+                    self.transform.rot.y,
+                    self.transform.rot.z,
+                    self.transform.rot.w,
+                ],
+                scale: self.transform.scale,
+            },
+            dynamo: NetDynamo {
+                traction: self.dynamo.traction,
+                rudder: self.dynamo.rudder,
+                linear_velocity: self.dynamo.linear_velocity.into(),
+                angular_velocity: self.dynamo.angular_velocity.into(),
+            },
+        }
+    }
+
+    fn apply_control(&mut self, dt: f32, common: &config::common::Common) {
+        let control = &self.control;
+        if control.rudder != 0.0 {
+            let angle = self.dynamo.rudder
+                + common.car.rudder_step * 2.0 * dt * control.rudder;
+            self.dynamo.rudder = angle.clamp(-common.car.rudder_max, common.car.rudder_max);
+        }
+        if control.motor != 0.0 {
+            self.dynamo
+                .change_traction(control.motor * dt * common.car.traction_incr);
+        }
+        if control.brake && self.dynamo.traction != 0.0 {
+            self.dynamo.traction *= (-dt).exp2();
+        }
+    }
+}
+
+/// Find a spawn point on the level terrain.
+fn find_spawn_point(level: &level::Level, index: usize) -> (i32, i32) {
+    let spacing = 30;
+    let base_x = level.size.0 / 4;
+    let base_y = level.size.1 / 4;
+    let x = base_x + (index as i32 % 4) * spacing;
+    let y = base_y + (index as i32 / 4) * spacing;
+    (x.rem_euclid(level.size.0), y.rem_euclid(level.size.1))
 }
 
 #[tokio::main]
@@ -63,21 +123,41 @@ async fn main() {
     env_logger::init();
     let cli = Cli::parse();
 
+    // Load level
+    info!("Loading level: {}", cli.level);
+    let level_config = if cli.level == "test" {
+        level::LevelConfig::new_test()
+    } else {
+        level::LevelConfig::load(std::path::Path::new(&cli.level))
+    };
+    let geometry = settings::Geometry::default();
+    let level = level::load(&level_config, &geometry);
+    info!(
+        "Level loaded: {}x{} (test={})",
+        level.size.0,
+        level.size.1,
+        cli.level == "test"
+    );
+
+    // Physics constants
+    let common = config::common::Common::test_default();
+    info!("Using test physics constants (gravity={}, frame_rate={})",
+        common.nature.gravity, common.speed.standard_frame_rate);
+
     let addr = format!("0.0.0.0:{}", cli.port);
     let listener = TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("Failed to bind to {}: {}", addr, e));
     info!("Vangers server listening on {}", addr);
     info!(
-        "Level: {}, tick rate: {} Hz, max players: {}",
-        cli.level, cli.tick_rate, cli.max_players
+        "Tick rate: {} Hz, max players: {}",
+        cli.tick_rate, cli.max_players
     );
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<SessionEvent>();
 
     // Spawn connection acceptor
     let accept_tx = event_tx.clone();
-    let max_players = cli.max_players;
     tokio::spawn(async move {
         let mut next_id: PlayerId = 1;
         loop {
@@ -99,11 +179,22 @@ async fn main() {
     // Main game loop
     let tick_duration = Duration::from_secs_f64(1.0 / cli.tick_rate as f64);
     let mut tick_interval = time::interval(tick_duration);
-    let mut players: HashMap<PlayerId, PlayerState> = HashMap::new();
+    let mut players: HashMap<PlayerId, ServerAgent> = HashMap::new();
     let mut tick: u32 = 0;
     let level_name = cli.level.clone();
+    let max_players = cli.max_players;
+    let max_quant = 0.02f32;
 
-    info!("Starting game loop");
+    // Physics timing
+    let dt_fixed = 1.0 / cli.tick_rate as f32;
+    let input_factor = dt_fixed / config::common::MAIN_LOOP_TIME;
+    let physics_dt = dt_fixed * {
+        let n = &common.nature;
+        let fps = common.speed.standard_frame_rate as f32;
+        fps * n.time_delta0 * n.num_calls_analysis as f32
+    };
+
+    info!("Starting game loop (physics_dt={:.4}, input_factor={:.2})", physics_dt, input_factor);
 
     loop {
         tokio::select! {
@@ -114,25 +205,82 @@ async fn main() {
 
                 tick += 1;
 
-                // Collect agent states
+                // Apply controls and step physics for each player
+                for agent in players.values_mut() {
+                    if !agent.joined {
+                        continue;
+                    }
+
+                    // Apply control inputs
+                    agent.apply_control(input_factor, &common);
+
+                    let f_turbo = if agent.control.turbo {
+                        common.global.k_traction_turbo
+                    } else {
+                        1.0
+                    };
+                    let f_brake = if agent.control.brake {
+                        common.global.f_brake_max
+                    } else {
+                        0.0
+                    };
+                    let jump = agent.control.jump.take();
+
+                    // Step physics (may need sub-stepping for stability)
+                    let mut remaining = physics_dt;
+                    while remaining > max_quant {
+                        physics::step(
+                            &mut agent.dynamo,
+                            &mut agent.transform,
+                            max_quant,
+                            &agent.phys_data,
+                            &level,
+                            &common,
+                            f_turbo,
+                            f_brake,
+                            None,
+                            0.0,
+                            None,
+                        );
+                        remaining -= max_quant;
+                    }
+                    physics::step(
+                        &mut agent.dynamo,
+                        &mut agent.transform,
+                        remaining,
+                        &agent.phys_data,
+                        &level,
+                        &common,
+                        f_turbo,
+                        f_brake,
+                        jump,
+                        agent.control.roll,
+                        None,
+                    );
+
+                    // Wrap coordinates
+                    let size = level.size;
+                    agent.transform.disp.x =
+                        agent.transform.disp.x.rem_euclid(size.0 as f32);
+                    agent.transform.disp.y =
+                        agent.transform.disp.y.rem_euclid(size.1 as f32);
+                }
+
+                // Collect agent states and broadcast
                 let agents: Vec<AgentState> = players
                     .iter()
-                    .map(|(&id, state)| AgentState {
-                        player_id: id,
-                        transform: state.transform.clone(),
-                        dynamo: state.dynamo.clone(),
-                    })
+                    .filter(|(_, a)| a.joined)
+                    .map(|(&id, agent)| agent.to_agent_state(id))
                     .collect();
 
-                // Broadcast world state
                 let msg = encode(&ServerMessage::WorldState {
                     tick,
                     agents,
                 });
 
                 let mut disconnected = Vec::new();
-                for (&id, state) in &players {
-                    if state.sender.send(msg.clone()).is_err() {
+                for (&id, agent) in &players {
+                    if agent.sender.send(msg.clone()).is_err() {
                         disconnected.push(id);
                     }
                 }
@@ -149,82 +297,90 @@ async fn main() {
                             drop(sender);
                             continue;
                         }
-                        // Store sender, wait for Join message to complete registration
-                        players.insert(player_id, PlayerState {
+                        // Create agent with placeholder state, wait for Join
+                        players.insert(player_id, ServerAgent {
                             name: String::new(),
                             car_name: String::new(),
                             color: 0,
                             control: NetControl::default(),
-                            transform: NetTransform {
-                                position: [0.0, 0.0, 100.0],
-                                rotation: [0.0, 0.0, 0.0, 1.0],
-                                scale: 1.0,
-                            },
-                            dynamo: NetDynamo {
-                                traction: 0.0,
-                                rudder: 0.0,
-                                linear_velocity: [0.0, 0.0, 0.0],
-                                angular_velocity: [0.0, 0.0, 0.0],
-                            },
+                            transform: space::Transform::IDENTITY,
+                            dynamo: Dynamo::default(),
+                            phys_data: CarPhysicsData::test_default(),
                             sender,
+                            joined: false,
                         });
                     }
 
                     SessionEvent::Message { player_id, msg } => {
                         match msg {
                             ClientMessage::Join { player_name, car_name, color } => {
-                                info!("Player {} ({}) joined with car={}, color={}",
-                                    player_id, player_name, car_name, color);
+                                let spawn_index = players.len();
+                                let coords = find_spawn_point(&level, spawn_index);
+                                let height = level.get(coords).high() + 5.0;
 
-                                // Send welcome
-                                if let Some(state) = players.get_mut(&player_id) {
-                                    state.name = player_name.clone();
-                                    state.car_name = car_name.clone();
-                                    state.color = color;
+                                info!(
+                                    "Player {} ({}) joined with car={}, color={}, spawn=({},{})",
+                                    player_id, player_name, car_name, color, coords.0, coords.1
+                                );
 
+                                if let Some(agent) = players.get_mut(&player_id) {
+                                    agent.name = player_name.clone();
+                                    agent.car_name = car_name.clone();
+                                    agent.color = color;
+                                    agent.joined = true;
+                                    agent.transform = space::Transform {
+                                        scale: 1.0,
+                                        disp: Vec3::new(
+                                            coords.0 as f32,
+                                            coords.1 as f32,
+                                            height,
+                                        ),
+                                        rot: glam::Quat::from_rotation_z(std::f32::consts::PI),
+                                    };
+
+                                    // Send welcome
                                     let welcome = encode(&ServerMessage::Welcome {
                                         player_id,
                                         tick,
                                         level_name: level_name.clone(),
                                     });
-                                    let _ = state.sender.send(welcome);
+                                    let _ = agent.sender.send(welcome);
+                                }
 
-                                    // Notify existing players about the new player
-                                    let joined_msg = encode(&ServerMessage::PlayerJoined {
-                                        player_id,
-                                        player_name: player_name.clone(),
-                                        car_name: car_name.clone(),
-                                        color,
-                                    });
-
-                                    // Send info about existing players to the new player
-                                    for (&id, other) in &players {
-                                        if id != player_id && !other.name.is_empty() {
-                                            // Tell new player about existing player
+                                // Tell new player about existing players
+                                let new_sender = players.get(&player_id)
+                                    .map(|a| a.sender.clone());
+                                for (&id, other) in &players {
+                                    if id != player_id && other.joined {
+                                        if let Some(ref sender) = new_sender {
                                             let existing = encode(&ServerMessage::PlayerJoined {
                                                 player_id: id,
                                                 player_name: other.name.clone(),
                                                 car_name: other.car_name.clone(),
                                                 color: other.color,
                                             });
-                                            if let Some(new_state) = players.get(&player_id) {
-                                                let _ = new_state.sender.send(existing);
-                                            }
+                                            let _ = sender.send(existing);
                                         }
                                     }
+                                }
 
-                                    // Tell existing players about new player
-                                    for (&id, other) in &players {
-                                        if id != player_id && !other.name.is_empty() {
-                                            let _ = other.sender.send(joined_msg.clone());
-                                        }
+                                // Tell existing players about new player
+                                let joined_msg = encode(&ServerMessage::PlayerJoined {
+                                    player_id,
+                                    player_name,
+                                    car_name,
+                                    color,
+                                });
+                                for (&id, other) in &players {
+                                    if id != player_id && other.joined {
+                                        let _ = other.sender.send(joined_msg.clone());
                                     }
                                 }
                             }
 
                             ClientMessage::Input { control, .. } => {
-                                if let Some(state) = players.get_mut(&player_id) {
-                                    state.control = control;
+                                if let Some(agent) = players.get_mut(&player_id) {
+                                    agent.control = control;
                                 }
                             }
 
@@ -245,12 +401,12 @@ async fn main() {
     }
 }
 
-fn remove_player(players: &mut HashMap<PlayerId, PlayerState>, player_id: PlayerId) {
+fn remove_player(players: &mut HashMap<PlayerId, ServerAgent>, player_id: PlayerId) {
     if let Some(removed) = players.remove(&player_id) {
         info!("Removed player {} ({})", player_id, removed.name);
         let msg = encode(&ServerMessage::PlayerLeft { player_id });
-        for state in players.values() {
-            let _ = state.sender.send(msg.clone());
+        for agent in players.values() {
+            let _ = agent.sender.send(msg.clone());
         }
     }
 }
@@ -287,10 +443,9 @@ async fn handle_connection(
 
     loop {
         match reader.read(&mut tmp).await {
-            Ok(0) => break, // Connection closed
+            Ok(0) => break,
             Ok(n) => {
                 buf.extend_from_slice(&tmp[..n]);
-                // Process all complete messages in the buffer
                 while let Some((msg, consumed)) = decode::<ClientMessage>(&buf) {
                     let _ = event_tx.send(SessionEvent::Message {
                         player_id,
