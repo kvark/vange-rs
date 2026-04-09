@@ -17,3 +17,45 @@ jobs:
     - run: cargo check
     - run: cargo clippy --workspace -- -D warnings
     - run: cargo test --all
+
+  snapshot:
+    name: Snapshot tests (lavapipe)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install lavapipe
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mesa-vulkan-drivers
+    - name: Build level binary
+      run: cargo build --release --bin level
+    - name: Snapshot RayTraced
+      run: |
+        VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+        WGPU_BACKEND=vulkan \
+        cargo run --release --bin level -- --snapshot snapshots/ray.png --terrain RayTraced
+    - name: Snapshot Sliced
+      run: |
+        VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+        WGPU_BACKEND=vulkan \
+        cargo run --release --bin level -- --snapshot snapshots/sliced.png --terrain Sliced
+    - name: Snapshot Painted
+      run: |
+        VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+        WGPU_BACKEND=vulkan \
+        cargo run --release --bin level -- --snapshot snapshots/painted.png --terrain Painted
+    - name: Upload snapshots
+      uses: actions/upload-artifact@v4
+      with:
+        name: terrain-snapshots
+        path: snapshots/
+
+  wasm:
+    name: WASM build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Add wasm target
+      run: rustup target add wasm32-unknown-unknown
+    - name: Check WASM compilation
+      run: cargo check --target wasm32-unknown-unknown --features web --bin web

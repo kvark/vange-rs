@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Vangers – Rust WebGPU</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #c9d1d9; }
+
+        /* Tab bar */
+        nav { display: flex; background: #161b22; border-bottom: 1px solid #30363d; }
+        nav button {
+            padding: 12px 24px; background: none; border: none; color: #8b949e;
+            font-size: 15px; cursor: pointer; border-bottom: 2px solid transparent;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        nav button:hover { color: #c9d1d9; }
+        nav button.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+
+        /* Panels */
+        .panel { display: none; }
+        .panel.active { display: block; }
+
+        /* Game tab */
+        #game-panel { position: relative; }
+        #game-panel canvas {
+            width: 100vw; height: calc(100vh - 47px); display: block; background: #1a1a2e;
+        }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #e0e0e0; font-family: monospace; font-size: 18px; z-index: 10;
+        }
+        #controls-hint {
+            position: absolute; bottom: 16px; left: 16px; background: rgba(0,0,0,0.7);
+            padding: 8px 14px; border-radius: 6px; font-size: 13px; color: #8b949e;
+            pointer-events: none;
+        }
+
+        /* Blog/About tabs */
+        .content { max-width: 720px; margin: 0 auto; padding: 40px 20px; line-height: 1.7; }
+        .content h1 { font-size: 2em; margin-bottom: 16px; color: #f0f6fc; }
+        .content h2 { font-size: 1.4em; margin: 32px 0 12px; color: #f0f6fc; }
+        .content p { margin-bottom: 16px; }
+        .content a { color: #58a6ff; text-decoration: none; }
+        .content a:hover { text-decoration: underline; }
+        .content code {
+            background: #161b22; padding: 2px 6px; border-radius: 4px;
+            font-family: 'Fira Code', monospace; font-size: 0.9em;
+        }
+        .content pre {
+            background: #161b22; padding: 16px; border-radius: 8px;
+            overflow-x: auto; margin-bottom: 16px;
+        }
+        .content pre code { padding: 0; }
+        .content img { max-width: 100%; border-radius: 8px; margin: 16px 0; }
+        .badge {
+            display: inline-block; padding: 4px 10px; border-radius: 12px;
+            font-size: 12px; font-weight: 600; margin-right: 6px;
+        }
+        .badge-green { background: #238636; color: #fff; }
+        .badge-blue { background: #1f6feb; color: #fff; }
+        .badge-orange { background: #9e6a03; color: #fff; }
+    </style>
+</head>
+<body>
+    <nav>
+        <button class="active" onclick="showTab('game')">Play</button>
+        <button onclick="showTab('blog')">Blog</button>
+        <button onclick="showTab('about')">About</button>
+    </nav>
+
+    <!-- Game Tab -->
+    <div id="game-panel" class="panel active">
+        <div id="loading">Initializing WebGPU…</div>
+        <canvas id="canvas"></canvas>
+        <div id="controls-hint">
+            WASD – move &nbsp;|&nbsp; Z/X – altitude &nbsp;|&nbsp; Q/E – rotate &nbsp;|&nbsp; Scroll – zoom
+        </div>
+    </div>
+
+    <!-- Blog Tab -->
+    <div id="blog-panel" class="panel">
+        <div class="content">
+            <h1>Development Log</h1>
+
+            <h2>Reviving vange-rs (2026)</h2>
+            <p>
+                After a period of dormancy, vange-rs is being modernized and brought to the web.
+                Here's what changed:
+            </p>
+
+            <p><span class="badge badge-green">Done</span> <strong>Dependency overhaul</strong> —
+                Updated all major dependencies to their latest breaking versions:
+                wgpu 0.17→29, winit 0.28→0.30, egui 0.22→0.34, ron 0.8→0.12, png 0.17→0.18.</p>
+
+            <p><span class="badge badge-green">Done</span> <strong>cgmath → glam</strong> —
+                Replaced the unmaintained cgmath library with glam across the entire codebase.
+                Custom <code>Transform</code> struct replaces <code>cgmath::Decomposed</code>.</p>
+
+            <p><span class="badge badge-green">Done</span> <strong>Modern tooling</strong> —
+                getopts→clap, futures→pollster, clippy clean with <code>-D warnings</code>,
+                Blade-style lint configuration.</p>
+
+            <p><span class="badge badge-blue">Done</span> <strong>WebGPU/WASM</strong> —
+                New web binary with embedded shaders, procedural test level,
+                and camera controls. No game data files needed.</p>
+
+            <p><span class="badge badge-blue">Done</span> <strong>Headless snapshots</strong> —
+                <code>level --snapshot output.png --terrain RayTraced</code> renders
+                to PNG without a window. CI tests all terrain modes with lavapipe.</p>
+
+            <p><span class="badge badge-orange">Next</span> <strong>Playable web demo</strong> —
+                Procedural terrain generation, vehicle rendering, and drag-and-drop
+                support for original game data.</p>
+        </div>
+    </div>
+
+    <!-- About Tab -->
+    <div id="about-panel" class="panel">
+        <div class="content">
+            <h1>About Vangers</h1>
+            <p>
+                <strong>Vangers</strong> (1998) is a legendary open-world racing/RPG game
+                by K-D Lab. It features a unique voxel-based terrain engine and a surreal
+                post-apocalyptic world.
+            </p>
+            <p>
+                <strong>vange-rs</strong> is a Rust reimplementation of the Vangers rendering
+                engine with modern hardware-accelerated graphics via
+                <a href="https://wgpu.rs">wgpu</a> (WebGPU/Vulkan/Metal/DX12).
+            </p>
+
+            <h2>Features</h2>
+            <p>
+                Multiple terrain rendering strategies: ray-traced, voxel-accelerated,
+                sliced, painted, and scattered. Full physics simulation ported from the
+                original game. Cross-platform: Windows, macOS, Linux, and now Web.
+            </p>
+
+            <h2>Requirements</h2>
+            <p>
+                The web demo uses a procedural test level and needs no external data.
+                The desktop version requires the original Vangers game data (available on
+                <a href="https://store.steampowered.com/app/264080/Vangers/">Steam</a> or
+                <a href="https://www.gog.com/game/vangers">GOG</a>).
+            </p>
+
+            <h2>Links</h2>
+            <p>
+                <a href="https://github.com/kvark/vange-rs">GitHub Repository</a><br>
+                <a href="https://github.com/KranX/Vangers">Original Vangers (open source)</a>
+            </p>
+
+            <h2>Technology</h2>
+            <pre><code>Rust + wgpu 29 + winit 0.30 + egui 0.34 + glam 0.29
+WebGPU for browser, Vulkan/Metal/DX12 for desktop
+WGSL shaders, compute-based voxel baking</code></pre>
+        </div>
+    </div>
+
+    <script>
+        function showTab(name) {
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+            document.getElementById(name + '-panel').classList.add('active');
+            event.target.classList.add('active');
+
+            // Lazy-load the WASM module when the game tab is first shown
+            if (name === 'game' && !window._wasmLoaded) {
+                window._wasmLoaded = true;
+                loadGame();
+            }
+        }
+
+        async function loadGame() {
+            try {
+                const { default: init } = await import('./web.js');
+                await init();
+                document.getElementById('loading').style.display = 'none';
+            } catch (err) {
+                const msg = String(err);
+                if (msg.includes('WebGPU')) {
+                    document.getElementById('loading').innerHTML =
+                        'WebGPU is not supported in this browser.<br>' +
+                        'Try Chrome 113+, Edge 113+, or Firefox Nightly.';
+                } else {
+                    document.getElementById('loading').textContent = 'Error: ' + msg;
+                }
+            }
+        }
+
+        // Auto-load game on first visit
+        loadGame();
+    </script>
+</body>
+</html>

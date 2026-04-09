@@ -308,6 +308,7 @@ impl LevelData {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
     use rayon::prelude::*;
     use splay::Splay;
@@ -347,9 +348,9 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
         .for_each(|source_group| {
             //Note: a separate file per group is required
             let mut vmc = File::open(path).unwrap();
-            let data_size: i16 = **source_group
+            let data_size: i16 = source_group
                 .iter()
-                .map(|&(_, (_, ref size))| size)
+                .map(|item| *item.1 .1)
                 .max()
                 .unwrap();
             let mut data = vec![0u8; data_size as usize];
@@ -384,7 +385,7 @@ pub fn load_vmp(path: &Path, size: (i32, i32)) -> LevelData {
     level
 }
 
-fn path_empty(path_buf: &Path) -> bool {
+fn path_empty(path_buf: &std::path::Path) -> bool {
     path_buf.to_str() == Some("")
 }
 
@@ -395,15 +396,41 @@ pub fn load(config: &LevelConfig, geometry: &settings::Geometry) -> Level {
     let size = (config.size.0.as_value(), config.size.1.as_value());
     let LevelData { height, meta, size } = if path_empty(&config.path_data) {
         let total = size.0 as usize * size.1 as usize;
+        let mut height = vec![0u8; total];
+        let mut meta = vec![0u8; total];
+        // Generate procedural terrain
+        for y in 0..size.1 as usize {
+            for x in 0..size.0 as usize {
+                let fx = x as f32 / size.0 as f32;
+                let fy = y as f32 / size.1 as f32;
+                // Rolling hills using sine waves
+                let h = 128.0
+                    + 40.0 * (fx * 6.0 * std::f32::consts::PI).sin()
+                    + 30.0 * (fy * 4.0 * std::f32::consts::PI).sin()
+                    + 20.0 * ((fx + fy) * 8.0 * std::f32::consts::PI).sin();
+                height[y * size.0 as usize + x] = h.clamp(0.0, 255.0) as u8;
+                // Terrain type based on height
+                meta[y * size.0 as usize + x] = ((h as u8) >> 5) & 0x07;
+            }
+        }
         LevelData {
-            height: vec![0; total].into_boxed_slice(),
-            meta: vec![0; total].into_boxed_slice(),
+            height: height.into_boxed_slice(),
+            meta: meta.into_boxed_slice(),
             size,
         }
-    } else if config.is_compressed {
-        load_vmc(&config.path_data.with_extension("vmc"), size)
     } else {
-        load_vmp(&config.path_data.with_extension("vmp"), size)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if config.is_compressed {
+                load_vmc(&config.path_data.with_extension("vmc"), size)
+            } else {
+                load_vmp(&config.path_data.with_extension("vmp"), size)
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            panic!("File-based level loading is not supported on web");
+        }
     };
 
     info!("Loading flood map...");
@@ -411,11 +438,23 @@ pub fn load(config: &LevelConfig, geometry: &settings::Geometry) -> Level {
         let sections = size.1 as usize >> config.section.as_power();
         vec![0; sections].into_boxed_slice()
     } else {
-        load_flood(config)
+        #[cfg(not(target_arch = "wasm32"))]
+        { load_flood(config) }
+        #[cfg(target_arch = "wasm32")]
+        { panic!("File-based level loading is not supported on web") }
     };
 
     let palette = if path_empty(&config.path_palette) {
-        [[0xFF; 4]; 0x100]
+        let mut pal = [[0xFF; 4]; 0x100];
+        for (i, color) in pal.iter_mut().enumerate() {
+            let t = i as f32 / 255.0;
+            // Gradient from dark green (low) to brown (mid) to white (high)
+            color[0] = (40.0 + 180.0 * t) as u8; // R
+            color[1] = (80.0 + 100.0 * t * t) as u8; // G
+            color[2] = (20.0 + 60.0 * t) as u8; // B
+            color[3] = 0xFF;
+        }
+        pal
     } else {
         let file = File::open(&config.path_palette).expect("Unable to open the palette file");
         read_palette(file, Some(&config.terrains))

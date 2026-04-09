@@ -1,0 +1,47 @@
+name: Deploy Web
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install wasm-bindgen-cli
+      run: cargo install wasm-bindgen-cli --version 0.2.100
+
+    - name: Add wasm target
+      run: rustup target add wasm32-unknown-unknown
+
+    - name: Build WASM binary
+      run: cargo build --target wasm32-unknown-unknown --features web --bin web --release
+
+    - name: Generate JS bindings
+      run: wasm-bindgen target/wasm32-unknown-unknown/release/web.wasm --out-dir docs/ --target web --no-typescript
+
+    - name: Upload pages artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: docs/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
