@@ -1,3 +1,6 @@
+mod pipeline;
+mod types;
+
 use crate::{
     config::settings,
     level,
