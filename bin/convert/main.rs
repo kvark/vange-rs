@@ -5,7 +5,7 @@ mod model_obj;
 
 use std::{
     fs::{read as fs_read, File},
-    io::BufWriter,
+    io::{BufReader, BufWriter},
     path::{Path, PathBuf},
 };
 
@@ -52,32 +52,25 @@ pub fn save_tiff(path: &Path, layers: layers::LevelLayers) {
     tiff::save(file, &images).unwrap();
 }
 
+/// Vangers resource converter
+#[derive(clap::Parser)]
+struct Cli {
+    /// Input file path
+    input: PathBuf,
+    /// Output file path
+    output: PathBuf,
+    /// Number of chunks to split into (for large levels)
+    #[arg(short, long)]
+    chunks: Option<i32>,
+}
+
 fn main() {
-    use std::env;
+    use clap::Parser as _;
     use std::io::Write;
 
-    let args: Vec<_> = env::args().collect();
-    let mut options = getopts::Options::new();
-    options
-        .parsing_style(getopts::ParsingStyle::StopAtFirstFree)
-        .optflag("h", "help", "print this help menu")
-        .optopt(
-            "c",
-            "chunks",
-            "number of chunks to split into",
-            "big levels can be split into 8",
-        );
-
-    let matches = options.parse(&args[1..]).unwrap();
-    if matches.opt_present("h") || matches.free.len() != 2 {
-        println!("Vangers resource converter");
-        let brief = format!("Usage: {} [options] <input> <output>", args[0]);
-        println!("{}", options.usage(&brief));
-        return;
-    }
-
-    let src_path = PathBuf::from(matches.free[0].as_str());
-    let dst_path = PathBuf::from(matches.free[1].as_str());
+    let cli = Cli::parse();
+    let src_path = cli.input;
+    let dst_path = cli.output;
     let geometry = vangers::config::settings::Geometry::default();
 
     match (
@@ -152,7 +145,7 @@ fn main() {
             let level = vangers::level::load(&config, &geometry);
             let pal_owned = layers::extract_palette(&level);
             let palette = Some(pal_owned.as_slice());
-            if let Some(chunks) = matches.opt_get::<i32>("c").unwrap() {
+            if let Some(chunks) = cli.chunks {
                 for i in 0..chunks {
                     let file_name = format!(
                         "{}{}.obj",
@@ -212,7 +205,7 @@ fn main() {
         ("png", "pal") => {
             println!("Converting PNG to palette...");
             let file = File::open(&src_path).unwrap();
-            let decoder = png::Decoder::new(file);
+            let decoder = png::Decoder::new(BufReader::new(file));
             let mut reader = decoder.read_info().unwrap();
             let info = reader.info();
             assert_eq!((info.width, info.height), (0x100, 1));
@@ -223,7 +216,7 @@ fn main() {
             };
             let mut data = vec![0u8; stride * 0x100];
             assert_eq!(info.bit_depth, png::BitDepth::Eight);
-            assert_eq!(reader.output_buffer_size(), data.len());
+            assert_eq!(reader.output_buffer_size(), Some(data.len()));
             reader.next_frame(&mut data).unwrap();
             let mut output = File::create(&dst_path).unwrap();
             for chunk in data.chunks(stride) {

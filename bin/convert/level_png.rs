@@ -2,7 +2,7 @@ use crate::layers::LevelLayers;
 
 use serde::{Deserialize, Serialize};
 
-use std::{fs::File, path::Path};
+use std::{fs::File, io::BufReader, path::Path};
 
 #[derive(Serialize, Deserialize)]
 struct MultiPng {
@@ -78,7 +78,7 @@ pub fn load(path: &Path) -> LevelLayers {
     {
         println!("\t\t{}...", mp.height);
         let file = File::open(path.with_file_name(mp.height)).unwrap();
-        let decoder = png::Decoder::new(file);
+        let decoder = png::Decoder::new(BufReader::new(file));
         let mut reader = decoder.read_info().unwrap();
         let info = reader.info();
         assert_eq!((info.width, info.height), mp.size);
@@ -89,7 +89,7 @@ pub fn load(path: &Path) -> LevelLayers {
         };
         let mut data = vec![0u8; stride * (layers.size.0 as usize) * (layers.size.1 as usize)];
         assert_eq!(info.bit_depth, png::BitDepth::Eight);
-        assert_eq!(reader.output_buffer_size(), data.len());
+        assert_eq!(reader.output_buffer_size(), Some(data.len()));
         reader.next_frame(&mut data).unwrap();
         for chunk in data.chunks(stride) {
             layers.het0.push(chunk[0]);
@@ -100,7 +100,7 @@ pub fn load(path: &Path) -> LevelLayers {
     {
         println!("\t\t{}...", mp.material_lo);
         let file = File::open(path.with_file_name(mp.material_lo)).unwrap();
-        let mut decoder = png::Decoder::new(file);
+        let mut decoder = png::Decoder::new(BufReader::new(file));
         decoder.set_transformations(png::Transformations::empty());
         let mut reader = decoder.read_info().unwrap();
         let info = reader.info();
@@ -109,13 +109,13 @@ pub fn load(path: &Path) -> LevelLayers {
         layers
             .mat0
             .resize(info.width as usize * info.height as usize / 2, 0);
-        assert_eq!(reader.output_buffer_size(), layers.mat0.len());
+        assert_eq!(reader.output_buffer_size(), Some(layers.mat0.len()));
         reader.next_frame(&mut layers.mat0).unwrap();
     }
     {
         println!("\t\t{}...", mp.material_hi);
         let file = File::open(path.with_file_name(mp.material_hi)).unwrap();
-        let mut decoder = png::Decoder::new(file);
+        let mut decoder = png::Decoder::new(BufReader::new(file));
         decoder.set_transformations(png::Transformations::empty());
         let mut reader = decoder.read_info().unwrap();
         let info = reader.info();
@@ -124,7 +124,7 @@ pub fn load(path: &Path) -> LevelLayers {
         layers
             .mat1
             .resize(info.width as usize * info.height as usize / 2, 0);
-        assert_eq!(reader.output_buffer_size(), layers.mat1.len());
+        assert_eq!(reader.output_buffer_size(), Some(layers.mat1.len()));
         reader.next_frame(&mut layers.mat1).unwrap();
     }
 

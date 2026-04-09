@@ -17,7 +17,7 @@ log = "0.4"
 env_logger = { version = "0.11", optional = true }
 futures = "0.3"
 cgmath = "0.18"
-ron = "0.8"
+ron = "0.12"
 slotmap = "1"
 wgpu = "29"
 hal = { package = "wgpu-hal", version = "29", features = ["gles"] }

@@ -33,7 +33,7 @@ pub struct LevelView {
 
 impl LevelView {
     pub fn new(
-        override_path: Option<&String>,
+        override_path: Option<&str>,
         settings: &config::settings::Settings,
         gfx: &GraphicsContext,
     ) -> Self {
