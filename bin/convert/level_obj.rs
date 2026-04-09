@@ -6,7 +6,7 @@ use std::{
 };
 use vangers::level::{Level, Texel};
 
-const EXTREME_HEIGHT: i32 = i32::max_value();
+const EXTREME_HEIGHT: i32 = i32::MAX;
 
 #[derive(Debug)]
 pub struct Config<'a> {
@@ -266,51 +266,51 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
             ];
 
             struct Side {
-                corners: ops::Range<u32>,
+                corners: [u32; 2],
                 face_column: FaceColumn,
-                x_offset: ops::Range<i32>,
-                y_offset: ops::Range<i32>,
+                x_offset: [i32; 2],
+                y_offset: [i32; 2],
             }
             let sides = [
                 Side {
-                    corners: 0x8..0x1,
+                    corners: [0x8, 0x1],
                     face_column: if x != config.xr.start {
                         c.face_columns[yrel][xrel - 1].clone()
                     } else {
                         FaceColumn::from_quad(c.add_quad_custom(2, x..x, y..y + 1, 0))
                     },
-                    x_offset: 0..0,
-                    y_offset: 1..0,
+                    x_offset: [0, 0],
+                    y_offset: [1, 0],
                 },
                 Side {
-                    corners: 0x2..0x4,
+                    corners: [0x2, 0x4],
                     face_column: if x + 1 != config.xr.end {
                         c.face_columns[yrel][xrel + 1].clone()
                     } else {
                         FaceColumn::from_quad(c.add_quad_custom(2, x + 1..x + 1, y..y + 1, 0))
                     },
-                    x_offset: 1..1,
-                    y_offset: 0..1,
+                    x_offset: [1, 1],
+                    y_offset: [0, 1],
                 },
                 Side {
-                    corners: 0x1..0x2,
+                    corners: [0x1, 0x2],
                     face_column: if y != config.yr.start {
                         c.face_columns[yrel - 1][xrel].clone()
                     } else {
                         FaceColumn::from_quad(c.add_quad_custom(2, x..x + 1, y..y, 0))
                     },
-                    x_offset: 0..1,
-                    y_offset: 0..0,
+                    x_offset: [0, 1],
+                    y_offset: [0, 0],
                 },
                 Side {
-                    corners: 0x4..0x8,
+                    corners: [0x4, 0x8],
                     face_column: if y + 1 != config.yr.end {
                         c.face_columns[yrel + 1][xrel].clone()
                     } else {
                         FaceColumn::from_quad(c.add_quad_custom(2, x..x + 1, y + 1..y + 1, 0))
                     },
-                    x_offset: 1..0,
-                    y_offset: 1..1,
+                    x_offset: [1, 0],
+                    y_offset: [1, 1],
                 },
             ];
 
@@ -320,7 +320,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
             column.add_faces(&fc, !0);
             // Sides each break 2 corners
             for side in sides.iter() {
-                column.add_faces(&side.face_column, side.corners.start | side.corners.end);
+                column.add_faces(&side.face_column, side.corners[0] | side.corners[1]);
             }
             // Each diagonal breaks 1 corner
             for diagonal in diagonals.iter() {
@@ -333,7 +333,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                 {
                     let diag_column = &c.face_columns[(dy - config.yr.start) as usize]
                         [(dx - config.xr.start) as usize];
-                    column.add_faces(&diag_column, diagonal.corner);
+                    column.add_faces(diag_column, diagonal.corner);
                 }
             }
 
@@ -344,7 +344,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     if next.height == EXTREME_HEIGHT {
                         break;
                     }
-                    if (next.payload & (side.corners.start | side.corners.end)) == 0 {
+                    if (next.payload & (side.corners[0] | side.corners[1])) == 0 {
                         continue;
                     }
 
@@ -367,34 +367,34 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     };
 
                     // now, advance along the edges and generate side triangles
-                    if (next.payload & side.corners.start) != 0 && base_z.start != next.height {
+                    if (next.payload & side.corners[0]) != 0 && base_z.start != next.height {
                         if let Some(mt) = mat_type {
                             groups[mt as usize].tris.push([
                                 c.add(
-                                    x + side.x_offset.start,
-                                    y + side.y_offset.start,
+                                    x + side.x_offset[0],
+                                    y + side.y_offset[0],
                                     base_z.start,
                                 ),
-                                c.add(x + side.x_offset.end, y + side.y_offset.end, base_z.end),
+                                c.add(x + side.x_offset[1], y + side.y_offset[1], base_z.end),
                                 c.add(
-                                    x + side.x_offset.start,
-                                    y + side.y_offset.start,
+                                    x + side.x_offset[0],
+                                    y + side.y_offset[0],
                                     next.height,
                                 ),
                             ]);
                         }
                         base_z.start = next.height;
                     }
-                    if (next.payload & side.corners.end) != 0 && base_z.end != next.height {
+                    if (next.payload & side.corners[1]) != 0 && base_z.end != next.height {
                         if let Some(mt) = mat_type {
                             groups[mt as usize].tris.push([
                                 c.add(
-                                    x + side.x_offset.start,
-                                    y + side.y_offset.start,
+                                    x + side.x_offset[0],
+                                    y + side.y_offset[0],
                                     base_z.start,
                                 ),
-                                c.add(x + side.x_offset.end, y + side.y_offset.end, base_z.end),
-                                c.add(x + side.x_offset.end, y + side.y_offset.end, next.height),
+                                c.add(x + side.x_offset[1], y + side.y_offset[1], base_z.end),
+                                c.add(x + side.x_offset[1], y + side.y_offset[1], next.height),
                             ]);
                         }
                         base_z.end = next.height;
@@ -441,7 +441,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
         unit(num_tris),
     );
 
-    let mut dest = BufWriter::new(File::create(&path).unwrap());
+    let mut dest = BufWriter::new(File::create(path).unwrap());
     bar.set_job_title("Vertices:");
     for v in c.final_vertices {
         writeln!(dest, "v {} {} {}", v[0], v[1], v[2]).unwrap();
