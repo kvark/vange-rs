@@ -1,4 +1,4 @@
-use vangers::{config, level, model, space};
+use crate::{config, level, model, space};
 
 use glam::Vec3;
 
@@ -91,10 +91,8 @@ impl CollisionData {
             let dz = height - pos.z;
             log::trace!("\t\t\tSample h={:?} at {:?}, dz={}", height, pos, dz);
             if dz > terraconf.min_wall_delta {
-                //log::debug!("\t\t\tHard touch of {} at {:?}", dz, pos);
                 hard.add(pos, dz);
             } else if dz > 0.0 {
-                //log::debug!("\t\t\tSoft touch of {} at {:?}", dz, pos);
                 soft.add(pos, dz);
             }
         }

@@ -36,5 +36,6 @@ extern crate serde_derive;
 pub mod config;
 pub mod level;
 pub mod model;
+pub mod physics;
 pub mod render;
 pub mod space;
