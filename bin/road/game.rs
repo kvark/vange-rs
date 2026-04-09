@@ -1,7 +1,8 @@
-use crate::{boilerplate::Application, physics};
+use crate::boilerplate::Application;
 use m3d::Mesh;
 use vangers::{
     config, level, model,
+    physics::{self, CarPhysicsData},
     render::{
         debug::LineBuffer, object::BodyColor, Batcher, GraphicsContext, Render, ScreenTargets,
     },
@@ -52,6 +53,7 @@ pub struct Agent {
     _name: String,
     spirit: Spirit,
     car: config::car::CarInfo,
+    phys_data: CarPhysicsData,
     car_name: String,
     color: BodyColor,
     control: Control,
@@ -82,6 +84,7 @@ impl Agent {
                 last_transform: transform,
                 roll_time: 0.0,
             }),
+            phys_data: CarPhysicsData::from_car_info(car),
             car: car.clone(),
             car_name,
             color,
@@ -95,6 +98,7 @@ impl Agent {
     }
 
     fn change_car(&mut self, car: &config::car::CarInfo, car_name: String) {
+        self.phys_data = CarPhysicsData::from_car_info(car);
         self.car = car.clone();
         self.car_name = car_name;
         match self.physics {
@@ -152,7 +156,7 @@ impl Agent {
             dynamo,
             transform,
             dt,
-            &self.car,
+            &self.phys_data,
             level,
             common,
             if self.control.turbo {

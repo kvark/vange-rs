@@ -1,14 +1,14 @@
 //! Physics port of the original game. Most closely described by the following documents:
 //! - https://people.eecs.berkeley.edu/~jfc/mirtich/thesis/mirtichThesis.pdf
 
-use vangers::{config, level, render::debug::LineBuffer, space};
+use crate::{config, level, model, render::debug::LineBuffer, space};
 
 use glam::{Mat3, Quat, Vec3};
 
 const EPSILON: f32 = f32::EPSILON;
 
 mod rigid;
-mod terrain;
+pub mod terrain;
 
 const MAX_TRACTION: config::common::Traction = 4.0;
 
@@ -50,6 +50,48 @@ impl Dynamo {
     }
 }
 
+/// GPU-free physics data extracted from a car model.
+/// Contains only the CPU-side fields needed by the physics simulation,
+/// without any wgpu buffers or GPU resources.
+pub struct CarPhysicsData {
+    pub physics: config::car::CarPhysics,
+    pub body_physics: m3d::Physics,
+    pub bbox: model::BoundingBox,
+    pub shape_polygons: Vec<model::Polygon>,
+    pub shape_samples: Vec<model::RawVertex>,
+    pub wheels: Vec<WheelPhysics>,
+    pub scale: f32,
+}
+
+/// Wheel data needed for physics (no GPU mesh).
+pub struct WheelPhysics {
+    pub steer: u32,
+    pub pos: [f32; 3],
+}
+
+impl CarPhysicsData {
+    /// Extract physics data from a full CarInfo (which contains GPU resources).
+    pub fn from_car_info(car: &config::car::CarInfo) -> Self {
+        CarPhysicsData {
+            physics: car.physics.clone(),
+            body_physics: car.model.body.physics,
+            bbox: car.model.body.bbox,
+            shape_polygons: car.model.shape.polygons.clone(),
+            shape_samples: car.model.shape.samples.clone(),
+            wheels: car
+                .model
+                .wheels
+                .iter()
+                .map(|w| WheelPhysics {
+                    steer: w.steer,
+                    pos: w.pos,
+                })
+                .collect(),
+            scale: car.scale,
+        }
+    }
+}
+
 pub fn jump_dir(power: f32) -> Vec3 {
     5.0 * power * Vec3::new(0.0, 3.0, 10.0).normalize()
 }
@@ -58,7 +100,7 @@ pub fn step(
     dynamo: &mut Dynamo,
     transform: &mut space::Transform,
     dt: f32,
-    car: &config::car::CarInfo,
+    car: &CarPhysicsData,
     level: &level::Level,
     common: &config::common::Common,
     f_turbo: f32,
@@ -81,7 +123,7 @@ pub fn step(
     let dt_impulse = 1.0;
 
     let mut rigid = {
-        let phys = &car.model.body.physics;
+        let phys = &car.body_physics;
         let jacobian =
             Mat3::from_cols_array_2d(&phys.jacobi) * (transform.scale * transform.scale / phys.volume);
         rigid::RigidBody::new(&jacobian, dynamo.linear_velocity, dynamo.angular_velocity)
@@ -89,18 +131,16 @@ pub fn step(
 
     if let Some(power) = jump {
         let mass = common.nature.density
-            * car.model.body.physics.volume
+            * car.body_physics.volume
             * transform.scale
             * transform.scale;
         let f = device_modulation * common.force.k_distance_to_force * dt_impulse / mass.powf(0.3);
         log::info!("jump mass {:?}, f {:?}", mass, f);
-        //DBV dV = A_g2l*DBV(-Sin(Pi/10)*Sin(psi),-Sin(Pi/10)*Cos(psi),Cos(Pi/10));
         rigid.vel += f * jump_dir(power);
     }
 
     let mut wheels_touch = 0u32;
     let mut spring_touch = 0;
-    //let mut in_water = false;
 
     let mut float_count = 0;
     let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
@@ -122,7 +162,7 @@ pub fn step(
     let mut sum_rg0 = Vec3::ZERO;
     let mut sum_df = 0.;
 
-    for (bound_poly_id, poly) in car.model.shape.polygons.iter().enumerate() {
+    for (bound_poly_id, poly) in car.shape_polygons.iter().enumerate() {
         let r = Vec3::from(poly.middle) * (transform.scale * car.physics.scale_bound);
         let rg0 = transform.rot * r;
         let rglob = rg0 + transform.disp;
@@ -152,7 +192,7 @@ pub fn step(
         if z_axis.dot(poly_norm) < 0.0 {
             let cdata = terrain::CollisionData::collide_low(
                 poly,
-                &car.model.shape.samples,
+                &car.shape_samples,
                 car.physics.scale_bound,
                 transform,
                 level,
@@ -179,10 +219,10 @@ pub fn step(
                     hard: Some(ref cp), ..
                 } if mostly_horisontal => {
                     log::debug!("\t\t\tmostly horisontal");
-                    let r1 = rot_inv * Vec3::new(cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0); // ignore vertical
+                    let r1 = rot_inv * Vec3::new(cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0);
                     let pv = rigid.velocity_at(r1);
                     let normal = {
-                        let bm = car.model.body.bbox.max;
+                        let bm = car.bbox.max;
                         let n = Vec3::new(r1.x / bm[0], r1.y / bm[1], r1.z / bm[2]);
                         n.normalize()
                     };
@@ -194,13 +234,11 @@ pub fn step(
                 terrain::CollisionData {
                     soft: Some(ref cp), ..
                 } => {
-                    //TODO: let r1 = rot_inv * (cp.pos - origin);
                     let r1 =
                         rot_inv * Vec3::new(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
                     let pv = rigid.velocity_at(r1);
                     if pv.dot(z_axis) < 0.0 {
                         let vec = if stand_on_wheels {
-                            // ignore XY
                             Vec3::new(0.0, 0.0, pv.z)
                         } else {
                             let projected = poly_norm * poly_norm.dot(pv);
@@ -218,9 +256,6 @@ pub fn step(
                 let df = df0.min(common.impulse.elastic_restriction);
                 log::debug!("\t\tbound[{}] dF.z = {}, rg0={:?}", bound_poly_id, df, rg0);
 
-                //let impulse = Vec3::new(0., 0., df);
-                //acc_springs.f += impulse;
-                //acc_springs.k += rg0.cross(impulse);
                 acc_springs.f.z += df;
                 acc_springs.k.x += rg0.y * df;
                 acc_springs.k.y -= rg0.x * df;
@@ -237,19 +272,15 @@ pub fn step(
                 sum_df += df;
 
                 if let Some(ref mut lbuf) = line_buffer {
-                    // Red: center -> collision point
                     lbuf.add(transform.disp.into(), rglob.into(), 0xFF000000);
-                    // Yellow: collision point -> linear force
                     let up = rglob + Vec3::new(0.0, 0.0, df0);
                     lbuf.add(rglob.into(), up.into(), 0xFFFF0000);
-                    // Purple: collision point -> angular force
                     let end = rglob + df * Vec3::new(rg0.y, -rg0.x, 0.0);
                     lbuf.add(rglob.into(), end.into(), 0xFF00FF00);
                 }
             }
         } else {
             //TODO: upper average
-            // down_minus_up -= 1;
         }
     }
 
@@ -271,9 +302,8 @@ pub fn step(
             .drag
             .speed
             .w
-            .powf(rigid.angular_velocity().length_squared()); //why mag2?
+            .powf(rigid.angular_velocity().length_squared());
     if wheels_touch > 0 {
-        //TODO: why `ln()`?
         let speed =
             common.drag.wheel_speed.ln() * car.physics.mobility_factor * common.global.speed_factor
                 / car.physics.speed_factor;
@@ -285,12 +315,12 @@ pub fn step(
     if wheels_touch != 0 && stand_on_wheels {
         let f_traction_per_wheel =
             car.physics.mobility_factor * common.global.mobility_factor * f_turbo * dynamo.traction
-                / (car.model.wheels.len() as f32);
+                / (car.wheels.len() as f32);
         let rudder_vec = {
             let (sin, cos) = dynamo.rudder.sin_cos();
             Vec3::new(cos, -sin, 0.0)
         };
-        for wheel in car.model.wheels.iter() {
+        for wheel in car.wheels.iter() {
             let pw = transform.transform_point(Vec3::from(wheel.pos));
             let detect_wheel_hits = false;
             if detect_wheel_hits {
@@ -301,9 +331,9 @@ pub fn step(
             }
 
             let rx_max = if wheel.pos[0] > 0.0 {
-                car.model.body.bbox.max[0]
+                car.bbox.max[0]
             } else {
-                car.model.body.bbox.min[0]
+                car.bbox.min[0]
             };
             let pos = Vec3::new(rx_max, wheel.pos[1], wheel.pos[2]) * transform.scale;
             let pv = rigid.velocity_at(pos);
@@ -329,7 +359,6 @@ pub fn step(
     }
 
     if spring_touch + wheels_touch != 0 {
-        //|| in_water
         let tmp = Vec3::new(
             0.0,
             0.0,
@@ -345,9 +374,9 @@ pub fn step(
     if roll != 0.0 && wheels_touch == 0 && spring_touch != 0 {
         let df = common.force.f_spring_impulse * speed_correction_factor;
         let x_edge = if roll > 0.0 {
-            car.model.body.bbox.max[0]
+            car.bbox.max[0]
         } else {
-            car.model.body.bbox.min[0]
+            car.bbox.min[0]
         };
         rigid.add_raw(
             Vec3::new(0.0, 0.0, df),
@@ -359,7 +388,6 @@ pub fn step(
     rigid.add_raw(acc_cur.f * dt, acc_cur.k * dt);
     let (mut v_vel, mut w_vel) = rigid.finish();
 
-    //log::debug!("J_inv {:?}, handedness {}", j_inv.transpose(), j_inv.x.cross(j_inv.y).dot(j_inv.z));
     log::debug!("\tresulting v={:?} w={:?}", v_vel, w_vel);
     if spring_touch != 0 {
         v_drag *= common.drag.spring.v;
@@ -374,7 +402,7 @@ pub fn step(
     }
 
     if v_mag * v_drag > common.drag.abs_stop.v || w_mag * w_drag > common.drag.abs_stop.w {
-        let radius = car.model.body.bbox.radius; //approx?
+        let radius = car.bbox.radius;
         let local_z_scaled = z_axis * (radius * common.impulse.rolling_scale);
         let r_diff_sign = down_minus_up.signum() as f32;
         let vs = v_vel - r_diff_sign * local_z_scaled.cross(w_vel);
@@ -393,23 +421,19 @@ pub fn step(
             transform.scale
         );
     }
-    //log::debug!("\tdrag v={} w={}", v_drag, w_drag);
     v_vel *= v_drag.powf(speed_correction_factor);
     w_vel *= w_drag.powf(speed_correction_factor);
 
     if let Some(ref mut lbuf) = line_buffer {
-        // Note: velocity and acceleration are in local space
         let rot = transform.rot;
         let ba = transform.disp + Vec3::new(3.0, 0.0, 10.0);
         let xf = ba + rot * acc_cur.f;
         let xk = ba + rot * acc_cur.k;
         lbuf.add(ba.into(), xf.into(), 0x0000FF00);
         lbuf.add(ba.into(), xk.into(), 0xFF00FF00);
-        // Yellow: center -> angular springs total
-        lbuf.add(ba.into(), (ba + acc_springs.k).into(), 0xFFFF0000);
         let bv = transform.disp + Vec3::new(-3.0, 0.0, 10.0);
         let xv = bv + rot * v_vel;
-        let xw = bv + rot * w_vel * 10.0; //TEMP
+        let xw = bv + rot * w_vel * 10.0;
         lbuf.add(bv.into(), xv.into(), 0x00FF0000);
         lbuf.add(bv.into(), xw.into(), 0x00FFFF00);
     }

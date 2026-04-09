@@ -5,7 +5,6 @@ use log::info;
 #[path = "../boilerplate.rs"]
 mod boilerplate;
 mod game;
-mod physics;
 
 /// Vangers game prototype
 #[derive(clap::Parser)]
