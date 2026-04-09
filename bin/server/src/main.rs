@@ -10,22 +10,30 @@ use vangers_net::{
 };
 
 use clap::Parser;
+use futures_util::{SinkExt, StreamExt};
 use glam::Vec3;
 use log::{error, info, warn};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::mpsc,
     time::{self, Duration},
 };
+use tokio_tungstenite::tungstenite;
 
 /// Vangers headless multiplayer server
 #[derive(Parser)]
 struct Cli {
-    /// Port to listen on
+    /// TCP port to listen on
     #[arg(short, long, default_value = "7800")]
     port: u16,
+
+    /// WebSocket port to listen on (for WASM clients)
+    #[arg(long, default_value = "7801")]
+    ws_port: u16,
 
     /// Maximum number of players
     #[arg(long, default_value = "8")]
@@ -144,37 +152,59 @@ async fn main() {
     info!("Using test physics constants (gravity={}, frame_rate={})",
         common.nature.gravity, common.speed.standard_frame_rate);
 
-    let addr = format!("0.0.0.0:{}", cli.port);
-    let listener = TcpListener::bind(&addr)
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<SessionEvent>();
+    let next_id = Arc::new(AtomicU32::new(1));
+
+    // TCP listener
+    let tcp_addr = format!("0.0.0.0:{}", cli.port);
+    let tcp_listener = TcpListener::bind(&tcp_addr)
         .await
-        .unwrap_or_else(|e| panic!("Failed to bind to {}: {}", addr, e));
-    info!("Vangers server listening on {}", addr);
+        .unwrap_or_else(|e| panic!("Failed to bind TCP to {}: {}", tcp_addr, e));
+    info!("TCP listening on {}", tcp_addr);
+
+    let tcp_tx = event_tx.clone();
+    let tcp_next_id = next_id.clone();
+    tokio::spawn(async move {
+        loop {
+            match tcp_listener.accept().await {
+                Ok((stream, peer)) => {
+                    let id = tcp_next_id.fetch_add(1, Ordering::Relaxed);
+                    info!("TCP connection from {} assigned player_id={}", peer, id);
+                    let tx = tcp_tx.clone();
+                    tokio::spawn(handle_tcp_connection(stream, id, tx));
+                }
+                Err(e) => error!("TCP accept error: {}", e),
+            }
+        }
+    });
+
+    // WebSocket listener
+    let ws_addr = format!("0.0.0.0:{}", cli.ws_port);
+    let ws_listener = TcpListener::bind(&ws_addr)
+        .await
+        .unwrap_or_else(|e| panic!("Failed to bind WS to {}: {}", ws_addr, e));
+    info!("WebSocket listening on {}", ws_addr);
+
+    let ws_tx = event_tx.clone();
+    let ws_next_id = next_id;
+    tokio::spawn(async move {
+        loop {
+            match ws_listener.accept().await {
+                Ok((stream, peer)) => {
+                    let id = ws_next_id.fetch_add(1, Ordering::Relaxed);
+                    info!("WebSocket connection from {} assigned player_id={}", peer, id);
+                    let tx = ws_tx.clone();
+                    tokio::spawn(handle_ws_connection(stream, id, tx));
+                }
+                Err(e) => error!("WS accept error: {}", e),
+            }
+        }
+    });
+
     info!(
         "Tick rate: {} Hz, max players: {}",
         cli.tick_rate, cli.max_players
     );
-
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<SessionEvent>();
-
-    // Spawn connection acceptor
-    let accept_tx = event_tx.clone();
-    tokio::spawn(async move {
-        let mut next_id: PlayerId = 1;
-        loop {
-            match listener.accept().await {
-                Ok((stream, peer)) => {
-                    let id = next_id;
-                    next_id += 1;
-                    info!("Connection from {} assigned player_id={}", peer, id);
-                    let tx = accept_tx.clone();
-                    tokio::spawn(handle_connection(stream, id, tx));
-                }
-                Err(e) => {
-                    error!("Accept error: {}", e);
-                }
-            }
-        }
-    });
 
     // Main game loop
     let tick_duration = Duration::from_secs_f64(1.0 / cli.tick_rate as f64);
@@ -411,7 +441,7 @@ fn remove_player(players: &mut HashMap<PlayerId, ServerAgent>, player_id: Player
     }
 }
 
-async fn handle_connection(
+async fn handle_tcp_connection(
     stream: TcpStream,
     player_id: PlayerId,
     event_tx: mpsc::UnboundedSender<SessionEvent>,
@@ -458,6 +488,71 @@ async fn handle_connection(
                 warn!("Read error for player {}: {}", player_id, e);
                 break;
             }
+        }
+    }
+
+    let _ = event_tx.send(SessionEvent::Disconnected { player_id });
+    write_handle.abort();
+}
+
+async fn handle_ws_connection(
+    stream: TcpStream,
+    player_id: PlayerId,
+    event_tx: mpsc::UnboundedSender<SessionEvent>,
+) {
+    let ws_stream = match tokio_tungstenite::accept_async(stream).await {
+        Ok(ws) => ws,
+        Err(e) => {
+            warn!("WebSocket handshake failed for player {}: {}", player_id, e);
+            return;
+        }
+    };
+
+    let (mut ws_writer, mut ws_reader) = ws_stream.split();
+
+    // Channel for outbound messages
+    let (send_tx, mut send_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+
+    // Register connection
+    let _ = event_tx.send(SessionEvent::Connected {
+        player_id,
+        sender: send_tx,
+    });
+
+    // Writer task: send binary WebSocket frames
+    let write_handle = tokio::spawn(async move {
+        while let Some(data) = send_rx.recv().await {
+            if ws_writer
+                .send(tungstenite::Message::Binary(data.into()))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+
+    // Reader loop: receive binary WebSocket frames
+    let mut buf = Vec::with_capacity(4096);
+
+    while let Some(result) = ws_reader.next().await {
+        match result {
+            Ok(tungstenite::Message::Binary(data)) => {
+                buf.extend_from_slice(&data);
+                while let Some((msg, consumed)) = decode::<ClientMessage>(&buf) {
+                    let _ = event_tx.send(SessionEvent::Message {
+                        player_id,
+                        msg,
+                    });
+                    buf.drain(..consumed);
+                }
+            }
+            Ok(tungstenite::Message::Close(_)) => break,
+            Err(e) => {
+                warn!("WS read error for player {}: {}", player_id, e);
+                break;
+            }
+            _ => {} // Ignore ping/pong/text
         }
     }
 
