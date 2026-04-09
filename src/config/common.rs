@@ -163,6 +163,121 @@ pub struct Common {
     pub speed: Speed,
 }
 
+impl Common {
+    /// Sensible default physics constants for testing without game data files.
+    /// Values are approximations of the original game's common.prm.
+    pub fn test_default() -> Self {
+        Common {
+            nature: Nature {
+                gravity: 3.0,
+                density: 0.1,
+                time_delta0: 0.04,
+                scale_general: 1.0,
+                num_calls_analysis: 1,
+                movement_detection_threshold: 5,
+            },
+            impulse: Impulse {
+                elastic_restriction: 100.0,
+                elastic_time_scale_factor: 1.0,
+                rolling_scale: 0.1,
+                normal_threshold: 0.5,
+                k_wheel: 0.5,
+                factors: [2.0, 2.0],
+                k_friction: 0.5,
+            },
+            car: Car {
+                rudder_step: 0.02,
+                rudder_max: 0.4,
+                rudder_k_decr: 0.5,
+                traction_incr: 0.5,
+                traction_decr: 0.1,
+            },
+            global: Global {
+                speed_factor: 1.0,
+                mobility_factor: 30.0,
+                water_speed_factor: 1.0,
+                air_speed_factor: 1.0,
+                underground_speed_factor: 1.0,
+                k_traction_turbo: 4.0,
+                f_brake_max: 0.5,
+            },
+            heli: Helicopter {
+                max_height: 200,
+                height_incr: 2,
+                height_decr: 1,
+                k_thrust: 1.0,
+                k_rotate: 1.0,
+                k_strife: 1.0,
+                max_time: 60,
+                convert: [1.0, 1.0],
+                rudder_decr: 0.02,
+                traction_decr: 0.1,
+                z_offset: 20.0,
+                ampl: 2.0,
+                dphi: 100,
+                circle_radius: [50.0, 50.0],
+                circle_dphi: 50,
+            },
+            drag: Drag {
+                speed: VelocityPair { v: 0.99, w: 0.99 },
+                wheel_speed: 0.98,
+                z: 1.02,
+                free: VelocityPair { v: 0.99, w: 0.99 },
+                wheel: VelocityPair { v: 0.98, w: 0.98 },
+                spring: VelocityPair { v: 0.95, w: 0.95 },
+                coll: VelocityPair { v: 0.9, w: 0.9 },
+                helicopter: VelocityPair { v: 0.98, w: 0.98 },
+                float: VelocityPair { v: 0.97, w: 0.97 },
+                friction: VelocityPair { v: 0.98, w: 0.98 },
+                abs_stop: VelocityPair { v: 0.01, w: 0.01 },
+                stuff: 0.95,
+                swamp: 0.9,
+                mole: 0.95,
+                abs_min: VelocityPair { v: 1.0, w: 0.5 },
+            },
+            terrain: Terrain {
+                dz_max: 50.0,
+                min_wall_delta: 10.0,
+            },
+            mole: Mole {
+                k_elastic_mole: 1.0,
+                k_mole: 1.0,
+                k_mole_rudder: 0.5,
+                mole_emerging_fz: 5.0,
+                mole_submerging_fz: -5.0,
+            },
+            contact: Contact {
+                k_elastic_wheel: 1.0,
+                k_elastic_spring: 2.0,
+                k_elastic_xy: 0.5,
+                k_elastic_db_coll: 1.0,
+                k_destroy_level: 0.1,
+                strong_ground_collision_threshold: 50.0,
+                strong_double_collision_threshold: 100.0,
+                k_friction_wheel_x: 0.5,
+                k_friction_wheel_x_back: 0.3,
+                k_friction_wheel_y: 0.5,
+                k_friction_wheel_z: 0.1,
+                k_friction_spring: 0.5,
+            },
+            force: Force {
+                f_spring_impulse: 10.0,
+                k_spring_impulse: 1.0,
+                f_traction_impulse: 5.0,
+                k_distance_to_force: 10.0,
+                explosion: VelocityPair { v: 50.0, w: 10.0 },
+                max_jump_power: 10.0,
+                side_impulse_delay: 3,
+                side_impulse_duration: 5,
+            },
+            speed: Speed {
+                standard_frame_rate: 14,
+                speed_correction_tau: 1.6e-2,
+            },
+        }
+    }
+}
+
 fn get_pair(reader: &mut Reader<File>, name: &str) -> VelocityPair {
     let sv = format!("V_{}:", name);
     let sw = format!("W_{}:", name);

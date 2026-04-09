@@ -3199,8 +3199,10 @@ dependencies = [
  "bincode",
  "clap",
  "env_logger",
+ "glam",
  "log",
  "tokio",
+ "vangers",
  "vangers-net",
 ]
 

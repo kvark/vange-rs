@@ -70,6 +70,76 @@ pub struct WheelPhysics {
 }
 
 impl CarPhysicsData {
+    /// Create a simple box-shaped car for testing without game data files.
+    pub fn test_default() -> Self {
+        let half = 10.0f32;
+        // A simple box with 6 faces, each face is a polygon
+        let faces: Vec<([f32; 3], [f32; 3])> = vec![
+            ([0.0, 0.0, -half], [0.0, 0.0, -1.0]),  // bottom
+            ([0.0, 0.0, half], [0.0, 0.0, 1.0]),     // top
+            ([half, 0.0, 0.0], [1.0, 0.0, 0.0]),     // right
+            ([-half, 0.0, 0.0], [-1.0, 0.0, 0.0]),   // left
+            ([0.0, half, 0.0], [0.0, 1.0, 0.0]),     // front
+            ([0.0, -half, 0.0], [0.0, -1.0, 0.0]),   // back
+        ];
+
+        let mut polygons = Vec::new();
+        let mut samples = Vec::new();
+        for (middle, normal) in faces {
+            let start = samples.len();
+            samples.push([middle[0] as i8, middle[1] as i8, middle[2] as i8]);
+            polygons.push(model::Polygon {
+                middle,
+                normal,
+                samples: start..samples.len(),
+            });
+        }
+
+        CarPhysicsData {
+            physics: config::car::CarPhysics {
+                name: "TestCar".into(),
+                scale_size: 1.0,
+                scale_bound: 1.0,
+                scale_box: 1.0,
+                z_offset_of_mass_center: 0.0,
+                speed_factor: 1.0,
+                mobility_factor: 1.0,
+                water_speed_factor: 1.0,
+                air_speed_factor: 1.0,
+                underground_speed_factor: 1.0,
+                k_archimedean: 0.5,
+                k_water_traction: 0.5,
+                k_water_rudder: 0.5,
+                terra_mover_sx: [0.0; 3],
+                defence: [100; config::car::NUM_SIDES],
+                ram_power: [50; config::car::NUM_SIDES],
+            },
+            body_physics: m3d::Physics {
+                volume: 8000.0, // 20^3
+                rcm: [0.0, 0.0, 0.0],
+                jacobi: [
+                    [1333.0, 0.0, 0.0],
+                    [0.0, 1333.0, 0.0],
+                    [0.0, 0.0, 1333.0],
+                ], // uniform box inertia: m*s^2/6
+            },
+            bbox: model::BoundingBox {
+                min: [-half, -half, -half],
+                max: [half, half, half],
+                radius: half * 1.73, // sqrt(3) * half
+            },
+            shape_polygons: polygons,
+            shape_samples: samples,
+            wheels: vec![
+                WheelPhysics { steer: 1, pos: [half, half, -half] },
+                WheelPhysics { steer: 1, pos: [-half, half, -half] },
+                WheelPhysics { steer: 0, pos: [half, -half, -half] },
+                WheelPhysics { steer: 0, pos: [-half, -half, -half] },
+            ],
+            scale: 1.0,
+        }
+    }
+
     /// Extract physics data from a full CarInfo (which contains GPU resources).
     pub fn from_car_info(car: &config::car::CarInfo) -> Self {
         CarPhysicsData {
