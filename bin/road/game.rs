@@ -8,7 +8,7 @@ use vangers::{
     space,
 };
 
-use cgmath::prelude::*;
+use glam::Vec3;
 
 use std::collections::HashMap;
 
@@ -43,7 +43,7 @@ enum Physics {
 enum SimulationStep<'a> {
     Intermediate,
     Final {
-        focus_point: &'a cgmath::Point3<f32>,
+        focus_point: &'a Vec3,
         line_buffer: Option<&'a mut LineBuffer>,
     },
 }
@@ -66,14 +66,14 @@ impl Agent {
         car_name: String,
         color: BodyColor,
         coords: (i32, i32),
-        orientation: cgmath::Rad<f32>,
+        orientation: f32,
         level: &level::Level,
     ) -> Self {
         let height = level.get(coords).high() + 5.; //center offset
-        let transform = cgmath::Decomposed {
+        let transform = space::Transform {
             scale: car.scale,
-            disp: cgmath::vec3(coords.0 as f32, coords.1 as f32, height),
-            rot: cgmath::Quaternion::from_angle_z(orientation),
+            disp: Vec3::new(coords.0 as f32, coords.1 as f32, height),
+            rot: glam::Quat::from_rotation_z(orientation),
         };
 
         Agent {
@@ -200,14 +200,14 @@ impl Agent {
             }
         } else if ai.last_transform.disp == transform.disp {
             ai.roll_time = 0.5;
-            let x_axis = transform.rot * cgmath::Vector3::unit_x();
+            let x_axis = transform.rot * Vec3::X;
             self.control.roll = x_axis.z.signum();
         }
 
         ai.last_transform = *transform;
     }
 
-    fn position(&self) -> cgmath::Vector3<f32> {
+    fn position(&self) -> Vec3 {
         match self.physics {
             Physics::Cpu { ref transform, .. } => transform.disp,
         }

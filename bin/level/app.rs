@@ -14,8 +14,8 @@ enum Input {
     Ver { dir: f32, alt: bool, shift: bool },
     Dep { dir: f32, alt: bool },
     DepQuant(f32),
-    PlaneQuant(cgmath::Vector2<f32>),
-    RotQuant(cgmath::Vector2<f32>),
+    PlaneQuant(glam::Vec2),
+    RotQuant(glam::Vec2),
     Empty,
 }
 
@@ -26,7 +26,7 @@ pub struct LevelView {
     input: Input,
     ui: config::settings::Ui,
 
-    last_mouse_pos: cgmath::Vector2<f32>,
+    last_mouse_pos: glam::Vec2,
     alt_button_pressed: bool,
     mouse_button_pressed: bool,
 }
@@ -101,13 +101,13 @@ impl LevelView {
 
         let depth = settings.game.camera.depth_range;
         let cam = space::Camera {
-            loc: cgmath::vec3(0.0, 0.0, 400.0),
-            rot: cgmath::One::one(),
-            scale: cgmath::vec3(1.0, -1.0, 1.0),
+            loc: glam::Vec3::new(0.0, 0.0, 400.0),
+            rot: glam::Quat::IDENTITY,
+            scale: glam::Vec3::new(1.0, -1.0, 1.0),
             proj: match settings.game.camera.projection {
                 config::settings::Projection::Perspective => {
-                    let pf = cgmath::PerspectiveFov {
-                        fovy: cgmath::Deg(45.0).into(),
+                    let pf = space::PerspectiveParams {
+                        fovy: 45.0f32.to_radians(),
                         aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
                         near: depth.0,
                         far: depth.1,
@@ -143,7 +143,7 @@ impl LevelView {
             cam,
             input: Input::Empty,
             ui: settings.ui,
-            last_mouse_pos: cgmath::vec2(-1.0, -1.0),
+            last_mouse_pos: glam::Vec2::new(-1.0, -1.0),
             alt_button_pressed: false,
             mouse_button_pressed: false,
         }
@@ -155,7 +155,7 @@ impl Application for LevelView {
         if !self.mouse_button_pressed {
             return;
         }
-        let position_vec = cgmath::vec2(position.0 as f32, position.1 as f32);
+        let position_vec = glam::Vec2::new(position.0 as f32, position.1 as f32);
 
         if self.last_mouse_pos.x < 0.0 {
             self.last_mouse_pos = position_vec;
@@ -187,7 +187,7 @@ impl Application for LevelView {
     fn on_mouse_button(&mut self, state: event::ElementState, button: event::MouseButton) {
         if button == event::MouseButton::Left {
             self.mouse_button_pressed = state == event::ElementState::Pressed;
-            self.last_mouse_pos = cgmath::vec2(-1.0, -1.0);
+            self.last_mouse_pos = glam::Vec2::new(-1.0, -1.0);
         }
     }
 
@@ -255,8 +255,6 @@ impl Application for LevelView {
     }
 
     fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
-        use cgmath::{InnerSpace as _, Rotation3 as _};
-
         let move_speed = match self.cam.proj {
             space::Projection::Perspective(_) => 100.0,
             space::Projection::Ortho { .. } => 500.0,
@@ -269,7 +267,7 @@ impl Application for LevelView {
                 alt: false,
                 shift,
             } if dir != 0.0 => {
-                let mut vec = self.cam.rot * cgmath::Vector3::unit_x();
+                let mut vec = self.cam.rot * glam::Vec3::X;
                 vec.z = 0.0;
                 let speed = if shift { fast_move_speed } else { move_speed };
                 self.cam.loc += speed * delta * dir * vec.normalize();
@@ -279,40 +277,40 @@ impl Application for LevelView {
                 alt: false,
                 shift,
             } if dir != 0.0 => {
-                let mut vec = self.cam.rot * cgmath::Vector3::unit_y();
+                let mut vec = self.cam.rot * glam::Vec3::Y;
                 vec.z = 0.0;
                 let speed = if shift { fast_move_speed } else { move_speed };
                 self.cam.loc += speed * delta * dir * vec.normalize();
             }
             Input::Dep { dir, alt: false } if dir != 0.0 => {
-                let vec = cgmath::Vector3::unit_z();
+                let vec = glam::Vec3::Z;
                 self.cam.loc += move_speed * delta * dir * vec.normalize();
             }
             Input::Hor { dir, alt: true, .. } if dir != 0.0 => {
                 let rot =
-                    cgmath::Quaternion::from_angle_z(cgmath::Rad(rotation_speed * delta * dir));
+                    glam::Quat::from_rotation_z(rotation_speed * delta * dir);
                 self.cam.rot = rot * self.cam.rot;
             }
             Input::Ver { dir, alt: true, .. } if dir != 0.0 => {
                 let rot =
-                    cgmath::Quaternion::from_angle_x(cgmath::Rad(rotation_speed * delta * dir));
+                    glam::Quat::from_rotation_x(rotation_speed * delta * dir);
                 self.cam.rot = self.cam.rot * rot;
             }
             Input::DepQuant(dir) => {
-                let vec = cgmath::Vector3::unit_z();
+                let vec = glam::Vec3::Z;
                 self.cam.loc += 1000.0 * delta * dir * vec.normalize();
                 self.input = Input::Empty;
             }
             Input::PlaneQuant(dir) => {
-                let vec_x = self.cam.rot * cgmath::vec3(-dir.x, 0.0, 0.0);
-                let vec_y = self.cam.rot * cgmath::vec3(0.0, dir.y, 0.0);
+                let vec_x = self.cam.rot * glam::Vec3::new(-dir.x, 0.0, 0.0);
+                let vec_y = self.cam.rot * glam::Vec3::new(0.0, dir.y, 0.0);
 
                 let mut vec = vec_x + vec_y;
 
-                let norm1 = vec.magnitude();
+                let norm1 = vec.length();
                 if norm1 > 0.0 {
                     vec.z = 0.0;
-                    let norm = vec.magnitude();
+                    let norm = vec.length();
                     vec *= norm1 / norm;
                     self.cam.loc += self.cam.loc.z * 0.2 * delta * vec;
                 }
@@ -320,8 +318,8 @@ impl Application for LevelView {
             }
             Input::RotQuant(dir) => {
                 let speed = 0.3;
-                let rot_x = cgmath::Quaternion::from_angle_z(cgmath::Rad(speed * delta * dir.x));
-                let rot_y = cgmath::Quaternion::from_angle_x(cgmath::Rad(-speed * delta * dir.y));
+                let rot_x = glam::Quat::from_rotation_z(speed * delta * dir.x);
+                let rot_y = glam::Quat::from_rotation_x(-speed * delta * dir.y);
                 self.cam.rot = rot_x * self.cam.rot * rot_y;
                 self.input = Input::Empty;
             }

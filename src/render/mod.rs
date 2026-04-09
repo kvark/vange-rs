@@ -40,7 +40,7 @@ impl GpuTransform {
     pub fn new(t: &Transform) -> Self {
         GpuTransform {
             pos_scale: [t.disp.x, t.disp.y, t.disp.z, t.scale],
-            orientation: [t.rot.v.x, t.rot.v.y, t.rot.v.z, t.rot.s],
+            orientation: [t.rot.x, t.rot.y, t.rot.z, t.rot.w],
         }
     }
 }
@@ -234,8 +234,6 @@ impl Batcher {
         debug_shape_scale: Option<f32>,
         color: object::BodyColor,
     ) {
-        use cgmath::{One as _, Rotation3 as _, Transform as _};
-
         // body
         self.add_mesh(
             &model.body,
@@ -254,8 +252,8 @@ impl Batcher {
         for w in model.wheels.iter() {
             if let Some(ref mesh) = w.mesh {
                 let transform = base_transform.concat(&Transform {
-                    disp: mesh.offset.into(),
-                    rot: cgmath::Quaternion::one(),
+                    disp: glam::Vec3::from(mesh.offset),
+                    rot: glam::Quat::IDENTITY,
                     scale: 1.0,
                 });
                 self.add_mesh(mesh, object::Instance::new(&transform, 0.0, color as u8));
@@ -266,11 +264,11 @@ impl Batcher {
         for s in model.slots.iter() {
             if let Some(ref mesh) = s.mesh {
                 let mut local = Transform {
-                    disp: cgmath::vec3(s.pos[0] as f32, s.pos[1] as f32, s.pos[2] as f32),
-                    rot: cgmath::Quaternion::from_angle_y(cgmath::Deg(s.angle as f32)),
+                    disp: glam::Vec3::new(s.pos[0] as f32, s.pos[1] as f32, s.pos[2] as f32),
+                    rot: glam::Quat::from_rotation_y((s.angle as f32).to_radians()),
                     scale: s.scale / base_transform.scale,
                 };
-                local.disp -= local.transform_vector(cgmath::Vector3::from(mesh.offset));
+                local.disp -= local.transform_vector(glam::Vec3::from(mesh.offset));
                 let transform = base_transform.concat(&local);
                 self.add_mesh(mesh, object::Instance::new(&transform, 0.0, color as u8));
             }
