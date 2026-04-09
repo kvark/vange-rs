@@ -1,4 +1,5 @@
 use crate::boilerplate::Application;
+use crate::net::{NetEvent, NetworkClient};
 use m3d::Mesh;
 use vangers::{
     config, level, model,
@@ -8,6 +9,7 @@ use vangers::{
     },
     space,
 };
+use vangers_net::PlayerId;
 
 use glam::Vec3;
 
@@ -218,6 +220,13 @@ impl Agent {
     }
 }
 
+/// A remote player received via network, rendered locally.
+struct RemoteAgent {
+    car: config::car::CarInfo,
+    color: BodyColor,
+    transform: space::Transform,
+}
+
 #[derive(Default)]
 struct Stats {
     frame_deltas: Vec<f32>,
@@ -306,6 +315,9 @@ pub struct Game {
     line_buffer: LineBuffer,
     level: level::Level,
     agents: Vec<Agent>,
+    remote_agents: HashMap<PlayerId, RemoteAgent>,
+    net: Option<NetworkClient>,
+    input_seq: u32,
     stats: Stats,
     ui: config::settings::Ui,
     cam: space::Camera,
@@ -315,7 +327,12 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(settings: &config::Settings, gfx: &GraphicsContext) -> Self {
+    pub fn new(
+        settings: &config::Settings,
+        gfx: &GraphicsContext,
+        server_addr: Option<String>,
+        player_name: String,
+    ) -> Self {
         let mut rng = rand::thread_rng();
         log::info!("Loading world parameters");
         let mut escaves = config::escaves::load(settings.open_relative("escaves.prm"));
@@ -464,6 +481,17 @@ impl Game {
             agents.push(agent);
         }
 
+        // Connect to server if requested
+        let net = server_addr.map(|addr| {
+            let player = agents.iter().find(|a| a.spirit == Spirit::Player).unwrap();
+            NetworkClient::connect(
+                &addr,
+                &player_name,
+                &player.car_name,
+                player.color as u8,
+            )
+        });
+
         Game {
             db,
             render,
@@ -471,6 +499,9 @@ impl Game {
             line_buffer: LineBuffer::new(),
             level,
             agents,
+            remote_agents: HashMap::new(),
+            net,
+            input_seq: 0,
             stats: Stats::default(),
             ui: settings.ui,
             cam,
@@ -695,6 +726,124 @@ impl Application for Game {
                 a.ai_behavior(delta);
             });
         }
+
+        // Networking: send input and process server events
+        if let Some(ref mut net) = self.net {
+            // Send local player's control to the server
+            let player = self
+                .agents
+                .iter()
+                .find(|a| a.spirit == Spirit::Player)
+                .unwrap();
+            self.input_seq += 1;
+            net.send_input(
+                self.input_seq,
+                &vangers_net::NetControl {
+                    motor: player.control.motor,
+                    rudder: player.control.rudder,
+                    roll: player.control.roll,
+                    brake: player.control.brake,
+                    turbo: player.control.turbo,
+                    jump: player.jump,
+                },
+            );
+
+            // Process events from the server
+            let my_id = net.player_id;
+            for event in net.poll() {
+                match event {
+                    NetEvent::Welcome { player_id, level_name } => {
+                        log::info!(
+                            "Connected as player {} on level '{}'",
+                            player_id,
+                            level_name,
+                        );
+                    }
+                    NetEvent::PlayerJoined {
+                        player_id,
+                        player_name,
+                        car_name,
+                        color,
+                    } => {
+                        if Some(player_id) == my_id {
+                            continue;
+                        }
+                        log::info!(
+                            "Remote player {} ({}) joined with car={}",
+                            player_id,
+                            player_name,
+                            car_name,
+                        );
+                        // Look up the car model in our local database
+                        let car_info = self
+                            .db
+                            .cars
+                            .get(&car_name)
+                            .or_else(|| self.db.cars.values().next());
+                        if let Some(car) = car_info {
+                            let body_color = BodyColor::from_value(color);
+                            self.remote_agents.insert(
+                                player_id,
+                                RemoteAgent {
+                                    car: car.clone(),
+                                    color: body_color,
+                                    transform: space::Transform::IDENTITY,
+                                },
+                            );
+                        }
+                    }
+                    NetEvent::PlayerLeft { player_id } => {
+                        log::info!("Remote player {} left", player_id);
+                        self.remote_agents.remove(&player_id);
+                    }
+                    NetEvent::WorldState { agents, .. } => {
+                        for agent_state in &agents {
+                            if Some(agent_state.player_id) == my_id {
+                                // Apply server correction to local player
+                                let player = self
+                                    .agents
+                                    .iter_mut()
+                                    .find(|a| a.spirit == Spirit::Player);
+                                if let Some(player) = player {
+                                    if let Physics::Cpu {
+                                        ref mut transform, ..
+                                    } = player.physics
+                                    {
+                                        let t = &agent_state.transform;
+                                        transform.disp = Vec3::from(t.position);
+                                        transform.rot = glam::Quat::from_xyzw(
+                                            t.rotation[0],
+                                            t.rotation[1],
+                                            t.rotation[2],
+                                            t.rotation[3],
+                                        );
+                                        transform.scale = t.scale;
+                                    }
+                                }
+                            } else if let Some(remote) =
+                                self.remote_agents.get_mut(&agent_state.player_id)
+                            {
+                                let t = &agent_state.transform;
+                                remote.transform = space::Transform {
+                                    disp: Vec3::from(t.position),
+                                    rot: glam::Quat::from_xyzw(
+                                        t.rotation[0],
+                                        t.rotation[1],
+                                        t.rotation[2],
+                                        t.rotation[3],
+                                    ),
+                                    scale: t.scale,
+                                };
+                            }
+                        }
+                    }
+                    NetEvent::Disconnected => {
+                        log::warn!("Disconnected from server");
+                        self.remote_agents.clear();
+                    }
+                }
+            }
+        }
     }
 
     fn resize(&mut self, device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -845,6 +994,15 @@ impl Application for Game {
             };
             self.batcher
                 .add_model(&agent.car.model, transform, debug_shape_scale, agent.color);
+        }
+
+        // Render remote agents from the network
+        for remote in self.remote_agents.values() {
+            if clipper.clip(&remote.transform.disp) {
+                continue;
+            }
+            self.batcher
+                .add_model(&remote.car.model, &remote.transform, None, remote.color);
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

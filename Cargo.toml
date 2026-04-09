@@ -53,6 +53,7 @@ required-features = ["web"]
 m3d = { path = "lib/m3d" }
 splay = { path = "lib/splay" }
 tiff = { path = "lib/tiff" }
+vangers-net = { path = "lib/net" }
 # library
 bytemuck = "1"
 byteorder = "1.0"
