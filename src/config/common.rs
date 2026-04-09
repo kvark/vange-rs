@@ -178,9 +178,8 @@ pub fn load(file: File) -> Common {
     assert_eq!(fi.cur(), "COMMON:\t\t2");
     let traction_scale = 1.0 / 64.0;
     let angle_scale = {
-        use std::f32::consts::PI;
         const PI_BITS: usize = 11;
-        PI / (1 << PI_BITS) as f32
+        f32::consts::PI / (1 << PI_BITS) as f32
     };
     Common {
         nature: Nature {

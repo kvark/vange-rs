@@ -142,7 +142,7 @@ impl LevelView {
             level,
             cam,
             input: Input::Empty,
-            ui: settings.ui.clone(),
+            ui: settings.ui,
             last_mouse_pos: cgmath::vec2(-1.0, -1.0),
             alt_button_pressed: false,
             mouse_button_pressed: false,

@@ -16,7 +16,7 @@ type RefModel = Model<Mesh<String>, Mesh<String>>;
 type RefAnimatedMesh = AnimatedMesh<String>;
 type DrawAnimatedMesh = AnimatedMesh<Geometry<DrawTriangle>>;
 
-const MAT_NAME: &'static str = "object.mtl";
+const MAT_NAME: &str = "object.mtl";
 
 pub fn export_m3d(full: FullModel, model_path: &Path) {
     const BODY_PATH: &str = "body.obj";
@@ -151,9 +151,8 @@ pub fn import_a3d(mesh_path: &Path) -> DrawAnimatedMesh {
 }
 
 fn map_color_id(id: u32) -> ColorId {
-    use std::mem;
     if id < NUM_COLOR_IDS {
-        unsafe { mem::transmute(id) }
+        unsafe { std::mem::transmute::<u32, ColorId>(id) }
     } else {
         println!("Unknown ColorId {:?}", id);
         ColorId::Reserved
@@ -292,9 +291,9 @@ pub fn load_geometry<P: Polygon>(path: PathBuf) -> Geometry<P> {
         .iter()
         .map(|p| {
             [
-                p[0].min(NORMALIZER).max(-NORMALIZER) as i8,
-                p[1].min(NORMALIZER).max(-NORMALIZER) as i8,
-                p[2].min(NORMALIZER).max(-NORMALIZER) as i8,
+                p[0].clamp(-NORMALIZER, NORMALIZER) as i8,
+                p[1].clamp(-NORMALIZER, NORMALIZER) as i8,
+                p[2].clamp(-NORMALIZER, NORMALIZER) as i8,
             ]
         })
         .collect();

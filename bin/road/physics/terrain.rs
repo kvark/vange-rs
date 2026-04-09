@@ -11,7 +11,7 @@ pub struct CollisionPoint {
 #[derive(Debug)]
 pub struct CollisionData {
     pub soft: Option<CollisionPoint>,
-    pub hard_dominant: bool,
+    pub _hard_dominant: bool,
     pub hard: Option<CollisionPoint>,
 }
 
@@ -106,7 +106,7 @@ impl CollisionData {
         let threshold = 0.05 * total;
         CollisionData {
             soft: (if soft.count > 0.0 { &soft } else { &hard }).finish(0.0),
-            hard_dominant: hard.count * 2.0 >= total,
+            _hard_dominant: hard.count * 2.0 >= total,
             hard: hard.finish(threshold),
         }
     }
