@@ -20,6 +20,7 @@ members = [
 [features]
 default = []
 profile = ["profiling/profile-with-tracy"]
+web = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "console_log", "console_error_panic_hook", "getrandom", "getrandom_02", "dep:web-time"]
 
 [profile.release]
 panic = "abort"
@@ -39,6 +40,11 @@ path = "bin/level/main.rs"
 [[bin]]
 name = "convert"
 path = "bin/convert/main.rs"
+
+[[bin]]
+name = "web"
+path = "bin/web/main.rs"
+required-features = ["web"]
 
 [dependencies]
 # internals
@@ -71,8 +77,17 @@ winit = "0.30"
 # gui
 egui = "0.34"
 egui_plot = "0.35"
-egui-winit = "0.34"
+egui-winit = { version = "0.34", default-features = false, features = ["links", "wayland", "x11"] }
 egui-wgpu = { version = "0.34", default-features = false }
+# web
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "Element", "HtmlCanvasElement"] }
+console_log = { version = "1", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+getrandom_02 = { package = "getrandom", version = "0.2", optional = true, features = ["js"] }
+getrandom = { version = "0.3", optional = true, features = ["wasm_js"] }
+web-time = { version = "1", optional = true }
 
 [dev-dependencies]
 naga = { version = "29", features = ["wgsl-in"] }

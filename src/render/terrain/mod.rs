@@ -1636,7 +1636,6 @@ impl Context {
                     },
                 );
 
-                staging_buf.unmap();
                 dr.need_upload = false;
             }
 

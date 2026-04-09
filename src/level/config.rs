@@ -47,7 +47,7 @@ impl LevelConfig {
             path_palette: PathBuf::default(),
             path_data: PathBuf::default(),
             is_compressed: false,
-            size: (Power(1), Power(0)),
+            size: (Power(8), Power(8)), // 256x256
             geo: Power(0),
             section: Power(8),
             min_square: Power(0),

@@ -158,10 +158,35 @@ pub struct Fog {
     pub depth: f32,
 }
 
+impl Default for Render {
+    fn default() -> Self {
+        Render {
+            wgpu_trace_path: String::new(),
+            allow_tearing: false,
+            light: Light {
+                pos: [1.0, 2.0, 4.0, 0.0],
+                color: [1.0, 1.0, 1.0],
+                shadow: Shadow {
+                    size: 0,
+                    terrain: ShadowTerrain::RayTraced,
+                },
+            },
+            terrain: Terrain::RayTraced,
+            water: Water {},
+            fog: Fog {
+                color: [0.1, 0.2, 0.3],
+                depth: 50.0,
+            },
+            debug: DebugRender::default(),
+        }
+    }
+}
+
 #[derive(Clone, Deserialize)]
 pub struct Render {
     #[serde(default)]
     pub wgpu_trace_path: String,
+    #[serde(default)]
     pub allow_tearing: bool,
     pub light: Light,
     pub terrain: Terrain,
