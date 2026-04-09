@@ -5,7 +5,7 @@ use vangers::{config, level, render::debug::LineBuffer, space};
 
 use cgmath::prelude::*;
 
-use std::f32::EPSILON;
+const EPSILON: f32 = f32::EPSILON;
 
 mod rigid;
 mod terrain;
@@ -38,7 +38,7 @@ impl Default for Dynamo {
 
 impl Dynamo {
     pub fn change_traction(&mut self, delta: config::common::Traction) {
-        self.traction = (self.traction + delta).min(MAX_TRACTION).max(-MAX_TRACTION);
+        self.traction = (self.traction + delta).clamp(-MAX_TRACTION, MAX_TRACTION);
     }
 
     pub fn slow_down(&mut self, delta: config::common::Traction) {

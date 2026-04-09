@@ -226,30 +226,32 @@ struct VoxelDebugRender {
     lod_range: Option<Range<usize>>,
 }
 
+struct RayVoxelData {
+    bake_pipeline_layout: wgpu::PipelineLayout,
+    draw_pipeline_layout: wgpu::PipelineLayout,
+    draw_shader: wgpu::ShaderModule,
+    init_pipeline: wgpu::ComputePipeline,
+    mip_pipeline: wgpu::ComputePipeline,
+    draw_pipeline: wgpu::RenderPipeline,
+    bake_bind_group: wgpu::BindGroup,
+    draw_bind_group: wgpu::BindGroup,
+    constant_buffer: wgpu::Buffer,
+    update_buffer: wgpu::Buffer,
+    voxel_size: [u32; 3],
+    max_outer_steps: u32,
+    max_inner_steps: u32,
+    max_update_rects: usize,
+    max_update_texels: usize,
+    debug_alpha: f32,
+    debug_render: Option<VoxelDebugRender>,
+    mips: Vec<VoxelMip>,
+}
+
 enum Kind {
     Ray {
         pipeline: wgpu::RenderPipeline,
     },
-    RayVoxel {
-        bake_pipeline_layout: wgpu::PipelineLayout,
-        draw_pipeline_layout: wgpu::PipelineLayout,
-        draw_shader: wgpu::ShaderModule,
-        init_pipeline: wgpu::ComputePipeline,
-        mip_pipeline: wgpu::ComputePipeline,
-        draw_pipeline: wgpu::RenderPipeline,
-        bake_bind_group: wgpu::BindGroup,
-        draw_bind_group: wgpu::BindGroup,
-        constant_buffer: wgpu::Buffer,
-        update_buffer: wgpu::Buffer,
-        voxel_size: [u32; 3],
-        max_outer_steps: u32,
-        max_inner_steps: u32,
-        max_update_rects: usize,
-        max_update_texels: usize,
-        debug_alpha: f32,
-        debug_render: Option<VoxelDebugRender>,
-        mips: Vec<VoxelMip>,
-    },
+    RayVoxel(Box<RayVoxelData>),
     Slice {
         pipeline: wgpu::RenderPipeline,
         layer_count: u32,
@@ -447,13 +449,13 @@ impl Context {
             label: Some("terrain-ray-voxel"),
             layout: Some(pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &draw_shader,
+                module: draw_shader,
                 entry_point: Some("main"),
                 compilation_options: Default::default(),
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &draw_shader,
+                module: draw_shader,
                 entry_point: Some("draw_depth"),
                 compilation_options: Default::default(),
                 targets: &[],
@@ -1244,7 +1246,7 @@ impl Context {
                     ],
                 });
 
-                Kind::RayVoxel {
+                Kind::RayVoxel(Box::new(RayVoxelData {
                     bake_pipeline_layout,
                     draw_pipeline_layout,
                     draw_shader,
@@ -1263,7 +1265,7 @@ impl Context {
                     debug_alpha: 0.0,
                     debug_render,
                     mips,
-                }
+                }))
             }
             settings::Terrain::Sliced => {
                 let pipeline =
@@ -1371,14 +1373,10 @@ impl Context {
                 max_outer_steps,
                 max_inner_steps,
             } => match kind {
-                Kind::RayVoxel {
-                    ref draw_pipeline_layout,
-                    ref draw_shader,
-                    ..
-                } => ShadowKind::InheritRayVoxel {
+                Kind::RayVoxel(ref rv) => ShadowKind::InheritRayVoxel {
                     pipeline: Self::create_voxel_shadow_pipeline(
-                        draw_pipeline_layout,
-                        draw_shader,
+                        &rv.draw_pipeline_layout,
+                        &rv.draw_shader,
                         &gfx.device,
                     ),
                     max_outer_steps,
@@ -1444,34 +1442,25 @@ impl Context {
                     "ray_color",
                 );
             }
-            Kind::RayVoxel {
-                ref bake_pipeline_layout,
-                ref draw_pipeline_layout,
-                ref mut draw_shader,
-                ref mut init_pipeline,
-                ref mut mip_pipeline,
-                ref mut draw_pipeline,
-                ref mut debug_render,
-                ..
-            } => {
+            Kind::RayVoxel(ref mut rv) => {
                 let (init, mip, draw, shader) = Self::create_voxel_pipelines(
-                    bake_pipeline_layout,
-                    draw_pipeline_layout,
+                    &rv.bake_pipeline_layout,
+                    &rv.draw_pipeline_layout,
                     device,
                     self.color_format,
                 );
-                if let Some(ref mut debug) = *debug_render {
+                if let Some(ref mut debug) = rv.debug_render {
                     debug.pipeline = Self::create_voxel_debug_pipeline(
-                        draw_pipeline_layout,
+                        &rv.draw_pipeline_layout,
                         &shader,
                         device,
                         self.color_format,
                     );
                 }
-                *init_pipeline = init;
-                *mip_pipeline = mip;
-                *draw_pipeline = draw;
-                *draw_shader = shader;
+                rv.init_pipeline = init;
+                rv.mip_pipeline = mip;
+                rv.draw_pipeline = draw;
+                rv.draw_shader = shader;
             }
             Kind::Slice {
                 ref mut pipeline, ..
@@ -1516,14 +1505,10 @@ impl Context {
             ShadowKind::InheritRayVoxel {
                 ref mut pipeline, ..
             } => match self.kind {
-                Kind::RayVoxel {
-                    ref draw_pipeline_layout,
-                    ref draw_shader,
-                    ..
-                } => {
+                Kind::RayVoxel(ref rv) => {
                     *pipeline = Self::create_voxel_shadow_pipeline(
-                        draw_pipeline_layout,
-                        draw_shader,
+                        &rv.draw_pipeline_layout,
+                        &rv.draw_shader,
                         device,
                     );
                 }
@@ -1651,17 +1636,18 @@ impl Context {
             }
 
             match self.kind {
-                Kind::RayVoxel {
-                    ref init_pipeline,
-                    ref mip_pipeline,
-                    ref mips,
-                    ref bake_bind_group,
-                    ref update_buffer,
-                    voxel_size,
-                    max_update_rects,
-                    max_update_texels,
-                    ..
-                } => {
+                Kind::RayVoxel(ref rv) => {
+                    let RayVoxelData {
+                        ref init_pipeline,
+                        ref mip_pipeline,
+                        ref mips,
+                        ref bake_bind_group,
+                        ref update_buffer,
+                        voxel_size,
+                        max_update_rects,
+                        max_update_texels,
+                        ..
+                    } = **rv;
                     fn align_down(v: u16, tile: u32) -> i32 {
                         assert!(tile.is_power_of_two());
                         (v as u32 & !(tile - 1)) as i32
@@ -1885,21 +1871,14 @@ impl Context {
         }
 
         match self.kind {
-            Kind::RayVoxel {
-                ref constant_buffer,
-                voxel_size,
-                max_outer_steps,
-                max_inner_steps,
-                debug_alpha,
-                ..
-            } => {
+            Kind::RayVoxel(ref rv) => {
                 let constants = VoxelConstants {
-                    voxel_size,
+                    voxel_size: rv.voxel_size,
                     pad: 0,
                     max_depth: cam.depth_range().end,
-                    debug_alpha,
-                    max_outer_steps,
-                    max_inner_steps,
+                    debug_alpha: rv.debug_alpha,
+                    max_outer_steps: rv.max_outer_steps,
+                    max_inner_steps: rv.max_inner_steps,
                 };
                 let constant_update =
                     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1910,7 +1889,7 @@ impl Context {
                 encoder.copy_buffer_to_buffer(
                     &constant_update,
                     0,
-                    constant_buffer,
+                    &rv.constant_buffer,
                     0,
                     mem::size_of::<VoxelConstants>() as wgpu::BufferAddress,
                 );
@@ -2008,17 +1987,12 @@ impl Context {
                 max_inner_steps,
                 ..
             } => match self.kind {
-                Kind::RayVoxel {
-                    ref constant_buffer,
-                    voxel_size,
-                    debug_alpha,
-                    ..
-                } => {
+                Kind::RayVoxel(ref rv) => {
                     let constants = VoxelConstants {
-                        voxel_size,
+                        voxel_size: rv.voxel_size,
                         pad: 0,
                         max_depth: cam.depth_range().end,
-                        debug_alpha,
+                        debug_alpha: rv.debug_alpha,
                         max_outer_steps,
                         max_inner_steps,
                     };
@@ -2031,7 +2005,7 @@ impl Context {
                     encoder.copy_buffer_to_buffer(
                         &constant_update,
                         0,
-                        constant_buffer,
+                        &rv.constant_buffer,
                         0,
                         mem::size_of::<VoxelConstants>() as wgpu::BufferAddress,
                     );
@@ -2053,25 +2027,19 @@ impl Context {
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.draw_indexed(0..geo.num_indices, 0, 0..1);
             }
-            Kind::RayVoxel {
-                ref draw_pipeline,
-                ref draw_bind_group,
-                ref debug_render,
-                ref mips,
-                ..
-            } => {
-                pass.set_pipeline(draw_pipeline);
-                pass.set_bind_group(2, draw_bind_group, &[]);
+            Kind::RayVoxel(ref rv) => {
+                pass.set_pipeline(&rv.draw_pipeline);
+                pass.set_bind_group(2, &rv.draw_bind_group, &[]);
                 pass.draw(0..3, 0..1);
                 if let Some(VoxelDebugRender {
                     ref pipeline,
                     ref geo,
                     lod_range: Some(ref lod_range),
-                }) = *debug_render
+                }) = rv.debug_render
                 {
                     pass.set_pipeline(pipeline);
                     let mut instances = 0..0;
-                    for (i, mip) in mips[..lod_range.end.min(mips.len())].iter().enumerate() {
+                    for (i, mip) in rv.mips[..lod_range.end.min(rv.mips.len())].iter().enumerate() {
                         let count =
                             mip.extent.width * mip.extent.height * mip.extent.depth_or_array_layers;
                         if i < lod_range.start {
@@ -2123,12 +2091,9 @@ impl Context {
                 pass.draw_indexed(0..geo.num_indices, 0, 0..1);
             }
             ShadowKind::InheritRayVoxel { ref pipeline, .. } => match self.kind {
-                Kind::RayVoxel {
-                    ref draw_bind_group,
-                    ..
-                } => {
+                Kind::RayVoxel(ref rv) => {
                     pass.set_pipeline(pipeline);
-                    pass.set_bind_group(2, draw_bind_group, &[]);
+                    pass.set_bind_group(2, &rv.draw_bind_group, &[]);
                     pass.draw(0..3, 0..1);
                 }
                 _ => unreachable!(),
@@ -2138,17 +2103,11 @@ impl Context {
 
     pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
         match self.kind {
-            Kind::RayVoxel {
-                ref mut max_outer_steps,
-                ref mut max_inner_steps,
-                ref mut debug_alpha,
-                ref mut debug_render,
-                ..
-            } => {
-                ui.add(egui::Slider::new(max_outer_steps, 0..=100).text("Max outer steps"));
-                ui.add(egui::Slider::new(max_inner_steps, 0..=100).text("Max inner steps"));
-                ui.add(egui::Slider::new(debug_alpha, 0.0..=1.0).text("Debug alpha"));
-                if let Some(ref mut debug) = *debug_render {
+            Kind::RayVoxel(ref mut rv) => {
+                ui.add(egui::Slider::new(&mut rv.max_outer_steps, 0..=100).text("Max outer steps"));
+                ui.add(egui::Slider::new(&mut rv.max_inner_steps, 0..=100).text("Max inner steps"));
+                ui.add(egui::Slider::new(&mut rv.debug_alpha, 0.0..=1.0).text("Debug alpha"));
+                if let Some(ref mut debug) = rv.debug_render {
                     let mut debug_voxels = debug.lod_range.is_some();
                     ui.checkbox(&mut debug_voxels, "Debug voxels");
                     let mut lod_start = debug.lod_range.clone().map_or(4, |r| r.start);

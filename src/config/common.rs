@@ -179,7 +179,7 @@ pub fn load(file: File) -> Common {
     let traction_scale = 1.0 / 64.0;
     let angle_scale = {
         const PI_BITS: usize = 11;
-        f32::consts::PI / (1 << PI_BITS) as f32
+        std::f32::consts::PI / (1 << PI_BITS) as f32
     };
     Common {
         nature: Nature {

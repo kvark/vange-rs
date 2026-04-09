@@ -347,9 +347,9 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
         .for_each(|source_group| {
             //Note: a separate file per group is required
             let mut vmc = File::open(path).unwrap();
-            let data_size: i16 = source_group
+            let data_size: i16 = **source_group
                 .iter()
-                .map(|(_, (_, size))| *size)
+                .map(|&(_, (_, ref size))| size)
                 .max()
                 .unwrap();
             let mut data = vec![0u8; data_size as usize];
