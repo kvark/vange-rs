@@ -19,7 +19,7 @@
 
 use byteorder::{LittleEndian as E, WriteBytesExt};
 
-use std::io::{Result as IoResult, Seek, SeekFrom};
+use std::io::{Result as IoResult, Seek};
 
 const TY_ASCII: u16 = 2;
 const TY_SHORT: u16 = 3;
@@ -125,7 +125,7 @@ pub fn save<W: Seek + WriteBytesExt>(mut tiff: W, images: &[Image<'_>]) -> IoRes
         }
         cur_offset += 4 + 2 + fields.len() as u32 * 12;
         data_offset += total_bytes as u32;
-        assert_eq!(tiff.seek(SeekFrom::Current(0)).unwrap(), cur_offset as u64);
+        assert_eq!(tiff.stream_position().unwrap(), cur_offset as u64);
     }
     // gap
     assert!(cur_offset < data_start);

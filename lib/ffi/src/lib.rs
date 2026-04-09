@@ -16,7 +16,6 @@ use slotmap::{DefaultKey, Key as _, SlotMap};
 use std::{
     ffi::{CStr, CString},
     fs::File,
-    mem,
     os::raw,
     ptr, slice,
     sync::Arc,
@@ -312,6 +311,8 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     ptr::NonNull::new(ptr)
 }
 
+/// # Safety
+/// Raw FFI - caller must ensure valid pointers.
 #[no_mangle]
 pub unsafe extern "C" fn rv_exit(ctx: *mut Context) {
     let _ctx = Box::from_raw(ctx);
@@ -398,6 +399,8 @@ pub extern "C" fn rv_map_exit(ctx: &mut Context) {
     ctx.level = None;
 }
 
+/// # Safety
+/// Raw FFI - caller must ensure valid pointers.
 #[no_mangle]
 pub unsafe extern "C" fn rv_map_update_data(ctx: &mut Context, region: Rect) {
     let lc = ctx.level.as_mut().unwrap();
@@ -433,6 +436,8 @@ pub unsafe extern "C" fn rv_map_update_data(ctx: &mut Context, region: Rect) {
         });
 }
 
+/// # Safety
+/// Raw FFI - caller must ensure valid pointers.
 #[no_mangle]
 pub unsafe extern "C" fn rv_map_update_palette(
     ctx: &mut Context,

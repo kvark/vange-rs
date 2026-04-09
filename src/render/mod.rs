@@ -529,7 +529,7 @@ impl Render {
                 &self.fog_config,
                 level.geometry.height,
                 cam,
-                viewport.unwrap_or_else(|| Rect {
+                viewport.unwrap_or(Rect {
                     x: 0,
                     y: 0,
                     w: self.screen_size.width as u16,

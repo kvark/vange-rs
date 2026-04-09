@@ -3,7 +3,7 @@ use byteorder::{LittleEndian as E, ReadBytesExt, WriteBytesExt};
 use std::{
     fs::File,
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 mod config;
@@ -187,8 +187,8 @@ fn print_palette(data: &[[u8; 4]], info: &str) {
     print!("Palette - {}:", info);
     for i in 0..3 {
         print!("\n\t");
-        for j in 0..0x100 {
-            print!("{:02X}", data[j][i]);
+        for item in data.iter().take(0x100) {
+            print!("{:02X}", item[i]);
         }
     }
     println!();
@@ -237,7 +237,7 @@ pub fn load_flood(config: &LevelConfig) -> Box<[u8]> {
     let size = (config.size.0.as_value(), config.size.1.as_value());
     let flood_size = size.1 >> config.section.as_power();
 
-    let vpr_file = match File::open(&config.path_data.with_extension("vpr")) {
+    let vpr_file = match File::open(config.path_data.with_extension("vpr")) {
         Ok(file) => file,
         Err(_) => return vec![0; flood_size as usize].into_boxed_slice(),
     };
@@ -297,7 +297,7 @@ impl LevelData {
         }
 
         Splay::write_trivial(&mut vmc);
-        assert_eq!(vmc.seek(SeekFrom::Current(0)).unwrap(), base_offset);
+        assert_eq!(vmc.stream_position().unwrap(), base_offset);
 
         self.height
             .chunks(self.size.0 as _)
@@ -349,7 +349,7 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
             let mut vmc = File::open(path).unwrap();
             let data_size: i16 = source_group
                 .iter()
-                .map(|(_, (_, &size))| size)
+                .map(|(_, (_, size))| *size)
                 .max()
                 .unwrap();
             let mut data = vec![0u8; data_size as usize];
@@ -384,8 +384,8 @@ pub fn load_vmp(path: &Path, size: (i32, i32)) -> LevelData {
     level
 }
 
-fn path_empty(path_buf: &PathBuf) -> bool {
-    path_buf.as_path().to_str() == Some("")
+fn path_empty(path_buf: &Path) -> bool {
+    path_buf.to_str() == Some("")
 }
 
 pub fn load(config: &LevelConfig, geometry: &settings::Geometry) -> Level {

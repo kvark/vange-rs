@@ -175,7 +175,7 @@ impl Render {
     pub fn get_device_limits(&self, adapter_limits: &wgpu::Limits, slices: u32) -> wgpu::Limits {
         let (max_width, max_height) = (2048usize, 16384usize);
         match self.terrain {
-            Terrain::RayTraced { .. } | Terrain::Sliced { .. } | Terrain::Painted { .. } => {
+            Terrain::RayTraced | Terrain::Sliced | Terrain::Painted => {
                 wgpu::Limits {
                     max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
                     ..wgpu::Limits::downlevel_webgl2_defaults()

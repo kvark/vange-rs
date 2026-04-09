@@ -468,7 +468,7 @@ impl Game {
             level,
             agents,
             stats: Stats::default(),
-            ui: settings.ui.clone(),
+            ui: settings.ui,
             cam,
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
