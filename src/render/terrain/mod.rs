@@ -58,8 +58,8 @@ unsafe impl Pod for Constants {}
 unsafe impl Zeroable for Constants {}
 
 struct ScatterConstants {
-    origin: cgmath::Point2<f32>,
-    dir: cgmath::Vector2<f32>,
+    origin: glam::Vec2,
+    dir: glam::Vec2,
     sample_y: Range<f32>,
     sample_x: Range<f32>,
 }
@@ -114,33 +114,33 @@ impl BakeConstants {
 //Note: this is very similar to `visible_bounds_at()`
 // but it searches in a different parameter space
 fn compute_scatter_constants(cam: &Camera, height_scale: u32) -> ScatterConstants {
-    use cgmath::{prelude::*, Point2, Point3, Vector2, Vector3};
+    use glam::{Vec2, Vec3};
 
-    let cam_origin = Point2::new(cam.loc.x, cam.loc.y);
+    let cam_origin = Vec2::new(cam.loc.x, cam.loc.y);
     let cam_dir = {
         let vec = cam.dir();
-        let v2 = Vector2::new(vec.x, vec.y);
-        if v2.magnitude2() > 0.0 {
+        let v2 = Vec2::new(vec.x, vec.y);
+        if v2.length_squared() > 0.0 {
             v2.normalize()
         } else {
-            Vector2::new(0.0, 1.0)
+            Vec2::new(0.0, 1.0)
         }
     };
 
-    fn intersect(base: &Vector3<f32>, target: Point3<f32>, height: u32) -> Point2<f32> {
-        let dir = target.to_vec() - *base;
+    fn intersect(base: &Vec3, target: Vec3, height: u32) -> Vec2 {
+        let dir = target - *base;
         let t = if dir.z == 0.0 {
             0.0
         } else {
             (height as f32 - base.z) / dir.z
         };
-        let end = base + dir * t.max(0.0);
-        Point2::new(end.x, end.y)
+        let end = *base + dir * t.max(0.0);
+        Vec2::new(end.x, end.y)
     }
 
-    let mx_invp = cam.get_view_proj().invert().unwrap();
+    let mx_invp = cam.get_view_proj().inverse();
     let y_center = {
-        let center = mx_invp.transform_point(Point3::new(0.0, 0.0, 0.0));
+        let center = mx_invp.project_point3(Vec3::new(0.0, 0.0, 0.0));
         let center_base = intersect(&cam.loc, center, 0);
         (center_base - cam_origin).dot(cam_dir)
     };
@@ -150,14 +150,14 @@ fn compute_scatter_constants(cam: &Camera, height_scale: u32) -> ScatterConstant
     let v = 1.0; // set to smaller for debugging
 
     let local_positions = [
-        Point3::new(v, v, 0.0),
-        Point3::new(-v, v, 0.0),
-        Point3::new(v, -v, 0.0),
-        Point3::new(-v, -v, 0.0),
+        Vec3::new(v, v, 0.0),
+        Vec3::new(-v, v, 0.0),
+        Vec3::new(v, -v, 0.0),
+        Vec3::new(-v, -v, 0.0),
     ];
 
     for &lp in &local_positions {
-        let wp = mx_invp.transform_point(lp);
+        let wp = mx_invp.project_point3(lp);
         let pa = intersect(&cam.loc, wp, 0);
         let pb = intersect(&cam.loc, wp, height_scale);
         for p in &[pa, pb] {
@@ -1829,10 +1829,9 @@ impl Context {
         let sc = if let Kind::Scatter { .. } = self.kind {
             compute_scatter_constants(cam, level_height)
         } else {
-            use cgmath::EuclideanSpace;
             let bounds = cam.visible_bounds();
             ScatterConstants {
-                origin: cgmath::Point2::from_vec(cam.loc.truncate()),
+                origin: cam.loc.truncate(),
                 dir: cam.dir().truncate(),
                 sample_x: bounds.start.x..bounds.end.x,
                 sample_y: bounds.start.y..bounds.end.y,
@@ -1946,11 +1945,9 @@ impl Context {
         cam: &Camera,
         screen_size: wgpu::Extent3d,
     ) {
-        use cgmath::EuclideanSpace;
-
         let bounds = cam.visible_bounds();
         let sc = ScatterConstants {
-            origin: cgmath::Point2::from_vec(cam.loc.truncate()),
+            origin: cam.loc.truncate(),
             dir: cam.dir().truncate(),
             sample_x: bounds.start.x..bounds.end.x,
             sample_y: bounds.start.y..bounds.end.y,

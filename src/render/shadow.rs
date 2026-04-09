@@ -1,9 +1,9 @@
 use crate::{
     config::settings,
-    space::{Camera, Projection},
+    space::{Camera, OrthoParams, Projection},
 };
 
-use cgmath::{EuclideanSpace as _, One as _, Rotation as _};
+use glam::{Quat, Vec3};
 
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 
@@ -34,32 +34,37 @@ impl Shadow {
         Shadow {
             view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
             cam: Camera {
-                loc: cgmath::Zero::zero(),
-                rot: cgmath::Quaternion::one(),
-                scale: cgmath::Vector3::new(1.0, 1.0, 1.0),
+                loc: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                scale: Vec3::new(1.0, 1.0, 1.0),
                 proj: Projection::ortho(1, 1, 0.0..1.0),
             },
             size,
         }
     }
 
-    fn get_local_point(&self, world_pt: cgmath::Point3<f32>) -> cgmath::Point3<f32> {
-        let diff = world_pt.to_vec() - self.cam.loc;
-        cgmath::Point3::origin() + self.cam.rot.invert() * diff
+    fn get_local_point(&self, world_pt: Vec3) -> Vec3 {
+        let diff = world_pt - self.cam.loc;
+        self.cam.rot.inverse() * diff
     }
 
     pub(super) fn update_view(&mut self, light_pos: &[f32; 4], cam: &Camera, max_height: f32) {
-        let dir = cgmath::Vector4::from(*light_pos).truncate();
+        let dir = Vec3::new(light_pos[0], light_pos[1], light_pos[2]);
         let up = if dir.x == 0.0 && dir.y == 0.0 {
-            cgmath::Vector3::unit_y()
+            Vec3::Y
         } else {
-            cgmath::Vector3::unit_z()
+            Vec3::Z
         };
 
-        self.cam.rot = cgmath::Quaternion::look_at(dir, up).invert();
-        self.cam.loc = cam.intersect_height(0.0).to_vec();
+        // Build rotation matrix looking along dir
+        let forward = dir.normalize();
+        let right = forward.cross(up).normalize();
+        let up_corrected = right.cross(forward);
+        self.cam.rot =
+            Quat::from_mat3(&glam::Mat3::from_cols(right, up_corrected, -forward)).inverse();
+        self.cam.loc = cam.intersect_height(0.0);
 
-        let mut p = cgmath::Ortho {
+        let mut p = OrthoParams {
             left: 0.0f32,
             right: 0.0,
             top: 0.0,
@@ -79,7 +84,7 @@ impl Shadow {
             .iter()
             .cloned()
             .chain(points_hi.iter().cloned())
-            .chain(points_hi.iter().map(|&p| p + offset))
+            .chain(points_hi.iter().map(|&pp| pp + offset))
         {
             let local = self.get_local_point(pt);
             p.left = p.left.min(local.x);

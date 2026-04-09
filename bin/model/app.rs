@@ -1,5 +1,4 @@
 use crate::boilerplate::Application;
-use cgmath::Transform as _;
 use vangers::{config, level, model, render, space};
 
 use log::info;
@@ -16,7 +15,7 @@ pub struct ResourceView {
     object: render::object::Context,
     transform: space::Transform,
     camera: space::Camera,
-    rotation: (cgmath::Rad<f32>, cgmath::Rad<f32>),
+    rotation: (f32, f32),
     light_config: config::settings::Light,
 }
 
@@ -27,11 +26,11 @@ impl ResourceView {
         gfx: &render::GraphicsContext,
     ) -> Self {
         let camera = space::Camera {
-            loc: cgmath::vec3(0.0, -200.0, 100.0),
-            rot: cgmath::Rotation3::from_angle_x::<cgmath::Rad<_>>(cgmath::Angle::turn_div_6()),
-            scale: cgmath::vec3(1.0, 1.0, 1.0),
-            proj: space::Projection::Perspective(cgmath::PerspectiveFov {
-                fovy: cgmath::Deg(45.0).into(),
+            loc: glam::Vec3::new(0.0, -200.0, 100.0),
+            rot: glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_3),
+            scale: glam::Vec3::new(1.0, 1.0, 1.0),
+            proj: space::Projection::Perspective(space::PerspectiveParams {
+                fovy: 45.0f32.to_radians(),
                 aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
                 near: 5.0,
                 far: 400.0,
@@ -85,31 +84,31 @@ impl ResourceView {
             car,
             global,
             object,
-            transform: cgmath::Decomposed {
+            transform: space::Transform {
                 scale: 1.0,
-                disp: cgmath::Vector3::unit_z(),
-                rot: cgmath::One::one(),
+                disp: glam::Vec3::Z,
+                rot: glam::Quat::IDENTITY,
             },
             camera,
-            rotation: (cgmath::Rad(0.), cgmath::Rad(0.)),
+            rotation: (0.0, 0.0),
             light_config: settings.render.light,
         }
     }
 
-    fn rotate_z(&mut self, angle: cgmath::Rad<f32>) {
-        let other = cgmath::Decomposed {
+    fn rotate_z(&mut self, angle: f32) {
+        let other = space::Transform {
             scale: 1.0,
-            rot: cgmath::Rotation3::from_angle_z(angle),
-            disp: cgmath::Zero::zero(),
+            rot: glam::Quat::from_rotation_z(angle),
+            disp: glam::Vec3::ZERO,
         };
         self.transform = other.concat(&self.transform);
     }
 
-    fn rotate_x(&mut self, angle: cgmath::Rad<f32>) {
-        let other = cgmath::Decomposed {
+    fn rotate_x(&mut self, angle: f32) {
+        let other = space::Transform {
             scale: 1.0,
-            rot: cgmath::Rotation3::from_angle_x(angle),
-            disp: cgmath::Zero::zero(),
+            rot: glam::Quat::from_rotation_x(angle),
+            disp: glam::Vec3::ZERO,
         };
         self.transform = self.transform.concat(&other);
     }
@@ -119,7 +118,7 @@ impl Application for ResourceView {
     fn on_key(&mut self, key: winit::keyboard::KeyCode, state: winit::event::ElementState) -> bool {
         use winit::{event::ElementState, keyboard::KeyCode};
 
-        let angle = cgmath::Rad(2.0);
+        let angle = 2.0f32;
         match state {
             ElementState::Pressed => match key {
                 KeyCode::Escape => return false,
@@ -130,8 +129,8 @@ impl Application for ResourceView {
                 _ => (),
             },
             ElementState::Released => match key {
-                KeyCode::KeyA | KeyCode::KeyD => self.rotation.0 = cgmath::Rad(0.0),
-                KeyCode::KeyW | KeyCode::KeyS => self.rotation.1 = cgmath::Rad(0.0),
+                KeyCode::KeyA | KeyCode::KeyD => self.rotation.0 = 0.0,
+                KeyCode::KeyW | KeyCode::KeyS => self.rotation.1 = 0.0,
                 _ => (),
             },
         }
@@ -140,11 +139,11 @@ impl Application for ResourceView {
     }
 
     fn update(&mut self, _device: &wgpu::Device, queue: &wgpu::Queue, delta: f32) {
-        if self.rotation.0 != cgmath::Rad(0.) {
+        if self.rotation.0 != 0.0 {
             let rot = self.rotation.0 * delta;
             self.rotate_z(rot);
         }
-        if self.rotation.1 != cgmath::Rad(0.) {
+        if self.rotation.1 != 0.0 {
             let rot = self.rotation.1 * delta;
             self.rotate_x(rot);
         }

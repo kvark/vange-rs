@@ -172,15 +172,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "approx"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f2a05fd1bd10b2527e20a2cd32d8873d115b8b39fe219ee25f42a8aca6ba278"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "arboard"
 version = "3.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -405,17 +396,6 @@ name = "cfg_aliases"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
-
-[[package]]
-name = "cgmath"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a98d30140e3296250832bbaaff83b27dcd6fa3cc70fb6f1f3e5c9c0023b5317"
-dependencies = [
- "approx",
- "num-traits",
- "rand",
-]
 
 [[package]]
 name = "clap"
@@ -1115,6 +1095,12 @@ dependencies = [
  "log",
  "xml-rs",
 ]
+
+[[package]]
+name = "glam"
+version = "0.29.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8babf46d4c1c9d92deac9f7be466f76dfc4482b6452fc5024b5e8daf6ffeb3ee"
 
 [[package]]
 name = "glow"
@@ -2640,8 +2626,8 @@ version = "0.1.0"
 dependencies = [
  "android_logger",
  "bytemuck",
- "cgmath",
  "env_logger",
+ "glam",
  "log",
  "log-panics",
  "m3d",
@@ -3245,7 +3231,6 @@ version = "0.3.0"
 dependencies = [
  "bytemuck",
  "byteorder",
- "cgmath",
  "clap",
  "egui",
  "egui-wgpu",
@@ -3253,6 +3238,7 @@ dependencies = [
  "egui_plot",
  "env_logger",
  "fnv",
+ "glam",
  "log",
  "m3d",
  "naga",
