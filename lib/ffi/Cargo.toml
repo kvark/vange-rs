@@ -15,7 +15,7 @@ m3d = { path = "../m3d" }
 bytemuck = "1"
 log = "0.4"
 env_logger = { version = "0.11", optional = true }
-futures = "0.3"
+pollster = "0.4"
 cgmath = "0.18"
 ron = "0.12"
 slotmap = "1"
