@@ -294,7 +294,7 @@ impl Application for LevelView {
             Input::Ver { dir, alt: true, .. } if dir != 0.0 => {
                 let rot =
                     glam::Quat::from_rotation_x(rotation_speed * delta * dir);
-                self.cam.rot = self.cam.rot * rot;
+                self.cam.rot *= rot;
             }
             Input::DepQuant(dir) => {
                 let vec = glam::Vec3::Z;

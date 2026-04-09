@@ -3,7 +3,7 @@
 
 use vangers::{config, level, render::debug::LineBuffer, space};
 
-use cgmath::prelude::*;
+use glam::{Mat3, Quat, Vec3};
 
 const EPSILON: f32 = f32::EPSILON;
 
@@ -14,24 +14,24 @@ const MAX_TRACTION: config::common::Traction = 4.0;
 
 #[derive(Debug)]
 struct AccelerationVectors {
-    f: cgmath::Vector3<f32>, // linear
-    k: cgmath::Vector3<f32>, // angular
+    f: Vec3, // linear
+    k: Vec3, // angular
 }
 
 pub struct Dynamo {
     pub traction: config::common::Traction,
-    pub rudder: cgmath::Rad<f32>,
-    pub linear_velocity: cgmath::Vector3<f32>,
-    pub angular_velocity: cgmath::Vector3<f32>,
+    pub rudder: f32,
+    pub linear_velocity: Vec3,
+    pub angular_velocity: Vec3,
 }
 
 impl Default for Dynamo {
     fn default() -> Self {
         Dynamo {
             traction: 0.,
-            rudder: cgmath::Rad(0.),
-            linear_velocity: cgmath::Vector3::zero(),
-            angular_velocity: cgmath::Vector3::zero(),
+            rudder: 0.0,
+            linear_velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
         }
     }
 }
@@ -50,8 +50,8 @@ impl Dynamo {
     }
 }
 
-pub fn jump_dir(power: f32) -> cgmath::Vector3<f32> {
-    5.0 * power * cgmath::vec3(0.0, 3.0, 10.0).normalize()
+pub fn jump_dir(power: f32) -> Vec3 {
+    5.0 * power * Vec3::new(0.0, 3.0, 10.0).normalize()
 }
 
 pub fn step(
@@ -69,21 +69,21 @@ pub fn step(
 ) {
     let speed_correction_factor = dt / common.nature.time_delta0;
     let acc_global = AccelerationVectors {
-        f: cgmath::vec3(0.0, 0.0, -common.nature.gravity),
-        k: cgmath::vec3(0.0, 0.0, 0.0),
+        f: Vec3::new(0.0, 0.0, -common.nature.gravity),
+        k: Vec3::new(0.0, 0.0, 0.0),
     };
-    let rot_inv = transform.rot.invert();
+    let rot_inv = transform.rot.inverse();
     log::debug!("dt {}, num {}", dt, common.nature.num_calls_analysis);
     let flood_level = level.flood_map[0] as f32;
     // Z axis in the local coordinate space
-    let z_axis = rot_inv * cgmath::Vector3::unit_z();
+    let z_axis = rot_inv * Vec3::Z;
     let device_modulation = 1.0;
     let dt_impulse = 1.0;
 
     let mut rigid = {
         let phys = &car.model.body.physics;
         let jacobian =
-            cgmath::Matrix3::from(phys.jacobi) * (transform.scale * transform.scale / phys.volume);
+            Mat3::from_cols_array_2d(&phys.jacobi) * (transform.scale * transform.scale / phys.volume);
         rigid::RigidBody::new(&jacobian, dynamo.linear_velocity, dynamo.angular_velocity)
     };
 
@@ -105,7 +105,7 @@ pub fn step(
     let mut float_count = 0;
     let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
     let stand_on_wheels =
-        z_axis.z > 0.0 && (transform.rot * cgmath::Vector3::unit_x()).z.abs() < 0.7;
+        z_axis.z > 0.0 && (transform.rot * Vec3::X).z.abs() < 0.7;
     let modulation = 1.0;
     let mut acc_cur = AccelerationVectors {
         f: rot_inv * acc_global.f,
@@ -114,16 +114,16 @@ pub fn step(
 
     let mut down_minus_up = 0i32;
     let mut acc_springs = AccelerationVectors {
-        f: cgmath::Vector3::zero(),
-        k: cgmath::Vector3::zero(),
+        f: Vec3::ZERO,
+        k: Vec3::ZERO,
     };
 
     let mut sum_count = 0usize;
-    let mut sum_rg0 = cgmath::Vector3::zero();
+    let mut sum_rg0 = Vec3::ZERO;
     let mut sum_df = 0.;
 
     for (bound_poly_id, poly) in car.model.shape.polygons.iter().enumerate() {
-        let r = cgmath::Vector3::from(poly.middle) * (transform.scale * car.physics.scale_bound);
+        let r = Vec3::from(poly.middle) * (transform.scale * car.physics.scale_bound);
         let rg0 = transform.rot * r;
         let rglob = rg0 + transform.disp;
         log::debug!(
@@ -148,7 +148,7 @@ pub fn step(
             }
             _ => {}
         };
-        let poly_norm = cgmath::Vector3::from(poly.normal).normalize();
+        let poly_norm = Vec3::from(poly.normal).normalize();
         if z_axis.dot(poly_norm) < 0.0 {
             let cdata = terrain::CollisionData::collide_low(
                 poly,
@@ -179,11 +179,11 @@ pub fn step(
                     hard: Some(ref cp), ..
                 } if mostly_horisontal => {
                     log::debug!("\t\t\tmostly horisontal");
-                    let r1 = rot_inv * cgmath::vec3(cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0); // ignore vertical
+                    let r1 = rot_inv * Vec3::new(cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0); // ignore vertical
                     let pv = rigid.velocity_at(r1);
                     let normal = {
                         let bm = car.model.body.bbox.max;
-                        let n = cgmath::vec3(r1.x / bm[0], r1.y / bm[1], r1.z / bm[2]);
+                        let n = Vec3::new(r1.x / bm[0], r1.y / bm[1], r1.z / bm[2]);
                         n.normalize()
                     };
                     let dot = pv.dot(normal);
@@ -196,12 +196,12 @@ pub fn step(
                 } => {
                     //TODO: let r1 = rot_inv * (cp.pos - origin);
                     let r1 =
-                        rot_inv * cgmath::vec3(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
+                        rot_inv * Vec3::new(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
                     let pv = rigid.velocity_at(r1);
                     if pv.dot(z_axis) < 0.0 {
                         let vec = if stand_on_wheels {
                             // ignore XY
-                            cgmath::vec3(0.0, 0.0, pv.z)
+                            Vec3::new(0.0, 0.0, pv.z)
                         } else {
                             let projected = poly_norm * poly_norm.dot(pv);
                             common.impulse.k_friction * pv
@@ -218,7 +218,7 @@ pub fn step(
                 let df = df0.min(common.impulse.elastic_restriction);
                 log::debug!("\t\tbound[{}] dF.z = {}, rg0={:?}", bound_poly_id, df, rg0);
 
-                //let impulse = cgmath::vec3(0., 0., df);
+                //let impulse = Vec3::new(0., 0., df);
                 //acc_springs.f += impulse;
                 //acc_springs.k += rg0.cross(impulse);
                 acc_springs.f.z += df;
@@ -240,10 +240,10 @@ pub fn step(
                     // Red: center -> collision point
                     lbuf.add(transform.disp.into(), rglob.into(), 0xFF000000);
                     // Yellow: collision point -> linear force
-                    let up = rglob + cgmath::vec3(0.0, 0.0, df0);
+                    let up = rglob + Vec3::new(0.0, 0.0, df0);
                     lbuf.add(rglob.into(), up.into(), 0xFFFF0000);
                     // Purple: collision point -> angular force
-                    let end = rglob + df * cgmath::vec3(rg0.y, -rg0.x, 0.0);
+                    let end = rglob + df * Vec3::new(rg0.y, -rg0.x, 0.0);
                     lbuf.add(rglob.into(), end.into(), 0xFF00FF00);
                 }
             }
@@ -265,13 +265,13 @@ pub fn step(
     }
 
     // apply drag
-    let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(rigid.vel.magnitude());
+    let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(rigid.vel.length());
     let mut w_drag = common.drag.free.w
         * common
             .drag
             .speed
             .w
-            .powf(rigid.angular_velocity().magnitude2()); //why mag2?
+            .powf(rigid.angular_velocity().length_squared()); //why mag2?
     if wheels_touch > 0 {
         //TODO: why `ln()`?
         let speed =
@@ -288,10 +288,10 @@ pub fn step(
                 / (car.model.wheels.len() as f32);
         let rudder_vec = {
             let (sin, cos) = dynamo.rudder.sin_cos();
-            cgmath::vec3(cos, -sin, 0.0)
+            Vec3::new(cos, -sin, 0.0)
         };
         for wheel in car.model.wheels.iter() {
-            let pw = transform.transform_point(cgmath::Point3::from(wheel.pos));
+            let pw = transform.transform_point(Vec3::from(wheel.pos));
             let detect_wheel_hits = false;
             if detect_wheel_hits {
                 let dist = terrain::get_distance_to_terrain(level, pw);
@@ -305,7 +305,7 @@ pub fn step(
             } else {
                 car.model.body.bbox.min[0]
             };
-            let pos = cgmath::vec3(rx_max, wheel.pos[1], wheel.pos[2]) * transform.scale;
+            let pos = Vec3::new(rx_max, wheel.pos[1], wheel.pos[2]) * transform.scale;
             let pv = rigid.velocity_at(pos);
 
             acc_cur.f.y += f_traction_per_wheel;
@@ -315,7 +315,7 @@ pub fn step(
                 let dir = if wheel.steer != 0 {
                     rudder_vec
                 } else {
-                    cgmath::Vector3::unit_x()
+                    Vec3::X
                 };
 
                 let dot = dir.dot(pv);
@@ -330,7 +330,7 @@ pub fn step(
 
     if spring_touch + wheels_touch != 0 {
         //|| in_water
-        let tmp = cgmath::Vector3::new(
+        let tmp = Vec3::new(
             0.0,
             0.0,
             car.physics.z_offset_of_mass_center * transform.scale,
@@ -350,8 +350,8 @@ pub fn step(
             car.model.body.bbox.min[0]
         };
         rigid.add_raw(
-            cgmath::vec3(0.0, 0.0, df),
-            cgmath::vec3(0.0, df * x_edge * transform.scale, 0.0),
+            Vec3::new(0.0, 0.0, df),
+            Vec3::new(0.0, df * x_edge * transform.scale, 0.0),
         );
     }
 
@@ -365,7 +365,7 @@ pub fn step(
         v_drag *= common.drag.spring.v;
         w_drag *= common.drag.spring.w;
     }
-    let (v_mag, w_mag) = (v_vel.magnitude(), w_vel.magnitude());
+    let (v_mag, w_mag) = (v_vel.length(), w_vel.length());
     if stand_on_wheels && v_mag < common.drag.abs_min.v && w_mag < common.drag.abs_min.w {
         let v_pow = common.drag.abs_min.v / (v_mag + EPSILON);
         let w_pow = common.drag.abs_min.w / (w_mag + EPSILON);
@@ -379,10 +379,10 @@ pub fn step(
         let r_diff_sign = down_minus_up.signum() as f32;
         let vs = v_vel - r_diff_sign * local_z_scaled.cross(w_vel);
 
-        let angle = cgmath::Rad(-dt * w_mag);
-        let vel_rot_inv = cgmath::Quaternion::from_axis_angle(w_vel / (w_mag + EPSILON), angle);
+        let angle = -dt * w_mag;
+        let vel_rot_inv = Quat::from_axis_angle(w_vel / (w_mag + EPSILON), angle);
         transform.disp += (transform.rot * vs) * dt;
-        transform.rot = transform.rot * vel_rot_inv.invert();
+        transform.rot *= vel_rot_inv.inverse();
         v_vel = vel_rot_inv * v_vel;
         w_vel = vel_rot_inv * w_vel;
         log::debug!(
@@ -400,14 +400,14 @@ pub fn step(
     if let Some(ref mut lbuf) = line_buffer {
         // Note: velocity and acceleration are in local space
         let rot = transform.rot;
-        let ba = transform.disp + cgmath::vec3(3.0, 0.0, 10.0);
+        let ba = transform.disp + Vec3::new(3.0, 0.0, 10.0);
         let xf = ba + rot * acc_cur.f;
         let xk = ba + rot * acc_cur.k;
         lbuf.add(ba.into(), xf.into(), 0x0000FF00);
         lbuf.add(ba.into(), xk.into(), 0xFF00FF00);
         // Yellow: center -> angular springs total
         lbuf.add(ba.into(), (ba + acc_springs.k).into(), 0xFFFF0000);
-        let bv = transform.disp + cgmath::vec3(-3.0, 0.0, 10.0);
+        let bv = transform.disp + Vec3::new(-3.0, 0.0, 10.0);
         let xv = bv + rot * v_vel;
         let xw = bv + rot * w_vel * 10.0; //TEMP
         lbuf.add(bv.into(), xv.into(), 0x00FF0000);
@@ -417,9 +417,9 @@ pub fn step(
     dynamo.linear_velocity = v_vel;
     dynamo.angular_velocity = w_vel;
     // unsteer
-    if dynamo.rudder.0 != 0.0 && wheels_touch != 0 {
-        let change = dynamo.rudder.0 * v_vel.y * dt * common.car.rudder_k_decr;
-        dynamo.rudder.0 -= dynamo.rudder.0.signum() * change.abs();
+    if dynamo.rudder != 0.0 && wheels_touch != 0 {
+        let change = dynamo.rudder * v_vel.y * dt * common.car.rudder_k_decr;
+        dynamo.rudder -= dynamo.rudder.signum() * change.abs();
     }
     // slow down
     dynamo.slow_down(dt * common.car.traction_decr);
