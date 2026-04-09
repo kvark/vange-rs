@@ -22,7 +22,7 @@ pub struct ResourceView {
 
 impl ResourceView {
     pub fn new(
-        path: Option<&String>,
+        path: Option<&str>,
         settings: &config::settings::Settings,
         gfx: &render::GraphicsContext,
     ) -> Self {
