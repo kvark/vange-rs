@@ -220,11 +220,30 @@ impl Agent {
     }
 }
 
-/// A remote player received via network, rendered locally.
+/// A remote player received via network, rendered locally with interpolation.
 struct RemoteAgent {
     car: config::car::CarInfo,
     color: BodyColor,
-    transform: space::Transform,
+    /// Previous snapshot transform (interpolation source).
+    prev_transform: space::Transform,
+    /// Target snapshot transform (interpolation target).
+    target_transform: space::Transform,
+    /// Current interpolated transform used for rendering.
+    render_transform: space::Transform,
+    /// Interpolation progress [0..1], advances each frame.
+    interp_t: f32,
+}
+
+/// Multiplayer connection state for the lobby UI.
+struct MultiplayerState {
+    /// Address input field.
+    server_addr: String,
+    /// Player name input field.
+    player_name: String,
+    /// Status message shown in the UI.
+    status: String,
+    /// Whether we're currently connected.
+    connected: bool,
 }
 
 #[derive(Default)]
@@ -317,6 +336,7 @@ pub struct Game {
     agents: Vec<Agent>,
     remote_agents: HashMap<PlayerId, RemoteAgent>,
     net: Option<NetworkClient>,
+    mp_state: MultiplayerState,
     input_seq: u32,
     stats: Stats,
     ui: config::settings::Ui,
@@ -481,11 +501,12 @@ impl Game {
             agents.push(agent);
         }
 
-        // Connect to server if requested
-        let net = server_addr.map(|addr| {
+        // Connect to server if requested via CLI
+        let connected = server_addr.is_some();
+        let net = server_addr.as_ref().map(|addr| {
             let player = agents.iter().find(|a| a.spirit == Spirit::Player).unwrap();
             NetworkClient::connect(
-                &addr,
+                addr,
                 &player_name,
                 &player.car_name,
                 player.color as u8,
@@ -501,6 +522,16 @@ impl Game {
             agents,
             remote_agents: HashMap::new(),
             net,
+            mp_state: MultiplayerState {
+                server_addr: server_addr.unwrap_or_else(|| "127.0.0.1:7800".to_string()),
+                player_name,
+                status: if connected {
+                    "Connecting...".to_string()
+                } else {
+                    String::new()
+                },
+                connected,
+            },
             input_seq: 0,
             stats: Stats::default(),
             ui: settings.ui,
@@ -758,6 +789,11 @@ impl Application for Game {
                             player_id,
                             level_name,
                         );
+                        self.mp_state.status = format!(
+                            "Connected (player {}, level '{}')",
+                            player_id, level_name
+                        );
+                        self.mp_state.connected = true;
                     }
                     NetEvent::PlayerJoined {
                         player_id,
@@ -787,7 +823,10 @@ impl Application for Game {
                                 RemoteAgent {
                                     car: car.clone(),
                                     color: body_color,
-                                    transform: space::Transform::IDENTITY,
+                                    prev_transform: space::Transform::IDENTITY,
+                                    target_transform: space::Transform::IDENTITY,
+                                    render_transform: space::Transform::IDENTITY,
+                                    interp_t: 1.0,
                                 },
                             );
                         }
@@ -798,8 +837,19 @@ impl Application for Game {
                     }
                     NetEvent::WorldState { agents, .. } => {
                         for agent_state in &agents {
+                            let server_transform = space::Transform {
+                                disp: Vec3::from(agent_state.transform.position),
+                                rot: glam::Quat::from_xyzw(
+                                    agent_state.transform.rotation[0],
+                                    agent_state.transform.rotation[1],
+                                    agent_state.transform.rotation[2],
+                                    agent_state.transform.rotation[3],
+                                ),
+                                scale: agent_state.transform.scale,
+                            };
+
                             if Some(agent_state.player_id) == my_id {
-                                // Apply server correction to local player
+                                // Client-side prediction: soft-correct toward server
                                 let player = self
                                     .agents
                                     .iter_mut()
@@ -809,40 +859,53 @@ impl Application for Game {
                                         ref mut transform, ..
                                     } = player.physics
                                     {
-                                        let t = &agent_state.transform;
-                                        transform.disp = Vec3::from(t.position);
-                                        transform.rot = glam::Quat::from_xyzw(
-                                            t.rotation[0],
-                                            t.rotation[1],
-                                            t.rotation[2],
-                                            t.rotation[3],
+                                        // Client-side prediction: blend toward server
+                                        // Low rate = trust local physics more (less jitter)
+                                        // High rate = trust server more (less desync)
+                                        const BLEND: f32 = 0.3;
+                                        transform.disp = transform.disp.lerp(
+                                            server_transform.disp,
+                                            BLEND,
                                         );
-                                        transform.scale = t.scale;
+                                        transform.rot = transform.rot.slerp(
+                                            server_transform.rot,
+                                            BLEND,
+                                        );
+                                        transform.scale = server_transform.scale;
                                     }
                                 }
                             } else if let Some(remote) =
                                 self.remote_agents.get_mut(&agent_state.player_id)
                             {
-                                let t = &agent_state.transform;
-                                remote.transform = space::Transform {
-                                    disp: Vec3::from(t.position),
-                                    rot: glam::Quat::from_xyzw(
-                                        t.rotation[0],
-                                        t.rotation[1],
-                                        t.rotation[2],
-                                        t.rotation[3],
-                                    ),
-                                    scale: t.scale,
-                                };
+                                // Push current target to prev, set new target
+                                remote.prev_transform = remote.target_transform;
+                                remote.target_transform = server_transform;
+                                remote.interp_t = 0.0;
                             }
                         }
                     }
                     NetEvent::Disconnected => {
                         log::warn!("Disconnected from server");
                         self.remote_agents.clear();
+                        self.mp_state.connected = false;
+                        self.mp_state.status = "Disconnected".to_string();
                     }
                 }
             }
+        }
+
+        // Advance remote agent interpolation
+        // Server tick rate is ~20 Hz, so each snapshot lasts ~0.05s
+        let interp_speed = delta * 20.0; // normalize to server tick rate
+        for remote in self.remote_agents.values_mut() {
+            remote.interp_t = (remote.interp_t + interp_speed).min(1.0);
+            let t = remote.interp_t;
+            remote.render_transform = space::Transform {
+                disp: remote.prev_transform.disp.lerp(remote.target_transform.disp, t),
+                rot: remote.prev_transform.rot.slerp(remote.target_transform.rot, t),
+                scale: remote.prev_transform.scale
+                    + (remote.target_transform.scale - remote.prev_transform.scale) * t,
+            };
         }
     }
 
@@ -973,6 +1036,57 @@ impl Application for Game {
             let name = selected_car.clone();
             player.change_car(&self.db.cars[&name], name);
         }
+
+        // Multiplayer panel
+        egui::Window::new("Multiplayer")
+            .default_open(false)
+            .show(context, |ui| {
+                if self.mp_state.connected {
+                    ui.label(format!("Connected to {}", self.mp_state.server_addr));
+                    if let Some(ref net) = self.net {
+                        if let Some(id) = net.player_id {
+                            ui.label(format!("Player ID: {}", id));
+                        }
+                    }
+                    ui.label(format!(
+                        "Remote players: {}",
+                        self.remote_agents.len()
+                    ));
+                    if ui.button("Disconnect").clicked() {
+                        self.net = None;
+                        self.remote_agents.clear();
+                        self.mp_state.connected = false;
+                        self.mp_state.status = "Disconnected".to_string();
+                    }
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.label("Server:");
+                        ui.text_edit_singleline(&mut self.mp_state.server_addr);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut self.mp_state.player_name);
+                    });
+                    if ui.button("Connect").clicked() {
+                        let player = self
+                            .agents
+                            .iter()
+                            .find(|a| a.spirit == Spirit::Player)
+                            .unwrap();
+                        self.net = Some(NetworkClient::connect(
+                            &self.mp_state.server_addr,
+                            &self.mp_state.player_name,
+                            &player.car_name,
+                            player.color as u8,
+                        ));
+                        self.mp_state.connected = true;
+                        self.mp_state.status = "Connecting...".to_string();
+                    }
+                }
+                if !self.mp_state.status.is_empty() {
+                    ui.label(&self.mp_state.status);
+                }
+            });
     }
 
     fn draw(&mut self, device: &wgpu::Device, targets: ScreenTargets) -> wgpu::CommandBuffer {
@@ -996,13 +1110,13 @@ impl Application for Game {
                 .add_model(&agent.car.model, transform, debug_shape_scale, agent.color);
         }
 
-        // Render remote agents from the network
+        // Render remote agents from the network (using interpolated transform)
         for remote in self.remote_agents.values() {
-            if clipper.clip(&remote.transform.disp) {
+            if clipper.clip(&remote.render_transform.disp) {
                 continue;
             }
             self.batcher
-                .add_model(&remote.car.model, &remote.transform, None, remote.color);
+                .add_model(&remote.car.model, &remote.render_transform, None, remote.color);
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

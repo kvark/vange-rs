@@ -15,11 +15,14 @@ struct ServerProcess {
 
 impl ServerProcess {
     fn start() -> Self {
-        let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
+        let port = NEXT_PORT.fetch_add(2, Ordering::Relaxed);
+        let ws_port = port + 1;
         let child = Command::new(env!("CARGO_BIN_EXE_vangers-server"))
             .args([
                 "--port",
                 &port.to_string(),
+                "--ws-port",
+                &ws_port.to_string(),
                 "--level",
                 "test",
                 "--tick-rate",
