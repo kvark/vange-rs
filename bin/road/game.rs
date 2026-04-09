@@ -112,8 +112,8 @@ impl Agent {
             Physics::Cpu { ref mut dynamo, .. } => dynamo,
         };
         if self.control.rudder != 0.0 {
-            let angle = dynamo.rudder.0 + common.car.rudder_step * 2.0 * dt * self.control.rudder;
-            dynamo.rudder.0 = angle.min(common.car.rudder_max).max(-common.car.rudder_max);
+            let angle = dynamo.rudder + common.car.rudder_step * 2.0 * dt * self.control.rudder;
+            dynamo.rudder = angle.min(common.car.rudder_max).max(-common.car.rudder_max);
         }
         if self.control.motor != 0.0 {
             dynamo.change_traction(self.control.motor * dt * common.car.traction_incr);
@@ -171,10 +171,10 @@ impl Agent {
         );
 
         if let Some(focus) = focus_point {
-            let wrap = cgmath::vec2(level.size.0 as f32, (level.size.1 >> 1) as f32);
-            let offset = cgmath::Point3::from_vec(transform.disp) - focus;
-            transform.disp = focus.to_vec()
-                + cgmath::vec3(
+            let wrap = glam::Vec2::new(level.size.0 as f32, (level.size.1 >> 1) as f32);
+            let offset = transform.disp - focus;
+            transform.disp = focus
+                + Vec3::new(
                     (offset.x + 0.5 * wrap.x).rem_euclid(wrap.x) - 0.5 * wrap.x,
                     (offset.y + 0.5 * wrap.y).rem_euclid(wrap.y) - 0.5 * wrap.y,
                     offset.z,
@@ -239,20 +239,20 @@ enum CameraStyle {
 impl CameraStyle {
     fn new(config: &config::settings::Camera) -> Self {
         // the new angle is relative to the surface perpendicular
-        let angle = cgmath::Deg(config.angle as f32) - cgmath::Deg::turn_div_4();
+        let angle = (config.angle as f32).to_radians() - std::f32::consts::FRAC_PI_2;
         if config.speed > 0.0 {
             CameraStyle::Follow {
                 follow: space::Follow {
                     angle_x: angle,
-                    offset: cgmath::vec3(0.0, config.offset, config.height),
+                    offset: Vec3::new(0.0, config.offset, config.height),
                     speed: config.speed,
                 },
-                ground_anchor: angle > cgmath::Deg(15.0),
+                ground_anchor: angle > 15.0f32.to_radians(),
             }
         } else {
             //Note: this appears to be broken ATM
             CameraStyle::Simple(space::Direction {
-                view: cgmath::vec3(0.0, angle.sin(), -angle.cos()),
+                view: Vec3::new(0.0, angle.sin(), -angle.cos()),
                 height: config.height,
             })
         }
@@ -260,7 +260,7 @@ impl CameraStyle {
 }
 
 struct Clipper {
-    mx_vp: cgmath::Matrix4<f32>,
+    mx_vp: glam::Mat4,
     threshold: f32,
 }
 
@@ -272,8 +272,8 @@ impl Clipper {
         }
     }
 
-    fn clip(&self, pos: &cgmath::Vector3<f32>) -> bool {
-        let p = self.mx_vp * pos.extend(1.0);
+    fn clip(&self, pos: &Vec3) -> bool {
+        let p = self.mx_vp * glam::Vec4::from((*pos, 1.0));
         let w = p.w * self.threshold;
         p.x < -w || p.x > w || p.y < -w || p.y > w
     }
@@ -352,13 +352,13 @@ impl Game {
 
         let depth = settings.game.camera.depth_range;
         let cam = space::Camera {
-            loc: cgmath::vec3(coords.0 as f32, coords.1 as f32, 200.0),
-            rot: cgmath::One::one(),
-            scale: cgmath::vec3(1.0, -1.0, 1.0),
+            loc: Vec3::new(coords.0 as f32, coords.1 as f32, 200.0),
+            rot: glam::Quat::IDENTITY,
+            scale: Vec3::new(1.0, -1.0, 1.0),
             proj: match settings.game.camera.projection {
                 config::settings::Projection::Perspective => {
-                    let pf = cgmath::PerspectiveFov {
-                        fovy: cgmath::Deg(45.0).into(),
+                    let pf = space::PerspectiveParams {
+                        fovy: 45.0f32.to_radians(),
                         aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
                         near: depth.0,
                         far: depth.1,
@@ -413,7 +413,7 @@ impl Game {
             settings.car.id.clone(),
             settings.car.color,
             coords,
-            cgmath::Rad::turn_div_2(),
+            std::f32::consts::PI,
             &level,
         );
         player_agent.spirit = Spirit::Player;
@@ -454,7 +454,7 @@ impl Game {
                 car_id.clone(),
                 color,
                 (x, y),
-                rng.gen(),
+                rng.gen_range(0.0..std::f32::consts::TAU),
                 &level,
             );
             agents.push(agent);
@@ -477,7 +477,7 @@ impl Game {
     }
 
     fn _move_cam(&mut self, step: f32) {
-        let mut back = self.cam.rot * cgmath::Vector3::unit_z();
+        let mut back = self.cam.rot * Vec3::Z;
         back.z = 0.0;
         self.cam.loc -= back.normalize() * step;
     }
@@ -502,8 +502,8 @@ impl Application for Game {
                     self.input.tick = None;
                     if self.input.is_paused {
                         self.input.is_paused = false;
-                        self.cam.loc = center.disp + cgmath::vec3(0.0, 0.0, 200.0);
-                        self.cam.rot = cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0);
+                        self.cam.loc = center.disp + Vec3::new(0.0, 0.0, 200.0);
+                        self.cam.rot = glam::Quat::IDENTITY;
                     } else {
                         self.input.is_paused = true;
                         self.cam.focus_on(&center);
@@ -521,9 +521,9 @@ impl Application for Game {
                         ref mut dynamo,
                     } = player.physics
                     {
-                        transform.rot = cgmath::One::one();
-                        dynamo.linear_velocity = cgmath::Vector3::zero();
-                        dynamo.angular_velocity = cgmath::Vector3::zero();
+                        transform.rot = glam::Quat::IDENTITY;
+                        dynamo.linear_velocity = Vec3::ZERO;
+                        dynamo.angular_velocity = Vec3::ZERO;
                     }
                 }
                 KeyCode::KeyA => self.input.spin_hor = -self.cam.scale.y,
@@ -600,8 +600,8 @@ impl Application for Game {
 
                 self.cam.rotate_focus(
                     &target,
-                    cgmath::Rad(2.0 * delta * self.input.spin_hor),
-                    cgmath::Rad(delta * self.input.spin_ver),
+                    2.0 * delta * self.input.spin_hor,
+                    delta * self.input.spin_ver,
                 );
 
                 return;
@@ -771,7 +771,9 @@ impl Application for Game {
                     ref mut ground_anchor,
                 } = self.cam_style
                 {
-                    ui.add(egui::Slider::new(&mut follow.angle_x.0, -105.0..=0.0).text("Angle"));
+                    let mut angle_deg = follow.angle_x.to_degrees();
+                    ui.add(egui::Slider::new(&mut angle_deg, -105.0..=0.0).text("Angle"));
+                    follow.angle_x = angle_deg.to_radians();
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::DragValue::new(&mut follow.offset.x)

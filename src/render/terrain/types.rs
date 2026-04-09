@@ -3,7 +3,7 @@ use crate::space::Camera;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt as _;
 
-use std::{mem, ops::Range};
+use std::ops::Range;
 
 pub(super) const SCATTER_GROUP_SIZE: [u32; 3] = [16, 16, 1];
 // Has to agree with the shader
@@ -48,8 +48,8 @@ unsafe impl Pod for Constants {}
 unsafe impl Zeroable for Constants {}
 
 pub(super) struct ScatterConstants {
-    pub origin: cgmath::Point2<f32>,
-    pub dir: cgmath::Vector2<f32>,
+    pub origin: glam::Vec2,
+    pub dir: glam::Vec2,
     pub sample_y: Range<f32>,
     pub sample_x: Range<f32>,
 }
@@ -104,33 +104,33 @@ impl BakeConstants {
 //Note: this is very similar to `visible_bounds_at()`
 // but it searches in a different parameter space
 pub(super) fn compute_scatter_constants(cam: &Camera, height_scale: u32) -> ScatterConstants {
-    use cgmath::{prelude::*, Point2, Point3, Vector2, Vector3};
+    use glam::{Vec2, Vec3};
 
-    let cam_origin = Point2::new(cam.loc.x, cam.loc.y);
+    let cam_origin = Vec2::new(cam.loc.x, cam.loc.y);
     let cam_dir = {
         let vec = cam.dir();
-        let v2 = Vector2::new(vec.x, vec.y);
-        if v2.magnitude2() > 0.0 {
+        let v2 = Vec2::new(vec.x, vec.y);
+        if v2.length_squared() > 0.0 {
             v2.normalize()
         } else {
-            Vector2::new(0.0, 1.0)
+            Vec2::new(0.0, 1.0)
         }
     };
 
-    fn intersect(base: &Vector3<f32>, target: Point3<f32>, height: u32) -> Point2<f32> {
-        let dir = target.to_vec() - *base;
+    fn intersect(base: &Vec3, target: Vec3, height: u32) -> Vec2 {
+        let dir = target - *base;
         let t = if dir.z == 0.0 {
             0.0
         } else {
             (height as f32 - base.z) / dir.z
         };
-        let end = base + dir * t.max(0.0);
-        Point2::new(end.x, end.y)
+        let end = *base + dir * t.max(0.0);
+        Vec2::new(end.x, end.y)
     }
 
-    let mx_invp = cam.get_view_proj().invert().unwrap();
+    let mx_invp = cam.get_view_proj().inverse();
     let y_center = {
-        let center = mx_invp.transform_point(Point3::new(0.0, 0.0, 0.0));
+        let center = mx_invp.project_point3(Vec3::new(0.0, 0.0, 0.0));
         let center_base = intersect(&cam.loc, center, 0);
         (center_base - cam_origin).dot(cam_dir)
     };
@@ -140,14 +140,14 @@ pub(super) fn compute_scatter_constants(cam: &Camera, height_scale: u32) -> Scat
     let v = 1.0; // set to smaller for debugging
 
     let local_positions = [
-        Point3::new(v, v, 0.0),
-        Point3::new(-v, v, 0.0),
-        Point3::new(v, -v, 0.0),
-        Point3::new(-v, -v, 0.0),
+        Vec3::new(v, v, 0.0),
+        Vec3::new(-v, v, 0.0),
+        Vec3::new(v, -v, 0.0),
+        Vec3::new(-v, -v, 0.0),
     ];
 
     for &lp in &local_positions {
-        let wp = mx_invp.transform_point(lp);
+        let wp = mx_invp.project_point3(lp);
         let pa = intersect(&cam.loc, wp, 0);
         let pb = intersect(&cam.loc, wp, height_scale);
         for p in &[pa, pb] {
