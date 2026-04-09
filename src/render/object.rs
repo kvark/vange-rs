@@ -60,6 +60,17 @@ impl BodyColor {
             Self::Gray => "gray",
         }
     }
+
+    pub fn from_value(v: u8) -> Self {
+        match v as u32 {
+            21 => Self::Green,
+            7 => Self::Red,
+            8 => Self::Blue,
+            9 => Self::Yellow,
+            10 => Self::Gray,
+            _ => Self::Green,
+        }
+    }
 }
 
 #[repr(C)]

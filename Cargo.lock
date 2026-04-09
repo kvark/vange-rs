@@ -3175,6 +3175,7 @@ dependencies = [
  "serde_scan",
  "splay",
  "tiff",
+ "vangers-net",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
