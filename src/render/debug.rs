@@ -135,8 +135,8 @@ impl Context {
             Ok(ref shape_bgl) => {
                 let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("debug"),
-                    bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout, shape_bgl],
-                    push_constant_ranges: &[],
+                    bind_group_layouts: &[Some(&global.bind_group_layout), Some(&bind_group_layout), Some(shape_bgl)],
+                    immediate_size: 0,
                 });
                 Ok(pl)
             }
@@ -239,7 +239,8 @@ impl Context {
                         },
                         vertex: wgpu::VertexState {
                             module: &shader,
-                            entry_point: "main_vs",
+                            entry_point: Some("main_vs"),
+                            compilation_options: Default::default(),
                             buffers: &[
                                 wgpu::VertexBufferLayout {
                                     array_stride: mem::size_of::<Position>() as wgpu::BufferAddress,
@@ -263,7 +264,8 @@ impl Context {
                         },
                         fragment: Some(wgpu::FragmentState {
                             module: &shader,
-                            entry_point: "main_fs",
+                            entry_point: Some("main_fs"),
+                            compilation_options: Default::default(),
                             targets: &[Some(wgpu::ColorTargetState {
                                 format: self.color_format,
                                 blend: Some(wgpu::BlendState {
@@ -276,13 +278,14 @@ impl Context {
                         primitive,
                         depth_stencil: Some(wgpu::DepthStencilState {
                             format: DEPTH_FORMAT,
-                            depth_write_enabled,
-                            depth_compare,
+                            depth_write_enabled: Some(depth_write_enabled),
+                            depth_compare: Some(depth_compare),
                             stencil: Default::default(),
                             bias: Default::default(),
                         }),
                         multisample: wgpu::MultisampleState::default(),
-                        multiview: None,
+                        multiview_mask: None,
+                        cache: None,
                     });
                     self.pipelines_line
                         .insert((visibility, color_rate), pipeline);

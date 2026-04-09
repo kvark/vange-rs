@@ -332,7 +332,8 @@ impl Context {
             layout: Some(layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "main",
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
@@ -345,7 +346,8 @@ impl Context {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
                 targets,
             }),
             primitive: wgpu::PrimitiveState {
@@ -354,13 +356,14 @@ impl Context {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Always,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
+            cache: None,
         })
     }
 
@@ -381,13 +384,17 @@ impl Context {
             label: Some("Voxel init"),
             layout: Some(bake_layout),
             module: &bake_shader,
-            entry_point: "init",
+            entry_point: Some("init"),
+            compilation_options: Default::default(),
+            cache: None,
         });
         let mip_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Voxel mip"),
             layout: Some(bake_layout),
             module: &bake_shader,
-            entry_point: "mip",
+            entry_point: Some("mip"),
+            compilation_options: Default::default(),
+            cache: None,
         });
 
         let draw_shader = super::load_shader("terrain/voxel-draw", &substitutions, device).unwrap();
@@ -402,12 +409,14 @@ impl Context {
             layout: Some(draw_layout),
             vertex: wgpu::VertexState {
                 module: &draw_shader,
-                entry_point: "main",
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &draw_shader,
-                entry_point: "draw_color",
+                entry_point: Some("draw_color"),
+                compilation_options: Default::default(),
                 targets: &color_descs,
             }),
             primitive: wgpu::PrimitiveState {
@@ -416,13 +425,14 @@ impl Context {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Always,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
+            cache: None,
         });
 
         (init_pipeline, mip_pipeline, draw_pipeline, draw_shader)
@@ -438,12 +448,14 @@ impl Context {
             layout: Some(pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &draw_shader,
-                entry_point: "main",
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &draw_shader,
-                entry_point: "draw_depth",
+                entry_point: Some("draw_depth"),
+                compilation_options: Default::default(),
                 targets: &[],
             }),
             primitive: wgpu::PrimitiveState {
@@ -452,13 +464,14 @@ impl Context {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: SHADOW_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Always,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
+            cache: None,
         })
     }
 
@@ -473,12 +486,14 @@ impl Context {
             layout: Some(pipeline_layout),
             vertex: wgpu::VertexState {
                 module: draw_shader,
-                entry_point: "vert_bound",
+                entry_point: Some("vert_bound"),
+                compilation_options: Default::default(),
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
                 module: draw_shader,
-                entry_point: "draw_bound",
+                entry_point: Some("draw_bound"),
+                compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -492,13 +507,14 @@ impl Context {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
+            cache: None,
         })
     }
 
@@ -513,12 +529,14 @@ impl Context {
             layout: Some(layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "main_vs",
+                entry_point: Some("main_vs"),
+                compilation_options: Default::default(),
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "main_fs",
+                entry_point: Some("main_fs"),
+                compilation_options: Default::default(),
                 targets: &[Some(color_format.into())],
             }),
             primitive: wgpu::PrimitiveState {
@@ -527,13 +545,14 @@ impl Context {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
+            cache: None,
         })
     }
 
@@ -548,12 +567,14 @@ impl Context {
             layout: Some(layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vertex",
+                entry_point: Some("vertex"),
+                compilation_options: Default::default(),
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fragment",
+                entry_point: Some("fragment"),
+                compilation_options: Default::default(),
                 targets: &[Some(color_format.into())],
             }),
             primitive: wgpu::PrimitiveState {
@@ -564,13 +585,14 @@ impl Context {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
+            cache: None,
         })
     }
 
@@ -588,13 +610,17 @@ impl Context {
             label: Some("terrain-scatter"),
             layout: Some(layout),
             module: &shader,
-            entry_point: "main",
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
         });
         let clear_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("terrain-scatter-clear"),
             layout: Some(layout),
             module: &shader,
-            entry_point: "clear",
+            entry_point: Some("clear"),
+            compilation_options: Default::default(),
+            cache: None,
         });
 
         let copy_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -602,12 +628,14 @@ impl Context {
             layout: Some(layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "copy_vs",
+                entry_point: Some("copy_vs"),
+                compilation_options: Default::default(),
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "copy_fs",
+                entry_point: Some("copy_fs"),
+                compilation_options: Default::default(),
                 targets: &[Some(color_format.into())],
             }),
             primitive: wgpu::PrimitiveState {
@@ -616,13 +644,14 @@ impl Context {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
+            cache: None,
         });
 
         (scatter_pipeline, clear_pipeline, copy_pipeline)
@@ -740,7 +769,7 @@ impl Context {
         gfx.queue.write_texture(
             table_texture.as_image_copy(),
             bytemuck::cast_slice(&terrain_table),
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(table_extent.width * 4),
                 rows_per_image: None,
@@ -756,7 +785,7 @@ impl Context {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
         let table_sampler = gfx.device.create_sampler(&wgpu::SamplerDescriptor {
@@ -765,7 +794,7 @@ impl Context {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
@@ -919,8 +948,8 @@ impl Context {
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("terrain"),
-                bind_group_layouts: &[&global.bind_group_layout, &bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&global.bind_group_layout), Some(&bind_group_layout)],
+                immediate_size: 0,
             });
 
         let raytrace_geo = Geometry::new(
@@ -1005,8 +1034,8 @@ impl Context {
                     gfx.device
                         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                             label: Some("Voxel bake"),
-                            bind_group_layouts: &[&bake_bg_layout, &bind_group_layout],
-                            push_constant_ranges: &[],
+                            bind_group_layouts: &[Some(&bake_bg_layout), Some(&bind_group_layout)],
+                            immediate_size: 0,
                         });
 
                 let draw_bg_layout =
@@ -1052,11 +1081,11 @@ impl Context {
                         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                             label: Some("voxel"),
                             bind_group_layouts: &[
-                                &global.bind_group_layout,
-                                &bind_group_layout,
-                                &draw_bg_layout,
+                                Some(&global.bind_group_layout),
+                                Some(&bind_group_layout),
+                                Some(&draw_bg_layout),
                             ],
-                            push_constant_ranges: &[],
+                            immediate_size: 0,
                         });
 
                 let (init_pipeline, mip_pipeline, draw_pipeline, draw_shader) =
@@ -1173,21 +1202,20 @@ impl Context {
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                let mip_buffer = gfx.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("Bake mip constant"),
-                    size: MAXIMUM_UNIFORM_BUFFER_ALIGNMENT as wgpu::BufferAddress
-                        * mip_level_count as wgpu::BufferAddress,
-                    usage: wgpu::BufferUsages::UNIFORM,
-                    mapped_at_creation: true,
-                });
-                {
-                    let mut mapping = mip_buffer.slice(..).get_mapped_range_mut();
-                    for i in 0..mip_level_count {
+                let mip_data = {
+                    let total = MAXIMUM_UNIFORM_BUFFER_ALIGNMENT * mip_level_count as usize;
+                    let mut data = vec![0u8; total];
+                    for i in 0..mip_level_count as usize {
                         // initializing the least significant byte of the word
-                        mapping[i as usize * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT] = i as u8;
+                        data[i * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT] = i as u8;
                     }
-                }
-                mip_buffer.unmap();
+                    data
+                };
+                let mip_buffer = gfx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Bake mip constant"),
+                    contents: &mip_data,
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
 
                 let bake_bind_group = gfx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Bake group"),
@@ -1299,11 +1327,11 @@ impl Context {
                         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                             label: Some("scatter"),
                             bind_group_layouts: &[
-                                &global.bind_group_layout,
-                                &bind_group_layout,
-                                &local_bg_layout,
+                                Some(&global.bind_group_layout),
+                                Some(&bind_group_layout),
+                                Some(&local_bg_layout),
                             ],
-                            push_constant_ranges: &[],
+                            immediate_size: 0,
                         });
 
                 let (scatter_pipeline, clear_pipeline, copy_pipeline) =
@@ -1554,7 +1582,7 @@ impl Context {
                 0,
                 &self.surface_uni_buf,
                 0,
-                mem::size_of::<SurfaceConstants>() as _,
+                mem::size_of::<SurfaceConstants>() as wgpu::BufferAddress,
             );
             // Update acceleration structures
             self.dirty_rects.push(super::DirtyRect {
@@ -1577,35 +1605,31 @@ impl Context {
                 //Note: we are uploading the whole rows currently. We could instead upload
                 // only the relevant sub-rectangle, but managing `bytes_per_row` becomes annoying.
 
-                let total_size =
-                    dr.rect.h as wgpu::BufferAddress * level.size.0 as wgpu::BufferAddress * 2;
-                let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("staging level update"),
-                    size: total_size,
-                    usage: wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: true,
-                });
-                {
-                    let mut mapping = staging_buf.slice(..).get_mapped_range_mut();
-                    for (y_off, line) in mapping.chunks_mut(level.size.0 as usize * 2).enumerate() {
-                        let base = (dr.rect.y as usize + y_off) * level.size.0 as usize;
-                        for x in 0..level.size.0 as usize {
-                            line[2 * x + 0] = level.height[base + x];
-                            line[2 * x + 1] = level.meta[base + x];
-                        }
+                let row_stride = level.size.0 as usize * 2;
+                let mut staging_data = vec![0u8; dr.rect.h as usize * row_stride];
+                for (y_off, line) in staging_data.chunks_mut(row_stride).enumerate() {
+                    let base = (dr.rect.y as usize + y_off) * level.size.0 as usize;
+                    for x in 0..level.size.0 as usize {
+                        line[2 * x] = level.height[base + x];
+                        line[2 * x + 1] = level.meta[base + x];
                     }
                 }
+                let staging_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("staging level update"),
+                    contents: &staging_data,
+                    usage: wgpu::BufferUsages::COPY_SRC,
+                });
 
                 encoder.copy_buffer_to_texture(
-                    wgpu::ImageCopyBuffer {
+                    wgpu::TexelCopyBufferInfo {
                         buffer: &staging_buf,
-                        layout: wgpu::ImageDataLayout {
+                        layout: wgpu::TexelCopyBufferLayout {
                             offset: 0,
                             bytes_per_row: Some(level.size.0 as u32 * 2),
                             rows_per_image: None,
                         },
                     },
-                    wgpu::ImageCopyTexture {
+                    wgpu::TexelCopyTextureInfo {
                         texture: &self.terrain_texture,
                         mip_level: 0,
                         origin: wgpu::Origin3d {
@@ -1711,15 +1735,16 @@ impl Context {
                     for i in 0..update_buffer_contents.len() {
                         encoder.copy_buffer_to_buffer(
                             &staging_buf,
-                            (i * mem::size_of::<BakeConstants>()) as _,
+                            (i * mem::size_of::<BakeConstants>()) as wgpu::BufferAddress,
                             update_buffer,
-                            (i * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT) as _,
-                            mem::size_of::<BakeConstants>() as _,
+                            (i * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT) as wgpu::BufferAddress,
+                            mem::size_of::<BakeConstants>() as wgpu::BufferAddress,
                         );
                     }
 
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                         label: Some("Voxel bake"),
+                        timestamp_writes: None,
                     });
                     pass.set_pipeline(init_pipeline);
                     pass.set_bind_group(1, &self.bind_group, &[]);
@@ -1758,9 +1783,9 @@ impl Context {
             });
 
             encoder.copy_buffer_to_texture(
-                wgpu::ImageCopyBuffer {
+                wgpu::TexelCopyBufferInfo {
                     buffer: &staging_buf,
-                    layout: wgpu::ImageDataLayout {
+                    layout: wgpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(0x100),
                         rows_per_image: None,
@@ -1787,9 +1812,9 @@ impl Context {
             img_copy.origin.x = self.dirty_palette.start;
 
             encoder.copy_buffer_to_texture(
-                wgpu::ImageCopyBuffer {
+                wgpu::TexelCopyBufferInfo {
                     buffer: &staging_buf,
-                    layout: wgpu::ImageDataLayout::default(),
+                    layout: wgpu::TexelCopyBufferLayout::default(),
                 },
                 img_copy,
                 wgpu::Extent3d {
@@ -1855,7 +1880,7 @@ impl Context {
                 0,
                 &self.uniform_buf,
                 0,
-                mem::size_of::<Constants>() as _,
+                mem::size_of::<Constants>() as wgpu::BufferAddress,
             );
         }
 
@@ -1887,7 +1912,7 @@ impl Context {
                     0,
                     constant_buffer,
                     0,
-                    mem::size_of::<VoxelConstants>() as _,
+                    mem::size_of::<VoxelConstants>() as wgpu::BufferAddress,
                 );
             }
             Kind::Paint {
@@ -1914,6 +1939,7 @@ impl Context {
             } => {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("scatter"),
+                    timestamp_writes: None,
                 });
                 pass.set_bind_group(0, &global.bind_group, &[]);
                 pass.set_bind_group(1, &self.bind_group, &[]);
@@ -2007,7 +2033,7 @@ impl Context {
                         0,
                         constant_buffer,
                         0,
-                        mem::size_of::<VoxelConstants>() as _,
+                        mem::size_of::<VoxelConstants>() as wgpu::BufferAddress,
                     );
                 }
                 _ => unreachable!(),

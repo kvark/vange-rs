@@ -182,7 +182,7 @@ impl Palette {
         queue.write_texture(
             self.texture.as_image_copy(),
             bytemuck::cast_slice(data),
-            wgpu::ImageDataLayout::default(),
+            wgpu::TexelCopyBufferLayout::default(),
             wgpu::Extent3d {
                 width: 0x100,
                 height: 1,
@@ -483,10 +483,11 @@ impl Render {
                     view: &shadow.view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
+                ..Default::default()
             });
 
             pass.set_bind_group(0, &self.global.shadow_bind_group, &[]);
@@ -542,6 +543,7 @@ impl Render {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: targets.color,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear({
                             let c = self.fog_config.color;
@@ -552,17 +554,18 @@ impl Render {
                                 a: 1.0,
                             }
                         }),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: targets.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
+                ..Default::default()
             });
 
             if let Some(ref r) = viewport {

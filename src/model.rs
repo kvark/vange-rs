@@ -6,7 +6,7 @@ use crate::render::{
 use m3d;
 use wgpu::util::DeviceExt as _;
 
-use std::{fs::File, mem, ops::Range, slice, sync::Arc};
+use std::{fs::File, ops::Range, slice, sync::Arc};
 
 #[derive(Copy, Clone)]
 pub struct BoundingBox {
@@ -127,33 +127,23 @@ pub fn load_c3d(
 ) -> Arc<Mesh> {
     let num_vertices = raw.geometry.polygons.len() * 3;
     debug!("\tGot {} GPU vertices...", num_vertices);
-    let vertex_size = mem::size_of::<ObjectVertex>();
-    let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("C3D"),
-        size: (num_vertices * vertex_size) as wgpu::BufferAddress,
-        usage: wgpu::BufferUsages::VERTEX,
-        mapped_at_creation: true,
-    });
-    {
-        let mut mapping = vertex_buf.slice(..).get_mapped_range_mut();
-        for (chunk, tri) in mapping
-            .chunks_mut(3 * vertex_size)
-            .zip(&raw.geometry.polygons)
-        {
-            let out_vertices =
-                unsafe { slice::from_raw_parts_mut(chunk.as_mut_ptr() as *mut ObjectVertex, 3) };
-            for (vo, v) in out_vertices.iter_mut().zip(&tri.vertices) {
-                let p = raw.geometry.positions[v.pos as usize];
-                let n = raw.geometry.normals[v.normal as usize];
-                *vo = ObjectVertex {
-                    pos: [p[0], p[1], p[2], 1],
-                    color: tri.material[0],
-                    normal: [n[0], n[1], n[2], 0],
-                };
-            }
+    let mut vertex_data = Vec::with_capacity(num_vertices);
+    for tri in &raw.geometry.polygons {
+        for v in &tri.vertices {
+            let p = raw.geometry.positions[v.pos as usize];
+            let n = raw.geometry.normals[v.normal as usize];
+            vertex_data.push(ObjectVertex {
+                pos: [p[0], p[1], p[2], 1],
+                color: tri.material[0],
+                normal: [n[0], n[1], n[2], 0],
+            });
         }
     }
-    vertex_buf.unmap();
+    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("C3D"),
+        contents: bytemuck::cast_slice(&vertex_data),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
 
     Arc::new(Mesh {
         num_vertices,
@@ -249,20 +239,16 @@ pub fn load_c3d_shape(
         samples.extend(cur_samples);
     }
 
-    let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
+    let mut shape_data: Vec<u8> = Vec::with_capacity(raw.geometry.positions.len() * 4);
+    for p in &raw.geometry.positions {
+        shape_data.extend_from_slice(unsafe { slice::from_raw_parts(p.as_ptr() as *const u8, 3) });
+        shape_data.push(1);
+    }
+    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Shape"),
-        size: (raw.geometry.positions.len() * mem::size_of::<ShapeVertex>()) as wgpu::BufferAddress,
+        contents: &shape_data,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
-        mapped_at_creation: true,
     });
-    {
-        let mut mapping = vertex_buf.slice(..).get_mapped_range_mut();
-        for (vo, p) in mapping.chunks_mut(4).zip(&raw.geometry.positions) {
-            vo[..3].copy_from_slice(unsafe { slice::from_raw_parts(p.as_ptr() as *const u8, 3) });
-            vo[3] = 1;
-        }
-    };
-    vertex_buf.unmap();
 
     let bind_group = match object.shape_bind_group_layout {
         Ok(ref layout) => Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {

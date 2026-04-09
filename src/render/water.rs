@@ -44,12 +44,14 @@ impl Context {
             layout: Some(layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "main_vs",
+                entry_point: Some("main_vs"),
+                compilation_options: Default::default(),
                 buffers: &[vertex_descriptor],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "main_fs",
+                entry_point: Some("main_fs"),
+                compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -64,13 +66,14 @@ impl Context {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
+            cache: None,
         })
     }
 
@@ -82,8 +85,8 @@ impl Context {
     ) -> Self {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("water"),
-            bind_group_layouts: &[&global.bind_group_layout, &terrain.bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&global.bind_group_layout), Some(&terrain.bind_group_layout)],
+            immediate_size: 0,
         });
         let pipeline = Self::create_pipeline(&pipeline_layout, device, global.color_format);
 

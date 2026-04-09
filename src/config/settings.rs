@@ -88,7 +88,6 @@ pub enum Backend {
     Metal,
     Vulkan,
     DX12,
-    DX11,
     GL,
 }
 
@@ -99,7 +98,6 @@ impl Backend {
             Backend::Metal => wgpu::Backends::METAL,
             Backend::Vulkan => wgpu::Backends::VULKAN,
             Backend::DX12 => wgpu::Backends::DX12,
-            Backend::DX11 => wgpu::Backends::DX11,
             Backend::GL => wgpu::Backends::GL,
         }
     }
@@ -195,7 +193,7 @@ impl Render {
                     voxel_storage_size >> 20
                 );
                 wgpu::Limits {
-                    max_storage_buffer_binding_size: voxel_storage_size as u32,
+                    max_storage_buffer_binding_size: voxel_storage_size as u64,
                     max_texture_dimension_2d: max_width.max(max_height) as u32,
                     ..wgpu::Limits::downlevel_defaults()
                 }
