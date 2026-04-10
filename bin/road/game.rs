@@ -246,11 +246,6 @@ struct MultiplayerState {
     connected: bool,
 }
 
-#[derive(Default)]
-struct Stats {
-    frame_deltas: Vec<f32>,
-}
-
 struct DataBase {
     _bunches: Vec<config::bunches::Bunch>,
     cars: HashMap<String, config::car::CarInfo>,
@@ -338,7 +333,6 @@ pub struct Game {
     net: Option<NetworkClient>,
     mp_state: MultiplayerState,
     input_seq: u32,
-    stats: Stats,
     ui: config::settings::Ui,
     cam: space::Camera,
     cam_style: CameraStyle,
@@ -533,7 +527,6 @@ impl Game {
                 connected,
             },
             input_seq: 0,
-            stats: Stats::default(),
             ui: settings.ui,
             cam,
             cam_style: CameraStyle::new(&settings.game.camera),
@@ -623,11 +616,6 @@ impl Application for Game {
 
     fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
         profiling::scope!("Update");
-
-        self.stats.frame_deltas.push(delta * 1000.0);
-        if self.stats.frame_deltas.len() > self.ui.frame_history {
-            self.stats.frame_deltas.remove(0);
-        }
 
         let focus_point = self
             .cam
@@ -925,9 +913,6 @@ impl Application for Game {
             return;
         }
 
-        let fd_points = egui_plot::PlotPoints::from_ys_f32(&self.stats.frame_deltas);
-        let fd_line = egui_plot::Line::new("last", fd_points);
-
         let player = self
             .agents
             .iter_mut()
@@ -1019,17 +1004,6 @@ impl Application for Game {
                 ui.label("Renderer:");
                 self.render.draw_ui(ui);
             });
-            egui_plot::Plot::new("Frame time")
-                .allow_zoom(false)
-                .allow_scroll(false)
-                .allow_drag(false)
-                .show_x(false)
-                .include_y(0.0)
-                .show_axes([false, true])
-                .show(ui, |plot_ui| {
-                    plot_ui.line(fd_line);
-                    plot_ui.hline(egui_plot::HLine::new("smooth", 1000.0 / 60.0));
-                });
         });
 
         if selected_car != &player.car_name {
