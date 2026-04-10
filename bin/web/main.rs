@@ -149,8 +149,8 @@ mod net_ws {
             ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
             // on_error
-            let on_error = Closure::wrap(Box::new(move |e: web_sys::ErrorEvent| {
-                log::warn!("WebSocket error: {:?}", e.message());
+            let on_error = Closure::wrap(Box::new(move |_: web_sys::ErrorEvent| {
+                log::warn!("WebSocket error");
             }) as Box<dyn FnMut(web_sys::ErrorEvent)>);
             ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
 
