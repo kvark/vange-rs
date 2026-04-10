@@ -22,7 +22,7 @@ members = [
 [features]
 default = []
 profile = ["profiling/profile-with-tracy"]
-web = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "console_log", "console_error_panic_hook", "getrandom", "getrandom_02", "dep:web-time"]
+web = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "console_log", "console_error_panic_hook", "getrandom", "getrandom_02", "dep:web-time", "wgpu/webgl"]
 
 [profile.release]
 panic = "abort"
