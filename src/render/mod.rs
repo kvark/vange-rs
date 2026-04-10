@@ -428,14 +428,18 @@ impl Render {
     ) -> Self {
         profiling::scope!("Init Renderer");
 
+        info!("Creating shadow...");
         let shadow = if settings.light.shadow.size != 0 {
             Some(shadow::Shadow::new(&settings.light.shadow, &gfx.device))
         } else {
             None
         };
 
+        info!("Creating global context...");
         let global = global::Context::new(gfx, shadow.as_ref().map(|shadow| &shadow.view));
+        info!("Creating object context...");
         let object = object::Context::new(gfx, front_face, object_palette, &global);
+        info!("Creating terrain context...");
         let terrain = terrain::Context::new(
             gfx,
             level,
@@ -444,8 +448,11 @@ impl Render {
             &settings.terrain,
             &settings.light.shadow.terrain,
         );
+        info!("Creating water context...");
         let water = water::Context::new(&gfx.device, &settings.water, &global, &terrain);
+        info!("Creating debug context...");
         let debug = debug::Context::new(&gfx.device, &settings.debug, &global, &object);
+        info!("Renderer initialized");
 
         Render {
             global,
