@@ -94,7 +94,7 @@ mod net_ws {
     use super::*;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use vangers_net::{decode, encode, ClientMessage, ServerMessage, AgentState, PlayerId};
+    use vangers_net::{decode, encode, ClientMessage, ServerMessage, PlayerId};
     use wasm_bindgen::closure::Closure;
 
     pub struct WsClient {
@@ -210,14 +210,22 @@ use web_time::Instant;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
+/// GPU resources initialized asynchronously on WASM.
+struct GpuState {
+    surface: wgpu::Surface<'static>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    depth_view: wgpu::TextureView,
+    app: WebApp,
+}
+
 struct WebHandler {
     window: Option<Arc<Window>>,
-    surface: Option<wgpu::Surface<'static>>,
-    device: Option<wgpu::Device>,
-    queue: Option<wgpu::Queue>,
-    config: Option<wgpu::SurfaceConfiguration>,
-    depth_view: Option<wgpu::TextureView>,
-    app: Option<WebApp>,
+    gpu: Option<GpuState>,
+    /// Shared slot for async WASM GPU init to deliver results.
+    #[cfg(target_arch = "wasm32")]
+    gpu_pending: std::rc::Rc<std::cell::RefCell<Option<GpuState>>>,
     screen_size: wgpu::Extent3d,
     keys_pressed: std::collections::HashSet<KeyCode>,
     last_frame: Option<Instant>,
@@ -232,16 +240,33 @@ impl WebHandler {
     fn new() -> Self {
         // Try to connect to multiplayer server if configured
         #[cfg(target_arch = "wasm32")]
-        let (ws_client, mp_status) = if let Some(url) = SERVER_WS {
-            match net_ws::WsClient::connect(url) {
-                Ok(client) => (Some(client), format!("Connecting to {}...", url)),
-                Err(e) => {
-                    log::warn!("Failed to connect to {}: {:?}", url, e);
-                    (None, "Standalone mode".into())
+        let (ws_client, mp_status) = match SERVER_WS {
+            Some(url) if !url.is_empty() => {
+                // Auto-upgrade ws:// to wss:// when page is served over HTTPS
+                let url = {
+                    let is_https = web_sys::window()
+                        .and_then(|w| w.location().protocol().ok())
+                        .map_or(false, |p| p == "https:");
+                    if is_https && url.starts_with("ws://") {
+                        let upgraded = format!("wss://{}", &url[5..]);
+                        log::info!("HTTPS page: upgrading {} to {}", url, upgraded);
+                        upgraded
+                    } else {
+                        url.to_string()
+                    }
+                };
+                match net_ws::WsClient::connect(&url) {
+                    Ok(client) => (Some(client), format!("Connecting to {}...", url)),
+                    Err(e) => {
+                        log::warn!("Failed to connect to {}: {:?}", url, e);
+                        (None, "Standalone mode (connection failed)".into())
+                    }
                 }
             }
-        } else {
-            (None, String::new())
+            _ => {
+                log::info!("No server configured, running standalone");
+                (None, String::new())
+            }
         };
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -249,12 +274,9 @@ impl WebHandler {
 
         WebHandler {
             window: None,
-            surface: None,
-            device: None,
-            queue: None,
-            config: None,
-            depth_view: None,
-            app: None,
+            gpu: None,
+            #[cfg(target_arch = "wasm32")]
+            gpu_pending: std::rc::Rc::new(std::cell::RefCell::new(None)),
             screen_size: wgpu::Extent3d {
                 width: 1,
                 height: 1,
@@ -348,24 +370,21 @@ impl ApplicationHandler for WebHandler {
             (surface, adapter, device, queue, window_clone)
         };
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.window = Some(window);
-            wasm_bindgen_futures::spawn_local(async move {
-                let (_surface, _adapter, _device, _queue, _window) = init_future.await;
-                log::info!("GPU initialized on web!");
-            });
-        }
+        let screen_size = self.screen_size;
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let (surface, _adapter, device, queue, _) = pollster::block_on(init_future);
-            let caps = surface.get_capabilities(&_adapter);
+        // Build GPU state from the async init results
+        let build_gpu_state = move |surface: wgpu::Surface<'static>,
+                                     adapter: &wgpu::Adapter,
+                                     device: wgpu::Device,
+                                     queue: wgpu::Queue,
+                                     screen_size: wgpu::Extent3d|
+                                     -> GpuState {
+            let caps = surface.get_capabilities(adapter);
             let config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format: caps.formats[0],
-                width: self.screen_size.width,
-                height: self.screen_size.height,
+                width: screen_size.width,
+                height: screen_size.height,
                 present_mode: wgpu::PresentMode::Fifo,
                 alpha_mode: wgpu::CompositeAlphaMode::Auto,
                 view_formats: Vec::new(),
@@ -376,7 +395,7 @@ impl ApplicationHandler for WebHandler {
             let depth_view = device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some("Depth"),
-                    size: self.screen_size,
+                    size: screen_size,
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
@@ -387,21 +406,41 @@ impl ApplicationHandler for WebHandler {
                 .create_view(&wgpu::TextureViewDescriptor::default());
 
             let gfx = GraphicsContext {
-                downlevel_caps: _adapter.get_downlevel_capabilities(),
+                downlevel_caps: adapter.get_downlevel_capabilities(),
                 color_format: config.format,
-                screen_size: self.screen_size,
+                screen_size,
                 device,
                 queue,
             };
             let app = WebApp::new(&gfx);
 
+            GpuState {
+                surface,
+                device: gfx.device,
+                queue: gfx.queue,
+                config,
+                depth_view,
+                app,
+            }
+        };
+
+        #[cfg(target_arch = "wasm32")]
+        {
             self.window = Some(window);
-            self.device = Some(gfx.device);
-            self.queue = Some(gfx.queue);
-            self.surface = Some(surface);
-            self.config = Some(config);
-            self.depth_view = Some(depth_view);
-            self.app = Some(app);
+            let pending = self.gpu_pending.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let (surface, adapter, device, queue, _window) = init_future.await;
+                log::info!("GPU initialized on web!");
+                let state = build_gpu_state(surface, &adapter, device, queue, screen_size);
+                *pending.borrow_mut() = Some(state);
+            });
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (surface, adapter, device, queue, _) = pollster::block_on(init_future);
+            self.gpu = Some(build_gpu_state(surface, &adapter, device, queue, screen_size));
+            self.window = Some(window);
         }
     }
 
@@ -440,12 +479,10 @@ impl ApplicationHandler for WebHandler {
                     height: size.height,
                     depth_or_array_layers: 1,
                 };
-                if let (Some(device), Some(surface), Some(config)) =
-                    (&self.device, &self.surface, &mut self.config)
-                {
-                    config.width = size.width;
-                    config.height = size.height;
-                    surface.configure(device, config);
+                if let Some(ref mut gpu) = self.gpu {
+                    gpu.config.width = size.width;
+                    gpu.config.height = size.height;
+                    gpu.surface.configure(&gpu.device, &gpu.config);
                 }
             }
             _ => {}
@@ -453,13 +490,17 @@ impl ApplicationHandler for WebHandler {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        let (Some(device), Some(queue), Some(surface), Some(depth_view), Some(app)) = (
-            &self.device,
-            &self.queue,
-            &self.surface,
-            &self.depth_view,
-            &mut self.app,
-        ) else {
+        // Check if async GPU init completed (WASM)
+        #[cfg(target_arch = "wasm32")]
+        if self.gpu.is_none() {
+            if let Some(state) = self.gpu_pending.borrow_mut().take() {
+                self.gpu = Some(state);
+            } else {
+                return; // Still waiting for GPU init
+            }
+        }
+
+        let Some(ref mut gpu) = self.gpu else {
             return;
         };
 
@@ -480,50 +521,50 @@ impl ApplicationHandler for WebHandler {
         let mut _rudder = 0.0f32;
 
         if self.keys_pressed.contains(&KeyCode::KeyW) {
-            let mut dir = app.cam.rot * glam::Vec3::Y;
+            let mut dir = gpu.app.cam.rot * glam::Vec3::Y;
             dir.z = 0.0;
             if dir.length_squared() > 0.0 {
-                app.cam.loc += move_speed * dt * dir.normalize();
+                gpu.app.cam.loc += move_speed * dt * dir.normalize();
             }
             _motor = 1.0;
         }
         if self.keys_pressed.contains(&KeyCode::KeyS) {
-            let mut dir = app.cam.rot * glam::Vec3::Y;
+            let mut dir = gpu.app.cam.rot * glam::Vec3::Y;
             dir.z = 0.0;
             if dir.length_squared() > 0.0 {
-                app.cam.loc -= move_speed * dt * dir.normalize();
+                gpu.app.cam.loc -= move_speed * dt * dir.normalize();
             }
             _motor = -1.0;
         }
         if self.keys_pressed.contains(&KeyCode::KeyA) {
-            let mut dir = app.cam.rot * glam::Vec3::X;
+            let mut dir = gpu.app.cam.rot * glam::Vec3::X;
             dir.z = 0.0;
             if dir.length_squared() > 0.0 {
-                app.cam.loc -= move_speed * dt * dir.normalize();
+                gpu.app.cam.loc -= move_speed * dt * dir.normalize();
             }
             _rudder = 1.0;
         }
         if self.keys_pressed.contains(&KeyCode::KeyD) {
-            let mut dir = app.cam.rot * glam::Vec3::X;
+            let mut dir = gpu.app.cam.rot * glam::Vec3::X;
             dir.z = 0.0;
             if dir.length_squared() > 0.0 {
-                app.cam.loc += move_speed * dt * dir.normalize();
+                gpu.app.cam.loc += move_speed * dt * dir.normalize();
             }
             _rudder = -1.0;
         }
         if self.keys_pressed.contains(&KeyCode::KeyZ) {
-            app.cam.loc.z += move_speed * dt;
+            gpu.app.cam.loc.z += move_speed * dt;
         }
         if self.keys_pressed.contains(&KeyCode::KeyX) {
-            app.cam.loc.z -= move_speed * dt;
+            gpu.app.cam.loc.z -= move_speed * dt;
         }
         if self.keys_pressed.contains(&KeyCode::KeyQ) {
             let rotation = glam::Quat::from_rotation_z(rotation_speed * dt);
-            app.cam.rot = rotation * app.cam.rot;
+            gpu.app.cam.rot = rotation * gpu.app.cam.rot;
         }
         if self.keys_pressed.contains(&KeyCode::KeyE) {
             let rotation = glam::Quat::from_rotation_z(-rotation_speed * dt);
-            app.cam.rot = rotation * app.cam.rot;
+            gpu.app.cam.rot = rotation * gpu.app.cam.rot;
         }
 
         // Process multiplayer messages
@@ -554,7 +595,7 @@ impl ApplicationHandler for WebHandler {
                             if let Some(me) = agents.iter().find(|a| a.player_id == my_id) {
                                 let pos = glam::Vec3::from(me.transform.position);
                                 // Smoothly follow server position
-                                app.cam.loc = app.cam.loc.lerp(
+                                gpu.app.cam.loc = gpu.app.cam.loc.lerp(
                                     glam::vec3(pos.x, pos.y, pos.z + 200.0),
                                     0.1,
                                 );
@@ -565,7 +606,7 @@ impl ApplicationHandler for WebHandler {
             }
         }
 
-        let frame = match surface.get_current_texture() {
+        let frame = match gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             _ => return,
         };
@@ -576,10 +617,10 @@ impl ApplicationHandler for WebHandler {
         let targets = ScreenTargets {
             extent: self.screen_size,
             color: &view,
-            depth: depth_view,
+            depth: &gpu.depth_view,
         };
-        let command_buffer = app.draw(device, targets);
-        queue.submit(std::iter::once(command_buffer));
+        let command_buffer = gpu.app.draw(&gpu.device, targets);
+        gpu.queue.submit(std::iter::once(command_buffer));
         frame.present();
     }
 }
