@@ -348,39 +348,79 @@ impl ApplicationHandler for WebHandler {
         };
 
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY | wgpu::Backends::GL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
 
-        let surface = instance
-            .create_surface(window.clone())
-            .expect("Unable to create surface");
+        #[cfg(not(target_arch = "wasm32"))]
+        let init_future = {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let surface = instance
+                .create_surface(window.clone())
+                .expect("Unable to create surface");
+            let window_clone = window.clone();
+            async move {
+                let adapter = instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        compatible_surface: Some(&surface),
+                        force_fallback_adapter: false,
+                    })
+                    .await
+                    .expect("No GPU adapter found");
 
-        let window_clone = window.clone();
-        let init_future = async move {
-            let adapter = instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    compatible_surface: Some(&surface),
-                    force_fallback_adapter: false,
-                })
-                .await
-                .expect("No GPU adapter found");
+                let (device, queue) = adapter
+                    .request_device(&wgpu::DeviceDescriptor {
+                        label: None,
+                        required_features: wgpu::Features::empty(),
+                        required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                        memory_hints: wgpu::MemoryHints::default(),
+                        trace: wgpu::Trace::Off,
+                        experimental_features: Default::default(),
+                    })
+                    .await
+                    .expect("Failed to create device");
 
-            let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
-                    memory_hints: wgpu::MemoryHints::default(),
-                    trace: wgpu::Trace::Off,
-                    experimental_features: Default::default(),
-                })
-                .await
-                .expect("Failed to create device");
+                (instance, surface, adapter, device, queue, window_clone)
+            }
+        };
 
-            (instance, surface, adapter, device, queue, window_clone)
+        #[cfg(target_arch = "wasm32")]
+        let init_future = {
+            let window_clone = window.clone();
+            async move {
+                // Use async WebGPU detection: properly checks for WebGPU support
+                // and falls back to WebGL2 if unavailable.
+                let instance = wgpu::util::new_instance_with_webgpu_detection(
+                    wgpu::InstanceDescriptor::new_without_display_handle(),
+                )
+                .await;
+
+                let surface = instance
+                    .create_surface(window_clone.clone())
+                    .expect("Unable to create surface");
+
+                let adapter = instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        compatible_surface: Some(&surface),
+                        force_fallback_adapter: false,
+                    })
+                    .await
+                    .expect("No GPU adapter found");
+
+                let (device, queue) = adapter
+                    .request_device(&wgpu::DeviceDescriptor {
+                        label: None,
+                        required_features: wgpu::Features::empty(),
+                        required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                        memory_hints: wgpu::MemoryHints::default(),
+                        trace: wgpu::Trace::Off,
+                        experimental_features: Default::default(),
+                    })
+                    .await
+                    .expect("Failed to create device");
+
+                (instance, surface, adapter, device, queue, window_clone)
+            }
         };
 
         let screen_size = self.screen_size;
