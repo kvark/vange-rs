@@ -499,10 +499,10 @@ impl Render {
         targets: ScreenTargets<'_>,
         viewport: Option<Rect>,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
     ) {
         profiling::scope!("draw_world");
         batcher.prepare(device);
-
         self.terrain.update_dirty(encoder, level, device);
 
         //TODO: common routine for draw passes
@@ -513,18 +513,7 @@ impl Render {
             shadow.update_view(&self.light_config.pos, cam, level.geometry.height as f32);
 
             let constants = global::Constants::new(&shadow.cam, &self.light_config, None);
-            let global_staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("temp-global-shadow"),
-                contents: bytemuck::bytes_of(&constants),
-                usage: wgpu::BufferUsages::COPY_SRC,
-            });
-            encoder.copy_buffer_to_buffer(
-                &global_staging,
-                0,
-                &self.global.uniform_buf,
-                0,
-                mem::size_of::<global::Constants>() as wgpu::BufferAddress,
-            );
+            queue.write_buffer(&self.global.uniform_buf, 0, bytemuck::bytes_of(&constants));
 
             self.terrain.prepare_shadow(
                 encoder,
@@ -570,18 +559,7 @@ impl Render {
                 &self.light_config,
                 self.shadow.as_ref().map(|shadow| &shadow.cam),
             );
-            let global_staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("temp-global"),
-                contents: bytemuck::bytes_of(&constants),
-                usage: wgpu::BufferUsages::COPY_SRC,
-            });
-            encoder.copy_buffer_to_buffer(
-                &global_staging,
-                0,
-                &self.global.uniform_buf,
-                0,
-                mem::size_of::<global::Constants>() as wgpu::BufferAddress,
-            );
+            queue.write_buffer(&self.global.uniform_buf, 0, bytemuck::bytes_of(&constants));
 
             self.terrain.prepare(
                 encoder,

@@ -1063,7 +1063,7 @@ impl Application for Game {
             });
     }
 
-    fn draw(&mut self, device: &wgpu::Device, targets: ScreenTargets) -> wgpu::CommandBuffer {
+    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) -> wgpu::CommandBuffer {
         let clipper = Clipper::new(&self.cam);
         self.batcher.clear();
 
@@ -1105,6 +1105,7 @@ impl Application for Game {
             targets,
             None,
             device,
+            queue,
         );
 
         /*

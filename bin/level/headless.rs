@@ -157,6 +157,7 @@ pub fn render_snapshot(
         targets,
         None,
         &gfx.device,
+        &gfx.queue,
     );
 
     // Copy rendered texture to staging buffer
