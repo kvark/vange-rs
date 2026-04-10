@@ -52,10 +52,10 @@ impl WebApp {
             }),
         };
 
-        // Use Painted terrain: simplest mode, no compute shaders,
-        // compatible with both WebGPU and WebGL2.
+        // Use Sliced terrain: simple layered renderer, no compute shaders
+        // and no vertex storage buffers. Compatible with WebGL2.
         let render_settings = settings::Render {
-            terrain: settings::Terrain::Painted,
+            terrain: settings::Terrain::Sliced,
             ..settings::Render::default()
         };
         let render = Render::new(
@@ -387,12 +387,14 @@ impl ApplicationHandler for WebHandler {
         let init_future = {
             let window_clone = window.clone();
             async move {
-                // Use async WebGPU detection: properly checks for WebGPU support
-                // and falls back to WebGL2 if unavailable.
-                let instance = wgpu::util::new_instance_with_webgpu_detection(
-                    wgpu::InstanceDescriptor::new_without_display_handle(),
-                )
-                .await;
+                // Use WebGL2 backend on WASM. WebGPU's GPUCanvasContext
+                // fails dyn_into type checks on Firefox (wgpu 29 bug).
+                // Sliced terrain doesn't need compute shaders, so
+                // WebGL2 is sufficient and more widely compatible.
+                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::GL,
+                    ..wgpu::InstanceDescriptor::new_without_display_handle()
+                });
 
                 let surface = instance
                     .create_surface(window_clone.clone())
