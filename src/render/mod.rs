@@ -9,12 +9,17 @@ use wgpu::util::DeviceExt as _;
 
 use std::{
     collections::HashMap,
-    fs::File,
-    io::{BufReader, Error as IoError, Read},
+    io::Error as IoError,
     mem,
     ops::Range,
-    path::PathBuf,
     sync::Arc,
+};
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::{
+    fs::File,
+    io::{BufReader, Read},
+    path::PathBuf,
 };
 
 pub mod debug;
@@ -96,26 +101,77 @@ impl ShapeVertexDesc {
     }
 }
 
-pub fn make_shader_code(name: &str, substitutions: &[(&str, String)]) -> Result<String, IoError> {
-    let base_path = PathBuf::from("res").join("shader");
-    let path = base_path.join(name).with_extension("wgsl");
-    if !path.is_file() {
-        panic!("Shader not found: {:?}", path);
-    }
+/// On WASM, shaders are embedded at compile time since there's no filesystem.
+#[cfg(target_arch = "wasm32")]
+fn embedded_shader(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "body.inc.wgsl" => include_str!("../../res/shader/body.inc.wgsl"),
+        "debug.wgsl" => include_str!("../../res/shader/debug.wgsl"),
+        "globals.inc.wgsl" => include_str!("../../res/shader/globals.inc.wgsl"),
+        "morton.inc.wgsl" => include_str!("../../res/shader/morton.inc.wgsl"),
+        "object.wgsl" => include_str!("../../res/shader/object.wgsl"),
+        "quat.inc.wgsl" => include_str!("../../res/shader/quat.inc.wgsl"),
+        "shadow.inc.wgsl" => include_str!("../../res/shader/shadow.inc.wgsl"),
+        "surface.inc.wgsl" => include_str!("../../res/shader/surface.inc.wgsl"),
+        "water.wgsl" => include_str!("../../res/shader/water.wgsl"),
+        "terrain/color.inc.wgsl" => include_str!("../../res/shader/terrain/color.inc.wgsl"),
+        "terrain/locals.inc.wgsl" => include_str!("../../res/shader/terrain/locals.inc.wgsl"),
+        "terrain/paint.wgsl" => include_str!("../../res/shader/terrain/paint.wgsl"),
+        "terrain/ray.wgsl" => include_str!("../../res/shader/terrain/ray.wgsl"),
+        "terrain/scatter.wgsl" => include_str!("../../res/shader/terrain/scatter.wgsl"),
+        "terrain/slice.wgsl" => include_str!("../../res/shader/terrain/slice.wgsl"),
+        "terrain/voxel-bake.wgsl" => include_str!("../../res/shader/terrain/voxel-bake.wgsl"),
+        "terrain/voxel-draw.wgsl" => include_str!("../../res/shader/terrain/voxel-draw.wgsl"),
+        "terrain/voxel.inc.wgsl" => include_str!("../../res/shader/terrain/voxel.inc.wgsl"),
+        _ => return None,
+    })
+}
 
+#[cfg(target_arch = "wasm32")]
+fn read_shader_source(base: &str, name_with_ext: &str) -> Result<String, IoError> {
+    let key = if base.is_empty() {
+        name_with_ext.to_string()
+    } else {
+        format!("{}/{}", base, name_with_ext)
+    };
+    embedded_shader(&key)
+        .map(|s| s.to_string())
+        .ok_or_else(|| IoError::new(std::io::ErrorKind::NotFound, format!("Shader not found: {}", key)))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_shader_source(base_path: &str, name_with_ext: &str) -> Result<String, IoError> {
+    let path = PathBuf::from("res").join("shader").join(base_path).join(name_with_ext);
     let mut source = String::new();
     BufReader::new(File::open(&path)?).read_to_string(&mut source)?;
+    Ok(source)
+}
+
+pub fn make_shader_code(name: &str, substitutions: &[(&str, String)]) -> Result<String, IoError> {
+    // Split "terrain/slice" into base="terrain", stem="slice"
+    let (base, stem) = match name.rsplit_once('/') {
+        Some((b, s)) => (b, s),
+        None => ("", name),
+    };
+
+    let source = read_shader_source(base, &format!("{}.wgsl", stem))?;
     let mut buf = String::new();
-    // parse meta-data
+
+    // parse meta-data: //!include directives
     {
         let mut lines = source.lines();
         let first = lines.next().unwrap();
         if first.starts_with("//!include") {
             for include in first.split_whitespace().skip(1) {
-                let inc_path = base_path.join(include).with_extension("inc.wgsl");
-                match File::open(&inc_path) {
-                    Ok(include) => BufReader::new(include).read_to_string(&mut buf)?,
-                    Err(e) => panic!("Unable to include {:?}: {:?}", inc_path, e),
+                let inc_name = format!("{}.wgsl", include);
+                // Includes can be "globals.inc" (root) or "terrain/locals.inc" (subdir)
+                let (inc_base, inc_file) = match inc_name.rsplit_once('/') {
+                    Some((b, f)) => (b, f),
+                    None => ("", inc_name.as_str()),
+                };
+                match read_shader_source(inc_base, inc_file) {
+                    Ok(content) => buf.push_str(&content),
+                    Err(e) => panic!("Unable to include {:?}: {:?}", inc_name, e),
                 };
             }
         }
