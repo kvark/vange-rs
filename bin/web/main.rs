@@ -212,6 +212,7 @@ use std::time::Instant;
 
 /// GPU resources initialized asynchronously on WASM.
 struct GpuState {
+    _instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -369,13 +370,14 @@ impl ApplicationHandler for WebHandler {
                 .await
                 .expect("Failed to create device");
 
-            (surface, adapter, device, queue, window_clone)
+            (instance, surface, adapter, device, queue, window_clone)
         };
 
         let screen_size = self.screen_size;
 
         // Build GPU state from the async init results
-        let build_gpu_state = move |surface: wgpu::Surface<'static>,
+        let build_gpu_state = move |instance: wgpu::Instance,
+                                     surface: wgpu::Surface<'static>,
                                      adapter: &wgpu::Adapter,
                                      device: wgpu::Device,
                                      queue: wgpu::Queue,
@@ -417,6 +419,7 @@ impl ApplicationHandler for WebHandler {
             let app = WebApp::new(&gfx);
 
             GpuState {
+                _instance: instance,
                 surface,
                 device: gfx.device,
                 queue: gfx.queue,
@@ -431,17 +434,17 @@ impl ApplicationHandler for WebHandler {
             self.window = Some(window);
             let pending = self.gpu_pending.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let (surface, adapter, device, queue, _window) = init_future.await;
+                let (instance, surface, adapter, device, queue, _window) = init_future.await;
                 log::info!("GPU initialized on web!");
-                let state = build_gpu_state(surface, &adapter, device, queue, screen_size);
+                let state = build_gpu_state(instance, surface, &adapter, device, queue, screen_size);
                 *pending.borrow_mut() = Some(state);
             });
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let (surface, adapter, device, queue, _) = pollster::block_on(init_future);
-            self.gpu = Some(build_gpu_state(surface, &adapter, device, queue, screen_size));
+            let (instance, surface, adapter, device, queue, _) = pollster::block_on(init_future);
+            self.gpu = Some(build_gpu_state(instance, surface, &adapter, device, queue, screen_size));
             self.window = Some(window);
         }
     }
