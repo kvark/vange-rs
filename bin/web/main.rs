@@ -1,5 +1,9 @@
 //! Web entry point for vange-rs level viewer with test level.
 //! Compiled with `cargo build --target wasm32-unknown-unknown --features web --bin web`
+//!
+//! If the `VANGERS_SERVER_WS` environment variable is set at compile time,
+//! the viewer will attempt to connect to that WebSocket address on startup.
+//! If the connection fails, it continues as a standalone viewer.
 
 use wasm_bindgen::prelude::*;
 
@@ -19,6 +23,10 @@ use winit::{
     window::Window,
 };
 
+/// Compile-time server address for multiplayer. Set via:
+///   VANGERS_SERVER_WS=ws://host:port cargo build ...
+const SERVER_WS: Option<&str> = option_env!("VANGERS_SERVER_WS");
+
 struct WebApp {
     render: Render,
     level: level::Level,
@@ -30,7 +38,7 @@ impl WebApp {
     fn new(gfx: &GraphicsContext) -> Self {
         let level_config = level::LevelConfig::new_test();
         let geometry = settings::Geometry::default();
-        let objects_palette = [[0xFF; 4]; 0x100]; // white palette for test level
+        let objects_palette = [[0xFF; 4]; 0x100];
 
         let cam = space::Camera {
             loc: glam::vec3(0.0, 0.0, 400.0),
@@ -79,6 +87,124 @@ impl WebApp {
     }
 }
 
+// --- Multiplayer WebSocket client (WASM only) ---
+
+#[cfg(target_arch = "wasm32")]
+mod net_ws {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use vangers_net::{decode, encode, ClientMessage, ServerMessage, AgentState, PlayerId};
+    use wasm_bindgen::closure::Closure;
+
+    pub struct WsClient {
+        ws: web_sys::WebSocket,
+        pub received: Rc<RefCell<Vec<ServerMessage>>>,
+        pub connected: Rc<RefCell<bool>>,
+        pub player_id: Option<PlayerId>,
+        _on_message: Closure<dyn FnMut(web_sys::MessageEvent)>,
+        _on_open: Closure<dyn FnMut(JsValue)>,
+        _on_error: Closure<dyn FnMut(web_sys::ErrorEvent)>,
+        _on_close: Closure<dyn FnMut(web_sys::CloseEvent)>,
+    }
+
+    impl WsClient {
+        pub fn connect(url: &str) -> Result<Self, JsValue> {
+            log::info!("Connecting to WebSocket server: {}", url);
+            let ws = web_sys::WebSocket::new(url)?;
+            ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
+
+            let received = Rc::new(RefCell::new(Vec::<ServerMessage>::new()));
+            let connected = Rc::new(RefCell::new(false));
+
+            // on_message: decode binary frames
+            let recv_clone = received.clone();
+            let on_message = Closure::wrap(Box::new(move |e: web_sys::MessageEvent| {
+                if let Ok(buf) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
+                    let array = js_sys::Uint8Array::new(&buf);
+                    let data = array.to_vec();
+                    // Our protocol is length-prefixed; the server sends framed messages
+                    let mut offset = 0;
+                    while let Some((msg, consumed)) = decode::<ServerMessage>(&data[offset..]) {
+                        recv_clone.borrow_mut().push(msg);
+                        offset += consumed;
+                    }
+                }
+            }) as Box<dyn FnMut(web_sys::MessageEvent)>);
+            ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+
+            // on_open: send Join
+            let ws_clone = ws.clone();
+            let conn_clone = connected.clone();
+            let on_open = Closure::wrap(Box::new(move |_: JsValue| {
+                log::info!("WebSocket connected");
+                *conn_clone.borrow_mut() = true;
+                let msg = encode(&ClientMessage::Join {
+                    player_name: "WebPlayer".into(),
+                    car_name: "TestCar".into(),
+                    color: 21,
+                });
+                let _ = ws_clone.send_with_u8_array(&msg);
+            }) as Box<dyn FnMut(JsValue)>);
+            ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
+
+            // on_error
+            let on_error = Closure::wrap(Box::new(move |e: web_sys::ErrorEvent| {
+                log::warn!("WebSocket error: {:?}", e.message());
+            }) as Box<dyn FnMut(web_sys::ErrorEvent)>);
+            ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+
+            // on_close
+            let conn_close = connected.clone();
+            let on_close = Closure::wrap(Box::new(move |_: web_sys::CloseEvent| {
+                log::info!("WebSocket closed");
+                *conn_close.borrow_mut() = false;
+            }) as Box<dyn FnMut(web_sys::CloseEvent)>);
+            ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
+
+            Ok(WsClient {
+                ws,
+                received,
+                connected,
+                player_id: None,
+                _on_message: on_message,
+                _on_open: on_open,
+                _on_error: on_error,
+                _on_close: on_close,
+            })
+        }
+
+        pub fn send_input(&self, motor: f32, rudder: f32) {
+            if !*self.connected.borrow() {
+                return;
+            }
+            let msg = encode(&ClientMessage::Input {
+                sequence: 0,
+                control: vangers_net::NetControl {
+                    motor,
+                    rudder,
+                    roll: 0.0,
+                    brake: false,
+                    turbo: false,
+                    jump: None,
+                },
+            });
+            let _ = self.ws.send_with_u8_array(&msg);
+        }
+
+        pub fn poll(&mut self) -> Vec<ServerMessage> {
+            let mut msgs = self.received.borrow_mut();
+            let result = msgs.drain(..).collect();
+            result
+        }
+
+        #[allow(dead_code)]
+        pub fn is_connected(&self) -> bool {
+            *self.connected.borrow()
+        }
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 #[cfg(not(target_arch = "wasm32"))]
@@ -95,10 +221,32 @@ struct WebHandler {
     screen_size: wgpu::Extent3d,
     keys_pressed: std::collections::HashSet<KeyCode>,
     last_frame: Option<Instant>,
+    #[cfg(target_arch = "wasm32")]
+    ws_client: Option<net_ws::WsClient>,
+    /// Status text overlay (used in multiplayer logging)
+    #[allow(dead_code)]
+    mp_status: String,
 }
 
 impl WebHandler {
     fn new() -> Self {
+        // Try to connect to multiplayer server if configured
+        #[cfg(target_arch = "wasm32")]
+        let (ws_client, mp_status) = if let Some(url) = SERVER_WS {
+            match net_ws::WsClient::connect(url) {
+                Ok(client) => (Some(client), format!("Connecting to {}...", url)),
+                Err(e) => {
+                    log::warn!("Failed to connect to {}: {:?}", url, e);
+                    (None, "Standalone mode".into())
+                }
+            }
+        } else {
+            (None, String::new())
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let mp_status = String::new();
+
         WebHandler {
             window: None,
             surface: None,
@@ -114,6 +262,9 @@ impl WebHandler {
             },
             keys_pressed: std::collections::HashSet::new(),
             last_frame: None,
+            #[cfg(target_arch = "wasm32")]
+            ws_client,
+            mp_status,
         }
     }
 }
@@ -147,7 +298,6 @@ impl ApplicationHandler for WebHandler {
             .create_surface(window.clone())
             .expect("Unable to create surface");
 
-        // Async GPU init
         let window_clone = window.clone();
         let init_future = async move {
             let adapter = instance
@@ -174,14 +324,11 @@ impl ApplicationHandler for WebHandler {
             (surface, adapter, device, queue, window_clone)
         };
 
-        // On web, we need wasm_bindgen_futures; on native, use pollster
         #[cfg(target_arch = "wasm32")]
         {
             self.window = Some(window);
             wasm_bindgen_futures::spawn_local(async move {
                 let (_surface, _adapter, _device, _queue, _window) = init_future.await;
-                // Note: This is a simplified structure. A full implementation
-                // would use shared state to feed these back to the handler.
                 log::info!("GPU initialized on web!");
             });
         }
@@ -299,61 +446,99 @@ impl ApplicationHandler for WebHandler {
             None => 1.0 / 60.0,
         };
         self.last_frame = Some(now);
-        let dt = dt.min(0.1); // clamp to avoid huge jumps
+        let dt = dt.min(0.1);
 
         // Camera movement from keyboard
         let move_speed = 100.0;
         let rotation_speed = 1.0;
 
-        // Forward (W)
+        let mut _motor = 0.0f32;
+        let mut _rudder = 0.0f32;
+
         if self.keys_pressed.contains(&KeyCode::KeyW) {
             let mut dir = app.cam.rot * glam::Vec3::Y;
             dir.z = 0.0;
             if dir.length_squared() > 0.0 {
                 app.cam.loc += move_speed * dt * dir.normalize();
             }
+            _motor = 1.0;
         }
-        // Backward (S)
         if self.keys_pressed.contains(&KeyCode::KeyS) {
             let mut dir = app.cam.rot * glam::Vec3::Y;
             dir.z = 0.0;
             if dir.length_squared() > 0.0 {
                 app.cam.loc -= move_speed * dt * dir.normalize();
             }
+            _motor = -1.0;
         }
-        // Strafe left (A)
         if self.keys_pressed.contains(&KeyCode::KeyA) {
             let mut dir = app.cam.rot * glam::Vec3::X;
             dir.z = 0.0;
             if dir.length_squared() > 0.0 {
                 app.cam.loc -= move_speed * dt * dir.normalize();
             }
+            _rudder = 1.0;
         }
-        // Strafe right (D)
         if self.keys_pressed.contains(&KeyCode::KeyD) {
             let mut dir = app.cam.rot * glam::Vec3::X;
             dir.z = 0.0;
             if dir.length_squared() > 0.0 {
                 app.cam.loc += move_speed * dt * dir.normalize();
             }
+            _rudder = -1.0;
         }
-        // Up (Z)
         if self.keys_pressed.contains(&KeyCode::KeyZ) {
             app.cam.loc.z += move_speed * dt;
         }
-        // Down (X)
         if self.keys_pressed.contains(&KeyCode::KeyX) {
             app.cam.loc.z -= move_speed * dt;
         }
-        // Rotate left (Q)
         if self.keys_pressed.contains(&KeyCode::KeyQ) {
             let rotation = glam::Quat::from_rotation_z(rotation_speed * dt);
             app.cam.rot = rotation * app.cam.rot;
         }
-        // Rotate right (E)
         if self.keys_pressed.contains(&KeyCode::KeyE) {
             let rotation = glam::Quat::from_rotation_z(-rotation_speed * dt);
             app.cam.rot = rotation * app.cam.rot;
+        }
+
+        // Process multiplayer messages
+        #[cfg(target_arch = "wasm32")]
+        if let Some(ref mut ws) = self.ws_client {
+            // Send input
+            if _motor != 0.0 || _rudder != 0.0 {
+                ws.send_input(_motor, _rudder);
+            }
+
+            // Process received messages
+            for msg in ws.poll() {
+                match msg {
+                    vangers_net::ServerMessage::Welcome { player_id, level_name, .. } => {
+                        self.mp_status = format!("Connected (player {}, level '{}')", player_id, level_name);
+                        ws.player_id = Some(player_id);
+                        log::info!("{}", self.mp_status);
+                    }
+                    vangers_net::ServerMessage::PlayerJoined { player_id, player_name, .. } => {
+                        log::info!("Player {} ({}) joined", player_id, player_name);
+                    }
+                    vangers_net::ServerMessage::PlayerLeft { player_id } => {
+                        log::info!("Player {} left", player_id);
+                    }
+                    vangers_net::ServerMessage::WorldState { agents, .. } => {
+                        // Move camera to follow our agent if we have one
+                        if let Some(my_id) = ws.player_id {
+                            if let Some(me) = agents.iter().find(|a| a.player_id == my_id) {
+                                let pos = glam::Vec3::from(me.transform.position);
+                                // Smoothly follow server position
+                                app.cam.loc = app.cam.loc.lerp(
+                                    glam::vec3(pos.x, pos.y, pos.z + 200.0),
+                                    0.1,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         let frame = match surface.get_current_texture() {
@@ -388,6 +573,12 @@ pub fn web_main() {
     }
 
     log::info!("Starting Vangers Web");
+    if let Some(url) = SERVER_WS {
+        log::info!("Multiplayer server: {}", url);
+    } else {
+        log::info!("Standalone mode (no VANGERS_SERVER_WS set)");
+    }
+
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut handler = WebHandler::new();

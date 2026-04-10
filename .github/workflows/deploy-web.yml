@@ -19,13 +19,15 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install wasm-bindgen-cli
-      run: cargo install wasm-bindgen-cli --version 0.2.100
+      run: cargo install wasm-bindgen-cli --version 0.2.117
 
     - name: Add wasm target
       run: rustup target add wasm32-unknown-unknown
 
     - name: Build WASM binary
       run: cargo build --target wasm32-unknown-unknown --features web --bin web --release
+      env:
+        VANGERS_SERVER_WS: ${{ secrets.VANGERS_SERVER_WS }}
 
     - name: Generate JS bindings
       run: wasm-bindgen target/wasm32-unknown-unknown/release/web.wasm --out-dir docs/ --target web --no-typescript

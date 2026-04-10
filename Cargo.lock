@@ -3307,6 +3307,7 @@ dependencies = [
  "getrandom 0.2.7",
  "getrandom 0.3.4",
  "glam",
+ "js-sys",
  "log",
  "m3d",
  "naga",
