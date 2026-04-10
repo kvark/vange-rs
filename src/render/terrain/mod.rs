@@ -813,7 +813,7 @@ impl Context {
                         // surface uniforms
                         wgpu::BindGroupLayoutEntry {
                             binding: 0,
-                            visibility: wgpu::ShaderStages::all(),
+                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE,
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Uniform,
                                 has_dynamic_offset: false,
@@ -824,7 +824,7 @@ impl Context {
                         // terrain locals
                         wgpu::BindGroupLayoutEntry {
                             binding: 1,
-                            visibility: wgpu::ShaderStages::all(),
+                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE,
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Uniform,
                                 has_dynamic_offset: false,
@@ -835,7 +835,7 @@ impl Context {
                         // terrain data
                         wgpu::BindGroupLayoutEntry {
                             binding: 2,
-                            visibility: wgpu::ShaderStages::all(),
+                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE,
                             ty: wgpu::BindingType::Texture {
                                 view_dimension: wgpu::TextureViewDimension::D2,
                                 sample_type: wgpu::TextureSampleType::Uint,
@@ -846,7 +846,7 @@ impl Context {
                         // flood map
                         wgpu::BindGroupLayoutEntry {
                             binding: 4,
-                            visibility: wgpu::ShaderStages::all(),
+                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE,
                             ty: wgpu::BindingType::Texture {
                                 view_dimension: wgpu::TextureViewDimension::D1,
                                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -1054,7 +1054,7 @@ impl Context {
                                 wgpu::BindGroupLayoutEntry {
                                     binding: 0,
                                     visibility: if supports_vertex_storage {
-                                        wgpu::ShaderStages::all()
+                                        wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE
                                     } else {
                                         wgpu::ShaderStages::FRAGMENT
                                     },
