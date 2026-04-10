@@ -704,6 +704,16 @@ impl Context {
     ) -> Self {
         profiling::scope!("Init Terrain");
 
+        let needs_compute = matches!(
+            config,
+            settings::Terrain::RayVoxelTraced { .. } | settings::Terrain::Scattered { .. }
+        );
+        let base_visibility = if needs_compute {
+            wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE
+        } else {
+            wgpu::ShaderStages::VERTEX_FRAGMENT
+        };
+
         let supports_vertex_storage = gfx
             .downlevel_caps
             .flags
@@ -813,7 +823,7 @@ impl Context {
                         // surface uniforms
                         wgpu::BindGroupLayoutEntry {
                             binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                            visibility: base_visibility,
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Uniform,
                                 has_dynamic_offset: false,
@@ -824,7 +834,7 @@ impl Context {
                         // terrain locals
                         wgpu::BindGroupLayoutEntry {
                             binding: 1,
-                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                            visibility: base_visibility,
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Uniform,
                                 has_dynamic_offset: false,
@@ -835,7 +845,7 @@ impl Context {
                         // terrain data
                         wgpu::BindGroupLayoutEntry {
                             binding: 2,
-                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                            visibility: base_visibility,
                             ty: wgpu::BindingType::Texture {
                                 view_dimension: wgpu::TextureViewDimension::D2,
                                 sample_type: wgpu::TextureSampleType::Uint,
@@ -846,7 +856,7 @@ impl Context {
                         // flood map (D2 with height=1 for WebGPU compat)
                         wgpu::BindGroupLayoutEntry {
                             binding: 4,
-                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                            visibility: base_visibility,
                             ty: wgpu::BindingType::Texture {
                                 view_dimension: wgpu::TextureViewDimension::D2,
                                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
