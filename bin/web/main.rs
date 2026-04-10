@@ -313,16 +313,18 @@ impl ApplicationHandler for WebHandler {
                 .dyn_into::<web_sys::HtmlCanvasElement>()
                 .unwrap();
 
-            // Read the CSS layout size and set canvas resolution to match
+            // Read the CSS layout size and set canvas resolution to match.
+            // Cap at 4096 to stay within WebGPU texture limits.
             let dpr = web_sys::window().unwrap().device_pixel_ratio();
-            let cw = (canvas.client_width() as f64 * dpr) as u32;
-            let ch = (canvas.client_height() as f64 * dpr) as u32;
+            let max_dim = 4096u32;
+            let cw = ((canvas.client_width() as f64 * dpr) as u32).min(max_dim);
+            let ch = ((canvas.client_height() as f64 * dpr) as u32).min(max_dim);
             if cw > 0 && ch > 0 {
                 canvas.set_width(cw);
                 canvas.set_height(ch);
                 _init_width = cw;
                 _init_height = ch;
-                log::info!("Canvas size: {}x{} (dpr={})", cw, ch, dpr);
+                log::info!("Canvas size: {}x{} (dpr={:.1})", cw, ch, dpr);
             }
 
             attrs.with_canvas(Some(canvas))
@@ -359,7 +361,7 @@ impl ApplicationHandler for WebHandler {
                 .request_device(&wgpu::DeviceDescriptor {
                     label: None,
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
                     memory_hints: wgpu::MemoryHints::default(),
                     trace: wgpu::Trace::Off,
                     experimental_features: Default::default(),
