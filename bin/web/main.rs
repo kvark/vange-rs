@@ -52,11 +52,17 @@ impl WebApp {
             }),
         };
 
+        // Use Painted terrain: simplest mode, no compute shaders,
+        // compatible with both WebGPU and WebGL2.
+        let render_settings = settings::Render {
+            terrain: settings::Terrain::Painted,
+            ..settings::Render::default()
+        };
         let render = Render::new(
             gfx,
             &level_config,
             &objects_palette,
-            &settings::Render::default(),
+            &render_settings,
             &geometry,
             cam.front_face(),
         );
