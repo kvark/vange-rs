@@ -79,7 +79,6 @@ png = "0.18"
 winit = "0.30"
 # gui
 egui = "0.34"
-egui_plot = "0.35"
 egui-winit = { version = "0.34", default-features = false, features = ["links", "wayland", "x11"] }
 egui-wgpu = { version = "0.34", default-features = false }
 # web
