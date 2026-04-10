@@ -757,7 +757,7 @@ impl Context {
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D1,
+            dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R8Unorm,
             view_formats: &[],
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
@@ -767,7 +767,7 @@ impl Context {
             size: table_extent,
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D1,
+            dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Uint,
             view_formats: &[],
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
@@ -843,12 +843,12 @@ impl Context {
                             },
                             count: None,
                         },
-                        // flood map
+                        // flood map (D2 with height=1 for WebGPU compat)
                         wgpu::BindGroupLayoutEntry {
                             binding: 4,
                             visibility: wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE,
                             ty: wgpu::BindingType::Texture {
-                                view_dimension: wgpu::TextureViewDimension::D1,
+                                view_dimension: wgpu::TextureViewDimension::D2,
                                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
                                 multisampled: false,
                             },
@@ -859,7 +859,7 @@ impl Context {
                             binding: 5,
                             visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                             ty: wgpu::BindingType::Texture {
-                                view_dimension: wgpu::TextureViewDimension::D1,
+                                view_dimension: wgpu::TextureViewDimension::D2,
                                 sample_type: wgpu::TextureSampleType::Uint,
                                 multisampled: false,
                             },
@@ -870,7 +870,7 @@ impl Context {
                             binding: 6,
                             visibility: wgpu::ShaderStages::FRAGMENT,
                             ty: wgpu::BindingType::Texture {
-                                view_dimension: wgpu::TextureViewDimension::D1,
+                                view_dimension: wgpu::TextureViewDimension::D2,
                                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
                                 multisampled: false,
                             },

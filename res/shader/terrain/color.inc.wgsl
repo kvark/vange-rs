@@ -1,9 +1,9 @@
 // Common FS routines for evaluating terrain color.
 
 // Terrain parameters per type: shadow offset, height shift, palette start, palette end
-@group(1) @binding(5) var t_Table: texture_1d<u32>;
+@group(1) @binding(5) var t_Table: texture_2d<u32>;
 // corresponds to SDL palette
-@group(1) @binding(6) var t_Palette: texture_1d<f32>;
+@group(1) @binding(6) var t_Palette: texture_2d<f32>;
 
 @group(0) @binding(1) var s_Palette: sampler;
 
@@ -24,7 +24,7 @@ fn evaluate_light(material: vec3<f32>, height_diff: f32) -> f32 {
 
 fn evaluate_palette(ty: u32, value_in: f32) -> f32 {
     var value = clamp(value_in, 0.0, 1.0);
-    let terr = vec4<f32>(textureLoad(t_Table, i32(ty), 0));
+    let terr = vec4<f32>(textureLoad(t_Table, vec2<i32>(i32(ty), 0), 0));
     //Note: the original game had specific logic here to process water
     return (mix(terr.z, terr.w, value) + 0.5) / 256.0;
 }
@@ -61,5 +61,5 @@ fn evaluate_color_id(ty: u32, pos: vec3<f32>, lit_factor: f32) -> f32 {
 
 fn evaluate_color(ty: u32, pos: vec3<f32>, lit_factor: f32) -> vec4<f32> {
     let color_id = evaluate_color_id(ty, pos, lit_factor);
-    return textureSample(t_Palette, s_Palette, color_id);
+    return textureSample(t_Palette, s_Palette, vec2<f32>(color_id, 0.5));
 }

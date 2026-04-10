@@ -139,7 +139,7 @@ impl Harness {
             &device,
             config.format,
             egui_wgpu::RendererOptions {
-                depth_stencil_format: Some(DEPTH_FORMAT),
+                depth_stencil_format: None,
                 ..Default::default()
             },
         );
