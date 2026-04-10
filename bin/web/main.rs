@@ -46,7 +46,7 @@ impl WebApp {
             scale: glam::vec3(1.0, -1.0, 1.0),
             proj: space::Projection::Perspective(space::PerspectiveParams {
                 fovy: 45.0f32.to_radians(),
-                aspect: 800.0 / 600.0,
+                aspect: gfx.screen_size.width as f32 / gfx.screen_size.height.max(1) as f32,
                 near: 10.0,
                 far: 2000.0,
             }),
@@ -256,8 +256,8 @@ impl WebHandler {
             depth_view: None,
             app: None,
             screen_size: wgpu::Extent3d {
-                width: 800,
-                height: 600,
+                width: 1,
+                height: 1,
                 depth_or_array_layers: 1,
             },
             keys_pressed: std::collections::HashSet::new(),
@@ -275,9 +275,11 @@ impl ApplicationHandler for WebHandler {
             return;
         }
 
+        let mut _init_width = 800u32;
+        let mut _init_height = 600u32;
+
         let attrs = Window::default_attributes()
-            .with_title("Vangers Web")
-            .with_inner_size(winit::dpi::PhysicalSize::new(800u32, 600u32));
+            .with_title("Vangers Web");
 
         #[cfg(target_arch = "wasm32")]
         let attrs = {
@@ -288,7 +290,29 @@ impl ApplicationHandler for WebHandler {
                 .expect("missing <canvas id='canvas'>")
                 .dyn_into::<web_sys::HtmlCanvasElement>()
                 .unwrap();
+
+            // Read the CSS layout size and set canvas resolution to match
+            let dpr = web_sys::window().unwrap().device_pixel_ratio();
+            let cw = (canvas.client_width() as f64 * dpr) as u32;
+            let ch = (canvas.client_height() as f64 * dpr) as u32;
+            if cw > 0 && ch > 0 {
+                canvas.set_width(cw);
+                canvas.set_height(ch);
+                _init_width = cw;
+                _init_height = ch;
+                log::info!("Canvas size: {}x{} (dpr={})", cw, ch, dpr);
+            }
+
             attrs.with_canvas(Some(canvas))
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let attrs = attrs.with_inner_size(winit::dpi::PhysicalSize::new(_init_width, _init_height));
+
+        self.screen_size = wgpu::Extent3d {
+            width: _init_width,
+            height: _init_height,
+            depth_or_array_layers: 1,
         };
 
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
