@@ -359,7 +359,7 @@ impl Application for LevelView {
         });
     }
 
-    fn draw(&mut self, device: &wgpu::Device, targets: ScreenTargets) -> wgpu::CommandBuffer {
+    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("World"),
         });
@@ -372,6 +372,7 @@ impl Application for LevelView {
             targets,
             None,
             device,
+            queue,
         );
 
         encoder.finish()

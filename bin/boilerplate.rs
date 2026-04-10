@@ -22,7 +22,7 @@ pub trait Application {
     fn reload(&mut self, device: &wgpu::Device);
     fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, delta: f32);
     fn draw_ui(&mut self, context: &egui::Context);
-    fn draw(&mut self, device: &wgpu::Device, targets: ScreenTargets) -> wgpu::CommandBuffer;
+    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) -> wgpu::CommandBuffer;
 }
 
 struct WindowContext {
@@ -353,7 +353,7 @@ impl<A: Application> ApplicationHandler for HarnessHandler<A> {
             color: &view,
             depth: &self.win.depth_target,
         };
-        let command_buffer = self.app.draw(&self.gfx.device, targets);
+        let command_buffer = self.app.draw(&self.gfx.device, &self.gfx.queue, targets);
 
         //Note: we can't run this in the main render pass since it has
         // a depth texture, and `egui` doesn't expect that.

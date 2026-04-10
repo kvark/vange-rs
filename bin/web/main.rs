@@ -70,7 +70,7 @@ impl WebApp {
         }
     }
 
-    fn draw(&mut self, device: &wgpu::Device, targets: ScreenTargets) -> wgpu::CommandBuffer {
+    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("World"),
         });
@@ -82,6 +82,7 @@ impl WebApp {
             targets,
             None,
             device,
+            queue,
         );
         encoder.finish()
     }
@@ -624,7 +625,7 @@ impl ApplicationHandler for WebHandler {
             color: &view,
             depth: &gpu.depth_view,
         };
-        let command_buffer = gpu.app.draw(&gpu.device, targets);
+        let command_buffer = gpu.app.draw(&gpu.device, &gpu.queue, targets);
         gpu.queue.submit(std::iter::once(command_buffer));
         frame.present();
     }

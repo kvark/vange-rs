@@ -171,6 +171,7 @@ impl Application for ResourceView {
     fn draw(
         &mut self,
         device: &wgpu::Device,
+        _queue: &wgpu::Queue,
         targets: render::ScreenTargets,
     ) -> wgpu::CommandBuffer {
         let (bound, color) = if let Some(ref cc) = self.car {
