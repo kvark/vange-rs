@@ -8,7 +8,7 @@ struct Storage {
 
 @group(0) @binding(2) var<storage, read> s_Storage: Storage;
 
-@group(1) @binding(0) var t_ColorTable: texture_1d<u32>;
+@group(1) @binding(0) var t_ColorTable: texture_2d<u32>;
 
 struct Geometry {
     @location(3) pos_scale: vec4<f32>,
@@ -66,7 +66,7 @@ fn color_vs(
     let world = qrot(body.orient, local) * body.scale + body.pos;
 
     let color_id = select(color_index, geo.body_and_color_id.y, color_index == c_BodyColorId);
-    let range = textureLoad(t_ColorTable, i32(color_id), 0).xy;
+    let range = textureLoad(t_ColorTable, vec2<i32>(i32(color_id), 0), 0).xy;
     let palette_range = vec2<f32>(vec2<u32>(range.x, range.x + (128u >> range.y)));
 
     let n = normalize(normal.xyz);
@@ -81,7 +81,7 @@ fn color_vs(
 
 
 @group(0) @binding(1) var s_PaletteSampler: sampler;
-@group(1) @binding(1) var t_Palette: texture_1d<f32>;
+@group(1) @binding(1) var t_Palette: texture_2d<f32>;
 
 @fragment
 fn color_fs(in: Varyings, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
@@ -91,5 +91,5 @@ fn color_fs(in: Varyings, @builtin(front_facing) is_front: bool) -> @location(0)
     let n_dot_l = lit_factor * max(0.0, dot(normal, light));
     let tc_raw = mix(in.palette_range.x, in.palette_range.y, n_dot_l);
     let tc = clamp(tc_raw, in.palette_range.x + 0.5, in.palette_range.y - 0.5) / 256.0;
-    return textureSample(t_Palette, s_PaletteSampler, tc);
+    return textureSample(t_Palette, s_PaletteSampler, vec2<f32>(tc, 0.5));
 }

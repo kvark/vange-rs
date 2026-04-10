@@ -33,7 +33,7 @@ struct CopyOutput {
 @fragment
 fn copy_fs(@builtin(position) pos: vec4<f32>) -> CopyOutput {
     let value = atomicLoad(&s_Storage.data[u32(pos.y) * u_Locals.screen_rect.z + u32(pos.x)]);
-    let color = textureLoad(t_Palette, i32(value & 255u), 0);
+    let color = textureLoad(t_Palette, vec2<i32>(i32(value & 255u), 0), 0);
     let depth = f32(value >> 8u) / 16777215.0; //TODO: 0xFFFFFFu
     return CopyOutput(color, depth);
 }

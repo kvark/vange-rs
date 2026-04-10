@@ -361,7 +361,7 @@ impl ApplicationHandler for WebHandler {
                 .request_device(&wgpu::DeviceDescriptor {
                     label: None,
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
+                    required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
                     memory_hints: wgpu::MemoryHints::default(),
                     trace: wgpu::Trace::Off,
                     experimental_features: Default::default(),

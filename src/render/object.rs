@@ -230,7 +230,7 @@ impl Context {
             size: extent,
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D1,
+            dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rg8Uint,
             view_formats: &[],
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
@@ -278,7 +278,7 @@ impl Context {
                             binding: 0,
                             visibility: wgpu::ShaderStages::VERTEX,
                             ty: wgpu::BindingType::Texture {
-                                view_dimension: wgpu::TextureViewDimension::D1,
+                                view_dimension: wgpu::TextureViewDimension::D2,
                                 sample_type: wgpu::TextureSampleType::Uint,
                                 multisampled: false,
                             },
@@ -289,7 +289,7 @@ impl Context {
                             binding: 1,
                             visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                             ty: wgpu::BindingType::Texture {
-                                view_dimension: wgpu::TextureViewDimension::D1,
+                                view_dimension: wgpu::TextureViewDimension::D2,
                                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
                                 multisampled: false,
                             },
