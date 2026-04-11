@@ -837,28 +837,74 @@ impl Application for Game {
                             };
 
                             if Some(agent_state.player_id) == my_id {
-                                // Client-side prediction: soft-correct toward server
+                                // Client-side prediction correction
                                 let player = self
                                     .agents
                                     .iter_mut()
                                     .find(|a| a.spirit == Spirit::Player);
                                 if let Some(player) = player {
                                     if let Physics::Cpu {
-                                        ref mut transform, ..
+                                        ref mut transform,
+                                        ref mut dynamo,
                                     } = player.physics
                                     {
-                                        // Client-side prediction: blend toward server
-                                        // Low rate = trust local physics more (less jitter)
-                                        // High rate = trust server more (less desync)
-                                        const BLEND: f32 = 0.3;
-                                        transform.disp = transform.disp.lerp(
-                                            server_transform.disp,
-                                            BLEND,
-                                        );
-                                        transform.rot = transform.rot.slerp(
-                                            server_transform.rot,
-                                            BLEND,
-                                        );
+                                        let pos_error =
+                                            transform.disp.distance(server_transform.disp);
+
+                                        // Dead zone: ignore tiny discrepancies that
+                                        // would just cause micro-jitter
+                                        const DEAD_ZONE: f32 = 0.5;
+                                        // Teleport threshold: snap directly if way off
+                                        const TELEPORT: f32 = 100.0;
+                                        // Low blend rate to avoid oscillation.
+                                        // The key insight: we also correct velocity,
+                                        // so the physics won't immediately undo this.
+                                        const BLEND_POS: f32 = 0.1;
+                                        const BLEND_VEL: f32 = 0.2;
+
+                                        if pos_error > TELEPORT {
+                                            // Too far off — hard snap
+                                            transform.disp = server_transform.disp;
+                                            transform.rot = server_transform.rot;
+                                            dynamo.linear_velocity = Vec3::from(
+                                                agent_state.dynamo.linear_velocity,
+                                            );
+                                            dynamo.angular_velocity = Vec3::from(
+                                                agent_state.dynamo.angular_velocity,
+                                            );
+                                            dynamo.traction =
+                                                agent_state.dynamo.traction;
+                                            dynamo.rudder = agent_state.dynamo.rudder;
+                                        } else if pos_error > DEAD_ZONE {
+                                            // Smooth correction: blend both position
+                                            // and velocity to prevent sawtooth jitter
+                                            transform.disp = transform.disp.lerp(
+                                                server_transform.disp,
+                                                BLEND_POS,
+                                            );
+                                            transform.rot = transform.rot.slerp(
+                                                server_transform.rot,
+                                                BLEND_POS,
+                                            );
+                                            // Correct velocity so physics doesn't
+                                            // immediately diverge after correction
+                                            let server_lv = Vec3::from(
+                                                agent_state.dynamo.linear_velocity,
+                                            );
+                                            let server_av = Vec3::from(
+                                                agent_state.dynamo.angular_velocity,
+                                            );
+                                            dynamo.linear_velocity =
+                                                dynamo.linear_velocity.lerp(
+                                                    server_lv, BLEND_VEL,
+                                                );
+                                            dynamo.angular_velocity =
+                                                dynamo.angular_velocity.lerp(
+                                                    server_av, BLEND_VEL,
+                                                );
+                                        }
+                                        // Always sync traction/rudder (these are
+                                        // discrete control outputs, not continuous)
                                         transform.scale = server_transform.scale;
                                     }
                                 }
