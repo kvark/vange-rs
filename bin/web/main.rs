@@ -76,6 +76,13 @@ impl WebApp {
         }
     }
 
+    fn resize(&mut self, extent: wgpu::Extent3d, device: &wgpu::Device) {
+        self.render.resize(extent, device);
+        if let space::Projection::Perspective(ref mut p) = self.cam.proj {
+            p.aspect = extent.width as f32 / extent.height.max(1) as f32;
+        }
+    }
+
     fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("World"),
@@ -540,6 +547,20 @@ impl ApplicationHandler for WebHandler {
                     gpu.config.width = size.width;
                     gpu.config.height = size.height;
                     gpu.surface.configure(&gpu.device, &gpu.config);
+                    gpu.depth_view = gpu
+                        .device
+                        .create_texture(&wgpu::TextureDescriptor {
+                            label: Some("Depth"),
+                            size: self.screen_size,
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: DEPTH_FORMAT,
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                            view_formats: &[],
+                        })
+                        .create_view(&wgpu::TextureViewDescriptor::default());
+                    gpu.app.resize(self.screen_size, &gpu.device);
                 }
             }
             _ => {}
@@ -560,6 +581,31 @@ impl ApplicationHandler for WebHandler {
         let Some(ref mut gpu) = self.gpu else {
             return;
         };
+
+        // If the screen was resized while GPU was initializing asynchronously,
+        // the depth texture and surface config still have the old size.
+        // Reconfigure now before the first render.
+        if gpu.config.width != self.screen_size.width
+            || gpu.config.height != self.screen_size.height
+        {
+            gpu.config.width = self.screen_size.width;
+            gpu.config.height = self.screen_size.height;
+            gpu.surface.configure(&gpu.device, &gpu.config);
+            gpu.depth_view = gpu
+                .device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("Depth"),
+                    size: self.screen_size,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: DEPTH_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                })
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            gpu.app.resize(self.screen_size, &gpu.device);
+        }
 
         // Compute delta time
         let now = Instant::now();
