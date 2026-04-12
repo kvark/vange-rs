@@ -749,8 +749,21 @@ pub fn web_main() {
 
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut handler = WebHandler::new();
-    event_loop.run_app(&mut handler).unwrap();
+    let handler = WebHandler::new();
+
+    // On WASM, use spawn_app to avoid the "exceptions for control flow"
+    // error that run_app throws. spawn_app sets up the event loop
+    // asynchronously and returns normally.
+    #[cfg(target_arch = "wasm32")]
+    {
+        use winit::platform::web::EventLoopExtWebSys;
+        event_loop.spawn_app(handler);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut handler = handler;
+        event_loop.run_app(&mut handler).unwrap();
+    }
 }
 
 fn main() {

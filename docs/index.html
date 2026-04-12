@@ -180,10 +180,16 @@ WGSL shaders, compute-based voxel baking</code></pre>
                 document.getElementById('loading').style.display = 'none';
             } catch (err) {
                 const msg = String(err);
-                if (msg.includes('WebGPU')) {
+                // winit uses exceptions for control flow on WASM;
+                // this is expected and not an actual error
+                if (msg.includes('Using exceptions for control flow')) {
+                    document.getElementById('loading').style.display = 'none';
+                    return;
+                }
+                if (msg.includes('WebGL') || msg.includes('WebGPU')) {
                     document.getElementById('loading').innerHTML =
-                        'WebGPU is not supported in this browser.<br>' +
-                        'Try Chrome 113+, Edge 113+, or Firefox Nightly.';
+                        'WebGL2 is not supported in this browser.<br>' +
+                        'Try Chrome, Edge, or Firefox with WebGL2 enabled.';
                 } else {
                     document.getElementById('loading').textContent = 'Error: ' + msg;
                 }
