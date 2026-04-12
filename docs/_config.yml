@@ -4,5 +4,10 @@ title: Vangers Oxidation Project
 description: >-
   Vange-rs experiments and technology blog: future technology from the past.
 
-baseurl: "/"
+baseurl: ""
 url: "https://vange.rs"
+
+# Include WASM artifacts that Jekyll would otherwise skip
+include:
+  - "*.wasm"
+  - "*.js"
