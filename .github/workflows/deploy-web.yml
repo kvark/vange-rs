@@ -32,10 +32,16 @@ jobs:
     - name: Generate JS bindings
       run: wasm-bindgen target/wasm32-unknown-unknown/release/web.wasm --out-dir docs/ --target web --no-typescript
 
+    - name: Build Jekyll site
+      uses: actions/jekyll-build-pages@v1
+      with:
+        source: docs/
+        destination: _site/
+
     - name: Upload pages artifact
       uses: actions/upload-pages-artifact@v3
       with:
-        path: docs/
+        path: _site/
 
   deploy:
     needs: build
