@@ -83,36 +83,30 @@
     <div id="blog-panel" class="panel">
         <div class="content">
             <h1>Development Log</h1>
+            <p>Technical posts about the vange-rs rendering engine.</p>
 
-            <h2>Reviving vange-rs (2026)</h2>
-            <p>
-                After a period of dormancy, vange-rs is being modernized and brought to the web.
-                Here's what changed:
-            </p>
+            <h2><a href="/2022/11/08/voxels.html">Voxel Tracing</a></h2>
+            <p>Nov 8, 2022 — Accelerating ray-terrain intersection with a voxel octree.</p>
 
-            <p><span class="badge badge-green">Done</span> <strong>Dependency overhaul</strong> —
-                Updated all major dependencies to their latest breaking versions:
-                wgpu 0.17→29, winit 0.28→0.30, egui 0.22→0.34, ron 0.8→0.12, png 0.17→0.18.</p>
+            <h2><a href="/2021/08/25/pure-rust.html">WGSL</a></h2>
+            <p>Aug 25, 2021 — Porting shaders to WGSL and removing the C dependency.</p>
 
-            <p><span class="badge badge-green">Done</span> <strong>cgmath → glam</strong> —
-                Replaced the unmaintained cgmath library with glam across the entire codebase.
-                Custom <code>Transform</code> struct replaces <code>cgmath::Decomposed</code>.</p>
+            <h2><a href="/2020/08/29/bar-painting.html">Bar Painting</a></h2>
+            <p>Aug 29, 2020 — A "true" 3D rendering method for the Vangers terrain.</p>
 
-            <p><span class="badge badge-green">Done</span> <strong>Modern tooling</strong> —
-                getopts→clap, futures→pollster, clippy clean with <code>-D warnings</code>,
-                Blade-style lint configuration.</p>
+            <h2><a href="/2020/08/04/shadows.html">Hybrid Shadows</a></h2>
+            <p>Aug 4, 2020 — Shadow mapping for the voxel terrain engine.</p>
 
-            <p><span class="badge badge-blue">Done</span> <strong>WebGPU/WASM</strong> —
-                New web binary with embedded shaders, procedural test level,
-                and camera controls. No game data files needed.</p>
+            <h2><a href="/2019/12/19/gpu-collisions.html">GPU Collisions</a></h2>
+            <p>Dec 19, 2019 — Moving the collision model to the GPU.</p>
 
-            <p><span class="badge badge-blue">Done</span> <strong>Headless snapshots</strong> —
-                <code>level --snapshot output.png --terrain RayTraced</code> renders
-                to PNG without a window. CI tests all terrain modes with lavapipe.</p>
+            <h2><a href="/2019/12/17/collision-model.html">Collision Model</a></h2>
+            <p>Dec 17, 2019 — How Vangers handles vehicle-terrain collisions.</p>
 
-            <p><span class="badge badge-orange">Next</span> <strong>Playable web demo</strong> —
-                Procedural terrain generation, vehicle rendering, and drag-and-drop
-                support for original game data.</p>
+            <h2><a href="/2019/12/12/data-formats.html">Data Formats</a></h2>
+            <p>Dec 12, 2019 — Reverse-engineering the original Vangers data files.</p>
+
+            <p style="margin-top: 32px;"><a href="/blog">View full blog &rarr;</a></p>
         </div>
     </div>
 
