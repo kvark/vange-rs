@@ -18,7 +18,7 @@ use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
     event::{self, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::Window,
 };
@@ -311,6 +311,10 @@ impl WebHandler {
 
 impl ApplicationHandler for WebHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // On native, use ControlFlow::Poll for continuous rendering.
+        // On web, rendering is driven by requestAnimationFrame via request_redraw().
+        #[cfg(not(target_arch = "wasm32"))]
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
         if self.window.is_some() {
             return;
         }
@@ -496,10 +500,13 @@ impl ApplicationHandler for WebHandler {
             self.window = Some(window);
             let pending = self.gpu_pending.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let (instance, surface, adapter, device, queue, _window) = init_future.await;
+                let (instance, surface, adapter, device, queue, window) = init_future.await;
                 log::info!("GPU initialized on web!");
                 let state = build_gpu_state(instance, surface, &adapter, device, queue, screen_size);
                 *pending.borrow_mut() = Some(state);
+                // Wake the event loop — without this, ControlFlow::Wait
+                // keeps the loop sleeping and gpu_pending is never picked up.
+                window.request_redraw();
             });
         }
 
@@ -568,10 +575,19 @@ impl ApplicationHandler for WebHandler {
                 }
             }
             WindowEvent::RedrawRequested => {
+                // Check if async GPU init completed (WASM)
+                #[cfg(target_arch = "wasm32")]
+                if self.gpu.is_none() {
+                    if let Some(state) = self.gpu_pending.borrow_mut().take() {
+                        self.gpu = Some(state);
+                    }
+                }
+
                 self.render();
-                // Schedule the next frame via requestAnimationFrame.
-                // This is the standard web rendering pattern — without this,
-                // the browser never composites the canvas.
+
+                // Schedule the next frame. On web this calls
+                // requestAnimationFrame; on native with ControlFlow::Poll
+                // this is redundant but harmless.
                 if let Some(ref window) = self.window {
                     window.request_redraw();
                 }
@@ -581,24 +597,10 @@ impl ApplicationHandler for WebHandler {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // Check if async GPU init completed (WASM)
-        #[cfg(target_arch = "wasm32")]
-        if self.gpu.is_none() {
-            if let Some(state) = self.gpu_pending.borrow_mut().take() {
-                self.gpu = Some(state);
-                // GPU just became available — kick off the first frame
-                if let Some(ref window) = self.window {
-                    window.request_redraw();
-                }
-            }
-        }
-
-        // On native, drive continuous rendering from about_to_wait
-        // (ControlFlow::Poll calls this repeatedly).
-        // On web, rendering is driven by RedrawRequested/requestAnimationFrame.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.render();
+        // On native, ControlFlow::Poll drives this continuously.
+        // Trigger a redraw each iteration so RedrawRequested fires.
+        if let Some(ref window) = self.window {
+            window.request_redraw();
         }
     }
 }
@@ -797,9 +799,6 @@ pub fn web_main() {
     let event_loop = EventLoop::new().unwrap();
     let handler = WebHandler::new();
 
-    // On WASM, use spawn_app (no exception) and let requestAnimationFrame
-    // drive the rendering loop via RedrawRequested.
-    // On native, use ControlFlow::Poll + run_app for continuous rendering.
     #[cfg(target_arch = "wasm32")]
     {
         use winit::platform::web::EventLoopExtWebSys;
@@ -807,7 +806,6 @@ pub fn web_main() {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        event_loop.set_control_flow(ControlFlow::Poll);
         let mut handler = handler;
         event_loop.run_app(&mut handler).unwrap();
     }
