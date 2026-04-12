@@ -244,6 +244,8 @@ struct WebHandler {
     screen_size: wgpu::Extent3d,
     keys_pressed: std::collections::HashSet<KeyCode>,
     last_frame: Option<Instant>,
+    /// Total elapsed time for auto-orbit camera.
+    elapsed: f32,
     #[cfg(target_arch = "wasm32")]
     ws_client: Option<net_ws::WsClient>,
     /// Status text overlay (used in multiplayer logging)
@@ -299,6 +301,7 @@ impl WebHandler {
             },
             keys_pressed: std::collections::HashSet::new(),
             last_frame: None,
+            elapsed: 0.0,
             #[cfg(target_arch = "wasm32")]
             ws_client,
             mp_status,
@@ -615,10 +618,13 @@ impl ApplicationHandler for WebHandler {
         };
         self.last_frame = Some(now);
         let dt = dt.min(0.1);
+        self.elapsed += dt;
 
-        // Camera movement from keyboard
+        // Auto-orbit camera around terrain center when no keys are pressed.
+        // Keyboard input overrides the orbit for manual control.
         let move_speed = 100.0;
         let rotation_speed = 1.0;
+        let has_input = !self.keys_pressed.is_empty();
 
         let mut _motor = 0.0f32;
         let mut _rudder = 0.0f32;
@@ -668,6 +674,23 @@ impl ApplicationHandler for WebHandler {
         if self.keys_pressed.contains(&KeyCode::KeyE) {
             let rotation = glam::Quat::from_rotation_z(-rotation_speed * dt);
             gpu.app.cam.rot = rotation * gpu.app.cam.rot;
+        }
+
+        // Auto-orbit: slowly circle the terrain center
+        if !has_input {
+            let center = glam::vec3(128.0, 128.0, 0.0);
+            let radius = 200.0;
+            let height = 300.0;
+            let angle = self.elapsed * 0.15; // slow orbit
+            gpu.app.cam.loc = center + glam::vec3(
+                radius * angle.cos(),
+                radius * angle.sin(),
+                height,
+            );
+            // Look toward center with a slight downward tilt
+            let tilt = glam::Quat::from_rotation_x(-0.6);
+            let yaw = glam::Quat::from_rotation_z(angle + std::f32::consts::FRAC_PI_2);
+            gpu.app.cam.rot = yaw * tilt;
         }
 
         // Process multiplayer messages
