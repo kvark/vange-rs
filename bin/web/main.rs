@@ -507,7 +507,8 @@ impl ApplicationHandler for WebHandler {
         {
             let (instance, surface, adapter, device, queue, _) = pollster::block_on(init_future);
             self.gpu = Some(build_gpu_state(instance, surface, &adapter, device, queue, screen_size));
-            self.window = Some(window);
+            self.window = Some(window.clone());
+            window.request_redraw();
         }
     }
 
@@ -566,6 +567,15 @@ impl ApplicationHandler for WebHandler {
                     gpu.app.resize(self.screen_size, &gpu.device);
                 }
             }
+            WindowEvent::RedrawRequested => {
+                self.render();
+                // Schedule the next frame via requestAnimationFrame.
+                // This is the standard web rendering pattern — without this,
+                // the browser never composites the canvas.
+                if let Some(ref window) = self.window {
+                    window.request_redraw();
+                }
+            }
             _ => {}
         }
     }
@@ -576,11 +586,25 @@ impl ApplicationHandler for WebHandler {
         if self.gpu.is_none() {
             if let Some(state) = self.gpu_pending.borrow_mut().take() {
                 self.gpu = Some(state);
-            } else {
-                return; // Still waiting for GPU init
+                // GPU just became available — kick off the first frame
+                if let Some(ref window) = self.window {
+                    window.request_redraw();
+                }
             }
         }
 
+        // On native, drive continuous rendering from about_to_wait
+        // (ControlFlow::Poll calls this repeatedly).
+        // On web, rendering is driven by RedrawRequested/requestAnimationFrame.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.render();
+        }
+    }
+}
+
+impl WebHandler {
+    fn render(&mut self) {
         let Some(ref mut gpu) = self.gpu else {
             return;
         };
@@ -771,12 +795,11 @@ pub fn web_main() {
     }
 
     let event_loop = EventLoop::new().unwrap();
-    event_loop.set_control_flow(ControlFlow::Poll);
     let handler = WebHandler::new();
 
-    // On WASM, use spawn_app to avoid the "exceptions for control flow"
-    // error that run_app throws. spawn_app sets up the event loop
-    // asynchronously and returns normally.
+    // On WASM, use spawn_app (no exception) and let requestAnimationFrame
+    // drive the rendering loop via RedrawRequested.
+    // On native, use ControlFlow::Poll + run_app for continuous rendering.
     #[cfg(target_arch = "wasm32")]
     {
         use winit::platform::web::EventLoopExtWebSys;
@@ -784,6 +807,7 @@ pub fn web_main() {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
+        event_loop.set_control_flow(ControlFlow::Poll);
         let mut handler = handler;
         event_loop.run_app(&mut handler).unwrap();
     }
