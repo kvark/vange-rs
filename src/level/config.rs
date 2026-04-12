@@ -40,11 +40,11 @@ impl LevelConfig {
     pub fn new_test() -> Self {
         // Each terrain type gets a 32-entry slice of the 256-color palette,
         // giving visible color variation across height zones.
-        let terrains: Vec<TerrainConfig> = (0..8)
+        let terrains: Vec<TerrainConfig> = (0..8u8)
             .map(|i| TerrainConfig {
                 shadow_offset: 0,
                 height_shift: 0,
-                colors: (i * 32)..((i + 1) * 32),
+                colors: (i * 32)..(i * 32 + 31),
             })
             .collect();
         LevelConfig {
