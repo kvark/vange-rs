@@ -38,11 +38,15 @@ pub struct LevelConfig {
 
 impl LevelConfig {
     pub fn new_test() -> Self {
-        let tc = TerrainConfig {
-            shadow_offset: 0,
-            height_shift: 0,
-            colors: 0..1,
-        };
+        // Each terrain type gets a 32-entry slice of the 256-color palette,
+        // giving visible color variation across height zones.
+        let terrains: Vec<TerrainConfig> = (0..8)
+            .map(|i| TerrainConfig {
+                shadow_offset: 0,
+                height_shift: 0,
+                colors: (i * 32)..((i + 1) * 32),
+            })
+            .collect();
         LevelConfig {
             path_palette: PathBuf::default(),
             path_data: PathBuf::default(),
@@ -51,7 +55,7 @@ impl LevelConfig {
             geo: Power(0),
             section: Power(8),
             min_square: Power(0),
-            terrains: (0..8).map(|_| tc.clone()).collect(),
+            terrains: terrains.into_boxed_slice(),
         }
     }
 

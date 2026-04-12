@@ -409,8 +409,9 @@ pub fn load(config: &LevelConfig, geometry: &settings::Geometry) -> Level {
                     + 30.0 * (fy * 4.0 * std::f32::consts::PI).sin()
                     + 20.0 * ((fx + fy) * 8.0 * std::f32::consts::PI).sin();
                 height[y * size.0 as usize + x] = h.clamp(0.0, 255.0) as u8;
-                // Terrain type based on height
-                meta[y * size.0 as usize + x] = ((h as u8) >> 5) & 0x07;
+                // Terrain type based on height.
+                // For 8 terrain types, the shader reads bits 3-5 (shift=3, mask=7).
+                meta[y * size.0 as usize + x] = h.clamp(0.0, 255.0) as u8 & 0b00111000;
             }
         }
         LevelData {
@@ -447,11 +448,21 @@ pub fn load(config: &LevelConfig, geometry: &settings::Geometry) -> Level {
     let palette = if path_empty(&config.path_palette) {
         let mut pal = [[0xFF; 4]; 0x100];
         for (i, color) in pal.iter_mut().enumerate() {
-            let t = i as f32 / 255.0;
-            // Gradient from dark green (low) to brown (mid) to white (high)
-            color[0] = (40.0 + 180.0 * t) as u8; // R
-            color[1] = (80.0 + 100.0 * t * t) as u8; // G
-            color[2] = (20.0 + 60.0 * t) as u8; // B
+            // Each 32-entry block maps to one terrain type
+            let block = i / 32;
+            let (r, g, b) = match block {
+                0 => (0.0, 0.0, 200.0),       // blue (water)
+                1 => (200.0, 180.0, 80.0),     // sand
+                2 => (40.0, 180.0, 40.0),      // green
+                3 => (80.0, 200.0, 80.0),      // light green
+                4 => (160.0, 140.0, 60.0),     // olive
+                5 => (140.0, 100.0, 40.0),     // brown
+                6 => (180.0, 160.0, 140.0),    // grey rock
+                _ => (240.0, 240.0, 250.0),    // snow
+            };
+            color[0] = r as u8;
+            color[1] = g as u8;
+            color[2] = b as u8;
             color[3] = 0xFF;
         }
         pal
