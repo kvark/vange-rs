@@ -47,17 +47,19 @@ impl WebApp {
             loc: glam::vec3(128.0, 128.0, 400.0),
             rot: glam::Quat::IDENTITY,
             scale: glam::vec3(1.0, -1.0, 1.0),
-            proj: space::Projection::ortho(
-                gfx.screen_size.width as u16,
-                gfx.screen_size.height as u16,
-                10.0..1024.0,
-            ),
+            proj: space::Projection::Perspective(space::PerspectiveParams {
+                fovy: 45.0f32.to_radians(),
+                aspect: gfx.screen_size.width as f32 / gfx.screen_size.height.max(1) as f32,
+                near: 10.0,
+                far: 2000.0,
+            }),
         };
 
-        // Use Sliced terrain: simple layered renderer, no compute shaders
-        // and no vertex storage buffers. Compatible with WebGL2.
+        // RayTraced terrain does a per-pixel height lookup in the fragment
+        // shader. It doesn't need compute shaders or vertex storage, so it
+        // works on WebGL2 and produces proper 3D relief with lighting.
         let render_settings = settings::Render {
-            terrain: settings::Terrain::Sliced,
+            terrain: settings::Terrain::RayTraced,
             ..settings::Render::default()
         };
         let render = Render::new(
@@ -80,11 +82,9 @@ impl WebApp {
 
     fn resize(&mut self, extent: wgpu::Extent3d, device: &wgpu::Device) {
         self.render.resize(extent, device);
-        self.cam.proj = space::Projection::ortho(
-            extent.width as u16,
-            extent.height as u16,
-            10.0..1024.0,
-        );
+        if let space::Projection::Perspective(ref mut p) = self.cam.proj {
+            p.aspect = extent.width as f32 / extent.height.max(1) as f32;
+        }
     }
 
     fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) -> wgpu::CommandBuffer {
@@ -706,15 +706,20 @@ impl WebHandler {
             gpu.app.cam.rot = rotation * gpu.app.cam.rot;
         }
 
-        // Auto-orbit: pan across terrain from above.
-        // Sliced terrain only shows detail from a top-down view;
-        // tilted perspectives degenerate into a solid green fill.
+        // Auto-orbit: slowly circle the terrain center
         if !has_input {
+            let center = glam::vec3(128.0, 128.0, 0.0);
+            let radius = 200.0;
+            let height = 300.0;
             let angle = self.elapsed * 0.15;
-            let center_x = 128.0 + 60.0 * angle.cos();
-            let center_y = 128.0 + 60.0 * angle.sin();
-            gpu.app.cam.loc = glam::vec3(center_x, center_y, 400.0);
-            gpu.app.cam.rot = glam::Quat::IDENTITY;
+            gpu.app.cam.loc = center + glam::vec3(
+                radius * angle.cos(),
+                radius * angle.sin(),
+                height,
+            );
+            let tilt = glam::Quat::from_rotation_x(-0.6);
+            let yaw = glam::Quat::from_rotation_z(angle + std::f32::consts::FRAC_PI_2);
+            gpu.app.cam.rot = yaw * tilt;
         }
 
         // Process multiplayer messages
