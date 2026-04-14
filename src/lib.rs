@@ -39,3 +39,7 @@ pub mod model;
 pub mod physics;
 pub mod render;
 pub mod space;
+pub mod vfs;
+
+#[cfg(feature = "web")]
+pub mod data;

@@ -12,7 +12,55 @@ use vangers::{
     level,
     render::{Batcher, GraphicsContext, Render, ScreenTargets, DEPTH_FORMAT},
     space,
+    vfs::Vfs,
 };
+
+#[cfg(target_arch = "wasm32")]
+use vangers::data;
+
+/// Default level to try loading from the release. If the release asset
+/// is missing (404) we fall back to the procedural test level.
+const DEFAULT_LEVEL: &str = "fostral";
+
+/// INI path inside the per-level zip. Zips are expected to contain
+/// `<level_id>/world.ini` plus the .vmc/.vmp/.pal files it references.
+fn level_ini_path(level_id: &str) -> String {
+    format!("{}/world.ini", level_id)
+}
+
+/// Fetch `common.zip` and `<level_id>.zip` from the release and mount
+/// both into a VFS. Returns `None` on any error (missing asset, network
+/// failure, invalid zip, etc.); the caller then falls back to a
+/// procedural test level.
+#[cfg(target_arch = "wasm32")]
+async fn fetch_release_level(level_id: &str) -> Option<(Vfs, String)> {
+    let mut vfs = Vfs::new();
+
+    // common.zip holds cross-level assets. A level-only run is fine
+    // without it, so we log+continue on failure.
+    if let Err(e) = data::fetch_and_mount(&mut vfs, data::COMMON_ARCHIVE).await {
+        log::warn!("Couldn't fetch {}: {}", data::COMMON_ARCHIVE, e);
+    }
+
+    let archive = data::level_archive_name(level_id);
+    if let Err(e) = data::fetch_and_mount(&mut vfs, &archive).await {
+        log::warn!("Couldn't fetch {}: {}. Falling back to test level.", archive, e);
+        return None;
+    }
+
+    let ini_path = level_ini_path(level_id);
+    if !vfs.contains(&ini_path) {
+        log::warn!(
+            "{} did not contain {}. Falling back to test level.",
+            archive,
+            ini_path
+        );
+        return None;
+    }
+
+    log::info!("Loaded release level '{}' from VFS ({} entries)", level_id, vfs.len());
+    Some((vfs, ini_path))
+}
 
 use std::sync::Arc;
 use winit::{
@@ -35,14 +83,32 @@ struct WebApp {
 }
 
 impl WebApp {
+    /// Build the app with a procedural test level. Used as a fallback
+    /// when the release data can't be fetched (404, offline, etc.).
     fn new(gfx: &GraphicsContext) -> Self {
         let level_config = level::LevelConfig::new_test();
         let geometry = settings::Geometry::default();
+        let level = level::load(&level_config, &geometry);
+        Self::build(gfx, level_config, level, geometry)
+    }
+
+    /// Build the app from a real level in a [`Vfs`]. `ini_path` is the
+    /// VFS key of the world INI (e.g. `"fostral/world.ini"`).
+    fn new_from_vfs(gfx: &GraphicsContext, vfs: &Vfs, ini_path: &str) -> Self {
+        let level_config = level::LevelConfig::load_from_vfs(vfs, ini_path);
+        let geometry = settings::Geometry::default();
+        let level = level::load_from_vfs(vfs, &level_config, &geometry);
+        Self::build(gfx, level_config, level, geometry)
+    }
+
+    fn build(
+        gfx: &GraphicsContext,
+        level_config: level::LevelConfig,
+        level: level::Level,
+        geometry: settings::Geometry,
+    ) -> Self {
         let objects_palette = [[0xFF; 4]; 0x100];
 
-        // Use ortho projection for the Sliced terrain test level.
-        // Sliced terrain draws horizontal layers that produce a uniform
-        // color under perspective — only ortho shows height detail.
         let cam = space::Camera {
             loc: glam::vec3(128.0, 128.0, 400.0),
             rot: glam::Quat::IDENTITY,
@@ -70,7 +136,6 @@ impl WebApp {
             &geometry,
             cam.front_face(),
         );
-        let level = level::load(&level_config, &geometry);
 
         WebApp {
             render,
@@ -446,13 +511,16 @@ impl ApplicationHandler for WebHandler {
 
         let screen_size = self.screen_size;
 
-        // Build GPU state from the async init results
+        // Build GPU state from the async init results. `vfs_level` is
+        // `Some((vfs, ini_path))` when real level data has been fetched;
+        // `None` falls back to the procedural test level.
         let build_gpu_state = move |instance: wgpu::Instance,
                                      surface: wgpu::Surface<'static>,
                                      adapter: &wgpu::Adapter,
                                      device: wgpu::Device,
                                      queue: wgpu::Queue,
-                                     screen_size: wgpu::Extent3d|
+                                     screen_size: wgpu::Extent3d,
+                                     vfs_level: Option<(Vfs, String)>|
                                      -> GpuState {
             let caps = surface.get_capabilities(adapter);
             let config = wgpu::SurfaceConfiguration {
@@ -487,7 +555,10 @@ impl ApplicationHandler for WebHandler {
                 device,
                 queue,
             };
-            let app = WebApp::new(&gfx);
+            let app = match vfs_level {
+                Some((vfs, ini_path)) => WebApp::new_from_vfs(&gfx, &vfs, &ini_path),
+                None => WebApp::new(&gfx),
+            };
 
             GpuState {
                 _instance: instance,
@@ -505,9 +576,18 @@ impl ApplicationHandler for WebHandler {
             self.window = Some(window);
             let pending = self.gpu_pending.clone();
             wasm_bindgen_futures::spawn_local(async move {
+                // Start GPU init. Data fetch is sequential for now (both
+                // are I/O-bound but `join` would need the futures crate).
                 let (instance, surface, adapter, device, queue, window) = init_future.await;
                 log::info!("GPU initialized on web!");
-                let state = build_gpu_state(instance, surface, &adapter, device, queue, screen_size);
+
+                // Best-effort fetch of release data. On any failure we
+                // fall back to the procedural test level.
+                let vfs_level = fetch_release_level(DEFAULT_LEVEL).await;
+
+                let state = build_gpu_state(
+                    instance, surface, &adapter, device, queue, screen_size, vfs_level,
+                );
                 *pending.borrow_mut() = Some(state);
                 // Wake the event loop — without this, ControlFlow::Wait
                 // keeps the loop sleeping and gpu_pending is never picked up.
@@ -518,7 +598,9 @@ impl ApplicationHandler for WebHandler {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let (instance, surface, adapter, device, queue, _) = pollster::block_on(init_future);
-            self.gpu = Some(build_gpu_state(instance, surface, &adapter, device, queue, screen_size));
+            self.gpu = Some(build_gpu_state(
+                instance, surface, &adapter, device, queue, screen_size, None,
+            ));
             self.window = Some(window.clone());
             window.request_redraw();
         }

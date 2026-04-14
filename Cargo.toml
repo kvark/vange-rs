@@ -69,6 +69,7 @@ rust-ini = "0.21"
 serde = "1.0"
 serde_derive = "1.0"
 serde_scan = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 # keep in sync with `lib/ffi/Cargo.toml`
 wgpu = "29"
 # binaries
@@ -84,7 +85,7 @@ egui-wgpu = { version = "0.34", default-features = false }
 # web
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
-web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "Element", "HtmlCanvasElement", "Location", "WebSocket", "BinaryType", "MessageEvent", "ErrorEvent", "CloseEvent", "Blob", "FileReader"] }
+web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "Element", "HtmlCanvasElement", "Location", "WebSocket", "BinaryType", "MessageEvent", "ErrorEvent", "CloseEvent", "Blob", "FileReader", "Request", "RequestInit", "RequestMode", "Response", "Headers"] }
 console_log = { version = "1", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 getrandom_02 = { package = "getrandom", version = "0.2", optional = true, features = ["js"] }

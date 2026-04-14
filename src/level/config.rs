@@ -2,6 +2,8 @@ use ini::Ini;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use crate::vfs::Vfs;
+
 #[derive(Copy, Clone)]
 pub struct Power(pub i32);
 impl Power {
@@ -63,6 +65,25 @@ impl LevelConfig {
         let ini = Ini::load_from_file(ini_path).unwrap_or_else(|_| {
             panic!("Unable to read the level's INI description: {:?}", ini_path)
         });
+        Self::from_ini(&ini, ini_path)
+    }
+
+    /// Load a level config from a VFS entry. `ini_path` is the VFS key
+    /// of the world INI (e.g. `"fostral/world.ini"`); the resulting
+    /// `path_data` and `path_palette` are VFS-relative keys too, suitable
+    /// for passing back into `vfs.read(...)`.
+    pub fn load_from_vfs(vfs: &Vfs, ini_path: &str) -> Self {
+        let bytes = vfs
+            .read(ini_path)
+            .unwrap_or_else(|| panic!("INI not found in VFS: {}", ini_path));
+        let text = std::str::from_utf8(&bytes)
+            .unwrap_or_else(|e| panic!("INI {} is not valid UTF-8: {}", ini_path, e));
+        let ini = Ini::load_from_str(text)
+            .unwrap_or_else(|e| panic!("Failed to parse INI {}: {}", ini_path, e));
+        Self::from_ini(&ini, Path::new(ini_path))
+    }
+
+    fn from_ini(ini: &Ini, ini_path: &Path) -> Self {
         let global = &ini["Global Parameters"];
         let storage = &ini["Storage"];
         let render = &ini["Rendering Parameters"];
