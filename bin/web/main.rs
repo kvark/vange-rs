@@ -248,8 +248,6 @@ struct WebHandler {
     screen_size: wgpu::Extent3d,
     keys_pressed: std::collections::HashSet<KeyCode>,
     last_frame: Option<Instant>,
-    /// Total elapsed time for auto-orbit camera.
-    elapsed: f32,
     #[cfg(target_arch = "wasm32")]
     ws_client: Option<net_ws::WsClient>,
     /// Status text overlay (used in multiplayer logging)
@@ -305,7 +303,6 @@ impl WebHandler {
             },
             keys_pressed: std::collections::HashSet::new(),
             last_frame: None,
-            elapsed: 0.0,
             #[cfg(target_arch = "wasm32")]
             ws_client,
             mp_status,
@@ -407,7 +404,7 @@ impl ApplicationHandler for WebHandler {
             async move {
                 // Use WebGL2 backend on WASM. WebGPU's GPUCanvasContext
                 // fails dyn_into type checks on Firefox (wgpu 29 bug).
-                // Sliced terrain doesn't need compute shaders, so
+                // RayTraced terrain doesn't need compute shaders, so
                 // WebGL2 is sufficient and more widely compatible.
                 let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
                     backends: wgpu::Backends::GL,
@@ -427,11 +424,15 @@ impl ApplicationHandler for WebHandler {
                     .await
                     .expect("No GPU adapter found");
 
+                let adapter_limits = adapter.limits();
                 let (device, queue) = adapter
                     .request_device(&wgpu::DeviceDescriptor {
                         label: None,
                         required_features: wgpu::Features::empty(),
-                        required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                        required_limits: wgpu::Limits {
+                            max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+                            ..wgpu::Limits::downlevel_webgl2_defaults()
+                        },
                         memory_hints: wgpu::MemoryHints::default(),
                         trace: wgpu::Trace::Off,
                         experimental_features: Default::default(),
@@ -648,13 +649,8 @@ impl WebHandler {
         };
         self.last_frame = Some(now);
         let dt = dt.min(0.1);
-        self.elapsed += dt;
-
-        // Auto-orbit camera around terrain center when no keys are pressed.
-        // Keyboard input overrides the orbit for manual control.
         let move_speed = 100.0;
         let rotation_speed = 1.0;
-        let has_input = !self.keys_pressed.is_empty();
 
         let mut _motor = 0.0f32;
         let mut _rudder = 0.0f32;
@@ -706,21 +702,6 @@ impl WebHandler {
             gpu.app.cam.rot = rotation * gpu.app.cam.rot;
         }
 
-        // Auto-orbit: slowly circle the terrain center
-        if !has_input {
-            let center = glam::vec3(128.0, 128.0, 0.0);
-            let radius = 200.0;
-            let height = 300.0;
-            let angle = self.elapsed * 0.15;
-            gpu.app.cam.loc = center + glam::vec3(
-                radius * angle.cos(),
-                radius * angle.sin(),
-                height,
-            );
-            let tilt = glam::Quat::from_rotation_x(-0.6);
-            let yaw = glam::Quat::from_rotation_z(angle + std::f32::consts::FRAC_PI_2);
-            gpu.app.cam.rot = yaw * tilt;
-        }
 
         // Process multiplayer messages
         #[cfg(target_arch = "wasm32")]

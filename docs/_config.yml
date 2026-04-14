@@ -9,5 +9,5 @@ url: "https://vange.rs"
 
 # Include WASM artifacts that Jekyll would otherwise skip
 include:
-  - "*.wasm"
-  - "*.js"
+  - web.js
+  - web_bg.wasm
