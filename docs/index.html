@@ -30,6 +30,36 @@
         #loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             color: #e0e0e0; font-family: monospace; font-size: 18px; z-index: 10;
+            text-align: center; min-width: 280px;
+        }
+        #loading.error { color: #f85149; }
+        #progress-bar {
+            margin-top: 12px; height: 6px; background: #21262d; border-radius: 3px;
+            overflow: hidden; position: relative;
+        }
+        #progress-fill {
+            height: 100%; width: 0%; background: #58a6ff;
+            transition: width 0.15s linear;
+        }
+        #progress-fill.indeterminate {
+            width: 30%;
+            animation: indet 1.2s linear infinite;
+        }
+        @keyframes indet {
+            0%   { transform: translateX(-100%); }
+            100% { transform: translateX(400%); }
+        }
+        #progress-text {
+            margin-top: 8px; font-size: 13px; color: #8b949e;
+        }
+        #level-picker {
+            position: absolute; top: 12px; right: 12px; z-index: 10;
+            background: rgba(0,0,0,0.7); padding: 6px 10px; border-radius: 6px;
+            font-size: 13px; color: #c9d1d9; display: flex; gap: 8px; align-items: center;
+        }
+        #level-picker select {
+            background: #161b22; color: #c9d1d9; border: 1px solid #30363d;
+            padding: 4px 8px; border-radius: 4px; font-size: 13px; cursor: pointer;
         }
         #controls-hint {
             position: absolute; bottom: 16px; left: 16px; background: rgba(0,0,0,0.7);
@@ -72,7 +102,15 @@
 
     <!-- Game Tab -->
     <div id="game-panel" class="panel active">
-        <div id="loading">Initializing WebGPU…</div>
+        <div id="level-picker">
+            <label for="level-select">Level:</label>
+            <select id="level-select" onchange="onLevelChange()"></select>
+        </div>
+        <div id="loading">
+            <div id="status-text">Initializing WebGPU…</div>
+            <div id="progress-bar"><div id="progress-fill"></div></div>
+            <div id="progress-text"></div>
+        </div>
         <canvas id="canvas"></canvas>
         <div id="controls-hint">
             WASD – move &nbsp;|&nbsp; Z/X – altitude &nbsp;|&nbsp; Q/E – rotate &nbsp;|&nbsp; Scroll – zoom
@@ -154,6 +192,88 @@ WGSL shaders, compute-based voxel baking</code></pre>
     </div>
 
     <script>
+        // --- Level picker -----------------------------------------------
+        // Hardcoded list of known worlds. Each must correspond to a
+        // <id>.zip asset on the GitHub release; if the asset is missing
+        // the page falls back to the procedural test level.
+        const LEVELS = [
+            { id: 'fostral',  title: 'Fostral'  },
+            { id: 'necross',  title: 'Necross'  },
+            { id: 'glorx',    title: 'Glorx'    },
+            { id: 'khox',     title: 'Khox'     },
+        ];
+        const DEFAULT_LEVEL = 'fostral';
+
+        function readHashLevel() {
+            const hash = window.location.hash.replace(/^#/, '');
+            for (const pair of hash.split('&')) {
+                const [k, v] = pair.split('=');
+                if (k === 'level' && v) return decodeURIComponent(v);
+            }
+            return null;
+        }
+
+        function initLevelPicker() {
+            const select = document.getElementById('level-select');
+            for (const lvl of LEVELS) {
+                const opt = document.createElement('option');
+                opt.value = lvl.id;
+                opt.textContent = lvl.title;
+                select.appendChild(opt);
+            }
+            const initial = readHashLevel() || DEFAULT_LEVEL;
+            select.value = initial;
+            // Expose the choice to Rust (read once on startup).
+            window.vangeSelectedLevel = () => select.value;
+        }
+
+        function onLevelChange() {
+            const select = document.getElementById('level-select');
+            // Update URL fragment so the choice survives reloads + sharing.
+            window.location.hash = 'level=' + select.value;
+            // Switching levels requires reinitializing the world; full
+            // reload is the simplest correct option for now.
+            window.location.reload();
+        }
+
+        // --- Progress bar bridge ---------------------------------------
+        // Called by the WASM loader. `total` is -1 if unknown.
+        window.vangeProgress = function(label, loaded, total) {
+            const status = document.getElementById('status-text');
+            const fill = document.getElementById('progress-fill');
+            const text = document.getElementById('progress-text');
+            status.textContent = 'Loading ' + label;
+            if (total > 0) {
+                fill.classList.remove('indeterminate');
+                fill.style.width = Math.min(100, (loaded / total) * 100) + '%';
+                text.textContent = fmtBytes(loaded) + ' / ' + fmtBytes(total);
+            } else {
+                fill.classList.add('indeterminate');
+                text.textContent = fmtBytes(loaded);
+            }
+        };
+
+        window.vangeProgressDone = function() {
+            document.getElementById('loading').style.display = 'none';
+        };
+
+        window.vangeProgressError = function(message) {
+            const loading = document.getElementById('loading');
+            loading.classList.add('error');
+            document.getElementById('status-text').textContent =
+                'Could not load level data — using procedural fallback.';
+            document.getElementById('progress-text').textContent = message;
+            // Keep the message visible briefly, then hide so the canvas shows.
+            setTimeout(() => { loading.style.display = 'none'; }, 4000);
+        };
+
+        function fmtBytes(n) {
+            if (n < 1024) return n + ' B';
+            if (n < 1024*1024) return (n / 1024).toFixed(1) + ' KiB';
+            return (n / 1024 / 1024).toFixed(1) + ' MiB';
+        }
+
+        // --- Tabs / WASM bootstrap -------------------------------------
         function showTab(name) {
             document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
             document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
@@ -181,16 +301,18 @@ WGSL shaders, compute-based voxel baking</code></pre>
                     return;
                 }
                 if (msg.includes('WebGL') || msg.includes('WebGPU')) {
-                    document.getElementById('loading').innerHTML =
+                    document.getElementById('status-text').innerHTML =
                         'WebGL2 is not supported in this browser.<br>' +
                         'Try Chrome, Edge, or Firefox with WebGL2 enabled.';
                 } else {
-                    document.getElementById('loading').textContent = 'Error: ' + msg;
+                    document.getElementById('status-text').textContent = 'Error: ' + msg;
                 }
             }
         }
 
-        // Auto-load game on first visit
+        // Set up UI before the WASM module starts so its initial
+        // `vangeSelectedLevel()` call sees the populated <select>.
+        initLevelPicker();
         loadGame();
     </script>
 </body>

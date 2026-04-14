@@ -18,7 +18,8 @@ use vangers::{
 #[cfg(target_arch = "wasm32")]
 use vangers::data;
 
-/// Default level to try loading from the release. If the release asset
+/// Default level to try loading from the release if neither the URL
+/// hash nor the level picker have selected one. If the release asset
 /// is missing (404) we fall back to the procedural test level.
 const DEFAULT_LEVEL: &str = "fostral";
 
@@ -28,23 +29,74 @@ fn level_ini_path(level_id: &str) -> String {
     format!("{}/world.ini", level_id)
 }
 
+/// JS bridge for loading-screen UI. The HTML defines these on `window`;
+/// they update a progress bar and status text. All four are no-ops on
+/// pages that don't define them (we wrap calls in a catch_unwind-style
+/// closure-or-noop pattern via a wasm_bindgen `catch` attribute).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = window, js_name = vangeProgress, catch)]
+    fn js_progress(label: &str, loaded: f64, total: f64) -> Result<(), JsValue>;
+
+    #[wasm_bindgen(js_namespace = window, js_name = vangeProgressDone, catch)]
+    fn js_progress_done() -> Result<(), JsValue>;
+
+    #[wasm_bindgen(js_namespace = window, js_name = vangeProgressError, catch)]
+    fn js_progress_error(message: &str) -> Result<(), JsValue>;
+
+    #[wasm_bindgen(js_namespace = window, js_name = vangeSelectedLevel, catch)]
+    fn js_selected_level() -> Result<JsValue, JsValue>;
+}
+
+/// Read the selected level id from JS (set by the level picker UI),
+/// falling back to the URL fragment `#level=<id>`, then to
+/// [`DEFAULT_LEVEL`].
+#[cfg(target_arch = "wasm32")]
+fn selected_level_id() -> String {
+    if let Ok(val) = js_selected_level() {
+        if let Some(s) = val.as_string() {
+            if !s.is_empty() {
+                return s;
+            }
+        }
+    }
+    if let Some(window) = web_sys::window() {
+        if let Ok(hash) = window.location().hash() {
+            for pair in hash.trim_start_matches('#').split('&') {
+                if let Some(rest) = pair.strip_prefix("level=") {
+                    if !rest.is_empty() {
+                        return rest.to_string();
+                    }
+                }
+            }
+        }
+    }
+    DEFAULT_LEVEL.to_string()
+}
+
 /// Fetch `common.zip` and `<level_id>.zip` from the release and mount
-/// both into a VFS. Returns `None` on any error (missing asset, network
-/// failure, invalid zip, etc.); the caller then falls back to a
-/// procedural test level.
+/// both into a VFS, reporting download progress to the JS UI. Returns
+/// `None` on any error; the caller falls back to a procedural test level.
 #[cfg(target_arch = "wasm32")]
 async fn fetch_release_level(level_id: &str) -> Option<(Vfs, String)> {
     let mut vfs = Vfs::new();
 
+    let mut report = |label: &str, loaded: u64, total: Option<u64>| {
+        let total_f = total.map_or(-1.0, |v| v as f64);
+        let _ = js_progress(label, loaded as f64, total_f);
+    };
+
     // common.zip holds cross-level assets. A level-only run is fine
     // without it, so we log+continue on failure.
-    if let Err(e) = data::fetch_and_mount(&mut vfs, data::COMMON_ARCHIVE).await {
+    if let Err(e) = data::fetch_and_mount(&mut vfs, data::COMMON_ARCHIVE, &mut report).await {
         log::warn!("Couldn't fetch {}: {}", data::COMMON_ARCHIVE, e);
     }
 
     let archive = data::level_archive_name(level_id);
-    if let Err(e) = data::fetch_and_mount(&mut vfs, &archive).await {
+    if let Err(e) = data::fetch_and_mount(&mut vfs, &archive, &mut report).await {
         log::warn!("Couldn't fetch {}: {}. Falling back to test level.", archive, e);
+        let _ = js_progress_error(&format!("{}: {}", archive, e));
         return None;
     }
 
@@ -55,6 +107,7 @@ async fn fetch_release_level(level_id: &str) -> Option<(Vfs, String)> {
             archive,
             ini_path
         );
+        let _ = js_progress_error(&format!("{} missing {}", archive, ini_path));
         return None;
     }
 
@@ -583,7 +636,10 @@ impl ApplicationHandler for WebHandler {
 
                 // Best-effort fetch of release data. On any failure we
                 // fall back to the procedural test level.
-                let vfs_level = fetch_release_level(DEFAULT_LEVEL).await;
+                let level_id = selected_level_id();
+                log::info!("Selected level: {}", level_id);
+                let vfs_level = fetch_release_level(&level_id).await;
+                let _ = js_progress_done();
 
                 let state = build_gpu_state(
                     instance, surface, &adapter, device, queue, screen_size, vfs_level,
