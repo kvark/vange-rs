@@ -10,6 +10,7 @@ mod config;
 
 pub use self::config::{LevelConfig, Power, TerrainConfig};
 use crate::config::settings;
+use crate::vfs::Vfs;
 
 pub type TerrainType = u8;
 
@@ -195,7 +196,15 @@ fn print_palette(data: &[[u8; 4]], info: &str) {
 }
 
 pub fn read_palette(input: File, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 0x100] {
-    let mut file = BufReader::new(input);
+    let file = BufReader::new(input);
+    read_palette_from(file, config)
+}
+
+pub fn read_palette_bytes(bytes: &[u8], config: Option<&[TerrainConfig]>) -> [[u8; 4]; 0x100] {
+    read_palette_from(std::io::Cursor::new(bytes), config)
+}
+
+fn read_palette_from<R: Read>(mut file: R, config: Option<&[TerrainConfig]>) -> [[u8; 4]; 0x100] {
     let mut data = [[0xFF; 4]; 0x100];
     for p in data.iter_mut() {
         file.read_exact(&mut p[..3]).unwrap();
@@ -365,6 +374,11 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
 }
 
 pub fn load_vmp(path: &Path, size: (i32, i32)) -> LevelData {
+    let bytes = std::fs::read(path).expect("Unable to open VMP");
+    load_vmp_bytes(&bytes, size)
+}
+
+pub fn load_vmp_bytes(bytes: &[u8], size: (i32, i32)) -> LevelData {
     let total = (size.0 * size.1) as usize;
     let mut level = LevelData {
         height: vec![0u8; total].into_boxed_slice(),
@@ -372,7 +386,7 @@ pub fn load_vmp(path: &Path, size: (i32, i32)) -> LevelData {
         size,
     };
 
-    let mut vmp = BufReader::new(File::open(path).expect("Unable to open VMP"));
+    let mut vmp = std::io::Cursor::new(bytes);
     level
         .height
         .chunks_mut(size.0 as _)
@@ -385,8 +399,134 @@ pub fn load_vmp(path: &Path, size: (i32, i32)) -> LevelData {
     level
 }
 
+/// Byte-slice variant of `load_vmc`, usable on any platform.
+/// Decompresses sequentially — the whole archive is already in memory,
+/// so there is no I/O to parallelize.
+pub fn load_vmc_bytes(bytes: &[u8], size: (i32, i32)) -> LevelData {
+    use splay::Splay;
+
+    info!("Loading height map (from bytes)...");
+    let total = (size.0 * size.1) as usize;
+    let mut level = LevelData {
+        height: vec![0u8; total].into_boxed_slice(),
+        meta: vec![0u8; total].into_boxed_slice(),
+        size,
+    };
+
+    let mut cursor = std::io::Cursor::new(bytes);
+
+    let mut st_table = Vec::<i32>::with_capacity(size.1 as usize);
+    let mut sz_table = Vec::<i16>::with_capacity(size.1 as usize);
+    for _ in 0..size.1 {
+        st_table.push(cursor.read_i32::<E>().unwrap());
+        sz_table.push(cursor.read_i16::<E>().unwrap());
+    }
+
+    let splay = Splay::new(&mut cursor);
+
+    for (y, ((h_row, m_row), (&offset, &row_size))) in level
+        .height
+        .chunks_mut(size.0 as _)
+        .zip(level.meta.chunks_mut(size.0 as _))
+        .zip(st_table.iter().zip(&sz_table))
+        .enumerate()
+    {
+        let start = offset as usize;
+        let end = start + row_size as usize;
+        if end > bytes.len() {
+            panic!("VMC row {} out of bounds: {}..{} (len {})", y, start, end, bytes.len());
+        }
+        splay.expand(&bytes[start..end], h_row, m_row);
+    }
+
+    level
+}
+
+pub fn load_flood_bytes(config: &LevelConfig, vpr_bytes: Option<&[u8]>) -> Box<[u8]> {
+    let size = (config.size.0.as_value(), config.size.1.as_value());
+    let flood_size = size.1 >> config.section.as_power();
+
+    let bytes = match vpr_bytes {
+        Some(b) => b,
+        None => return vec![0; flood_size as usize].into_boxed_slice(),
+    };
+
+    let geo_pow = config.geo.as_power();
+    let net_size = (size.0 * size.1) >> (2 * geo_pow);
+    let flood_offset =
+        (2 * 4 + (1 + 4 + 4) * 4 + 2 * net_size + 2 * geo_pow * 4 + 2 * flood_size * geo_pow * 4)
+            as u64;
+    let expected_size = flood_offset + (flood_size * 4) as u64;
+    assert_eq!(bytes.len() as u64, expected_size);
+
+    let mut vpr = std::io::Cursor::new(bytes);
+    vpr.seek(SeekFrom::Start(flood_offset)).unwrap();
+    (0..flood_size)
+        .map(|_| vpr.read_u32::<E>().unwrap() as u8)
+        .collect()
+}
+
 fn path_empty(path_buf: &std::path::Path) -> bool {
     path_buf.to_str() == Some("")
+}
+
+fn path_as_str(path: &std::path::Path) -> &str {
+    path.to_str().expect("VFS paths must be UTF-8")
+}
+
+fn with_ext(path: &std::path::Path, ext: &str) -> String {
+    // `Path::with_extension` strips only the final component of a path
+    // with a dot; works fine for our "dir/stem" inputs.
+    path.with_extension(ext)
+        .to_str()
+        .expect("VFS paths must be UTF-8")
+        .to_string()
+}
+
+/// Load a level from a VFS. Mirrors the native `load` path but reads
+/// every file from the in-memory VFS rather than the filesystem.
+pub fn load_from_vfs(
+    vfs: &Vfs,
+    config: &LevelConfig,
+    geometry: &settings::Geometry,
+) -> Level {
+    info!("Loading level from VFS...");
+    let size = (config.size.0.as_value(), config.size.1.as_value());
+
+    let data_base = path_as_str(&config.path_data);
+    let LevelData { height, meta, size } = if config.is_compressed {
+        let key = with_ext(&config.path_data, "vmc");
+        let bytes = vfs
+            .read(&key)
+            .unwrap_or_else(|| panic!("VMC missing from VFS: {} (base {})", key, data_base));
+        load_vmc_bytes(&bytes, size)
+    } else {
+        let key = with_ext(&config.path_data, "vmp");
+        let bytes = vfs
+            .read(&key)
+            .unwrap_or_else(|| panic!("VMP missing from VFS: {} (base {})", key, data_base));
+        load_vmp_bytes(&bytes, size)
+    };
+
+    let vpr_key = with_ext(&config.path_data, "vpr");
+    let flood_bytes = vfs.read(&vpr_key);
+    let flood_map = load_flood_bytes(config, flood_bytes.as_deref());
+
+    let palette_key = path_as_str(&config.path_palette);
+    let palette_bytes = vfs
+        .read(palette_key)
+        .unwrap_or_else(|| panic!("Palette missing from VFS: {}", palette_key));
+    let palette = read_palette_bytes(&palette_bytes, Some(&config.terrains));
+
+    Level {
+        size,
+        flood_map,
+        height,
+        meta,
+        palette,
+        terrains: config.terrains.clone(),
+        geometry: geometry.clone(),
+    }
 }
 
 pub fn load(config: &LevelConfig, geometry: &settings::Geometry) -> Level {
