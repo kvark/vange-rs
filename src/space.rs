@@ -48,11 +48,7 @@ impl Transform {
     }
 
     pub fn to_mat4(&self) -> Mat4 {
-        Mat4::from_scale_rotation_translation(
-            Vec3::splat(self.scale),
-            self.rot,
-            self.disp,
-        )
+        Mat4::from_scale_rotation_translation(Vec3::splat(self.scale), self.rot, self.disp)
     }
 }
 
@@ -314,12 +310,7 @@ impl Camera {
         self.rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_3);
     }
 
-    pub fn rotate_focus(
-        &mut self,
-        target: &Transform,
-        hor: f32,
-        ver: f32,
-    ) {
+    pub fn rotate_focus(&mut self, target: &Transform, hor: f32, ver: f32) {
         let mut view = Transform {
             scale: 1.0,
             rot: self.rot,

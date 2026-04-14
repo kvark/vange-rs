@@ -333,6 +333,10 @@ pub struct Game {
     net: Option<NetworkClient>,
     mp_state: MultiplayerState,
     input_seq: u32,
+    /// Set after the first WorldState snap from the server.
+    /// Before this, the client's player position may differ from the
+    /// server's spawn point, so we need to hard-snap the camera.
+    server_synced: bool,
     ui: config::settings::Ui,
     cam: space::Camera,
     cam_style: CameraStyle,
@@ -499,12 +503,7 @@ impl Game {
         let connected = server_addr.is_some();
         let net = server_addr.as_ref().map(|addr| {
             let player = agents.iter().find(|a| a.spirit == Spirit::Player).unwrap();
-            NetworkClient::connect(
-                addr,
-                &player_name,
-                &player.car_name,
-                player.color as u8,
-            )
+            NetworkClient::connect(addr, &player_name, &player.car_name, player.color as u8)
         });
 
         Game {
@@ -527,6 +526,7 @@ impl Game {
                 connected,
             },
             input_seq: 0,
+            server_synced: false,
             ui: settings.ui,
             cam,
             cam_style: CameraStyle::new(&settings.game.camera),
@@ -632,7 +632,7 @@ impl Application for Game {
                 .iter_mut()
                 .find(|a| a.spirit == Spirit::Player)
                 .unwrap();
-            let mut target = match player.physics {
+            let target = match player.physics {
                 Physics::Cpu { ref transform, .. } => *transform,
             };
 
@@ -680,24 +680,6 @@ impl Application for Game {
                 }
                 None => 0.0,
             };
-
-            match self.cam_style {
-                CameraStyle::Simple(ref dir) => {
-                    self.cam.look_by(&target, dir);
-                }
-                CameraStyle::Follow {
-                    ref follow,
-                    ground_anchor,
-                } => {
-                    if ground_anchor {
-                        target.disp.z = self
-                            .level
-                            .get((target.disp.x as i32, target.disp.y as i32))
-                            .high();
-                    }
-                    self.cam.follow(&target, delta, follow);
-                }
-            }
         }
 
         const TIME_HACK: f32 = 1.0;
@@ -771,16 +753,17 @@ impl Application for Game {
             let my_id = net.player_id;
             for event in net.poll() {
                 match event {
-                    NetEvent::Welcome { player_id, level_name } => {
+                    NetEvent::Welcome {
+                        player_id,
+                        level_name,
+                    } => {
                         log::info!(
                             "Connected as player {} on level '{}'",
                             player_id,
                             level_name,
                         );
-                        self.mp_state.status = format!(
-                            "Connected (player {}, level '{}')",
-                            player_id, level_name
-                        );
+                        self.mp_state.status =
+                            format!("Connected (player {}, level '{}')", player_id, level_name);
                         self.mp_state.connected = true;
                     }
                     NetEvent::PlayerJoined {
@@ -837,75 +820,30 @@ impl Application for Game {
                             };
 
                             if Some(agent_state.player_id) == my_id {
-                                // Client-side prediction correction
-                                let player = self
-                                    .agents
-                                    .iter_mut()
-                                    .find(|a| a.spirit == Spirit::Player);
+                                // Sync local player with server state.
+                                // Both client and server run physics independently,
+                                // so just snap to keep them consistent.
+                                let player =
+                                    self.agents.iter_mut().find(|a| a.spirit == Spirit::Player);
                                 if let Some(player) = player {
                                     if let Physics::Cpu {
                                         ref mut transform,
                                         ref mut dynamo,
                                     } = player.physics
                                     {
-                                        let pos_error =
-                                            transform.disp.distance(server_transform.disp);
-
-                                        // Dead zone: ignore tiny discrepancies that
-                                        // would just cause micro-jitter
-                                        const DEAD_ZONE: f32 = 0.5;
-                                        // Teleport threshold: snap directly if way off
-                                        const TELEPORT: f32 = 100.0;
-                                        // Low blend rate to avoid oscillation.
-                                        // The key insight: we also correct velocity,
-                                        // so the physics won't immediately undo this.
-                                        const BLEND_POS: f32 = 0.1;
-                                        const BLEND_VEL: f32 = 0.2;
-
-                                        if pos_error > TELEPORT {
-                                            // Too far off — hard snap
-                                            transform.disp = server_transform.disp;
-                                            transform.rot = server_transform.rot;
-                                            dynamo.linear_velocity = Vec3::from(
-                                                agent_state.dynamo.linear_velocity,
-                                            );
-                                            dynamo.angular_velocity = Vec3::from(
-                                                agent_state.dynamo.angular_velocity,
-                                            );
-                                            dynamo.traction =
-                                                agent_state.dynamo.traction;
-                                            dynamo.rudder = agent_state.dynamo.rudder;
-                                        } else if pos_error > DEAD_ZONE {
-                                            // Smooth correction: blend both position
-                                            // and velocity to prevent sawtooth jitter
-                                            transform.disp = transform.disp.lerp(
-                                                server_transform.disp,
-                                                BLEND_POS,
-                                            );
-                                            transform.rot = transform.rot.slerp(
-                                                server_transform.rot,
-                                                BLEND_POS,
-                                            );
-                                            // Correct velocity so physics doesn't
-                                            // immediately diverge after correction
-                                            let server_lv = Vec3::from(
-                                                agent_state.dynamo.linear_velocity,
-                                            );
-                                            let server_av = Vec3::from(
-                                                agent_state.dynamo.angular_velocity,
-                                            );
-                                            dynamo.linear_velocity =
-                                                dynamo.linear_velocity.lerp(
-                                                    server_lv, BLEND_VEL,
-                                                );
-                                            dynamo.angular_velocity =
-                                                dynamo.angular_velocity.lerp(
-                                                    server_av, BLEND_VEL,
-                                                );
+                                        if !self.server_synced {
+                                            // First sync: hard-snap camera to
+                                            // avoid slow chase from old spawn.
+                                            self.server_synced = true;
+                                            self.cam.focus_on(&server_transform);
                                         }
-                                        // Always sync traction/rudder (these are
-                                        // discrete control outputs, not continuous)
-                                        transform.scale = server_transform.scale;
+                                        *transform = server_transform;
+                                        dynamo.linear_velocity =
+                                            Vec3::from(agent_state.dynamo.linear_velocity);
+                                        dynamo.angular_velocity =
+                                            Vec3::from(agent_state.dynamo.angular_velocity);
+                                        dynamo.traction = agent_state.dynamo.traction;
+                                        dynamo.rudder = agent_state.dynamo.rudder;
                                     }
                                 }
                             } else if let Some(remote) =
@@ -935,11 +873,48 @@ impl Application for Game {
             remote.interp_t = (remote.interp_t + interp_speed).min(1.0);
             let t = remote.interp_t;
             remote.render_transform = space::Transform {
-                disp: remote.prev_transform.disp.lerp(remote.target_transform.disp, t),
-                rot: remote.prev_transform.rot.slerp(remote.target_transform.rot, t),
+                disp: remote
+                    .prev_transform
+                    .disp
+                    .lerp(remote.target_transform.disp, t),
+                rot: remote
+                    .prev_transform
+                    .rot
+                    .slerp(remote.target_transform.rot, t),
                 scale: remote.prev_transform.scale
                     + (remote.target_transform.scale - remote.prev_transform.scale) * t,
             };
+        }
+
+        // Camera follow runs last so it sees the post-physics,
+        // post-network-correction transform — no oscillation.
+        {
+            let player = self
+                .agents
+                .iter()
+                .find(|a| a.spirit == Spirit::Player)
+                .unwrap();
+            let mut target = match player.physics {
+                Physics::Cpu { ref transform, .. } => *transform,
+            };
+
+            match self.cam_style {
+                CameraStyle::Simple(ref dir) => {
+                    self.cam.look_by(&target, dir);
+                }
+                CameraStyle::Follow {
+                    ref follow,
+                    ground_anchor,
+                } => {
+                    if ground_anchor {
+                        target.disp.z = self
+                            .level
+                            .get((target.disp.x as i32, target.disp.y as i32))
+                            .high();
+                    }
+                    self.cam.follow(&target, delta, follow);
+                }
+            }
         }
     }
 
@@ -1068,10 +1043,7 @@ impl Application for Game {
                             ui.label(format!("Player ID: {}", id));
                         }
                     }
-                    ui.label(format!(
-                        "Remote players: {}",
-                        self.remote_agents.len()
-                    ));
+                    ui.label(format!("Remote players: {}", self.remote_agents.len()));
                     if ui.button("Disconnect").clicked() {
                         self.net = None;
                         self.remote_agents.clear();
@@ -1109,7 +1081,12 @@ impl Application for Game {
             });
     }
 
-    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) -> wgpu::CommandBuffer {
+    fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        targets: ScreenTargets,
+    ) -> wgpu::CommandBuffer {
         let clipper = Clipper::new(&self.cam);
         self.batcher.clear();
 
@@ -1135,8 +1112,12 @@ impl Application for Game {
             if clipper.clip(&remote.render_transform.disp) {
                 continue;
             }
-            self.batcher
-                .add_model(&remote.car.model, &remote.render_transform, None, remote.color);
+            self.batcher.add_model(
+                &remote.car.model,
+                &remote.render_transform,
+                None,
+                remote.color,
+            );
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

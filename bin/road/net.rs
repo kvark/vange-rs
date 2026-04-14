@@ -1,6 +1,4 @@
-use vangers_net::{
-    decode, encode, AgentState, ClientMessage, NetControl, PlayerId, ServerMessage,
-};
+use vangers_net::{decode, encode, AgentState, ClientMessage, NetControl, PlayerId, ServerMessage};
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -106,7 +104,10 @@ impl NetworkClient {
                                     NetEvent::PlayerLeft { player_id }
                                 }
                                 ServerMessage::WorldState { tick, agents } => {
-                                    NetEvent::WorldState { _tick: tick, agents }
+                                    NetEvent::WorldState {
+                                        _tick: tick,
+                                        agents,
+                                    }
                                 }
                             };
                             if recv_tx.send(event).is_err() {

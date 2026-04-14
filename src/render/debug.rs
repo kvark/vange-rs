@@ -135,7 +135,11 @@ impl Context {
             Ok(ref shape_bgl) => {
                 let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("debug"),
-                    bind_group_layouts: &[Some(&global.bind_group_layout), Some(&bind_group_layout), Some(shape_bgl)],
+                    bind_group_layouts: &[
+                        Some(&global.bind_group_layout),
+                        Some(&bind_group_layout),
+                        Some(shape_bgl),
+                    ],
                     immediate_size: 0,
                 });
                 Ok(pl)

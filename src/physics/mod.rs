@@ -53,6 +53,7 @@ impl Dynamo {
 /// GPU-free physics data extracted from a car model.
 /// Contains only the CPU-side fields needed by the physics simulation,
 /// without any wgpu buffers or GPU resources.
+#[derive(Clone)]
 pub struct CarPhysicsData {
     pub physics: config::car::CarPhysics,
     pub body_physics: m3d::Physics,
@@ -64,6 +65,7 @@ pub struct CarPhysicsData {
 }
 
 /// Wheel data needed for physics (no GPU mesh).
+#[derive(Clone)]
 pub struct WheelPhysics {
     pub steer: u32,
     pub pos: [f32; 3],
@@ -75,12 +77,12 @@ impl CarPhysicsData {
         let half = 10.0f32;
         // A simple box with 6 faces, each face is a polygon
         let faces: Vec<([f32; 3], [f32; 3])> = vec![
-            ([0.0, 0.0, -half], [0.0, 0.0, -1.0]),  // bottom
-            ([0.0, 0.0, half], [0.0, 0.0, 1.0]),     // top
-            ([half, 0.0, 0.0], [1.0, 0.0, 0.0]),     // right
-            ([-half, 0.0, 0.0], [-1.0, 0.0, 0.0]),   // left
-            ([0.0, half, 0.0], [0.0, 1.0, 0.0]),     // front
-            ([0.0, -half, 0.0], [0.0, -1.0, 0.0]),   // back
+            ([0.0, 0.0, -half], [0.0, 0.0, -1.0]), // bottom
+            ([0.0, 0.0, half], [0.0, 0.0, 1.0]),   // top
+            ([half, 0.0, 0.0], [1.0, 0.0, 0.0]),   // right
+            ([-half, 0.0, 0.0], [-1.0, 0.0, 0.0]), // left
+            ([0.0, half, 0.0], [0.0, 1.0, 0.0]),   // front
+            ([0.0, -half, 0.0], [0.0, -1.0, 0.0]), // back
         ];
 
         let mut polygons = Vec::new();
@@ -117,11 +119,7 @@ impl CarPhysicsData {
             body_physics: m3d::Physics {
                 volume: 8000.0, // 20^3
                 rcm: [0.0, 0.0, 0.0],
-                jacobi: [
-                    [1333.0, 0.0, 0.0],
-                    [0.0, 1333.0, 0.0],
-                    [0.0, 0.0, 1333.0],
-                ], // uniform box inertia: m*s^2/6
+                jacobi: [[1333.0, 0.0, 0.0], [0.0, 1333.0, 0.0], [0.0, 0.0, 1333.0]], // uniform box inertia: m*s^2/6
             },
             bbox: model::BoundingBox {
                 min: [-half, -half, -half],
@@ -131,12 +129,66 @@ impl CarPhysicsData {
             shape_polygons: polygons,
             shape_samples: samples,
             wheels: vec![
-                WheelPhysics { steer: 1, pos: [half, half, -half] },
-                WheelPhysics { steer: 1, pos: [-half, half, -half] },
-                WheelPhysics { steer: 0, pos: [half, -half, -half] },
-                WheelPhysics { steer: 0, pos: [-half, -half, -half] },
+                WheelPhysics {
+                    steer: 1,
+                    pos: [half, half, -half],
+                },
+                WheelPhysics {
+                    steer: 1,
+                    pos: [-half, half, -half],
+                },
+                WheelPhysics {
+                    steer: 0,
+                    pos: [half, -half, -half],
+                },
+                WheelPhysics {
+                    steer: 0,
+                    pos: [-half, -half, -half],
+                },
             ],
             scale: 1.0,
+        }
+    }
+
+    /// Load physics data from an M3D model file and a .prm parameters file.
+    /// This does not require a GPU and is suitable for headless servers.
+    pub fn load_from_files(
+        m3d_file: std::fs::File,
+        prm_file: std::fs::File,
+        scale: f32,
+        shape_sampling: u8,
+    ) -> Self {
+        let raw = m3d::FullModel::load(m3d_file);
+        let physics = config::car::CarPhysics::load(prm_file);
+        let shape = model::extract_shape_physics(raw.shape, shape_sampling);
+
+        CarPhysicsData {
+            body_physics: raw.body.physics,
+            bbox: model::BoundingBox {
+                min: [
+                    raw.body.bounds.coord_min[0] as f32,
+                    raw.body.bounds.coord_min[1] as f32,
+                    raw.body.bounds.coord_min[2] as f32,
+                ],
+                max: [
+                    raw.body.bounds.coord_max[0] as f32,
+                    raw.body.bounds.coord_max[1] as f32,
+                    raw.body.bounds.coord_max[2] as f32,
+                ],
+                radius: raw.body.max_radius as f32,
+            },
+            wheels: raw
+                .wheels
+                .iter()
+                .map(|w| WheelPhysics {
+                    steer: w.steer,
+                    pos: w.pos,
+                })
+                .collect(),
+            scale,
+            shape_polygons: shape.polygons,
+            shape_samples: shape.samples,
+            physics,
         }
     }
 
@@ -194,16 +246,14 @@ pub fn step(
 
     let mut rigid = {
         let phys = &car.body_physics;
-        let jacobian =
-            Mat3::from_cols_array_2d(&phys.jacobi) * (transform.scale * transform.scale / phys.volume);
+        let jacobian = Mat3::from_cols_array_2d(&phys.jacobi)
+            * (transform.scale * transform.scale / phys.volume);
         rigid::RigidBody::new(&jacobian, dynamo.linear_velocity, dynamo.angular_velocity)
     };
 
     if let Some(power) = jump {
-        let mass = common.nature.density
-            * car.body_physics.volume
-            * transform.scale
-            * transform.scale;
+        let mass =
+            common.nature.density * car.body_physics.volume * transform.scale * transform.scale;
         let f = device_modulation * common.force.k_distance_to_force * dt_impulse / mass.powf(0.3);
         log::info!("jump mass {:?}, f {:?}", mass, f);
         rigid.vel += f * jump_dir(power);
@@ -214,8 +264,7 @@ pub fn step(
 
     let mut float_count = 0;
     let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
-    let stand_on_wheels =
-        z_axis.z > 0.0 && (transform.rot * Vec3::X).z.abs() < 0.7;
+    let stand_on_wheels = z_axis.z > 0.0 && (transform.rot * Vec3::X).z.abs() < 0.7;
     let modulation = 1.0;
     let mut acc_cur = AccelerationVectors {
         f: rot_inv * acc_global.f,
@@ -304,8 +353,7 @@ pub fn step(
                 terrain::CollisionData {
                     soft: Some(ref cp), ..
                 } => {
-                    let r1 =
-                        rot_inv * Vec3::new(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
+                    let r1 = rot_inv * Vec3::new(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
                     let pv = rigid.velocity_at(r1);
                     if pv.dot(z_axis) < 0.0 {
                         let vec = if stand_on_wheels {

@@ -1,7 +1,7 @@
 mod app;
-mod headless;
 #[path = "../boilerplate.rs"]
 mod boilerplate;
+mod headless;
 
 /// Vangers level viewer
 #[derive(clap::Parser)]

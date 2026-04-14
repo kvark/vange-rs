@@ -8,11 +8,7 @@ use vangers::{
 use log::info;
 use std::path::Path;
 
-pub fn render_snapshot(
-    output_path: &str,
-    level_path: Option<&str>,
-    terrain: settings::Terrain,
-) {
+pub fn render_snapshot(output_path: &str, level_path: Option<&str>, terrain: settings::Terrain) {
     let width = 800u32;
     let height = 600u32;
     let extent = wgpu::Extent3d {
@@ -46,16 +42,15 @@ pub fn render_snapshot(
     let limits = render_settings.get_device_limits(&adapter.limits(), geometry.height);
     let downlevel_caps = adapter.get_downlevel_capabilities();
 
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("headless"),
-            required_features: wgpu::Features::empty(),
-            required_limits: limits,
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-            experimental_features: Default::default(),
-        }))
-        .expect("Failed to create device");
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("headless"),
+        required_features: wgpu::Features::empty(),
+        required_limits: limits,
+        memory_hints: wgpu::MemoryHints::default(),
+        trace: wgpu::Trace::Off,
+        experimental_features: Default::default(),
+    }))
+    .expect("Failed to create device");
 
     let color_format = wgpu::TextureFormat::Rgba8UnormSrgb;
 
@@ -194,10 +189,12 @@ pub fn render_snapshot(
     slice.map_async(wgpu::MapMode::Read, move |result| {
         tx.send(result).unwrap();
     });
-    gfx.device.poll(wgpu::PollType::Wait {
-        timeout: Some(std::time::Duration::from_secs(5)),
-        submission_index: Default::default(),
-    }).unwrap();
+    gfx.device
+        .poll(wgpu::PollType::Wait {
+            timeout: Some(std::time::Duration::from_secs(5)),
+            submission_index: Default::default(),
+        })
+        .unwrap();
     rx.recv().unwrap().expect("Failed to map staging buffer");
 
     let data = slice.get_mapped_range();

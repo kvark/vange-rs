@@ -370,17 +370,9 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     if (next.payload & side.corners[0]) != 0 && base_z.start != next.height {
                         if let Some(mt) = mat_type {
                             groups[mt as usize].tris.push([
-                                c.add(
-                                    x + side.x_offset[0],
-                                    y + side.y_offset[0],
-                                    base_z.start,
-                                ),
+                                c.add(x + side.x_offset[0], y + side.y_offset[0], base_z.start),
                                 c.add(x + side.x_offset[1], y + side.y_offset[1], base_z.end),
-                                c.add(
-                                    x + side.x_offset[0],
-                                    y + side.y_offset[0],
-                                    next.height,
-                                ),
+                                c.add(x + side.x_offset[0], y + side.y_offset[0], next.height),
                             ]);
                         }
                         base_z.start = next.height;
@@ -388,11 +380,7 @@ pub fn save(path: &Path, level: &Level, config: &Config) {
                     if (next.payload & side.corners[1]) != 0 && base_z.end != next.height {
                         if let Some(mt) = mat_type {
                             groups[mt as usize].tris.push([
-                                c.add(
-                                    x + side.x_offset[0],
-                                    y + side.y_offset[0],
-                                    base_z.start,
-                                ),
+                                c.add(x + side.x_offset[0], y + side.y_offset[0], base_z.start),
                                 c.add(x + side.x_offset[1], y + side.y_offset[1], base_z.end),
                                 c.add(x + side.x_offset[1], y + side.y_offset[1], next.height),
                             ]);

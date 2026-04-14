@@ -22,7 +22,12 @@ pub trait Application {
     fn reload(&mut self, device: &wgpu::Device);
     fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, delta: f32);
     fn draw_ui(&mut self, context: &egui::Context);
-    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) -> wgpu::CommandBuffer;
+    fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        targets: ScreenTargets,
+    ) -> wgpu::CommandBuffer;
 }
 
 struct WindowContext {
@@ -88,16 +93,15 @@ impl Harness {
             .render
             .get_device_limits(&adapter.limits(), settings.game.geometry.height);
 
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::empty(),
-                required_limits: limits,
-                memory_hints: wgpu::MemoryHints::default(),
-                trace: wgpu::Trace::Off,
-                experimental_features: Default::default(),
-            }))
-            .unwrap();
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: None,
+            required_features: wgpu::Features::empty(),
+            required_limits: limits,
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::Off,
+            experimental_features: Default::default(),
+        }))
+        .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
         log::info!("Supported surface formats: {:?}", surface_caps.formats);
@@ -127,14 +131,8 @@ impl Harness {
         surface.configure(&device, &config);
 
         let egui_ctx = egui::Context::default();
-        let egui_state = egui_winit::State::new(
-            egui_ctx,
-            egui::ViewportId::ROOT,
-            &window,
-            None,
-            None,
-            None,
-        );
+        let egui_state =
+            egui_winit::State::new(egui_ctx, egui::ViewportId::ROOT, &window, None, None, None);
         let egui_renderer = egui_wgpu::Renderer::new(
             &device,
             config.format,
@@ -220,7 +218,10 @@ impl<A: Application> ApplicationHandler for HarnessHandler<A> {
         _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        let response = self.win.egui_state.on_window_event(&self.win.window, &event);
+        let response = self
+            .win
+            .egui_state
+            .on_window_event(&self.win.window, &event);
         if response.consumed {
             return;
         }
@@ -288,9 +289,7 @@ impl<A: Application> ApplicationHandler for HarnessHandler<A> {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => self.app.on_mouse_wheel(delta),
-            WindowEvent::CursorMoved { position, .. } => {
-                self.app.on_cursor_move(position.into())
-            }
+            WindowEvent::CursorMoved { position, .. } => self.app.on_cursor_move(position.into()),
             WindowEvent::MouseInput { state, button, .. } => {
                 self.app.on_mouse_button(state, button)
             }
@@ -357,12 +356,10 @@ impl<A: Application> ApplicationHandler for HarnessHandler<A> {
 
         //Note: we can't run this in the main render pass since it has
         // a depth texture, and `egui` doesn't expect that.
-        let mut egui_encoder =
-            self.gfx
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("UI"),
-                });
+        let mut egui_encoder = self
+            .gfx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("UI") });
         {
             let mut pass = egui_encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
