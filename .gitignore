@@ -5,3 +5,4 @@
 .DS_Store
 last-shader.wgsl
 res/data
+/docs/*.ts

@@ -867,7 +867,7 @@ impl Context {
                         // table map
                         wgpu::BindGroupLayoutEntry {
                             binding: 5,
-                            visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                            visibility: base_visibility & !wgpu::ShaderStages::VERTEX,
                             ty: wgpu::BindingType::Texture {
                                 view_dimension: wgpu::TextureViewDimension::D2,
                                 sample_type: wgpu::TextureSampleType::Uint,
@@ -889,7 +889,7 @@ impl Context {
                         // flood sampler
                         wgpu::BindGroupLayoutEntry {
                             binding: 8,
-                            visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                            visibility: base_visibility & !wgpu::ShaderStages::VERTEX,
                             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                             count: None,
                         },
