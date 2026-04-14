@@ -7,7 +7,7 @@
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{Request, RequestInit, RequestMode, Response};
+use web_sys::{ReadableStreamDefaultReader, Request, RequestInit, RequestMode, Response};
 
 use crate::vfs::{Vfs, VfsError};
 
@@ -19,6 +19,10 @@ pub const RELEASE_BASE_URL: &str =
 /// Archive that holds cross-level assets: resource models, sounds,
 /// `game.lst`, `wrlds.dat`, palettes shared across worlds, etc.
 pub const COMMON_ARCHIVE: &str = "common.zip";
+
+/// Progress reports from a streaming fetch. `total` is `None` if the
+/// server didn't send a `Content-Length` header.
+pub type ProgressFn<'a> = &'a mut dyn FnMut(&str, u64, Option<u64>);
 
 #[derive(Debug)]
 pub enum FetchError {
@@ -52,13 +56,21 @@ fn js_err(v: wasm_bindgen::JsValue) -> FetchError {
     FetchError::Network(format!("{:?}", v))
 }
 
-/// Fetch one release asset by filename (e.g. `"common.zip"`).
-pub async fn fetch_asset(name: &str) -> Result<Vec<u8>, FetchError> {
+/// Fetch one release asset by filename (e.g. `"common.zip"`),
+/// reporting incremental download progress to `progress`.
+pub async fn fetch_asset(
+    name: &str,
+    progress: ProgressFn<'_>,
+) -> Result<Vec<u8>, FetchError> {
     let url = format!("{}/{}", RELEASE_BASE_URL, name);
-    fetch_bytes(&url).await
+    fetch_bytes_streaming(name, &url, progress).await
 }
 
-async fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
+async fn fetch_bytes_streaming(
+    label: &str,
+    url: &str,
+    progress: ProgressFn<'_>,
+) -> Result<Vec<u8>, FetchError> {
     let opts = RequestInit::new();
     opts.set_method("GET");
     opts.set_mode(RequestMode::Cors);
@@ -82,16 +94,60 @@ async fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
         });
     }
 
-    let buf_value = JsFuture::from(resp.array_buffer().map_err(js_err)?)
-        .await
-        .map_err(js_err)?;
-    let array = js_sys::Uint8Array::new(&buf_value);
-    Ok(array.to_vec())
+    let total = resp
+        .headers()
+        .get("content-length")
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<u64>().ok());
+
+    // Initial 0% notification so the bar shows up before bytes arrive.
+    progress(label, 0, total);
+
+    // Drain the response body via its ReadableStream, accumulating
+    // chunks and reporting cumulative bytes. We can't use array_buffer()
+    // here because it gives no per-chunk callbacks.
+    let body = resp
+        .body()
+        .ok_or_else(|| FetchError::Network("response had no body".into()))?;
+    let reader: ReadableStreamDefaultReader = body
+        .get_reader()
+        .dyn_into()
+        .map_err(|o| FetchError::Network(format!("not a default reader: {:?}", o)))?;
+
+    let mut acc: Vec<u8> = Vec::with_capacity(total.unwrap_or(0) as usize);
+
+    loop {
+        let chunk = JsFuture::from(reader.read()).await.map_err(js_err)?;
+        let done = js_sys::Reflect::get(&chunk, &"done".into())
+            .map_err(js_err)?
+            .as_bool()
+            .unwrap_or(false);
+        if done {
+            break;
+        }
+        let value = js_sys::Reflect::get(&chunk, &"value".into()).map_err(js_err)?;
+        let array: js_sys::Uint8Array = value.dyn_into().map_err(js_err)?;
+        let n = array.byte_length() as usize;
+        let start = acc.len();
+        acc.resize(start + n, 0);
+        array.copy_to(&mut acc[start..start + n]);
+        progress(label, acc.len() as u64, total);
+    }
+
+    // Final notification with the true total (handles missing
+    // Content-Length: caller can flip the bar to "complete").
+    progress(label, acc.len() as u64, Some(acc.len() as u64));
+    Ok(acc)
 }
 
-/// Fetch an asset and mount it into `vfs`.
-pub async fn fetch_and_mount(vfs: &mut Vfs, name: &str) -> Result<(), FetchError> {
-    let bytes = fetch_asset(name).await?;
+/// Fetch an asset and mount it into `vfs`, reporting download progress.
+pub async fn fetch_and_mount(
+    vfs: &mut Vfs,
+    name: &str,
+    progress: ProgressFn<'_>,
+) -> Result<(), FetchError> {
+    let bytes = fetch_asset(name, progress).await?;
     log::info!("Mounting {} ({} bytes) into VFS", name, bytes.len());
     vfs.mount_zip(&bytes)?;
     Ok(())
