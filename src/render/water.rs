@@ -85,7 +85,10 @@ impl Context {
     ) -> Self {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("water"),
-            bind_group_layouts: &[Some(&global.bind_group_layout), Some(&terrain.bind_group_layout)],
+            bind_group_layouts: &[
+                Some(&global.bind_group_layout),
+                Some(&terrain.bind_group_layout),
+            ],
             immediate_size: 0,
         });
         let pipeline = Self::create_pipeline(&pipeline_layout, device, global.color_format);

@@ -288,6 +288,52 @@ pub fn load_c3d_shape(
 
 pub type VisualModel = m3d::Model<Arc<Mesh>, Arc<Shape>>;
 
+/// Physics-only shape data extracted from a collision mesh without GPU resources.
+pub struct ShapePhysics {
+    pub polygons: Vec<Polygon>,
+    pub samples: Vec<RawVertex>,
+}
+
+/// Extract collision shape polygons and samples from a raw M3D collision mesh.
+/// This is the CPU-only equivalent of `load_c3d_shape` for headless use.
+pub fn extract_shape_physics(
+    raw: m3d::Mesh<m3d::Geometry<m3d::CollisionQuad>>,
+    shape_sampling: u8,
+) -> ShapePhysics {
+    let mut polygons = Vec::new();
+    let mut samples = Vec::new();
+    let mut tess = Tessellator::new(shape_sampling);
+
+    for quad in &raw.geometry.polygons {
+        let corners = [
+            raw.geometry.positions[quad.vertices[0] as usize],
+            raw.geometry.positions[quad.vertices[1] as usize],
+            raw.geometry.positions[quad.vertices[2] as usize],
+            raw.geometry.positions[quad.vertices[3] as usize],
+        ];
+        let middle = [
+            quad.middle[0] as f32,
+            quad.middle[1] as f32,
+            quad.middle[2] as f32,
+        ];
+        let normal = [
+            quad.flat_normal[0] as f32 / m3d::NORMALIZER,
+            quad.flat_normal[1] as f32 / m3d::NORMALIZER,
+            quad.flat_normal[2] as f32 / m3d::NORMALIZER,
+        ];
+        let cur_samples = tess.tessellate(&corners[..], quad.middle);
+
+        polygons.push(Polygon {
+            middle,
+            normal,
+            samples: samples.len()..samples.len() + cur_samples.len(),
+        });
+        samples.extend(cur_samples);
+    }
+
+    ShapePhysics { polygons, samples }
+}
+
 pub fn load_m3d(
     file: File,
     device: &wgpu::Device,

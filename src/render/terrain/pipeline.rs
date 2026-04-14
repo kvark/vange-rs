@@ -377,8 +377,7 @@ pub(super) fn create_scatter_resources(
 
     let group_count = [
         (extent.width / SCATTER_GROUP_SIZE[0]) + (extent.width % SCATTER_GROUP_SIZE[0]).min(1),
-        (extent.height / SCATTER_GROUP_SIZE[1])
-            + (extent.height % SCATTER_GROUP_SIZE[1]).min(1),
+        (extent.height / SCATTER_GROUP_SIZE[1]) + (extent.height % SCATTER_GROUP_SIZE[1]).min(1),
         1,
     ];
     (bind_group, group_count)

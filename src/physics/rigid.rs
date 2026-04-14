@@ -8,11 +8,7 @@ pub struct RigidBody {
 }
 
 impl RigidBody {
-    pub fn new(
-        jacobian: &Mat3,
-        vel: Vec3,
-        wel: Vec3,
-    ) -> Self {
+    pub fn new(jacobian: &Mat3, vel: Vec3, wel: Vec3) -> Self {
         RigidBody {
             j_inv: jacobian.inverse(),
             vel,
@@ -60,11 +56,7 @@ impl RigidBody {
         self.wel_raw += wel_raw;
     }
 
-    pub fn push(
-        &mut self,
-        point: Vec3,
-        vec: Vec3,
-    ) -> Vec3 {
+    pub fn push(&mut self, point: Vec3, vec: Vec3) -> Vec3 {
         let pulse = self.calc_collision_matrix_inv(&point) * vec;
         self.vel += pulse;
         self.wel_raw += point.cross(pulse);

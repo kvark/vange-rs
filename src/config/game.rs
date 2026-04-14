@@ -13,10 +13,14 @@ pub struct Registry {
 
 impl Registry {
     pub fn load(settings: &Settings) -> Registry {
+        Self::load_from_file(settings.open_relative("game.lst"))
+    }
+
+    pub fn load_from_file(file: std::fs::File) -> Registry {
         let mut reg = Registry {
             model_infos: HashMap::new(),
         };
-        let mut fi = Reader::new(settings.open_relative("game.lst"));
+        let mut fi = Reader::new(file);
 
         while !fi.cur().starts_with("NumModel") {
             fi.advance();

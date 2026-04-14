@@ -79,8 +79,9 @@ impl Client {
                 Ok(n) => {
                     self.buf.extend_from_slice(&tmp[..n]);
                 }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(ref e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut => {}
                 Err(_) => break,
             }
             while let Some((msg, consumed)) = decode::<ServerMessage>(&self.buf) {
@@ -172,15 +173,15 @@ fn test_two_players_see_each_other() {
     bob_msgs.extend(bob.recv_for(Duration::from_secs(2)));
 
     // Alice should have received Bob's PlayerJoined
-    let bob_joined = alice_msgs
-        .iter()
-        .any(|m| matches!(m, ServerMessage::PlayerJoined { player_id, .. } if *player_id == bob_id));
+    let bob_joined = alice_msgs.iter().any(
+        |m| matches!(m, ServerMessage::PlayerJoined { player_id, .. } if *player_id == bob_id),
+    );
     assert!(bob_joined, "Alice didn't receive Bob's PlayerJoined");
 
     // Bob should have received Alice's PlayerJoined
-    let alice_joined = bob_msgs
-        .iter()
-        .any(|m| matches!(m, ServerMessage::PlayerJoined { player_id, .. } if *player_id == alice_id));
+    let alice_joined = bob_msgs.iter().any(
+        |m| matches!(m, ServerMessage::PlayerJoined { player_id, .. } if *player_id == alice_id),
+    );
     assert!(alice_joined, "Bob didn't receive Alice's PlayerJoined");
 
     // The last WorldState should have 2 agents (both joined)

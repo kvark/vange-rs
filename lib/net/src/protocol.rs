@@ -13,10 +13,7 @@ pub enum ClientMessage {
         color: u8,
     },
     /// Per-frame input from the client.
-    Input {
-        sequence: u32,
-        control: NetControl,
-    },
+    Input { sequence: u32, control: NetControl },
     /// Client is leaving the session.
     Leave,
 }
@@ -38,14 +35,9 @@ pub enum ServerMessage {
         color: u8,
     },
     /// A player has left the session.
-    PlayerLeft {
-        player_id: PlayerId,
-    },
+    PlayerLeft { player_id: PlayerId },
     /// Authoritative world state snapshot broadcast every tick.
-    WorldState {
-        tick: u32,
-        agents: Vec<AgentState>,
-    },
+    WorldState { tick: u32, agents: Vec<AgentState> },
 }
 
 /// Player control input, sent from client to server.

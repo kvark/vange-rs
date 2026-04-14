@@ -251,21 +251,19 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     }
     .expect("GL adapter can't be initialized");
 
-    let instance = wgpu::Instance::new(
-        wgpu::InstanceDescriptor::new_without_display_handle(),
-    );
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = unsafe { instance.create_adapter_from_hal(exposed) };
     let limits = render_config.get_device_limits(&adapter.limits(), geometry_config.height);
 
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: None,
-            required_features: wgpu::Features::empty(),
-            required_limits: limits,
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-            experimental_features: Default::default(),
-        }))
-        .ok()?;
+        label: None,
+        required_features: wgpu::Features::empty(),
+        required_limits: limits,
+        memory_hints: wgpu::MemoryHints::default(),
+        trace: wgpu::Trace::Off,
+        experimental_features: Default::default(),
+    }))
+    .ok()?;
 
     let gfx = vangers::render::GraphicsContext {
         queue,
@@ -344,8 +342,7 @@ pub extern "C" fn rv_camera_init(ctx: &mut Context, desc: CameraDescription) {
 pub extern "C" fn rv_camera_set_transform(ctx: &mut Context, t: Transform) {
     assert_eq!(t.scale, 1.0);
     ctx.camera.loc = glam::Vec3::new(t.position.x, t.position.y, t.position.z);
-    ctx.camera.rot =
-        glam::Quat::from_xyzw(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w);
+    ctx.camera.rot = glam::Quat::from_xyzw(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w);
 }
 
 #[no_mangle]
@@ -538,11 +535,14 @@ pub unsafe extern "C" fn rv_model_create(
             });
         }
     }
-    let vertex_buf = ctx.gfx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(label),
-        contents: bytemuck::cast_slice(&vertex_data),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
+    let vertex_buf = ctx
+        .gfx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::cast_slice(&vertex_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
 
     let j = &model.jacobian;
     let mesh = vangers::model::Mesh {

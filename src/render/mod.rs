@@ -7,13 +7,7 @@ use crate::{
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt as _;
 
-use std::{
-    collections::HashMap,
-    io::Error as IoError,
-    mem,
-    ops::Range,
-    sync::Arc,
-};
+use std::{collections::HashMap, io::Error as IoError, mem, ops::Range, sync::Arc};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
@@ -134,14 +128,20 @@ fn read_shader_source(base: &str, name_with_ext: &str) -> Result<String, IoError
     } else {
         format!("{}/{}", base, name_with_ext)
     };
-    embedded_shader(&key)
-        .map(|s| s.to_string())
-        .ok_or_else(|| IoError::new(std::io::ErrorKind::NotFound, format!("Shader not found: {}", key)))
+    embedded_shader(&key).map(|s| s.to_string()).ok_or_else(|| {
+        IoError::new(
+            std::io::ErrorKind::NotFound,
+            format!("Shader not found: {}", key),
+        )
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn read_shader_source(base_path: &str, name_with_ext: &str) -> Result<String, IoError> {
-    let path = PathBuf::from("res").join("shader").join(base_path).join(name_with_ext);
+    let path = PathBuf::from("res")
+        .join("shader")
+        .join(base_path)
+        .join(name_with_ext);
     let mut source = String::new();
     BufReader::new(File::open(&path)?).read_to_string(&mut source)?;
     Ok(source)

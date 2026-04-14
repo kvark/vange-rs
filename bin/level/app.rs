@@ -243,9 +243,12 @@ impl Application for LevelView {
                 _ => (),
             },
             ElementState::Released => match key {
-                KeyCode::KeyW | KeyCode::KeyS | KeyCode::KeyA | KeyCode::KeyD | KeyCode::KeyZ | KeyCode::KeyX => {
-                    *i = Input::Empty
-                }
+                KeyCode::KeyW
+                | KeyCode::KeyS
+                | KeyCode::KeyA
+                | KeyCode::KeyD
+                | KeyCode::KeyZ
+                | KeyCode::KeyX => *i = Input::Empty,
                 KeyCode::AltLeft => self.alt_button_pressed = false,
                 _ => (),
             },
@@ -287,13 +290,11 @@ impl Application for LevelView {
                 self.cam.loc += move_speed * delta * dir * vec.normalize();
             }
             Input::Hor { dir, alt: true, .. } if dir != 0.0 => {
-                let rot =
-                    glam::Quat::from_rotation_z(rotation_speed * delta * dir);
+                let rot = glam::Quat::from_rotation_z(rotation_speed * delta * dir);
                 self.cam.rot = rot * self.cam.rot;
             }
             Input::Ver { dir, alt: true, .. } if dir != 0.0 => {
-                let rot =
-                    glam::Quat::from_rotation_x(rotation_speed * delta * dir);
+                let rot = glam::Quat::from_rotation_x(rotation_speed * delta * dir);
                 self.cam.rot *= rot;
             }
             Input::DepQuant(dir) => {
@@ -359,7 +360,12 @@ impl Application for LevelView {
         });
     }
 
-    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) -> wgpu::CommandBuffer {
+    fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        targets: ScreenTargets,
+    ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("World"),
         });

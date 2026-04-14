@@ -45,7 +45,7 @@ pub struct Physics {
     pub shape_sampling: u8,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Copy, Clone, Debug, Deserialize)]
 pub struct Geometry {
     pub height: u32,
     pub delta_mask: u32,
@@ -200,12 +200,10 @@ impl Render {
     pub fn get_device_limits(&self, adapter_limits: &wgpu::Limits, slices: u32) -> wgpu::Limits {
         let (max_width, max_height) = (2048usize, 16384usize);
         match self.terrain {
-            Terrain::RayTraced | Terrain::Sliced | Terrain::Painted => {
-                wgpu::Limits {
-                    max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
-                    ..wgpu::Limits::downlevel_webgl2_defaults()
-                }
-            }
+            Terrain::RayTraced | Terrain::Sliced | Terrain::Painted => wgpu::Limits {
+                max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+                ..wgpu::Limits::downlevel_webgl2_defaults()
+            },
             Terrain::RayVoxelTraced { voxel_size, .. } => {
                 let voxel_points = voxel_size[0] * voxel_size[1] * voxel_size[2];
                 let max_voxels = max_width * max_height * slices as usize / voxel_points as usize;
@@ -274,6 +272,19 @@ impl Settings {
         }
 
         set
+    }
+
+    /// Like `load`, but returns `None` instead of panicking when the
+    /// settings file is missing or the game data path is invalid.
+    pub fn try_load(path: &str) -> Option<Self> {
+        use std::io::Read as _;
+        let mut string = String::new();
+        File::open(path).ok()?.read_to_string(&mut string).ok()?;
+        let set: Settings = ron::de::from_str(&string).ok()?;
+        if !set.check_path("options.dat") {
+            return None;
+        }
+        Some(set)
     }
 
     pub fn open_relative(&self, path: &str) -> File {

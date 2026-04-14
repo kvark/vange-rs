@@ -95,7 +95,11 @@ async fn fetch_release_level(level_id: &str) -> Option<(Vfs, String)> {
 
     let archive = data::level_archive_name(level_id);
     if let Err(e) = data::fetch_and_mount(&mut vfs, &archive, &mut report).await {
-        log::warn!("Couldn't fetch {}: {}. Falling back to test level.", archive, e);
+        log::warn!(
+            "Couldn't fetch {}: {}. Falling back to test level.",
+            archive,
+            e
+        );
         let _ = js_progress_error(&format!("{}: {}", archive, e));
         return None;
     }
@@ -111,7 +115,11 @@ async fn fetch_release_level(level_id: &str) -> Option<(Vfs, String)> {
         return None;
     }
 
-    log::info!("Loaded release level '{}' from VFS ({} entries)", level_id, vfs.len());
+    log::info!(
+        "Loaded release level '{}' from VFS ({} entries)",
+        level_id,
+        vfs.len()
+    );
     Some((vfs, ini_path))
 }
 
@@ -205,7 +213,12 @@ impl WebApp {
         }
     }
 
-    fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, targets: ScreenTargets) -> wgpu::CommandBuffer {
+    fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        targets: ScreenTargets,
+    ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("World"),
         });
@@ -230,7 +243,7 @@ mod net_ws {
     use super::*;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use vangers_net::{decode, encode, ClientMessage, ServerMessage, PlayerId};
+    use vangers_net::{decode, encode, ClientMessage, PlayerId, ServerMessage};
     use wasm_bindgen::closure::Closure;
 
     pub struct WsClient {
@@ -341,10 +354,10 @@ mod net_ws {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-use web_time::Instant;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 /// GPU resources initialized asynchronously on WASM.
 struct GpuState {
@@ -441,8 +454,7 @@ impl ApplicationHandler for WebHandler {
         let mut _init_width = 800u32;
         let mut _init_height = 600u32;
 
-        let attrs = Window::default_attributes()
-            .with_title("Vangers Web");
+        let attrs = Window::default_attributes().with_title("Vangers Web");
 
         #[cfg(target_arch = "wasm32")]
         let attrs = {
@@ -568,13 +580,13 @@ impl ApplicationHandler for WebHandler {
         // `Some((vfs, ini_path))` when real level data has been fetched;
         // `None` falls back to the procedural test level.
         let build_gpu_state = move |instance: wgpu::Instance,
-                                     surface: wgpu::Surface<'static>,
-                                     adapter: &wgpu::Adapter,
-                                     device: wgpu::Device,
-                                     queue: wgpu::Queue,
-                                     screen_size: wgpu::Extent3d,
-                                     vfs_level: Option<(Vfs, String)>|
-                                     -> GpuState {
+                                    surface: wgpu::Surface<'static>,
+                                    adapter: &wgpu::Adapter,
+                                    device: wgpu::Device,
+                                    queue: wgpu::Queue,
+                                    screen_size: wgpu::Extent3d,
+                                    vfs_level: Option<(Vfs, String)>|
+              -> GpuState {
             let caps = surface.get_capabilities(adapter);
             let config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -642,7 +654,13 @@ impl ApplicationHandler for WebHandler {
                 let _ = js_progress_done();
 
                 let state = build_gpu_state(
-                    instance, surface, &adapter, device, queue, screen_size, vfs_level,
+                    instance,
+                    surface,
+                    &adapter,
+                    device,
+                    queue,
+                    screen_size,
+                    vfs_level,
                 );
                 *pending.borrow_mut() = Some(state);
                 // Wake the event loop — without this, ControlFlow::Wait
@@ -655,7 +673,13 @@ impl ApplicationHandler for WebHandler {
         {
             let (instance, surface, adapter, device, queue, _) = pollster::block_on(init_future);
             self.gpu = Some(build_gpu_state(
-                instance, surface, &adapter, device, queue, screen_size, None,
+                instance,
+                surface,
+                &adapter,
+                device,
+                queue,
+                screen_size,
+                None,
             ));
             self.window = Some(window.clone());
             window.request_redraw();
@@ -787,59 +811,65 @@ impl WebHandler {
         };
         self.last_frame = Some(now);
         let dt = dt.min(0.1);
-        let move_speed = 100.0;
-        let rotation_speed = 1.0;
-
         let mut _motor = 0.0f32;
         let mut _rudder = 0.0f32;
 
         if self.keys_pressed.contains(&KeyCode::KeyW) {
-            let mut dir = gpu.app.cam.rot * glam::Vec3::Y;
-            dir.z = 0.0;
-            if dir.length_squared() > 0.0 {
-                gpu.app.cam.loc += move_speed * dt * dir.normalize();
-            }
             _motor = 1.0;
         }
         if self.keys_pressed.contains(&KeyCode::KeyS) {
-            let mut dir = gpu.app.cam.rot * glam::Vec3::Y;
-            dir.z = 0.0;
-            if dir.length_squared() > 0.0 {
-                gpu.app.cam.loc -= move_speed * dt * dir.normalize();
-            }
             _motor = -1.0;
         }
         if self.keys_pressed.contains(&KeyCode::KeyA) {
-            let mut dir = gpu.app.cam.rot * glam::Vec3::X;
-            dir.z = 0.0;
-            if dir.length_squared() > 0.0 {
-                gpu.app.cam.loc -= move_speed * dt * dir.normalize();
-            }
             _rudder = 1.0;
         }
         if self.keys_pressed.contains(&KeyCode::KeyD) {
-            let mut dir = gpu.app.cam.rot * glam::Vec3::X;
-            dir.z = 0.0;
-            if dir.length_squared() > 0.0 {
-                gpu.app.cam.loc += move_speed * dt * dir.normalize();
-            }
             _rudder = -1.0;
         }
-        if self.keys_pressed.contains(&KeyCode::KeyZ) {
-            gpu.app.cam.loc.z += move_speed * dt;
-        }
-        if self.keys_pressed.contains(&KeyCode::KeyX) {
-            gpu.app.cam.loc.z -= move_speed * dt;
-        }
-        if self.keys_pressed.contains(&KeyCode::KeyQ) {
-            let rotation = glam::Quat::from_rotation_z(rotation_speed * dt);
-            gpu.app.cam.rot = rotation * gpu.app.cam.rot;
-        }
-        if self.keys_pressed.contains(&KeyCode::KeyE) {
-            let rotation = glam::Quat::from_rotation_z(-rotation_speed * dt);
-            gpu.app.cam.rot = rotation * gpu.app.cam.rot;
-        }
 
+        // When not connected to a server, allow direct camera control
+        let connected = {
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.ws_client.is_some()
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                false
+            }
+        };
+        if !connected {
+            let move_speed = 100.0;
+            let rotation_speed = 1.0;
+            if _motor != 0.0 {
+                let mut dir = gpu.app.cam.rot * glam::Vec3::Y;
+                dir.z = 0.0;
+                if dir.length_squared() > 0.0 {
+                    gpu.app.cam.loc += move_speed * dt * _motor * dir.normalize();
+                }
+            }
+            if _rudder != 0.0 {
+                let mut dir = gpu.app.cam.rot * glam::Vec3::X;
+                dir.z = 0.0;
+                if dir.length_squared() > 0.0 {
+                    gpu.app.cam.loc -= move_speed * dt * _rudder * dir.normalize();
+                }
+            }
+            if self.keys_pressed.contains(&KeyCode::KeyZ) {
+                gpu.app.cam.loc.z += move_speed * dt;
+            }
+            if self.keys_pressed.contains(&KeyCode::KeyX) {
+                gpu.app.cam.loc.z -= move_speed * dt;
+            }
+            if self.keys_pressed.contains(&KeyCode::KeyQ) {
+                let rotation = glam::Quat::from_rotation_z(rotation_speed * dt);
+                gpu.app.cam.rot = rotation * gpu.app.cam.rot;
+            }
+            if self.keys_pressed.contains(&KeyCode::KeyE) {
+                let rotation = glam::Quat::from_rotation_z(-rotation_speed * dt);
+                gpu.app.cam.rot = rotation * gpu.app.cam.rot;
+            }
+        }
 
         // Process multiplayer messages
         #[cfg(target_arch = "wasm32")]
@@ -852,27 +882,32 @@ impl WebHandler {
             // Process received messages
             for msg in ws.poll() {
                 match msg {
-                    vangers_net::ServerMessage::Welcome { player_id, level_name, .. } => {
-                        self.mp_status = format!("Connected (player {}, level '{}')", player_id, level_name);
+                    vangers_net::ServerMessage::Welcome {
+                        player_id,
+                        level_name,
+                        ..
+                    } => {
+                        self.mp_status =
+                            format!("Connected (player {}, level '{}')", player_id, level_name);
                         ws.player_id = Some(player_id);
                         log::info!("{}", self.mp_status);
                     }
-                    vangers_net::ServerMessage::PlayerJoined { player_id, player_name, .. } => {
+                    vangers_net::ServerMessage::PlayerJoined {
+                        player_id,
+                        player_name,
+                        ..
+                    } => {
                         log::info!("Player {} ({}) joined", player_id, player_name);
                     }
                     vangers_net::ServerMessage::PlayerLeft { player_id } => {
                         log::info!("Player {} left", player_id);
                     }
                     vangers_net::ServerMessage::WorldState { agents, .. } => {
-                        // Move camera to follow our agent if we have one
+                        // Move camera to follow our agent
                         if let Some(my_id) = ws.player_id {
                             if let Some(me) = agents.iter().find(|a| a.player_id == my_id) {
                                 let pos = glam::Vec3::from(me.transform.position);
-                                // Smoothly follow server position
-                                gpu.app.cam.loc = gpu.app.cam.loc.lerp(
-                                    glam::vec3(pos.x, pos.y, pos.z + 200.0),
-                                    0.1,
-                                );
+                                gpu.app.cam.loc = glam::vec3(pos.x, pos.y, pos.z + 200.0);
                             }
                         }
                     }

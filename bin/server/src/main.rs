@@ -1,6 +1,5 @@
 use vangers::{
-    config::{self, settings},
-    level,
+    config, level,
     physics::{self, CarPhysicsData, Dynamo},
     space,
 };
@@ -46,6 +45,10 @@ struct Cli {
     /// Level name to host (use "test" for procedural test level)
     #[arg(short, long, default_value = "test")]
     level: String,
+
+    /// Path to settings file (default: config/settings.ron)
+    #[arg(short, long, default_value = "config/settings.ron")]
+    settings: String,
 }
 
 /// Events from client connection tasks to the main game loop.
@@ -102,8 +105,7 @@ impl ServerAgent {
     fn apply_control(&mut self, dt: f32, common: &config::common::Common) {
         let control = &self.control;
         if control.rudder != 0.0 {
-            let angle = self.dynamo.rudder
-                + common.car.rudder_step * 2.0 * dt * control.rudder;
+            let angle = self.dynamo.rudder + common.car.rudder_step * 2.0 * dt * control.rudder;
             self.dynamo.rudder = angle.clamp(-common.car.rudder_max, common.car.rudder_max);
         }
         if control.motor != 0.0 {
@@ -131,6 +133,16 @@ async fn main() {
     env_logger::init();
     let cli = Cli::parse();
 
+    // Try to load settings (same config file as the client).
+    // Falls back to test defaults when the file or game data is missing (e.g. CI).
+    let settings = config::Settings::try_load(&cli.settings);
+    if settings.is_none() {
+        warn!(
+            "Could not load settings from '{}' — using test defaults",
+            cli.settings
+        );
+    }
+
     // Load level
     info!("Loading level: {}", cli.level);
     let level_config = if cli.level == "test" {
@@ -138,7 +150,10 @@ async fn main() {
     } else {
         level::LevelConfig::load(std::path::Path::new(&cli.level))
     };
-    let geometry = settings::Geometry::default();
+    let geometry = settings
+        .as_ref()
+        .map(|s| s.game.geometry)
+        .unwrap_or_default();
     let level = level::load(&level_config, &geometry);
     info!(
         "Level loaded: {}x{} (test={})",
@@ -147,10 +162,30 @@ async fn main() {
         cli.level == "test"
     );
 
-    // Physics constants
-    let common = config::common::Common::test_default();
-    info!("Using test physics constants (gravity={}, frame_rate={})",
-        common.nature.gravity, common.speed.standard_frame_rate);
+    // Load physics constants and car data from game files when available.
+    let (common, car_physics) = if let Some(ref settings) = settings {
+        let common = config::common::load(settings.open_relative("common.prm"));
+        let reg = config::game::Registry::load(settings);
+        let cars = config::car::load_physics_registry(
+            &settings.data_path,
+            &reg,
+            settings.game.physics.shape_sampling,
+        );
+        info!(
+            "Loaded physics (gravity={}, frame_rate={}, {} cars)",
+            common.nature.gravity,
+            common.speed.standard_frame_rate,
+            cars.len(),
+        );
+        (common, cars)
+    } else {
+        let common = config::common::Common::test_default();
+        info!(
+            "Using test physics (gravity={}, frame_rate={})",
+            common.nature.gravity, common.speed.standard_frame_rate
+        );
+        (common, std::collections::HashMap::new())
+    };
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<SessionEvent>();
     let next_id = Arc::new(AtomicU32::new(1));
@@ -192,7 +227,10 @@ async fn main() {
             match ws_listener.accept().await {
                 Ok((stream, peer)) => {
                     let id = ws_next_id.fetch_add(1, Ordering::Relaxed);
-                    info!("WebSocket connection from {} assigned player_id={}", peer, id);
+                    info!(
+                        "WebSocket connection from {} assigned player_id={}",
+                        peer, id
+                    );
                     let tx = ws_tx.clone();
                     tokio::spawn(handle_ws_connection(stream, id, tx));
                 }
@@ -224,7 +262,10 @@ async fn main() {
         fps * n.time_delta0 * n.num_calls_analysis as f32
     };
 
-    info!("Starting game loop (physics_dt={:.4}, input_factor={:.2})", physics_dt, input_factor);
+    info!(
+        "Starting game loop (physics_dt={:.4}, input_factor={:.2})",
+        physics_dt, input_factor
+    );
 
     loop {
         tokio::select! {
@@ -335,7 +376,7 @@ async fn main() {
                             control: NetControl::default(),
                             transform: space::Transform::IDENTITY,
                             dynamo: Dynamo::default(),
-                            phys_data: CarPhysicsData::test_default(),
+                            phys_data: CarPhysicsData::test_default(), // replaced on Join
                             sender,
                             joined: false,
                         });
@@ -354,12 +395,17 @@ async fn main() {
                                 );
 
                                 if let Some(agent) = players.get_mut(&player_id) {
+                                    if let Some(phys) = car_physics.get(&car_name) {
+                                        agent.phys_data = phys.clone();
+                                    } else {
+                                        warn!("Unknown car '{}', using test physics", car_name);
+                                    }
                                     agent.name = player_name.clone();
                                     agent.car_name = car_name.clone();
                                     agent.color = color;
                                     agent.joined = true;
                                     agent.transform = space::Transform {
-                                        scale: 1.0,
+                                        scale: agent.phys_data.scale,
                                         disp: Vec3::new(
                                             coords.0 as f32,
                                             coords.1 as f32,
@@ -477,10 +523,7 @@ async fn handle_tcp_connection(
             Ok(n) => {
                 buf.extend_from_slice(&tmp[..n]);
                 while let Some((msg, consumed)) = decode::<ClientMessage>(&buf) {
-                    let _ = event_tx.send(SessionEvent::Message {
-                        player_id,
-                        msg,
-                    });
+                    let _ = event_tx.send(SessionEvent::Message { player_id, msg });
                     buf.drain(..consumed);
                 }
             }
@@ -540,10 +583,7 @@ async fn handle_ws_connection(
             Ok(tungstenite::Message::Binary(data)) => {
                 buf.extend_from_slice(&data);
                 while let Some((msg, consumed)) = decode::<ClientMessage>(&buf) {
-                    let _ = event_tx.send(SessionEvent::Message {
-                        player_id,
-                        msg,
-                    });
+                    let _ = event_tx.send(SessionEvent::Message { player_id, msg });
                     buf.drain(..consumed);
                 }
             }

@@ -13,8 +13,7 @@ use crate::vfs::{Vfs, VfsError};
 
 /// GitHub release that holds the data zips. Bump the tag to invalidate
 /// every client's browser cache at once.
-pub const RELEASE_BASE_URL: &str =
-    "https://github.com/kvark/vange-rs/releases/download/data-0";
+pub const RELEASE_BASE_URL: &str = "https://github.com/kvark/vange-rs/releases/download/data-0";
 
 /// Archive that holds cross-level assets: resource models, sounds,
 /// `game.lst`, `wrlds.dat`, palettes shared across worlds, etc.
@@ -58,10 +57,7 @@ fn js_err(v: wasm_bindgen::JsValue) -> FetchError {
 
 /// Fetch one release asset by filename (e.g. `"common.zip"`),
 /// reporting incremental download progress to `progress`.
-pub async fn fetch_asset(
-    name: &str,
-    progress: ProgressFn<'_>,
-) -> Result<Vec<u8>, FetchError> {
+pub async fn fetch_asset(name: &str, progress: ProgressFn<'_>) -> Result<Vec<u8>, FetchError> {
     let url = format!("{}/{}", RELEASE_BASE_URL, name);
     fetch_bytes_streaming(name, &url, progress).await
 }

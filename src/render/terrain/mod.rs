@@ -1064,7 +1064,8 @@ impl Context {
                                 wgpu::BindGroupLayoutEntry {
                                     binding: 0,
                                     visibility: if supports_vertex_storage {
-                                        wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE
+                                        wgpu::ShaderStages::VERTEX_FRAGMENT
+                                            | wgpu::ShaderStages::COMPUTE
                                     } else {
                                         wgpu::ShaderStages::FRAGMENT
                                     },
@@ -1228,11 +1229,13 @@ impl Context {
                     }
                     data
                 };
-                let mip_buffer = gfx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Bake mip constant"),
-                    contents: &mip_data,
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
+                let mip_buffer = gfx
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Bake mip constant"),
+                        contents: &mip_data,
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
 
                 let bake_bind_group = gfx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Bake group"),
@@ -2050,7 +2053,10 @@ impl Context {
                 {
                     pass.set_pipeline(pipeline);
                     let mut instances = 0..0;
-                    for (i, mip) in rv.mips[..lod_range.end.min(rv.mips.len())].iter().enumerate() {
+                    for (i, mip) in rv.mips[..lod_range.end.min(rv.mips.len())]
+                        .iter()
+                        .enumerate()
+                    {
                         let count =
                             mip.extent.width * mip.extent.height * mip.extent.depth_or_array_layers;
                         if i < lod_range.start {

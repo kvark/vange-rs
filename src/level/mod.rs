@@ -357,11 +357,7 @@ pub fn load_vmc(path: &Path, size: (i32, i32)) -> LevelData {
         .for_each(|source_group| {
             //Note: a separate file per group is required
             let mut vmc = File::open(path).unwrap();
-            let data_size: i16 = source_group
-                .iter()
-                .map(|item| *item.1 .1)
-                .max()
-                .unwrap();
+            let data_size: i16 = source_group.iter().map(|item| *item.1 .1).max().unwrap();
             let mut data = vec![0u8; data_size as usize];
             for &mut ((ref mut h_row, ref mut m_row), (offset, &size)) in source_group {
                 vmc.seek(SeekFrom::Start(*offset as u64)).unwrap();
@@ -434,7 +430,13 @@ pub fn load_vmc_bytes(bytes: &[u8], size: (i32, i32)) -> LevelData {
         let start = offset as usize;
         let end = start + row_size as usize;
         if end > bytes.len() {
-            panic!("VMC row {} out of bounds: {}..{} (len {})", y, start, end, bytes.len());
+            panic!(
+                "VMC row {} out of bounds: {}..{} (len {})",
+                y,
+                start,
+                end,
+                bytes.len()
+            );
         }
         splay.expand(&bytes[start..end], h_row, m_row);
     }
@@ -485,11 +487,7 @@ fn with_ext(path: &std::path::Path, ext: &str) -> String {
 
 /// Load a level from a VFS. Mirrors the native `load` path but reads
 /// every file from the in-memory VFS rather than the filesystem.
-pub fn load_from_vfs(
-    vfs: &Vfs,
-    config: &LevelConfig,
-    geometry: &settings::Geometry,
-) -> Level {
+pub fn load_from_vfs(vfs: &Vfs, config: &LevelConfig, geometry: &settings::Geometry) -> Level {
     info!("Loading level from VFS...");
     let size = (config.size.0.as_value(), config.size.1.as_value());
 
@@ -525,7 +523,7 @@ pub fn load_from_vfs(
         meta,
         palette,
         terrains: config.terrains.clone(),
-        geometry: geometry.clone(),
+        geometry: *geometry,
     }
 }
 
@@ -580,9 +578,13 @@ pub fn load(config: &LevelConfig, geometry: &settings::Geometry) -> Level {
         vec![0; sections].into_boxed_slice()
     } else {
         #[cfg(not(target_arch = "wasm32"))]
-        { load_flood(config) }
+        {
+            load_flood(config)
+        }
         #[cfg(target_arch = "wasm32")]
-        { panic!("File-based level loading is not supported on web") }
+        {
+            panic!("File-based level loading is not supported on web")
+        }
     };
 
     let palette = if path_empty(&config.path_palette) {
@@ -591,14 +593,14 @@ pub fn load(config: &LevelConfig, geometry: &settings::Geometry) -> Level {
             // Each 32-entry block maps to one terrain type
             let block = i / 32;
             let (r, g, b) = match block {
-                0 => (0.0, 0.0, 200.0),       // blue (water)
-                1 => (200.0, 180.0, 80.0),     // sand
-                2 => (40.0, 180.0, 40.0),      // green
-                3 => (80.0, 200.0, 80.0),      // light green
-                4 => (160.0, 140.0, 60.0),     // olive
-                5 => (140.0, 100.0, 40.0),     // brown
-                6 => (180.0, 160.0, 140.0),    // grey rock
-                _ => (240.0, 240.0, 250.0),    // snow
+                0 => (0.0, 0.0, 200.0),     // blue (water)
+                1 => (200.0, 180.0, 80.0),  // sand
+                2 => (40.0, 180.0, 40.0),   // green
+                3 => (80.0, 200.0, 80.0),   // light green
+                4 => (160.0, 140.0, 60.0),  // olive
+                5 => (140.0, 100.0, 40.0),  // brown
+                6 => (180.0, 160.0, 140.0), // grey rock
+                _ => (240.0, 240.0, 250.0), // snow
             };
             color[0] = r as u8;
             color[1] = g as u8;
@@ -618,6 +620,6 @@ pub fn load(config: &LevelConfig, geometry: &settings::Geometry) -> Level {
         meta,
         palette,
         terrains: config.terrains.clone(),
-        geometry: geometry.clone(),
+        geometry: *geometry,
     }
 }

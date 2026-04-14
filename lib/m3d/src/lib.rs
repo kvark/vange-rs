@@ -5,7 +5,7 @@
     clippy::new_without_default,
     clippy::single_match,
     clippy::vec_init_then_push,
-    clippy::too_many_arguments,
+    clippy::too_many_arguments
 )]
 #![warn(
     trivial_casts,
@@ -14,7 +14,7 @@
     rust_2018_idioms,
     future_incompatible,
     nonstandard_style,
-    clippy::pattern_type_mismatch,
+    clippy::pattern_type_mismatch
 )]
 
 mod geometry;

@@ -105,7 +105,7 @@ pub struct CarPhysics {
 }
 
 impl CarPhysics {
-    fn load(file: File) -> Self {
+    pub fn load(file: File) -> Self {
         let mut fi = Reader::new(file);
         fi.advance();
         CarPhysics {
@@ -204,6 +204,56 @@ pub fn load_registry(
                 physics,
                 model,
                 scale,
+            },
+        );
+    }
+
+    map
+}
+
+/// Load car physics data for all cars without GPU resources (for headless servers).
+pub fn load_physics_registry(
+    data_path: &std::path::Path,
+    reg: &super::game::Registry,
+    shape_sampling: u8,
+) -> HashMap<String, crate::physics::CarPhysicsData> {
+    use crate::physics::CarPhysicsData;
+
+    let open = |rel: &str| -> File {
+        File::open(data_path.join(rel))
+            .unwrap_or_else(|_| panic!("Unable to open game file: {}", rel))
+    };
+
+    let mut map = HashMap::new();
+    let mut fi = Reader::new(open("car.prm"));
+    fi.advance();
+    assert_eq!(fi.cur(), "uniVang-ParametersFile_Ver_1");
+
+    let num_main: u8 = fi.next_value();
+    let num_ruffa: u8 = fi.next_value();
+    let num_const: u8 = fi.next_value();
+
+    for _ in 0..num_main + num_ruffa + num_const {
+        let (name, _data) = fi.next_entry::<i32>();
+        let mi = &reg.model_infos[name];
+        let mut prm_path = data_path.join(&mi.path).with_extension("prm");
+        let is_default = !prm_path.exists();
+        if is_default {
+            prm_path.set_file_name("default");
+        }
+        let m3d_file = open(&mi.path);
+        let prm_file = File::open(&prm_path).unwrap();
+        let phys = CarPhysicsData::load_from_files(m3d_file, prm_file, mi.scale, shape_sampling);
+        let final_scale = if is_default {
+            mi.scale
+        } else {
+            phys.physics.scale_size
+        };
+        map.insert(
+            name.to_owned(),
+            CarPhysicsData {
+                scale: final_scale,
+                ..phys
             },
         );
     }
