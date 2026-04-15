@@ -8,8 +8,14 @@ Produces one zip per level plus a `common.zip` holding cross-level
 assets, laid out to match the layout expected by `src/data.rs`:
 
     <out>/
-      common.zip            game.lst, wrlds.dat, resource/, everything
-                            outside a level directory
+      common.zip            game.lst, wrlds.dat, car.prm, common.prm,
+                            resource/m3d/, resource/pal/ — the files
+                            the web build actually reads. Everything
+                            else under --root (cutscene videos, menu
+                            art, music, original binaries, editor
+                            scripts…) is dropped by default because the
+                            web build doesn't use it and the full data
+                            is ~180 MiB on the wire.
       fostral.zip           contents of the Fostral level directory,
                             flat (no leading `fostral/` prefix)
       necross.zip           ...
@@ -20,6 +26,10 @@ directory's own name becomes the level id (the zip basename). This
 matches the URL scheme the web client uses:
 
     https://github.com/kvark/vange-rs/releases/download/data-0/<id>.zip
+
+Pass `--full-common` to revert to the old behaviour of packing every
+non-level file; useful if you want to host the full Vangers data set
+at the same release tag.
 
 Upload the resulting zips as assets to the `data-0` release (e.g. via
 `gh release upload data-0 *.zip`).
@@ -32,6 +42,33 @@ import os
 import sys
 import zipfile
 from pathlib import Path
+
+# Which paths under --root are kept in the default (web-minimal)
+# common.zip. Everything outside this list is dropped unless
+# --full-common is passed.
+#
+# Drivers for this list come from a read of the runtime loaders:
+#   - bin/web/main.rs::spawn_default_agent  — game.lst, car.prm, m3d,
+#     per-vehicle .prm, default.prm
+#   - WebApp::build                         — common.prm
+# The palette dir is included defensively; nothing in the web build
+# currently reads it, but it's ~10 KiB and levels reference palettes
+# by relative path.
+WEB_KEEP_FILES = {
+    "game.lst",
+    "wrlds.dat",
+    "car.prm",
+    "common.prm",
+    "worlds.prm",
+    "escaves.prm",
+    "spots.prm",
+    "bunches.prm",
+    "tabutask.prm",
+}
+WEB_KEEP_PREFIXES = (
+    "resource/m3d/",
+    "resource/pal/",
+)
 
 
 def find_level_dirs(root: Path) -> dict[str, Path]:
@@ -76,16 +113,35 @@ def pack_level(level_id: str, level_dir: Path, out_path: Path, verbose: bool) ->
             zf.write(p, arcname=arcname)
 
 
+def keep_for_web(arcname: str) -> bool:
+    """Whether a file at `arcname` (forward-slash path relative to
+    --root) should go into the minimal common.zip."""
+    if arcname in WEB_KEEP_FILES:
+        return True
+    return any(arcname.startswith(p) for p in WEB_KEEP_PREFIXES)
+
+
 def pack_common(
     root: Path,
     level_dirs: set[Path],
     out_path: Path,
+    full: bool,
     verbose: bool,
 ) -> None:
-    """Zip everything under `root` that isn't inside a level directory."""
+    """Zip the cross-level assets into `out_path`.
+
+    By default only the files the web build actually reads are kept
+    (see `WEB_KEEP_FILES` / `WEB_KEEP_PREFIXES`). Passing `full=True`
+    restores the "everything not inside a level dir" behaviour, handy
+    when a release also needs to serve the full Vangers data set.
+    """
     level_dirs_abs = {d.resolve() for d in level_dirs}
+    mode = "full" if full else "web-minimal"
     if verbose:
-        print(f"  building {out_path.name} (cross-level assets)")
+        print(f"  building {out_path.name} ({mode} cross-level assets)")
+    kept = 0
+    dropped = 0
+    dropped_bytes = 0
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for p in sorted(root.rglob("*")):
             if p.is_dir():
@@ -94,9 +150,19 @@ def pack_common(
             if any(anc in level_dirs_abs for anc in p.resolve().parents):
                 continue
             arcname = p.relative_to(root).as_posix()
+            if not full and not keep_for_web(arcname):
+                dropped += 1
+                dropped_bytes += p.stat().st_size
+                continue
             if verbose:
                 print(f"    + {arcname}")
             zf.write(p, arcname=arcname)
+            kept += 1
+    if not full:
+        print(
+            f"    kept {kept} file(s); dropped {dropped} non-web "
+            f"file(s) ({human_bytes(dropped_bytes)})"
+        )
 
 
 def human_bytes(n: int) -> str:
@@ -133,6 +199,14 @@ def main() -> int:
         "--skip-common",
         action="store_true",
         help="do not build common.zip (useful when only re-packing levels)",
+    )
+    ap.add_argument(
+        "--full-common",
+        action="store_true",
+        help="pack every non-level file into common.zip (default is to "
+        "include only the small set the web build actually reads, "
+        "trimming ~170 MiB of videos/music/menu art from a typical "
+        "Vangers install).",
     )
     ap.add_argument(
         "-v",
@@ -177,7 +251,13 @@ def main() -> int:
         out_path = out / "common.zip"
         # Pass all discovered level dirs (even ones not selected) so
         # common.zip never duplicates level data that lives elsewhere.
-        pack_common(root, set(levels.values()), out_path, args.verbose)
+        pack_common(
+            root,
+            set(levels.values()),
+            out_path,
+            full=args.full_common,
+            verbose=args.verbose,
+        )
         print(f"    -> {out_path.name}  {human_bytes(out_path.stat().st_size)}")
 
     print("\nDone. Upload with:")
