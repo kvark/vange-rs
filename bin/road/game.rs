@@ -825,26 +825,25 @@ impl Application for Game {
                                 // so just snap to keep them consistent.
                                 let player =
                                     self.agents.iter_mut().find(|a| a.spirit == Spirit::Player);
-                                if let Some(player) = player {
-                                    if let Physics::Cpu {
+                                if let Some(player) = player
+                                    && let Physics::Cpu {
                                         ref mut transform,
                                         ref mut dynamo,
                                     } = player.physics
-                                    {
-                                        if !self.server_synced {
-                                            // First sync: hard-snap camera to
-                                            // avoid slow chase from old spawn.
-                                            self.server_synced = true;
-                                            self.cam.focus_on(&server_transform);
-                                        }
-                                        *transform = server_transform;
-                                        dynamo.linear_velocity =
-                                            Vec3::from(agent_state.dynamo.linear_velocity);
-                                        dynamo.angular_velocity =
-                                            Vec3::from(agent_state.dynamo.angular_velocity);
-                                        dynamo.traction = agent_state.dynamo.traction;
-                                        dynamo.rudder = agent_state.dynamo.rudder;
+                                {
+                                    if !self.server_synced {
+                                        // First sync: hard-snap camera to
+                                        // avoid slow chase from old spawn.
+                                        self.server_synced = true;
+                                        self.cam.focus_on(&server_transform);
                                     }
+                                    *transform = server_transform;
+                                    dynamo.linear_velocity =
+                                        Vec3::from(agent_state.dynamo.linear_velocity);
+                                    dynamo.angular_velocity =
+                                        Vec3::from(agent_state.dynamo.angular_velocity);
+                                    dynamo.traction = agent_state.dynamo.traction;
+                                    dynamo.rudder = agent_state.dynamo.rudder;
                                 }
                             } else if let Some(remote) =
                                 self.remote_agents.get_mut(&agent_state.player_id)
@@ -1038,10 +1037,10 @@ impl Application for Game {
             .show(context, |ui| {
                 if self.mp_state.connected {
                     ui.label(format!("Connected to {}", self.mp_state.server_addr));
-                    if let Some(ref net) = self.net {
-                        if let Some(id) = net.player_id {
-                            ui.label(format!("Player ID: {}", id));
-                        }
+                    if let Some(ref net) = self.net
+                        && let Some(id) = net.player_id
+                    {
+                        ui.label(format!("Player ID: {}", id));
                     }
                     ui.label(format!("Remote players: {}", self.remote_agents.len()));
                     if ui.button("Disconnect").clicked() {

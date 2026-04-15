@@ -55,21 +55,20 @@ extern "C" {
 /// [`DEFAULT_LEVEL`].
 #[cfg(target_arch = "wasm32")]
 fn selected_level_id() -> String {
-    if let Ok(val) = js_selected_level() {
-        if let Some(s) = val.as_string() {
-            if !s.is_empty() {
-                return s;
-            }
-        }
+    if let Ok(val) = js_selected_level()
+        && let Some(s) = val.as_string()
+        && !s.is_empty()
+    {
+        return s;
     }
-    if let Some(window) = web_sys::window() {
-        if let Ok(hash) = window.location().hash() {
-            for pair in hash.trim_start_matches('#').split('&') {
-                if let Some(rest) = pair.strip_prefix("level=") {
-                    if !rest.is_empty() {
-                        return rest.to_string();
-                    }
-                }
+    if let Some(window) = web_sys::window()
+        && let Ok(hash) = window.location().hash()
+    {
+        for pair in hash.trim_start_matches('#').split('&') {
+            if let Some(rest) = pair.strip_prefix("level=")
+                && !rest.is_empty()
+            {
+                return rest.to_string();
             }
         }
     }
@@ -343,9 +342,7 @@ mod net_ws {
         }
 
         pub fn poll(&mut self) -> Vec<ServerMessage> {
-            let mut msgs = self.received.borrow_mut();
-            let result = msgs.drain(..).collect();
-            result
+            self.received.borrow_mut().drain(..).collect()
         }
 
         #[allow(dead_code)]
@@ -397,7 +394,7 @@ impl WebHandler {
                 let url = {
                     let is_https = web_sys::window()
                         .and_then(|w| w.location().protocol().ok())
-                        .map_or(false, |p| p == "https:");
+                        .is_some_and(|p| p == "https:");
                     if is_https && url.starts_with("ws://") {
                         let upgraded = format!("wss://{}", &url[5..]);
                         log::info!("HTTPS page: upgrading {} to {}", url, upgraded);
@@ -745,10 +742,10 @@ impl ApplicationHandler for WebHandler {
             WindowEvent::RedrawRequested => {
                 // Check if async GPU init completed (WASM)
                 #[cfg(target_arch = "wasm32")]
-                if self.gpu.is_none() {
-                    if let Some(state) = self.gpu_pending.borrow_mut().take() {
-                        self.gpu = Some(state);
-                    }
+                if self.gpu.is_none()
+                    && let Some(state) = self.gpu_pending.borrow_mut().take()
+                {
+                    self.gpu = Some(state);
                 }
 
                 self.render();
@@ -905,11 +902,11 @@ impl WebHandler {
                     }
                     vangers_net::ServerMessage::WorldState { agents, .. } => {
                         // Move camera to follow our agent
-                        if let Some(my_id) = ws.player_id {
-                            if let Some(me) = agents.iter().find(|a| a.player_id == my_id) {
-                                let pos = glam::Vec3::from(me.transform.position);
-                                gpu.app.cam.loc = glam::vec3(pos.x, pos.y, pos.z + 200.0);
-                            }
+                        if let Some(my_id) = ws.player_id
+                            && let Some(me) = agents.iter().find(|a| a.player_id == my_id)
+                        {
+                            let pos = glam::Vec3::from(me.transform.position);
+                            gpu.app.cam.loc = glam::vec3(pos.x, pos.y, pos.z + 200.0);
                         }
                     }
                 }
