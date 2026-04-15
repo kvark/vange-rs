@@ -11,3 +11,4 @@ url: "https://vange.rs"
 include:
   - web.js
   - web_bg.wasm
+  - data-0
