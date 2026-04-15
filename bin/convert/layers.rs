@@ -1,4 +1,4 @@
-use vangers::level::{Level, LevelData, TerrainBits, DELTA_BITS, DELTA_MASK, DOUBLE_LEVEL};
+use vangers::level::{DELTA_BITS, DELTA_MASK, DOUBLE_LEVEL, Level, LevelData, TerrainBits};
 
 const DEFAULT_DELTA_POWER: u8 = 3;
 const DELTA_MAX: u8 = ((0x3 << DELTA_BITS) + 0x3) << DEFAULT_DELTA_POWER;
@@ -150,8 +150,8 @@ fn test_roundtrip() {
     for _ in 0..size {
         for _ in 0..size / 2 {
             let delta = rng.gen_range(0..16) << DEFAULT_DELTA_POWER;
-            let h0 = rng.gen();
-            let h1 = rng.gen();
+            let h0 = rng.r#gen();
+            let h1 = rng.r#gen();
             let t0 = rng.gen_range(0..num_terrains);
             let t1 = rng.gen_range(0..num_terrains);
             layers.delta.push(delta);

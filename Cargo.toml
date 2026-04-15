@@ -1,8 +1,8 @@
 [package]
 name = "vangers"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["kvark"]
-edition = "2021"
+edition = "2024"
 resolver = "2"
 default-run = "road"
 publish = false
