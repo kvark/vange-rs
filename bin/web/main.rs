@@ -8,9 +8,9 @@
 use wasm_bindgen::prelude::*;
 
 use vangers::{
-    config::settings,
-    level,
-    render::{Batcher, GraphicsContext, Render, ScreenTargets, DEPTH_FORMAT},
+    config::{self, settings},
+    level, model, physics,
+    render::{self, Batcher, GraphicsContext, Render, ScreenTargets, DEPTH_FORMAT},
     space,
     vfs::Vfs,
 };
@@ -155,11 +155,171 @@ use winit::{
 ///   VANGERS_SERVER_WS=ws://host:port cargo build ...
 const SERVER_WS: Option<&str> = option_env!("VANGERS_SERVER_WS");
 
+/// How many collision-shape samples per face to tessellate when
+/// uploading a vehicle's collision mesh. The native build takes this
+/// from `settings.ron`; on web we hardcode a balanced value.
+const SHAPE_SAMPLING: u8 = 3;
+
+/// Default body color for the spawned player vehicle.
+const PLAYER_COLOR: render::object::BodyColor = render::object::BodyColor::Green;
+
+/// Minimal controller state the web build feeds into the physics
+/// integrator. Mirrors the private struct of the same name in
+/// `bin/road/game.rs` — kept local because the native game has its
+/// own copy with more fields (roll, etc.) we don't need here.
+#[derive(Default)]
+struct Control {
+    motor: f32,
+    rudder: f32,
+    brake: bool,
+}
+
+/// The player vehicle + its per-frame physics state. Built once at
+/// startup (when the VFS happens to contain enough Vangers data for
+/// it) and then stepped each frame.
+struct Agent {
+    car: config::car::CarInfo,
+    phys_data: physics::CarPhysicsData,
+    transform: space::Transform,
+    dynamo: physics::Dynamo,
+    control: Control,
+    color: render::object::BodyColor,
+}
+
+impl Agent {
+    /// Apply the current control inputs to the dynamo, then integrate
+    /// a physics step. Matches the `cpu_apply_control` + `cpu_step`
+    /// pair in `bin/road/game.rs`.
+    fn step(
+        &mut self,
+        dt: f32,
+        level: &level::Level,
+        common: &config::common::Common,
+    ) {
+        if self.control.rudder != 0.0 {
+            let angle = self.dynamo.rudder
+                + common.car.rudder_step * 2.0 * dt * self.control.rudder;
+            self.dynamo.rudder = angle.clamp(-common.car.rudder_max, common.car.rudder_max);
+        }
+        if self.control.motor != 0.0 {
+            self.dynamo
+                .change_traction(self.control.motor * dt * common.car.traction_incr);
+        }
+        if self.control.brake && self.dynamo.traction != 0.0 {
+            self.dynamo.traction *= (-dt).exp2();
+        }
+
+        physics::step(
+            &mut self.dynamo,
+            &mut self.transform,
+            dt,
+            &self.phys_data,
+            level,
+            common,
+            0.0, // f_turbo
+            if self.control.brake { 1.0 } else { 0.0 },
+            None,   // jump
+            0.0,    // roll
+            None,   // line_buffer
+        );
+    }
+}
+
+/// Try to load the first main vehicle listed in `car.prm` out of the
+/// VFS. Returns `None` on any missing asset — the caller uses free
+/// camera movement in that case (same UX as before gameplay was wired).
+fn spawn_default_agent(
+    vfs: &Vfs,
+    level: &level::Level,
+    device: &wgpu::Device,
+    object: &render::object::Context,
+) -> Option<Agent> {
+    use std::io::Cursor;
+
+    let game_lst = vfs.read("game.lst")?;
+    let registry = config::game::Registry::load_reader(Cursor::new(&*game_lst));
+
+    let car_prm = vfs.read("car.prm")?;
+    let (car_name, stats_data) = config::car::first_main_entry(Cursor::new(&*car_prm));
+
+    let model_info = registry.model_infos.get(&car_name)?;
+    let m3d_bytes = vfs.read(&model_info.path)?;
+
+    // Per-vehicle physics file lives next to the m3d. If it's missing,
+    // fall back to `default.prm` in the same directory.
+    let prm_path = std::path::Path::new(&model_info.path).with_extension("prm");
+    let prm_key = prm_path.to_str()?;
+    let (prm_bytes, is_default) = if let Some(bytes) = vfs.read(prm_key) {
+        (bytes, false)
+    } else {
+        let mut default = std::path::Path::new(&model_info.path).to_path_buf();
+        default.set_file_name("default.prm");
+        (vfs.read(default.to_str()?)?, true)
+    };
+
+    let car_physics = config::car::CarPhysics::load_reader(Cursor::new(&*prm_bytes));
+    let scale = if is_default {
+        model_info.scale
+    } else {
+        car_physics.scale_size
+    };
+
+    let visual = model::load_m3d_bytes(&m3d_bytes, device, object, SHAPE_SAMPLING);
+    let phys_data = physics::CarPhysicsData::from_bytes(
+        &m3d_bytes,
+        &prm_bytes,
+        scale,
+        SHAPE_SAMPLING,
+    );
+
+    let car = config::car::CarInfo {
+        kind: config::car::Kind::Main,
+        stats: config::car::CarStats::new(&stats_data),
+        physics: car_physics,
+        model: visual,
+        scale,
+    };
+
+    // Spawn at the level center, snapped to the terrain.
+    let coords = (level.size.0 / 2, level.size.1 / 2);
+    let height = level.get(coords).high() + 5.0;
+    let transform = space::Transform {
+        scale,
+        disp: glam::Vec3::new(coords.0 as f32, coords.1 as f32, height),
+        rot: glam::Quat::IDENTITY,
+    };
+
+    log::info!(
+        "Spawned agent '{}' at ({}, {}, {:.1})",
+        car_name,
+        coords.0,
+        coords.1,
+        height
+    );
+
+    Some(Agent {
+        car,
+        phys_data,
+        transform,
+        dynamo: physics::Dynamo::default(),
+        control: Control::default(),
+        color: PLAYER_COLOR,
+    })
+}
+
 struct WebApp {
     render: Render,
     level: level::Level,
     cam: space::Camera,
     batcher: Batcher,
+    /// Physics constants loaded from `common.prm`; `test_default` when
+    /// the archive isn't available.
+    common: config::common::Common,
+    /// The player vehicle. `None` means the VFS didn't contain enough
+    /// data to build one; we fall back to free-camera mode.
+    agent: Option<Agent>,
+    /// Follow-camera parameters (radius/height/smoothing).
+    follow: space::Follow,
 }
 
 impl WebApp {
@@ -169,7 +329,7 @@ impl WebApp {
         let level_config = level::LevelConfig::new_test();
         let geometry = settings::Geometry::default();
         let level = level::load(&level_config, &geometry);
-        Self::build(gfx, level_config, level, geometry)
+        Self::build(gfx, level_config, level, geometry, None)
     }
 
     /// Build the app from a real level in a [`Vfs`]. `ini_path` is the
@@ -178,7 +338,7 @@ impl WebApp {
         let level_config = level::LevelConfig::load_from_vfs(vfs, ini_path);
         let geometry = settings::Geometry::default();
         let level = level::load_from_vfs(vfs, &level_config, &geometry);
-        Self::build(gfx, level_config, level, geometry)
+        Self::build(gfx, level_config, level, geometry, Some(vfs))
     }
 
     fn build(
@@ -186,6 +346,7 @@ impl WebApp {
         level_config: level::LevelConfig,
         level: level::Level,
         geometry: settings::Geometry,
+        vfs: Option<&Vfs>,
     ) -> Self {
         let objects_palette = [[0xFF; 4]; 0x100];
 
@@ -217,11 +378,35 @@ impl WebApp {
             cam.front_face(),
         );
 
+        // If the VFS has `common.prm` and a vehicle registry, spawn a
+        // player agent. Any gap (missing common.prm, missing car.prm,
+        // missing m3d/prm for the first vehicle) leaves `agent = None`
+        // and the app falls back to free-camera mode.
+        let common = vfs
+            .and_then(|v| v.read("common.prm"))
+            .map(|b| config::common::load_reader(std::io::Cursor::new(&*b)))
+            .unwrap_or_else(config::common::Common::test_default);
+        let agent = vfs.and_then(|v| spawn_default_agent(v, &level, &gfx.device, &render.object));
+        if agent.is_none() {
+            log::info!("No player agent — running in free-camera mode");
+        }
+
+        // Conservative follow-camera tuning. Distance behind the
+        // vehicle, height above it, moderate smoothing speed.
+        let follow = space::Follow {
+            angle_x: 45f32.to_radians(),
+            offset: glam::vec3(0.0, -40.0, 30.0),
+            speed: 2.0,
+        };
+
         WebApp {
             render,
             level,
             cam,
             batcher: Batcher::new(),
+            common,
+            agent,
+            follow,
         }
     }
 
@@ -241,6 +426,17 @@ impl WebApp {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("World"),
         });
+
+        self.batcher.clear();
+        if let Some(ref agent) = self.agent {
+            self.batcher.add_model(
+                &agent.car.model,
+                &agent.transform,
+                None,
+                agent.color,
+            );
+        }
+
         self.render.draw_world(
             &mut encoder,
             &mut self.batcher,
@@ -395,6 +591,8 @@ struct WebHandler {
     screen_size: wgpu::Extent3d,
     keys_pressed: std::collections::HashSet<KeyCode>,
     last_frame: Option<Instant>,
+    /// Rolling frame counter for throttled debug logs.
+    frame_counter: u32,
     #[cfg(target_arch = "wasm32")]
     ws_client: Option<net_ws::WsClient>,
     /// Status text overlay (used in multiplayer logging)
@@ -449,6 +647,7 @@ impl WebHandler {
                 depth_or_array_layers: 1,
             },
             keys_pressed: std::collections::HashSet::new(),
+            frame_counter: 0,
             last_frame: None,
             #[cfg(target_arch = "wasm32")]
             ws_client,
@@ -839,21 +1038,25 @@ impl WebHandler {
         };
         self.last_frame = Some(now);
         let dt = dt.min(0.1);
-        let mut _motor = 0.0f32;
-        let mut _rudder = 0.0f32;
 
+        // Derive motor/rudder from the currently pressed keys. Same
+        // axis mapping in both "driving a vehicle" and "server input"
+        // modes, so the multiplayer branch below can use them too.
+        let mut motor = 0.0f32;
+        let mut rudder = 0.0f32;
         if self.keys_pressed.contains(&KeyCode::KeyW) {
-            _motor = 1.0;
+            motor = 1.0;
         }
         if self.keys_pressed.contains(&KeyCode::KeyS) {
-            _motor = -1.0;
+            motor = -1.0;
         }
         if self.keys_pressed.contains(&KeyCode::KeyA) {
-            _rudder = 1.0;
+            rudder = 1.0;
         }
         if self.keys_pressed.contains(&KeyCode::KeyD) {
-            _rudder = -1.0;
+            rudder = -1.0;
         }
+        let brake = self.keys_pressed.contains(&KeyCode::Space);
 
         // Direct camera control is active whenever we aren't actually
         // synced with a multiplayer server. `ws_client` is `Some` from
@@ -864,30 +1067,62 @@ impl WebHandler {
         let connected = {
             #[cfg(target_arch = "wasm32")]
             {
-                self.ws_client
-                    .as_ref()
-                    .is_some_and(|c| c.is_connected())
+                self.ws_client.as_ref().is_some_and(|c| c.is_connected())
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
                 false
             }
         };
-        if !connected {
+
+        if gpu.app.agent.is_some() {
+            // Drive the player vehicle. Keyboard feeds control; physics
+            // integrates the dynamo; the camera chases the transform.
+            // We take a mutable reborrow scope so the follow-camera
+            // update below can read from gpu.app too.
+            let common = gpu.app.common.clone();
+            let level_ref = &gpu.app.level;
+            let follow = gpu.app.follow;
+            if let Some(ref mut agent) = gpu.app.agent {
+                agent.control.motor = motor;
+                agent.control.rudder = rudder;
+                agent.control.brake = brake;
+                agent.step(dt, level_ref, &common);
+                let target_transform = agent.transform;
+                // Throttled debug trace — once per second, confirms
+                // the physics loop is advancing the agent state.
+                if self.frame_counter.is_multiple_of(60) {
+                    log::info!(
+                        "agent pos={:.1},{:.1},{:.1} traction={:.2} rudder={:.2} vel={:.1}",
+                        agent.transform.disp.x,
+                        agent.transform.disp.y,
+                        agent.transform.disp.z,
+                        agent.dynamo.traction,
+                        agent.dynamo.rudder,
+                        agent.dynamo.linear_velocity.length(),
+                    );
+                }
+                self.frame_counter = self.frame_counter.wrapping_add(1);
+                gpu.app.cam.follow(&target_transform, dt, &follow);
+            }
+        } else if !connected {
+            // No vehicle loaded — fall back to the free camera. Same
+            // bindings as the level-viewer behaviour this build
+            // shipped with before gameplay was wired in.
             let move_speed = 100.0;
             let rotation_speed = 1.0;
-            if _motor != 0.0 {
+            if motor != 0.0 {
                 let mut dir = gpu.app.cam.rot * glam::Vec3::Y;
                 dir.z = 0.0;
                 if dir.length_squared() > 0.0 {
-                    gpu.app.cam.loc += move_speed * dt * _motor * dir.normalize();
+                    gpu.app.cam.loc += move_speed * dt * motor * dir.normalize();
                 }
             }
-            if _rudder != 0.0 {
+            if rudder != 0.0 {
                 let mut dir = gpu.app.cam.rot * glam::Vec3::X;
                 dir.z = 0.0;
                 if dir.length_squared() > 0.0 {
-                    gpu.app.cam.loc -= move_speed * dt * _rudder * dir.normalize();
+                    gpu.app.cam.loc -= move_speed * dt * rudder * dir.normalize();
                 }
             }
             if self.keys_pressed.contains(&KeyCode::KeyZ) {
@@ -910,8 +1145,8 @@ impl WebHandler {
         #[cfg(target_arch = "wasm32")]
         if let Some(ref mut ws) = self.ws_client {
             // Send input
-            if _motor != 0.0 || _rudder != 0.0 {
-                ws.send_input(_motor, _rudder);
+            if motor != 0.0 || rudder != 0.0 {
+                ws.send_input(motor, rudder);
             }
 
             // Process received messages

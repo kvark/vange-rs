@@ -158,8 +158,31 @@ impl CarPhysicsData {
         scale: f32,
         shape_sampling: u8,
     ) -> Self {
-        let raw = m3d::FullModel::load(m3d_file);
-        let physics = config::car::CarPhysics::load(prm_file);
+        Self::build(
+            m3d::FullModel::load(m3d_file),
+            config::car::CarPhysics::load(prm_file),
+            scale,
+            shape_sampling,
+        )
+    }
+
+    /// Byte-slice variant of [`load_from_files`]. Used by the web build
+    /// to construct physics data from zip-backed bytes.
+    pub fn from_bytes(m3d_bytes: &[u8], prm_bytes: &[u8], scale: f32, shape_sampling: u8) -> Self {
+        Self::build(
+            m3d::FullModel::load(std::io::Cursor::new(m3d_bytes)),
+            config::car::CarPhysics::load_reader(std::io::Cursor::new(prm_bytes)),
+            scale,
+            shape_sampling,
+        )
+    }
+
+    fn build(
+        raw: m3d::FullModel,
+        physics: config::car::CarPhysics,
+        scale: f32,
+        shape_sampling: u8,
+    ) -> Self {
         let shape = model::extract_shape_physics(raw.shape, shape_sampling);
 
         CarPhysicsData {
