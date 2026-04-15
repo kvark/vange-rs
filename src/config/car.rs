@@ -4,7 +4,7 @@ use crate::{
 
 use wgpu;
 
-use std::{collections::HashMap, fs::File};
+use std::{collections::HashMap, fs::File, io::Read};
 
 pub type BoxSize = u8;
 pub type Price = u32;
@@ -39,7 +39,7 @@ pub struct CarStats {
 }
 
 impl CarStats {
-    fn new(d: &[u32]) -> Self {
+    pub fn new(d: &[u32]) -> Self {
         CarStats {
             class: d[0] as u8,
             price_buy: d[1],
@@ -106,7 +106,13 @@ pub struct CarPhysics {
 
 impl CarPhysics {
     pub fn load(file: File) -> Self {
-        let mut fi = Reader::new(file);
+        Self::load_reader(file)
+    }
+
+    /// Reader-based variant of [`CarPhysics::load`]. Useful when the
+    /// source is a zip entry in memory rather than a real file.
+    pub fn load_reader<R: Read>(reader: R) -> Self {
+        let mut fi = Reader::new(reader);
         fi.advance();
         CarPhysics {
             name: fi.cur().split_whitespace().nth(1).unwrap().to_owned(),
@@ -152,6 +158,21 @@ pub struct CarInfo {
     pub physics: CarPhysics,
     pub model: model::VisualModel,
     pub scale: f32,
+}
+
+/// Parse `car.prm` and return `(name, stats)` for the first "main"
+/// vehicle entry. The web build uses this to spawn a default player
+/// vehicle without the full `load_registry` dance (which needs
+/// `Settings` + on-disk paths).
+pub fn first_main_entry<R: Read>(reader: R) -> (String, Vec<u32>) {
+    let mut fi = Reader::new(reader);
+    fi.advance();
+    assert_eq!(fi.cur(), "uniVang-ParametersFile_Ver_1");
+    let _num_main: u8 = fi.next_value();
+    let _num_ruffa: u8 = fi.next_value();
+    let _num_const: u8 = fi.next_value();
+    let (name, data) = fi.next_entry::<u32>();
+    (name.to_owned(), data)
 }
 
 pub fn load_registry(

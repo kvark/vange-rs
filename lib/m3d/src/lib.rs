@@ -479,7 +479,7 @@ pub struct AnimatedMesh<G> {
 }
 
 impl<P: Polygon> AnimatedMesh<Geometry<P>> {
-    pub fn load(mut input: File) -> Self {
+    pub fn load<R: ReadBytesExt>(mut input: R) -> Self {
         let count = input.read_u32::<E>().unwrap();
         AnimatedMesh {
             bound: UpperBound::read(&mut input),
@@ -501,7 +501,7 @@ impl<P: Polygon> AnimatedMesh<Geometry<P>> {
 pub type FullModel = Model<DrawMesh, CollisionMesh>;
 
 impl FullModel {
-    pub fn load(mut input: File) -> Self {
+    pub fn load<R: ReadBytesExt>(mut input: R) -> Self {
         profiling::scope!("Load Model");
 
         log::debug!("\tReading the body...");

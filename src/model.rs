@@ -340,8 +340,36 @@ pub fn load_m3d(
     object: &ObjectContext,
     shape_sampling: u8,
 ) -> VisualModel {
-    let raw = m3d::FullModel::load(file);
+    build_visual(
+        m3d::FullModel::load(file),
+        device,
+        object,
+        shape_sampling,
+    )
+}
 
+/// Byte-slice variant of [`load_m3d`], for loading a vehicle out of a
+/// zip entry held in memory (the web build's VFS).
+pub fn load_m3d_bytes(
+    bytes: &[u8],
+    device: &wgpu::Device,
+    object: &ObjectContext,
+    shape_sampling: u8,
+) -> VisualModel {
+    build_visual(
+        m3d::FullModel::load(std::io::Cursor::new(bytes)),
+        device,
+        object,
+        shape_sampling,
+    )
+}
+
+fn build_visual(
+    raw: m3d::FullModel,
+    device: &wgpu::Device,
+    object: &ObjectContext,
+    shape_sampling: u8,
+) -> VisualModel {
     VisualModel {
         body: load_c3d(raw.body, device),
         shape: load_c3d_shape(raw.shape, device, shape_sampling, true, object),

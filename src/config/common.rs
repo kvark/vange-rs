@@ -278,7 +278,7 @@ impl Common {
     }
 }
 
-fn get_pair(reader: &mut Reader<File>, name: &str) -> VelocityPair {
+fn get_pair<R: std::io::Read>(reader: &mut Reader<R>, name: &str) -> VelocityPair {
     let sv = format!("V_{}:", name);
     let sw = format!("W_{}:", name);
     VelocityPair {
@@ -288,7 +288,13 @@ fn get_pair(reader: &mut Reader<File>, name: &str) -> VelocityPair {
 }
 
 pub fn load(file: File) -> Common {
-    let mut fi = Reader::new(file);
+    load_reader(file)
+}
+
+/// Reader-based variant of [`load`]. Used by the web build to parse
+/// `common.prm` straight out of a zip archive.
+pub fn load_reader<R: std::io::Read>(reader: R) -> Common {
+    let mut fi = Reader::new(reader);
     fi.advance();
     assert_eq!(fi.cur(), "COMMON:\t\t2");
     let traction_scale = 1.0 / 64.0;

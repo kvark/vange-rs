@@ -17,10 +17,16 @@ impl Registry {
     }
 
     pub fn load_from_file(file: std::fs::File) -> Registry {
+        Self::load_reader(file)
+    }
+
+    /// Reader-based variant of [`Registry::load_from_file`]. Used by
+    /// the web build to parse `game.lst` out of a zip archive.
+    pub fn load_reader<R: std::io::Read>(reader: R) -> Registry {
         let mut reg = Registry {
             model_infos: HashMap::new(),
         };
-        let mut fi = Reader::new(file);
+        let mut fi = Reader::new(reader);
 
         while !fi.cur().starts_with("NumModel") {
             fi.advance();
