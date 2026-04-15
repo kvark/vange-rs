@@ -32,6 +32,19 @@ jobs:
     - name: Generate JS bindings
       run: wasm-bindgen target/wasm32-unknown-unknown/release/web.wasm --out-dir docs/ --target web --no-typescript
 
+    # Bundle the data-0 release into the Pages site so the client
+    # fetches the zips same-origin from vange.rs — no CORS proxy,
+    # no api.github.com round-trip. The directory is gitignored; it
+    # only exists during the Pages build.
+    - name: Download data-0 release assets
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        mkdir -p docs/data-0
+        gh release download data-0 --dir docs/data-0 --repo ${{ github.repository }}
+        echo "Bundled release into docs/data-0:"
+        ls -lh docs/data-0/
+
     - name: Build Jekyll site
       uses: actions/jekyll-build-pages@v1
       with:
