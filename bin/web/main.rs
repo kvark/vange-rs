@@ -30,13 +30,29 @@ fn level_ini_path(_level_id: &str) -> String {
     "world.ini".to_string()
 }
 
-/// JS bridge for loading-screen UI. The HTML defines these on `window`;
-/// they update a progress bar and status text. All four are no-ops on
-/// pages that don't define them (we wrap calls in a catch_unwind-style
-/// closure-or-noop pattern via a wasm_bindgen `catch` attribute).
+/// JS bridge for the loading-screen UI. The HTML defines these on
+/// `window`; they update a progress bar and status text. The `catch`
+/// attribute makes every call a no-op when the JS function is missing,
+/// so the WASM binary works unchanged on pages without the overlay.
+///
+/// The sequence is:
+///   vangePhase("Connecting to GPU…")     ← opaque step, spinner
+///   vangePhase("Downloading fostral.zip") ← indeterminate
+///   vangeProgress("fostral.zip", 1234, 5678)  ← byte progress
+///   vangePhase("Mounting archives…")     ← spinner
+///   vangePhase("Building renderer…")     ← spinner
+///   vangeProgressDone()                   ← hide overlay
+/// or, on failure:
+///   vangeProgressError("…")               ← red banner, auto-hide
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 extern "C" {
+    /// Set the top-line status text and switch the bar to indeterminate.
+    #[wasm_bindgen(js_namespace = window, js_name = vangePhase, catch)]
+    fn js_phase(label: &str) -> Result<(), JsValue>;
+
+    /// Update the progress bar with byte counts. `total < 0` means
+    /// Content-Length was missing; the bar stays indeterminate.
     #[wasm_bindgen(js_namespace = window, js_name = vangeProgress, catch)]
     fn js_progress(label: &str, loaded: f64, total: f64) -> Result<(), JsValue>;
 
@@ -49,6 +65,7 @@ extern "C" {
     #[wasm_bindgen(js_namespace = window, js_name = vangeSelectedLevel, catch)]
     fn js_selected_level() -> Result<JsValue, JsValue>;
 }
+
 
 /// Read the selected level id from JS (set by the level picker UI),
 /// falling back to the URL fragment `#level=<id>`, then to
@@ -89,11 +106,13 @@ async fn fetch_release_level(level_id: &str) -> Option<(Vfs, String)> {
 
     // common.zip holds cross-level assets. A level-only run is fine
     // without it, so we log+continue on failure.
+    let _ = js_phase(&format!("Downloading {}", data::COMMON_ARCHIVE));
     if let Err(e) = data::fetch_and_mount(&mut vfs, data::COMMON_ARCHIVE, &mut report).await {
         log::warn!("Couldn't fetch {}: {}", data::COMMON_ARCHIVE, e);
     }
 
     let archive = data::level_archive_name(level_id);
+    let _ = js_phase(&format!("Downloading {}", archive));
     if let Err(e) = data::fetch_and_mount(&mut vfs, &archive, &mut report).await {
         log::warn!(
             "Couldn't fetch {}: {}. Falling back to test level.",
@@ -345,7 +364,6 @@ mod net_ws {
             self.received.borrow_mut().drain(..).collect()
         }
 
-        #[allow(dead_code)]
         pub fn is_connected(&self) -> bool {
             *self.connected.borrow()
         }
@@ -639,8 +657,7 @@ impl ApplicationHandler for WebHandler {
             self.window = Some(window);
             let pending = self.gpu_pending.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                // Start GPU init. Data fetch is sequential for now (both
-                // are I/O-bound but `join` would need the futures crate).
+                let _ = js_phase("Initializing WebGL…");
                 let (instance, surface, adapter, device, queue, window) = init_future.await;
                 log::info!("GPU initialized on web!");
 
@@ -649,7 +666,17 @@ impl ApplicationHandler for WebHandler {
                 let level_id = selected_level_id();
                 log::info!("Selected level: {}", level_id);
                 let vfs_level = fetch_release_level(&level_id).await;
-                let _ = js_progress_done();
+
+                // Level construction and renderer setup are synchronous
+                // but far from instant (the renderer builds several
+                // shader pipelines and uploads the height/meta/palette
+                // textures). Announce the phase so the user sees why
+                // the screen is still blank.
+                let _ = js_phase(if vfs_level.is_some() {
+                    "Building level from release data…"
+                } else {
+                    "Building procedural test level…"
+                });
 
                 let state = build_gpu_state(
                     instance,
@@ -664,6 +691,9 @@ impl ApplicationHandler for WebHandler {
                 // Wake the event loop — without this, ControlFlow::Wait
                 // keeps the loop sleeping and gpu_pending is never picked up.
                 window.request_redraw();
+
+                let _ = js_progress_done();
+                log::info!("Web app ready");
             });
         }
 
@@ -825,11 +855,18 @@ impl WebHandler {
             _rudder = -1.0;
         }
 
-        // When not connected to a server, allow direct camera control
+        // Direct camera control is active whenever we aren't actually
+        // synced with a multiplayer server. `ws_client` is `Some` from
+        // the moment the JS WebSocket object is created; we need the
+        // true "handshake finished and socket still open" state, which
+        // `WsClient::is_connected` exposes. Otherwise a failed or
+        // dropped connection would leave the camera locked.
         let connected = {
             #[cfg(target_arch = "wasm32")]
             {
-                self.ws_client.is_some()
+                self.ws_client
+                    .as_ref()
+                    .is_some_and(|c| c.is_connected())
             }
             #[cfg(not(target_arch = "wasm32"))]
             {

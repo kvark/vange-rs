@@ -52,6 +52,13 @@
         #progress-text {
             margin-top: 8px; font-size: 13px; color: #8b949e;
         }
+        #phase-log {
+            margin-top: 14px; font-size: 12px; color: #6e7681;
+            text-align: left; max-height: 160px; overflow: hidden;
+            font-family: 'Fira Code', monospace;
+        }
+        #phase-log div { padding: 1px 0; }
+        #phase-log div:last-child { color: #c9d1d9; }
         #level-picker {
             position: absolute; top: 12px; right: 12px; z-index: 10;
             background: rgba(0,0,0,0.7); padding: 6px 10px; border-radius: 6px;
@@ -107,9 +114,10 @@
             <select id="level-select" onchange="onLevelChange()"></select>
         </div>
         <div id="loading">
-            <div id="status-text">Initializing WebGPU…</div>
+            <div id="status-text">Starting…</div>
             <div id="progress-bar"><div id="progress-fill"></div></div>
             <div id="progress-text"></div>
+            <div id="phase-log"></div>
         </div>
         <canvas id="canvas"></canvas>
         <div id="controls-hint">
@@ -237,12 +245,37 @@ WGSL shaders, compute-based voxel baking</code></pre>
         }
 
         // --- Progress bar bridge ---------------------------------------
-        // Called by the WASM loader. `total` is -1 if unknown.
+        // The WASM loader drives three JS hooks:
+        //   vangePhase(label)          — start of an opaque step
+        //   vangeProgress(label, a, b) — byte progress within a step
+        //   vangeProgressDone()        — everything's ready
+        // A single event log shows the user what happened in order —
+        // useful because phases fly by when data is in the browser
+        // cache, and invisible otherwise.
+        const phaseStart = performance.now();
+        function logPhase(text) {
+            const elapsed = ((performance.now() - phaseStart) / 1000).toFixed(1);
+            const log = document.getElementById('phase-log');
+            const line = document.createElement('div');
+            line.textContent = `[${elapsed}s] ${text}`;
+            log.appendChild(line);
+            // Keep only the last 8 lines so the overlay stays compact.
+            while (log.childElementCount > 8) log.removeChild(log.firstChild);
+        }
+
+        window.vangePhase = function(label) {
+            document.getElementById('status-text').textContent = label;
+            const fill = document.getElementById('progress-fill');
+            fill.classList.add('indeterminate');
+            fill.style.width = '';
+            document.getElementById('progress-text').textContent = '';
+            logPhase(label);
+        };
+
         window.vangeProgress = function(label, loaded, total) {
-            const status = document.getElementById('status-text');
+            document.getElementById('status-text').textContent = 'Loading ' + label;
             const fill = document.getElementById('progress-fill');
             const text = document.getElementById('progress-text');
-            status.textContent = 'Loading ' + label;
             if (total > 0) {
                 fill.classList.remove('indeterminate');
                 fill.style.width = Math.min(100, (loaded / total) * 100) + '%';
@@ -254,7 +287,13 @@ WGSL shaders, compute-based voxel baking</code></pre>
         };
 
         window.vangeProgressDone = function() {
-            document.getElementById('loading').style.display = 'none';
+            logPhase('Ready');
+            // Small delay so the last phase is readable even when the
+            // whole pipeline completes in a handful of milliseconds
+            // (e.g. cached re-visit).
+            setTimeout(() => {
+                document.getElementById('loading').style.display = 'none';
+            }, 300);
         };
 
         window.vangeProgressError = function(message) {
@@ -263,6 +302,7 @@ WGSL shaders, compute-based voxel baking</code></pre>
             document.getElementById('status-text').textContent =
                 'Could not load level data — using procedural fallback.';
             document.getElementById('progress-text').textContent = message;
+            logPhase('Error: ' + message);
             // Keep the message visible briefly, then hide so the canvas shows.
             setTimeout(() => { loading.style.display = 'none'; }, 4000);
         };
