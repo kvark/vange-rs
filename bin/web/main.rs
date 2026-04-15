@@ -23,10 +23,11 @@ use vangers::data;
 /// is missing (404) we fall back to the procedural test level.
 const DEFAULT_LEVEL: &str = "fostral";
 
-/// INI path inside the per-level zip. Zips are expected to contain
-/// `<level_id>/world.ini` plus the .vmc/.vmp/.pal files it references.
-fn level_ini_path(level_id: &str) -> String {
-    format!("{}/world.ini", level_id)
+/// INI path inside the per-level zip. Each `<id>.zip` stores the level
+/// files at the archive root (no `<id>/` prefix), so the INI key is
+/// just `"world.ini"`.
+fn level_ini_path(_level_id: &str) -> String {
+    "world.ini".to_string()
 }
 
 /// JS bridge for loading-screen UI. The HTML defines these on `window`;
