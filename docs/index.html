@@ -31,7 +31,9 @@
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             color: #e0e0e0; font-family: monospace; font-size: 18px; z-index: 10;
             text-align: center; min-width: 280px;
+            transition: opacity 0.4s ease-out;
         }
+        #loading.fade-out { opacity: 0; }
         #loading.error { color: #f85149; }
         #progress-bar {
             margin-top: 12px; height: 6px; background: #21262d; border-radius: 3px;
@@ -286,14 +288,22 @@ WGSL shaders, compute-based voxel baking</code></pre>
             }
         };
 
+        // Minimum time the overlay is visible after "Ready" fires, so
+        // even a cached (instant) reload shows the phase log long
+        // enough to read. Measured from the moment the page scripts
+        // started.
+        const MIN_OVERLAY_MS = 1500;
+        const READY_HOLD_MS = 1200;
+
         window.vangeProgressDone = function() {
             logPhase('Ready');
-            // Small delay so the last phase is readable even when the
-            // whole pipeline completes in a handful of milliseconds
-            // (e.g. cached re-visit).
+            const overlay = document.getElementById('loading');
+            const alreadyShown = performance.now() - phaseStart;
+            const wait = Math.max(READY_HOLD_MS, MIN_OVERLAY_MS - alreadyShown);
             setTimeout(() => {
-                document.getElementById('loading').style.display = 'none';
-            }, 300);
+                overlay.classList.add('fade-out');
+                setTimeout(() => { overlay.style.display = 'none'; }, 400);
+            }, wait);
         };
 
         window.vangeProgressError = function(message) {
@@ -331,13 +341,16 @@ WGSL shaders, compute-based voxel baking</code></pre>
             try {
                 const { default: init } = await import('./web.js');
                 await init();
-                document.getElementById('loading').style.display = 'none';
+                // Don't hide the overlay here. The WASM loader's own
+                // `vangeProgressDone()` hook does that once the async
+                // spawn_local pipeline finishes (fetch → mount →
+                // build_gpu_state). Hiding here would race ahead of
+                // the phases the user is supposed to see.
             } catch (err) {
                 const msg = String(err);
                 // winit uses exceptions for control flow on WASM;
-                // this is expected and not an actual error
+                // this is expected and not an actual error.
                 if (msg.includes('Using exceptions for control flow')) {
-                    document.getElementById('loading').style.display = 'none';
                     return;
                 }
                 if (msg.includes('WebGL') || msg.includes('WebGPU')) {
