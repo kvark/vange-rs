@@ -348,7 +348,10 @@ impl WebApp {
         geometry: settings::Geometry,
         vfs: Option<&Vfs>,
     ) -> Self {
-        let objects_palette = [[0xFF; 4]; 0x100];
+        let objects_palette = vfs
+            .and_then(|v| v.read("resource/pal/objects.pal"))
+            .map(|b| level::read_palette_bytes(&b, None))
+            .unwrap_or([[0xFF; 4]; 0x100]);
 
         let cam = space::Camera {
             loc: glam::vec3(128.0, 128.0, 400.0),
@@ -391,12 +394,12 @@ impl WebApp {
             log::info!("No player agent — running in free-camera mode");
         }
 
-        // Conservative follow-camera tuning. Distance behind the
-        // vehicle, height above it, moderate smoothing speed.
+        // Follow-camera tuning matching native defaults
+        // (config/settings.template.ron camera section).
         let follow = space::Follow {
-            angle_x: 45f32.to_radians(),
-            offset: glam::vec3(0.0, -40.0, 30.0),
-            speed: 2.0,
+            angle_x: 60f32.to_radians(),
+            offset: glam::vec3(0.0, 140.0, 210.0),
+            speed: 1.0,
         };
 
         WebApp {

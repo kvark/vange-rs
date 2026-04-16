@@ -121,9 +121,9 @@
             <div id="progress-text"></div>
             <div id="phase-log"></div>
         </div>
-        <canvas id="canvas"></canvas>
+        <canvas id="canvas" tabindex="0"></canvas>
         <div id="controls-hint">
-            WASD – move &nbsp;|&nbsp; Z/X – altitude &nbsp;|&nbsp; Q/E – rotate &nbsp;|&nbsp; Scroll – zoom
+            WASD – drive &nbsp;|&nbsp; Space – brake
         </div>
     </div>
 
@@ -302,7 +302,13 @@ WGSL shaders, compute-based voxel baking</code></pre>
             const wait = Math.max(READY_HOLD_MS, MIN_OVERLAY_MS - alreadyShown);
             setTimeout(() => {
                 overlay.classList.add('fade-out');
-                setTimeout(() => { overlay.style.display = 'none'; }, 400);
+                setTimeout(() => {
+                    overlay.style.display = 'none';
+                    // Focus the canvas so keyboard events reach winit.
+                    // Without this, focus stays on the level picker
+                    // <select> or a nav button, and WASD is swallowed.
+                    document.getElementById('canvas')?.focus();
+                }, 400);
             }, wait);
         };
 
