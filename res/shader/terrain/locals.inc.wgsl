@@ -11,13 +11,9 @@ struct Locals {
 
 fn get_frag_ndc(frag_coord: vec2<f32>, z: f32) -> vec4<f32> {
     let normalized = (frag_coord.xy - vec2<f32>(u_Locals.screen_rect.xy)) / vec2<f32>(u_Locals.screen_rect.zw);
-    // Y-flip direction: -1.0 on Vulkan (frag_coord.y is top-down),
-    // +1.0 on GL/WebGL (naga already flips vertex output, so the
-    // frag_coord convention matches NDC). Passed at runtime via
-    // light_color.w (the `pad` field in Constants).
-    let y_sign = u_Globals.light_color.w;
     return vec4<f32>(
-        (normalized * 2.0 - vec2<f32>(1.0)) * vec2<f32>(1.0, y_sign),
+        // note the Y-flip here
+        (normalized * 2.0 - vec2<f32>(1.0)) * vec2<f32>(1.0, -1.0),
         z,
         1.0,
     );
@@ -25,6 +21,16 @@ fn get_frag_ndc(frag_coord: vec2<f32>, z: f32) -> vec4<f32> {
 
 fn get_frag_world(frag_coord: vec2<f32>, z: f32) -> vec3<f32> {
     let ndc = get_frag_ndc(frag_coord, z);
+    let homogeneous = u_Globals.inv_view_proj * ndc;
+    return homogeneous.xyz / homogeneous.w;
+}
+
+/// Reconstruct world position from a clip-space varying (passed from
+/// the vertex shader). Unlike `get_frag_world` this doesn't use
+/// `@builtin(position)` and works identically on all GPU backends —
+/// naga's GL vertex Y-flip propagates through the interpolated varying.
+fn get_clip_world(clip_pos: vec4<f32>, z: f32) -> vec3<f32> {
+    let ndc = vec4<f32>(clip_pos.xy / clip_pos.w, z, 1.0);
     let homogeneous = u_Globals.inv_view_proj * ndc;
     return homogeneous.xyz / homogeneous.w;
 }

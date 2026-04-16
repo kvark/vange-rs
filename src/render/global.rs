@@ -23,20 +23,6 @@ impl Constants {
             .map_or(glam::Mat4::ZERO, |sc| sc.get_view_proj())
             .to_cols_array_2d();
         let mx_vp = cam.get_view_proj();
-        // On GL targets (WebGL2) naga flips `gl_Position.y` in vertex
-        // shaders and the present blit flips Y again — these cancel
-        // for vertex-based geometry. But the terrain ray shader
-        // computes pixels from `@builtin(position)` via `get_frag_ndc`,
-        // whose hardcoded Y-flip matches Vulkan's top-down frag_coord.
-        // On GL that flip produces correctly-oriented content in the
-        // FBO, which the blit then erroneously re-flips, making the
-        // terrain upside down. We pass the sign via `pad` (which maps
-        // to `light_color.w` in WGSL) so the shader can adapt.
-        let frag_y_sign: f32 = if cfg!(target_arch = "wasm32") {
-            1.0
-        } else {
-            -1.0
-        };
         Constants {
             camera_pos: cam.loc.extend(1.0).into(),
             m_vp: mx_vp.to_cols_array_2d(),
@@ -44,7 +30,7 @@ impl Constants {
             m_light_vp,
             light_pos: light.pos,
             light_color: light.color,
-            pad: frag_y_sign,
+            pad: 1.0,
         }
     }
 }
