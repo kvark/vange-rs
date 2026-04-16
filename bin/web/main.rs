@@ -806,9 +806,24 @@ impl ApplicationHandler for WebHandler {
                                     vfs_level: Option<(Vfs, String)>|
               -> GpuState {
             let caps = surface.get_capabilities(adapter);
+            // Prefer a non-sRGB surface format. wgpu's GL backend has
+            // two present paths: glBlitFramebuffer (non-sRGB) which
+            // correctly Y-flips the image, and a fullscreen-triangle
+            // shader (sRGB) whose UV mapping interacts poorly with
+            // default texture wrapping and can produce an upside-down
+            // image. Picking the non-sRGB variant side-steps the issue
+            // entirely. On Vulkan/Metal this is a no-op since those
+            // backends don't have the dual-path present.
+            let format = caps
+                .formats
+                .iter()
+                .copied()
+                .find(|f| !f.is_srgb())
+                .unwrap_or(caps.formats[0]);
+            log::info!("Surface format: {:?} (sRGB: {})", format, format.is_srgb());
             let config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: caps.formats[0],
+                format,
                 width: screen_size.width,
                 height: screen_size.height,
                 present_mode: wgpu::PresentMode::Fifo,
