@@ -207,10 +207,16 @@ WGSL shaders, compute-based voxel baking</code></pre>
         // <id>.zip asset on the GitHub release; if the asset is missing
         // the page falls back to the procedural test level.
         const LEVELS = [
-            { id: 'fostral',  title: 'Fostral'  },
-            { id: 'necross',  title: 'Necross'  },
-            { id: 'glorx',    title: 'Glorx'    },
-            { id: 'khox',     title: 'Khox'     },
+            { id: 'fostral',    title: 'Fostral'    },
+            { id: 'glorx',      title: 'Glorx'      },
+            { id: 'necross',    title: 'Necross'    },
+            { id: 'khox',       title: 'Khox'       },
+            { id: 'boozeena',   title: 'Boozeena'   },
+            { id: 'weexow',     title: 'Weexow'     },
+            { id: 'xplo',       title: 'Xplo'       },
+            { id: 'hmok',       title: 'Hmok'       },
+            { id: 'threall',    title: 'Threall'    },
+            { id: 'ark-a-znoy', title: 'Ark-a-Znoy' },
         ];
         const DEFAULT_LEVEL = 'fostral';
 
@@ -307,10 +313,22 @@ WGSL shaders, compute-based voxel baking</code></pre>
                     // Focus the canvas so keyboard events reach winit.
                     // Without this, focus stays on the level picker
                     // <select> or a nav button, and WASD is swallowed.
-                    document.getElementById('canvas')?.focus();
+                    const c = document.getElementById('canvas');
+                    if (c) { c.focus(); c.click(); }
                 }, 400);
             }, wait);
         };
+
+        // Ensure clicking anywhere on the game panel gives focus to
+        // the canvas. Without this, clicking the surrounding area
+        // (e.g. the controls-hint or empty space) might defocus.
+        document.addEventListener('click', function(e) {
+            const panel = document.getElementById('game-panel');
+            const canvas = document.getElementById('canvas');
+            if (panel?.contains(e.target) && canvas && e.target !== canvas) {
+                canvas.focus();
+            }
+        });
 
         window.vangeProgressError = function(message) {
             const loading = document.getElementById('loading');
