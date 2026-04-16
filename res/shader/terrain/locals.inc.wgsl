@@ -25,16 +25,6 @@ fn get_frag_world(frag_coord: vec2<f32>, z: f32) -> vec3<f32> {
     return homogeneous.xyz / homogeneous.w;
 }
 
-/// Reconstruct world position from a clip-space varying (passed from
-/// the vertex shader). Unlike `get_frag_world` this doesn't use
-/// `@builtin(position)` and works identically on all GPU backends —
-/// naga's GL vertex Y-flip propagates through the interpolated varying.
-fn get_clip_world(clip_pos: vec4<f32>, z: f32) -> vec3<f32> {
-    let ndc = vec4<f32>(clip_pos.xy / clip_pos.w, z, 1.0);
-    let homogeneous = u_Globals.inv_view_proj * ndc;
-    return homogeneous.xyz / homogeneous.w;
-}
-
 fn apply_fog(terrain_color: vec4<f32>, world_pos: vec2<f32>) -> vec4<f32> {
     let cam_distance = clamp(length(world_pos - u_Locals.cam_origin_dir.xy), u_Locals.fog_params.x, u_Locals.fog_params.y);
     let fog_amount = smoothstep(u_Locals.fog_params.x, u_Locals.fog_params.y, cam_distance);

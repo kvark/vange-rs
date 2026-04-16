@@ -1,20 +1,14 @@
 //!include globals.inc terrain/locals.inc surface.inc shadow.inc terrain/color.inc
 
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) clip_pos: vec4<f32>,
-};
-
 @vertex
-fn main(@location(0) pos: vec4<i32>) -> VertexOutput {
+fn main(@location(0) pos: vec4<i32>) -> @builtin(position) vec4<f32> {
     // orhto projections don't like infinite values
-    let clip = select(
+    return select(
         u_Globals.view_proj * vec4<f32>(pos),
         // the expected geometry is 4 trianges meeting in the center
         vec4<f32>(vec2<f32>(pos.xy), 0.0, 0.5),
         u_Globals.view_proj[2][3] == 0.0
     );
-    return VertexOutput(clip, clip);
 }
 
 //imported: Surface, u_Surface, get_surface, evaluate_color
@@ -167,14 +161,13 @@ fn color_point(pt: CastPoint, lit_factor: f32) -> vec4<f32> {
 }
 
 struct RayInput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) clip_pos: vec4<f32>,
+    @builtin(position) frag_coord: vec4<f32>,
 };
 
 @fragment
 fn ray_depth(in: RayInput) -> @builtin(frag_depth) f32 {
-    let sp_near_world = get_clip_world(in.clip_pos, 0.0);
-    let sp_far_world = get_clip_world(in.clip_pos, 1.0);
+    let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
+    let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
     let view = normalize(sp_far_world - sp_near_world);
     let pt = cast_ray_to_map(sp_near_world, view);
 
@@ -189,8 +182,8 @@ struct FragOutput {
 
 @fragment
 fn ray_color_debug(in: RayInput) -> FragOutput {
-    let sp_near_world = get_clip_world(in.clip_pos, 0.0);
-    let sp_far_world = get_clip_world(in.clip_pos, 1.0);
+    let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
+    let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
     let view = normalize(sp_far_world - sp_near_world);
 
     let pos = cast_ray_to_plane(0.0, sp_near_world, view);
@@ -201,8 +194,8 @@ fn ray_color_debug(in: RayInput) -> FragOutput {
 
 @fragment
 fn ray_color(in: RayInput) -> FragOutput {
-    let sp_near_world = get_clip_world(in.clip_pos, 0.0);
-    let sp_far_world = get_clip_world(in.clip_pos, 1.0);
+    let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
+    let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
     let view = normalize(sp_far_world - sp_near_world);
     let pt = cast_ray_to_map(sp_near_world, view);
 
