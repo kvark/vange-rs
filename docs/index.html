@@ -335,6 +335,13 @@ WGSL shaders, compute-based voxel baking</code></pre>
         // auto-focuses the canvas on any keypress while the game tab
         // is active, and re-dispatches the event so winit sees it
         // immediately (no "press twice" issue).
+        //
+        // Firefox ignores synthetic KeyboardEvents dispatched via
+        // dispatchEvent for security reasons (isTrusted=false), so
+        // the re-dispatch doesn't work there. As a fallback, we also
+        // focus the canvas on the first mouse movement over the game
+        // panel, which covers the typical "move mouse then press key"
+        // flow.
         document.addEventListener('keydown', function(e) {
             const canvas = document.getElementById('canvas');
             if (!canvas || document.activeElement === canvas) return;
@@ -346,6 +353,19 @@ WGSL shaders, compute-based voxel baking</code></pre>
                 bubbles: false, cancelable: true,
             }));
         });
+
+        // Focus canvas when mouse enters the game area — covers the
+        // common case where the user moves the mouse over the game
+        // before pressing keys. On Firefox this is more reliable than
+        // the keydown re-dispatch above.
+        document.getElementById('game-panel')?.addEventListener(
+            'mousemove',
+            function() {
+                const c = document.getElementById('canvas');
+                if (c && document.activeElement !== c) c.focus();
+            },
+            { passive: true }
+        );
 
         window.vangeProgressError = function(message) {
             const loading = document.getElementById('loading');
