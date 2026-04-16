@@ -11,9 +11,13 @@ struct Locals {
 
 fn get_frag_ndc(frag_coord: vec2<f32>, z: f32) -> vec4<f32> {
     let normalized = (frag_coord.xy - vec2<f32>(u_Locals.screen_rect.xy)) / vec2<f32>(u_Locals.screen_rect.zw);
+    // Y-flip direction: -1.0 on Vulkan (frag_coord.y is top-down),
+    // +1.0 on GL/WebGL (naga already flips vertex output, so the
+    // frag_coord convention matches NDC). Passed at runtime via
+    // light_color.w (the `pad` field in Constants).
+    let y_sign = u_Globals.light_color.w;
     return vec4<f32>(
-        // note the Y-flip here
-        (normalized * 2.0 - vec2<f32>(1.0)) * vec2<f32>(1.0, -1.0),
+        (normalized * 2.0 - vec2<f32>(1.0)) * vec2<f32>(1.0, y_sign),
         z,
         1.0,
     );

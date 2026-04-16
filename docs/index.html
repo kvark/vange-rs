@@ -330,6 +330,23 @@ WGSL shaders, compute-based voxel baking</code></pre>
             }
         });
 
+        // winit attaches keydown/keyup listeners to the <canvas>, so
+        // keys only arrive when it has focus. This global interceptor
+        // auto-focuses the canvas on any keypress while the game tab
+        // is active, and re-dispatches the event so winit sees it
+        // immediately (no "press twice" issue).
+        document.addEventListener('keydown', function(e) {
+            const canvas = document.getElementById('canvas');
+            if (!canvas || document.activeElement === canvas) return;
+            const panel = document.getElementById('game-panel');
+            if (!panel?.classList.contains('active')) return;
+            canvas.focus();
+            canvas.dispatchEvent(new KeyboardEvent('keydown', {
+                code: e.code, key: e.key, keyCode: e.keyCode,
+                bubbles: false, cancelable: true,
+            }));
+        });
+
         window.vangeProgressError = function(message) {
             const loading = document.getElementById('loading');
             loading.classList.add('error');
