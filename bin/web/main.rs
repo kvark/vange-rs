@@ -356,6 +356,14 @@ impl WebApp {
         let cam = space::Camera {
             loc: glam::vec3(128.0, 128.0, 400.0),
             rot: glam::Quat::IDENTITY,
+            // On native (Vulkan/Metal/DX12), scale.y = -1 compensates
+            // for the Vangers world convention + the follow-camera's
+            // 180° Z patch. On WebGL, wgpu's naga vertex Y-flip adds
+            // an extra negation that double-flips the image. Setting
+            // scale.y = 1 on web removes one flip from the chain.
+            #[cfg(target_arch = "wasm32")]
+            scale: glam::vec3(1.0, 1.0, 1.0),
+            #[cfg(not(target_arch = "wasm32"))]
             scale: glam::vec3(1.0, -1.0, 1.0),
             proj: space::Projection::Perspective(space::PerspectiveParams {
                 fovy: 45.0f32.to_radians(),
@@ -806,23 +814,9 @@ impl ApplicationHandler for WebHandler {
                                     vfs_level: Option<(Vfs, String)>|
               -> GpuState {
             let caps = surface.get_capabilities(adapter);
-            // Force non-sRGB surface format on WebGL. wgpu's GL present
-            // has two paths: glBlitFramebuffer (non-sRGB) correctly
-            // Y-flips the image to account for naga's vertex Y-flip.
-            // The sRGB path uses a fullscreen shader whose UV mapping
-            // breaks under GL_REPEAT wrapping on negative coords,
-            // producing an upside-down image. The palette-based
-            // rendering doesn't rely on hardware sRGB conversion, so
-            // a non-sRGB format is visually equivalent.
-            let format = caps
-                .formats
-                .iter()
-                .copied()
-                .find(|f| !f.is_srgb())
-                .unwrap_or(caps.formats[0]);
             let config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format,
+                format: caps.formats[0],
                 width: screen_size.width,
                 height: screen_size.height,
                 present_mode: wgpu::PresentMode::Fifo,
