@@ -46,17 +46,27 @@ jobs:
     - name: Generate JS bindings
       run: wasm-bindgen target/wasm32-unknown-unknown/release/web.wasm --out-dir docs/ --target web --no-typescript
 
-    # Cache the release assets between runs. The `data-0` tag is
-    # meant to be immutable — bump to `data-1` to ship new data —
-    # so a fixed cache key works. If you do need to re-download
-    # without bumping the tag (e.g. you replaced an asset in place),
-    # bust the cache by editing the key below or from the Actions UI.
+    # Cache the release assets between runs. The key is derived from
+    # the list of asset names and sizes in the release, so uploading a
+    # new common.zip (or any asset) automatically invalidates the
+    # cache — no manual key-bumping needed.
+    - name: Compute release cache key
+      id: release-key
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        hash=$(gh release view data-0 --json assets \
+          -q '[.assets[] | "\(.name):\(.size)"] | sort | join(",")' \
+          --repo ${{ github.repository }} | sha256sum | cut -d' ' -f1)
+        echo "key=release-data-0-${hash:0:16}" >> "$GITHUB_OUTPUT"
+        echo "Cache key: release-data-0-${hash:0:16}"
+
     - name: Cache data-0 release assets
       id: cache-data
       uses: actions/cache@v4
       with:
         path: docs/data-0
-        key: release-data-0-v1
+        key: ${{ steps.release-key.outputs.key }}
 
     # Bundle the data-0 release into the Pages site so the client
     # fetches the zips same-origin from vange.rs — no CORS proxy,
