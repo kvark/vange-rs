@@ -31,20 +31,14 @@ const step_scale = 1.0;
 
 var<private> debug_color: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) clip_pos: vec4<f32>,
-};
-
 @vertex
-fn main(@builtin(vertex_index) index: u32) -> VertexOutput {
-    let clip = vec4<f32>(
+fn main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    return vec4<f32>(
         select(-1.0, 3.0, index == 1u),
         select(-1.0, 3.0, index >= 2u),
         0.0,
         1.0,
     );
-    return VertexOutput(clip, clip);
 }
 
 const TYPE_MISS: u32 = 0xFFu;
@@ -223,15 +217,10 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     return CastPoint(pos, ty);
 }
 
-struct VoxelInput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) clip_pos: vec4<f32>,
-};
-
 @fragment
-fn draw_depth(in: VoxelInput) -> @builtin(frag_depth) f32 {
-    let sp_near_world = get_clip_world(in.clip_pos, 0.0);
-    let sp_far_world = get_clip_world(in.clip_pos, 1.0);
+fn draw_depth(@builtin(position) frag_coord: vec4<f32>) -> @builtin(frag_depth) f32 {
+    let sp_near_world = get_frag_world(frag_coord.xy, 0.0);
+    let sp_far_world = get_frag_world(frag_coord.xy, 1.0);
     let view = normalize(sp_far_world - sp_near_world);
     let pt = cast_ray_through_voxels(sp_near_world, view);
     //let pt = cast_ray_fallback(sp_near_world, view);
@@ -249,9 +238,9 @@ struct FragOutput {
 };
 
 @fragment
-fn draw_color(in: VoxelInput) -> FragOutput {
-    let sp_near_world = get_clip_world(in.clip_pos, 0.0);
-    let sp_far_world = get_clip_world(in.clip_pos, 1.0);
+fn draw_color(@builtin(position) frag_coord: vec4<f32>) -> FragOutput {
+    let sp_near_world = get_frag_world(frag_coord.xy, 0.0);
+    let sp_far_world = get_frag_world(frag_coord.xy, 1.0);
     let view = normalize(sp_far_world - sp_near_world);
     let pt = cast_ray_through_voxels(sp_near_world, view);
     //let pt = cast_ray_fallback(sp_near_world, view);

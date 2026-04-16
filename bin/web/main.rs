@@ -806,9 +806,23 @@ impl ApplicationHandler for WebHandler {
                                     vfs_level: Option<(Vfs, String)>|
               -> GpuState {
             let caps = surface.get_capabilities(adapter);
+            // Force non-sRGB surface format on WebGL. wgpu's GL present
+            // has two paths: glBlitFramebuffer (non-sRGB) correctly
+            // Y-flips the image to account for naga's vertex Y-flip.
+            // The sRGB path uses a fullscreen shader whose UV mapping
+            // breaks under GL_REPEAT wrapping on negative coords,
+            // producing an upside-down image. The palette-based
+            // rendering doesn't rely on hardware sRGB conversion, so
+            // a non-sRGB format is visually equivalent.
+            let format = caps
+                .formats
+                .iter()
+                .copied()
+                .find(|f| !f.is_srgb())
+                .unwrap_or(caps.formats[0]);
             let config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: caps.formats[0],
+                format,
                 width: screen_size.width,
                 height: screen_size.height,
                 present_mode: wgpu::PresentMode::Fifo,
