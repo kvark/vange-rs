@@ -290,13 +290,14 @@ fn spawn_default_agent(
     };
 
     log::info!(
-        "Spawned agent '{}' at ({}, {}, {:.1}) scale={:.3} bbox=({:?})",
+        "Spawned agent '{}' at ({}, {}, {:.1}) scale={:.3} wheels={} phys_wheels={}",
         car_name,
         coords.0,
         coords.1,
         height,
         scale,
-        car.model.body.bbox,
+        car.model.wheels.len(),
+        phys_data.wheels.len(),
     );
 
     Some(Agent {
@@ -1111,6 +1112,12 @@ impl WebHandler {
             let level_ref = &gpu.app.level;
             let follow = gpu.app.follow;
             if let Some(ref mut agent) = gpu.app.agent {
+                if motor != 0.0 && agent.control.motor == 0.0 {
+                    log::info!(
+                        "Key input: motor={} rudder={} keys={:?}",
+                        motor, rudder, self.keys_pressed
+                    );
+                }
                 agent.control.motor = motor;
                 agent.control.rudder = rudder;
                 agent.control.brake = brake;
