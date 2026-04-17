@@ -290,11 +290,13 @@ fn spawn_default_agent(
     };
 
     log::info!(
-        "Spawned agent '{}' at ({}, {}, {:.1})",
+        "Spawned agent '{}' at ({}, {}, {:.1}) scale={:.3} bbox=({:?})",
         car_name,
         coords.0,
         coords.1,
-        height
+        height,
+        scale,
+        car.model.body.bbox,
     );
 
     Some(Agent {
@@ -614,6 +616,9 @@ struct WebHandler {
     last_frame: Option<Instant>,
     /// Rolling frame counter for throttled debug logs.
     frame_counter: u32,
+    /// Wall-clock time of the last throttled debug log, for
+    /// measuring effective frame rate.
+    last_log: Option<Instant>,
     #[cfg(target_arch = "wasm32")]
     ws_client: Option<net_ws::WsClient>,
     /// Status text overlay (used in multiplayer logging)
@@ -669,6 +674,7 @@ impl WebHandler {
             },
             keys_pressed: std::collections::HashSet::new(),
             frame_counter: 0,
+            last_log: None,
             last_frame: None,
             #[cfg(target_arch = "wasm32")]
             ws_client,
@@ -1112,17 +1118,22 @@ impl WebHandler {
                 let target_transform = agent.transform;
                 self.frame_counter = self.frame_counter.wrapping_add(1);
                 gpu.app.cam.follow(&target_transform, dt, &follow);
-                // Throttled debug trace — once per second, confirms
-                // the physics loop is advancing the agent state AND
-                // the camera is actually tracking it.
+                // Throttled debug trace — every 60 render frames,
+                // log the agent, camera, and the wall-clock interval
+                // between log lines so the user can spot framerate
+                // issues (long gap = low fps).
                 if self.frame_counter.is_multiple_of(60) {
+                    let now = Instant::now();
+                    let interval = self.last_log.map_or(0.0, |t| (now - t).as_secs_f32());
+                    self.last_log = Some(now);
                     log::info!(
-                        "agent pos={:.1},{:.1},{:.1} traction={:.2} rudder={:.2} vel={:.1} cam=({:.1},{:.1},{:.1})",
+                        "frame={} dt_60={:.2}s (~{:.0}fps) agent=({:.1},{:.1},{:.1}) vel={:.1} cam=({:.1},{:.1},{:.1})",
+                        self.frame_counter,
+                        interval,
+                        if interval > 0.0 { 60.0 / interval } else { 0.0 },
                         agent.transform.disp.x,
                         agent.transform.disp.y,
                         agent.transform.disp.z,
-                        agent.dynamo.traction,
-                        agent.dynamo.rudder,
                         agent.dynamo.linear_velocity.length(),
                         gpu.app.cam.loc.x,
                         gpu.app.cam.loc.y,
