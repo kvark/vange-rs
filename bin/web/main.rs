@@ -404,9 +404,19 @@ impl WebApp {
 
         // Follow-camera tuning matching native defaults
         // (config/settings.template.ron camera section).
+        //
+        // On web, `scale.y = 1` removes the Vulkan Y-flip convention,
+        // which means the follow camera's 180° Z patch no longer lines
+        // up the camera's "look" direction with the vehicle's "behind"
+        // direction. Flipping offset.y puts the camera on the correct
+        // side so the patched rotation still looks toward the vehicle.
+        #[cfg(target_arch = "wasm32")]
+        let follow_offset_y = -140.0;
+        #[cfg(not(target_arch = "wasm32"))]
+        let follow_offset_y = 140.0;
         let follow = space::Follow {
             angle_x: 60f32.to_radians(),
-            offset: glam::vec3(0.0, 140.0, 210.0),
+            offset: glam::vec3(0.0, follow_offset_y, 210.0),
             speed: 1.0,
         };
 
@@ -1100,21 +1110,25 @@ impl WebHandler {
                 agent.control.brake = brake;
                 agent.step(dt, level_ref, &common);
                 let target_transform = agent.transform;
+                self.frame_counter = self.frame_counter.wrapping_add(1);
+                gpu.app.cam.follow(&target_transform, dt, &follow);
                 // Throttled debug trace — once per second, confirms
-                // the physics loop is advancing the agent state.
+                // the physics loop is advancing the agent state AND
+                // the camera is actually tracking it.
                 if self.frame_counter.is_multiple_of(60) {
                     log::info!(
-                        "agent pos={:.1},{:.1},{:.1} traction={:.2} rudder={:.2} vel={:.1}",
+                        "agent pos={:.1},{:.1},{:.1} traction={:.2} rudder={:.2} vel={:.1} cam=({:.1},{:.1},{:.1})",
                         agent.transform.disp.x,
                         agent.transform.disp.y,
                         agent.transform.disp.z,
                         agent.dynamo.traction,
                         agent.dynamo.rudder,
                         agent.dynamo.linear_velocity.length(),
+                        gpu.app.cam.loc.x,
+                        gpu.app.cam.loc.y,
+                        gpu.app.cam.loc.z,
                     );
                 }
-                self.frame_counter = self.frame_counter.wrapping_add(1);
-                gpu.app.cam.follow(&target_transform, dt, &follow);
             }
         } else if !connected {
             // No vehicle loaded — fall back to the free camera. Same
