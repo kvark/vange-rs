@@ -164,7 +164,14 @@ const PLAYER_COLOR: render::object::BodyColor = render::object::BodyColor::Green
 struct Control {
     motor: f32,
     rudder: f32,
+    roll: f32,
     brake: bool,
+    turbo: bool,
+    /// `Some(power)` while the jump key is held; charge increases each
+    /// frame. Consumed (set to `None`) on key release.
+    jump_charge: Option<f32>,
+    /// Pending jump to fire this frame, produced on key release.
+    jump: Option<f32>,
 }
 
 /// The player vehicle + its per-frame physics state. Built once at
@@ -206,6 +213,11 @@ impl Agent {
         level: &level::Level,
         common: &config::common::Common,
     ) {
+        let f_turbo = if self.control.turbo {
+            common.global.k_traction_turbo
+        } else {
+            1.0
+        };
         physics::step(
             &mut self.dynamo,
             &mut self.transform,
@@ -213,10 +225,10 @@ impl Agent {
             &self.phys_data,
             level,
             common,
-            1.0, // f_turbo (1.0 = normal traction; 0.0 would zero out all drive force)
+            f_turbo,
             if self.control.brake { 1.0 } else { 0.0 },
-            None, // jump
-            0.0,  // roll
+            self.control.jump.take(),
+            self.control.roll,
             None, // line_buffer
         );
     }
@@ -382,8 +394,10 @@ impl WebApp {
         // Follow-camera tuning matching native defaults
         // (config/settings.template.ron camera section).
         //
+        // Match native: angle is relative to surface perpendicular
+        // (config.angle - 90°), not raw degrees.
         let follow = space::Follow {
-            angle_x: 60f32.to_radians(),
+            angle_x: (60.0f32 - 90.0).to_radians(),
             offset: glam::vec3(0.0, 140.0, 210.0),
             speed: 1.0,
         };
@@ -957,6 +971,14 @@ impl WebHandler {
             rudder = -1.0;
         }
         let brake = self.keys_pressed.contains(&KeyCode::Space);
+        let turbo = self.keys_pressed.contains(&KeyCode::ShiftLeft);
+        let mut roll = 0.0f32;
+        if self.keys_pressed.contains(&KeyCode::KeyQ) {
+            roll = -1.0;
+        }
+        if self.keys_pressed.contains(&KeyCode::KeyE) {
+            roll = 1.0;
+        }
 
         // Direct camera control is active whenever we aren't actually
         // synced with a multiplayer server. `ws_client` is `Some` from
@@ -978,6 +1000,16 @@ impl WebHandler {
                 agent.control.motor = motor;
                 agent.control.rudder = rudder;
                 agent.control.brake = brake;
+                agent.control.turbo = turbo;
+                agent.control.roll = roll;
+                // Jump: charge while Alt is held, fire on release
+                if self.keys_pressed.contains(&KeyCode::AltLeft) {
+                    let power = dt * common.speed.standard_frame_rate as f32;
+                    let charge = agent.control.jump_charge.get_or_insert(0.0);
+                    *charge = (*charge + power).min(common.force.max_jump_power);
+                } else if let Some(power) = agent.control.jump_charge.take() {
+                    agent.control.jump = Some(power);
+                }
                 // Match the native build's time scaling (see bin/road/game.rs):
                 //   input_factor = delta / MAIN_LOOP_TIME
                 //   physics_dt   = delta * fps * time_delta0 * num_calls
