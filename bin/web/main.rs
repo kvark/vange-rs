@@ -9,14 +9,11 @@ use wasm_bindgen::prelude::*;
 
 use vangers::{
     config::{self, settings},
-    level, model, physics,
+    data, level, model, physics,
     render::{self, Batcher, DEPTH_FORMAT, GraphicsContext, Render, ScreenTargets},
     space,
     vfs::Vfs,
 };
-
-#[cfg(target_arch = "wasm32")]
-use vangers::data;
 
 /// Default level to try loading from the release if neither the URL
 /// hash nor the level picker have selected one. If the release asset
@@ -44,7 +41,6 @@ fn level_ini_path(_level_id: &str) -> String {
 ///   vangeProgressDone()                   ← hide overlay
 /// or, on failure:
 ///   vangeProgressError("…")               ← red banner, auto-hide
-#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 extern "C" {
     /// Set the top-line status text and switch the bar to indeterminate.
@@ -69,7 +65,6 @@ extern "C" {
 /// Read the selected level id from JS (set by the level picker UI),
 /// falling back to the URL fragment `#level=<id>`, then to
 /// [`DEFAULT_LEVEL`].
-#[cfg(target_arch = "wasm32")]
 fn selected_level_id() -> String {
     if let Ok(val) = js_selected_level()
         && let Some(s) = val.as_string()
@@ -94,7 +89,6 @@ fn selected_level_id() -> String {
 /// Fetch `common.zip` and `<level_id>.zip` from the release and mount
 /// both into a VFS, reporting download progress to the JS UI. Returns
 /// `None` on any error; the caller falls back to a procedural test level.
-#[cfg(target_arch = "wasm32")]
 async fn fetch_release_level(level_id: &str) -> Option<(Vfs, String)> {
     let mut vfs = Vfs::new();
 
@@ -347,15 +341,9 @@ impl WebApp {
         let cam = space::Camera {
             loc: glam::vec3(128.0, 128.0, 400.0),
             rot: glam::Quat::IDENTITY,
-            // On native (Vulkan/Metal/DX12), scale.y = -1 compensates
-            // for the Vangers world convention + the follow-camera's
-            // 180° Z patch. On WebGL, wgpu's naga vertex Y-flip adds
-            // an extra negation that double-flips the image. Setting
-            // scale.y = 1 on web removes one flip from the chain.
-            #[cfg(target_arch = "wasm32")]
+            // On WebGL, wgpu's naga vertex Y-flip already handles the
+            // coordinate convention, so scale.y = 1 (no extra flip).
             scale: glam::vec3(1.0, 1.0, 1.0),
-            #[cfg(not(target_arch = "wasm32"))]
-            scale: glam::vec3(1.0, -1.0, 1.0),
             proj: space::Projection::Perspective(space::PerspectiveParams {
                 fovy: 45.0f32.to_radians(),
                 aspect: gfx.screen_size.width as f32 / gfx.screen_size.height.max(1) as f32,
@@ -396,18 +384,9 @@ impl WebApp {
         // Follow-camera tuning matching native defaults
         // (config/settings.template.ron camera section).
         //
-        // On web, `scale.y = 1` removes the Vulkan Y-flip convention,
-        // which means the follow camera's 180° Z patch no longer lines
-        // up the camera's "look" direction with the vehicle's "behind"
-        // direction. Flipping offset.y puts the camera on the correct
-        // side so the patched rotation still looks toward the vehicle.
-        #[cfg(target_arch = "wasm32")]
-        let follow_offset_y = -140.0;
-        #[cfg(not(target_arch = "wasm32"))]
-        let follow_offset_y = 140.0;
         let follow = space::Follow {
             angle_x: 60f32.to_radians(),
-            offset: glam::vec3(0.0, follow_offset_y, 210.0),
+            offset: glam::vec3(0.0, 140.0, 210.0),
             speed: 1.0,
         };
 
@@ -461,7 +440,6 @@ impl WebApp {
 
 // --- Multiplayer WebSocket client (WASM only) ---
 
-#[cfg(target_arch = "wasm32")]
 mod net_ws {
     use super::*;
     use std::cell::RefCell;
@@ -574,9 +552,6 @@ mod net_ws {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-#[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
 /// GPU resources initialized asynchronously on WASM.
@@ -594,13 +569,10 @@ struct WebHandler {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
     /// Shared slot for async WASM GPU init to deliver results.
-    #[cfg(target_arch = "wasm32")]
     gpu_pending: std::rc::Rc<std::cell::RefCell<Option<GpuState>>>,
     screen_size: wgpu::Extent3d,
     keys_pressed: std::collections::HashSet<KeyCode>,
     last_frame: Option<Instant>,
-    /// Rolling frame counter for throttled debug logs.
-    #[cfg(target_arch = "wasm32")]
     ws_client: Option<net_ws::WsClient>,
     /// Status text overlay (used in multiplayer logging)
     #[allow(dead_code)]
@@ -609,8 +581,6 @@ struct WebHandler {
 
 impl WebHandler {
     fn new() -> Self {
-        // Try to connect to multiplayer server if configured
-        #[cfg(target_arch = "wasm32")]
         let (ws_client, mp_status) = match SERVER_WS {
             Some(url) if !url.is_empty() => {
                 // Auto-upgrade ws:// to wss:// when page is served over HTTPS
@@ -640,13 +610,9 @@ impl WebHandler {
             }
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let mp_status = String::new();
-
         WebHandler {
             window: None,
             gpu: None,
-            #[cfg(target_arch = "wasm32")]
             gpu_pending: std::rc::Rc::new(std::cell::RefCell::new(None)),
             screen_size: wgpu::Extent3d {
                 width: 1,
@@ -655,7 +621,6 @@ impl WebHandler {
             },
             keys_pressed: std::collections::HashSet::new(),
             last_frame: None,
-            #[cfg(target_arch = "wasm32")]
             ws_client,
             mp_status,
         }
@@ -664,10 +629,6 @@ impl WebHandler {
 
 impl ApplicationHandler for WebHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // On native, use ControlFlow::Poll for continuous rendering.
-        // On web, rendering is driven by requestAnimationFrame via request_redraw().
-        #[cfg(not(target_arch = "wasm32"))]
-        event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
         if self.window.is_some() {
             return;
         }
@@ -677,7 +638,6 @@ impl ApplicationHandler for WebHandler {
 
         let attrs = Window::default_attributes().with_title("Vangers Web");
 
-        #[cfg(target_arch = "wasm32")]
         let attrs = {
             use winit::platform::web::WindowAttributesExtWebSys;
             let document = web_sys::window().unwrap().document().unwrap();
@@ -704,9 +664,6 @@ impl ApplicationHandler for WebHandler {
             attrs.with_canvas(Some(canvas))
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let attrs = attrs.with_inner_size(winit::dpi::PhysicalSize::new(_init_width, _init_height));
-
         self.screen_size = wgpu::Extent3d {
             width: _init_width,
             height: _init_height,
@@ -715,41 +672,6 @@ impl ApplicationHandler for WebHandler {
 
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let init_future = {
-            let instance =
-                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-            let surface = instance
-                .create_surface(window.clone())
-                .expect("Unable to create surface");
-            let window_clone = window.clone();
-            async move {
-                let adapter = instance
-                    .request_adapter(&wgpu::RequestAdapterOptions {
-                        power_preference: wgpu::PowerPreference::HighPerformance,
-                        compatible_surface: Some(&surface),
-                        force_fallback_adapter: false,
-                    })
-                    .await
-                    .expect("No GPU adapter found");
-
-                let (device, queue) = adapter
-                    .request_device(&wgpu::DeviceDescriptor {
-                        label: None,
-                        required_features: wgpu::Features::empty(),
-                        required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
-                        memory_hints: wgpu::MemoryHints::default(),
-                        trace: wgpu::Trace::Off,
-                        experimental_features: Default::default(),
-                    })
-                    .await
-                    .expect("Failed to create device");
-
-                (instance, surface, adapter, device, queue, window_clone)
-            }
-        };
-
-        #[cfg(target_arch = "wasm32")]
         let init_future = {
             let window_clone = window.clone();
             async move {
@@ -857,66 +779,47 @@ impl ApplicationHandler for WebHandler {
             }
         };
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.window = Some(window);
-            let pending = self.gpu_pending.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                let _ = js_phase("Initializing WebGL…");
-                let (instance, surface, adapter, device, queue, window) = init_future.await;
-                log::info!("GPU initialized on web!");
+        self.window = Some(window);
+        let pending = self.gpu_pending.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = js_phase("Initializing WebGL…");
+            let (instance, surface, adapter, device, queue, window) = init_future.await;
+            log::info!("GPU initialized on web!");
 
-                // Best-effort fetch of release data. On any failure we
-                // fall back to the procedural test level.
-                let level_id = selected_level_id();
-                log::info!("Selected level: {}", level_id);
-                let vfs_level = fetch_release_level(&level_id).await;
+            // Best-effort fetch of release data. On any failure we
+            // fall back to the procedural test level.
+            let level_id = selected_level_id();
+            log::info!("Selected level: {}", level_id);
+            let vfs_level = fetch_release_level(&level_id).await;
 
-                // Level construction and renderer setup are synchronous
-                // but far from instant (the renderer builds several
-                // shader pipelines and uploads the height/meta/palette
-                // textures). Announce the phase so the user sees why
-                // the screen is still blank.
-                let _ = js_phase(if vfs_level.is_some() {
-                    "Building level from release data…"
-                } else {
-                    "Building procedural test level…"
-                });
-
-                let state = build_gpu_state(
-                    instance,
-                    surface,
-                    &adapter,
-                    device,
-                    queue,
-                    screen_size,
-                    vfs_level,
-                );
-                *pending.borrow_mut() = Some(state);
-                // Wake the event loop — without this, ControlFlow::Wait
-                // keeps the loop sleeping and gpu_pending is never picked up.
-                window.request_redraw();
-
-                let _ = js_progress_done();
-                log::info!("Web app ready");
+            // Level construction and renderer setup are synchronous
+            // but far from instant (the renderer builds several
+            // shader pipelines and uploads the height/meta/palette
+            // textures). Announce the phase so the user sees why
+            // the screen is still blank.
+            let _ = js_phase(if vfs_level.is_some() {
+                "Building level from release data…"
+            } else {
+                "Building procedural test level…"
             });
-        }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let (instance, surface, adapter, device, queue, _) = pollster::block_on(init_future);
-            self.gpu = Some(build_gpu_state(
+            let state = build_gpu_state(
                 instance,
                 surface,
                 &adapter,
                 device,
                 queue,
                 screen_size,
-                None,
-            ));
-            self.window = Some(window.clone());
+                vfs_level,
+            );
+            *pending.borrow_mut() = Some(state);
+            // Wake the event loop — without this, ControlFlow::Wait
+            // keeps the loop sleeping and gpu_pending is never picked up.
             window.request_redraw();
-        }
+
+            let _ = js_progress_done();
+            log::info!("Web app ready");
+        });
     }
 
     fn window_event(
@@ -935,19 +838,14 @@ impl ApplicationHandler for WebHandler {
                         ..
                     },
                 ..
-            } => {
-                match state {
-                    event::ElementState::Pressed => {
-                        self.keys_pressed.insert(key);
-                    }
-                    event::ElementState::Released => {
-                        self.keys_pressed.remove(&key);
-                    }
+            } => match state {
+                event::ElementState::Pressed => {
+                    self.keys_pressed.insert(key);
                 }
-                if key == KeyCode::Escape && state == event::ElementState::Pressed {
-                    event_loop.exit();
+                event::ElementState::Released => {
+                    self.keys_pressed.remove(&key);
                 }
-            }
+            },
             WindowEvent::Resized(size) if size.width > 0 && size.height > 0 => {
                 self.screen_size = wgpu::Extent3d {
                     width: size.width,
@@ -975,8 +873,6 @@ impl ApplicationHandler for WebHandler {
                 }
             }
             WindowEvent::RedrawRequested => {
-                // Check if async GPU init completed (WASM)
-                #[cfg(target_arch = "wasm32")]
                 if self.gpu.is_none()
                     && let Some(state) = self.gpu_pending.borrow_mut().take()
                 {
@@ -1070,16 +966,7 @@ impl WebHandler {
         // true "handshake finished and socket still open" state, which
         // `WsClient::is_connected` exposes. Otherwise a failed or
         // dropped connection would leave the camera locked.
-        let connected = {
-            #[cfg(target_arch = "wasm32")]
-            {
-                self.ws_client.as_ref().is_some_and(|c| c.is_connected())
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                false
-            }
-        };
+        let connected = self.ws_client.as_ref().is_some_and(|c| c.is_connected());
 
         if gpu.app.agent.is_some() {
             // Drive the player vehicle. Keyboard feeds control; physics
@@ -1107,6 +994,12 @@ impl WebHandler {
                 agent.physics_step(physics_dt, level_ref, &common);
                 let target_transform = agent.transform;
                 gpu.app.cam.follow(&target_transform, dt, &follow);
+                // The shared follow() applies a 180° Z "patch" rotation
+                // that pairs with the native scale.y=-1 flip. With
+                // scale.y=1 there is no flip, so undo the patch so the
+                // camera looks forward from behind the vehicle.
+                let unpatch = glam::Quat::from_rotation_z(std::f32::consts::PI);
+                gpu.app.cam.rot = unpatch * gpu.app.cam.rot;
             }
         } else if !connected {
             // No vehicle loaded — fall back to the free camera. Same
@@ -1145,7 +1038,6 @@ impl WebHandler {
         }
 
         // Process multiplayer messages
-        #[cfg(target_arch = "wasm32")]
         if let Some(ref mut ws) = self.ws_client {
             // Send input
             if motor != 0.0 || rudder != 0.0 {
@@ -1209,15 +1101,8 @@ impl WebHandler {
 
 #[wasm_bindgen(start)]
 pub fn web_main() {
-    #[cfg(target_arch = "wasm32")]
-    {
-        console_error_panic_hook::set_once();
-        console_log::init_with_level(log::Level::Info).unwrap();
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        env_logger::init();
-    }
+    console_error_panic_hook::set_once();
+    console_log::init_with_level(log::Level::Info).unwrap();
 
     log::info!("Starting Vangers Web");
     if let Some(url) = SERVER_WS {
@@ -1229,16 +1114,8 @@ pub fn web_main() {
     let event_loop = EventLoop::new().unwrap();
     let handler = WebHandler::new();
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        use winit::platform::web::EventLoopExtWebSys;
-        event_loop.spawn_app(handler);
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let mut handler = handler;
-        event_loop.run_app(&mut handler).unwrap();
-    }
+    use winit::platform::web::EventLoopExtWebSys;
+    event_loop.spawn_app(handler);
 }
 
 fn main() {
