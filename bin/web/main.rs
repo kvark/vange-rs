@@ -317,25 +317,27 @@ struct WebApp {
     agent: Option<Agent>,
     /// Follow-camera parameters (radius/height/smoothing).
     follow: space::Follow,
+    /// True when running on WebGPU (vs WebGL2 fallback).
+    is_webgpu: bool,
 }
 
 impl WebApp {
     /// Build the app with a procedural test level. Used as a fallback
     /// when the release data can't be fetched (404, offline, etc.).
-    fn new(gfx: &GraphicsContext) -> Self {
+    fn new(gfx: &GraphicsContext, is_webgpu: bool) -> Self {
         let level_config = level::LevelConfig::new_test();
         let geometry = settings::Geometry::default();
         let level = level::load(&level_config, &geometry);
-        Self::build(gfx, level_config, level, geometry, None)
+        Self::build(gfx, level_config, level, geometry, None, is_webgpu)
     }
 
     /// Build the app from a real level in a [`Vfs`]. `ini_path` is the
     /// VFS key of the world INI (e.g. `"fostral/world.ini"`).
-    fn new_from_vfs(gfx: &GraphicsContext, vfs: &Vfs, ini_path: &str) -> Self {
+    fn new_from_vfs(gfx: &GraphicsContext, vfs: &Vfs, ini_path: &str, is_webgpu: bool) -> Self {
         let level_config = level::LevelConfig::load_from_vfs(vfs, ini_path);
         let geometry = settings::Geometry::default();
         let level = level::load_from_vfs(vfs, &level_config, &geometry);
-        Self::build(gfx, level_config, level, geometry, Some(vfs))
+        Self::build(gfx, level_config, level, geometry, Some(vfs), is_webgpu)
     }
 
     fn build(
@@ -344,13 +346,14 @@ impl WebApp {
         level: level::Level,
         geometry: settings::Geometry,
         vfs: Option<&Vfs>,
+        is_webgpu: bool,
     ) -> Self {
         let objects_palette = vfs
             .and_then(|v| v.read("resource/pal/objects.pal"))
             .map(|b| level::read_palette_bytes(&b, None))
             .unwrap_or([[0xFF; 4]; 0x100]);
 
-        let mut cam = space::Camera {
+        let cam = space::Camera {
             loc: glam::vec3(128.0, 128.0, 400.0),
             rot: glam::Quat::IDENTITY,
             scale: glam::vec3(1.0, -1.0, 1.0),
@@ -362,11 +365,21 @@ impl WebApp {
             }),
         };
 
-        // RayTraced terrain does a per-pixel height lookup in the fragment
-        // shader. It doesn't need compute shaders or vertex storage, so it
-        // works on WebGL2 and produces proper 3D relief with lighting.
+        // WebGPU has compute shaders → use RayVoxelTraced for proper
+        // voxel tracing. WebGL2 only supports fragment shaders → use
+        // RayTraced (per-pixel height lookup).
+        let terrain = if is_webgpu {
+            settings::Terrain::RayVoxelTraced {
+                voxel_size: [2, 4, 1],
+                max_outer_steps: 40,
+                max_inner_steps: 40,
+                max_update_texels: 1_000_000,
+            }
+        } else {
+            settings::Terrain::RayTraced
+        };
         let render_settings = settings::Render {
-            terrain: settings::Terrain::RayTraced,
+            terrain,
             ..settings::Render::default()
         };
         let render = Render::new(
@@ -393,22 +406,12 @@ impl WebApp {
 
         // Follow-camera tuning matching native defaults
         // (config/settings.template.ron camera section).
-        let cam_offset = 140.0f32;
-        let cam_height = 210.0f32;
+        // Angle is relative to surface perpendicular (config.angle - 90°).
         let follow = space::Follow {
-            // Tilt down so the camera looks at the car. The patch in
-            // follow() negates the Y component, so the look direction
-            // must compensate for the height/offset ratio.
-            angle_x: -(cam_height / cam_offset).atan(),
-            offset: glam::vec3(0.0, cam_offset, cam_height),
+            angle_x: (60.0f32 - 90.0).to_radians(),
+            offset: glam::vec3(0.0, 140.0, 210.0),
             speed: 1.0,
         };
-
-        // Snap the camera to the vehicle so it doesn't have to
-        // lerp from the default (128,128,400) across the map.
-        if let Some(ref agent) = agent {
-            cam.follow(&agent.transform, 1000.0, &follow);
-        }
 
         WebApp {
             render,
@@ -418,7 +421,36 @@ impl WebApp {
             common,
             agent,
             follow,
+            is_webgpu,
         }
+    }
+
+    fn draw_ui(&self, ctx: &egui::Context) {
+        egui::Window::new("Settings").show(ctx, |ui| {
+            ui.label(format!(
+                "Backend: {}",
+                if self.is_webgpu { "WebGPU" } else { "WebGL2" }
+            ));
+            if let Some(ref agent) = self.agent {
+                ui.separator();
+                ui.label("Vehicle");
+                let pos = agent.transform.disp;
+                ui.label(format!(
+                    "Position: ({:.0}, {:.0}, {:.0})",
+                    pos.x, pos.y, pos.z
+                ));
+                ui.label(format!(
+                    "Speed: {:.1}",
+                    agent.dynamo.linear_velocity.length()
+                ));
+            }
+            ui.separator();
+            ui.label("Camera");
+            ui.label(format!(
+                "Pos: ({:.0}, {:.0}, {:.0})",
+                self.cam.loc.x, self.cam.loc.y, self.cam.loc.z
+            ));
+        });
     }
 
     fn resize(&mut self, extent: wgpu::Extent3d, device: &wgpu::Device) {
@@ -583,6 +615,9 @@ struct GpuState {
     config: wgpu::SurfaceConfiguration,
     depth_view: wgpu::TextureView,
     app: WebApp,
+    window: Arc<Window>,
+    egui_state: egui_winit::State,
+    egui_renderer: egui_wgpu::Renderer,
 }
 
 struct WebHandler {
@@ -695,18 +730,29 @@ impl ApplicationHandler for WebHandler {
         let init_future = {
             let window_clone = window.clone();
             async move {
-                // Use WebGL2 backend on WASM. WebGPU's GPUCanvasContext
-                // fails dyn_into type checks on Firefox (wgpu 29 bug).
-                // RayTraced terrain doesn't need compute shaders, so
-                // WebGL2 is sufficient and more widely compatible.
-                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                    backends: wgpu::Backends::GL,
-                    ..wgpu::InstanceDescriptor::new_without_display_handle()
-                });
+                // Try WebGPU first — it supports compute shaders needed
+                // for RayVoxelTraced terrain. Fall back to WebGL2 which
+                // only supports RayTraced (fragment-only) rendering.
+                let try_backend = |backends| {
+                    let w = window_clone.clone();
+                    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                        backends,
+                        ..wgpu::InstanceDescriptor::new_without_display_handle()
+                    });
+                    let surface = instance.create_surface(w).ok()?;
+                    Some((instance, surface))
+                };
 
-                let surface = instance
-                    .create_surface(window_clone.clone())
-                    .expect("Unable to create surface");
+                let (instance, surface, is_webgpu) =
+                    if let Some((i, s)) = try_backend(wgpu::Backends::BROWSER_WEBGPU) {
+                        log::info!("Using WebGPU backend");
+                        (i, s, true)
+                    } else if let Some((i, s)) = try_backend(wgpu::Backends::GL) {
+                        log::info!("WebGPU unavailable, falling back to WebGL2");
+                        (i, s, false)
+                    } else {
+                        panic!("No GPU backend available");
+                    };
 
                 let adapter = instance
                     .request_adapter(&wgpu::RequestAdapterOptions {
@@ -718,14 +764,23 @@ impl ApplicationHandler for WebHandler {
                     .expect("No GPU adapter found");
 
                 let adapter_limits = adapter.limits();
+                let required_limits = if is_webgpu {
+                    wgpu::Limits {
+                        max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+                        ..wgpu::Limits::downlevel_defaults()
+                    }
+                } else {
+                    wgpu::Limits {
+                        max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+                        ..wgpu::Limits::downlevel_webgl2_defaults()
+                    }
+                };
+
                 let (device, queue) = adapter
                     .request_device(&wgpu::DeviceDescriptor {
                         label: None,
                         required_features: wgpu::Features::empty(),
-                        required_limits: wgpu::Limits {
-                            max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
-                            ..wgpu::Limits::downlevel_webgl2_defaults()
-                        },
+                        required_limits,
                         memory_hints: wgpu::MemoryHints::default(),
                         trace: wgpu::Trace::Off,
                         experimental_features: Default::default(),
@@ -733,7 +788,15 @@ impl ApplicationHandler for WebHandler {
                     .await
                     .expect("Failed to create device");
 
-                (instance, surface, adapter, device, queue, window_clone)
+                (
+                    instance,
+                    surface,
+                    adapter,
+                    device,
+                    queue,
+                    window_clone,
+                    is_webgpu,
+                )
             }
         };
 
@@ -748,7 +811,9 @@ impl ApplicationHandler for WebHandler {
                                     device: wgpu::Device,
                                     queue: wgpu::Queue,
                                     screen_size: wgpu::Extent3d,
-                                    vfs_level: Option<(Vfs, String)>|
+                                    vfs_level: Option<(Vfs, String)>,
+                                    is_webgpu: bool,
+                                    window: Arc<Window>|
               -> GpuState {
             let caps = surface.get_capabilities(adapter);
             let config = wgpu::SurfaceConfiguration {
@@ -784,9 +849,21 @@ impl ApplicationHandler for WebHandler {
                 queue,
             };
             let app = match vfs_level {
-                Some((vfs, ini_path)) => WebApp::new_from_vfs(&gfx, &vfs, &ini_path),
-                None => WebApp::new(&gfx),
+                Some((vfs, ini_path)) => WebApp::new_from_vfs(&gfx, &vfs, &ini_path, is_webgpu),
+                None => WebApp::new(&gfx, is_webgpu),
             };
+
+            let egui_ctx = egui::Context::default();
+            let egui_state =
+                egui_winit::State::new(egui_ctx, egui::ViewportId::ROOT, &window, None, None, None);
+            let egui_renderer = egui_wgpu::Renderer::new(
+                &gfx.device,
+                config.format,
+                egui_wgpu::RendererOptions {
+                    depth_stencil_format: None,
+                    ..Default::default()
+                },
+            );
 
             GpuState {
                 _instance: instance,
@@ -796,15 +873,21 @@ impl ApplicationHandler for WebHandler {
                 config,
                 depth_view,
                 app,
+                window,
+                egui_state,
+                egui_renderer,
             }
         };
 
         self.window = Some(window);
         let pending = self.gpu_pending.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let _ = js_phase("Initializing WebGL…");
-            let (instance, surface, adapter, device, queue, window) = init_future.await;
-            log::info!("GPU initialized on web!");
+            let _ = js_phase("Initializing GPU…");
+            let (instance, surface, adapter, device, queue, window, is_webgpu) = init_future.await;
+            log::info!(
+                "GPU initialized ({})",
+                if is_webgpu { "WebGPU" } else { "WebGL2" }
+            );
 
             // Best-effort fetch of release data. On any failure we
             // fall back to the procedural test level.
@@ -831,6 +914,8 @@ impl ApplicationHandler for WebHandler {
                 queue,
                 screen_size,
                 vfs_level,
+                is_webgpu,
+                window.clone(),
             );
             *pending.borrow_mut() = Some(state);
             // Wake the event loop — without this, ControlFlow::Wait
@@ -848,6 +933,14 @@ impl ApplicationHandler for WebHandler {
         _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
+        // Forward events to egui; skip game input if egui consumed them.
+        if let Some(ref mut gpu) = self.gpu {
+            let response = gpu.egui_state.on_window_event(&gpu.window, &event);
+            if response.consumed {
+                return;
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::KeyboardInput {
@@ -980,12 +1073,14 @@ impl WebHandler {
         }
         let brake = self.keys_pressed.contains(&KeyCode::Space);
         let turbo = self.keys_pressed.contains(&KeyCode::ShiftLeft);
+        // Roll direction matches native: Q/E are scaled by cam.scale.y
+        // (which is -1) so Q → +1, E → -1.
         let mut roll = 0.0f32;
         if self.keys_pressed.contains(&KeyCode::KeyQ) {
-            roll = -1.0;
+            roll = -gpu.app.cam.scale.y;
         }
         if self.keys_pressed.contains(&KeyCode::KeyE) {
-            roll = 1.0;
+            roll = gpu.app.cam.scale.y;
         }
 
         // Direct camera control is active whenever we aren't actually
@@ -1030,7 +1125,11 @@ impl WebHandler {
                 };
                 agent.apply_control(input_factor, &common);
                 agent.physics_step(physics_dt, level_ref, &common);
-                let target_transform = agent.transform;
+                // Offset the follow target ahead of the vehicle so the
+                // camera leads slightly, keeping the action in view.
+                let mut target_transform = agent.transform;
+                let forward = target_transform.rot * glam::Vec3::Y;
+                target_transform.disp += forward * 40.0;
                 gpu.app.cam.follow(&target_transform, dt, &follow);
             }
         } else if !connected {
@@ -1126,7 +1225,70 @@ impl WebHandler {
             depth: &gpu.depth_view,
         };
         let command_buffer = gpu.app.draw(&gpu.device, &gpu.queue, targets);
-        gpu.queue.submit(std::iter::once(command_buffer));
+
+        // --- egui UI pass ---
+        let raw_input = gpu.egui_state.take_egui_input(&gpu.window);
+        let full_output = gpu.egui_state.egui_ctx().run_ui(raw_input, |ctx| {
+            gpu.app.draw_ui(ctx);
+        });
+        gpu.egui_state
+            .handle_platform_output(&gpu.window, full_output.platform_output);
+
+        let paint_jobs = gpu
+            .egui_state
+            .egui_ctx()
+            .tessellate(full_output.shapes, full_output.pixels_per_point);
+        let screen_descriptor = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [self.screen_size.width, self.screen_size.height],
+            pixels_per_point: gpu.window.scale_factor() as f32,
+        };
+
+        for (id, delta) in &full_output.textures_delta.set {
+            gpu.egui_renderer
+                .update_texture(&gpu.device, &gpu.queue, *id, delta);
+        }
+        gpu.egui_renderer.update_buffers(
+            &gpu.device,
+            &gpu.queue,
+            &mut gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("egui upload"),
+                }),
+            &paint_jobs,
+            &screen_descriptor,
+        );
+
+        let mut egui_encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("UI") });
+        {
+            let mut pass = egui_encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("egui"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    ..Default::default()
+                })
+                .forget_lifetime();
+            gpu.egui_renderer
+                .render(&mut pass, &paint_jobs, &screen_descriptor);
+        }
+
+        gpu.queue
+            .submit(vec![command_buffer, egui_encoder.finish()]);
+        for &id in &full_output.textures_delta.free {
+            gpu.egui_renderer.free_texture(&id);
+        }
+
         frame.present();
     }
 }
