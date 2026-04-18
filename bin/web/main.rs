@@ -994,12 +994,6 @@ impl WebHandler {
                 agent.physics_step(physics_dt, level_ref, &common);
                 let target_transform = agent.transform;
                 gpu.app.cam.follow(&target_transform, dt, &follow);
-                // The shared follow() applies a 180° Z "patch" rotation
-                // that pairs with the native scale.y=-1 flip. With
-                // scale.y=1 there is no flip, so undo the patch so the
-                // camera looks forward from behind the vehicle.
-                let unpatch = glam::Quat::from_rotation_z(std::f32::consts::PI);
-                gpu.app.cam.rot = unpatch * gpu.app.cam.rot;
             }
         } else if !connected {
             // No vehicle loaded — fall back to the free camera. Same

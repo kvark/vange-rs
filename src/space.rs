@@ -288,13 +288,21 @@ impl Camera {
         front.z = 0.0;
         let twist = Quat::from_rotation_arc(Vec3::Y, front);
 
-        let patch = Quat::from_rotation_z(std::f32::consts::PI);
-        let rotation = patch * twist * swing;
+        // When scale.y is negative the rendered image is vertically
+        // flipped, so we rotate the camera 180° around Z to compensate.
+        // With scale.y positive (WebGL) no patch is needed.
+        let orient = if self.scale.y < 0.0 {
+            Quat::from_rotation_z(std::f32::consts::PI) * twist
+        } else {
+            twist
+        };
+
+        let rotation = orient * swing;
 
         let k = (dt * -follow.speed).exp();
         self.rot = rotation.slerp(self.rot, k);
 
-        let location = target.disp + (patch * twist) * follow.offset;
+        let location = target.disp + orient * follow.offset;
         self.loc = location * (1.0 - k) + self.loc * k;
     }
 
