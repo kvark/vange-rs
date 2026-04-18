@@ -324,35 +324,44 @@ struct WebApp {
 impl WebApp {
     /// Build the app with a procedural test level. Used as a fallback
     /// when the release data can't be fetched (404, offline, etc.).
+    // Embed settings.ron at compile time so the web build uses the
+    // same camera, render, and geometry config as the native build.
+    const SETTINGS_RON: &str = include_str!("../../config/settings.ron");
+
+    fn load_settings() -> settings::Settings {
+        ron::de::from_str(Self::SETTINGS_RON).expect("Failed to parse embedded settings.ron")
+    }
+
     fn new(gfx: &GraphicsContext, is_webgpu: bool) -> Self {
+        let settings = Self::load_settings();
         let level_config = level::LevelConfig::new_test();
-        let geometry = settings::Geometry::default();
-        let level = level::load(&level_config, &geometry);
-        Self::build(gfx, level_config, level, geometry, None, is_webgpu)
+        let level = level::load(&level_config, &settings.game.geometry);
+        Self::build(gfx, level_config, level, None, is_webgpu, &settings)
     }
 
     /// Build the app from a real level in a [`Vfs`]. `ini_path` is the
     /// VFS key of the world INI (e.g. `"fostral/world.ini"`).
     fn new_from_vfs(gfx: &GraphicsContext, vfs: &Vfs, ini_path: &str, is_webgpu: bool) -> Self {
+        let settings = Self::load_settings();
         let level_config = level::LevelConfig::load_from_vfs(vfs, ini_path);
-        let geometry = settings::Geometry::default();
-        let level = level::load_from_vfs(vfs, &level_config, &geometry);
-        Self::build(gfx, level_config, level, geometry, Some(vfs), is_webgpu)
+        let level = level::load_from_vfs(vfs, &level_config, &settings.game.geometry);
+        Self::build(gfx, level_config, level, Some(vfs), is_webgpu, &settings)
     }
 
     fn build(
         gfx: &GraphicsContext,
         level_config: level::LevelConfig,
         level: level::Level,
-        geometry: settings::Geometry,
         vfs: Option<&Vfs>,
         is_webgpu: bool,
+        settings: &settings::Settings,
     ) -> Self {
         let objects_palette = vfs
             .and_then(|v| v.read("resource/pal/objects.pal"))
             .map(|b| level::read_palette_bytes(&b, None))
             .unwrap_or([[0xFF; 4]; 0x100]);
 
+        let cam_config = &settings.game.camera;
         let cam = space::Camera {
             loc: glam::vec3(128.0, 128.0, 400.0),
             rot: glam::Quat::IDENTITY,
@@ -360,28 +369,25 @@ impl WebApp {
             proj: space::Projection::Perspective(space::PerspectiveParams {
                 fovy: 45.0f32.to_radians(),
                 aspect: gfx.screen_size.width as f32 / gfx.screen_size.height.max(1) as f32,
-                near: 10.0,
-                far: 2000.0,
+                near: cam_config.depth_range.0,
+                far: cam_config.depth_range.1,
             }),
         };
 
-        // WebGPU has compute shaders → use RayVoxelTraced for proper
-        // voxel tracing. WebGL2 only supports fragment shaders → use
-        // RayTraced (per-pixel height lookup).
-        let terrain = if is_webgpu {
-            settings::Terrain::RayVoxelTraced {
+        // On WebGPU, override terrain to RayVoxelTraced (needs compute).
+        // On WebGL2, force RayTraced (fragment-only).
+        let mut render_settings = settings.render.clone();
+        if is_webgpu {
+            render_settings.terrain = settings::Terrain::RayVoxelTraced {
                 voxel_size: [2, 4, 1],
                 max_outer_steps: 40,
                 max_inner_steps: 40,
                 max_update_texels: 1_000_000,
-            }
+            };
         } else {
-            settings::Terrain::RayTraced
-        };
-        let render_settings = settings::Render {
-            terrain,
-            ..settings::Render::default()
-        };
+            render_settings.terrain = settings::Terrain::RayTraced;
+        }
+        let geometry = settings.game.geometry;
         let render = Render::new(
             gfx,
             &level_config,
@@ -404,13 +410,12 @@ impl WebApp {
             log::info!("No player agent — running in free-camera mode");
         }
 
-        // Follow-camera tuning matching native defaults
-        // (config/settings.template.ron camera section).
-        // Angle is relative to surface perpendicular (config.angle - 90°).
+        // Camera follow params from settings.ron, same conversion as
+        // native (bin/road/game.rs CameraStyle::new).
         let follow = space::Follow {
-            angle_x: (60.0f32 - 90.0).to_radians(),
-            offset: glam::vec3(0.0, 140.0, 210.0),
-            speed: 1.0,
+            angle_x: (cam_config.angle as f32).to_radians() - std::f32::consts::FRAC_PI_2,
+            offset: glam::vec3(0.0, cam_config.offset, cam_config.height),
+            speed: cam_config.speed,
         };
 
         WebApp {
@@ -1125,12 +1130,7 @@ impl WebHandler {
                 };
                 agent.apply_control(input_factor, &common);
                 agent.physics_step(physics_dt, level_ref, &common);
-                // Offset the follow target ahead of the vehicle so the
-                // camera leads slightly, keeping the action in view.
-                let mut target_transform = agent.transform;
-                let forward = target_transform.rot * glam::Vec3::Y;
-                target_transform.disp += forward * 40.0;
-                gpu.app.cam.follow(&target_transform, dt, &follow);
+                gpu.app.cam.follow(&agent.transform, dt, &follow);
             }
         } else if !connected {
             // No vehicle loaded — fall back to the free camera. Same
