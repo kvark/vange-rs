@@ -341,9 +341,7 @@ impl WebApp {
         let cam = space::Camera {
             loc: glam::vec3(128.0, 128.0, 400.0),
             rot: glam::Quat::IDENTITY,
-            // On WebGL, wgpu's naga vertex Y-flip already handles the
-            // coordinate convention, so scale.y = 1 (no extra flip).
-            scale: glam::vec3(1.0, 1.0, 1.0),
+            scale: glam::vec3(1.0, -1.0, 1.0),
             proj: space::Projection::Perspective(space::PerspectiveParams {
                 fovy: 45.0f32.to_radians(),
                 aspect: gfx.screen_size.width as f32 / gfx.screen_size.height.max(1) as f32,
