@@ -216,7 +216,7 @@ impl Agent {
             &self.phys_data,
             level,
             common,
-            0.0, // f_turbo
+            1.0, // f_turbo (1.0 = normal traction; 0.0 would zero out all drive force)
             if self.control.brake { 1.0 } else { 0.0 },
             None,   // jump
             0.0,    // roll
