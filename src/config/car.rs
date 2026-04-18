@@ -1,5 +1,5 @@
 use crate::{
-    config::text::Reader, config::Settings, model, render::object::Context as ObjectContext,
+    config::Settings, config::text::Reader, model, render::object::Context as ObjectContext,
 };
 
 use wgpu;

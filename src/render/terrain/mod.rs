@@ -7,7 +7,7 @@ use crate::{
     config::settings,
     level,
     render::{
-        global::Context as GlobalContext, Palette, PipelineKind, DEPTH_FORMAT, SHADOW_FORMAT,
+        DEPTH_FORMAT, Palette, PipelineKind, SHADOW_FORMAT, global::Context as GlobalContext,
     },
     space::Camera,
 };

@@ -5,7 +5,7 @@ use vangers::{
     config, level, model,
     physics::{self, CarPhysicsData},
     render::{
-        debug::LineBuffer, object::BodyColor, Batcher, GraphicsContext, Render, ScreenTargets,
+        Batcher, GraphicsContext, Render, ScreenTargets, debug::LineBuffer, object::BodyColor,
     },
     space,
 };
@@ -472,7 +472,7 @@ impl Game {
         let mut agents = vec![player_agent];
         // populate with random agents
         for i in 0..settings.game.other.count {
-            use rand::{prelude::SliceRandom, Rng};
+            use rand::{Rng, prelude::SliceRandom};
             let color = match rng.gen_range(0..3) {
                 0 => BodyColor::Green,
                 1 => BodyColor::Red,

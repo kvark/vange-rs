@@ -1,5 +1,5 @@
 use super::types::*;
-use crate::render::{PipelineKind, DEPTH_FORMAT, SHADOW_FORMAT};
+use crate::render::{DEPTH_FORMAT, PipelineKind, SHADOW_FORMAT};
 
 use std::mem;
 

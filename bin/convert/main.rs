@@ -4,7 +4,7 @@ mod level_png;
 mod model_obj;
 
 use std::{
-    fs::{read as fs_read, File},
+    fs::{File, read as fs_read},
     io::{BufReader, BufWriter},
     path::{Path, PathBuf},
 };

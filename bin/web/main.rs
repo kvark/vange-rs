@@ -10,7 +10,7 @@ use wasm_bindgen::prelude::*;
 use vangers::{
     config::{self, settings},
     level, model, physics,
-    render::{self, Batcher, GraphicsContext, Render, ScreenTargets, DEPTH_FORMAT},
+    render::{self, Batcher, DEPTH_FORMAT, GraphicsContext, Render, ScreenTargets},
     space,
     vfs::Vfs,
 };
@@ -65,7 +65,6 @@ extern "C" {
     #[wasm_bindgen(js_namespace = window, js_name = vangeSelectedLevel, catch)]
     fn js_selected_level() -> Result<JsValue, JsValue>;
 }
-
 
 /// Read the selected level id from JS (set by the level picker UI),
 /// falling back to the URL fragment `#level=<id>`, then to
@@ -187,40 +186,44 @@ struct Agent {
 }
 
 impl Agent {
-    /// Apply the current control inputs to the dynamo, then integrate
-    /// a physics step. Matches the `cpu_apply_control` + `cpu_step`
-    /// pair in `bin/road/game.rs`.
-    fn step(
-        &mut self,
-        dt: f32,
-        level: &level::Level,
-        common: &config::common::Common,
-    ) {
+    /// Apply control inputs with the same time scaling as the native
+    /// build's `cpu_apply_control`. `input_factor` is
+    /// `delta / MAIN_LOOP_TIME`, NOT raw dt.
+    fn apply_control(&mut self, input_factor: f32, common: &config::common::Common) {
         if self.control.rudder != 0.0 {
             let angle = self.dynamo.rudder
-                + common.car.rudder_step * 2.0 * dt * self.control.rudder;
+                + common.car.rudder_step * 2.0 * input_factor * self.control.rudder;
             self.dynamo.rudder = angle.clamp(-common.car.rudder_max, common.car.rudder_max);
         }
         if self.control.motor != 0.0 {
             self.dynamo
-                .change_traction(self.control.motor * dt * common.car.traction_incr);
+                .change_traction(self.control.motor * input_factor * common.car.traction_incr);
         }
         if self.control.brake && self.dynamo.traction != 0.0 {
-            self.dynamo.traction *= (-dt).exp2();
+            self.dynamo.traction *= (-input_factor).exp2();
         }
+    }
 
+    /// Integrate one physics step. `physics_dt` uses the same scaling
+    /// as the native build: `delta * fps * time_delta0 * num_calls`.
+    fn physics_step(
+        &mut self,
+        physics_dt: f32,
+        level: &level::Level,
+        common: &config::common::Common,
+    ) {
         physics::step(
             &mut self.dynamo,
             &mut self.transform,
-            dt,
+            physics_dt,
             &self.phys_data,
             level,
             common,
             1.0, // f_turbo (1.0 = normal traction; 0.0 would zero out all drive force)
             if self.control.brake { 1.0 } else { 0.0 },
-            None,   // jump
-            0.0,    // roll
-            None,   // line_buffer
+            None, // jump
+            0.0,  // roll
+            None, // line_buffer
         );
     }
 }
@@ -265,12 +268,8 @@ fn spawn_default_agent(
     };
 
     let visual = model::load_m3d_bytes(&m3d_bytes, device, object, SHAPE_SAMPLING);
-    let phys_data = physics::CarPhysicsData::from_bytes(
-        &m3d_bytes,
-        &prm_bytes,
-        scale,
-        SHAPE_SAMPLING,
-    );
+    let phys_data =
+        physics::CarPhysicsData::from_bytes(&m3d_bytes, &prm_bytes, scale, SHAPE_SAMPLING);
 
     let car = config::car::CarInfo {
         kind: config::car::Kind::Main,
@@ -288,17 +287,6 @@ fn spawn_default_agent(
         disp: glam::Vec3::new(coords.0 as f32, coords.1 as f32, height),
         rot: glam::Quat::IDENTITY,
     };
-
-    log::info!(
-        "Spawned agent '{}' at ({}, {}, {:.1}) scale={:.3} wheels={} phys_wheels={}",
-        car_name,
-        coords.0,
-        coords.1,
-        height,
-        scale,
-        car.model.wheels.len(),
-        phys_data.wheels.len(),
-    );
 
     Some(Agent {
         car,
@@ -453,12 +441,8 @@ impl WebApp {
 
         self.batcher.clear();
         if let Some(ref agent) = self.agent {
-            self.batcher.add_model(
-                &agent.car.model,
-                &agent.transform,
-                None,
-                agent.color,
-            );
+            self.batcher
+                .add_model(&agent.car.model, &agent.transform, None, agent.color);
         }
 
         self.render.draw_world(
@@ -482,7 +466,7 @@ mod net_ws {
     use super::*;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use vangers_net::{decode, encode, ClientMessage, PlayerId, ServerMessage};
+    use vangers_net::{ClientMessage, PlayerId, ServerMessage, decode, encode};
     use wasm_bindgen::closure::Closure;
 
     pub struct WsClient {
@@ -616,7 +600,6 @@ struct WebHandler {
     keys_pressed: std::collections::HashSet<KeyCode>,
     last_frame: Option<Instant>,
     /// Rolling frame counter for throttled debug logs.
-    frame_counter: u32,
     #[cfg(target_arch = "wasm32")]
     ws_client: Option<net_ws::WsClient>,
     /// Status text overlay (used in multiplayer logging)
@@ -671,7 +654,6 @@ impl WebHandler {
                 depth_or_array_layers: 1,
             },
             keys_pressed: std::collections::HashSet::new(),
-            frame_counter: 0,
             last_frame: None,
             #[cfg(target_arch = "wasm32")]
             ws_client,
@@ -1108,39 +1090,23 @@ impl WebHandler {
             let level_ref = &gpu.app.level;
             let follow = gpu.app.follow;
             if let Some(ref mut agent) = gpu.app.agent {
-                if motor != 0.0 && agent.control.motor == 0.0 {
-                    log::info!(
-                        "Key input: motor={} rudder={} keys={:?}",
-                        motor, rudder, self.keys_pressed
-                    );
-                }
                 agent.control.motor = motor;
                 agent.control.rudder = rudder;
                 agent.control.brake = brake;
-                agent.step(dt, level_ref, &common);
+                // Match the native build's time scaling (see bin/road/game.rs):
+                //   input_factor = delta / MAIN_LOOP_TIME
+                //   physics_dt   = delta * fps * time_delta0 * num_calls
+                let input_factor = dt / config::common::MAIN_LOOP_TIME;
+                let physics_dt = dt * {
+                    let n = &common.nature;
+                    common.speed.standard_frame_rate as f32
+                        * n.time_delta0
+                        * n.num_calls_analysis as f32
+                };
+                agent.apply_control(input_factor, &common);
+                agent.physics_step(physics_dt, level_ref, &common);
                 let target_transform = agent.transform;
-                self.frame_counter = self.frame_counter.wrapping_add(1);
                 gpu.app.cam.follow(&target_transform, dt, &follow);
-                // Throttled debug trace — every 60 render frames,
-                // log the agent, camera, and the wall-clock interval
-                // between log lines so the user can spot framerate
-                // issues (long gap = low fps).
-                if self.frame_counter.is_multiple_of(60) {
-                    log::info!(
-                        "frame={} motor={:.1} traction={:.2} vel={:.1} wheels={} agent=({:.1},{:.1},{:.1}) cam=({:.1},{:.1},{:.1})",
-                        self.frame_counter,
-                        agent.control.motor,
-                        agent.dynamo.traction,
-                        agent.dynamo.linear_velocity.length(),
-                        agent.phys_data.wheels.len(),
-                        agent.transform.disp.x,
-                        agent.transform.disp.y,
-                        agent.transform.disp.z,
-                        gpu.app.cam.loc.x,
-                        gpu.app.cam.loc.y,
-                        gpu.app.cam.loc.z,
-                    );
-                }
             }
         } else if !connected {
             // No vehicle loaded — fall back to the free camera. Same

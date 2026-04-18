@@ -1,4 +1,4 @@
-use crate::{config::text::Reader, config::Settings};
+use crate::{config::Settings, config::text::Reader};
 
 use std::collections::HashMap;
 

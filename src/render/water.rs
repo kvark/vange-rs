@@ -1,6 +1,6 @@
 use crate::{
     config::settings,
-    render::{global::Context as GlobalContext, terrain::Context as TerrainContext, DEPTH_FORMAT},
+    render::{DEPTH_FORMAT, global::Context as GlobalContext, terrain::Context as TerrainContext},
     space::Camera,
 };
 use bytemuck::{Pod, Zeroable};

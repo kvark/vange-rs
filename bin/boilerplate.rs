@@ -1,7 +1,7 @@
 #![allow(clippy::single_match)]
 use vangers::{
     config::Settings,
-    render::{GraphicsContext, ScreenTargets, DEPTH_FORMAT},
+    render::{DEPTH_FORMAT, GraphicsContext, ScreenTargets},
 };
 
 use std::sync::Arc;

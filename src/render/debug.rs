@@ -2,9 +2,9 @@ use crate::{
     config::settings,
     model,
     render::{
+        DEPTH_FORMAT, VertexStorageNotSupported,
         global::Context as GlobalContext,
         object::{Context as ObjectContext, Instance as ObjectInstance},
-        VertexStorageNotSupported, DEPTH_FORMAT,
     },
 };
 

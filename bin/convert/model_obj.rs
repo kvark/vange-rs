@@ -1,6 +1,6 @@
 use m3d::{
     AnimatedMesh, CollisionQuad, ColorId, Debrie, DrawTriangle, FullModel, Geometry, Mesh, Model,
-    Polygon, Slot, Vertex, NORMALIZER, NUM_COLOR_IDS,
+    NORMALIZER, NUM_COLOR_IDS, Polygon, Slot, Vertex,
 };
 
 use obj::{IndexTuple, Obj};

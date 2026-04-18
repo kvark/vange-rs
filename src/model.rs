@@ -1,7 +1,7 @@
 use crate::render::{
+    ShapePolygon, VertexStorageNotSupported,
     debug::Position as DebugPos,
     object::{Context as ObjectContext, Vertex as ObjectVertex},
-    ShapePolygon, VertexStorageNotSupported,
 };
 use m3d;
 use wgpu::util::DeviceExt as _;
@@ -340,12 +340,7 @@ pub fn load_m3d(
     object: &ObjectContext,
     shape_sampling: u8,
 ) -> VisualModel {
-    build_visual(
-        m3d::FullModel::load(file),
-        device,
-        object,
-        shape_sampling,
-    )
+    build_visual(m3d::FullModel::load(file), device, object, shape_sampling)
 }
 
 /// Byte-slice variant of [`load_m3d`], for loading a vehicle out of a

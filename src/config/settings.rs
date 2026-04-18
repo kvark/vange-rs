@@ -259,8 +259,7 @@ impl Settings {
             Ok(set) => set,
             Err(e) => panic!(
                 "Unable to parse settings RON: {:?}.\nPlease check if `{}` has changed and your local config needs to be adjusted.",
-                e,
-                TEMPLATE,
+                e, TEMPLATE,
             ),
         };
 

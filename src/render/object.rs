@@ -1,7 +1,7 @@
 use crate::{
     render::{
-        global::Context as GlobalContext, GpuTransform, Palette, PipelineSet,
-        VertexStorageNotSupported, DEPTH_FORMAT, SHADOW_FORMAT,
+        DEPTH_FORMAT, GpuTransform, Palette, PipelineSet, SHADOW_FORMAT, VertexStorageNotSupported,
+        global::Context as GlobalContext,
     },
     space::Transform,
 };

@@ -1,4 +1,4 @@
-use vangers_net::{decode, encode, AgentState, ClientMessage, NetControl, PlayerId, ServerMessage};
+use vangers_net::{AgentState, ClientMessage, NetControl, PlayerId, ServerMessage, decode, encode};
 
 use std::io::{Read, Write};
 use std::net::TcpStream;

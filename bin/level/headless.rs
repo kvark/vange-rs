@@ -1,7 +1,7 @@
 use vangers::{
     config::settings,
     level,
-    render::{Batcher, GraphicsContext, Render, ScreenTargets, DEPTH_FORMAT},
+    render::{Batcher, DEPTH_FORMAT, GraphicsContext, Render, ScreenTargets},
     space,
 };
 
