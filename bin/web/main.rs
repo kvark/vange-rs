@@ -350,7 +350,7 @@ impl WebApp {
             .map(|b| level::read_palette_bytes(&b, None))
             .unwrap_or([[0xFF; 4]; 0x100]);
 
-        let cam = space::Camera {
+        let mut cam = space::Camera {
             loc: glam::vec3(128.0, 128.0, 400.0),
             rot: glam::Quat::IDENTITY,
             scale: glam::vec3(1.0, -1.0, 1.0),
@@ -393,14 +393,22 @@ impl WebApp {
 
         // Follow-camera tuning matching native defaults
         // (config/settings.template.ron camera section).
-        //
-        // Match native: angle is relative to surface perpendicular
-        // (config.angle - 90°), not raw degrees.
+        let cam_offset = 140.0f32;
+        let cam_height = 210.0f32;
         let follow = space::Follow {
-            angle_x: (60.0f32 - 90.0).to_radians(),
-            offset: glam::vec3(0.0, 140.0, 210.0),
+            // Tilt down so the camera looks at the car. The patch in
+            // follow() negates the Y component, so the look direction
+            // must compensate for the height/offset ratio.
+            angle_x: -(cam_height / cam_offset).atan(),
+            offset: glam::vec3(0.0, cam_offset, cam_height),
             speed: 1.0,
         };
+
+        // Snap the camera to the vehicle so it doesn't have to
+        // lerp from the default (128,128,400) across the map.
+        if let Some(ref agent) = agent {
+            cam.follow(&agent.transform, 1000.0, &follow);
+        }
 
         WebApp {
             render,
