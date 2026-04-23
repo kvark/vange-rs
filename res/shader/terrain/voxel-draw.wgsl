@@ -10,7 +10,7 @@ struct VoxelConstants {
 
 struct VoxelData {
     lod_count: vec4<u32>,
-    lods: array<VoxelLod, 16>,
+    lods: array<vec4<i32>, 16>,
     occupancy: array<u32>,
 }
 
@@ -19,9 +19,9 @@ struct VoxelData {
 
 fn check_occupancy(coordinates: vec3<i32>, lod: u32) -> bool {
     let lod_info = b_VoxelGrid.lods[lod];
-    let ramainder = coordinates % lod_info.dim;
+    let ramainder = coordinates % lod_info.xyz;
     // see https://github.com/gfx-rs/naga/issues/2122
-    let sanitized = ramainder + select(lod_info.dim, vec3<i32>(0), ramainder >= vec3<i32>(0));
+    let sanitized = ramainder + select(lod_info.xyz, vec3<i32>(0), ramainder >= vec3<i32>(0));
     let addr = linearize(vec3<u32>(sanitized), lod_info);
     return (b_VoxelGrid.occupancy[addr.offset] & addr.mask) != 0u;
 }
@@ -171,7 +171,8 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
         let a = vec3<f32>((lod_voxel_pos + 0) * lod_voxel_size);
         let b = vec3<f32>((lod_voxel_pos + 1) * lod_voxel_size);
         // "tc" is the distance to each of the walls of the box
-        let tc = (select(a, b, dir > vec3<f32>(0.0)) - pos) / dir;
+        let c = mix(a, b, step(vec3<f32>(0.0), dir));
+        let tc = (c - pos) / dir;
         // "t" is the closest distance to the boundary
         let t = min(tc.x, min(tc.y, tc.z));
         let new_pos = pos + t * dir;
@@ -274,7 +275,7 @@ fn vert_bound(
     var index = i32(inst_index);
     var coord = vec3<i32>(0);
     while (lod < b_VoxelGrid.lod_count.x) {
-        let dim = b_VoxelGrid.lods[lod].dim;
+        let dim = b_VoxelGrid.lods[lod].xyz;
         let total = i32(dim.x * dim.y * dim.z);
         if (index < total) {
             coord = vec3<i32>(index % dim.x, (index / dim.x) % dim.y, index / (dim.x * dim.y));
