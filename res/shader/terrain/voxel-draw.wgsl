@@ -146,7 +146,7 @@ fn cast_ray_through_voxels(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     }
 
     let tpu = step_scale / abs(dir); // "t" step per unit of distance
-    let t_step = min(tpu.x, min(tpu.y, tpu.y));
+    let t_step = min(tpu.x, min(tpu.y, tpu.z));
 
     var lod = b_VoxelGrid.lod_count.x - 1u;
     let base_lod_voxel_size = vec3<f32>(u_Constants.voxel_size.xyz << vec3<u32>(lod));
