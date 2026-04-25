@@ -1678,7 +1678,7 @@ impl Context {
                     while let Some(dr) = self.dirty_rects.pop() {
                         let num_texels = dr.rect.w as usize * dr.rect.h as usize;
                         if num_texels > max_update_texels {
-                            // split into 2 rectangles
+                            // split into 4 quadrants
                             let mid_x = dr.rect.x + dr.rect.w / 2;
                             let mid_y = dr.rect.y + dr.rect.h / 2;
                             for (xb, yb) in
@@ -1725,7 +1725,13 @@ impl Context {
                                     0,
                                 ],
                             });
-                            texels_to_update -= texels_to_update;
+                            // Decrement the per-frame budget by the rect we
+                            // just enqueued, so further small rects can pack
+                            // into the same dispatch up to `max_update_rects`.
+                            // The previous `-= texels_to_update` zeroed the
+                            // budget after the first push and capped us to
+                            // one rect per frame.
+                            texels_to_update -= num_texels;
                         }
                     }
 
