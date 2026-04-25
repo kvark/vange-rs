@@ -1859,7 +1859,9 @@ impl Context {
         };
 
         {
-            // constants update
+            // constants update — shadow + main passes read the same
+            // uniform_buf, so the in-encoder copy ordering matters.
+            // See the TODO above re: switching to write_buffer.
             let depth_range = cam.depth_range();
             let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("temp-constants"),
