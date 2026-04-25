@@ -388,6 +388,13 @@ impl WebApp {
                 max_inner_steps: 40,
                 max_update_texels: 1_000_000,
             };
+            // Reuse the same voxel grid for shadow casting. Step counts
+            // are halved compared to the main pass — shadows are lower-
+            // frequency and don't need the same precision.
+            render_settings.light.shadow.terrain = settings::ShadowTerrain::RayVoxelTraced {
+                max_outer_steps: 20,
+                max_inner_steps: 20,
+            };
         } else {
             render_settings.terrain = settings::Terrain::RayTraced;
         }

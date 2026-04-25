@@ -44,6 +44,10 @@ struct Cli {
     /// Optional path to write the per-frame timing summary as JSON
     #[arg(long)]
     bench_out: Option<String>,
+    /// Reuse the voxel grid for shadow casting (matches the WebGPU build).
+    /// Only meaningful with --terrain RayVoxelTraced.
+    #[arg(long, default_value_t = false)]
+    shadow_voxel: bool,
 }
 
 fn parse_terrain(name: &str) -> vangers::config::settings::Terrain {
@@ -106,6 +110,7 @@ fn main() {
             frames: cli.frames,
             warmup: cli.warmup,
             bench_out: cli.bench_out.clone(),
+            shadow_voxel: cli.shadow_voxel,
         };
         headless::render_snapshot(opts);
         return;
