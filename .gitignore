@@ -6,4 +6,7 @@
 last-shader.wgsl
 res/data
 /docs/*.ts
+/docs/*.js
+/docs/*.wasm
 /docs/data-0/
+/.claude

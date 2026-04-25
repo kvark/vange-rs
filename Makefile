@@ -3,7 +3,11 @@ WASM_BINDGEN_VERSION = 0.2.117
 OUT_DIR = docs
 PORT = 8080
 
-.PHONY: web web-serve clean-web
+.PHONY: web web-serve setup-web clean-web
+
+setup-web:
+	rustup target add $(WASM_TARGET)
+	cargo install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION)
 
 ## Build WASM and generate JS bindings
 web:
