@@ -67,9 +67,18 @@ jobs:
       env:
         VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
         WGPU_BACKEND: vulkan
+        RUST_BACKTRACE: full
+        RUST_LOG: info,wgpu_core=info,wgpu_hal=info,naga=info
       run: |
+        # Tee everything to log files inside the snapshots artifact so we
+        # can inspect the panic/validation message — the GitHub Actions
+        # /logs API requires auth and isn't WebFetch-readable. Continue
+        # past per-elevation failures so all three logs are captured.
+        mkdir -p snapshots
+        rc=0
         for elev in 30 60 90; do
-          cargo run --release --bin level --quiet -- \
+          set +e
+          cargo run --release --bin level -- \
             --snapshot "snapshots/voxel-ci-${elev}.png" \
             --terrain RayVoxelTraced \
             --level-zip docs/data-0/fostral.zip \
@@ -78,8 +87,16 @@ jobs:
             --cam-target "576,896,80" \
             --cam-distance 350 \
             --cam-elev "$elev" \
-            --warmup 20 --frames 1
+            --warmup 20 --frames 1 \
+            2>&1 | tee "snapshots/voxel-ci-${elev}.log"
+          this_rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$this_rc" -ne 0 ]; then
+            echo "::warning::voxel snapshot at ${elev}° exited with $this_rc"
+            rc="$this_rc"
+          fi
         done
+        exit "$rc"
     - name: Upload snapshots
       uses: actions/upload-artifact@v4
       if: always()
