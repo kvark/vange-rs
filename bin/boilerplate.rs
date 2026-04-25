@@ -283,10 +283,8 @@ impl<A: Application> ApplicationHandler for HarnessHandler<A> {
                         ..
                     },
                 ..
-            } => {
-                if !self.app.on_key(key, state) {
-                    event_loop.exit();
-                }
+            } if !self.app.on_key(key, state) => {
+                event_loop.exit();
             }
             WindowEvent::MouseWheel { delta, .. } => self.app.on_mouse_wheel(delta),
             WindowEvent::CursorMoved { position, .. } => self.app.on_cursor_move(position.into()),

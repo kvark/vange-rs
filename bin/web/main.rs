@@ -324,9 +324,10 @@ struct WebApp {
 impl WebApp {
     /// Build the app with a procedural test level. Used as a fallback
     /// when the release data can't be fetched (404, offline, etc.).
-    // Embed settings.ron at compile time so the web build uses the
-    // same camera, render, and geometry config as the native build.
-    const SETTINGS_RON: &str = include_str!("../../config/settings.ron");
+    // Embed settings.template.ron — the tracked version in the repo.
+    // (config/settings.ron is gitignored as a per-developer override,
+    // so it isn't present in CI checkouts.)
+    const SETTINGS_RON: &str = include_str!("../../config/settings.template.ron");
 
     fn load_settings() -> settings::Settings {
         ron::de::from_str(Self::SETTINGS_RON).expect("Failed to parse embedded settings.ron")
@@ -362,8 +363,11 @@ impl WebApp {
             .unwrap_or([[0xFF; 4]; 0x100]);
 
         let cam_config = &settings.game.camera;
-        let cam = space::Camera {
-            loc: glam::vec3(128.0, 128.0, 400.0),
+        // Camera location is fixed up after the agent spawns below;
+        // (0, 0, 200) is just a sane starting placeholder for the
+        // free-camera fallback.
+        let mut cam = space::Camera {
+            loc: glam::vec3(0.0, 0.0, 200.0),
             rot: glam::Quat::IDENTITY,
             scale: glam::vec3(1.0, -1.0, 1.0),
             proj: space::Projection::Perspective(space::PerspectiveParams {
@@ -417,6 +421,18 @@ impl WebApp {
             offset: glam::vec3(0.0, cam_config.offset, cam_config.height),
             speed: cam_config.speed,
         };
+
+        // Settle the follow camera at the agent's spawn pose. Without
+        // this, the camera starts at the placeholder above and the slow
+        // exponential follow (k = exp(-dt) ≈ 0.98 per frame at 60 Hz)
+        // takes seconds to close the gap, looking like the camera "isn't
+        // catching up". Same trick as `tests/net_physics.rs`.
+        if let Some(ref a) = agent {
+            cam.loc = a.transform.disp + glam::vec3(0.0, 0.0, 200.0);
+            for _ in 0..120 {
+                cam.follow(&a.transform, 1.0 / 60.0, &follow);
+            }
+        }
 
         WebApp {
             render,
@@ -770,8 +786,16 @@ impl ApplicationHandler for WebHandler {
 
                 let adapter_limits = adapter.limits();
                 let required_limits = if is_webgpu {
+                    // The voxel grid for Fostral at voxel_size=[2,4,1]
+                    // is ~146 MiB, just above the 128 MiB default. Ask
+                    // for 256 MiB — enough headroom for the stock
+                    // levels without demanding more than low-end
+                    // adapters can give.
+                    const VOXEL_BUFFER_CAP: u64 = 256 << 20;
                     wgpu::Limits {
                         max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+                        max_storage_buffer_binding_size: VOXEL_BUFFER_CAP,
+                        max_buffer_size: VOXEL_BUFFER_CAP,
                         ..wgpu::Limits::downlevel_defaults()
                     }
                 } else {
@@ -820,6 +844,25 @@ impl ApplicationHandler for WebHandler {
                                     is_webgpu: bool,
                                     window: Arc<Window>|
               -> GpuState {
+            // winit's web backend manages canvas backing size via its
+            // own ResizeObserver. By the time async GPU init resolves,
+            // it may have re-sized the canvas to a slightly different
+            // value than what we computed in `resumed()` from
+            // `client_width * dpr`. Trusting `window.inner_size()` here
+            // keeps the surface config and camera aspect consistent
+            // with the actual canvas backing — otherwise WebGPU draws
+            // into a buffer of the wrong shape and the browser
+            // stretches it onto the canvas.
+            let inner = window.inner_size();
+            let screen_size = if inner.width > 0 && inner.height > 0 {
+                wgpu::Extent3d {
+                    width: inner.width,
+                    height: inner.height,
+                    depth_or_array_layers: 1,
+                }
+            } else {
+                screen_size
+            };
             let caps = surface.get_capabilities(adapter);
             let config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -994,6 +1037,17 @@ impl ApplicationHandler for WebHandler {
                 if self.gpu.is_none()
                     && let Some(state) = self.gpu_pending.borrow_mut().take()
                 {
+                    // Adopt the surface's actual dimensions — they may
+                    // differ from the pre-cap math in `resumed()` if
+                    // winit's ResizeObserver reshaped the canvas during
+                    // async GPU init. If this isn't synced, the next
+                    // size-mismatch branch in render() would reconfigure
+                    // back to the stale value and break the aspect ratio.
+                    self.screen_size = wgpu::Extent3d {
+                        width: state.config.width,
+                        height: state.config.height,
+                        depth_or_array_layers: 1,
+                    };
                     self.gpu = Some(state);
                 }
 
