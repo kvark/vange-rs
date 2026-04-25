@@ -37,7 +37,14 @@ impl Constants {
 
 pub struct Context {
     pub bind_group_layout: wgpu::BindGroupLayout,
+    /// Constants for the main pass.
     pub uniform_buf: wgpu::Buffer,
+    /// Constants for the shadow pass — *must* be a separate buffer
+    /// because we update both via `queue.write_buffer` between
+    /// recording the shadow + main passes into one encoder. With a
+    /// shared buffer the second write would land before the encoder
+    /// ran and the shadow pass would read the main camera's matrix.
+    pub shadow_uniform_buf: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
     pub shadow_bind_group: wgpu::BindGroup,
     pub color_format: wgpu::TextureFormat,
@@ -89,6 +96,12 @@ impl Context {
                 });
         let uniform_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Uniform"),
+            size: mem::size_of::<Constants>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let shadow_uniform_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Uniform.Shadow"),
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -179,7 +192,7 @@ impl Context {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: uniform_buf.as_entire_binding(),
+                    resource: shadow_uniform_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -199,6 +212,7 @@ impl Context {
         Context {
             bind_group_layout,
             uniform_buf,
+            shadow_uniform_buf,
             bind_group,
             shadow_bind_group,
             color_format: gfx.color_format,
