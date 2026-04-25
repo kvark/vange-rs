@@ -513,7 +513,11 @@ impl Render {
             shadow.update_view(&self.light_config.pos, cam, level.geometry.height as f32);
 
             let constants = global::Constants::new(&shadow.cam, &self.light_config, None);
-            queue.write_buffer(&self.global.uniform_buf, 0, bytemuck::bytes_of(&constants));
+            queue.write_buffer(
+                &self.global.shadow_uniform_buf,
+                0,
+                bytemuck::bytes_of(&constants),
+            );
 
             self.terrain.prepare_shadow(
                 encoder,
