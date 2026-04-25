@@ -45,6 +45,7 @@ for ELEV in 30 60 90; do
         --snapshot "$OUT_PNG" \
         --bench-out "$OUT_JSON" \
         --terrain RayVoxelTraced \
+        --shadow-voxel \
         --level-zip "$LEVEL_ZIP" \
         --common-zip "$COMMON_ZIP" \
         --width "$WIDTH" \

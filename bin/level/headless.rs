@@ -45,6 +45,7 @@ pub struct SnapshotOptions {
     pub frames: u32,
     pub warmup: u32,
     pub bench_out: Option<String>,
+    pub shadow_voxel: bool,
 }
 
 impl Default for SnapshotOptions {
@@ -63,6 +64,7 @@ impl Default for SnapshotOptions {
             frames: 1,
             warmup: 0,
             bench_out: None,
+            shadow_voxel: false,
         }
     }
 }
@@ -134,10 +136,21 @@ pub fn render_snapshot(opts: SnapshotOptions) {
 
     info!("Adapter: {:?}", adapter.get_info().name);
 
-    let render_settings = settings::Render {
+    let mut render_settings = settings::Render {
         terrain: opts.terrain,
         ..Default::default()
     };
+    if opts.shadow_voxel {
+        // Default `Render::default()` leaves `shadow.size = 0`, which
+        // disables shadow rendering entirely. Mirror the WebGPU/native
+        // settings.ron value (1024) so the voxel shadow path is actually
+        // exercised. Step counts match the WebGPU build.
+        render_settings.light.shadow.size = 1024;
+        render_settings.light.shadow.terrain = settings::ShadowTerrain::RayVoxelTraced {
+            max_outer_steps: 20,
+            max_inner_steps: 20,
+        };
+    }
 
     let geometry = settings::Geometry::default();
 
