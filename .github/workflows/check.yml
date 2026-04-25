@@ -49,6 +49,37 @@ jobs:
         VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
         WGPU_BACKEND=vulkan \
         cargo run --release --bin level -- --snapshot snapshots/painted.png --terrain Painted
+
+    # Voxel-terrain reftest at the same Fostral citadel cluster used by
+    # tools/bench-voxel.sh. Correctness-only: no perf gate, just a smoke
+    # test that the bake + draw + shadow path doesn't crash and produces
+    # a non-empty image at three reference cameras. Real assets come from
+    # the data-0 release the deploy job already publishes.
+    - name: Download Fostral + common assets
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        mkdir -p docs/data-0
+        gh release download data-0 --repo ${{ github.repository }} \
+          --pattern 'fostral.zip' --pattern 'common.zip' \
+          --dir docs/data-0
+    - name: Voxel snapshots (Fostral, 30°/60°/90°)
+      env:
+        VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+        WGPU_BACKEND: vulkan
+      run: |
+        for elev in 30 60 90; do
+          cargo run --release --bin level --quiet -- \
+            --snapshot "snapshots/voxel-ci-${elev}.png" \
+            --terrain RayVoxelTraced \
+            --level-zip docs/data-0/fostral.zip \
+            --common-zip docs/data-0/common.zip \
+            --width 320 --height 240 \
+            --cam-target "576,896,80" \
+            --cam-distance 350 \
+            --cam-elev "$elev" \
+            --warmup 20 --frames 1
+        done
     - name: Upload snapshots
       uses: actions/upload-artifact@v4
       if: always()
