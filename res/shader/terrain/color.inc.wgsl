@@ -30,8 +30,14 @@ fn evaluate_palette(ty: u32, value_in: f32) -> f32 {
 }
 
 fn get_surface_height(pos: vec3<f32>) -> f32 {
-    let suf = get_surface(pos.xy);
-    return select(suf.low_alt, suf.high_alt, pos.z >= suf.mid_alt);
+    // Smooth altitude lookup gives a bilinearly-interpolated height
+    // sample, which feeds the surface gradient + horizon factor in
+    // `evaluate_color_id`. Using the cell-quantised `get_surface`
+    // produced visible block edges in the lighting; the smooth
+    // variant costs 4× the texture samples but only on the four
+    // gradient taps.
+    let alt = get_surface_alt_smooth(pos.xy);
+    return select(alt.low, alt.high, pos.z >= alt.mid);
 }
 
 fn get_surface_gradient(pos: vec3<f32>) -> vec2<f32> {

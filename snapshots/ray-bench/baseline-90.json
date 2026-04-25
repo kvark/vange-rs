@@ -1,0 +1,11 @@
+{
+  "adapter": "NVIDIA GeForce RTX 3050",
+  "width": 640,
+  "height": 480,
+  "frames": 60,
+  "warmup": 40,
+  "cam_elev_deg": 90,
+  "min_ms": 0.2955,
+  "avg_ms": 0.3397,
+  "max_ms": 1.8083
+}

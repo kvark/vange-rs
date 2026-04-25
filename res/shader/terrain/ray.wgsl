@@ -127,7 +127,12 @@ fn cast_ray_to_map(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     );
     var c = cast_ray_to_plane(0.0, base, dir);
 
-    let cast_result = cast_ray_impl(a_in, c, true, 8, 4);
+    // Forward step counts doubled (8 → 16, 6 → 12). The previous values
+    // skipped over thin columns at oblique angles, leaving jagged
+    // silhouettes; doubling roughly halves the maximum step length and
+    // costs ~2× fragment work, but the WebGL2 fallback is fragment-bound
+    // and this is its primary visible quality issue.
+    let cast_result = cast_ray_impl(a_in, c, true, 16, 4);
     var a = cast_result.a;
     var b = cast_result.b;
     var suf = cast_result.surface;
@@ -137,7 +142,7 @@ fn cast_ray_to_map(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     if (suf.low_alt < suf.high_alt && b.z < suf.mid_alt) {
         // continue the cast underground, but reserve
         // the right to re-appear above the surface.
-        let cr = cast_ray_impl(b, c, false, 6, 3);
+        let cr = cast_ray_impl(b, c, false, 12, 3);
         a = cr.a;
         b = cr.b;
         suf = cr.surface;

@@ -48,6 +48,10 @@ struct Cli {
     /// Only meaningful with --terrain RayVoxelTraced.
     #[arg(long, default_value_t = false)]
     shadow_voxel: bool,
+    /// Use the height-field ray-traced shadow path. Mirrors what the
+    /// WebGL2 fallback renders.
+    #[arg(long, default_value_t = false)]
+    shadow_ray: bool,
 }
 
 fn parse_terrain(name: &str) -> vangers::config::settings::Terrain {
@@ -111,6 +115,7 @@ fn main() {
             warmup: cli.warmup,
             bench_out: cli.bench_out.clone(),
             shadow_voxel: cli.shadow_voxel,
+            shadow_ray: cli.shadow_ray,
         };
         headless::render_snapshot(opts);
         return;
