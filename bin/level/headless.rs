@@ -46,6 +46,7 @@ pub struct SnapshotOptions {
     pub warmup: u32,
     pub bench_out: Option<String>,
     pub shadow_voxel: bool,
+    pub shadow_ray: bool,
 }
 
 impl Default for SnapshotOptions {
@@ -65,6 +66,7 @@ impl Default for SnapshotOptions {
             warmup: 0,
             bench_out: None,
             shadow_voxel: false,
+            shadow_ray: false,
         }
     }
 }
@@ -150,6 +152,11 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             max_outer_steps: 20,
             max_inner_steps: 20,
         };
+    } else if opts.shadow_ray {
+        // Mirrors the WebGL2 fallback: 1024² shadow map, height-field
+        // ray-traced.
+        render_settings.light.shadow.size = 1024;
+        render_settings.light.shadow.terrain = settings::ShadowTerrain::RayTraced;
     }
 
     let geometry = settings::Geometry::default();

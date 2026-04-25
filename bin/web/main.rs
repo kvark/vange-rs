@@ -397,6 +397,10 @@ impl WebApp {
             };
         } else {
             render_settings.terrain = settings::Terrain::RayTraced;
+            // The WebGL2 fallback is fragment-bound; halving the shadow
+            // map (1024 → 512) gives back ~75% of the shadow-pass cost
+            // and the difference at this view distance is invisible.
+            render_settings.light.shadow.size = 512;
         }
         let geometry = settings.game.geometry;
         let render = Render::new(
