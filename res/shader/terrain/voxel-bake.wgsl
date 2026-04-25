@@ -52,10 +52,20 @@ fn init(
     workgroupBarrier();
 
     for (var z=u_Constants.update_start.z; z < u_Constants.update_end.z; z += u_Constants.voxel_size.z) {
-        // Do a range intersection with the terrain
+        // Range intersection with the terrain. A voxel is considered
+        // occupied if any part of [z0, z1) overlaps a solid column:
+        //   * the lower terrain (z < low_alt) — `z0 < low_alt`
+        //   * the upper terrain in tunnel mode ([mid_alt, high_alt))
+        //
+        // The previous form `z1 <= low_alt` only caught voxels fully
+        // *below* the low terrain. In tunnel cells where low_alt < mid_alt
+        // (i.e. `low_alt != high_alt`), a voxel straddling the low surface
+        // would also fail the high-tier clause (z1 < mid_alt) and end up
+        // unmarked — the rendered ground stepped one voxel too low at
+        // tunnel mouths.
         let z0 = f32(z);
         let z1 = f32(z + u_Constants.voxel_size.z);
-        if (z1 <= suf.low_alt || (z1 > suf.mid_alt && z0 < suf.high_alt)) {
+        if (z0 < suf.low_alt || (z1 > suf.mid_alt && z0 < suf.high_alt)) {
             let voxel_coords = vec3<i32>(flat_coords, z) / u_Constants.voxel_size.xyz;
             set_bit(linearize(vec3<u32>(voxel_coords), vlod));
         }
