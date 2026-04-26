@@ -10,6 +10,12 @@
 const c_HorFactor: f32 = 0.5; //H_CORRECTION
 const c_DiffuseScale: f32 = 8.0;
 const c_ShadowDepthScale: f32 = 0.6; //~ 2.0 / 3.0;
+// Floor brightness applied to terrain in deep shadow. Matches the
+// `c_Ambient` used by `fetch_shadow` so unobstructed surfaces and
+// fully-shadowed ones meet at the same darkness when the cosine term
+// is zero. Defined here because `scatter.wgsl` includes color.inc but
+// not shadow.inc, so it can't pull in `c_Ambient`.
+const c_TerrainAmbient: f32 = 0.25;
 
 // see `RenderPrepare` in `land.cpp` for the original game logic
 
@@ -65,11 +71,31 @@ fn evaluate_color_id(ty: u32, pos: vec3<f32>, lit_factor: f32) -> f32 {
     return evaluate_palette(ty, lit_factor * tmp);
 }
 
-fn evaluate_color(ty: u32, pos: vec3<f32>, lit_factor: f32) -> vec4<f32> {
-    let color_id = evaluate_color_id(ty, pos, lit_factor);
-    // textureSampleLevel keeps the call valid even when the caller is
-    // inside non-uniform control flow (e.g. ray-cast early-outs in the
-    // voxel draw shader). The palette has a single mip level, so an
-    // explicit LOD of 0 matches the implicit-derivative result.
-    return textureSampleLevel(t_Palette, s_Palette, vec2<f32>(color_id, 0.5), 0.0);
+// Original Vangers baked diffuse + altitude shading into the palette
+// gradient and into the colormap itself, with `evaluate_color_id`
+// preserved here for the scatter compute that still needs a 0..1 ramp.
+//
+// For the live render we now use the brightest entry of each terrain's
+// gradient as the unshaded base color, then apply our own shadow +
+// cosine diffuse on top. This gives consistent lighting across all
+// surface orientations and lets the shadow map actually darken
+// terrain (the previous approach mostly amplified the baked gradient).
+fn evaluate_color(ty: u32, pos: vec3<f32>, shadow_visibility: f32) -> vec4<f32> {
+    let terr = vec4<f32>(textureLoad(t_Table, vec2<i32>(i32(ty), 0), 0));
+    let base_id = (terr.w - 0.5) / 256.0;
+    // textureSampleLevel — the caller may be inside non-uniform control
+    // flow (voxel-draw early-outs).
+    let base = textureSampleLevel(t_Palette, s_Palette, vec2<f32>(base_id, 0.5), 0.0);
+
+    // Surface normal from a 2-cell-wide central-difference height
+    // gradient. The gradient measures Δheight over Δxy = 2, so
+    // dheight/dxy = gradient * 0.5 — flipping signs gives the upward
+    // surface normal.
+    let gradient = get_surface_gradient(pos);
+    let normal = normalize(vec3<f32>(-0.5 * gradient.x, -0.5 * gradient.y, 1.0));
+    let light_dir = normalize(u_Globals.light_pos.xyz - pos * u_Globals.light_pos.w);
+    let n_dot_l = max(0.0, dot(normal, light_dir));
+
+    let modulation = c_TerrainAmbient + (1.0 - c_TerrainAmbient) * shadow_visibility * n_dot_l;
+    return vec4<f32>(base.rgb * modulation, base.a);
 }

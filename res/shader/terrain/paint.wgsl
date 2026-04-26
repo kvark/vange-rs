@@ -48,7 +48,7 @@ fn vertex(
 
 @fragment
 fn fragment(in: Varyings) -> @location(0) vec4<f32> {
-    let lit_factor = fetch_shadow(in.plane_pos);
-    let terrain_color = evaluate_color(in.ty, in.world_pos, lit_factor);
+    let visibility = fetch_shadow_visibility(in.plane_pos);
+    let terrain_color = evaluate_color(in.ty, in.world_pos, visibility);
     return apply_fog(terrain_color, in.plane_pos.xy);
 }
