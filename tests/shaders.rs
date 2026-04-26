@@ -6,6 +6,8 @@ fn parse(name: &str, substitutions: &[(&str, String)]) {
 
 #[test]
 fn parse_shaders() {
+    parse("object", &[]);
+    parse("water", &[]);
     parse("terrain/ray", &[]);
     parse("terrain/paint", &[]);
     parse("terrain/scatter", &[]);
