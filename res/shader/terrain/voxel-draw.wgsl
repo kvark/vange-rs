@@ -252,7 +252,7 @@ fn draw_color(@builtin(position) frag_coord: vec4<f32>) -> FragOutput {
     }
 
     let lit_factor = fetch_shadow(pt.pos);
-    let frag_color = evaluate_color(pt.ty, pt.pos, lit_factor);
+    let frag_color = apply_underwater(evaluate_color(pt.ty, pt.pos, lit_factor), pt.pos);
     let actual_color = mix(frag_color, debug_color, debug_color.a);
 
     let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
