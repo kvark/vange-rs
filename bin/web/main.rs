@@ -361,7 +361,15 @@ impl WebApp {
     const SETTINGS_RON: &str = include_str!("../../config/settings.template.ron");
 
     fn load_settings() -> settings::Settings {
-        ron::de::from_str(Self::SETTINGS_RON).expect("Failed to parse embedded settings.ron")
+        let mut s: settings::Settings =
+            ron::de::from_str(Self::SETTINGS_RON).expect("Failed to parse embedded settings.ron");
+        // Apply a 0.75x vertical scale to the web build. True 3D
+        // heightmap rendering otherwise looks taller than original
+        // Vangers (which projected the heightmap as a flat shaded
+        // plane); 0.75 brings the silhouette much closer to the 1998
+        // look without flattening the terrain.
+        s.game.geometry.height = (s.game.geometry.height * 3) / 4;
+        s
     }
 
     fn new(gfx: &GraphicsContext, is_webgpu: bool) -> Self {
