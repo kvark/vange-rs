@@ -762,19 +762,38 @@ impl ApplicationHandler for WebHandler {
         let init_future = {
             let window_clone = window.clone();
             async move {
-                // A single Instance with both backends. The earlier
-                // probe-then-fallback strategy failed in browsers with
-                // WebGPU disabled: probing WebGPU first calls
-                // `canvas.getContext('webgpu')` (which puts the canvas
-                // into "webgpu" mode for its lifetime, even if it
-                // returns null), so the subsequent WebGL2 probe's
-                // `getContext('webgl2')` returned null too. Letting
-                // wgpu pick a backend at `request_adapter` time keeps
-                // the canvas untouched until we know which one we'll
-                // actually use, and the `compatible_surface` hint lets
-                // it select either webgpu or webgl2 cleanly.
+                // Pick the backend BEFORE creating any wgpu surface.
+                // A canvas can only have one rendering context for
+                // its lifetime: the first `getContext()` call wins
+                // and subsequent ones for a different type return
+                // null. Letting wgpu probe both backends inside one
+                // Instance still calls `getContext('webgpu')` first
+                // and pins the canvas, so the GL surface creation
+                // silently fails and `request_adapter` reports
+                // `supported_backends: BROWSER_WEBGPU` only.
+                //
+                // `navigator.gpu` is the cheap, no-side-effects probe
+                // for WebGPU availability. If it exists we commit to
+                // BROWSER_WEBGPU; otherwise we commit to GL (WebGL2).
+                let webgpu_available = web_sys::window()
+                    .and_then(|w| {
+                        // navigator.gpu is undefined when WebGPU is
+                        // disabled; js_sys::Reflect lets us check
+                        // without taking a hard dep on the type.
+                        js_sys::Reflect::get(&w.navigator(), &"gpu".into()).ok()
+                    })
+                    .is_some_and(|gpu| !gpu.is_undefined() && !gpu.is_null());
+                let backends = if webgpu_available {
+                    log::info!("Using WebGPU backend");
+                    wgpu::Backends::BROWSER_WEBGPU
+                } else {
+                    log::info!("WebGPU unavailable, using WebGL2");
+                    wgpu::Backends::GL
+                };
+                let is_webgpu = webgpu_available;
+
                 let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                    backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
+                    backends,
                     ..wgpu::InstanceDescriptor::new_without_display_handle()
                 });
                 let surface = instance
@@ -790,20 +809,11 @@ impl ApplicationHandler for WebHandler {
                 {
                     Ok(a) => a,
                     Err(e) => {
-                        let msg = format!(
-                            "No GPU adapter available — enable WebGPU or WebGL2 in the browser ({:?})",
-                            e
-                        );
+                        let msg = format!("No GPU adapter available ({:?})", e);
                         let _ = js_progress_error(&msg);
                         panic!("{}", msg);
                     }
                 };
-                let is_webgpu = adapter.get_info().backend == wgpu::Backend::BrowserWebGpu;
-                if is_webgpu {
-                    log::info!("Using WebGPU backend");
-                } else {
-                    log::info!("WebGPU unavailable, using WebGL2");
-                }
 
                 let adapter_limits = adapter.limits();
                 let required_limits = if is_webgpu {
