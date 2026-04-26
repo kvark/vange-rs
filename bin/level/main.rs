@@ -52,9 +52,15 @@ struct Cli {
     /// WebGL2 fallback renders.
     #[arg(long, default_value_t = false)]
     shadow_ray: bool,
+    /// Override the RayVoxelTraced voxel cell size as "X,Y,Z". Larger
+    /// values make the grid coarser and the storage buffer smaller —
+    /// useful when the target adapter (e.g. lavapipe) caps storage
+    /// buffer bindings below the default.
+    #[arg(long)]
+    voxel_size: Option<String>,
 }
 
-fn parse_terrain(name: &str) -> vangers::config::settings::Terrain {
+fn parse_terrain(name: &str, voxel_size: [u32; 3]) -> vangers::config::settings::Terrain {
     use vangers::config::settings::Terrain;
     match name {
         "RayTraced" => Terrain::RayTraced,
@@ -63,7 +69,7 @@ fn parse_terrain(name: &str) -> vangers::config::settings::Terrain {
         // RayVoxelTraced uses the same parameters the web build hard-codes,
         // so the snapshot exercises the same path the user is benchmarking.
         "RayVoxelTraced" => Terrain::RayVoxelTraced {
-            voxel_size: [2, 4, 1],
+            voxel_size,
             max_outer_steps: 40,
             max_inner_steps: 40,
             max_update_texels: 1_000_000,
@@ -73,6 +79,25 @@ fn parse_terrain(name: &str) -> vangers::config::settings::Terrain {
             other
         ),
     }
+}
+
+fn parse_voxel_size(s: &str) -> [u32; 3] {
+    let parts: Vec<u32> = s
+        .split(',')
+        .map(|p| {
+            p.trim()
+                .parse::<u32>()
+                .unwrap_or_else(|_| panic!("Invalid number in voxel-size: {}", p))
+        })
+        .collect();
+    if parts.len() != 3 {
+        panic!(
+            "Expected 3 comma-separated numbers for voxel-size, got {}: {}",
+            parts.len(),
+            s
+        );
+    }
+    [parts[0], parts[1], parts[2]]
 }
 
 fn parse_vec3(s: &str) -> glam::Vec3 {
@@ -105,7 +130,13 @@ fn main() {
             level_zip: cli.level_zip.clone(),
             common_zip: cli.common_zip.clone(),
             level_path: cli.path.clone(),
-            terrain: parse_terrain(&cli.terrain),
+            terrain: parse_terrain(
+                &cli.terrain,
+                cli.voxel_size
+                    .as_deref()
+                    .map(parse_voxel_size)
+                    .unwrap_or([2, 4, 1]),
+            ),
             width: cli.width,
             height: cli.height,
             cam_target: parse_vec3(&cli.cam_target),
