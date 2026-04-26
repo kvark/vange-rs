@@ -90,11 +90,6 @@ pub struct Instance {
     orientation: [f32; 4],
     shape_scale: f32,
     body_and_color_id: [u32; 2],
-    /// World water level at the vehicle's xy. Filled in by
-    /// `Batcher::set_water_levels` before each frame's draw. A negative
-    /// sentinel means "no water at this xy" so the shader's underwater
-    /// tint stays inactive.
-    water_level: f32,
 }
 unsafe impl Pod for Instance {}
 unsafe impl Zeroable for Instance {}
@@ -107,22 +102,13 @@ impl Instance {
             orientation: gt.orientation,
             shape_scale,
             body_and_color_id: [0, color_id as u32],
-            water_level: f32::NEG_INFINITY,
         }
-    }
-
-    pub fn world_xy(&self) -> [f32; 2] {
-        [self.pos_scale[0], self.pos_scale[1]]
-    }
-
-    pub fn set_water_level(&mut self, level: f32) {
-        self.water_level = level;
     }
 }
 
 #[derive(Copy, Clone)]
 pub struct InstanceDesc {
-    attributes: [wgpu::VertexAttribute; 5],
+    attributes: [wgpu::VertexAttribute; 4],
 }
 
 impl InstanceDesc {
@@ -133,7 +119,6 @@ impl InstanceDesc {
                 4 => Float32x4,
                 5 => Float32,
                 6 => Uint32x2,
-                7 => Float32,
             ],
         }
     }
@@ -147,7 +132,72 @@ impl InstanceDesc {
     }
 }
 
+/// Resources the object pipeline needs to do a per-pixel underwater
+/// check: the surface uniforms (for `texture_scale`), the terrain meta
+/// texture (cell type), and the flood texture (per-Y water level). The
+/// game-side render pipeline supplies these from the terrain context;
+/// the standalone model viewer supplies stubs via [`create_stub_surface`].
+pub struct SurfaceInputs<'a> {
+    pub uniform_buf: &'a wgpu::Buffer,
+    pub terrain_view: &'a wgpu::TextureView,
+    pub flood_view: &'a wgpu::TextureView,
+}
+
+/// Build dummy surface resources for tools (the model viewer) that draw
+/// vehicles without a real terrain. The uniform's `texture_scale.x` is
+/// 0, which the object shader uses as the "skip the underwater branch"
+/// signal.
+pub struct StubSurface {
+    pub uniform_buf: wgpu::Buffer,
+    pub terrain_view: wgpu::TextureView,
+    pub flood_view: wgpu::TextureView,
+}
+
+pub fn create_stub_surface(device: &wgpu::Device) -> StubSurface {
+    use wgpu::util::DeviceExt as _;
+
+    let zero_uniform = [0u8; 32];
+    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Stub surface uniforms"),
+        contents: &zero_uniform,
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let make_view = |label, format| {
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            view_formats: &[],
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        });
+        tex.create_view(&wgpu::TextureViewDescriptor::default())
+    };
+    StubSurface {
+        uniform_buf,
+        terrain_view: make_view("Stub terrain", wgpu::TextureFormat::Rgba8Uint),
+        flood_view: make_view("Stub flood", wgpu::TextureFormat::R8Unorm),
+    }
+}
+
+impl StubSurface {
+    pub fn inputs(&self) -> SurfaceInputs<'_> {
+        SurfaceInputs {
+            uniform_buf: &self.uniform_buf,
+            terrain_view: &self.terrain_view,
+            flood_view: &self.flood_view,
+        }
+    }
+}
+
 pub struct Context {
+    pub surface_bind_group: wgpu::BindGroup,
     pub bind_group: wgpu::BindGroup,
     pub shape_bind_group_layout: Result<wgpu::BindGroupLayout, VertexStorageNotSupported>,
     pub pipeline_layout: wgpu::PipelineLayout,
@@ -287,6 +337,7 @@ impl Context {
         front_face: wgpu::FrontFace,
         palette_data: &[[u8; 4]],
         global: &GlobalContext,
+        surface: SurfaceInputs<'_>,
     ) -> Self {
         let bind_group_layout =
             gfx.device
@@ -375,17 +426,78 @@ impl Context {
                 },
             ],
         });
+        let surface_bind_group_layout =
+            gfx.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Object surface"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                sample_type: wgpu::TextureSampleType::Uint,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
+        let surface_bind_group = gfx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Object surface"),
+            layout: &surface_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: surface.uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(surface.terrain_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(surface.flood_view),
+                },
+            ],
+        });
+
         let pipeline_layout = gfx
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("object"),
-                bind_group_layouts: &[Some(&global.bind_group_layout), Some(&bind_group_layout)],
+                bind_group_layouts: &[
+                    Some(&global.bind_group_layout),
+                    Some(&bind_group_layout),
+                    Some(&surface_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
         let pipelines =
             Self::create_pipelines(&pipeline_layout, &gfx.device, gfx.color_format, front_face);
 
         Context {
+            surface_bind_group,
             bind_group,
             shape_bind_group_layout,
             pipeline_layout,

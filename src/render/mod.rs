@@ -283,52 +283,6 @@ impl Batcher {
             .push(instance);
     }
 
-    /// Fill in `Instance::water_level` from the level's flood map for
-    /// every queued instance. Must be called before `prepare`, otherwise
-    /// the instance buffer ships the default `f32::NEG_INFINITY`
-    /// (no-water sentinel) and the underwater tint never kicks in.
-    pub fn set_water_levels(&mut self, level: &level::Level) {
-        let flood_count = level.flood_map.len();
-        if flood_count == 0 {
-            return;
-        }
-        let section_y = level.size.1 as f32 / flood_count as f32;
-        // Matches the water shader's R8Unorm sampling: byte/255 * height.
-        let z_scale = level.geometry.height as f32 / 255.0;
-        let compute = |i: &mut object::Instance| {
-            let xy = i.world_xy();
-            // Gate the tint on the cell actually being water-type —
-            // otherwise tunnels (dual-level cells with a non-water floor)
-            // tint blue because the vehicle's z naturally sits below the
-            // per-Y flood level. Mirrors the water-cell pattern in
-            // `physics::mod::collide`.
-            let coord = (xy[0].floor() as i32, xy[1].floor() as i32);
-            let is_water = matches!(
-                level.get(coord),
-                level::Texel::Single(level::Point(_, 0))
-                    | level::Texel::Dual {
-                        low: level::Point(_, 0),
-                        ..
-                    }
-            );
-            if !is_water {
-                i.set_water_level(f32::NEG_INFINITY);
-                return;
-            }
-            let row = (xy[1] / section_y).floor() as i32;
-            let idx = row.rem_euclid(flood_count as i32) as usize;
-            i.set_water_level(level.flood_map[idx] as f32 * z_scale);
-        };
-        for arr in self.instances.values_mut() {
-            for inst in arr.data.iter_mut() {
-                compute(inst);
-            }
-        }
-        for inst in self.debug_instances.iter_mut() {
-            compute(inst);
-        }
-    }
-
     pub fn add_model(
         &mut self,
         model: &model::VisualModel,
@@ -483,8 +437,6 @@ impl Render {
 
         info!("Creating global context...");
         let global = global::Context::new(gfx, shadow.as_ref().map(|shadow| &shadow.view));
-        info!("Creating object context...");
-        let object = object::Context::new(gfx, front_face, object_palette, &global);
         info!("Creating terrain context...");
         let terrain = terrain::Context::new(
             gfx,
@@ -493,6 +445,25 @@ impl Render {
             &global,
             &settings.terrain,
             &settings.light.shadow.terrain,
+        );
+        info!("Creating object context...");
+        let terrain_view = terrain
+            .terrain_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let flood_view = terrain
+            .flood
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let object = object::Context::new(
+            gfx,
+            front_face,
+            object_palette,
+            &global,
+            object::SurfaceInputs {
+                uniform_buf: &terrain.surface_uni_buf,
+                terrain_view: &terrain_view,
+                flood_view: &flood_view,
+            },
         );
         info!("Creating water context...");
         let water = water::Context::new(&gfx.device, &settings.water, &global, &terrain);
@@ -548,7 +519,6 @@ impl Render {
         queue: &wgpu::Queue,
     ) {
         profiling::scope!("draw_world");
-        batcher.set_water_levels(level);
         batcher.prepare(device);
         self.terrain.update_dirty(encoder, level, device);
 
@@ -599,6 +569,7 @@ impl Render {
             pass.push_debug_group("vehicles");
             pass.set_pipeline(&self.object.pipelines.shadow);
             pass.set_bind_group(1, &self.object.bind_group, &[]);
+            pass.set_bind_group(2, &self.object.surface_bind_group, &[]);
             batcher.draw(&mut pass);
             pass.pop_debug_group();
         }
@@ -670,6 +641,7 @@ impl Render {
             pass.push_debug_group("vehicles");
             pass.set_pipeline(&self.object.pipelines.main);
             pass.set_bind_group(1, &self.object.bind_group, &[]);
+            pass.set_bind_group(2, &self.object.surface_bind_group, &[]);
             batcher.draw(&mut pass);
             pass.pop_debug_group();
 

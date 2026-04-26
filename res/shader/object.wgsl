@@ -14,10 +14,6 @@ struct Geometry {
     @location(3) pos_scale: vec4<f32>,
     @location(4) orientation: vec4<f32>,
     @location(6) body_and_color_id: vec2<u32>,
-    // Per-instance water level (world Z), populated CPU-side from the
-    // flood map at the vehicle's xy. Negative means "no water here", so
-    // the underwater tint never kicks in.
-    @location(7) water_level: f32,
 };
 
 struct BodyGeometry {
@@ -55,7 +51,6 @@ struct Varyings {
     @location(0) palette_range: vec2<f32>,
     @location(1) position: vec3<f32>,
     @location(2) normal: vec3<f32>,
-    @location(3) water_level: f32,
 };
 
 @vertex
@@ -81,7 +76,6 @@ fn color_vs(
         palette_range,
         world,
         world_normal,
-        geo.water_level,
     );
 }
 
@@ -89,10 +83,53 @@ fn color_vs(
 @group(0) @binding(1) var s_PaletteSampler: sampler;
 @group(1) @binding(1) var t_Palette: texture_2d<f32>;
 
+// Surface bindings, shared with the terrain pipeline so we can decide
+// per-fragment whether the vehicle is over a water cell, and at what
+// world Z that cell's water surface sits.
+struct SurfaceConstants {
+    texture_scale: vec4<f32>,
+    terrain_bits: u32,
+    delta_mode: u32,
+};
+@group(2) @binding(0) var<uniform> u_Surface: SurfaceConstants;
+@group(2) @binding(2) var t_Terrain: texture_2d<u32>;
+@group(2) @binding(4) var t_Flood: texture_2d<f32>;
+
+const c_DoubleLevelMask: u32 = 64u;
+const c_WaterTerrain: u32 = 0u;
+
+fn get_terrain_type(meta_data: u32) -> u32 {
+    let bits = u_Surface.terrain_bits;
+    return (meta_data >> (bits & 0xFu)) & (bits >> 4u);
+}
+
+// Returns the cell's low-layer terrain type at the given world xy. The
+// "low" layer matches what `physics::mod::collide` uses for water
+// detection, so vehicles in dual-level tunnel cells with a non-water
+// floor stay dry.
+fn low_terrain_type_at(world_xy: vec2<f32>) -> u32 {
+    let wrapped = world_xy - floor(world_xy / u_Surface.texture_scale.xy) * u_Surface.texture_scale.xy;
+    let tci = vec2<i32>(wrapped);
+    let data = textureLoad(t_Terrain, vec2<i32>(tci.x / 2, tci.y), 0);
+    if ((data.y & c_DoubleLevelMask) != 0u) {
+        return get_terrain_type(data.y);
+    }
+    let subdata = select(data.xy, data.zw, (tci.x & 1) != 0);
+    return get_terrain_type(subdata.y);
+}
+
+fn flood_z_at(world_y: f32) -> f32 {
+    let dim = textureDimensions(t_Flood);
+    let section_y = u_Surface.texture_scale.y / f32(dim.x);
+    let row_raw = i32(floor(world_y / section_y));
+    let row = ((row_raw % i32(dim.x)) + i32(dim.x)) % i32(dim.x);
+    let raw = textureLoad(t_Flood, vec2<i32>(row, 0), 0).x;
+    return raw * u_Surface.texture_scale.z;
+}
+
 // Matches the documented fallback water tint from
 // `src/level/mod.rs::load` (`0 => (0.0, 0.0, 200.0), // blue (water)`)
-// and the surface tone in `water.wgsl`. Keeps the water surface and
-// the underwater vehicle tint in the same hue.
+// and the surface tone in `water.wgsl`.
 const c_UnderwaterColor = vec3<f32>(0.0, 0.0, 200.0 / 255.0);
 // 1 / e-fold depth in world units. ~30 → ~95% blue at 90 units submerged.
 const c_UnderwaterDepthFactor: f32 = 1.0 / 30.0;
@@ -107,13 +144,19 @@ fn color_fs(in: Varyings, @builtin(front_facing) is_front: bool) -> @location(0)
     let tc = clamp(tc_raw, in.palette_range.x + 0.5, in.palette_range.y - 0.5) / 256.0;
     var color = textureSample(t_Palette, s_PaletteSampler, vec2<f32>(tc, 0.5));
 
-    // Underwater tint: vehicles are not aware of the water palette, so
-    // tint per fragment by the depth below the per-instance water level.
-    // Terrain has the water texture baked into its palette already.
-    let submersion = in.water_level - in.position.z;
-    if (submersion > 0.0) {
-        let mix_amount = 1.0 - exp(-submersion * c_UnderwaterDepthFactor);
-        color = vec4<f32>(mix(color.rgb, c_UnderwaterColor, mix_amount), color.a);
+    // Per-fragment underwater tint: only over cells whose low terrain
+    // type is water, and only for fragments whose world Z is below the
+    // per-Y flood level. Half-submerged vehicles get the tint on the
+    // submerged half only. The texture_scale.x > 0 guard is for the
+    // standalone model viewer, which binds a stub surface and disables
+    // the check by zeroing the map size.
+    if (u_Surface.texture_scale.x > 0.0
+        && low_terrain_type_at(in.position.xy) == c_WaterTerrain) {
+        let submersion = flood_z_at(in.position.y) - in.position.z;
+        if (submersion > 0.0) {
+            let mix_amount = 1.0 - exp(-submersion * c_UnderwaterDepthFactor);
+            color = vec4<f32>(mix(color.rgb, c_UnderwaterColor, mix_amount), color.a);
+        }
     }
     return color;
 }

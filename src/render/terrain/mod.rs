@@ -296,7 +296,7 @@ pub struct Flood {
 }
 
 pub struct Context {
-    surface_uni_buf: wgpu::Buffer,
+    pub surface_uni_buf: wgpu::Buffer,
     pub uniform_buf: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
     pub bind_group_layout: wgpu::BindGroupLayout,
@@ -305,7 +305,7 @@ pub struct Context {
     raytrace_geo: Geometry,
     kind: Kind,
     shadow_kind: ShadowKind,
-    terrain_texture: wgpu::Texture,
+    pub terrain_texture: wgpu::Texture,
     palette_texture: wgpu::Texture,
     pub flood: Flood,
     pub dirty_rects: Vec<super::DirtyRect>,

@@ -13,6 +13,7 @@ pub struct ResourceView {
     car: Option<CarContext>,
     global: render::global::Context,
     object: render::object::Context,
+    _stub_surface: render::object::StubSurface,
     transform: space::Transform,
     camera: space::Camera,
     rotation: (f32, f32),
@@ -40,7 +41,14 @@ impl ResourceView {
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
         let global = render::global::Context::new(gfx, None);
-        let object = render::object::Context::new(gfx, camera.front_face(), &pal_data, &global);
+        let stub_surface = render::object::create_stub_surface(&gfx.device);
+        let object = render::object::Context::new(
+            gfx,
+            camera.front_face(),
+            &pal_data,
+            &global,
+            stub_surface.inputs(),
+        );
 
         let (model, car) = if let Some(path_str) = path {
             info!("Loading model {}", path_str);
@@ -84,6 +92,7 @@ impl ResourceView {
             car,
             global,
             object,
+            _stub_surface: stub_surface,
             transform: space::Transform {
                 scale: 1.0,
                 disp: glam::Vec3::Z,
@@ -218,6 +227,7 @@ impl Application for ResourceView {
             pass.set_pipeline(self.object.pipelines.select(render::PipelineKind::Main));
             pass.set_bind_group(0, &self.global.bind_group, &[]);
             pass.set_bind_group(1, &self.object.bind_group, &[]);
+            pass.set_bind_group(2, &self.object.surface_bind_group, &[]);
 
             batcher.draw(&mut pass);
         }
