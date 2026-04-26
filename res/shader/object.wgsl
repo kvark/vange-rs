@@ -14,6 +14,10 @@ struct Geometry {
     @location(3) pos_scale: vec4<f32>,
     @location(4) orientation: vec4<f32>,
     @location(6) body_and_color_id: vec2<u32>,
+    // Per-instance water level (world Z), populated CPU-side from the
+    // flood map at the vehicle's xy. Negative means "no water here", so
+    // the underwater tint never kicks in.
+    @location(7) water_level: f32,
 };
 
 struct BodyGeometry {
@@ -51,6 +55,7 @@ struct Varyings {
     @location(0) palette_range: vec2<f32>,
     @location(1) position: vec3<f32>,
     @location(2) normal: vec3<f32>,
+    @location(3) water_level: f32,
 };
 
 @vertex
@@ -76,12 +81,17 @@ fn color_vs(
         palette_range,
         world,
         world_normal,
+        geo.water_level,
     );
 }
 
 
 @group(0) @binding(1) var s_PaletteSampler: sampler;
 @group(1) @binding(1) var t_Palette: texture_2d<f32>;
+
+const c_UnderwaterColor = vec3<f32>(0.0, 0.1, 0.4);
+// 1 / e-fold depth in world units. ~30 → ~95% blue at 90 units submerged.
+const c_UnderwaterDepthFactor: f32 = 1.0 / 30.0;
 
 @fragment
 fn color_fs(in: Varyings, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
@@ -91,5 +101,15 @@ fn color_fs(in: Varyings, @builtin(front_facing) is_front: bool) -> @location(0)
     let n_dot_l = lit_factor * max(0.0, dot(normal, light));
     let tc_raw = mix(in.palette_range.x, in.palette_range.y, n_dot_l);
     let tc = clamp(tc_raw, in.palette_range.x + 0.5, in.palette_range.y - 0.5) / 256.0;
-    return textureSample(t_Palette, s_PaletteSampler, vec2<f32>(tc, 0.5));
+    var color = textureSample(t_Palette, s_PaletteSampler, vec2<f32>(tc, 0.5));
+
+    // Underwater tint: vehicles are not aware of the water palette, so
+    // tint per fragment by the depth below the per-instance water level.
+    // Terrain has the water texture baked into its palette already.
+    let submersion = in.water_level - in.position.z;
+    if (submersion > 0.0) {
+        let mix_amount = 1.0 - exp(-submersion * c_UnderwaterDepthFactor);
+        color = vec4<f32>(mix(color.rgb, c_UnderwaterColor, mix_amount), color.a);
+    }
+    return color;
 }

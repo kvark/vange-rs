@@ -35,5 +35,5 @@ fn main_fs(in: Varyings) -> @location(0) vec4<f32> {
     };
 
     let lit_factor = select(0.25, 1.0, in.vpos.z > surface.low_alt || surface.low_alt == surface.high_alt);
-    return apply_underwater(evaluate_color(ty, in.vpos.xyz, lit_factor), in.vpos.xyz);
+    return evaluate_color(ty, in.vpos.xyz, lit_factor);
 }
