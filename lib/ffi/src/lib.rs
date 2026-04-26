@@ -295,6 +295,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
                 near: 1.0,
                 far: 100.0,
                 fovy: 45.0f32.to_radians(),
+                focal_px: None,
             }),
         },
         objects_palette,
@@ -335,6 +336,7 @@ pub extern "C" fn rv_camera_init(ctx: &mut Context, desc: CameraDescription) {
         near: desc.near,
         far: desc.far,
         fovy: desc.fov.to_radians(),
+        focal_px: None,
     });
 }
 

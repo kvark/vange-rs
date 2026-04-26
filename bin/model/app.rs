@@ -35,6 +35,7 @@ impl ResourceView {
                 aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
                 near: 5.0,
                 far: 400.0,
+                focal_px: None,
             }),
         };
 

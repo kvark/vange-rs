@@ -68,7 +68,28 @@ pub struct PerspectiveParams {
     pub aspect: f32,
     pub near: f32,
     pub far: f32,
+    /// If `Some`, [`Projection::update`] recomputes `fovy` from this
+    /// focal length (in screen pixels) and the new viewport height,
+    /// matching the original Vangers `focus_flt = 512` formula in
+    /// `road.cpp`. `None` keeps `fovy` fixed across resizes.
+    pub focal_px: Option<f32>,
 }
+
+impl PerspectiveParams {
+    /// Original-Vangers FOV: vertical FOV that places `focal_px` screen
+    /// pixels at the same angular size as one world unit at distance
+    /// `focal_px`. `focus_flt = 512` in the 1998 source.
+    pub fn fov_from_focal_px(focal_px: f32, height_px: f32) -> f32 {
+        2.0 * (0.5 * height_px / focal_px).atan()
+    }
+}
+
+/// Default focal length for camera setup, matching `focus_flt = 512` in
+/// the original Vangers `road.cpp`. Together with the window height
+/// this gives a vertical FOV close to what the 1998 game showed at
+/// equivalent resolutions, which feels less "telephoto" than the prior
+/// fixed 45°.
+pub const DEFAULT_FOCAL_PX: f32 = 512.0;
 
 #[derive(Copy, Clone)]
 pub enum Projection {
@@ -112,6 +133,9 @@ impl Projection {
             }
             Projection::Perspective(ref mut p) => {
                 p.aspect = w as f32 / h as f32;
+                if let Some(focal) = p.focal_px {
+                    p.fovy = PerspectiveParams::fov_from_focal_px(focal, h as f32);
+                }
             }
         }
     }
