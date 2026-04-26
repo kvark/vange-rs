@@ -76,11 +76,17 @@ jobs:
         # past per-elevation failures so all three logs are captured.
         mkdir -p snapshots
         rc=0
+        # voxel-size 4,8,2 instead of the production 2,4,1 — lavapipe
+        # caps `max_storage_buffer_binding_size` at 128 MiB and the
+        # finer grid needs 146 MiB. The coarser grid drops to ~19 MiB
+        # and still exercises every shader/pipeline path; this is a
+        # correctness smoke test, not a quality reference.
         for elev in 30 60 90; do
           set +e
           cargo run --release --bin level -- \
             --snapshot "snapshots/voxel-ci-${elev}.png" \
             --terrain RayVoxelTraced \
+            --voxel-size 4,8,2 \
             --level-zip docs/data-0/fostral.zip \
             --common-zip docs/data-0/common.zip \
             --width 320 --height 240 \
