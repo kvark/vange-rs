@@ -322,7 +322,11 @@ WGSL shaders, compute-based voxel baking</code></pre>
         // Ensure clicking anywhere on the game panel gives focus to
         // the canvas. Without this, clicking the surrounding area
         // (e.g. the controls-hint or empty space) might defocus.
+        // Native <select> dropdowns collapse on focus loss, so we
+        // exempt #level-picker — otherwise clicking it to open the
+        // menu immediately re-focuses the canvas and closes it.
         document.addEventListener('click', function(e) {
+            if (e.target.closest('#level-picker')) return;
             const panel = document.getElementById('game-panel');
             const canvas = document.getElementById('canvas');
             if (panel?.contains(e.target) && canvas && e.target !== canvas) {
@@ -358,11 +362,17 @@ WGSL shaders, compute-based voxel baking</code></pre>
         // common case where the user moves the mouse over the game
         // before pressing keys. On Firefox this is more reliable than
         // the keydown re-dispatch above.
+        // Skip while a form control inside the panel has focus (e.g.
+        // the level picker is open) — otherwise the dropdown closes
+        // the instant the cursor moves while picking a level.
         document.getElementById('game-panel')?.addEventListener(
             'mousemove',
-            function() {
+            function(e) {
+                if (e.target.closest('#level-picker')) return;
+                const active = document.activeElement;
+                if (active && active.tagName === 'SELECT') return;
                 const c = document.getElementById('canvas');
-                if (c && document.activeElement !== c) c.focus();
+                if (c && active !== c) c.focus();
             },
             { passive: true }
         );
