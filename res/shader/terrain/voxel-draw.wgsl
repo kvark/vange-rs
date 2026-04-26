@@ -262,7 +262,11 @@ fn draw_color(@builtin(position) frag_coord: vec4<f32>) -> FragOutput {
 
 struct DebugOutput {
     @builtin(position) pos: vec4<f32>,
-    @location(0) lod: u32,
+    // Integer vertex outputs must be flat-interpolated — WGSL forbids
+    // perspective interpolation of integers. Some validators accept
+    // the implicit form; Chrome's WebGPU validator requires the
+    // attribute explicitly.
+    @location(0) @interpolate(flat) lod: u32,
 }
 
 @vertex

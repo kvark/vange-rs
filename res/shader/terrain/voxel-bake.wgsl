@@ -34,22 +34,30 @@ fn init(
     @builtin(global_invocation_id) global_id: vec3<u32>,
 ) {
     let flat_coords = u_Constants.update_start.xy + vec2<i32>(global_id.xy);
-    if (any(flat_coords >= u_Constants.update_end.xy)) {
-        return;
-    }
+    // We can't `return` early when out of range — the workgroupBarrier
+    // below must be in uniform control flow, i.e. every invocation in
+    // the workgroup must reach it. Instead, skip the per-invocation
+    // work conditionally and keep the barrier at the top level.
+    let in_range = all(flat_coords < u_Constants.update_end.xy);
 
     let vlod = b_VoxelGrid.lods[0];
 
-    if (all(flat_coords % u_Constants.voxel_size.xy == vec2<i32>(0))) {
+    if (in_range && all(flat_coords % u_Constants.voxel_size.xy == vec2<i32>(0))) {
         for(var z = u_Constants.update_start.z; z < u_Constants.update_end.z; z += u_Constants.voxel_size.z) {
             let voxel_coords = vec3<i32>(flat_coords, z) / u_Constants.voxel_size.xyz;
             unset_bit(linearize(vec3<u32>(voxel_coords), vlod));
         }
     }
 
-    let suf = get_surface_impl(flat_coords);
+    var suf: Surface;
+    if (in_range) {
+        suf = get_surface_impl(flat_coords);
+    }
     // All the voxel occupancy bits are unset now, wait until we can set them again.
     workgroupBarrier();
+    if (!in_range) {
+        return;
+    }
 
     for (var z=u_Constants.update_start.z; z < u_Constants.update_end.z; z += u_Constants.voxel_size.z) {
         // Range intersection with the terrain. A voxel is considered
