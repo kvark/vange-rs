@@ -161,8 +161,8 @@ fn cast_ray_to_map(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
     return pt;
 }
 
-fn color_point(pt: CastPoint, lit_factor: f32) -> vec4<f32> {
-    return evaluate_color(pt.ty, pt.pos, lit_factor);
+fn color_point(pt: CastPoint, visibility: f32) -> vec4<f32> {
+    return evaluate_color(pt.ty, pt.pos, visibility);
 }
 
 struct RayInput {
@@ -204,8 +204,8 @@ fn ray_color(in: RayInput) -> FragOutput {
     let view = normalize(sp_far_world - sp_near_world);
     let pt = cast_ray_to_map(sp_near_world, view);
 
-    let lit_factor = fetch_shadow(pt.pos);
-    var frag_color = color_point(pt, lit_factor);
+    let visibility = fetch_shadow_visibility(pt.pos);
+    var frag_color = color_point(pt, visibility);
 
     let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
     let depth = target_ndc.z / target_ndc.w;

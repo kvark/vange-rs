@@ -5,7 +5,12 @@
 
 const c_Ambient: f32 = 0.25;
 
-fn fetch_shadow(pos: vec3<f32>) -> f32 {
+// Raw 4-tap PCF visibility in [0, 1]. Unlike `fetch_shadow`, this does
+// NOT mix in the ambient floor — the caller composes shadow visibility
+// with surface lighting (e.g. cosine diffuse) and adds ambient at the
+// end. Used by terrain shading, where the cosine term needs the raw
+// occlusion value rather than a pre-mixed brightness.
+fn fetch_shadow_visibility(pos: vec3<f32>) -> f32 {
     let flip_correction = vec2<f32>(1.0, -1.0);
 
     if (u_Globals.light_view_proj[3][3] == 0.0) {
@@ -20,17 +25,17 @@ fn fetch_shadow(pos: vec3<f32>) -> f32 {
 
     let light_local = 0.5 * (homogeneous_coords.xy * flip_correction / homogeneous_coords.w + 1.0);
     let depth = homogeneous_coords.z / homogeneous_coords.w;
-    // 4-tap PCF: sample at the four corners of the texel and average.
-    // The hardware comparison sampler does linear filtering between the
-    // depth comparisons inside each tap, so the resulting kernel is
-    // effectively a 3×3 box blur for the cost of 4 samples — a clear
-    // step up from the previous single-tap aliased shadow edges.
     let texel = vec2<f32>(1.0) / vec2<f32>(textureDimensions(t_Shadow));
     var shadow = 0.0;
     shadow += textureSampleCompareLevel(t_Shadow, s_Shadow, light_local + texel * vec2<f32>(-0.5, -0.5), depth);
     shadow += textureSampleCompareLevel(t_Shadow, s_Shadow, light_local + texel * vec2<f32>( 0.5, -0.5), depth);
     shadow += textureSampleCompareLevel(t_Shadow, s_Shadow, light_local + texel * vec2<f32>(-0.5,  0.5), depth);
     shadow += textureSampleCompareLevel(t_Shadow, s_Shadow, light_local + texel * vec2<f32>( 0.5,  0.5), depth);
-    shadow *= 0.25;
-    return mix(c_Ambient, 1.0, shadow);
+    return 0.25 * shadow;
+}
+
+// Convenience wrapper: visibility mixed with the ambient floor. Object
+// and water shaders use this directly as a brightness multiplier.
+fn fetch_shadow(pos: vec3<f32>) -> f32 {
+    return mix(c_Ambient, 1.0, fetch_shadow_visibility(pos));
 }
