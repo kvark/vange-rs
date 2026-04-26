@@ -206,7 +206,6 @@ fn ray_color(in: RayInput) -> FragOutput {
 
     let lit_factor = fetch_shadow(pt.pos);
     var frag_color = color_point(pt, lit_factor);
-    frag_color = apply_underwater(frag_color, pt.pos);
 
     let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
     let depth = target_ndc.z / target_ndc.w;

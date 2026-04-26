@@ -90,6 +90,11 @@ pub struct Instance {
     orientation: [f32; 4],
     shape_scale: f32,
     body_and_color_id: [u32; 2],
+    /// World water level at the vehicle's xy. Filled in by
+    /// `Batcher::set_water_levels` before each frame's draw. A negative
+    /// sentinel means "no water at this xy" so the shader's underwater
+    /// tint stays inactive.
+    water_level: f32,
 }
 unsafe impl Pod for Instance {}
 unsafe impl Zeroable for Instance {}
@@ -102,19 +107,34 @@ impl Instance {
             orientation: gt.orientation,
             shape_scale,
             body_and_color_id: [0, color_id as u32],
+            water_level: f32::NEG_INFINITY,
         }
+    }
+
+    pub fn world_xy(&self) -> [f32; 2] {
+        [self.pos_scale[0], self.pos_scale[1]]
+    }
+
+    pub fn set_water_level(&mut self, level: f32) {
+        self.water_level = level;
     }
 }
 
 #[derive(Copy, Clone)]
 pub struct InstanceDesc {
-    attributes: [wgpu::VertexAttribute; 4],
+    attributes: [wgpu::VertexAttribute; 5],
 }
 
 impl InstanceDesc {
     pub fn new() -> Self {
         InstanceDesc {
-            attributes: wgpu::vertex_attr_array![3 => Float32x4, 4 => Float32x4, 5 => Float32, 6 => Uint32x2],
+            attributes: wgpu::vertex_attr_array![
+                3 => Float32x4,
+                4 => Float32x4,
+                5 => Float32,
+                6 => Uint32x2,
+                7 => Float32,
+            ],
         }
     }
 

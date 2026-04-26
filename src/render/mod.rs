@@ -283,6 +283,33 @@ impl Batcher {
             .push(instance);
     }
 
+    /// Fill in `Instance::water_level` from the level's flood map for
+    /// every queued instance. Must be called before `prepare`, otherwise
+    /// the instance buffer ships the default `f32::NEG_INFINITY`
+    /// (no-water sentinel) and the underwater tint never kicks in.
+    pub fn set_water_levels(&mut self, level: &level::Level) {
+        let flood_count = level.flood_map.len();
+        if flood_count == 0 {
+            return;
+        }
+        let section_y = level.size.1 as f32 / flood_count as f32;
+        let z_scale = level.geometry.height as f32 / 256.0;
+        let compute = |i: &mut object::Instance| {
+            let xy = i.world_xy();
+            let row = (xy[1] / section_y).floor() as i32;
+            let idx = row.rem_euclid(flood_count as i32) as usize;
+            i.set_water_level(level.flood_map[idx] as f32 * z_scale);
+        };
+        for arr in self.instances.values_mut() {
+            for inst in arr.data.iter_mut() {
+                compute(inst);
+            }
+        }
+        for inst in self.debug_instances.iter_mut() {
+            compute(inst);
+        }
+    }
+
     pub fn add_model(
         &mut self,
         model: &model::VisualModel,
@@ -502,6 +529,7 @@ impl Render {
         queue: &wgpu::Queue,
     ) {
         profiling::scope!("draw_world");
+        batcher.set_water_levels(level);
         batcher.prepare(device);
         self.terrain.update_dirty(encoder, level, device);
 
