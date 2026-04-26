@@ -227,8 +227,8 @@ impl Application for ResourceView {
 
             pass.set_pipeline(self.object.pipelines.select(render::PipelineKind::Main));
             pass.set_bind_group(0, &self.global.bind_group, &[]);
-            pass.set_bind_group(1, &self.object.bind_group, &[]);
-            pass.set_bind_group(2, &self.object.surface_bind_group, &[]);
+            pass.set_bind_group(1, &self.object.surface_bind_group, &[]);
+            pass.set_bind_group(2, &self.object.bind_group, &[]);
 
             batcher.draw(&mut pass);
         }
