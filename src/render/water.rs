@@ -93,10 +93,10 @@ impl Context {
         });
         let pipeline = Self::create_pipeline(&pipeline_layout, device, global.color_format);
 
-        let max_vertices = 1000;
+        let initial_vertices = 1024;
         let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("water-vertex"),
-            size: (max_vertices * mem::size_of::<Vertex>()) as wgpu::BufferAddress,
+            size: (initial_vertices * mem::size_of::<Vertex>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -108,7 +108,7 @@ impl Context {
             texture_size: terrain.flood.texture_size,
             section_size: terrain.flood.section_size,
             vertex_buf,
-            vertices: Vec::with_capacity(max_vertices),
+            vertices: Vec::with_capacity(initial_vertices),
         }
     }
 
@@ -129,7 +129,7 @@ impl Context {
         self.vertices.clear();
         let bounds = cam.visible_bounds();
 
-        'outer: for tile_y in tile_range(bounds.start.y, bounds.end.y, self.section_size.1) {
+        for tile_y in tile_range(bounds.start.y, bounds.end.y, self.section_size.1) {
             let flood_id_signed = tile_y % self.texture_size as i32;
             let flood_id = if flood_id_signed < 0 {
                 (flood_id_signed + self.texture_size as i32) as u32
@@ -140,10 +140,6 @@ impl Context {
             let start_y = tile_y as f32 * self.section_size.1 as f32;
             let end_y = start_y + self.section_size.1 as f32;
             for tile_x in tile_range(bounds.start.x, bounds.end.x, self.section_size.0) {
-                if self.vertices.len() + 6 > self.vertices.capacity() {
-                    log::error!("Too many flood tiles are visible!");
-                    break 'outer;
-                }
                 let start_x = tile_x as f32 * self.section_size.0 as f32;
                 let end_x = start_x + self.section_size.0 as f32;
                 let positions = &[
@@ -163,19 +159,33 @@ impl Context {
             }
         }
 
+        if self.vertices.is_empty() {
+            return;
+        }
+
+        let total_size = (self.vertices.len() * mem::size_of::<Vertex>()) as wgpu::BufferAddress;
+
+        // Doubling growth: a wider visible footprint (focal-length FOV
+        // on Khox) can blow past the initial 1024-vertex allocation.
+        if self.vertex_buf.size() < total_size {
+            let mut new_size = self.vertex_buf.size().max(1);
+            while new_size < total_size {
+                new_size *= 2;
+            }
+            self.vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("water-vertex"),
+                size: new_size,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+
         let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("staging flood update"),
             contents: bytemuck::cast_slice(&self.vertices),
             usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
         });
-        let total_size = self.vertices.len() * mem::size_of::<Vertex>();
-        encoder.copy_buffer_to_buffer(
-            &staging,
-            0,
-            &self.vertex_buf,
-            0,
-            total_size as wgpu::BufferAddress,
-        );
+        encoder.copy_buffer_to_buffer(&staging, 0, &self.vertex_buf, 0, total_size);
     }
 
     pub fn draw<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
