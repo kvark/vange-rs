@@ -293,9 +293,28 @@ impl Batcher {
             return;
         }
         let section_y = level.size.1 as f32 / flood_count as f32;
-        let z_scale = level.geometry.height as f32 / 256.0;
+        // Matches the water shader's R8Unorm sampling: byte/255 * height.
+        let z_scale = level.geometry.height as f32 / 255.0;
         let compute = |i: &mut object::Instance| {
             let xy = i.world_xy();
+            // Gate the tint on the cell actually being water-type —
+            // otherwise tunnels (dual-level cells with a non-water floor)
+            // tint blue because the vehicle's z naturally sits below the
+            // per-Y flood level. Mirrors the water-cell pattern in
+            // `physics::mod::collide`.
+            let coord = (xy[0].floor() as i32, xy[1].floor() as i32);
+            let is_water = matches!(
+                level.get(coord),
+                level::Texel::Single(level::Point(_, 0))
+                    | level::Texel::Dual {
+                        low: level::Point(_, 0),
+                        ..
+                    }
+            );
+            if !is_water {
+                i.set_water_level(f32::NEG_INFINITY);
+                return;
+            }
             let row = (xy[1] / section_y).floor() as i32;
             let idx = row.rem_euclid(flood_count as i32) as usize;
             i.set_water_level(level.flood_map[idx] as f32 * z_scale);
