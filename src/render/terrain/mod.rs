@@ -55,6 +55,10 @@ struct Constants {
     fog_color: [f32; 3],
     pad: f32,
     fog_params: [f32; 4],
+    /// `[0]` = lighting mode. 0 = baked palette gradient (original
+    /// Vangers look), 1 = unbaked albedo + cosine diffuse + shadow.
+    /// The remaining slots are reserved.
+    lighting_flags: [u32; 4],
 }
 unsafe impl Pod for Constants {}
 unsafe impl Zeroable for Constants {}
@@ -312,6 +316,10 @@ pub struct Context {
     pub dirty_flood: bool,
     pub dirty_palette: Range<u32>,
     active_surface_constants: SurfaceConstants,
+    /// `false` (default) → original baked-palette lighting; `true` →
+    /// unbaked albedo + explicit cosine diffuse + shadow visibility.
+    /// Wired into `evaluate_color` via `Locals::lighting_flags`.
+    pub unbaked_lighting: bool,
 }
 
 impl Context {
@@ -1443,6 +1451,10 @@ impl Context {
                 pad0: 0,
                 pad1: 0,
             },
+            // Default to unbaked diffuse + shadow — matches the look
+            // we tuned in the cosine-lighting commit. Toggle in the UI
+            // to A/B against the original baked-palette path.
+            unbaked_lighting: true,
         }
     }
 
@@ -1882,6 +1894,7 @@ impl Context {
                     fog_color: fog.color,
                     pad: 1.0,
                     fog_params: [depth_range.end - fog.depth, depth_range.end, 0.0, 0.0],
+                    lighting_flags: [self.unbaked_lighting as u32, 0, 0, 0],
                 }),
                 usage: wgpu::BufferUsages::COPY_SRC,
             });
@@ -1991,6 +2004,7 @@ impl Context {
                     fog_color: [0.0; 3],
                     pad: 1.0,
                     fog_params: [10000000.0, 10000000.0, 0.0, 0.0],
+                    lighting_flags: [self.unbaked_lighting as u32, 0, 0, 0],
                 }),
                 usage: wgpu::BufferUsages::COPY_SRC,
             });
@@ -2127,6 +2141,10 @@ impl Context {
     }
 
     pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(
+            &mut self.unbaked_lighting,
+            "Unbaked diffuse + shadow (terrain)",
+        );
         match self.kind {
             Kind::RayVoxel(ref mut rv) => {
                 ui.add(egui::Slider::new(&mut rv.max_outer_steps, 0..=100).text("Max outer steps"));

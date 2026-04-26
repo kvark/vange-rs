@@ -71,20 +71,37 @@ fn evaluate_color_id(ty: u32, pos: vec3<f32>, lit_factor: f32) -> f32 {
     return evaluate_palette(ty, lit_factor * tmp);
 }
 
-// Original Vangers baked diffuse + altitude shading into the palette
-// gradient and into the colormap itself, with `evaluate_color_id`
-// preserved here for the scatter compute that still needs a 0..1 ramp.
+// Two lighting paths, switched at runtime via `u_Locals.lighting_flags.x`:
+//   0 = baked    — the original Vangers approach: lighting (cell-to-cell
+//                  diff, altitude attenuation, shadow) is folded into a
+//                  brightness value 0..1, which is then mapped to the
+//                  per-terrain palette gradient. Faithful to the 1998
+//                  look but the palette gradient itself acts as the
+//                  lighting ramp, so our shadow map mostly compresses
+//                  the gradient instead of darkening the surface.
+//   1 = unbaked  — sample the brightest entry of the terrain's gradient
+//                  as the unshaded albedo, then apply shadow * cosine
+//                  diffuse explicitly: base * (ambient + (1-ambient) *
+//                  visibility * n·l). Real shadow contribution; flat
+//                  surfaces no longer get the gradient's mid-tone for
+//                  free.
 //
-// For the live render we now use the brightest entry of each terrain's
-// gradient as the unshaded base color, then apply our own shadow +
-// cosine diffuse on top. This gives consistent lighting across all
-// surface orientations and lets the shadow map actually darken
-// terrain (the previous approach mostly amplified the baked gradient).
+// The toggle lives on the terrain "Locals" uniform so it costs one
+// branch on a uniform value (no dynamic divergence), and lets us A/B
+// the two looks at runtime.
 fn evaluate_color(ty: u32, pos: vec3<f32>, shadow_visibility: f32) -> vec4<f32> {
     let terr = vec4<f32>(textureLoad(t_Table, vec2<i32>(i32(ty), 0), 0));
-    let base_id = (terr.w - 0.5) / 256.0;
-    // textureSampleLevel — the caller may be inside non-uniform control
-    // flow (voxel-draw early-outs).
+    if (u_Locals.lighting_flags.x == 0u) {
+        let lit_factor = mix(c_TerrainAmbient, 1.0, shadow_visibility);
+        let color_id = evaluate_color_id(ty, pos, lit_factor);
+        return textureSampleLevel(t_Palette, s_Palette, vec2<f32>(color_id, 0.5), 0.0);
+    }
+
+    // Brightest gradient entry for this terrain. terr.w is the
+    // inclusive max palette index (see `TerrainConfig::colors`), so the
+    // texel center sits at (terr.w + 0.5) / 256 — same convention as
+    // `evaluate_palette` for value=1.
+    let base_id = (terr.w + 0.5) / 256.0;
     let base = textureSampleLevel(t_Palette, s_Palette, vec2<f32>(base_id, 0.5), 0.0);
 
     // Surface normal from a 2-cell-wide central-difference height
