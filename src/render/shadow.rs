@@ -45,23 +45,32 @@ impl Shadow {
 
     fn get_local_point(&self, world_pt: Vec3) -> Vec3 {
         let diff = world_pt - self.cam.loc;
+        // `cam.rot` is local→world (matches the rest of the codebase),
+        // so the world→local rotation is its inverse.
         self.cam.rot.inverse() * diff
     }
 
     pub(super) fn update_view(&mut self, light_pos: &[f32; 4], cam: &Camera, max_height: f32) {
-        let dir = Vec3::new(light_pos[0], light_pos[1], light_pos[2]);
-        let up = if dir.x == 0.0 && dir.y == 0.0 {
+        // Light direction in world space — `light_pos.xyz` is the
+        // direction *to* the sun, so the camera looks back along it.
+        let to_sun = Vec3::new(light_pos[0], light_pos[1], light_pos[2]).normalize();
+        let up = if to_sun.x == 0.0 && to_sun.y == 0.0 {
             Vec3::Y
         } else {
             Vec3::Z
         };
 
-        // Build rotation matrix looking along dir
-        let forward = dir.normalize();
+        // Camera convention is local -Z = view direction. The shadow
+        // camera looks *from* the sun *toward* the scene, i.e. opposite
+        // the to-sun vector.
+        let forward = -to_sun;
         let right = forward.cross(up).normalize();
         let up_corrected = right.cross(forward);
-        self.cam.rot =
-            Quat::from_mat3(&glam::Mat3::from_cols(right, up_corrected, -forward)).inverse();
+        // Mat3 cols are local axes in world coordinates → local→world,
+        // which is exactly what `cam.rot` stores. The previous code
+        // wrapped this in `.inverse()`, leaving cam.rot as world→local
+        // and causing the shadow render to project in the wrong frame.
+        self.cam.rot = Quat::from_mat3(&glam::Mat3::from_cols(right, up_corrected, -forward));
         self.cam.loc = cam.intersect_height(0.0);
 
         let mut p = OrthoParams {
@@ -74,8 +83,10 @@ impl Shadow {
         };
 
         // in addition to the camera bound, we need to include
-        // all the potential occluders nearby
-        let mut offset = dir * (max_height / dir.z);
+        // all the potential occluders nearby — extend the bounds in the
+        // to-sun direction so a tall column behind the visible region
+        // can still cast a shadow into it.
+        let mut offset = to_sun * (max_height / to_sun.z);
         offset.z = 0.0;
 
         let points_lo = cam.bound_points(0.0);
