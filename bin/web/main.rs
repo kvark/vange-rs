@@ -363,12 +363,13 @@ impl WebApp {
     fn load_settings() -> settings::Settings {
         let mut s: settings::Settings =
             ron::de::from_str(Self::SETTINGS_RON).expect("Failed to parse embedded settings.ron");
-        // Apply a 0.75x vertical scale to the web build. True 3D
-        // heightmap rendering otherwise looks taller than original
-        // Vangers (which projected the heightmap as a flat shaded
-        // plane); 0.75 brings the silhouette much closer to the 1998
-        // look without flattening the terrain.
-        s.game.geometry.height = (s.game.geometry.height * 3) / 4;
+        // Vertical heightmap scale for the web build. True 3D heightmap
+        // rendering looks taller than original Vangers (which projected
+        // the heightmap as a flat shaded plane); 0xA0/0x100 = 0.625
+        // brings the silhouette close to the 1998 look without
+        // flattening it. Hard-coded here so native + the FFI keep the
+        // settings.ron default (0x100).
+        s.game.geometry.height = 0xA0;
         s
     }
 
