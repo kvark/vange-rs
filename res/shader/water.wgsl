@@ -31,5 +31,10 @@ fn main_fs(in: Varyings) -> @location(0) vec4<f32> {
     let view = normalize(in.world_pos - u_Globals.camera_pos.xyz);
     //TODO: screen-space reflections
     //TODO: read the depth texture to find out actual transparency
-    return vec4<f32>(shadow * c_WaterColor, 1.0 + 0.9*view.z);
+    // Reduced base opacity (1.0 → 0.7) so the underwater terrain tint
+    // from `apply_underwater` actually shows through the water quad at
+    // intermediate viewing angles. Top-down stays mostly transparent;
+    // horizontal stays semi-opaque but no longer fully blocks the
+    // underwater colour.
+    return vec4<f32>(shadow * c_WaterColor, 0.7 + 0.7 * view.z);
 }
