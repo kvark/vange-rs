@@ -106,11 +106,14 @@ impl LevelView {
             scale: glam::Vec3::new(1.0, -1.0, 1.0),
             proj: match settings.game.camera.projection {
                 config::settings::Projection::Perspective => {
+                    let h = settings.window.size[1] as f32;
+                    let focal = space::DEFAULT_FOCAL_PX;
                     let pf = space::PerspectiveParams {
-                        fovy: 45.0f32.to_radians(),
-                        aspect: settings.window.size[0] as f32 / settings.window.size[1] as f32,
+                        fovy: space::PerspectiveParams::fov_from_focal_px(focal, h),
+                        aspect: settings.window.size[0] as f32 / h,
                         near: depth.0,
                         far: depth.1,
+                        focal_px: Some(focal),
                     };
                     space::Projection::Perspective(pf)
                 }

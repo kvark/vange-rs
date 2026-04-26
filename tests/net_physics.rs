@@ -48,6 +48,7 @@ fn make_camera(transform: &space::Transform) -> space::Camera {
             aspect: 4.0 / 3.0,
             near: 10.0,
             far: 2000.0,
+            focal_px: None,
         }),
     };
     // Warm up the camera follow so it starts at rest

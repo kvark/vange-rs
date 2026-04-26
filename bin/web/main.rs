@@ -401,12 +401,17 @@ impl WebApp {
             loc: glam::vec3(0.0, 0.0, 200.0),
             rot: glam::Quat::IDENTITY,
             scale: glam::vec3(1.0, -1.0, 1.0),
-            proj: space::Projection::Perspective(space::PerspectiveParams {
-                fovy: 45.0f32.to_radians(),
-                aspect: gfx.screen_size.width as f32 / gfx.screen_size.height.max(1) as f32,
-                near: cam_config.depth_range.0,
-                far: cam_config.depth_range.1,
-            }),
+            proj: {
+                let h = gfx.screen_size.height.max(1) as f32;
+                let focal = space::DEFAULT_FOCAL_PX;
+                space::Projection::Perspective(space::PerspectiveParams {
+                    fovy: space::PerspectiveParams::fov_from_focal_px(focal, h),
+                    aspect: gfx.screen_size.width as f32 / h,
+                    near: cam_config.depth_range.0,
+                    far: cam_config.depth_range.1,
+                    focal_px: Some(focal),
+                })
+            },
         };
 
         // On WebGPU, override terrain to RayVoxelTraced (needs compute).

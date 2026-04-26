@@ -91,12 +91,17 @@ fn make_camera(opts: &SnapshotOptions) -> space::Camera {
         loc: cam_loc,
         rot,
         scale: Vec3::new(1.0, -1.0, 1.0),
-        proj: space::Projection::Perspective(space::PerspectiveParams {
-            fovy: 45.0f32.to_radians(),
-            aspect: opts.width as f32 / opts.height.max(1) as f32,
-            near: 10.0,
-            far: 4000.0,
-        }),
+        proj: {
+            let h = opts.height.max(1) as f32;
+            let focal = space::DEFAULT_FOCAL_PX;
+            space::Projection::Perspective(space::PerspectiveParams {
+                fovy: space::PerspectiveParams::fov_from_focal_px(focal, h),
+                aspect: opts.width as f32 / h,
+                near: 10.0,
+                far: 4000.0,
+                focal_px: Some(focal),
+            })
+        },
     }
 }
 
