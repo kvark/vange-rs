@@ -16,7 +16,12 @@ jobs:
     - uses: actions/checkout@v4
     - run: cargo check
     - run: cargo clippy --workspace -- -D warnings
-    - run: cargo test --all
+    # Exclude vangers-server here — its integration tests bind TCP
+    # ports and race when run in parallel under `--all`. The
+    # `multiplayer` job below runs them with `--test-threads=1`.
+    # `--nocapture` keeps test stdout in the build log so we can
+    # actually see assertion failures next time something goes wrong.
+    - run: cargo test --workspace --exclude vangers-server -- --nocapture
 
   snapshot:
     name: Snapshot tests (lavapipe)
