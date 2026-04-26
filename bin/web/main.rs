@@ -62,6 +62,37 @@ extern "C" {
     fn js_selected_level() -> Result<JsValue, JsValue>;
 }
 
+/// Khox is the smallest stock level (2048 × 8192) and the only one
+/// that fits in an 8192-px texture. Used as the fallback when the
+/// adapter can't allocate a 16384-px texture for the larger levels.
+const SMALL_LEVEL: &str = "khox";
+
+/// Largest map dimension the stock big levels expect (Fostral, Glorx,
+/// Necross, etc. are 2048 × 16384). If the adapter can't go this high
+/// we have to fall back to a smaller level.
+const LARGE_LEVEL_TEXTURE_DIM: u32 = 16384;
+
+/// If the adapter can't allocate a [`LARGE_LEVEL_TEXTURE_DIM`] texture,
+/// override the selection to [`SMALL_LEVEL`] and tell the user why.
+/// Returns the (possibly substituted) level id.
+fn pick_level_for_adapter(requested: String, max_texture_dim: u32) -> String {
+    if max_texture_dim >= LARGE_LEVEL_TEXTURE_DIM || requested == SMALL_LEVEL {
+        return requested;
+    }
+    let msg = format!(
+        "GPU caps texture dimension at {} px; the big levels need {} px. Loading {} instead.",
+        max_texture_dim, LARGE_LEVEL_TEXTURE_DIM, SMALL_LEVEL
+    );
+    log::warn!(
+        "Substituting '{}' for requested level '{}' ({})",
+        SMALL_LEVEL,
+        requested,
+        msg
+    );
+    let _ = js_progress_error(&msg);
+    SMALL_LEVEL.to_string()
+}
+
 /// Read the selected level id from JS (set by the level picker UI),
 /// falling back to the URL fragment `#level=<id>`, then to
 /// [`DEFAULT_LEVEL`].
@@ -983,7 +1014,9 @@ impl ApplicationHandler for WebHandler {
 
             // Best-effort fetch of release data. On any failure we
             // fall back to the procedural test level.
-            let level_id = selected_level_id();
+            let requested = selected_level_id();
+            let level_id =
+                pick_level_for_adapter(requested, adapter.limits().max_texture_dimension_2d);
             log::info!("Selected level: {}", level_id);
             let vfs_level = fetch_release_level(&level_id).await;
 
