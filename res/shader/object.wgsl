@@ -1,4 +1,4 @@
-//!include body.inc globals.inc quat.inc shadow.inc
+//!include body.inc globals.inc quat.inc shadow.inc surface.inc
 
 const c_BodyColorId: u32 = 1u;
 
@@ -8,7 +8,17 @@ struct Storage {
 
 @group(0) @binding(2) var<storage, read> s_Storage: Storage;
 
-@group(1) @binding(0) var t_ColorTable: texture_2d<u32>;
+// Per-Y water level. Lives on the same bind group as the surface
+// uniforms / terrain meta (@group(1)) — these are all bound from the
+// terrain pipeline, or from the model-viewer stub.
+@group(1) @binding(4) var t_Flood: texture_2d<f32>;
+
+// Object-local resources: per-color lookup, palette texture, sampler.
+@group(2) @binding(0) var t_ColorTable: texture_2d<u32>;
+@group(2) @binding(1) var t_Palette: texture_2d<f32>;
+// Palette sampler comes from globals — this group's binding 2 is the
+// `NonFiltering` colour-table sampler used only by the vertex stage.
+@group(0) @binding(1) var s_PaletteSampler: sampler;
 
 struct Geometry {
     @location(3) pos_scale: vec4<f32>,
@@ -79,45 +89,13 @@ fn color_vs(
     );
 }
 
-
-@group(0) @binding(1) var s_PaletteSampler: sampler;
-@group(1) @binding(1) var t_Palette: texture_2d<f32>;
-
-// Surface bindings, shared with the terrain pipeline so we can decide
-// per-fragment whether the vehicle is over a water cell, and at what
-// world Z that cell's water surface sits.
-struct SurfaceConstants {
-    texture_scale: vec4<f32>,
-    terrain_bits: u32,
-    delta_mode: u32,
-};
-@group(2) @binding(0) var<uniform> u_Surface: SurfaceConstants;
-@group(2) @binding(2) var t_Terrain: texture_2d<u32>;
-@group(2) @binding(4) var t_Flood: texture_2d<f32>;
-
-const c_DoubleLevelMask: u32 = 64u;
 const c_WaterTerrain: u32 = 0u;
 
-fn get_terrain_type(meta_data: u32) -> u32 {
-    let bits = u_Surface.terrain_bits;
-    return (meta_data >> (bits & 0xFu)) & (bits >> 4u);
-}
-
-// Returns the cell's low-layer terrain type at the given world xy. The
-// "low" layer matches what `physics::mod::collide` uses for water
-// detection, so vehicles in dual-level tunnel cells with a non-water
-// floor stay dry.
-fn low_terrain_type_at(world_xy: vec2<f32>) -> u32 {
-    let wrapped = world_xy - floor(world_xy / u_Surface.texture_scale.xy) * u_Surface.texture_scale.xy;
-    let tci = vec2<i32>(wrapped);
-    let data = textureLoad(t_Terrain, vec2<i32>(tci.x / 2, tci.y), 0);
-    if ((data.y & c_DoubleLevelMask) != 0u) {
-        return get_terrain_type(data.y);
-    }
-    let subdata = select(data.xy, data.zw, (tci.x & 1) != 0);
-    return get_terrain_type(subdata.y);
-}
-
+// Per-Y flood map sample, scaled into world Z. Mirrors the formula in
+// `water.wgsl::main_vs`. Sampling a 1×1 stub texture (model viewer)
+// returns 0; a stub `texture_scale.z = 0` then keeps the resulting
+// water Z at 0, which makes the fragment-side submersion check a
+// no-op for vehicles above ground.
 fn flood_z_at(world_y: f32) -> f32 {
     let dim = textureDimensions(t_Flood);
     let section_y = u_Surface.texture_scale.y / f32(dim.x);
@@ -144,19 +122,16 @@ fn color_fs(in: Varyings, @builtin(front_facing) is_front: bool) -> @location(0)
     let tc = clamp(tc_raw, in.palette_range.x + 0.5, in.palette_range.y - 0.5) / 256.0;
     var color = textureSample(t_Palette, s_PaletteSampler, vec2<f32>(tc, 0.5));
 
-    // Per-fragment underwater tint: only over cells whose low terrain
-    // type is water, and only for fragments whose world Z is below the
-    // per-Y flood level. Half-submerged vehicles get the tint on the
-    // submerged half only. The texture_scale.x > 0 guard is for the
-    // standalone model viewer, which binds a stub surface and disables
-    // the check by zeroing the map size.
-    if (u_Surface.texture_scale.x > 0.0
-        && low_terrain_type_at(in.position.xy) == c_WaterTerrain) {
-        let submersion = flood_z_at(in.position.y) - in.position.z;
-        if (submersion > 0.0) {
-            let mix_amount = 1.0 - exp(-submersion * c_UnderwaterDepthFactor);
-            color = vec4<f32>(mix(color.rgb, c_UnderwaterColor, mix_amount), color.a);
-        }
+    // Per-fragment underwater tint. All texture fetches happen at
+    // uniform top level — only the *blend* is conditional. The cell's
+    // low terrain type comes from the shared surface helper; the per-Y
+    // water level from the flood map.
+    let surface = get_surface(in.position.xy);
+    let water_z = flood_z_at(in.position.y);
+    let submersion = water_z - in.position.z;
+    if (surface.low_type == c_WaterTerrain && submersion > 0.0) {
+        let mix_amount = 1.0 - exp(-submersion * c_UnderwaterDepthFactor);
+        color = vec4<f32>(mix(color.rgb, c_UnderwaterColor, mix_amount), color.a);
     }
     return color;
 }

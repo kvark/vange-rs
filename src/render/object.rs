@@ -156,10 +156,17 @@ pub struct StubSurface {
 pub fn create_stub_surface(device: &wgpu::Device) -> StubSurface {
     use wgpu::util::DeviceExt as _;
 
-    let zero_uniform = [0u8; 32];
+    // SurfaceConstants layout: vec4 texture_scale, u32 terrain_bits,
+    // u32 delta_mode, u32 pad0, u32 pad1. We need texture_scale.x and
+    // .y to be non-zero so the shader's wrap math doesn't divide by 0,
+    // and texture_scale.z = 0 so the flood-fed water Z stays at 0
+    // (keeps the underwater check inert for vehicles above ground).
+    let mut bytes = [0u8; 32];
+    bytes[0..4].copy_from_slice(&1.0f32.to_ne_bytes()); // texture_scale.x
+    bytes[4..8].copy_from_slice(&1.0f32.to_ne_bytes()); // texture_scale.y
     let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Stub surface uniforms"),
-        contents: &zero_uniform,
+        contents: &bytes,
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let make_view = |label, format| {
@@ -482,14 +489,18 @@ impl Context {
             ],
         });
 
+        // Surface goes at @group(1) so the object shader can `//!include
+        // surface.inc` directly (it hard-codes group 1 to match the
+        // terrain and water pipelines). Object-local resources move to
+        // @group(2).
         let pipeline_layout = gfx
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("object"),
                 bind_group_layouts: &[
                     Some(&global.bind_group_layout),
-                    Some(&bind_group_layout),
                     Some(&surface_bind_group_layout),
+                    Some(&bind_group_layout),
                 ],
                 immediate_size: 0,
             });

@@ -568,8 +568,8 @@ impl Render {
 
             pass.push_debug_group("vehicles");
             pass.set_pipeline(&self.object.pipelines.shadow);
-            pass.set_bind_group(1, &self.object.bind_group, &[]);
-            pass.set_bind_group(2, &self.object.surface_bind_group, &[]);
+            pass.set_bind_group(1, &self.object.surface_bind_group, &[]);
+            pass.set_bind_group(2, &self.object.bind_group, &[]);
             batcher.draw(&mut pass);
             pass.pop_debug_group();
         }
@@ -640,8 +640,8 @@ impl Render {
 
             pass.push_debug_group("vehicles");
             pass.set_pipeline(&self.object.pipelines.main);
-            pass.set_bind_group(1, &self.object.bind_group, &[]);
-            pass.set_bind_group(2, &self.object.surface_bind_group, &[]);
+            pass.set_bind_group(1, &self.object.surface_bind_group, &[]);
+            pass.set_bind_group(2, &self.object.bind_group, &[]);
             batcher.draw(&mut pass);
             pass.pop_debug_group();
 
