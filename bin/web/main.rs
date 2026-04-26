@@ -365,11 +365,18 @@ impl WebApp {
             ron::de::from_str(Self::SETTINGS_RON).expect("Failed to parse embedded settings.ron");
         // Vertical heightmap scale for the web build. True 3D heightmap
         // rendering looks taller than original Vangers (which projected
-        // the heightmap as a flat shaded plane); 0xA0/0x100 = 0.625
+        // the heightmap as a flat shaded plane); 0x80/0x100 = 0.5
         // brings the silhouette close to the 1998 look without
         // flattening it. Hard-coded here so native + the FFI keep the
         // settings.ron default (0x100).
-        s.game.geometry.height = 0xA0;
+        s.game.geometry.height = 0x80;
+        // The focal-length FOV is wider than the legacy 45° default,
+        // so the template's 2000-unit far plane clipped terrain near
+        // the top of the screen. Push it out and widen the fog band
+        // proportionally so the new horizon still fades smoothly
+        // instead of cutting hard at the far plane.
+        s.game.camera.depth_range = (10.0, 6000.0);
+        s.render.fog.depth = 1000.0;
         s
     }
 
