@@ -762,53 +762,48 @@ impl ApplicationHandler for WebHandler {
         let init_future = {
             let window_clone = window.clone();
             async move {
-                // Try WebGPU first — it supports compute shaders needed
-                // for RayVoxelTraced terrain. Fall back to WebGL2 which
-                // only supports RayTraced (fragment-only) rendering.
-                //
-                // The adapter request is part of the per-backend probe:
-                // creating a `wgpu::Instance` with `BROWSER_WEBGPU`
-                // succeeds even when the browser has WebGPU disabled —
-                // it's `request_adapter` that returns `None`. Doing the
-                // probe only at instance level meant we picked WebGPU,
-                // then panicked at the unwrap below.
-                async fn try_backend(
-                    backends: wgpu::Backends,
-                    window: Arc<Window>,
-                ) -> Option<(wgpu::Instance, wgpu::Surface<'static>, wgpu::Adapter)>
+                // A single Instance with both backends. The earlier
+                // probe-then-fallback strategy failed in browsers with
+                // WebGPU disabled: probing WebGPU first calls
+                // `canvas.getContext('webgpu')` (which puts the canvas
+                // into "webgpu" mode for its lifetime, even if it
+                // returns null), so the subsequent WebGL2 probe's
+                // `getContext('webgl2')` returned null too. Letting
+                // wgpu pick a backend at `request_adapter` time keeps
+                // the canvas untouched until we know which one we'll
+                // actually use, and the `compatible_surface` hint lets
+                // it select either webgpu or webgl2 cleanly.
+                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
+                    ..wgpu::InstanceDescriptor::new_without_display_handle()
+                });
+                let surface = instance
+                    .create_surface(window_clone.clone())
+                    .expect("Failed to create the canvas surface");
+                let adapter = match instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        compatible_surface: Some(&surface),
+                        force_fallback_adapter: false,
+                    })
+                    .await
                 {
-                    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                        backends,
-                        ..wgpu::InstanceDescriptor::new_without_display_handle()
-                    });
-                    let surface = instance.create_surface(window).ok()?;
-                    let adapter = instance
-                        .request_adapter(&wgpu::RequestAdapterOptions {
-                            power_preference: wgpu::PowerPreference::HighPerformance,
-                            compatible_surface: Some(&surface),
-                            force_fallback_adapter: false,
-                        })
-                        .await
-                        .ok()?;
-                    Some((instance, surface, adapter))
-                }
-
-                let (instance, surface, adapter, is_webgpu) = if let Some((i, s, a)) =
-                    try_backend(wgpu::Backends::BROWSER_WEBGPU, window_clone.clone()).await
-                {
-                    log::info!("Using WebGPU backend");
-                    (i, s, a, true)
-                } else if let Some((i, s, a)) =
-                    try_backend(wgpu::Backends::GL, window_clone.clone()).await
-                {
-                    log::info!("WebGPU unavailable, falling back to WebGL2");
-                    (i, s, a, false)
-                } else {
-                    let _ = js_progress_error(
-                        "No GPU adapter available — enable WebGPU or WebGL2 in the browser",
-                    );
-                    panic!("No GPU adapter available");
+                    Ok(a) => a,
+                    Err(e) => {
+                        let msg = format!(
+                            "No GPU adapter available — enable WebGPU or WebGL2 in the browser ({:?})",
+                            e
+                        );
+                        let _ = js_progress_error(&msg);
+                        panic!("{}", msg);
+                    }
                 };
+                let is_webgpu = adapter.get_info().backend == wgpu::Backend::BrowserWebGpu;
+                if is_webgpu {
+                    log::info!("Using WebGPU backend");
+                } else {
+                    log::info!("WebGPU unavailable, using WebGL2");
+                }
 
                 let adapter_limits = adapter.limits();
                 let required_limits = if is_webgpu {
