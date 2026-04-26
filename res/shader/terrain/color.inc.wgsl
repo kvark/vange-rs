@@ -67,5 +67,9 @@ fn evaluate_color_id(ty: u32, pos: vec3<f32>, lit_factor: f32) -> f32 {
 
 fn evaluate_color(ty: u32, pos: vec3<f32>, lit_factor: f32) -> vec4<f32> {
     let color_id = evaluate_color_id(ty, pos, lit_factor);
-    return textureSample(t_Palette, s_Palette, vec2<f32>(color_id, 0.5));
+    // textureSampleLevel keeps the call valid even when the caller is
+    // inside non-uniform control flow (e.g. ray-cast early-outs in the
+    // voxel draw shader). The palette has a single mip level, so an
+    // explicit LOD of 0 matches the implicit-derivative result.
+    return textureSampleLevel(t_Palette, s_Palette, vec2<f32>(color_id, 0.5), 0.0);
 }
