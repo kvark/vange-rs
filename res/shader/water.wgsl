@@ -5,7 +5,11 @@
 @group(1) @binding(8) var s_Flood: sampler;
 
 const c_TerrainWater = 0u;
-const c_WaterColor = vec3<f32>(0.0, 0.1, 0.4);
+// Matches the codebase's documented fallback water tone in
+// `src/level/mod.rs::load` (`0 => (0.0, 0.0, 200.0), // blue (water)`),
+// scaled to 0..1. Cleaner medium-blue than the previous teal-leaning
+// `(0.0, 0.1, 0.4)` value.
+const c_WaterColor = vec3<f32>(0.0, 0.0, 200.0 / 255.0);
 
 struct Varyings {
     @builtin(position) clip_pos: vec4<f32>,

@@ -89,7 +89,11 @@ fn color_vs(
 @group(0) @binding(1) var s_PaletteSampler: sampler;
 @group(1) @binding(1) var t_Palette: texture_2d<f32>;
 
-const c_UnderwaterColor = vec3<f32>(0.0, 0.1, 0.4);
+// Matches the documented fallback water tint from
+// `src/level/mod.rs::load` (`0 => (0.0, 0.0, 200.0), // blue (water)`)
+// and the surface tone in `water.wgsl`. Keeps the water surface and
+// the underwater vehicle tint in the same hue.
+const c_UnderwaterColor = vec3<f32>(0.0, 0.0, 200.0 / 255.0);
 // 1 / e-fold depth in world units. ~30 → ~95% blue at 90 units submerged.
 const c_UnderwaterDepthFactor: f32 = 1.0 / 30.0;
 
