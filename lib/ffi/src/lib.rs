@@ -205,6 +205,12 @@ fn crate_main_views(
     (color_view, depth_view)
 }
 
+
+#[no_mangle]
+pub extern "C" fn rv_api_version() -> i32 {
+    rv_api_3
+}
+
 #[no_mangle]
 pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>> {
     #[cfg(feature = "env_logger")]
@@ -251,7 +257,10 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
     }
     .expect("GL adapter can't be initialized");
 
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::empty(),
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
     let adapter = unsafe { instance.create_adapter_from_hal(exposed) };
     let limits = render_config.get_device_limits(&adapter.limits(), geometry_config.height);
 
