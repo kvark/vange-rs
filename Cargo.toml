@@ -77,11 +77,8 @@ env_logger = "0.11"
 clap = { version = "4", features = ["derive"] }
 obj = "0.10"
 png = "0.18"
-winit = "0.30"
 # gui
 egui = "0.34"
-egui-winit = { version = "0.34", default-features = false, features = ["links", "wayland", "x11"] }
-egui-wgpu = { version = "0.34", default-features = false }
 # web
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
@@ -99,3 +96,8 @@ naga = { version = "29", features = ["wgsl-in"] }
 [dependencies.profiling]
 version = "1.0"
 default-features = false
+
+[target.'cfg(not(target_os = "emscripten"))'.dependencies]
+winit = "0.30"
+egui-winit = { version = "0.34", default-features = false, features = ["links", "wayland", "x11"] }
+egui-wgpu = { version = "0.34", default-features = false }
