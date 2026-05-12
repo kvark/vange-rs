@@ -943,6 +943,9 @@ impl Application for Game {
             .unwrap();
         let mut selected_car = &player.car_name;
 
+        let connect_car_name = player.car_name.clone();
+        let connect_car_color = player.color as u8;
+
         #[allow(deprecated)]
         egui::SidePanel::right("Tweaks").show(context, |ui| {
             ui.group(|ui| {
@@ -1027,17 +1030,8 @@ impl Application for Game {
                 ui.label("Renderer:");
                 self.render.draw_ui(ui);
             });
-        });
-
-        if selected_car != &player.car_name {
-            let name = selected_car.clone();
-            player.change_car(&self.db.cars[&name], name);
-        }
-
-        // Multiplayer panel
-        egui::Window::new("Multiplayer")
-            .default_open(false)
-            .show(context, |ui| {
+            ui.group(|ui| {
+                ui.label("Multiplayer:");
                 if self.mp_state.connected {
                     ui.label(format!("Connected to {}", self.mp_state.server_addr));
                     if let Some(ref net) = self.net
@@ -1062,16 +1056,11 @@ impl Application for Game {
                         ui.text_edit_singleline(&mut self.mp_state.player_name);
                     });
                     if ui.button("Connect").clicked() {
-                        let player = self
-                            .agents
-                            .iter()
-                            .find(|a| a.spirit == Spirit::Player)
-                            .unwrap();
                         self.net = Some(NetworkClient::connect(
                             &self.mp_state.server_addr,
                             &self.mp_state.player_name,
-                            &player.car_name,
-                            player.color as u8,
+                            &connect_car_name,
+                            connect_car_color,
                         ));
                         self.mp_state.connected = true;
                         self.mp_state.status = "Connecting...".to_string();
@@ -1081,6 +1070,14 @@ impl Application for Game {
                     ui.label(&self.mp_state.status);
                 }
             });
+        });
+
+        if selected_car != &player.car_name {
+            let name = selected_car.clone();
+            player.change_car(&self.db.cars[&name], name);
+        }
+
+        
     }
 
     fn draw(

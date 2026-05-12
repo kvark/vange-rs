@@ -6,41 +6,28 @@
     <title>Vangers – Rust WebGPU</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #c9d1d9; }
-
-        /* Tab bar */
-        nav { display: flex; background: #161b22; border-bottom: 1px solid #30363d; }
-        nav button {
-            padding: 12px 24px; background: none; border: none; color: #8b949e;
-            font-size: 15px; cursor: pointer; border-bottom: 2px solid transparent;
-            transition: color 0.2s, border-color 0.2s;
-        }
-        nav button:hover { color: #c9d1d9; }
-        nav button.active { color: #58a6ff; border-bottom-color: #58a6ff; }
-
-        /* Panels */
-        .panel { display: none; }
-        .panel.active { display: block; }
-
-        /* Game tab */
-        #game-panel { position: relative; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #282828; color: #e0e0e0; }
+        #game-panel { position: relative; width: 100vw; height: 100vh; }
         #game-panel canvas {
-            width: 100vw; height: calc(100vh - 47px); display: block; background: #1a1a2e;
+            width: 100%; height: 100%; display: block; background: #1a1a2e;
         }
         #loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: #e0e0e0; font-family: monospace; font-size: 18px; z-index: 10;
-            text-align: center; min-width: 280px;
+            background: #282828; border: 1px solid #444; border-radius: 8px;
+            padding: 24px 32px;
+            color: #e0e0e0; font-family: monospace; font-size: 15px; z-index: 10;
+            text-align: center; min-width: 300px;
             transition: opacity 0.4s ease-out;
         }
         #loading.fade-out { opacity: 0; }
-        #loading.error { color: #f85149; }
+        #loading.error { border-color: #f85149; }
+        #loading.error #status-text { color: #f85149; }
         #progress-bar {
-            margin-top: 12px; height: 6px; background: #21262d; border-radius: 3px;
+            margin-top: 12px; height: 6px; background: #3a3a3a; border-radius: 3px;
             overflow: hidden; position: relative;
         }
         #progress-fill {
-            height: 100%; width: 0%; background: #58a6ff;
+            height: 100%; width: 0%; background: #5c7c2f;
             transition: width 0.15s linear;
         }
         #progress-fill.indeterminate {
@@ -52,69 +39,19 @@
             100% { transform: translateX(400%); }
         }
         #progress-text {
-            margin-top: 8px; font-size: 13px; color: #8b949e;
+            margin-top: 8px; font-size: 13px; color: #999;
         }
         #phase-log {
-            margin-top: 14px; font-size: 12px; color: #6e7681;
+            margin-top: 14px; font-size: 12px; color: #777;
             text-align: left; max-height: 160px; overflow: hidden;
             font-family: 'Fira Code', monospace;
         }
         #phase-log div { padding: 1px 0; }
-        #phase-log div:last-child { color: #c9d1d9; }
-        #level-picker {
-            position: absolute; top: 12px; right: 12px; z-index: 10;
-            background: rgba(0,0,0,0.7); padding: 6px 10px; border-radius: 6px;
-            font-size: 13px; color: #c9d1d9; display: flex; gap: 8px; align-items: center;
-        }
-        #level-picker select {
-            background: #161b22; color: #c9d1d9; border: 1px solid #30363d;
-            padding: 4px 8px; border-radius: 4px; font-size: 13px; cursor: pointer;
-        }
-        #controls-hint {
-            position: absolute; bottom: 16px; left: 16px; background: rgba(0,0,0,0.7);
-            padding: 8px 14px; border-radius: 6px; font-size: 13px; color: #8b949e;
-            pointer-events: none;
-        }
-
-        /* Blog/About tabs */
-        .content { max-width: 720px; margin: 0 auto; padding: 40px 20px; line-height: 1.7; }
-        .content h1 { font-size: 2em; margin-bottom: 16px; color: #f0f6fc; }
-        .content h2 { font-size: 1.4em; margin: 32px 0 12px; color: #f0f6fc; }
-        .content p { margin-bottom: 16px; }
-        .content a { color: #58a6ff; text-decoration: none; }
-        .content a:hover { text-decoration: underline; }
-        .content code {
-            background: #161b22; padding: 2px 6px; border-radius: 4px;
-            font-family: 'Fira Code', monospace; font-size: 0.9em;
-        }
-        .content pre {
-            background: #161b22; padding: 16px; border-radius: 8px;
-            overflow-x: auto; margin-bottom: 16px;
-        }
-        .content pre code { padding: 0; }
-        .content img { max-width: 100%; border-radius: 8px; margin: 16px 0; }
-        .badge {
-            display: inline-block; padding: 4px 10px; border-radius: 12px;
-            font-size: 12px; font-weight: 600; margin-right: 6px;
-        }
-        .badge-green { background: #238636; color: #fff; }
-        .badge-blue { background: #1f6feb; color: #fff; }
-        .badge-orange { background: #9e6a03; color: #fff; }
+        #phase-log div:last-child { color: #e0e0e0; }
     </style>
 </head>
 <body>
-    <nav>
-        <button class="active" onclick="showTab('game')">Play</button>
-        <button onclick="showTab('blog')">Blog</button>
-        <button onclick="showTab('about')">About</button>
-    </nav>
-
-    <!-- Game Tab -->
-    <div id="game-panel" class="panel active">
-        <div id="level-picker">
-            <label for="level-select">Level:</label>
-            <select id="level-select" onchange="onLevelChange()"></select>
-        </div>
+    <div id="game-panel">
         <div id="loading">
             <div id="status-text">Starting…</div>
             <div id="progress-bar"><div id="progress-fill"></div></div>
@@ -122,90 +59,9 @@
             <div id="phase-log"></div>
         </div>
         <canvas id="canvas" tabindex="0"></canvas>
-        <div id="controls-hint">
-            WASD – drive &nbsp;|&nbsp; Space – brake &nbsp;|&nbsp; Q/E – roll &nbsp;|&nbsp; Alt – jump &nbsp;|&nbsp; Shift – turbo
-        </div>
-    </div>
-
-    <!-- Blog Tab -->
-    <div id="blog-panel" class="panel">
-        <div class="content">
-            <h1>Development Log</h1>
-            <p>Technical posts about the vange-rs rendering engine.</p>
-
-            <h2><a href="/2022/11/08/voxels.html">Voxel Tracing</a></h2>
-            <p>Nov 8, 2022 — Accelerating ray-terrain intersection with a voxel octree.</p>
-
-            <h2><a href="/2021/08/25/pure-rust.html">WGSL</a></h2>
-            <p>Aug 25, 2021 — Porting shaders to WGSL and removing the C dependency.</p>
-
-            <h2><a href="/2020/08/29/bar-painting.html">Bar Painting</a></h2>
-            <p>Aug 29, 2020 — A "true" 3D rendering method for the Vangers terrain.</p>
-
-            <h2><a href="/2020/08/04/shadows.html">Hybrid Shadows</a></h2>
-            <p>Aug 4, 2020 — Shadow mapping for the voxel terrain engine.</p>
-
-            <h2><a href="/2019/12/19/gpu-collisions.html">GPU Collisions</a></h2>
-            <p>Dec 19, 2019 — Moving the collision model to the GPU.</p>
-
-            <h2><a href="/2019/12/17/collision-model.html">Collision Model</a></h2>
-            <p>Dec 17, 2019 — How Vangers handles vehicle-terrain collisions.</p>
-
-            <h2><a href="/2019/12/12/data-formats.html">Data Formats</a></h2>
-            <p>Dec 12, 2019 — Reverse-engineering the original Vangers data files.</p>
-
-            <p style="margin-top: 32px;"><a href="/blog">View full blog &rarr;</a></p>
-        </div>
-    </div>
-
-    <!-- About Tab -->
-    <div id="about-panel" class="panel">
-        <div class="content">
-            <h1>About Vangers</h1>
-            <p>
-                <strong>Vangers</strong> (1998) is a legendary open-world racing/RPG game
-                by K-D Lab. It features a unique voxel-based terrain engine and a surreal
-                post-apocalyptic world.
-            </p>
-            <p>
-                <strong>vange-rs</strong> is a Rust reimplementation of the Vangers rendering
-                engine with modern hardware-accelerated graphics via
-                <a href="https://wgpu.rs">wgpu</a> (WebGPU/Vulkan/Metal/DX12).
-            </p>
-
-            <h2>Features</h2>
-            <p>
-                Multiple terrain rendering strategies: ray-traced, voxel-accelerated,
-                sliced, painted, and scattered. Full physics simulation ported from the
-                original game. Cross-platform: Windows, macOS, Linux, and now Web.
-            </p>
-
-            <h2>Requirements</h2>
-            <p>
-                The web demo uses a procedural test level and needs no external data.
-                The desktop version requires the original Vangers game data (available on
-                <a href="https://store.steampowered.com/app/264080/Vangers/">Steam</a> or
-                <a href="https://www.gog.com/game/vangers">GOG</a>).
-            </p>
-
-            <h2>Links</h2>
-            <p>
-                <a href="https://github.com/kvark/vange-rs">GitHub Repository</a><br>
-                <a href="https://github.com/KranX/Vangers">Original Vangers (open source)</a>
-            </p>
-
-            <h2>Technology</h2>
-            <pre><code>Rust + wgpu 29 + winit 0.30 + egui 0.34 + glam 0.29
-WebGPU for browser, Vulkan/Metal/DX12 for desktop
-WGSL shaders, compute-based voxel baking</code></pre>
-        </div>
     </div>
 
     <script>
-        // --- Level picker -----------------------------------------------
-        // Hardcoded list of known worlds. Each must correspond to a
-        // <id>.zip asset on the GitHub release; if the asset is missing
-        // the page falls back to the procedural test level.
         const LEVELS = [
             { id: 'fostral',    title: 'Fostral'    },
             { id: 'glorx',      title: 'Glorx'      },
@@ -229,37 +85,15 @@ WGSL shaders, compute-based voxel baking</code></pre>
             return null;
         }
 
-        function initLevelPicker() {
-            const select = document.getElementById('level-select');
-            for (const lvl of LEVELS) {
-                const opt = document.createElement('option');
-                opt.value = lvl.id;
-                opt.textContent = lvl.title;
-                select.appendChild(opt);
-            }
-            const initial = readHashLevel() || DEFAULT_LEVEL;
-            select.value = initial;
-            // Expose the choice to Rust (read once on startup).
-            window.vangeSelectedLevel = () => select.value;
-        }
+        window.vangeSelectedLevel = function() {
+            return readHashLevel() || DEFAULT_LEVEL;
+        };
 
-        function onLevelChange() {
-            const select = document.getElementById('level-select');
-            // Update URL fragment so the choice survives reloads + sharing.
-            window.location.hash = 'level=' + select.value;
-            // Switching levels requires reinitializing the world; full
-            // reload is the simplest correct option for now.
+        window.vangeNavigateLevel = function(levelId) {
+            window.location.hash = 'level=' + levelId;
             window.location.reload();
-        }
+        };
 
-        // --- Progress bar bridge ---------------------------------------
-        // The WASM loader drives three JS hooks:
-        //   vangePhase(label)          — start of an opaque step
-        //   vangeProgress(label, a, b) — byte progress within a step
-        //   vangeProgressDone()        — everything's ready
-        // A single event log shows the user what happened in order —
-        // useful because phases fly by when data is in the browser
-        // cache, and invisible otherwise.
         const phaseStart = performance.now();
         function logPhase(text) {
             const elapsed = ((performance.now() - phaseStart) / 1000).toFixed(1);
@@ -267,7 +101,6 @@ WGSL shaders, compute-based voxel baking</code></pre>
             const line = document.createElement('div');
             line.textContent = `[${elapsed}s] ${text}`;
             log.appendChild(line);
-            // Keep only the last 8 lines so the overlay stays compact.
             while (log.childElementCount > 8) log.removeChild(log.firstChild);
         }
 
@@ -294,10 +127,6 @@ WGSL shaders, compute-based voxel baking</code></pre>
             }
         };
 
-        // Minimum time the overlay is visible after "Ready" fires, so
-        // even a cached (instant) reload shows the phase log long
-        // enough to read. Measured from the moment the page scripts
-        // started.
         const MIN_OVERLAY_MS = 1500;
         const READY_HOLD_MS = 1200;
 
@@ -310,47 +139,15 @@ WGSL shaders, compute-based voxel baking</code></pre>
                 overlay.classList.add('fade-out');
                 setTimeout(() => {
                     overlay.style.display = 'none';
-                    // Focus the canvas so keyboard events reach winit.
-                    // Without this, focus stays on the level picker
-                    // <select> or a nav button, and WASD is swallowed.
                     const c = document.getElementById('canvas');
                     if (c) { c.focus(); c.click(); }
                 }, 400);
             }, wait);
         };
 
-        // Ensure clicking anywhere on the game panel gives focus to
-        // the canvas. Without this, clicking the surrounding area
-        // (e.g. the controls-hint or empty space) might defocus.
-        // Native <select> dropdowns collapse on focus loss, so we
-        // exempt #level-picker — otherwise clicking it to open the
-        // menu immediately re-focuses the canvas and closes it.
-        document.addEventListener('click', function(e) {
-            if (e.target.closest('#level-picker')) return;
-            const panel = document.getElementById('game-panel');
-            const canvas = document.getElementById('canvas');
-            if (panel?.contains(e.target) && canvas && e.target !== canvas) {
-                canvas.focus();
-            }
-        });
-
-        // winit attaches keydown/keyup listeners to the <canvas>, so
-        // keys only arrive when it has focus. This global interceptor
-        // auto-focuses the canvas on any keypress while the game tab
-        // is active, and re-dispatches the event so winit sees it
-        // immediately (no "press twice" issue).
-        //
-        // Firefox ignores synthetic KeyboardEvents dispatched via
-        // dispatchEvent for security reasons (isTrusted=false), so
-        // the re-dispatch doesn't work there. As a fallback, we also
-        // focus the canvas on the first mouse movement over the game
-        // panel, which covers the typical "move mouse then press key"
-        // flow.
         document.addEventListener('keydown', function(e) {
             const canvas = document.getElementById('canvas');
             if (!canvas || document.activeElement === canvas) return;
-            const panel = document.getElementById('game-panel');
-            if (!panel?.classList.contains('active')) return;
             canvas.focus();
             canvas.dispatchEvent(new KeyboardEvent('keydown', {
                 code: e.code, key: e.key, keyCode: e.keyCode,
@@ -358,21 +155,11 @@ WGSL shaders, compute-based voxel baking</code></pre>
             }));
         });
 
-        // Focus canvas when mouse enters the game area — covers the
-        // common case where the user moves the mouse over the game
-        // before pressing keys. On Firefox this is more reliable than
-        // the keydown re-dispatch above.
-        // Skip while a form control inside the panel has focus (e.g.
-        // the level picker is open) — otherwise the dropdown closes
-        // the instant the cursor moves while picking a level.
         document.getElementById('game-panel')?.addEventListener(
             'mousemove',
             function(e) {
-                if (e.target.closest('#level-picker')) return;
-                const active = document.activeElement;
-                if (active && active.tagName === 'SELECT') return;
                 const c = document.getElementById('canvas');
-                if (c && active !== c) c.focus();
+                if (c && document.activeElement !== c) c.focus();
             },
             { passive: true }
         );
@@ -384,7 +171,6 @@ WGSL shaders, compute-based voxel baking</code></pre>
                 'Could not load level data — using procedural fallback.';
             document.getElementById('progress-text').textContent = message;
             logPhase('Error: ' + message);
-            // Keep the message visible briefly, then hide so the canvas shows.
             setTimeout(() => { loading.style.display = 'none'; }, 4000);
         };
 
@@ -394,33 +180,12 @@ WGSL shaders, compute-based voxel baking</code></pre>
             return (n / 1024 / 1024).toFixed(1) + ' MiB';
         }
 
-        // --- Tabs / WASM bootstrap -------------------------------------
-        function showTab(name) {
-            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-            document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-            document.getElementById(name + '-panel').classList.add('active');
-            event.target.classList.add('active');
-
-            // Lazy-load the WASM module when the game tab is first shown
-            if (name === 'game' && !window._wasmLoaded) {
-                window._wasmLoaded = true;
-                loadGame();
-            }
-        }
-
         async function loadGame() {
             try {
                 const { default: init } = await import('./web.js');
                 await init();
-                // Don't hide the overlay here. The WASM loader's own
-                // `vangeProgressDone()` hook does that once the async
-                // spawn_local pipeline finishes (fetch → mount →
-                // build_gpu_state). Hiding here would race ahead of
-                // the phases the user is supposed to see.
             } catch (err) {
                 const msg = String(err);
-                // winit uses exceptions for control flow on WASM;
-                // this is expected and not an actual error.
                 if (msg.includes('Using exceptions for control flow')) {
                     return;
                 }
@@ -434,9 +199,6 @@ WGSL shaders, compute-based voxel baking</code></pre>
             }
         }
 
-        // Set up UI before the WASM module starts so its initial
-        // `vangeSelectedLevel()` call sees the populated <select>.
-        initLevelPicker();
         loadGame();
     </script>
 </body>

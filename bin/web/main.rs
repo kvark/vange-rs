@@ -20,6 +20,19 @@ use vangers::{
 /// is missing (404) we fall back to the procedural test level.
 const DEFAULT_LEVEL: &str = "fostral";
 
+const LEVELS: &[&str] = &[
+    "fostral",
+    "glorx",
+    "necross",
+    "khox",
+    "boozeena",
+    "weexow",
+    "xplo",
+    "hmok",
+    "threall",
+    "ark-a-znoy",
+];
+
 /// INI path inside the per-level zip. Each `<id>.zip` stores the level
 /// files at the archive root (no `<id>/` prefix), so the INI key is
 /// just `"world.ini"`.
@@ -60,6 +73,9 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = window, js_name = vangeSelectedLevel, catch)]
     fn js_selected_level() -> Result<JsValue, JsValue>;
+
+    #[wasm_bindgen(js_namespace = window, js_name = vangeNavigateLevel)]
+    fn js_navigate_level(level_id: &str);
 }
 
 /// Khox is the smallest stock level (2048 × 8192) and the only one
@@ -348,8 +364,15 @@ struct WebApp {
     agent: Option<Agent>,
     /// Follow-camera parameters (radius/height/smoothing).
     follow: space::Follow,
+    /// If true, the follow camera anchors its height to the ground
+    /// beneath the agent rather than the agent's Z position.
+    ground_anchor: bool,
     /// True when running on WebGPU (vs WebGL2 fallback).
     is_webgpu: bool,
+    /// Currently loaded level id (for the level picker UI).
+    current_level: String,
+    /// Index into [`LEVELS`] for the level picker dropdown.
+    selected_level_idx: usize,
 }
 
 impl WebApp {
@@ -384,16 +407,16 @@ impl WebApp {
         let settings = Self::load_settings();
         let level_config = level::LevelConfig::new_test();
         let level = level::load(&level_config, &settings.game.geometry);
-        Self::build(gfx, level_config, level, None, is_webgpu, &settings)
+        Self::build(gfx, level_config, level, None, is_webgpu, &settings, DEFAULT_LEVEL)
     }
 
     /// Build the app from a real level in a [`Vfs`]. `ini_path` is the
     /// VFS key of the world INI (e.g. `"fostral/world.ini"`).
-    fn new_from_vfs(gfx: &GraphicsContext, vfs: &Vfs, ini_path: &str, is_webgpu: bool) -> Self {
+    fn new_from_vfs(gfx: &GraphicsContext, vfs: &Vfs, ini_path: &str, is_webgpu: bool, level_id: &str) -> Self {
         let settings = Self::load_settings();
         let level_config = level::LevelConfig::load_from_vfs(vfs, ini_path);
         let level = level::load_from_vfs(vfs, &level_config, &settings.game.geometry);
-        Self::build(gfx, level_config, level, Some(vfs), is_webgpu, &settings)
+        Self::build(gfx, level_config, level, Some(vfs), is_webgpu, &settings, level_id)
     }
 
     fn build(
@@ -403,6 +426,7 @@ impl WebApp {
         vfs: Option<&Vfs>,
         is_webgpu: bool,
         settings: &settings::Settings,
+        level_id: &str,
     ) -> Self {
         let objects_palette = vfs
             .and_then(|v| v.read("resource/pal/objects.pal"))
@@ -484,6 +508,7 @@ impl WebApp {
             offset: glam::vec3(0.0, cam_config.offset, cam_config.height),
             speed: cam_config.speed,
         };
+        let ground_anchor = follow.angle_x > 15.0f32.to_radians();
 
         // Settle the follow camera at the agent's spawn pose. Without
         // this, the camera starts at the placeholder above and the slow
@@ -505,35 +530,114 @@ impl WebApp {
             common,
             agent,
             follow,
+            ground_anchor,
             is_webgpu,
+            current_level: level_id.to_string(),
+            selected_level_idx: LEVELS.iter().position(|&l| l == level_id).unwrap_or(0),
         }
     }
 
-    fn draw_ui(&self, ctx: &egui::Context) {
-        egui::Window::new("Settings").show(ctx, |ui| {
-            ui.label(format!(
-                "Backend: {}",
-                if self.is_webgpu { "WebGPU" } else { "WebGL2" }
-            ));
-            if let Some(ref agent) = self.agent {
-                ui.separator();
-                ui.label("Vehicle");
-                let pos = agent.transform.disp;
-                ui.label(format!(
-                    "Position: ({:.0}, {:.0}, {:.0})",
-                    pos.x, pos.y, pos.z
-                ));
-                ui.label(format!(
-                    "Speed: {:.1}",
-                    agent.dynamo.linear_velocity.length()
-                ));
-            }
-            ui.separator();
-            ui.label("Camera");
-            ui.label(format!(
-                "Pos: ({:.0}, {:.0}, {:.0})",
-                self.cam.loc.x, self.cam.loc.y, self.cam.loc.z
-            ));
+fn draw_ui(&mut self, ctx: &egui::Context) {
+        #[allow(deprecated)]
+        egui::SidePanel::right("Tweaks")
+            .min_width(200.0)
+            .show(ctx, |ui| {
+            ui.vertical(|ui| {
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(format!(
+                        "Backend: {}",
+                        if self.is_webgpu { "WebGPU" } else { "WebGL2" }
+                    ));
+                });
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("Level:");
+                    let mut changed = false;
+                    egui::ComboBox::from_id_salt("level-select")
+                        .selected_text(LEVELS[self.selected_level_idx])
+                        .show_ui(ui, |ui| {
+                            for (i, name) in LEVELS.iter().enumerate() {
+                                if ui.selectable_label(i == self.selected_level_idx, *name).clicked() {
+                                    self.selected_level_idx = i;
+                                    changed = true;
+                                }
+                            }
+                        });
+                    if changed && LEVELS[self.selected_level_idx] != self.current_level {
+                        js_navigate_level(LEVELS[self.selected_level_idx]);
+                    }
+                    self.level.draw_ui(ui);
+                });
+                if let Some(ref mut agent) = self.agent {
+                    ui.group(|ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label("Mechous:");
+                        egui::ComboBox::from_id_salt("color-select")
+                            .selected_text(agent.color.name())
+                            .show_ui(ui, |ui| {
+                                for &color in &[
+                                    render::object::BodyColor::Green,
+                                    render::object::BodyColor::Red,
+                                    render::object::BodyColor::Blue,
+                                    render::object::BodyColor::Yellow,
+                                    render::object::BodyColor::Gray,
+                                ] {
+                                    ui.selectable_value(&mut agent.color, color, color.name());
+                                }
+                            });
+                        ui.horizontal(|ui| {
+                            ui.label("Position");
+                            ui.add(egui::DragValue::new(&mut agent.transform.disp.x)
+                                .speed(1.0).prefix("x:"));
+                            ui.add(egui::DragValue::new(&mut agent.transform.disp.y)
+                                .speed(1.0).prefix("y:"));
+                        });
+                        ui.label(format!(
+                            "Speed: {:.1}",
+                            agent.dynamo.linear_velocity.length()
+                        ));
+                    });
+                }
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("Camera:");
+                    self.cam.draw_ui(ui);
+                    let mut angle_deg = self.follow.angle_x.to_degrees();
+                    ui.add(egui::Slider::new(&mut angle_deg, -105.0..=0.0).text("Angle"));
+                    self.follow.angle_x = angle_deg.to_radians();
+                    ui.horizontal(|ui| {
+                        ui.add(egui::DragValue::new(&mut self.follow.offset.x)
+                            .speed(1.0).prefix("ox:"));
+                        ui.add(egui::DragValue::new(&mut self.follow.offset.y)
+                            .speed(1.0).prefix("oy:"));
+                        ui.add(egui::DragValue::new(&mut self.follow.offset.z)
+                            .speed(1.0).prefix("oz:"));
+                    });
+                    ui.add(egui::Slider::new(&mut self.follow.speed, 0.1..=10.0).text("Speed"));
+                    ui.checkbox(&mut self.ground_anchor, "Ground anchor");
+                });
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("Renderer:");
+                    self.render.draw_ui(ui);
+                });
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("Controls:");
+                    ui.label("WASD - drive");
+                    ui.label("Space - brake");
+                    ui.label("Q/E - roll");
+                    ui.label("Alt - jump");
+                    ui.label("Shift - turbo");
+                });
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("Links:");
+                    ui.hyperlink_to("Blog", "/blog");
+                    ui.hyperlink_to("GitHub", "https://github.com/kvark/vange-rs");
+                });
+            });
         });
     }
 
@@ -938,6 +1042,7 @@ impl ApplicationHandler for WebHandler {
                                     screen_size: wgpu::Extent3d,
                                     vfs_level: Option<(Vfs, String)>,
                                     is_webgpu: bool,
+                                    level_id: String,
                                     window: Arc<Window>|
               -> GpuState {
             // winit's web backend manages canvas backing size via its
@@ -993,7 +1098,7 @@ impl ApplicationHandler for WebHandler {
                 queue,
             };
             let app = match vfs_level {
-                Some((vfs, ini_path)) => WebApp::new_from_vfs(&gfx, &vfs, &ini_path, is_webgpu),
+                Some((vfs, ini_path)) => WebApp::new_from_vfs(&gfx, &vfs, &ini_path, is_webgpu, &level_id),
                 None => WebApp::new(&gfx, is_webgpu),
             };
 
@@ -1061,6 +1166,7 @@ impl ApplicationHandler for WebHandler {
                 screen_size,
                 vfs_level,
                 is_webgpu,
+                level_id,
                 window.clone(),
             );
             *pending.borrow_mut() = Some(state);
