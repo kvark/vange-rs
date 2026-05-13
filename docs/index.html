@@ -13,21 +13,21 @@
         }
         #loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: #282828; border: 1px solid #444; border-radius: 8px;
-            padding: 24px 32px;
-            color: #e0e0e0; font-family: monospace; font-size: 15px; z-index: 10;
-            text-align: center; min-width: 300px;
+            background: #282828; border: 1px solid #555; border-radius: 0;
+            padding: 20px 28px;
+            color: #ccc; font-family: monospace; font-size: 13px; z-index: 10;
+            text-align: center; min-width: 260px;
             transition: opacity 0.4s ease-out;
         }
         #loading.fade-out { opacity: 0; }
         #loading.error { border-color: #f85149; }
         #loading.error #status-text { color: #f85149; }
         #progress-bar {
-            margin-top: 12px; height: 6px; background: #3a3a3a; border-radius: 3px;
+            margin-top: 10px; height: 3px; background: #444; border-radius: 0;
             overflow: hidden; position: relative;
         }
         #progress-fill {
-            height: 100%; width: 0%; background: #5c7c2f;
+            height: 100%; width: 0%; background: #888;
             transition: width 0.15s linear;
         }
         #progress-fill.indeterminate {
@@ -39,15 +39,14 @@
             100% { transform: translateX(400%); }
         }
         #progress-text {
-            margin-top: 8px; font-size: 13px; color: #999;
+            margin-top: 6px; font-size: 12px; color: #888;
         }
         #phase-log {
-            margin-top: 14px; font-size: 12px; color: #777;
-            text-align: left; max-height: 160px; overflow: hidden;
-            font-family: 'Fira Code', monospace;
+            margin-top: 10px; font-size: 12px; color: #777;
+            text-align: left; max-height: 120px; overflow: hidden;
         }
         #phase-log div { padding: 1px 0; }
-        #phase-log div:last-child { color: #e0e0e0; }
+        #phase-log div:last-child { color: #aaa; }
     </style>
 </head>
 <body>
