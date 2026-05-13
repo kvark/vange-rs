@@ -1591,11 +1591,19 @@ impl WebHandler {
         // 3D viewport excludes the side panel.
         let screen = gpu.egui_state.egui_ctx().viewport_rect();
         let panel = gpu.egui_state.egui_ctx().content_rect();
-        let viewport = if panel.width() < screen.width() - 1.0 {
+        let panel_w = screen.width() - panel.width();
+        let viewport = if panel_w > 1.0 {
+            // Adjust camera aspect ratio to match the viewport width,
+            // not the full screen — prevents horizontal squishing.
+            let viewport_w = panel_w * gpu.window.scale_factor() as f32;
+            let viewport_h = self.screen_size.height as f32;
+            if let space::Projection::Perspective(ref mut p) = gpu.app.cam.proj {
+                p.aspect = viewport_w / viewport_h.max(1.0);
+            }
             Some(render::Rect {
                 x: 0,
                 y: 0,
-                w: (screen.width() - panel.width()) as u16,
+                w: panel_w as u16,
                 h: screen.height() as u16,
             })
         } else {
