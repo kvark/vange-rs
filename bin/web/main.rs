@@ -746,6 +746,7 @@ fn draw_ui(&mut self, ctx: &egui::Context) {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         targets: ScreenTargets,
+        viewport_rect: Option<render::Rect>,
     ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("World"),
@@ -763,7 +764,7 @@ fn draw_ui(&mut self, ctx: &egui::Context) {
             &self.level,
             &self.cam,
             targets,
-            None,
+            viewport_rect,
             device,
             queue,
         );
@@ -1578,9 +1579,8 @@ impl WebHandler {
             color: &view,
             depth: &gpu.depth_view,
         };
-        let command_buffer = gpu.app.draw(&gpu.device, &gpu.queue, targets);
 
-        // --- egui UI pass ---
+        // --- egui UI pass (run first to get panel rect) ---
         let raw_input = gpu.egui_state.take_egui_input(&gpu.window);
         let full_output = gpu.egui_state.egui_ctx().run_ui(raw_input, |ctx| {
             gpu.app.draw_ui(ctx);
@@ -1588,6 +1588,23 @@ impl WebHandler {
         gpu.egui_state
             .handle_platform_output(&gpu.window, full_output.platform_output);
 
+        // 3D viewport excludes the side panel.
+        let screen = gpu.egui_state.egui_ctx().viewport_rect();
+        let panel = gpu.egui_state.egui_ctx().content_rect();
+        let viewport = if panel.width() < screen.width() - 1.0 {
+            Some(render::Rect {
+                x: 0,
+                y: 0,
+                w: (screen.width() - panel.width()) as u16,
+                h: screen.height() as u16,
+            })
+        } else {
+            None
+        };
+
+        let command_buffer = gpu.app.draw(&gpu.device, &gpu.queue, targets, viewport);
+
+        // --- egui render pass ---
         let paint_jobs = gpu
             .egui_state
             .egui_ctx()
