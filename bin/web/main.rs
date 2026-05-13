@@ -133,6 +133,23 @@ fn selected_level_id() -> String {
     DEFAULT_LEVEL.to_string()
 }
 
+/// Read the selected car name from the URL fragment `#car=<name>`,
+/// falling back to an empty string (which means "use the first main car").
+fn selected_car_name() -> String {
+    if let Some(window) = web_sys::window()
+        && let Ok(hash) = window.location().hash()
+    {
+        for pair in hash.trim_start_matches('#').split('&') {
+            if let Some(rest) = pair.strip_prefix("car=")
+                && !rest.is_empty()
+            {
+                return rest.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
 /// Fetch `common.zip` and `<level_id>.zip` from the release and mount
 /// both into a VFS, reporting download progress to the JS UI. Returns
 /// `None` on any error; the caller falls back to a procedural test level.
@@ -298,11 +315,41 @@ fn spawn_default_agent(
     let car_prm = vfs.read("car.prm")?;
     let (car_name, stats_data) = config::car::first_main_entry(Cursor::new(&*car_prm));
 
-    let model_info = registry.model_infos.get(&car_name)?;
+    spawn_agent_named(&car_name, &stats_data, vfs, &registry, level, device, object)
+}
+
+fn spawn_named_agent(
+    name: &str,
+    vfs: &Vfs,
+    level: &level::Level,
+    device: &wgpu::Device,
+    object: &render::object::Context,
+) -> Option<Agent> {
+    use std::io::Cursor;
+
+    let game_lst = vfs.read("game.lst")?;
+    let registry = config::game::Registry::load_reader(Cursor::new(&*game_lst));
+
+    let car_prm_bytes = vfs.read("car.prm")?;
+    let stats_data = config::car::stats_for_name(name, Cursor::new(&*car_prm_bytes))?;
+
+    spawn_agent_named(name, &stats_data, vfs, &registry, level, device, object)
+}
+
+fn spawn_agent_named(
+    car_name: &str,
+    stats_data: &[u32],
+    vfs: &Vfs,
+    registry: &config::game::Registry,
+    level: &level::Level,
+    device: &wgpu::Device,
+    object: &render::object::Context,
+) -> Option<Agent> {
+    use std::io::Cursor;
+
+    let model_info = registry.model_infos.get(car_name)?;
     let m3d_bytes = vfs.read(&model_info.path)?;
 
-    // Per-vehicle physics file lives next to the m3d. If it's missing,
-    // fall back to `default.prm` in the same directory.
     let prm_path = std::path::Path::new(&model_info.path).with_extension("prm");
     let prm_key = prm_path.to_str()?;
     let (prm_bytes, is_default) = if let Some(bytes) = vfs.read(prm_key) {
@@ -326,13 +373,12 @@ fn spawn_default_agent(
 
     let car = config::car::CarInfo {
         kind: config::car::Kind::Main,
-        stats: config::car::CarStats::new(&stats_data),
+        stats: config::car::CarStats::new(stats_data),
         physics: car_physics,
         model: visual,
         scale,
     };
 
-    // Spawn at the level center, snapped to the terrain.
     let coords = (level.size.0 / 2, level.size.1 / 2);
     let height = level.get(coords).high() + 5.0;
     let transform = space::Transform {
@@ -349,6 +395,13 @@ fn spawn_default_agent(
         control: Control::default(),
         color: PLAYER_COLOR,
     })
+}
+
+fn list_car_names(vfs: &Vfs) -> Vec<String> {
+    use std::io::Cursor;
+    vfs.read("car.prm")
+        .map(|bytes| config::car::list_car_names(Cursor::new(&*bytes)))
+        .unwrap_or_default()
 }
 
 struct WebApp {
@@ -373,6 +426,10 @@ struct WebApp {
     current_level: String,
     /// Index into [`LEVELS`] for the level picker dropdown.
     selected_level_idx: usize,
+    /// Available car names parsed from `car.prm`.
+    car_names: Vec<String>,
+    /// Index into [`car_names`] for the car picker dropdown.
+    selected_car_idx: usize,
 }
 
 impl WebApp {
@@ -407,16 +464,16 @@ impl WebApp {
         let settings = Self::load_settings();
         let level_config = level::LevelConfig::new_test();
         let level = level::load(&level_config, &settings.game.geometry);
-        Self::build(gfx, level_config, level, None, is_webgpu, &settings, DEFAULT_LEVEL)
+        Self::build(gfx, level_config, level, None, is_webgpu, &settings, DEFAULT_LEVEL, "")
     }
 
     /// Build the app from a real level in a [`Vfs`]. `ini_path` is the
     /// VFS key of the world INI (e.g. `"fostral/world.ini"`).
-    fn new_from_vfs(gfx: &GraphicsContext, vfs: &Vfs, ini_path: &str, is_webgpu: bool, level_id: &str) -> Self {
+    fn new_from_vfs(gfx: &GraphicsContext, vfs: &Vfs, ini_path: &str, is_webgpu: bool, level_id: &str, car_name: &str) -> Self {
         let settings = Self::load_settings();
         let level_config = level::LevelConfig::load_from_vfs(vfs, ini_path);
         let level = level::load_from_vfs(vfs, &level_config, &settings.game.geometry);
-        Self::build(gfx, level_config, level, Some(vfs), is_webgpu, &settings, level_id)
+        Self::build(gfx, level_config, level, Some(vfs), is_webgpu, &settings, level_id, car_name)
     }
 
     fn build(
@@ -427,6 +484,7 @@ impl WebApp {
         is_webgpu: bool,
         settings: &settings::Settings,
         level_id: &str,
+        car_name: &str,
     ) -> Self {
         let objects_palette = vfs
             .and_then(|v| v.read("resource/pal/objects.pal"))
@@ -496,10 +554,26 @@ impl WebApp {
             .and_then(|v| v.read("common.prm"))
             .map(|b| config::common::load_reader(std::io::Cursor::new(&*b)))
             .unwrap_or_else(config::common::Common::test_default);
-        let agent = vfs.and_then(|v| spawn_default_agent(v, &level, &gfx.device, &render.object));
+        let agent = vfs.and_then(|v| {
+            if car_name.is_empty() {
+                spawn_default_agent(v, &level, &gfx.device, &render.object)
+            } else {
+                spawn_named_agent(car_name, v, &level, &gfx.device, &render.object)
+            }
+        });
         if agent.is_none() {
             log::info!("No player agent — running in free-camera mode");
         }
+        let car_names = vfs.map(|v| list_car_names(v)).unwrap_or_default();
+        let default_car = agent.as_ref().map(|a| a.car.stats.clone());
+        let selected_car_idx = default_car
+            .as_ref()
+            .and_then(|_| agent.as_ref())
+            .map(|a| {
+                let name = &a.car.physics.name;
+                car_names.iter().position(|n| n == name).unwrap_or(0)
+            })
+            .unwrap_or(0);
 
         // Camera follow params from settings.ron, same conversion as
         // native (bin/road/game.rs CameraStyle::new).
@@ -534,6 +608,8 @@ impl WebApp {
             is_webgpu,
             current_level: level_id.to_string(),
             selected_level_idx: LEVELS.iter().position(|&l| l == level_id).unwrap_or(0),
+            car_names,
+            selected_car_idx,
         }
     }
 
@@ -569,10 +645,27 @@ fn draw_ui(&mut self, ctx: &egui::Context) {
                     }
                     self.level.draw_ui(ui);
                 });
-                if let Some(ref mut agent) = self.agent {
-                    ui.group(|ui| {
-                        ui.set_width(ui.available_width());
-                        ui.label("Mechous:");
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("Mechous:");
+                    if !self.car_names.is_empty() {
+                        let mut car_changed = false;
+                        egui::ComboBox::from_id_salt("car-select")
+                            .selected_text(&self.car_names[self.selected_car_idx])
+                            .show_ui(ui, |ui| {
+                                for (i, name) in self.car_names.iter().enumerate() {
+                                    if ui.selectable_label(i == self.selected_car_idx, name.as_str()).clicked() {
+                                        self.selected_car_idx = i;
+                                        car_changed = true;
+                                    }
+                                }
+                            });
+                        if car_changed {
+                            let car_name = &self.car_names[self.selected_car_idx];
+                            js_navigate_level(&format!("{}&car={}", self.current_level, car_name));
+                        }
+                    }
+                    if let Some(ref mut agent) = self.agent {
                         egui::ComboBox::from_id_salt("color-select")
                             .selected_text(agent.color.name())
                             .show_ui(ui, |ui| {
@@ -597,8 +690,8 @@ fn draw_ui(&mut self, ctx: &egui::Context) {
                             "Speed: {:.1}",
                             agent.dynamo.linear_velocity.length()
                         ));
-                    });
-                }
+                    }
+                });
                 ui.group(|ui| {
                     ui.set_width(ui.available_width());
                     ui.label("Camera:");
@@ -1043,6 +1136,7 @@ impl ApplicationHandler for WebHandler {
                                     vfs_level: Option<(Vfs, String)>,
                                     is_webgpu: bool,
                                     level_id: String,
+                                    car_name: String,
                                     window: Arc<Window>|
               -> GpuState {
             // winit's web backend manages canvas backing size via its
@@ -1098,7 +1192,7 @@ impl ApplicationHandler for WebHandler {
                 queue,
             };
             let app = match vfs_level {
-                Some((vfs, ini_path)) => WebApp::new_from_vfs(&gfx, &vfs, &ini_path, is_webgpu, &level_id),
+                Some((vfs, ini_path)) => WebApp::new_from_vfs(&gfx, &vfs, &ini_path, is_webgpu, &level_id, &car_name),
                 None => WebApp::new(&gfx, is_webgpu),
             };
 
@@ -1143,7 +1237,8 @@ impl ApplicationHandler for WebHandler {
             let requested = selected_level_id();
             let level_id =
                 pick_level_for_adapter(requested, adapter.limits().max_texture_dimension_2d);
-            log::info!("Selected level: {}", level_id);
+            let car_name = selected_car_name();
+            log::info!("Selected level: {}, car: {}", level_id, if car_name.is_empty() { "(default)" } else { &car_name });
             let vfs_level = fetch_release_level(&level_id).await;
 
             // Level construction and renderer setup are synchronous
@@ -1167,6 +1262,7 @@ impl ApplicationHandler for WebHandler {
                 vfs_level,
                 is_webgpu,
                 level_id,
+                car_name,
                 window.clone(),
             );
             *pending.borrow_mut() = Some(state);

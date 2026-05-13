@@ -175,6 +175,44 @@ pub fn first_main_entry<R: Read>(reader: R) -> (String, Vec<u32>) {
     (name.to_owned(), data)
 }
 
+/// Parse `car.prm` and return a list of all vehicle names in order.
+/// Suitable for populating a car-selection UI without loading GPU
+/// resources.
+pub fn list_car_names<R: Read>(reader: R) -> Vec<String> {
+    let mut fi = Reader::new(reader);
+    fi.advance();
+    assert_eq!(fi.cur(), "uniVang-ParametersFile_Ver_1");
+    let num_main: u8 = fi.next_value();
+    let num_ruffa: u8 = fi.next_value();
+    let num_const: u8 = fi.next_value();
+    let total = (num_main + num_ruffa + num_const) as usize;
+    let mut names = Vec::with_capacity(total);
+    for _ in 0..total {
+        let (name, _) = fi.next_entry::<u32>();
+        names.push(name.to_owned());
+    }
+    names
+}
+
+/// Parse `car.prm` and return the stats data (`Vec<u32>`) for a named
+/// vehicle. Returns `None` if the name is not found.
+pub fn stats_for_name<R: Read>(name: &str, reader: R) -> Option<Vec<u32>> {
+    let mut fi = Reader::new(reader);
+    fi.advance();
+    assert_eq!(fi.cur(), "uniVang-ParametersFile_Ver_1");
+    let num_main: u8 = fi.next_value();
+    let num_ruffa: u8 = fi.next_value();
+    let num_const: u8 = fi.next_value();
+    let total = (num_main + num_ruffa + num_const) as usize;
+    for _ in 0..total {
+        let (entry_name, data) = fi.next_entry::<u32>();
+        if entry_name == name {
+            return Some(data);
+        }
+    }
+    None
+}
+
 pub fn load_registry(
     settings: &Settings,
     reg: &super::game::Registry,
