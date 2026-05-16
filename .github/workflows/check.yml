@@ -132,6 +132,8 @@ jobs:
       run: rustup target add wasm32-unknown-unknown
     - name: Install wasm-bindgen-cli
       run: cargo install wasm-bindgen-cli --version 0.2.117
+    - name: Copy settings template
+      run: cp config/settings.template.ron config/settings.ron
     - name: Build WASM binary
       run: cargo build --target wasm32-unknown-unknown --features web --bin web --release
     - name: Generate JS bindings
