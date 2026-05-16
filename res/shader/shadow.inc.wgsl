@@ -31,7 +31,12 @@ fn fetch_shadow_visibility(pos: vec3<f32>) -> f32 {
     shadow += textureSampleCompareLevel(t_Shadow, s_Shadow, light_local + texel * vec2<f32>( 0.5, -0.5), depth);
     shadow += textureSampleCompareLevel(t_Shadow, s_Shadow, light_local + texel * vec2<f32>(-0.5,  0.5), depth);
     shadow += textureSampleCompareLevel(t_Shadow, s_Shadow, light_local + texel * vec2<f32>( 0.5,  0.5), depth);
-    return 0.25 * shadow;
+    // Fade shadows near the edge of the shadow map so they don't
+    // cut off abruptly. `fade` goes from 1 (fully shadowed) at the
+    // interior to 0 (fully lit) at the boundary.
+    let edge = min(light_local, vec2<f32>(1.0) - light_local);
+    let fade = saturate(min(edge.x, edge.y) * 10.0);
+    return mix(1.0, 0.25 * shadow, fade);
 }
 
 // Convenience wrapper: visibility mixed with the ambient floor. Object

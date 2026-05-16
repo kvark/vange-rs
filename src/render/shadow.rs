@@ -82,21 +82,25 @@ impl Shadow {
             far: 0.0,
         };
 
-        // in addition to the camera bound, we need to include
-        // all the potential occluders nearby — extend the bounds in the
-        // to-sun direction so a tall column behind the visible region
-        // can still cast a shadow into it.
-        let mut offset = to_sun * (max_height / to_sun.z);
-        offset.z = 0.0;
+        // Limit the shadow region to a box around the camera center
+        // rather than covering the entire view frustum. This keeps
+        // shadow texel density high near the player where it matters.
+        // The radius is capped so that cameras with very long far
+        // planes don't produce continent-sized shadow maps.
+        let shadow_radius = 600.0f32;
+        let center = self.cam.loc;
+        let corners = [
+            Vec3::new(center.x - shadow_radius, center.y - shadow_radius, 0.0),
+            Vec3::new(center.x + shadow_radius, center.y - shadow_radius, 0.0),
+            Vec3::new(center.x + shadow_radius, center.y + shadow_radius, 0.0),
+            Vec3::new(center.x - shadow_radius, center.y + shadow_radius, 0.0),
+            Vec3::new(center.x - shadow_radius, center.y - shadow_radius, max_height),
+            Vec3::new(center.x + shadow_radius, center.y - shadow_radius, max_height),
+            Vec3::new(center.x + shadow_radius, center.y + shadow_radius, max_height),
+            Vec3::new(center.x - shadow_radius, center.y + shadow_radius, max_height),
+        ];
 
-        let points_lo = cam.bound_points(0.0);
-        let points_hi = cam.bound_points(max_height);
-        for pt in points_lo
-            .iter()
-            .cloned()
-            .chain(points_hi.iter().cloned())
-            .chain(points_hi.iter().map(|&pp| pp + offset))
-        {
+        for pt in corners {
             let local = self.get_local_point(pt);
             p.left = p.left.min(local.x);
             p.bottom = p.bottom.min(local.y);
