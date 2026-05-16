@@ -888,6 +888,170 @@ mod net_ws {
 
 use web_time::Instant;
 
+const BLIT_SHADER: &str = r"
+@group(0) @binding(0) var tex: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+
+struct VOut {
+    @builtin(position) pos: vec4f,
+    @location(0) uv: vec2f,
+};
+
+@vertex
+fn vs(@builtin(vertex_index) idx: u32) -> VOut {
+    var positions = array<vec2f, 3>(
+        vec2f(-1.0, -1.0),
+        vec2f(3.0, -1.0),
+        vec2f(-1.0, 3.0),
+    );
+    var uvs = array<vec2f, 3>(
+        vec2f(0.0, 1.0),
+        vec2f(2.0, 1.0),
+        vec2f(0.0, -1.0),
+    );
+    return VOut(vec4f(positions[idx], 0.0, 1.0), uvs[idx]);
+}
+
+@fragment
+fn fs(v: VOut) -> @location(0) vec4f {
+    return textureSample(tex, samp, v.uv);
+}
+";
+
+#[allow(dead_code)]
+struct ViewportResources {
+    color_texture: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    depth_texture: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+    size: wgpu::Extent3d,
+}
+
+impl ViewportResources {
+    fn new(
+        size: wgpu::Extent3d,
+        format: wgpu::TextureFormat,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        device: &wgpu::Device,
+    ) -> Self {
+        let color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Viewport Color"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Viewport Depth"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Viewport Blit"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        });
+
+        ViewportResources {
+            color_texture,
+            color_view,
+            depth_texture,
+            depth_view,
+            bind_group,
+            size,
+        }
+    }
+
+    fn ensure_size(
+        &mut self,
+        new_size: wgpu::Extent3d,
+        format: wgpu::TextureFormat,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        device: &wgpu::Device,
+    ) {
+        if self.size.width == new_size.width && self.size.height == new_size.height {
+            return;
+        }
+        *self = Self::new(new_size, format, layout, sampler, device);
+    }
+}
+
+fn create_blit_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Blit Shader"),
+        source: wgpu::ShaderSource::Wgsl(BLIT_SHADER.into()),
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Blit Pipeline Layout"),
+        bind_group_layouts: &[Some(layout)],
+        immediate_size: 0,
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Blit Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 /// GPU resources initialized asynchronously on WASM.
 struct GpuState {
     _instance: wgpu::Instance,
@@ -895,7 +1059,10 @@ struct GpuState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    depth_view: wgpu::TextureView,
+    viewport: ViewportResources,
+    blit_pipeline: wgpu::RenderPipeline,
+    blit_layout: wgpu::BindGroupLayout,
+    blit_sampler: wgpu::Sampler,
     app: WebApp,
     window: Arc<Window>,
     egui_state: egui_winit::State,
@@ -1172,18 +1339,46 @@ impl ApplicationHandler for WebHandler {
             };
             surface.configure(&device, &config);
 
-            let depth_view = device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some("Depth"),
-                    size: screen_size,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: DEPTH_FORMAT,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &[],
-                })
-                .create_view(&wgpu::TextureViewDescriptor::default());
+            let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Viewport Blit Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+            let blit_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("Viewport Blit Sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                ..Default::default()
+            });
+            let blit_pipeline =
+                create_blit_pipeline(&device, config.format, &blit_layout);
+            let viewport = ViewportResources::new(
+                screen_size,
+                config.format,
+                &blit_layout,
+                &blit_sampler,
+                &device,
+            );
 
             let gfx = GraphicsContext {
                 downlevel_caps: adapter.get_downlevel_capabilities(),
@@ -1215,7 +1410,10 @@ impl ApplicationHandler for WebHandler {
                 device: gfx.device,
                 queue: gfx.queue,
                 config,
-                depth_view,
+                viewport,
+                blit_pipeline,
+                blit_layout,
+                blit_sampler,
                 app,
                 window,
                 egui_state,
@@ -1318,20 +1516,6 @@ impl ApplicationHandler for WebHandler {
                     gpu.config.width = size.width;
                     gpu.config.height = size.height;
                     gpu.surface.configure(&gpu.device, &gpu.config);
-                    gpu.depth_view = gpu
-                        .device
-                        .create_texture(&wgpu::TextureDescriptor {
-                            label: Some("Depth"),
-                            size: self.screen_size,
-                            mip_level_count: 1,
-                            sample_count: 1,
-                            dimension: wgpu::TextureDimension::D2,
-                            format: DEPTH_FORMAT,
-                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                            view_formats: &[],
-                        })
-                        .create_view(&wgpu::TextureViewDescriptor::default());
-                    gpu.app.resize(self.screen_size, &gpu.device);
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -1381,28 +1565,26 @@ impl WebHandler {
         };
 
         // If the screen was resized while GPU was initializing asynchronously,
-        // the depth texture and surface config still have the old size.
-        // Reconfigure now before the first render.
+        // reconfigure the surface now before the first render.
         if gpu.config.width != self.screen_size.width
             || gpu.config.height != self.screen_size.height
         {
             gpu.config.width = self.screen_size.width;
             gpu.config.height = self.screen_size.height;
             gpu.surface.configure(&gpu.device, &gpu.config);
-            gpu.depth_view = gpu
-                .device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some("Depth"),
-                    size: self.screen_size,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: DEPTH_FORMAT,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &[],
-                })
-                .create_view(&wgpu::TextureViewDescriptor::default());
-            gpu.app.resize(self.screen_size, &gpu.device);
+            let new_size = wgpu::Extent3d {
+                width: gpu.config.width,
+                height: gpu.config.height,
+                depth_or_array_layers: 1,
+            };
+            gpu.viewport.ensure_size(
+                new_size,
+                gpu.config.format,
+                &gpu.blit_layout,
+                &gpu.blit_sampler,
+                &gpu.device,
+            );
+            gpu.app.resize(new_size, &gpu.device);
         }
 
         // Compute delta time
@@ -1571,14 +1753,9 @@ impl WebHandler {
             _ => return,
         };
 
-        let view = frame
+        let surface_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let targets = ScreenTargets {
-            extent: self.screen_size,
-            color: &view,
-            depth: &gpu.depth_view,
-        };
 
         // --- egui UI pass (run first to get panel rect) ---
         let raw_input = gpu.egui_state.take_egui_input(&gpu.window);
@@ -1590,27 +1767,93 @@ impl WebHandler {
 
         // 3D viewport excludes the side panel.
         let screen = gpu.egui_state.egui_ctx().viewport_rect();
-        let panel = gpu.egui_state.egui_ctx().content_rect();
-        let panel_w = screen.width() - panel.width();
-        let viewport = if panel_w > 1.0 {
-            // Adjust camera aspect ratio to match the viewport width,
-            // not the full screen — prevents horizontal squishing.
-            let viewport_w = panel_w * gpu.window.scale_factor() as f32;
-            let viewport_h = self.screen_size.height as f32;
-            if let space::Projection::Perspective(ref mut p) = gpu.app.cam.proj {
-                p.aspect = viewport_w / viewport_h.max(1.0);
+        let content = gpu.egui_state.egui_ctx().content_rect();
+        let sidebar_w = screen.width() - content.width();
+        let scale = gpu.window.scale_factor() as f32;
+        let viewport_size = if sidebar_w > 1.0 {
+            let viewport_w = (content.width() * scale).max(1.0) as u32;
+            let viewport_h = (screen.height() * scale).max(1.0) as u32;
+            wgpu::Extent3d {
+                width: viewport_w,
+                height: viewport_h,
+                depth_or_array_layers: 1,
             }
-            Some(render::Rect {
-                x: 0,
-                y: 0,
-                w: panel_w as u16,
-                h: screen.height() as u16,
-            })
         } else {
-            None
+            self.screen_size
         };
 
-        let command_buffer = gpu.app.draw(&gpu.device, &gpu.queue, targets, viewport);
+        // Ensure offscreen textures match the viewport and update
+        // renderer/camera when the size changes.
+        let prev_size = gpu.viewport.size;
+        gpu.viewport.ensure_size(
+            viewport_size,
+            gpu.config.format,
+            &gpu.blit_layout,
+            &gpu.blit_sampler,
+            &gpu.device,
+        );
+        if gpu.viewport.size.width != prev_size.width
+            || gpu.viewport.size.height != prev_size.height
+        {
+            gpu.app.resize(viewport_size, &gpu.device);
+        }
+        if let space::Projection::Perspective(ref mut p) = gpu.app.cam.proj {
+            let aspect = viewport_size.width as f32 / viewport_size.height.max(1) as f32;
+            p.aspect = aspect;
+        }
+
+        // --- Render 3D scene to offscreen texture ---
+        let offscreen_targets = ScreenTargets {
+            extent: viewport_size,
+            color: &gpu.viewport.color_view,
+            depth: &gpu.viewport.depth_view,
+        };
+        let viewport_rect = render::Rect {
+            x: 0,
+            y: 0,
+            w: viewport_size.width as u16,
+            h: viewport_size.height as u16,
+        };
+        let world_cmd = gpu.app.draw(
+            &gpu.device,
+            &gpu.queue,
+            offscreen_targets,
+            Some(viewport_rect),
+        );
+
+        // --- Blit offscreen texture to surface ---
+        let mut blit_encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Viewport Blit") });
+        {
+            let mut blit_pass = blit_encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Viewport Blit"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &surface_view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    ..Default::default()
+                })
+                .forget_lifetime();
+            blit_pass.set_viewport(
+                0.0,
+                0.0,
+                viewport_size.width as f32,
+                viewport_size.height as f32,
+                0.0,
+                1.0,
+            );
+            blit_pass.set_pipeline(&gpu.blit_pipeline);
+            blit_pass.set_bind_group(0, &gpu.viewport.bind_group, &[]);
+            blit_pass.draw(0..3, 0..1);
+        }
 
         // --- egui render pass ---
         let paint_jobs = gpu
@@ -1646,7 +1889,7 @@ impl WebHandler {
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("egui"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
+                        view: &surface_view,
                         resolve_target: None,
                         depth_slice: None,
                         ops: wgpu::Operations {
@@ -1663,7 +1906,7 @@ impl WebHandler {
         }
 
         gpu.queue
-            .submit(vec![command_buffer, egui_encoder.finish()]);
+            .submit(vec![world_cmd, blit_encoder.finish(), egui_encoder.finish()]);
         for &id in &full_output.textures_delta.free {
             gpu.egui_renderer.free_texture(&id);
         }
