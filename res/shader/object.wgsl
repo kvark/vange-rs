@@ -1,6 +1,7 @@
 //!include body.inc globals.inc quat.inc shadow.inc surface.inc
 
 const c_BodyColorId: u32 = 1u;
+const c_WheelColorId: u32 = 3u;
 
 struct Storage {
     bodies: array<Body>,
@@ -61,6 +62,7 @@ struct Varyings {
     @location(0) palette_range: vec2<f32>,
     @location(1) position: vec3<f32>,
     @location(2) normal: vec3<f32>,
+    @location(3) color_id: u32,
 };
 
 @vertex
@@ -86,6 +88,7 @@ fn color_vs(
         palette_range,
         world,
         world_normal,
+        color_id,
     );
 }
 
@@ -121,6 +124,10 @@ fn color_fs(in: Varyings, @builtin(front_facing) is_front: bool) -> @location(0)
     let tc_raw = mix(in.palette_range.x, in.palette_range.y, n_dot_l);
     let tc = clamp(tc_raw, in.palette_range.x + 0.5, in.palette_range.y - 0.5) / 256.0;
     var color = textureSample(t_Palette, s_PaletteSampler, vec2<f32>(tc, 0.5));
+    if (in.color_id == c_WheelColorId) {
+        let wheel_level = n_dot_l * (60.0 / 255.0);
+        color = vec4<f32>(vec3<f32>(wheel_level), color.a);
+    }
 
     // Per-fragment underwater tint. All texture fetches happen at
     // uniform top level — only the *blend* is conditional. The cell's
