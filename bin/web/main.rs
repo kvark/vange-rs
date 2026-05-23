@@ -20,6 +20,19 @@ use vangers::{
 /// is missing (404) we fall back to the procedural test level.
 const DEFAULT_LEVEL: &str = "fostral";
 
+const LEVELS: &[&str] = &[
+    "fostral",
+    "glorx",
+    "necross",
+    "khox",
+    "boozeena",
+    "weexow",
+    "xplo",
+    "hmok",
+    "threall",
+    "ark-a-znoy",
+];
+
 /// INI path inside the per-level zip. Each `<id>.zip` stores the level
 /// files at the archive root (no `<id>/` prefix), so the INI key is
 /// just `"world.ini"`.
@@ -60,6 +73,9 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = window, js_name = vangeSelectedLevel, catch)]
     fn js_selected_level() -> Result<JsValue, JsValue>;
+
+    #[wasm_bindgen(js_namespace = window, js_name = vangeNavigateLevel)]
+    fn js_navigate_level(level_id: &str);
 }
 
 /// Khox is the smallest stock level (2048 × 8192) and the only one
@@ -115,6 +131,23 @@ fn selected_level_id() -> String {
         }
     }
     DEFAULT_LEVEL.to_string()
+}
+
+/// Read the selected car name from the URL fragment `#car=<name>`,
+/// falling back to an empty string (which means "use the first main car").
+fn selected_car_name() -> String {
+    if let Some(window) = web_sys::window()
+        && let Ok(hash) = window.location().hash()
+    {
+        for pair in hash.trim_start_matches('#').split('&') {
+            if let Some(rest) = pair.strip_prefix("car=")
+                && !rest.is_empty()
+            {
+                return rest.to_string();
+            }
+        }
+    }
+    String::new()
 }
 
 /// Fetch `common.zip` and `<level_id>.zip` from the release and mount
@@ -282,11 +315,41 @@ fn spawn_default_agent(
     let car_prm = vfs.read("car.prm")?;
     let (car_name, stats_data) = config::car::first_main_entry(Cursor::new(&*car_prm));
 
-    let model_info = registry.model_infos.get(&car_name)?;
+    spawn_agent_named(&car_name, &stats_data, vfs, &registry, level, device, object)
+}
+
+fn spawn_named_agent(
+    name: &str,
+    vfs: &Vfs,
+    level: &level::Level,
+    device: &wgpu::Device,
+    object: &render::object::Context,
+) -> Option<Agent> {
+    use std::io::Cursor;
+
+    let game_lst = vfs.read("game.lst")?;
+    let registry = config::game::Registry::load_reader(Cursor::new(&*game_lst));
+
+    let car_prm_bytes = vfs.read("car.prm")?;
+    let stats_data = config::car::stats_for_name(name, Cursor::new(&*car_prm_bytes))?;
+
+    spawn_agent_named(name, &stats_data, vfs, &registry, level, device, object)
+}
+
+fn spawn_agent_named(
+    car_name: &str,
+    stats_data: &[u32],
+    vfs: &Vfs,
+    registry: &config::game::Registry,
+    level: &level::Level,
+    device: &wgpu::Device,
+    object: &render::object::Context,
+) -> Option<Agent> {
+    use std::io::Cursor;
+
+    let model_info = registry.model_infos.get(car_name)?;
     let m3d_bytes = vfs.read(&model_info.path)?;
 
-    // Per-vehicle physics file lives next to the m3d. If it's missing,
-    // fall back to `default.prm` in the same directory.
     let prm_path = std::path::Path::new(&model_info.path).with_extension("prm");
     let prm_key = prm_path.to_str()?;
     let (prm_bytes, is_default) = if let Some(bytes) = vfs.read(prm_key) {
@@ -310,13 +373,12 @@ fn spawn_default_agent(
 
     let car = config::car::CarInfo {
         kind: config::car::Kind::Main,
-        stats: config::car::CarStats::new(&stats_data),
+        stats: config::car::CarStats::new(stats_data),
         physics: car_physics,
         model: visual,
         scale,
     };
 
-    // Spawn at the level center, snapped to the terrain.
     let coords = (level.size.0 / 2, level.size.1 / 2);
     let height = level.get(coords).high() + 5.0;
     let transform = space::Transform {
@@ -335,6 +397,13 @@ fn spawn_default_agent(
     })
 }
 
+fn list_car_names(vfs: &Vfs) -> Vec<String> {
+    use std::io::Cursor;
+    vfs.read("car.prm")
+        .map(|bytes| config::car::list_car_names(Cursor::new(&*bytes)))
+        .unwrap_or_default()
+}
+
 struct WebApp {
     render: Render,
     level: level::Level,
@@ -348,8 +417,19 @@ struct WebApp {
     agent: Option<Agent>,
     /// Follow-camera parameters (radius/height/smoothing).
     follow: space::Follow,
+    /// If true, the follow camera anchors its height to the ground
+    /// beneath the agent rather than the agent's Z position.
+    ground_anchor: bool,
     /// True when running on WebGPU (vs WebGL2 fallback).
     is_webgpu: bool,
+    /// Currently loaded level id (for the level picker UI).
+    current_level: String,
+    /// Index into [`LEVELS`] for the level picker dropdown.
+    selected_level_idx: usize,
+    /// Available car names parsed from `car.prm`.
+    car_names: Vec<String>,
+    /// Index into [`car_names`] for the car picker dropdown.
+    selected_car_idx: usize,
 }
 
 impl WebApp {
@@ -384,16 +464,16 @@ impl WebApp {
         let settings = Self::load_settings();
         let level_config = level::LevelConfig::new_test();
         let level = level::load(&level_config, &settings.game.geometry);
-        Self::build(gfx, level_config, level, None, is_webgpu, &settings)
+        Self::build(gfx, level_config, level, None, is_webgpu, &settings, DEFAULT_LEVEL, "")
     }
 
     /// Build the app from a real level in a [`Vfs`]. `ini_path` is the
     /// VFS key of the world INI (e.g. `"fostral/world.ini"`).
-    fn new_from_vfs(gfx: &GraphicsContext, vfs: &Vfs, ini_path: &str, is_webgpu: bool) -> Self {
+    fn new_from_vfs(gfx: &GraphicsContext, vfs: &Vfs, ini_path: &str, is_webgpu: bool, level_id: &str, car_name: &str) -> Self {
         let settings = Self::load_settings();
         let level_config = level::LevelConfig::load_from_vfs(vfs, ini_path);
         let level = level::load_from_vfs(vfs, &level_config, &settings.game.geometry);
-        Self::build(gfx, level_config, level, Some(vfs), is_webgpu, &settings)
+        Self::build(gfx, level_config, level, Some(vfs), is_webgpu, &settings, level_id, car_name)
     }
 
     fn build(
@@ -403,6 +483,8 @@ impl WebApp {
         vfs: Option<&Vfs>,
         is_webgpu: bool,
         settings: &settings::Settings,
+        level_id: &str,
+        car_name: &str,
     ) -> Self {
         let objects_palette = vfs
             .and_then(|v| v.read("resource/pal/objects.pal"))
@@ -468,10 +550,26 @@ impl WebApp {
             .and_then(|v| v.read("common.prm"))
             .map(|b| config::common::load_reader(std::io::Cursor::new(&*b)))
             .unwrap_or_else(config::common::Common::test_default);
-        let agent = vfs.and_then(|v| spawn_default_agent(v, &level, &gfx.device, &render.object));
+        let agent = vfs.and_then(|v| {
+            if car_name.is_empty() {
+                spawn_default_agent(v, &level, &gfx.device, &render.object)
+            } else {
+                spawn_named_agent(car_name, v, &level, &gfx.device, &render.object)
+            }
+        });
         if agent.is_none() {
             log::info!("No player agent — running in free-camera mode");
         }
+        let car_names = vfs.map(|v| list_car_names(v)).unwrap_or_default();
+        let default_car = agent.as_ref().map(|a| a.car.stats.clone());
+        let selected_car_idx = default_car
+            .as_ref()
+            .and_then(|_| agent.as_ref())
+            .map(|a| {
+                let name = &a.car.physics.name;
+                car_names.iter().position(|n| n == name).unwrap_or(0)
+            })
+            .unwrap_or(0);
 
         // Camera follow params from settings.ron, same conversion as
         // native (bin/road/game.rs CameraStyle::new).
@@ -480,6 +578,7 @@ impl WebApp {
             offset: glam::vec3(0.0, cam_config.offset, cam_config.height),
             speed: cam_config.speed,
         };
+        let ground_anchor = follow.angle_x > 15.0f32.to_radians();
 
         // Settle the follow camera at the agent's spawn pose. Without
         // this, the camera starts at the placeholder above and the slow
@@ -501,35 +600,133 @@ impl WebApp {
             common,
             agent,
             follow,
+            ground_anchor,
             is_webgpu,
+            current_level: level_id.to_string(),
+            selected_level_idx: LEVELS.iter().position(|&l| l == level_id).unwrap_or(0),
+            car_names,
+            selected_car_idx,
         }
     }
 
-    fn draw_ui(&self, ctx: &egui::Context) {
-        egui::Window::new("Settings").show(ctx, |ui| {
-            ui.label(format!(
-                "Backend: {}",
-                if self.is_webgpu { "WebGPU" } else { "WebGL2" }
-            ));
-            if let Some(ref agent) = self.agent {
-                ui.separator();
-                ui.label("Vehicle");
-                let pos = agent.transform.disp;
-                ui.label(format!(
-                    "Position: ({:.0}, {:.0}, {:.0})",
-                    pos.x, pos.y, pos.z
-                ));
-                ui.label(format!(
-                    "Speed: {:.1}",
-                    agent.dynamo.linear_velocity.length()
-                ));
-            }
-            ui.separator();
-            ui.label("Camera");
-            ui.label(format!(
-                "Pos: ({:.0}, {:.0}, {:.0})",
-                self.cam.loc.x, self.cam.loc.y, self.cam.loc.z
-            ));
+fn draw_ui(&mut self, ctx: &egui::Context) {
+        #[allow(deprecated)]
+        egui::SidePanel::right("Tweaks")
+            .min_width(200.0)
+            .show(ctx, |ui| {
+            ui.vertical(|ui| {
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(format!(
+                        "Backend: {}",
+                        if self.is_webgpu { "WebGPU" } else { "WebGL2" }
+                    ));
+                });
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("Level:");
+                    let mut changed = false;
+                    egui::ComboBox::from_id_salt("level-select")
+                        .selected_text(LEVELS[self.selected_level_idx])
+                        .show_ui(ui, |ui| {
+                            for (i, name) in LEVELS.iter().enumerate() {
+                                if ui.selectable_label(i == self.selected_level_idx, *name).clicked() {
+                                    self.selected_level_idx = i;
+                                    changed = true;
+                                }
+                            }
+                        });
+                    if changed && LEVELS[self.selected_level_idx] != self.current_level {
+                        js_navigate_level(LEVELS[self.selected_level_idx]);
+                    }
+                    self.level.draw_ui(ui);
+                });
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("Mechous:");
+                    if !self.car_names.is_empty() {
+                        let mut car_changed = false;
+                        egui::ComboBox::from_id_salt("car-select")
+                            .selected_text(&self.car_names[self.selected_car_idx])
+                            .show_ui(ui, |ui| {
+                                for (i, name) in self.car_names.iter().enumerate() {
+                                    if ui.selectable_label(i == self.selected_car_idx, name.as_str()).clicked() {
+                                        self.selected_car_idx = i;
+                                        car_changed = true;
+                                    }
+                                }
+                            });
+                        if car_changed {
+                            let car_name = &self.car_names[self.selected_car_idx];
+                            js_navigate_level(&format!("{}&car={}", self.current_level, car_name));
+                        }
+                    }
+                    if let Some(ref mut agent) = self.agent {
+                        egui::ComboBox::from_id_salt("color-select")
+                            .selected_text(agent.color.name())
+                            .show_ui(ui, |ui| {
+                                for &color in &[
+                                    render::object::BodyColor::Green,
+                                    render::object::BodyColor::Red,
+                                    render::object::BodyColor::Blue,
+                                    render::object::BodyColor::Yellow,
+                                    render::object::BodyColor::Gray,
+                                ] {
+                                    ui.selectable_value(&mut agent.color, color, color.name());
+                                }
+                            });
+                        ui.horizontal(|ui| {
+                            ui.label("Position");
+                            ui.add(egui::DragValue::new(&mut agent.transform.disp.x)
+                                .speed(1.0).prefix("x:"));
+                            ui.add(egui::DragValue::new(&mut agent.transform.disp.y)
+                                .speed(1.0).prefix("y:"));
+                        });
+                        ui.label(format!(
+                            "Speed: {:.1}",
+                            agent.dynamo.linear_velocity.length()
+                        ));
+                    }
+                });
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("Camera:");
+                    self.cam.draw_ui(ui);
+                    let mut angle_deg = self.follow.angle_x.to_degrees();
+                    ui.add(egui::Slider::new(&mut angle_deg, -105.0..=0.0).text("Angle"));
+                    self.follow.angle_x = angle_deg.to_radians();
+                    ui.horizontal(|ui| {
+                        ui.add(egui::DragValue::new(&mut self.follow.offset.x)
+                            .speed(1.0).prefix("ox:"));
+                        ui.add(egui::DragValue::new(&mut self.follow.offset.y)
+                            .speed(1.0).prefix("oy:"));
+                        ui.add(egui::DragValue::new(&mut self.follow.offset.z)
+                            .speed(1.0).prefix("oz:"));
+                    });
+                    ui.add(egui::Slider::new(&mut self.follow.speed, 0.1..=10.0).text("Speed"));
+                    ui.checkbox(&mut self.ground_anchor, "Ground anchor");
+                });
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("Renderer:");
+                    self.render.draw_ui(ui);
+                });
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("Controls:");
+                    ui.label("WASD - drive");
+                    ui.label("Space - brake");
+                    ui.label("Q/E - roll");
+                    ui.label("Alt - jump");
+                    ui.label("Shift - turbo");
+                });
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("Links:");
+                    ui.hyperlink_to("Blog", "/blog");
+                    ui.hyperlink_to("GitHub", "https://github.com/kvark/vange-rs");
+                });
+            });
         });
     }
 
@@ -545,6 +742,7 @@ impl WebApp {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         targets: ScreenTargets,
+        viewport_rect: Option<render::Rect>,
     ) -> wgpu::CommandBuffer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("World"),
@@ -562,7 +760,7 @@ impl WebApp {
             &self.level,
             &self.cam,
             targets,
-            None,
+            viewport_rect,
             device,
             queue,
         );
@@ -686,6 +884,170 @@ mod net_ws {
 
 use web_time::Instant;
 
+const BLIT_SHADER: &str = r"
+@group(0) @binding(0) var tex: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+
+struct VOut {
+    @builtin(position) pos: vec4f,
+    @location(0) uv: vec2f,
+};
+
+@vertex
+fn vs(@builtin(vertex_index) idx: u32) -> VOut {
+    var positions = array<vec2f, 3>(
+        vec2f(-1.0, -1.0),
+        vec2f(3.0, -1.0),
+        vec2f(-1.0, 3.0),
+    );
+    var uvs = array<vec2f, 3>(
+        vec2f(0.0, 1.0),
+        vec2f(2.0, 1.0),
+        vec2f(0.0, -1.0),
+    );
+    return VOut(vec4f(positions[idx], 0.0, 1.0), uvs[idx]);
+}
+
+@fragment
+fn fs(v: VOut) -> @location(0) vec4f {
+    return textureSample(tex, samp, v.uv);
+}
+";
+
+#[allow(dead_code)]
+struct ViewportResources {
+    color_texture: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    depth_texture: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+    size: wgpu::Extent3d,
+}
+
+impl ViewportResources {
+    fn new(
+        size: wgpu::Extent3d,
+        format: wgpu::TextureFormat,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        device: &wgpu::Device,
+    ) -> Self {
+        let color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Viewport Color"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Viewport Depth"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Viewport Blit"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        });
+
+        ViewportResources {
+            color_texture,
+            color_view,
+            depth_texture,
+            depth_view,
+            bind_group,
+            size,
+        }
+    }
+
+    fn ensure_size(
+        &mut self,
+        new_size: wgpu::Extent3d,
+        format: wgpu::TextureFormat,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        device: &wgpu::Device,
+    ) {
+        if self.size.width == new_size.width && self.size.height == new_size.height {
+            return;
+        }
+        *self = Self::new(new_size, format, layout, sampler, device);
+    }
+}
+
+fn create_blit_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Blit Shader"),
+        source: wgpu::ShaderSource::Wgsl(BLIT_SHADER.into()),
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Blit Pipeline Layout"),
+        bind_group_layouts: &[Some(layout)],
+        immediate_size: 0,
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Blit Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 /// GPU resources initialized asynchronously on WASM.
 struct GpuState {
     _instance: wgpu::Instance,
@@ -693,7 +1055,10 @@ struct GpuState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    depth_view: wgpu::TextureView,
+    viewport: ViewportResources,
+    blit_pipeline: wgpu::RenderPipeline,
+    blit_layout: wgpu::BindGroupLayout,
+    blit_sampler: wgpu::Sampler,
     app: WebApp,
     window: Arc<Window>,
     egui_state: egui_winit::State,
@@ -934,6 +1299,8 @@ impl ApplicationHandler for WebHandler {
                                     screen_size: wgpu::Extent3d,
                                     vfs_level: Option<(Vfs, String)>,
                                     is_webgpu: bool,
+                                    level_id: String,
+                                    car_name: String,
                                     window: Arc<Window>|
               -> GpuState {
             // winit's web backend manages canvas backing size via its
@@ -968,18 +1335,46 @@ impl ApplicationHandler for WebHandler {
             };
             surface.configure(&device, &config);
 
-            let depth_view = device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some("Depth"),
-                    size: screen_size,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: DEPTH_FORMAT,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &[],
-                })
-                .create_view(&wgpu::TextureViewDescriptor::default());
+            let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Viewport Blit Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+            let blit_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("Viewport Blit Sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                ..Default::default()
+            });
+            let blit_pipeline =
+                create_blit_pipeline(&device, config.format, &blit_layout);
+            let viewport = ViewportResources::new(
+                screen_size,
+                config.format,
+                &blit_layout,
+                &blit_sampler,
+                &device,
+            );
 
             let gfx = GraphicsContext {
                 downlevel_caps: adapter.get_downlevel_capabilities(),
@@ -989,7 +1384,7 @@ impl ApplicationHandler for WebHandler {
                 queue,
             };
             let app = match vfs_level {
-                Some((vfs, ini_path)) => WebApp::new_from_vfs(&gfx, &vfs, &ini_path, is_webgpu),
+                Some((vfs, ini_path)) => WebApp::new_from_vfs(&gfx, &vfs, &ini_path, is_webgpu, &level_id, &car_name),
                 None => WebApp::new(&gfx, is_webgpu),
             };
 
@@ -1011,7 +1406,10 @@ impl ApplicationHandler for WebHandler {
                 device: gfx.device,
                 queue: gfx.queue,
                 config,
-                depth_view,
+                viewport,
+                blit_pipeline,
+                blit_layout,
+                blit_sampler,
                 app,
                 window,
                 egui_state,
@@ -1034,7 +1432,8 @@ impl ApplicationHandler for WebHandler {
             let requested = selected_level_id();
             let level_id =
                 pick_level_for_adapter(requested, adapter.limits().max_texture_dimension_2d);
-            log::info!("Selected level: {}", level_id);
+            let car_name = selected_car_name();
+            log::info!("Selected level: {}, car: {}", level_id, if car_name.is_empty() { "(default)" } else { &car_name });
             let vfs_level = fetch_release_level(&level_id).await;
 
             // Level construction and renderer setup are synchronous
@@ -1057,6 +1456,8 @@ impl ApplicationHandler for WebHandler {
                 screen_size,
                 vfs_level,
                 is_webgpu,
+                level_id,
+                car_name,
                 window.clone(),
             );
             *pending.borrow_mut() = Some(state);
@@ -1111,20 +1512,6 @@ impl ApplicationHandler for WebHandler {
                     gpu.config.width = size.width;
                     gpu.config.height = size.height;
                     gpu.surface.configure(&gpu.device, &gpu.config);
-                    gpu.depth_view = gpu
-                        .device
-                        .create_texture(&wgpu::TextureDescriptor {
-                            label: Some("Depth"),
-                            size: self.screen_size,
-                            mip_level_count: 1,
-                            sample_count: 1,
-                            dimension: wgpu::TextureDimension::D2,
-                            format: DEPTH_FORMAT,
-                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                            view_formats: &[],
-                        })
-                        .create_view(&wgpu::TextureViewDescriptor::default());
-                    gpu.app.resize(self.screen_size, &gpu.device);
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -1174,28 +1561,26 @@ impl WebHandler {
         };
 
         // If the screen was resized while GPU was initializing asynchronously,
-        // the depth texture and surface config still have the old size.
-        // Reconfigure now before the first render.
+        // reconfigure the surface now before the first render.
         if gpu.config.width != self.screen_size.width
             || gpu.config.height != self.screen_size.height
         {
             gpu.config.width = self.screen_size.width;
             gpu.config.height = self.screen_size.height;
             gpu.surface.configure(&gpu.device, &gpu.config);
-            gpu.depth_view = gpu
-                .device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some("Depth"),
-                    size: self.screen_size,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: DEPTH_FORMAT,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &[],
-                })
-                .create_view(&wgpu::TextureViewDescriptor::default());
-            gpu.app.resize(self.screen_size, &gpu.device);
+            let new_size = wgpu::Extent3d {
+                width: gpu.config.width,
+                height: gpu.config.height,
+                depth_or_array_layers: 1,
+            };
+            gpu.viewport.ensure_size(
+                new_size,
+                gpu.config.format,
+                &gpu.blit_layout,
+                &gpu.blit_sampler,
+                &gpu.device,
+            );
+            gpu.app.resize(new_size, &gpu.device);
         }
 
         // Compute delta time
@@ -1364,17 +1749,11 @@ impl WebHandler {
             _ => return,
         };
 
-        let view = frame
+        let surface_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let targets = ScreenTargets {
-            extent: self.screen_size,
-            color: &view,
-            depth: &gpu.depth_view,
-        };
-        let command_buffer = gpu.app.draw(&gpu.device, &gpu.queue, targets);
 
-        // --- egui UI pass ---
+        // --- egui UI pass (run first to get panel rect) ---
         let raw_input = gpu.egui_state.take_egui_input(&gpu.window);
         let full_output = gpu.egui_state.egui_ctx().run_ui(raw_input, |ctx| {
             gpu.app.draw_ui(ctx);
@@ -1382,6 +1761,97 @@ impl WebHandler {
         gpu.egui_state
             .handle_platform_output(&gpu.window, full_output.platform_output);
 
+        // 3D viewport excludes the side panel.
+        let screen = gpu.egui_state.egui_ctx().viewport_rect();
+        let content = gpu.egui_state.egui_ctx().content_rect();
+        let sidebar_w = screen.width() - content.width();
+        let scale = gpu.window.scale_factor() as f32;
+        let viewport_size = if sidebar_w > 1.0 {
+            let viewport_w = (content.width() * scale).max(1.0) as u32;
+            let viewport_h = (screen.height() * scale).max(1.0) as u32;
+            wgpu::Extent3d {
+                width: viewport_w,
+                height: viewport_h,
+                depth_or_array_layers: 1,
+            }
+        } else {
+            self.screen_size
+        };
+
+        // Ensure offscreen textures match the viewport and update
+        // renderer/camera when the size changes.
+        let prev_size = gpu.viewport.size;
+        gpu.viewport.ensure_size(
+            viewport_size,
+            gpu.config.format,
+            &gpu.blit_layout,
+            &gpu.blit_sampler,
+            &gpu.device,
+        );
+        if gpu.viewport.size.width != prev_size.width
+            || gpu.viewport.size.height != prev_size.height
+        {
+            gpu.app.resize(viewport_size, &gpu.device);
+        }
+        if let space::Projection::Perspective(ref mut p) = gpu.app.cam.proj {
+            let aspect = viewport_size.width as f32 / viewport_size.height.max(1) as f32;
+            p.aspect = aspect;
+        }
+
+        // --- Render 3D scene to offscreen texture ---
+        let offscreen_targets = ScreenTargets {
+            extent: viewport_size,
+            color: &gpu.viewport.color_view,
+            depth: &gpu.viewport.depth_view,
+        };
+        let viewport_rect = render::Rect {
+            x: 0,
+            y: 0,
+            w: viewport_size.width as u16,
+            h: viewport_size.height as u16,
+        };
+        let world_cmd = gpu.app.draw(
+            &gpu.device,
+            &gpu.queue,
+            offscreen_targets,
+            Some(viewport_rect),
+        );
+
+        // --- Blit offscreen texture to surface ---
+        let mut blit_encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Viewport Blit") });
+        {
+            let mut blit_pass = blit_encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Viewport Blit"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &surface_view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    ..Default::default()
+                })
+                .forget_lifetime();
+            blit_pass.set_viewport(
+                0.0,
+                0.0,
+                viewport_size.width as f32,
+                viewport_size.height as f32,
+                0.0,
+                1.0,
+            );
+            blit_pass.set_pipeline(&gpu.blit_pipeline);
+            blit_pass.set_bind_group(0, &gpu.viewport.bind_group, &[]);
+            blit_pass.draw(0..3, 0..1);
+        }
+
+        // --- egui render pass ---
         let paint_jobs = gpu
             .egui_state
             .egui_ctx()
@@ -1415,7 +1885,7 @@ impl WebHandler {
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("egui"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
+                        view: &surface_view,
                         resolve_target: None,
                         depth_slice: None,
                         ops: wgpu::Operations {
@@ -1432,7 +1902,7 @@ impl WebHandler {
         }
 
         gpu.queue
-            .submit(vec![command_buffer, egui_encoder.finish()]);
+            .submit(vec![world_cmd, blit_encoder.finish(), egui_encoder.finish()]);
         for &id in &full_output.textures_delta.free {
             gpu.egui_renderer.free_texture(&id);
         }
