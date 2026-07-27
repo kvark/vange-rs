@@ -7,8 +7,6 @@
 
 use wasm_bindgen::prelude::*;
 
-use std::cell::RefCell;
-
 use vangers::{
     config::{self, settings},
     data, level, model, physics,
@@ -352,9 +350,6 @@ struct WebApp {
     follow: space::Follow,
     /// True when running on WebGPU (vs WebGL2 fallback).
     is_webgpu: bool,
-    /// Cached DOM elements for nav status updates.
-    nav_els: RefCell<Option<(web_sys::Element, web_sys::Element)>>,
-    nav_text: RefCell<(String, String)>,
 }
 
 impl WebApp {
@@ -507,36 +502,21 @@ impl WebApp {
             agent,
             follow,
             is_webgpu,
-            nav_els: RefCell::new(None),
-            nav_text: RefCell::new((String::new(), String::new())),
         }
     }
 
     fn draw_ui(&self, _ctx: &egui::Context) {
-        let mut els = self.nav_els.borrow_mut();
-        if els.is_none() {
-            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                let backend = doc.get_element_by_id("nav-backend");
-                let camera = doc.get_element_by_id("nav-camera");
-                if let (Some(be), Some(ce)) = (backend, camera) {
-                    *els = Some((be, ce));
-                }
+        if let Some(document) = web_sys::window()
+            .and_then(|w| w.document())
+        {
+            if let Some(el) = document.get_element_by_id("nav-backend") {
+                el.set_text_content(Some(if self.is_webgpu { "WebGPU" } else { "WebGL2" }));
             }
-        }
-        if let Some((ref backend_el, ref camera_el)) = *els {
-            let backend_text = if self.is_webgpu { "WebGPU" } else { "WebGL2" };
-            let camera_text = format!(
-                "({:.0}, {:.0}, {:.0})",
-                self.cam.loc.x, self.cam.loc.y, self.cam.loc.z
-            );
-            let mut last = self.nav_text.borrow_mut();
-            if last.0 != backend_text {
-                backend_el.set_text_content(Some(backend_text));
-                last.0 = backend_text.to_string();
-            }
-            if last.1 != camera_text {
-                camera_el.set_text_content(Some(&camera_text));
-                last.1 = camera_text;
+            if let Some(el) = document.get_element_by_id("nav-camera") {
+                el.set_text_content(Some(&format!(
+                    "({:.0}, {:.0}, {:.0})",
+                    self.cam.loc.x, self.cam.loc.y, self.cam.loc.z
+                )));
             }
         }
     }
