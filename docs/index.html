@@ -9,7 +9,14 @@
         body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #c9d1d9; }
 
         /* Tab bar */
-        nav { display: flex; background: #161b22; border-bottom: 1px solid #30363d; }
+        nav {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+            display: flex; align-items: center;
+            background: rgba(22, 27, 34, 0.65);
+            border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+        }
         nav button {
             padding: 12px 24px; background: none; border: none; color: #8b949e;
             font-size: 15px; cursor: pointer; border-bottom: 2px solid transparent;
@@ -17,6 +24,11 @@
         }
         nav button:hover { color: #c9d1d9; }
         nav button.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        #nav-status {
+            margin-left: auto; display: flex; align-items: center; gap: 16px;
+            font-size: 12px; color: #8b949e; padding-right: 14px;
+        }
+        #nav-status span { font-family: 'Fira Code', monospace; color: #c9d1d9; }
 
         /* Panels */
         .panel { display: none; }
@@ -25,7 +37,7 @@
         /* Game tab */
         #game-panel { position: relative; }
         #game-panel canvas {
-            width: 100vw; height: calc(100vh - 47px); display: block; background: #1a1a2e;
+            width: 100vw; height: 100vh; display: block; background: #1a1a2e;
         }
         #loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -62,16 +74,29 @@
         #phase-log div { padding: 1px 0; }
         #phase-log div:last-child { color: #c9d1d9; }
         #level-picker {
-            position: absolute; top: 12px; right: 12px; z-index: 10;
-            background: rgba(0,0,0,0.7); padding: 6px 10px; border-radius: 6px;
-            font-size: 13px; color: #c9d1d9; display: flex; gap: 8px; align-items: center;
+            position: absolute; bottom: 16px; left: 16px; z-index: 10;
+            display: flex; gap: 8px; align-items: center;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            padding: 6px 10px; border-radius: 6px;
+            font-size: 13px; color: #c9d1d9;
         }
         #level-picker select {
-            background: #161b22; color: #c9d1d9; border: 1px solid #30363d;
-            padding: 4px 8px; border-radius: 4px; font-size: 13px; cursor: pointer;
+            appearance: none; -webkit-appearance: none;
+            background-color: rgba(255,255,255,0.08);
+            background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238b949e' d='M3 8h6L6 3z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 6px center;
+            color: #c9d1d9; border: 1px solid rgba(48,54,61,0.5);
+            padding: 4px 22px 4px 8px; border-radius: 4px;
+            font-size: 13px; cursor: pointer;
         }
         #controls-hint {
-            position: absolute; bottom: 16px; left: 16px; background: rgba(0,0,0,0.7);
+            position: absolute; bottom: 16px; right: 16px; z-index: 10;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
             padding: 8px 14px; border-radius: 6px; font-size: 13px; color: #8b949e;
             pointer-events: none;
         }
@@ -107,23 +132,28 @@
         <button class="active" onclick="showTab('game')">Play</button>
         <button onclick="showTab('blog')">Blog</button>
         <button onclick="showTab('about')">About</button>
+        <div id="nav-status">
+            Backend: <span id="nav-backend">…</span>
+            &nbsp;|&nbsp;
+            Camera: <span id="nav-camera">…</span>
+        </div>
     </nav>
 
     <!-- Game Tab -->
     <div id="game-panel" class="panel active">
-        <div id="level-picker">
-            <label for="level-select">Level:</label>
-            <select id="level-select" onchange="onLevelChange()"></select>
-        </div>
         <div id="loading">
             <div id="status-text">Starting…</div>
             <div id="progress-bar"><div id="progress-fill"></div></div>
             <div id="progress-text"></div>
             <div id="phase-log"></div>
         </div>
+        <div id="level-picker">
+            <label for="level-select">Level:</label>
+            <select id="level-select" onchange="onLevelChange()"></select>
+        </div>
         <canvas id="canvas" tabindex="0"></canvas>
         <div id="controls-hint">
-            WASD – drive &nbsp;|&nbsp; Space – brake &nbsp;|&nbsp; Q/E – roll &nbsp;|&nbsp; Alt – jump &nbsp;|&nbsp; Shift – turbo
+            WASD – drive &nbsp;|&nbsp; Space – brake &nbsp;|&nbsp; Q/E – roll &nbsp;|&nbsp; Alt – jump &nbsp;|&nbsp; Shift – turbo &nbsp;|&nbsp; Z/X – zoom
         </div>
     </div>
 

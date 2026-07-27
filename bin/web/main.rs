@@ -505,32 +505,20 @@ impl WebApp {
         }
     }
 
-    fn draw_ui(&self, ctx: &egui::Context) {
-        egui::Window::new("Settings").show(ctx, |ui| {
-            ui.label(format!(
-                "Backend: {}",
-                if self.is_webgpu { "WebGPU" } else { "WebGL2" }
-            ));
-            if let Some(ref agent) = self.agent {
-                ui.separator();
-                ui.label("Vehicle");
-                let pos = agent.transform.disp;
-                ui.label(format!(
-                    "Position: ({:.0}, {:.0}, {:.0})",
-                    pos.x, pos.y, pos.z
-                ));
-                ui.label(format!(
-                    "Speed: {:.1}",
-                    agent.dynamo.linear_velocity.length()
-                ));
+    fn draw_ui(&self, _ctx: &egui::Context) {
+        if let Some(document) = web_sys::window()
+            .and_then(|w| w.document())
+        {
+            if let Some(el) = document.get_element_by_id("nav-backend") {
+                el.set_text_content(Some(if self.is_webgpu { "WebGPU" } else { "WebGL2" }));
             }
-            ui.separator();
-            ui.label("Camera");
-            ui.label(format!(
-                "Pos: ({:.0}, {:.0}, {:.0})",
-                self.cam.loc.x, self.cam.loc.y, self.cam.loc.z
-            ));
-        });
+            if let Some(el) = document.get_element_by_id("nav-camera") {
+                el.set_text_content(Some(&format!(
+                    "({:.0}, {:.0}, {:.0})",
+                    self.cam.loc.x, self.cam.loc.y, self.cam.loc.z
+                )));
+            }
+        }
     }
 
     fn resize(&mut self, extent: wgpu::Extent3d, device: &wgpu::Device) {
