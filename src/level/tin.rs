@@ -622,13 +622,50 @@ impl Emitter<'_> {
 ///   from `mid` up to `high` along that edge. Only the slab side emits the
 ///   wall, so it is never duplicated.
 fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
+    // A triangle carries a slab only if it lies *entirely* inside the
+    // double-level region.
+    //
+    // Testing just the three corners is not enough. Real levels have
+    // fragmented dual regions - Fostral is 10.9% double-level with ragged
+    // outlines - so a coarse triangle can have all three corners dual while
+    // spanning terrain that mostly is not. Interpolating `high` across that
+    // gap produced a roof sloping up to a distant vertex's slab, with tall
+    // vertical curtains where its edges were walled off: on a river view it
+    // covered the entire sky.
+    //
+    // Erring the other way merely drops the slab near a region's edge,
+    // which reads as a gap in a tunnel roof rather than a wall through the
+    // horizon. Properly fixing it means constraining the triangulation to
+    // the `DOUBLE_LEVEL` outline so no triangle straddles it at all.
     let is_slab = |tri: &Tri| -> bool {
-        tri.v.iter().all(|&v| chunk.sample(grid, v).is_dual)
-            // A zero-thickness slab has nothing to show.
-            && tri.v.iter().any(|&v| {
-                let s = chunk.sample(grid, v);
-                s.high > s.low
-            })
+        let (a, b, c) = (
+            chunk.pos(grid, tri.v[0]),
+            chunk.pos(grid, tri.v[1]),
+            chunk.pos(grid, tri.v[2]),
+        );
+        if orient2d(a, b, c) <= 0 {
+            return false;
+        }
+        let min_x = a[0].min(b[0]).min(c[0]).max(0);
+        let max_x = a[0].max(b[0]).max(c[0]).min(grid.nx as i32 - 1);
+        let min_y = a[1].min(b[1]).min(c[1]).max(0);
+        let max_y = a[1].max(b[1]).max(c[1]).min(grid.ny as i32 - 1);
+        let mut has_thickness = false;
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                let q = [x, y];
+                if orient2d(b, c, q) < 0 || orient2d(c, a, q) < 0 || orient2d(a, b, q) < 0 {
+                    continue;
+                }
+                let s = grid.sample(grid.index(x as u32, y as u32));
+                if !s.is_dual {
+                    return false;
+                }
+                has_thickness |= s.high > s.low;
+            }
+        }
+        // A zero-thickness slab has nothing to show.
+        has_thickness
     };
 
     let mut emitter = Emitter {
