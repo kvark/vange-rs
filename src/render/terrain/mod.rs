@@ -269,16 +269,21 @@ struct MeshGeometry {
     /// The live triangulation, kept so terrain edits refine the mesh in
     /// place instead of rebuilding it.
     tin: level::tin::Tin,
+    /// Where each chunk's geometry lives, per LOD. Refreshed whenever the
+    /// slots move.
+    chunk_draws: Vec<level::tin::ChunkDraw>,
 }
 
 impl MeshGeometry {
     fn new(tin: level::tin::Tin, mesh: &level::tin::Mesh, device: &wgpu::Device) -> Self {
         let (vertex_buf, index_buf, num_indices) = Self::buffers(mesh, device);
+        let chunk_draws = tin.chunk_draws();
         MeshGeometry {
             vertex_buf,
             index_buf,
             num_indices,
             tin,
+            chunk_draws,
         }
     }
 
@@ -385,6 +390,12 @@ enum Kind {
         /// bounds, so both sides agree on the tile grid.
         tile_count: u32,
         wireframe: bool,
+        /// `(first index, index count)` per visible chunk, with the LOD
+        /// already chosen. Rebuilt each frame in `prepare`.
+        draws: Vec<(u32, u32)>,
+        /// Distance, in texels, at which the mesh drops to the next coarser
+        /// LOD. Each step doubles it.
+        lod_distance: f32,
     },
 }
 
@@ -1607,6 +1618,8 @@ impl Context {
                     geo: None,
                     tile_count: 1,
                     wireframe: false,
+                    draws: Vec::new(),
+                    lod_distance: 96.0,
                 }
             }
         };
@@ -1876,6 +1889,8 @@ impl Context {
                                 for part in &parts {
                                     geo.patch(part, encoder, device);
                                 }
+                                // Live index counts moved with the refit.
+                                geo.chunk_draws = geo.tin.chunk_draws();
                             }
                             level::tin::Update::Relaid(mesh) => {
                                 // Slots moved, so the buffers are replaced
@@ -1886,6 +1901,7 @@ impl Context {
                                 geo.vertex_buf = vertex_buf;
                                 geo.index_buf = index_buf;
                                 geo.num_indices = num_indices;
+                                geo.chunk_draws = geo.tin.chunk_draws();
                             }
                         }
                     }
@@ -2227,7 +2243,11 @@ impl Context {
                 };
             }
             Kind::Mesh {
-                ref mut tile_count, ..
+                ref mut tile_count,
+                ref mut draws,
+                ref geo,
+                lod_distance,
+                ..
             } => {
                 // The TIN covers the level once; the level wraps. Instance
                 // it across the tiles the camera can see, deriving the grid
@@ -2255,6 +2275,37 @@ impl Context {
                 } else {
                     1
                 };
+
+                // Pick a LOD per chunk from its distance to the camera,
+                // measured on the torus since the level wraps. Coarser
+                // levels are the same greedy fit stopped earlier, so this
+                // costs nothing but an index range swap.
+                draws.clear();
+                if let Some(geo) = geo.as_ref() {
+                    let wrap = |d: f32, period: f32| {
+                        if period > 0.0 {
+                            let d = d.rem_euclid(period);
+                            d.min(period - d)
+                        } else {
+                            d
+                        }
+                    };
+                    for chunk in geo.chunk_draws.iter() {
+                        let dx = wrap(chunk.center[0] - sc.origin.x, size[0]);
+                        let dy = wrap(chunk.center[1] - sc.origin.y, size[1]);
+                        let dist = (dx * dx + dy * dy).sqrt();
+                        let level = if lod_distance > 0.0 {
+                            ((dist / lod_distance).max(1.0).log2().floor() as usize)
+                                .min(chunk.lods.len() - 1)
+                        } else {
+                            0
+                        };
+                        let (base, count) = chunk.lods[level];
+                        if count != 0 {
+                            draws.push((base, count));
+                        }
+                    }
+                }
             }
             Kind::Scatter {
                 ref clear_pipeline,
@@ -2432,19 +2483,27 @@ impl Context {
                 geo: Some(ref geo),
                 tile_count,
                 wireframe,
+                ref draws,
                 ..
             } => {
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-                let indices = 0..geo.num_indices;
+                // One draw per chunk, because the LOD is chosen per chunk.
+                // With `MAX_TILE_RADIUS` bounding the wrap tiles, this stays
+                // a handful of calls per frame on a level-sized mesh.
+                let emit = |pass: &mut wgpu::RenderPass<'a>| {
+                    for &(base, count) in draws.iter() {
+                        pass.draw_indexed(base..base + count, 0, 0..tile_count);
+                    }
+                };
                 if let Some(wire) = wire_pipeline.as_ref().filter(|_| wireframe) {
                     pass.set_pipeline(&wire.depth);
-                    pass.draw_indexed(indices.clone(), 0, 0..tile_count);
+                    emit(pass);
                     pass.set_pipeline(&wire.line);
-                    pass.draw_indexed(indices, 0, 0..tile_count);
+                    emit(pass);
                 } else {
                     pass.set_pipeline(pipeline);
-                    pass.draw_indexed(indices, 0, 0..tile_count);
+                    emit(pass);
                 }
             }
             // Not built yet: the first `update_dirty` has not run.
@@ -2514,6 +2573,7 @@ impl Context {
             Kind::Mesh {
                 geo: Some(ref geo),
                 ref mut wireframe,
+                ref mut lod_distance,
                 config,
                 ..
             } => {
@@ -2531,6 +2591,11 @@ impl Context {
                     config.quality, stats.max_error
                 ));
                 ui.checkbox(wireframe, "Show mesh grid");
+                ui.add(
+                    egui::Slider::new(lod_distance, 16.0..=512.0)
+                        .logarithmic(true)
+                        .text("LOD distance"),
+                );
             }
             _ => {}
         }
