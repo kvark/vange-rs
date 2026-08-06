@@ -596,11 +596,19 @@ impl Emitter<'_> {
         index
     }
 
+    /// Emit one triangle, given its corners in outward-facing order.
+    ///
+    /// The indices go out reversed. Callers describe faces the natural way
+    /// - counter-clockwise seen from outside, in world space - but the
+    /// camera folds a scale of (1, -1, 1) into its view matrix to be
+    /// left-handed (see `Camera::get_view_proj`), which flips handedness on
+    /// the way to the screen. Reversing here means the rasterizer sees
+    /// outward faces as front-facing, so plain back-face culling works.
     fn tri(&mut self, a: (u32, Layer), b: (u32, Layer), c: (u32, Layer)) {
         let ia = self.vertex(a.0, a.1);
         let ib = self.vertex(b.0, b.1);
         let ic = self.vertex(c.0, c.1);
-        self.out.indices.extend_from_slice(&[ia, ib, ic]);
+        self.out.indices.extend_from_slice(&[ic, ib, ia]);
     }
 }
 

@@ -95,6 +95,9 @@ pub struct SnapshotOptions {
     /// Near clip distance. The default of 10 is fine for an orbit camera
     /// but clips the ground out from under a first-person one.
     pub near: f32,
+    /// Draw the voxel occupancy grid for LODs `[n, n+1)` instead of the
+    /// terrain, to inspect what the ray marcher actually sees.
+    pub voxel_debug_lod: Option<usize>,
 }
 
 impl Default for SnapshotOptions {
@@ -114,6 +117,7 @@ impl Default for SnapshotOptions {
             fp_pitch: 0.0,
             fp_under: false,
             near: 10.0,
+            voxel_debug_lod: None,
             width: 800,
             height: 600,
             cam_target: Vec3::new(128.0, 128.0, 0.0),
@@ -327,6 +331,9 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     );
     render.resize(extent, &gfx.device);
     render.terrain.set_mesh_wireframe(opts.mesh_wireframe);
+    render
+        .terrain
+        .set_voxel_debug_lods(opts.voxel_debug_lod.map(|n| n..n + 1));
 
     // Offscreen color + depth.
     let color_tex = gfx.device.create_texture(&wgpu::TextureDescriptor {
