@@ -67,9 +67,9 @@
 		// Sliced,
 		// Painted,
 		// Triangle mesh fitted to the height map (greedy Delaunay, see `level::tin`).
-		// `max_error` is in world altitude units; going below one height
-		// quantisation step (geometry height / 256) explodes the triangle count.
-		// Mesh( max_error: 1.0, chunk_size: 128, max_vertices_per_chunk: 4096 ),
+		// `quality` is 0..=1: 1.0 fits to one height quantisation step, and
+		// every 0.25 less doubles the tolerance (and roughly halves the triangles).
+		// Mesh( quality: 0.75 ),
 		water: (),
 		debug: (
 			max_vertices: 512,

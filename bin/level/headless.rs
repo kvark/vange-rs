@@ -47,6 +47,7 @@ pub struct SnapshotOptions {
     pub bench_out: Option<String>,
     pub shadow_voxel: bool,
     pub shadow_ray: bool,
+    pub mesh_wireframe: bool,
 }
 
 impl Default for SnapshotOptions {
@@ -57,6 +58,7 @@ impl Default for SnapshotOptions {
             common_zip: None,
             level_path: None,
             terrain: settings::Terrain::RayTraced,
+            mesh_wireframe: false,
             width: 800,
             height: 600,
             cam_target: Vec3::new(128.0, 128.0, 0.0),
@@ -169,9 +171,12 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     let limits = render_settings.get_device_limits(&adapter.limits(), geometry.height);
     let downlevel_caps = adapter.get_downlevel_capabilities();
 
+    // `POLYGON_MODE_LINE` drives the mesh terrain's grid view. It is
+    // optional in WebGPU, so take it only when the adapter offers it and
+    // let the renderer disable the view otherwise.
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("headless"),
-        required_features: wgpu::Features::empty(),
+        required_features: adapter.features() & wgpu::Features::POLYGON_MODE_LINE,
         required_limits: limits,
         memory_hints: wgpu::MemoryHints::default(),
         trace: wgpu::Trace::Off,
@@ -234,6 +239,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         cam.front_face(),
     );
     render.resize(extent, &gfx.device);
+    render.terrain.set_mesh_wireframe(opts.mesh_wireframe);
 
     // Offscreen color + depth.
     let color_tex = gfx.device.create_texture(&wgpu::TextureDescriptor {
