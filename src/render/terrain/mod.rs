@@ -410,6 +410,9 @@ enum Kind {
         /// Distance, in texels, at which the mesh drops to the next coarser
         /// LOD. Each step doubles it.
         lod_distance: f32,
+        /// Pin every chunk to one detail level, ignoring distance. For
+        /// inspecting what a level actually looks like.
+        lod_force: Option<usize>,
     },
 }
 
@@ -1640,6 +1643,7 @@ impl Context {
                     wireframe: false,
                     draws: Vec::new(),
                     lod_distance: 96.0,
+                    lod_force: None,
                 }
             }
         };
@@ -2251,6 +2255,7 @@ impl Context {
                 ref mut draws,
                 ref geo,
                 lod_distance,
+                lod_force,
                 ..
             } => {
                 // The TIN covers the level once; the level wraps. Instance
@@ -2319,7 +2324,9 @@ impl Context {
                                 chunk.center[1] + offset.y,
                             );
                             let dist = (center - sc.origin).length();
-                            let level = if lod_distance > 0.0 {
+                            let level = if let Some(forced) = lod_force {
+                                forced.min(chunk.lods.len() - 1)
+                            } else if lod_distance > 0.0 {
                                 ((dist / lod_distance).max(1.0).log2().floor() as usize)
                                     .min(chunk.lods.len() - 1)
                             } else {
@@ -2710,9 +2717,12 @@ impl Context {
                 geo: Some(ref geo),
                 ref mut wireframe,
                 ref mut lod_distance,
+                ref mut lod_force,
+                ref draws,
                 config,
                 ..
             } => {
+                let draw_count = draws.len();
                 let stats = &geo.tin.stats;
                 ui.label(format!(
                     "TIN: {} verts, {} tris",
@@ -2726,12 +2736,27 @@ impl Context {
                     "quality {:.2} -> max error {:.2}",
                     config.quality, stats.max_error
                 ));
+                ui.label(format!(
+                    "{} chunks drawn, {} levels each",
+                    draw_count,
+                    level::tin::LOD_COUNT
+                ));
                 ui.checkbox(wireframe, "Show mesh grid");
                 ui.add(
                     egui::Slider::new(lod_distance, 16.0..=512.0)
                         .logarithmic(true)
                         .text("LOD distance"),
                 );
+                let mut forced = lod_force.is_some();
+                ui.checkbox(&mut forced, "Force one LOD");
+                let mut level = lod_force.unwrap_or(0);
+                ui.add_enabled_ui(forced, |ui| {
+                    ui.add(
+                        egui::Slider::new(&mut level, 0..=level::tin::LOD_COUNT - 1)
+                            .text("Forced LOD (0 = finest)"),
+                    );
+                });
+                *lod_force = if forced { Some(level) } else { None };
             }
             _ => {}
         }
