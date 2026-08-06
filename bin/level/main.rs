@@ -103,6 +103,9 @@ struct Cli {
     /// Probe the voxel occupancy grid at "x,y" against the height map.
     #[arg(long)]
     voxel_probe: Option<String>,
+    /// Dump the depth buffer as raw f32 alongside the snapshot.
+    #[arg(long)]
+    depth_out: Option<String>,
 }
 
 fn parse_terrain(
@@ -209,6 +212,7 @@ fn main() {
                 let v = parse_vec3(&format!("{},0", s));
                 (v.x, v.y)
             }),
+            depth_out: cli.depth_out.clone(),
             fp_height: cli.fp_height,
             fp_yaw: cli.fp_yaw,
             fp_pitch: cli.fp_pitch,

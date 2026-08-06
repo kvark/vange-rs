@@ -101,6 +101,10 @@ pub struct SnapshotOptions {
     /// Probe the voxel occupancy grid at this world position, at every
     /// LOD, and print it alongside the height map's own answer.
     pub voxel_probe: Option<(i32, i32)>,
+    /// Also dump the depth buffer as raw little-endian f32, one per pixel.
+    /// Lets a comparison score geometry against a reference by distance
+    /// rather than by classifying colours.
+    pub depth_out: Option<String>,
 }
 
 impl Default for SnapshotOptions {
@@ -122,6 +126,7 @@ impl Default for SnapshotOptions {
             near: 10.0,
             voxel_debug_lod: None,
             voxel_probe: None,
+            depth_out: None,
             width: 800,
             height: 600,
             cam_target: Vec3::new(128.0, 128.0, 0.0),
@@ -359,7 +364,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -553,6 +558,59 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             "  height map: solid below z={} ({} steps of 2)",
             low,
             (low / 2.0) as i32
+        );
+    }
+
+    if let Some(ref path) = opts.depth_out {
+        // Depth32Float, so 4 bytes per pixel, rows padded to the copy
+        // alignment like the colour readback.
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let unpadded = 4 * opts.width;
+        let padded = (unpadded + align - 1) & !(align - 1);
+        let buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("depth readback"),
+            size: (padded * opts.height) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut enc = gfx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &depth_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::DepthOnly,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(opts.height),
+                },
+            },
+            extent,
+        );
+        gfx.queue.submit(Some(enc.finish()));
+        buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        let _ = gfx.device.poll(wgpu::PollType::Wait {
+            timeout: None,
+            submission_index: Default::default(),
+        });
+        let view = buf.slice(..).get_mapped_range();
+        let mut out = Vec::with_capacity((unpadded * opts.height) as usize);
+        for row in 0..opts.height as usize {
+            let start = row * padded as usize;
+            out.extend_from_slice(&view[start..start + unpadded as usize]);
+        }
+        drop(view);
+        buf.unmap();
+        std::fs::write(path, &out).expect("failed to write depth dump");
+        info!(
+            "Wrote {}x{} depth buffer to {}",
+            opts.width, opts.height, path
         );
     }
 
