@@ -171,6 +171,11 @@ fn make_camera(opts: &SnapshotOptions, lvl: &level::Level) -> space::Camera {
     let rot_mat = Mat3::from_cols(-right, -up, -forward);
     let rot = Quat::from_mat3(&rot_mat);
 
+    info!(
+        "Camera at ({:.1}, {:.1}, {:.1}) facing ({:.3}, {:.3}, {:.3})",
+        cam_loc.x, cam_loc.y, cam_loc.z, forward.x, forward.y, forward.z
+    );
+
     space::Camera {
         loc: cam_loc,
         rot,
