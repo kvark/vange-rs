@@ -97,6 +97,9 @@ struct Cli {
     /// (octree) and inner (leaf) loops. The default matches the web build.
     #[arg(long, default_value_t = 40)]
     voxel_steps: u32,
+    /// Draw the voxel occupancy grid at this LOD instead of the terrain.
+    #[arg(long)]
+    voxel_debug_lod: Option<usize>,
 }
 
 fn parse_terrain(
@@ -208,6 +211,7 @@ fn main() {
             fp_pitch: cli.fp_pitch,
             fp_under: cli.fp_under,
             near: cli.near,
+            voxel_debug_lod: cli.voxel_debug_lod,
         };
         headless::render_snapshot(opts);
         return;
