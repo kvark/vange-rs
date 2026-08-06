@@ -98,6 +98,9 @@ pub struct SnapshotOptions {
     /// Draw the voxel occupancy grid for LODs `[n, n+1)` instead of the
     /// terrain, to inspect what the ray marcher actually sees.
     pub voxel_debug_lod: Option<usize>,
+    /// Probe the voxel occupancy grid at this world position, at every
+    /// LOD, and print it alongside the height map's own answer.
+    pub voxel_probe: Option<(i32, i32)>,
 }
 
 impl Default for SnapshotOptions {
@@ -118,6 +121,7 @@ impl Default for SnapshotOptions {
             fp_under: false,
             near: 10.0,
             voxel_debug_lod: None,
+            voxel_probe: None,
             width: 800,
             height: 600,
             cam_target: Vec3::new(128.0, 128.0, 0.0),
@@ -523,6 +527,34 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     }
     drop(data);
     staging_buf.unmap();
+
+    if let Some((px, py)) = opts.voxel_probe {
+        let texel = lvl.get((px, py));
+        let low = texel.low();
+        info!(
+            "Probing voxel occupancy at x={} y={} (floor {})",
+            px, py, low
+        );
+        let mut col = String::new();
+        for zi in 0..128 {
+            let z = zi * 2;
+            let bits = render
+                .terrain
+                .debug_voxel_occupancy(&gfx.device, &gfx.queue, [px, py, z]);
+            col.push(if bits.first().copied().unwrap_or(false) {
+                '#'
+            } else {
+                '.'
+            });
+        }
+        info!("  LOD0 occupancy up the column (z = 0..256 step 2):");
+        info!("  {}", col);
+        info!(
+            "  height map: solid below z={} ({} steps of 2)",
+            low,
+            (low / 2.0) as i32
+        );
+    }
 
     info!("Saving snapshot to {}", opts.output_path);
     if let Some(parent) = std::path::Path::new(&opts.output_path).parent() {

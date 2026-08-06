@@ -100,6 +100,9 @@ struct Cli {
     /// Draw the voxel occupancy grid at this LOD instead of the terrain.
     #[arg(long)]
     voxel_debug_lod: Option<usize>,
+    /// Probe the voxel occupancy grid at "x,y" against the height map.
+    #[arg(long)]
+    voxel_probe: Option<String>,
 }
 
 fn parse_terrain(
@@ -212,6 +215,10 @@ fn main() {
             fp_under: cli.fp_under,
             near: cli.near,
             voxel_debug_lod: cli.voxel_debug_lod,
+            voxel_probe: cli.voxel_probe.as_deref().map(|s| {
+                let v = parse_vec3(&format!("{},0", s));
+                (v.x as i32, v.y as i32)
+            }),
         };
         headless::render_snapshot(opts);
         return;
