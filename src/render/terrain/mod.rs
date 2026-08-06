@@ -308,86 +308,34 @@ struct RayVoxelData {
     mips: Vec<VoxelMip>,
 }
 
-/// GPU buffers for the terrain TIN.
-struct MeshGeometry {
+/// GPU buffers for the terrain TIN: one pair per chunk.
+struct ChunkBufs {
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer,
-    num_indices: u32,
-    /// The live triangulation, kept so terrain edits refine the mesh in
-    /// place instead of rebuilding it.
-    tin: level::tin::Tin,
-    /// Where each chunk's geometry lives, per LOD. Refreshed whenever the
-    /// slots move.
-    chunk_draws: Vec<level::tin::ChunkDraw>,
+    lods: Vec<(u32, u32)>,
+    center: [f32; 2],
+    min: [f32; 3],
+    max: [f32; 3],
 }
 
-impl MeshGeometry {
-    fn new(tin: level::tin::Tin, mesh: &level::tin::Mesh, device: &wgpu::Device) -> Self {
-        let (vertex_buf, index_buf, num_indices) = Self::buffers(mesh, device);
-        let chunk_draws = tin.chunk_draws();
-        MeshGeometry {
-            vertex_buf,
-            index_buf,
-            num_indices,
-            tin,
-            chunk_draws,
+impl ChunkBufs {
+    fn new(src: &level::tin::ChunkBuffers, device: &wgpu::Device) -> Self {
+        ChunkBufs {
+            vertex_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("terrain-mesh-chunk-vertex"),
+                contents: bytemuck::cast_slice(&src.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+            index_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("terrain-mesh-chunk-index"),
+                contents: bytemuck::cast_slice(&src.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+            lods: src.lods.clone(),
+            center: src.center,
+            min: src.min,
+            max: src.max,
         }
-    }
-
-    fn buffers(
-        mesh: &level::tin::Mesh,
-        device: &wgpu::Device,
-    ) -> (wgpu::Buffer, wgpu::Buffer, u32) {
-        (
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("terrain-mesh-vertex"),
-                contents: bytemuck::cast_slice(&mesh.vertices),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            }),
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("terrain-mesh-index"),
-                contents: bytemuck::cast_slice(&mesh.indices),
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            }),
-            mesh.indices.len() as u32,
-        )
-    }
-
-    /// Write one chunk's refreshed geometry into its slot. The index range
-    /// is written in full (padded with degenerate triangles by the TIN), so
-    /// a chunk that shrank leaves nothing stale behind.
-    fn patch(
-        &self,
-        part: &level::tin::ChunkGeometry,
-        encoder: &mut wgpu::CommandEncoder,
-        device: &wgpu::Device,
-    ) {
-        let vertex_size = mem::size_of::<level::tin::MeshVertex>() as wgpu::BufferAddress;
-        let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("terrain-mesh patch"),
-            contents: bytemuck::cast_slice(&part.vertices),
-            usage: wgpu::BufferUsages::COPY_SRC,
-        });
-        encoder.copy_buffer_to_buffer(
-            &staging,
-            0,
-            &self.vertex_buf,
-            part.slot.vertex_base as wgpu::BufferAddress * vertex_size,
-            part.vertices.len() as wgpu::BufferAddress * vertex_size,
-        );
-
-        let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("terrain-mesh index patch"),
-            contents: bytemuck::cast_slice(&part.indices),
-            usage: wgpu::BufferUsages::COPY_SRC,
-        });
-        encoder.copy_buffer_to_buffer(
-            &staging,
-            0,
-            &self.index_buf,
-            part.slot.index_base as wgpu::BufferAddress * 4,
-            part.indices.len() as wgpu::BufferAddress * 4,
-        );
     }
 }
 
@@ -397,6 +345,24 @@ struct WirePipelines {
     depth: wgpu::RenderPipeline,
     /// The same triangles rasterised as edges.
     line: wgpu::RenderPipeline,
+}
+
+struct MeshGeometry {
+    chunks: Vec<ChunkBufs>,
+    /// The live triangulation, kept so terrain edits refine the mesh in
+    /// place instead of rebuilding it.
+    tin: level::tin::Tin,
+}
+
+impl MeshGeometry {
+    fn new(tin: level::tin::Tin, mesh: &level::tin::Mesh, device: &wgpu::Device) -> Self {
+        let chunks = mesh
+            .chunks
+            .iter()
+            .map(|c| ChunkBufs::new(c, device))
+            .collect();
+        MeshGeometry { chunks, tin }
+    }
 }
 
 enum Kind {
@@ -439,7 +405,7 @@ enum Kind {
         wireframe: bool,
         /// `(first index, index count, wrap tile)` per visible chunk, with
         /// the LOD already chosen. Rebuilt each frame in `prepare`.
-        draws: Vec<(u32, u32, u32, f32)>,
+        draws: Vec<(u32, u32, u32, u32, f32)>,
         /// Distance, in texels, at which the mesh drops to the next coarser
         /// LOD. Each step doubles it.
         lod_distance: f32,
@@ -1930,26 +1896,10 @@ impl Context {
                         }
                         let (x, y) = (dr.rect.x as i32, dr.rect.y as i32);
                         let (w, h) = (dr.rect.w as i32, dr.rect.h as i32);
-                        match geo.tin.update(level, x, y, w, h) {
-                            level::tin::Update::Unchanged => {}
-                            level::tin::Update::Patches(parts) => {
-                                for part in &parts {
-                                    geo.patch(part, encoder, device);
-                                }
-                                // Live index counts moved with the refit.
-                                geo.chunk_draws = geo.tin.chunk_draws();
-                            }
-                            level::tin::Update::Relaid(mesh) => {
-                                // Slots moved, so the buffers are replaced
-                                // wholesale. The triangulation itself is
-                                // untouched and stays where it is.
-                                let (vertex_buf, index_buf, num_indices) =
-                                    MeshGeometry::buffers(&mesh, device);
-                                geo.vertex_buf = vertex_buf;
-                                geo.index_buf = index_buf;
-                                geo.num_indices = num_indices;
-                                geo.chunk_draws = geo.tin.chunk_draws();
-                            }
+                        // Each refitted chunk just gets fresh buffers -- they
+                        // are small enough that rebuilding beats patching.
+                        for (index, buffers) in geo.tin.update(level, x, y, w, h) {
+                            geo.chunks[index] = ChunkBufs::new(&buffers, device);
                         }
                     }
                 }
@@ -2343,7 +2293,7 @@ impl Context {
                             (lo_x + (tile % tiles_x) as f32) * size[0],
                             (lo_y + (tile / tiles_x) as f32) * size[1],
                         );
-                        for chunk in geo.chunk_draws.iter() {
+                        for (ci, chunk) in geo.chunks.iter().enumerate() {
                             let min = glam::Vec3::new(
                                 chunk.min[0] + offset.x,
                                 chunk.min[1] + offset.y,
@@ -2370,7 +2320,7 @@ impl Context {
                             };
                             let (base, count) = chunk.lods[level];
                             if count != 0 {
-                                draws.push((base, count, tile, dist));
+                                draws.push((ci as u32, base, count, tile, dist));
                             }
                         }
                     }
@@ -2378,7 +2328,7 @@ impl Context {
                     // re-derives the surface gradient per pixel), so letting
                     // the depth test reject occluded chunks before shading
                     // them is worth more than the sort costs.
-                    draws.sort_unstable_by(|a, b| a.3.total_cmp(&b.3));
+                    draws.sort_unstable_by(|a, b| a.4.total_cmp(&b.4));
                 }
             }
             Kind::Scatter {
@@ -2559,13 +2509,15 @@ impl Context {
                 ref draws,
                 ..
             } => {
-                pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
-                pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-                // One draw per chunk, because the LOD is chosen per chunk.
-                // With `MAX_TILE_RADIUS` bounding the wrap tiles, this stays
-                // a handful of calls per frame on a level-sized mesh.
+                // One draw per visible chunk: each owns its buffers, and the
+                // LOD is chosen per chunk. With `MAX_TILE_RADIUS` bounding
+                // the wrap tiles and the frustum test in `prepare`, this is
+                // a handful of calls per frame even on a level-sized mesh.
                 let emit = |pass: &mut wgpu::RenderPass<'a>| {
-                    for &(base, count, tile, _) in draws.iter() {
+                    for &(ci, base, count, tile, _) in draws.iter() {
+                        let chunk = &geo.chunks[ci as usize];
+                        pass.set_vertex_buffer(0, chunk.vertex_buf.slice(..));
+                        pass.set_index_buffer(chunk.index_buf.slice(..), wgpu::IndexFormat::Uint32);
                         pass.draw_indexed(base..base + count, 0, tile..tile + 1);
                     }
                 };
