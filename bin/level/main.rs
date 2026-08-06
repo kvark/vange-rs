@@ -45,6 +45,10 @@ struct Cli {
     /// rather than on its roof.
     #[arg(long, default_value_t = false)]
     fp_under: bool,
+    /// Near clip distance. The 10-unit default clips the ground away from
+    /// under a first-person camera; rasterized terrain then shows through.
+    #[arg(long, default_value_t = 10.0)]
+    near: f32,
     /// Path to a level zip archive (for VFS-based loading; matches web)
     #[arg(long)]
     level_zip: Option<String>,
@@ -197,6 +201,7 @@ fn main() {
             fp_yaw: cli.fp_yaw,
             fp_pitch: cli.fp_pitch,
             fp_under: cli.fp_under,
+            near: cli.near,
         };
         headless::render_snapshot(opts);
         return;
