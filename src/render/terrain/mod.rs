@@ -2661,10 +2661,13 @@ impl Context {
     /// No-op unless the voxel terrain mode is active.
     pub fn set_voxel_debug_lods(&mut self, range: Option<Range<usize>>) {
         if let Kind::RayVoxel(ref mut rv) = self.kind {
+            // Only tint the frame when the debug view is actually wanted:
+            // `debug_alpha` recolours the whole terrain, so setting it
+            // unconditionally silently corrupts every ordinary render.
+            rv.debug_alpha = if range.is_some() { 1.0 } else { 0.0 };
             if let Some(ref mut debug) = rv.debug_render {
                 debug.lod_range = range;
             }
-            rv.debug_alpha = 1.0;
         }
     }
 
