@@ -54,6 +54,11 @@ jobs:
         VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
         WGPU_BACKEND=vulkan \
         cargo run --release --bin level -- --snapshot snapshots/painted.png --terrain Painted
+    - name: Snapshot Mesh
+      run: |
+        VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+        WGPU_BACKEND=vulkan \
+        cargo run --release --bin level -- --snapshot snapshots/mesh.png --terrain Mesh
 
     # Voxel-terrain reftest at the same Fostral citadel cluster used by
     # tools/bench-voxel.sh. Correctness-only: no perf gate, just a smoke

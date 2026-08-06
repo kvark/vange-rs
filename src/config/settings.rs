@@ -147,6 +147,16 @@ pub enum Terrain {
     Scattered {
         density: [u32; 3],
     },
+    /// Triangulated irregular network: a real triangle mesh fitted to the
+    /// height map by greedy Delaunay insertion. See `level::tin`.
+    Mesh {
+        /// Vertical tolerance in world altitude units.
+        max_error: f32,
+        /// Side of a build chunk, in texels.
+        chunk_size: u32,
+        /// Safety cap on the vertices one chunk may spend.
+        max_vertices_per_chunk: u32,
+    },
 }
 
 #[derive(Copy, Clone, Deserialize)]
@@ -200,10 +210,14 @@ impl Render {
     pub fn get_device_limits(&self, adapter_limits: &wgpu::Limits, slices: u32) -> wgpu::Limits {
         let (max_width, max_height) = (2048usize, 16384usize);
         match self.terrain {
-            Terrain::RayTraced | Terrain::Sliced | Terrain::Painted => wgpu::Limits {
-                max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
-                ..wgpu::Limits::downlevel_webgl2_defaults()
-            },
+            // `Mesh` only needs plain vertex/index buffers on top of the
+            // terrain texture, so it runs anywhere ray tracing does.
+            Terrain::RayTraced | Terrain::Sliced | Terrain::Painted | Terrain::Mesh { .. } => {
+                wgpu::Limits {
+                    max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+                    ..wgpu::Limits::downlevel_webgl2_defaults()
+                }
+            }
             Terrain::RayVoxelTraced { voxel_size, .. } => {
                 let voxel_points = voxel_size[0] * voxel_size[1] * voxel_size[2];
                 let max_voxels = max_width * max_height * slices as usize / voxel_points as usize;
