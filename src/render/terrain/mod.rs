@@ -288,6 +288,7 @@ struct VoxelDebugRender {
 }
 
 struct RayVoxelData {
+    grid: wgpu::Buffer,
     bake_pipeline_layout: wgpu::PipelineLayout,
     draw_pipeline_layout: wgpu::PipelineLayout,
     draw_shader: wgpu::ShaderModule,
@@ -1432,7 +1433,12 @@ impl Context {
                 let grid = gfx.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Grid"),
                     size: (mem::size_of::<VoxelHeader>() + data_offset_in_words as usize * 4) as _,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    // COPY_SRC so `debug_voxel_occupancy` can read the
+                    // acceleration structure back and check it against the
+                    // height map.
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_DST
+                        | wgpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 });
                 gfx.queue
@@ -1513,6 +1519,7 @@ impl Context {
                 });
 
                 Kind::RayVoxel(Box::new(RayVoxelData {
+                    grid,
                     bake_pipeline_layout,
                     draw_pipeline_layout,
                     draw_shader,
@@ -2560,6 +2567,96 @@ impl Context {
 
     /// Overlay the TIN's triangle edges on the shaded surface. No-op unless
     /// the mesh terrain mode is active.
+    /// Read the occupancy bit for one world position at every LOD.
+    ///
+    /// Replicates `linearize()` from `terrain/voxel.inc.wgsl` on the CPU so
+    /// the acceleration structure can be checked against the height map
+    /// directly, without going through the ray marcher.
+    pub fn debug_voxel_occupancy(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        world: [i32; 3],
+    ) -> Vec<bool> {
+        fn morton_part(arg: u32) -> u32 {
+            let mut x = arg & 0x3ff;
+            x = (x ^ (x << 16)) & 0xff0000ff;
+            x = (x ^ (x << 8)) & 0x0300f00f;
+            x = (x ^ (x << 4)) & 0x030c30c3;
+            x = (x ^ (x << 2)) & 0x09249249;
+            x
+        }
+
+        let rv = match self.kind {
+            Kind::RayVoxel(ref rv) => rv,
+            _ => return Vec::new(),
+        };
+        // `VoxelHeader` sits in front of the occupancy words.
+        let header_words = mem::size_of::<VoxelHeader>() as u32 / 4;
+        let size = rv.grid.size();
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("voxel readback"),
+            size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_buffer_to_buffer(&rv.grid, 0, &staging, 0, size);
+        queue.submit(Some(encoder.finish()));
+        staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        let _ = device.poll(wgpu::PollType::Wait {
+            timeout: None,
+            submission_index: Default::default(),
+        });
+        let view = staging.slice(..).get_mapped_range();
+        let words: &[u32] = bytemuck::cast_slice(&view);
+        let base = [
+            world[0] / rv.voxel_size[0] as i32,
+            world[1] / rv.voxel_size[1] as i32,
+            world[2] / rv.voxel_size[2] as i32,
+        ];
+        let mut out = Vec::with_capacity(rv.mips.len());
+        for (lod, mip) in rv.mips.iter().enumerate() {
+            let dim = [
+                mip.extent.width,
+                mip.extent.height,
+                mip.extent.depth_or_array_layers,
+            ];
+            let coords = [
+                (base[0] >> lod) as u32,
+                (base[1] >> lod) as u32,
+                (base[2] >> lod) as u32,
+            ];
+            if (0..3).any(|i| coords[i] >= dim[i]) {
+                out.push(false);
+                continue;
+            }
+            let tile = VOXEL_TILE_SIZE;
+            let tile_counts = [
+                (dim[0] - 1) / tile + 1,
+                (dim[1] - 1) / tile + 1,
+                (dim[2] - 1) / tile + 1,
+            ];
+            let bit_index = (morton_part(coords[2] % tile) << 2)
+                + (morton_part(coords[1] % tile) << 1)
+                + morton_part(coords[0] % tile);
+            let tile_coord = [coords[0] / tile, coords[1] / tile, coords[2] / tile];
+            let tile_index =
+                (tile_coord[2] * tile_counts[1] + tile_coord[1]) * tile_counts[0] + tile_coord[0];
+            let words_per_tile = tile.pow(3) / 32;
+            let offset = header_words
+                + mip.data_offset_in_words
+                + tile_index * words_per_tile
+                + bit_index / 32;
+            let word = words.get(offset as usize).copied().unwrap_or(0);
+            out.push(word & (1 << (bit_index & 31)) != 0);
+        }
+        drop(view);
+        staging.unmap();
+        out
+    }
+
     /// Draw the voxel occupancy grid itself, for the given LOD range.
     /// No-op unless the voxel terrain mode is active.
     pub fn set_voxel_debug_lods(&mut self, range: Option<Range<usize>>) {
