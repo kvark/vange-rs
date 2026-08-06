@@ -436,8 +436,15 @@ impl WebApp {
         if is_webgpu {
             render_settings.terrain = settings::Terrain::RayVoxelTraced {
                 voxel_size: [2, 4, 1],
-                max_outer_steps: 40,
-                max_inner_steps: 40,
+                // 40 was too low: rays that travel far exhaust the budget and return
+                // background, so solid terrain reads as sky. Measured against a CPU
+                // raycast on Fostral, first person, the fraction of solid terrain
+                // drawn as sky fell from 21.8% to 2.1% on an open river view going
+                // from 40 steps to 250, and from 9.3% to 0.1% on an open ridge.
+                // Enclosed views were already fine and cost almost nothing extra,
+                // because rays there terminate long before the budget runs out.
+                max_outer_steps: 200,
+                max_inner_steps: 200,
                 max_update_texels: 1_000_000,
             };
             // Reuse the same voxel grid for shadow casting. Step counts
