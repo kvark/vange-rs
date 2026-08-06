@@ -67,6 +67,18 @@ fn fragment(in: Varyings) -> @location(0) vec4<f32> {
     let suf = get_surface(in.world_pos.xy);
     let ty = select(suf.low_type, suf.high_type, in.layer != 0u);
     let visibility = fetch_shadow_visibility(in.world_pos);
-    let terrain_color = evaluate_color(ty, in.world_pos, visibility);
+
+    // The polygon's own normal, from screen-space derivatives of the world
+    // position. A ray marcher has to rebuild this from height map taps;
+    // here it is exact and free, and it is the only thing that gives a
+    // sensible normal on the vertical walls and cave ceilings, where the
+    // height gradient is undefined.
+    var normal = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+    let to_eye = u_Globals.camera_pos.xyz - in.world_pos;
+    if (dot(normal, to_eye) < 0.0) {
+        normal = -normal;
+    }
+
+    let terrain_color = evaluate_color_normal(ty, in.world_pos, visibility, normal);
     return apply_fog(terrain_color, in.world_pos.xy);
 }
