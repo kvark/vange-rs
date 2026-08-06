@@ -18,17 +18,32 @@ struct Varyings {
 };
 
 // The mesh spans the level exactly once, but the level itself wraps, so we
-// instance it across every tile the camera can currently see.
-// `u_Locals.sample_range` is the visible XY bounds (see `Constants` in
-// `render::terrain`); the instance count on the CPU side is derived from
-// the same numbers, so the two agree on the tile grid.
-fn tile_offset(instance_index: u32) -> vec2<f32> {
+// instance it across the tiles the camera can currently see.
+//
+// The tile grid is bounded to a fixed radius around the camera's own tile.
+// A far plane much larger than the level would otherwise ask for hundreds
+// of tiles, and anything a whole level away is deep in the fog regardless.
+// Both this and the instance count in `render::terrain` derive the grid the
+// same way from the same uniforms -- they have to agree exactly, or the
+// drawn tiles stop lining up with the instance indices and the camera's own
+// tile can drop out of the draw entirely.
+const c_MaxTileRadius: f32 = 1.0;
+
+fn tile_grid() -> vec4<f32> {
     let level_size = u_Surface.texture_scale.xy;
-    let lo = floor(vec2<f32>(u_Locals.sample_range.x, u_Locals.sample_range.z) / level_size);
-    let hi = floor(vec2<f32>(u_Locals.sample_range.y, u_Locals.sample_range.w) / level_size);
-    let count_x = max(1u, u32(hi.x - lo.x) + 1u);
+    let cam_tile = floor(u_Locals.cam_origin_dir.xy / level_size);
+    let visible_lo = floor(vec2<f32>(u_Locals.sample_range.x, u_Locals.sample_range.z) / level_size);
+    let visible_hi = floor(vec2<f32>(u_Locals.sample_range.y, u_Locals.sample_range.w) / level_size);
+    let lo = max(visible_lo, cam_tile - c_MaxTileRadius);
+    let hi = max(lo, min(visible_hi, cam_tile + c_MaxTileRadius));
+    return vec4<f32>(lo, hi - lo + vec2<f32>(1.0));
+}
+
+fn tile_offset(instance_index: u32) -> vec2<f32> {
+    let grid = tile_grid();
+    let count_x = max(1u, u32(grid.z));
     let tile = vec2<f32>(f32(instance_index % count_x), f32(instance_index / count_x));
-    return (lo + tile) * level_size;
+    return (grid.xy + tile) * u_Surface.texture_scale.xy;
 }
 
 @vertex

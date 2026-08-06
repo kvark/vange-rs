@@ -81,6 +81,14 @@ pub struct SnapshotOptions {
     /// Frame to dig on. 0 means before the mesh is ever built, which
     /// gives a from-scratch reference to compare the incremental path to.
     pub dig_frame: u32,
+    /// First-person camera: stand at this XY instead of orbiting a target.
+    pub fp: Option<(f32, f32)>,
+    /// Eye height above the local ground surface.
+    pub fp_height: f32,
+    /// Heading in degrees; 0 looks along +Y.
+    pub fp_yaw: f32,
+    /// Pitch in degrees; 0 is horizontal, positive looks up.
+    pub fp_pitch: f32,
 }
 
 impl Default for SnapshotOptions {
@@ -94,6 +102,10 @@ impl Default for SnapshotOptions {
             mesh_wireframe: false,
             dig: false,
             dig_frame: 1,
+            fp: None,
+            fp_height: 8.0,
+            fp_yaw: 0.0,
+            fp_pitch: 0.0,
             width: 800,
             height: 600,
             cam_target: Vec3::new(128.0, 128.0, 0.0),
@@ -108,10 +120,29 @@ impl Default for SnapshotOptions {
     }
 }
 
-fn make_camera(opts: &SnapshotOptions) -> space::Camera {
-    let elev = opts.cam_elev_deg.to_radians();
-    let cam_loc = opts.cam_target + opts.cam_distance * Vec3::new(0.0, -elev.cos(), elev.sin());
-    let forward = (opts.cam_target - cam_loc).normalize();
+fn make_camera(opts: &SnapshotOptions, lvl: &level::Level) -> space::Camera {
+    let (cam_loc, forward) = match opts.fp {
+        // First person: stand on the surface and look along a heading. This
+        // is the view the orbit camera can't express -- at a low elevation
+        // it happily puts the eye inside a hill, and the interesting cases
+        // here are exactly the ones grazing the terrain.
+        Some((x, y)) => {
+            let ground = lvl.get((x as i32, y as i32)).high();
+            let loc = Vec3::new(x, y, ground + opts.fp_height);
+            let (yaw, pitch) = (opts.fp_yaw.to_radians(), opts.fp_pitch.to_radians());
+            let forward = Vec3::new(
+                yaw.sin() * pitch.cos(),
+                yaw.cos() * pitch.cos(),
+                pitch.sin(),
+            );
+            (loc, forward.normalize())
+        }
+        None => {
+            let elev = opts.cam_elev_deg.to_radians();
+            let loc = opts.cam_target + opts.cam_distance * Vec3::new(0.0, -elev.cos(), elev.sin());
+            (loc, (opts.cam_target - loc).normalize())
+        }
+    };
     // World-up = +Z, except when forward is parallel (looking straight down).
     let up_ref = if forward.cross(Vec3::Z).length_squared() > 1e-6 {
         Vec3::Z
@@ -120,8 +151,11 @@ fn make_camera(opts: &SnapshotOptions) -> space::Camera {
     };
     let right = forward.cross(up_ref).normalize();
     let up = right.cross(forward).normalize();
-    // Camera-local axes: +X right, +Y up, -Z forward.
-    let rot_mat = Mat3::from_cols(right, up, -forward);
+    // The engine folds a `scale` of (1, -1, 1) into the view matrix to make
+    // the camera left-handed (see `Camera::get_view_proj`), so what ends up
+    // pointing up on screen is `-(rot * Y)`, not `rot * Y`. Build the basis
+    // accordingly; negating two columns keeps the rotation proper.
+    let rot_mat = Mat3::from_cols(-right, -up, -forward);
     let rot = Quat::from_mat3(&rot_mat);
 
     space::Camera {
@@ -263,7 +297,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         None => (0..256).map(|_| [255u8, 255, 255, 255]).collect(),
     };
 
-    let cam = make_camera(&opts);
+    let cam = make_camera(&opts, &lvl);
 
     let mut render = Render::new(
         &gfx,

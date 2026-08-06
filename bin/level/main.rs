@@ -28,6 +28,19 @@ struct Cli {
     /// reference), 1 exercises the incremental refit.
     #[arg(long, default_value_t = 1)]
     dig_frame: u32,
+    /// First-person camera: stand at "x,y" on the terrain instead of
+    /// orbiting a target. Overrides --cam-target/--cam-distance/--cam-elev.
+    #[arg(long)]
+    fp: Option<String>,
+    /// Eye height above the local ground surface
+    #[arg(long, default_value_t = 8.0)]
+    fp_height: f32,
+    /// First-person heading in degrees; 0 looks along +Y
+    #[arg(long, default_value_t = 0.0)]
+    fp_yaw: f32,
+    /// First-person pitch in degrees; 0 is horizontal
+    #[arg(long, default_value_t = 0.0)]
+    fp_pitch: f32,
     /// Path to a level zip archive (for VFS-based loading; matches web)
     #[arg(long)]
     level_zip: Option<String>,
@@ -172,6 +185,13 @@ fn main() {
             mesh_wireframe: cli.mesh_wireframe,
             dig: cli.dig,
             dig_frame: cli.dig_frame,
+            fp: cli.fp.as_deref().map(|s| {
+                let v = parse_vec3(&format!("{},0", s));
+                (v.x, v.y)
+            }),
+            fp_height: cli.fp_height,
+            fp_yaw: cli.fp_yaw,
+            fp_pitch: cli.fp_pitch,
         };
         headless::render_snapshot(opts);
         return;
