@@ -20,6 +20,14 @@ struct Cli {
     /// Overlay the mesh triangle edges. Only meaningful with --terrain Mesh.
     #[arg(long, default_value_t = false)]
     mesh_wireframe: bool,
+    /// Carve a crater into the level after the first frame, exercising the
+    /// incremental terrain-update path.
+    #[arg(long, default_value_t = false)]
+    dig: bool,
+    /// Frame to dig on; 0 digs before the mesh is built (from-scratch
+    /// reference), 1 exercises the incremental refit.
+    #[arg(long, default_value_t = 1)]
+    dig_frame: u32,
     /// Path to a level zip archive (for VFS-based loading; matches web)
     #[arg(long)]
     level_zip: Option<String>,
@@ -162,6 +170,8 @@ fn main() {
             shadow_voxel: cli.shadow_voxel,
             shadow_ray: cli.shadow_ray,
             mesh_wireframe: cli.mesh_wireframe,
+            dig: cli.dig,
+            dig_frame: cli.dig_frame,
         };
         headless::render_snapshot(opts);
         return;
