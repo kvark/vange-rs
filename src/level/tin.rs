@@ -598,8 +598,8 @@ impl Emitter<'_> {
 
     /// Emit one triangle, given its corners in outward-facing order.
     ///
-    /// The indices go out reversed. Callers describe faces the natural way
-    /// - counter-clockwise seen from outside, in world space - but the
+    /// The indices go out reversed. Callers describe faces the natural
+    /// way, counter-clockwise seen from outside in world space, but the
     /// camera folds a scale of (1, -1, 1) into its view matrix to be
     /// left-handed (see `Camera::get_view_proj`), which flips handedness on
     /// the way to the screen. Reversing here means the rasterizer sees
