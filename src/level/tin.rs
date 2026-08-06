@@ -104,8 +104,7 @@ pub struct Stats {
 }
 
 pub struct Mesh {
-    pub vertices: Vec<MeshVertex>,
-    pub indices: Vec<u32>,
+    pub chunks: Vec<ChunkBuffers>,
     pub stats: Stats,
 }
 
@@ -758,50 +757,61 @@ fn refine(chunk: &mut Chunk, grid: &Grid, max_error: f32) {
     }
 }
 
-/// Where one chunk's geometry lives inside the shared buffers.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Slot {
-    pub vertex_base: u32,
-    pub vertex_cap: u32,
-    pub index_base: u32,
-    pub index_cap: u32,
-    /// Indices actually in use; the rest of the slot is degenerate padding.
-    pub live_indices: u32,
-}
-
-/// One chunk's geometry, ready to be written into its slot.
-pub struct ChunkGeometry {
-    pub slot: Slot,
-    pub vertices: Vec<MeshVertex>,
-    /// Absolute (already offset by `slot.vertex_base`) and padded out to
-    /// `index_cap` with degenerate triangles, so the whole index buffer
-    /// stays drawable in a single call and a shrinking chunk leaves no
-    /// stale triangles behind.
-    pub indices: Vec<u32>,
-}
-
-/// Spare room each slot carries so edits can refine a chunk in place.
+/// One chunk's geometry, in its own pair of buffers.
 ///
-/// Overflowing it is not an error, just a relayout - but relayout costs a
-/// full re-emit, so the headroom is generous enough to make it rare.
-fn with_headroom(used: usize, granularity: usize) -> u32 {
-    let n = used * 2 + 64;
-    (n.div_ceil(granularity) * granularity) as u32
+/// Per-chunk buffers rather than one buffer for the level: a level-sized
+/// index buffer runs past `max_buffer_size` on WebGL-class limits long
+/// before the geometry itself is unreasonable (Fostral at quality 0.75 is
+/// 119 MB of vertices and 177 MB of indices, but only ~57 KB + ~84 KB per
+/// chunk per LOD). It also makes a refit after a terrain edit trivial -
+/// rebuild two small buffers - so there is no slot capacity, no degenerate
+/// padding, and no relayout when a chunk outgrows its space.
+pub struct ChunkBuffers {
+    pub vertices: Vec<MeshVertex>,
+    /// Indices into this chunk's own vertex buffer.
+    pub indices: Vec<u32>,
+    /// `(first index, index count)` per LOD, finest first.
+    pub lods: Vec<(u32, u32)>,
+    /// Chunk centre in texels, for distance-based LOD selection.
+    pub center: [f32; 2],
+    /// World bounding box, for frustum culling. Covers every layer, so it
+    /// holds whatever the chunk emits.
+    pub min: [f32; 3],
+    pub max: [f32; 3],
 }
 
-impl ChunkGeometry {
-    fn pack(slot: Slot, mesh: ChunkMesh) -> Self {
-        let mut indices: Vec<u32> = mesh.indices.iter().map(|i| i + slot.vertex_base).collect();
-        indices.resize(slot.index_cap as usize, slot.vertex_base);
-        ChunkGeometry {
-            slot,
-            vertices: mesh.vertices,
-            indices,
+impl ChunkBuffers {
+    fn new(state: &ChunkState, per_lod: Vec<ChunkMesh>) -> Self {
+        let mut buffers = ChunkBuffers {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            lods: Vec::with_capacity(per_lod.len()),
+            center: [
+                state.x0 as f32 + state.w as f32 * 0.5,
+                state.y0 as f32 + state.h as f32 * 0.5,
+            ],
+            // Vertices sit at texel centres, so the chunk spans
+            // `[x0 + 0.5, x0 + w + 0.5]`; pad by half a texel either way
+            // rather than tracking that exactly.
+            min: [state.x0 as f32, state.y0 as f32, state.alt.0],
+            max: [
+                (state.x0 + state.w as i32) as f32 + 1.0,
+                (state.y0 + state.h as i32) as f32 + 1.0,
+                state.alt.1,
+            ],
+        };
+        for mesh in per_lod {
+            let base = buffers.vertices.len() as u32;
+            let first = buffers.indices.len() as u32;
+            buffers
+                .indices
+                .extend(mesh.indices.iter().map(|i| i + base));
+            buffers.vertices.extend(mesh.vertices);
+            buffers
+                .lods
+                .push((first, buffers.indices.len() as u32 - first));
         }
-    }
-
-    fn fits(slot: &Slot, mesh: &ChunkMesh) -> bool {
-        mesh.vertices.len() as u32 <= slot.vertex_cap && mesh.indices.len() as u32 <= slot.index_cap
+        buffers
     }
 }
 
@@ -817,21 +827,6 @@ struct ChunkState {
 
 struct LodState {
     tri: Chunk,
-    slot: Slot,
-}
-
-/// What the renderer needs to draw one chunk: where its geometry lives at
-/// each detail level, and where it is in the world.
-#[derive(Clone, Debug)]
-pub struct ChunkDraw {
-    /// Chunk centre in texels, for distance-based LOD selection.
-    pub center: [f32; 2],
-    /// World-space bounding box of the chunk, for frustum culling. Covers
-    /// every layer, so it is valid whatever the chunk emits.
-    pub min: [f32; 3],
-    pub max: [f32; 3],
-    /// `(first index, index count)` per LOD, finest first.
-    pub lods: Vec<(u32, u32)>,
 }
 
 impl ChunkState {
@@ -847,16 +842,8 @@ impl ChunkState {
     }
 }
 
-/// What a terrain edit did to the mesh.
-pub enum Update {
-    /// Nothing needed re-fitting.
-    Unchanged,
-    /// Write these chunks into their slots; the buffers keep their size.
-    Patches(Vec<ChunkGeometry>),
-    /// A chunk outgrew its slot, so everything was laid out afresh.
-    /// The buffers have to be recreated from this.
-    Relaid(Mesh),
-}
+/// Chunks whose geometry changed, by index, with their new buffers.
+pub type Update = Vec<(usize, ChunkBuffers)>;
 
 /// A live TIN: the triangulations stay resident so terrain edits can refine
 /// the mesh instead of rebuilding it.
@@ -914,10 +901,7 @@ impl Tin {
                 let mut chunk = Chunk::new(&grid);
                 refine(&mut chunk, &grid, max_error * (1 << k) as f32);
                 meshes.push(emit_chunk(&chunk, &grid));
-                lods.push(LodState {
-                    tri: chunk,
-                    slot: Slot::default(),
-                });
+                lods.push(LodState { tri: chunk });
             }
             (
                 ChunkState {
@@ -940,8 +924,8 @@ impl Tin {
         #[cfg(target_arch = "wasm32")]
         let built: Vec<(ChunkState, Vec<ChunkMesh>)> = origins.iter().map(build_one).collect();
 
-        let (mut chunks, meshes): (Vec<_>, Vec<_>) = built.into_iter().unzip();
-        let mesh = layout(&mut chunks, meshes, level, max_error);
+        let (chunks, meshes): (Vec<_>, Vec<_>) = built.into_iter().unzip();
+        let mesh = assemble(&chunks, meshes, level, max_error);
 
         let tin = Tin {
             max_error,
@@ -951,33 +935,6 @@ impl Tin {
         };
         tin.log("built");
         (tin, mesh)
-    }
-
-    /// Per-chunk draw information, finest LOD first.
-    pub fn chunk_draws(&self) -> Vec<ChunkDraw> {
-        self.chunks
-            .iter()
-            .map(|state| ChunkDraw {
-                center: [
-                    state.x0 as f32 + state.w as f32 * 0.5,
-                    state.y0 as f32 + state.h as f32 * 0.5,
-                ],
-                // Vertices sit at texel centres, so the chunk spans
-                // `[x0 + 0.5, x0 + w + 0.5]`. Pad by half a texel either
-                // way rather than tracking that exactly.
-                min: [state.x0 as f32, state.y0 as f32, state.alt.0],
-                max: [
-                    (state.x0 + state.w as i32) as f32 + 1.0,
-                    (state.y0 + state.h as i32) as f32 + 1.0,
-                    state.alt.1,
-                ],
-                lods: state
-                    .lods
-                    .iter()
-                    .map(|lod| (lod.slot.index_base, lod.slot.live_indices))
-                    .collect(),
-            })
-            .collect()
     }
 
     fn log(&self, what: &str) {
@@ -1005,115 +962,52 @@ impl Tin {
         profiling::scope!("Update Terrain TIN");
 
         let max_error = self.max_error;
-        let mut patches = Vec::new();
-        let mut relayout = false;
-
-        for state in self.chunks.iter_mut() {
+        let mut changed = Vec::new();
+        for (index, state) in self.chunks.iter_mut().enumerate() {
             if !state.overlaps(x, y, w, h) {
                 continue;
             }
             let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
             state.alt = grid.altitude_range();
-            let mut fitted = Vec::with_capacity(state.lods.len());
+            let mut per_lod = Vec::with_capacity(state.lods.len());
             for (k, lod) in state.lods.iter_mut().enumerate() {
                 refine(&mut lod.tri, &grid, max_error * (1 << k) as f32);
-                let mesh = emit_chunk(&lod.tri, &grid);
-                if !ChunkGeometry::fits(&lod.slot, &mesh) {
-                    relayout = true;
-                    break;
-                }
-                lod.slot.live_indices = mesh.indices.len() as u32;
-                fitted.push(ChunkGeometry::pack(lod.slot, mesh));
+                per_lod.push(emit_chunk(&lod.tri, &grid));
             }
-            if relayout {
-                break;
-            }
-            patches.extend(fitted);
+            changed.push((index, ChunkBuffers::new(state, per_lod)));
         }
-
-        if relayout {
-            // Rare: a chunk more than doubled its geometry. Re-emit
-            // everything against fresh slots and hand back a whole new mesh.
-            info!("Terrain TIN: a chunk outgrew its slot, relaying out");
-            let meshes = self
-                .chunks
-                .iter()
-                .map(|state| {
-                    let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
-                    state
-                        .lods
-                        .iter()
-                        .map(|lod| emit_chunk(&lod.tri, &grid))
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-            let mesh = layout(&mut self.chunks, meshes, level, max_error);
-            self.stats = mesh.stats;
-            self.log("relaid out");
-            return Update::Relaid(mesh);
-        }
-
-        if patches.is_empty() {
-            return Update::Unchanged;
-        }
-        Update::Patches(patches)
+        changed
     }
 }
 
-/// Assign every chunk a slot and pack the whole mesh into one pair of
-/// buffers. Unused vertex slots are never indexed; unused index slots hold
-/// degenerate triangles, so a single draw call still covers everything.
-fn layout(
-    chunks: &mut [ChunkState],
+/// Pack every chunk into its own buffers and total up the statistics.
+fn assemble(
+    chunks: &[ChunkState],
     meshes: Vec<Vec<ChunkMesh>>,
     level: &Level,
     max_error: f32,
 ) -> Mesh {
-    let mut vertex_base = 0u32;
-    let mut index_base = 0u32;
-    for (state, per_lod) in chunks.iter_mut().zip(&meshes) {
-        for (lod, mesh) in state.lods.iter_mut().zip(per_lod) {
-            lod.slot = Slot {
-                vertex_base,
-                vertex_cap: with_headroom(mesh.vertices.len(), 1),
-                index_base,
-                // Index capacity has to stay a whole number of triangles.
-                index_cap: with_headroom(mesh.indices.len(), 3),
-                live_indices: mesh.indices.len() as u32,
-            };
-            vertex_base += lod.slot.vertex_cap;
-            index_base += lod.slot.index_cap;
-        }
-    }
-
-    let mut mesh = Mesh {
-        vertices: vec![MeshVertex::zeroed(); vertex_base as usize],
-        indices: vec![0; index_base as usize],
-        stats: Stats {
-            source_texels: (level.size.0 as usize) * (level.size.1 as usize),
-            max_error,
-            ..Default::default()
-        },
+    let mut stats = Stats {
+        source_texels: (level.size.0 as usize) * (level.size.1 as usize),
+        max_error,
+        ..Default::default()
     };
-    let mut live_vertices = 0;
-    let mut live_indices = 0;
-    for (state, per_lod) in chunks.iter().zip(meshes) {
-        for (k, (lod, part)) in state.lods.iter().zip(per_lod).enumerate() {
+    let packed = chunks
+        .iter()
+        .zip(meshes)
+        .map(|(state, per_lod)| {
             // Stats describe LOD 0 - the mesh as actually drawn up close.
-            if k == 0 {
-                live_vertices += part.vertices.len();
-                live_indices += part.indices.len();
+            if let Some(fine) = per_lod.first() {
+                stats.vertices += fine.vertices.len();
+                stats.triangles += fine.indices.len() / 3;
             }
-            let packed = ChunkGeometry::pack(lod.slot, part);
-            let vb = lod.slot.vertex_base as usize;
-            mesh.vertices[vb..vb + packed.vertices.len()].copy_from_slice(&packed.vertices);
-            let ib = lod.slot.index_base as usize;
-            mesh.indices[ib..ib + packed.indices.len()].copy_from_slice(&packed.indices);
-        }
+            ChunkBuffers::new(state, per_lod)
+        })
+        .collect();
+    Mesh {
+        chunks: packed,
+        stats,
     }
-    mesh.stats.vertices = live_vertices;
-    mesh.stats.triangles = live_indices / 3;
-    mesh
 }
 
 #[cfg(test)]
@@ -1243,13 +1137,10 @@ mod tests {
         let (_tin, mesh) = Tin::build(&level, &config);
 
         assert!(mesh.stats.triangles > 0);
-        assert_eq!(mesh.indices.len() % 3, 0);
-        // Every index must be in range.
-        assert!(
-            mesh.indices
-                .iter()
-                .all(|&i| (i as usize) < mesh.vertices.len())
-        );
+        for c in &mesh.chunks {
+            assert_eq!(c.indices.len() % 3, 0);
+            assert!(c.indices.iter().all(|&i| (i as usize) < c.vertices.len()));
+        }
         // A full grid mesh would be 2 triangles per texel; we must beat it
         // comfortably even on this deliberately bumpy input.
         let full = 2 * mesh.stats.source_texels;
@@ -1266,8 +1157,9 @@ mod tests {
         assert!(size < CHUNK_SIZE as i32);
         let span = size as f32 + 1.0;
         assert!(
-            mesh.vertices
+            mesh.chunks
                 .iter()
+                .flat_map(|c| c.vertices.iter())
                 .all(|v| v.pos[0] < span && v.pos[1] < span),
             "the mesh spilled outside the level bounds"
         );
@@ -1279,16 +1171,21 @@ mod tests {
         let config = Config { quality: 1.0 };
         let (_tin, mesh) = Tin::build(&level, &config);
 
-        let has_z = |z: f32| mesh.vertices.iter().any(|v| (v.pos[2] - z).abs() < 0.5);
+        let verts: Vec<MeshVertex> = mesh
+            .chunks
+            .iter()
+            .flat_map(|c| c.vertices.clone())
+            .collect();
+        let has_z = |z: f32| verts.iter().any(|v| (v.pos[2] - z).abs() < 0.5);
         // low = 60, mid = 60 + (9 << 3) = 132, high = 180.
         assert!(has_z(60.0), "missing the cave floor");
         assert!(has_z(132.0), "missing the slab ceiling");
         assert!(has_z(180.0), "missing the slab top");
 
         // A wall needs the same XY to appear at both `mid` and `high`.
-        let wall = mesh.vertices.iter().any(|a| {
+        let wall = verts.iter().any(|a| {
             (a.pos[2] - 180.0).abs() < 0.5
-                && mesh.vertices.iter().any(|b| {
+                && verts.iter().any(|b| {
                     b.pos[0] == a.pos[0] && b.pos[1] == a.pos[1] && (b.pos[2] - 132.0).abs() < 0.5
                 })
         });
@@ -1332,14 +1229,17 @@ mod tests {
         let config = Config { quality: 1.0 };
         let (_, a) = Tin::build(&level, &config);
         let (_, b) = Tin::build(&level, &config);
-        assert_eq!(a.indices, b.indices);
-        assert_eq!(a.vertices.len(), b.vertices.len());
-        assert!(
-            a.vertices
-                .iter()
-                .zip(&b.vertices)
-                .all(|(x, y)| x.pos == y.pos && x.layer == y.layer)
-        );
+        assert_eq!(a.chunks.len(), b.chunks.len());
+        for (ca, cb) in a.chunks.iter().zip(&b.chunks) {
+            assert_eq!(ca.indices, cb.indices);
+            assert_eq!(ca.vertices.len(), cb.vertices.len());
+            assert!(
+                ca.vertices
+                    .iter()
+                    .zip(&cb.vertices)
+                    .all(|(x, y)| x.pos == y.pos && x.layer == y.layer)
+            );
+        }
     }
 
     /// Lower a round pit into the level, returning the dirty rect. Steep
@@ -1447,12 +1347,8 @@ mod tests {
         for h in level.height.iter_mut() {
             *h = h.saturating_sub(3);
         }
-        let update = tin.update(&level, 0, 0, level.size.0, level.size.1);
-        let parts = match update {
-            Update::Patches(parts) => parts,
-            _ => panic!("a uniform shift should patch in place"),
-        };
-        assert!(!parts.is_empty());
+        let changed = tin.update(&level, 0, 0, level.size.0, level.size.1);
+        assert!(!changed.is_empty());
         assert_eq!(tin.stats.triangles, before);
     }
 
@@ -1512,24 +1408,19 @@ mod tests {
                 level.height[i] = if (x + y) % 2 == 0 { 40 } else { 200 };
             }
         }
-        let mesh = match tin.update(&level, 20, 20, 60, 60) {
-            Update::Relaid(mesh) => mesh,
-            _ => panic!("a per-texel-noise edit should have outgrown its slots"),
-        };
+        let changed = tin.update(&level, 20, 20, 60, 60);
+        assert!(!changed.is_empty(), "the edit should have refitted a chunk");
 
-        // The relaid mesh has to be self-consistent: every index in range,
-        // whole triangles, and the surface refitted to tolerance.
-        assert_eq!(mesh.indices.len() % 3, 0);
-        assert!(
-            mesh.indices
-                .iter()
-                .all(|&i| (i as usize) < mesh.vertices.len())
-        );
+        // Refitted buffers have to be self-consistent: every index in
+        // range, whole triangles, and the surface back within tolerance.
+        for (_, c) in &changed {
+            assert_eq!(c.indices.len() % 3, 0);
+            assert!(c.indices.iter().all(|&i| (i as usize) < c.vertices.len()));
+        }
         let worst = worst_error(&tin, &level);
         assert!(worst <= tin.max_error, "residual error {}", worst);
 
-        // And a further edit against the new slots must still leave the
-        // surface fitted, whichever path it takes.
+        // And a further edit must still leave the surface fitted.
         let (x, y, w, h) = dig(&mut level, 85, 85, 6);
         tin.update(&level, x, y, w, h);
         let worst = worst_error(&tin, &level);
@@ -1549,12 +1440,7 @@ mod tests {
 
         // Well inside the first chunk, far from any border.
         let (x, y, w, h) = dig(&mut level, 40, 40, 10);
-        let update = tin.update(&level, x, y, w, h);
-        let touched = match update {
-            Update::Patches(parts) => parts.len(),
-            Update::Unchanged => 0,
-            Update::Relaid(_) => tin.chunks.len(),
-        };
+        let touched = tin.update(&level, x, y, w, h).len();
         assert!(
             touched < tin.chunks.len(),
             "a local edit touched every one of {} chunks",
