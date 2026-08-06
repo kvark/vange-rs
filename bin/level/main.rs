@@ -94,8 +94,9 @@ struct Cli {
     #[arg(long)]
     voxel_size: Option<String>,
     /// Ray-march step budget for RayVoxelTraced, used for both the outer
-    /// (octree) and inner (leaf) loops. The default matches the web build.
-    #[arg(long, default_value_t = 40)]
+    /// (octree) and inner (leaf) loops. Matches the web build's default.
+    /// Below ~100 long sightlines exhaust it and solid terrain reads as sky.
+    #[arg(long, default_value_t = 200)]
     voxel_steps: u32,
     /// Draw the voxel occupancy grid at this LOD instead of the terrain.
     #[arg(long)]
