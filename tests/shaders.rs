@@ -13,6 +13,7 @@ fn parse_shaders() {
     parse("terrain/scatter", &[]);
     parse("terrain/paint", &[]);
     parse("terrain/slice", &[]);
+    parse("terrain/mesh", &[]);
     let voxel_subs = [("morton_tile_size", "1u".to_string())];
     parse("terrain/voxel-bake", &voxel_subs);
     parse("terrain/voxel-draw", &voxel_subs);

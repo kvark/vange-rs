@@ -74,8 +74,13 @@ fn parse_terrain(name: &str, voxel_size: [u32; 3]) -> vangers::config::settings:
             max_inner_steps: 40,
             max_update_texels: 1_000_000,
         },
+        "Mesh" => Terrain::Mesh {
+            max_error: 1.0,
+            chunk_size: 128,
+            max_vertices_per_chunk: 4096,
+        },
         other => panic!(
-            "Unknown terrain mode '{}'. Supported: RayTraced, Sliced, Painted, RayVoxelTraced",
+            "Unknown terrain mode '{}'. Supported: RayTraced, Sliced, Painted, RayVoxelTraced, Mesh",
             other
         ),
     }

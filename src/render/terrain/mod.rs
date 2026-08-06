@@ -256,6 +256,33 @@ struct RayVoxelData {
     mips: Vec<VoxelMip>,
 }
 
+/// GPU buffers for the terrain TIN.
+struct MeshGeometry {
+    vertex_buf: wgpu::Buffer,
+    index_buf: wgpu::Buffer,
+    num_indices: u32,
+    stats: level::tin::Stats,
+}
+
+impl MeshGeometry {
+    fn new(mesh: &level::tin::Mesh, device: &wgpu::Device) -> Self {
+        MeshGeometry {
+            vertex_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("terrain-mesh-vertex"),
+                contents: bytemuck::cast_slice(&mesh.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+            index_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("terrain-mesh-index"),
+                contents: bytemuck::cast_slice(&mesh.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+            num_indices: mesh.indices.len() as u32,
+            stats: mesh.stats,
+        }
+    }
+}
+
 enum Kind {
     Ray {
         pipeline: wgpu::RenderPipeline,
@@ -279,6 +306,17 @@ enum Kind {
         bind_group: wgpu::BindGroup,
         compute_groups: [u32; 3],
         density: [u32; 3],
+    },
+    Mesh {
+        pipeline: wgpu::RenderPipeline,
+        config: level::tin::Config,
+        /// Built on the first `update_dirty`, which is where the level data
+        /// first becomes available.
+        geo: Option<MeshGeometry>,
+        /// How many wrapped copies of the level are currently in view. The
+        /// shader derives each instance's offset from the same visible
+        /// bounds, so both sides agree on the tile grid.
+        tile_count: u32,
     },
 }
 
@@ -595,6 +633,51 @@ impl Context {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face: wgpu::FrontFace::Cw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        })
+    }
+
+    fn create_mesh_pipeline(
+        layout: &wgpu::PipelineLayout,
+        device: &wgpu::Device,
+        color_format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
+        let shader = super::load_shader("terrain/mesh", &[], device).unwrap();
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("terrain-mesh"),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vertex"),
+                compilation_options: Default::default(),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<level::tin::MeshVertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
+                }],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fragment"),
+                compilation_options: Default::default(),
+                targets: &[Some(color_format.into())],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                // The slab ceilings face down and the walls face sideways,
+                // so there is no single consistent winding to cull against.
                 cull_mode: None,
                 ..Default::default()
             },
@@ -1381,6 +1464,24 @@ impl Context {
                     density,
                 }
             }
+            settings::Terrain::Mesh {
+                max_error,
+                chunk_size,
+                max_vertices_per_chunk,
+            } => {
+                let pipeline =
+                    Self::create_mesh_pipeline(&pipeline_layout, &gfx.device, gfx.color_format);
+                Kind::Mesh {
+                    pipeline,
+                    config: level::tin::Config {
+                        max_error,
+                        chunk_size,
+                        max_vertices_per_chunk,
+                    },
+                    geo: None,
+                    tile_count: 1,
+                }
+            }
         };
 
         let shadow_kind = match *shadow_config {
@@ -1504,6 +1605,12 @@ impl Context {
                 *pipeline =
                     Self::create_paint_pipeline(&self.pipeline_layout, device, self.color_format);
             }
+            Kind::Mesh {
+                ref mut pipeline, ..
+            } => {
+                *pipeline =
+                    Self::create_mesh_pipeline(&self.pipeline_layout, device, self.color_format);
+            }
             Kind::Scatter {
                 ref pipeline_layout,
                 ref mut scatter_pipeline,
@@ -1610,6 +1717,21 @@ impl Context {
                 z_range: 0..level.geometry.height as _,
                 need_upload: false,
             });
+        }
+
+        // The TIN needs the level data, which `new()` never sees, so it is
+        // fitted here on the first update. Terrain edits do not invalidate
+        // the triangulation topology (it is planar in XY, altitudes are
+        // just vertex attributes) but they do move the surface, so a
+        // rebuild would be needed to track deformation -- not yet wired up.
+        if let Kind::Mesh {
+            ref config,
+            geo: ref mut geo @ None,
+            ..
+        } = self.kind
+        {
+            let mesh = level::tin::build(level, config);
+            *geo = Some(MeshGeometry::new(&mesh, device));
         }
 
         if !self.dirty_rects.is_empty() {
@@ -1945,6 +2067,26 @@ impl Context {
                     count
                 };
             }
+            Kind::Mesh {
+                ref mut tile_count, ..
+            } => {
+                // The TIN covers the level once; the level wraps. Instance
+                // it across the tiles the camera can see, deriving the grid
+                // from the same visible bounds the shader reads out of
+                // `u_Locals.sample_range` so the two cannot disagree.
+                let size = self.active_surface_constants.texture_scale;
+                *tile_count = if size[0] > 0.0 && size[1] > 0.0 {
+                    let span = |lo: f32, hi: f32, period: f32| {
+                        ((hi / period).floor() - (lo / period).floor()).max(0.0) as u32 + 1
+                    };
+                    let nx = span(sc.sample_x.start, sc.sample_x.end, size[0]);
+                    let ny = span(sc.sample_y.start, sc.sample_y.end, size[1]);
+                    // A runaway camera could ask for an absurd tiling.
+                    nx.saturating_mul(ny).clamp(1, 64)
+                } else {
+                    1
+                };
+            }
             Kind::Scatter {
                 ref clear_pipeline,
                 ref scatter_pipeline,
@@ -2115,6 +2257,19 @@ impl Context {
                 pass.set_bind_group(2, bind_group, &[]);
                 pass.draw(0..4, 0..1);
             }
+            Kind::Mesh {
+                ref pipeline,
+                geo: Some(ref geo),
+                tile_count,
+                ..
+            } => {
+                pass.set_pipeline(pipeline);
+                pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
+                pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..geo.num_indices, 0, 0..tile_count);
+            }
+            // Not built yet: the first `update_dirty` has not run.
+            Kind::Mesh { geo: None, .. } => {}
         }
     }
 
@@ -2165,6 +2320,19 @@ impl Context {
                         None
                     };
                 }
+            }
+            Kind::Mesh {
+                geo: Some(ref geo), ..
+            } => {
+                let stats = &geo.stats;
+                ui.label(format!(
+                    "TIN: {} verts, {} tris",
+                    stats.vertices, stats.triangles
+                ));
+                ui.label(format!(
+                    "{:.1}x fewer than a full grid mesh",
+                    2.0 * stats.source_texels as f32 / stats.triangles.max(1) as f32
+                ));
             }
             _ => {}
         }
