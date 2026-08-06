@@ -26,6 +26,11 @@ fn count_tiles(size: u32) -> u32 {
 
 const MAXIMUM_UNIFORM_BUFFER_ALIGNMENT: usize = 256;
 
+/// How many wrapped copies of the level the mesh terrain draws around the
+/// camera's own tile, per axis. Has to agree with `c_MaxTileRadius` in
+/// `terrain/mesh.wgsl`.
+const MAX_TILE_RADIUS: f32 = 1.0;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Vertex {
@@ -2230,13 +2235,23 @@ impl Context {
                 // `u_Locals.sample_range` so the two cannot disagree.
                 let size = self.active_surface_constants.texture_scale;
                 *tile_count = if size[0] > 0.0 && size[1] > 0.0 {
-                    let span = |lo: f32, hi: f32, period: f32| {
-                        ((hi / period).floor() - (lo / period).floor()).max(0.0) as u32 + 1
+                    // Must mirror `tile_grid()` in `terrain/mesh.wgsl`
+                    // exactly: the shader turns an instance index into a
+                    // tile offset with the same arithmetic, so any
+                    // disagreement draws the wrong tiles - including,
+                    // when the counts differ, dropping the camera's own.
+                    let span = |lo: f32, hi: f32, cam: f32, period: f32| {
+                        let cam_tile = (cam / period).floor();
+                        let lo = (lo / period).floor().max(cam_tile - MAX_TILE_RADIUS);
+                        let hi = (hi / period)
+                            .floor()
+                            .min(cam_tile + MAX_TILE_RADIUS)
+                            .max(lo);
+                        (hi - lo) as u32 + 1
                     };
-                    let nx = span(sc.sample_x.start, sc.sample_x.end, size[0]);
-                    let ny = span(sc.sample_y.start, sc.sample_y.end, size[1]);
-                    // A runaway camera could ask for an absurd tiling.
-                    nx.saturating_mul(ny).clamp(1, 64)
+                    let nx = span(sc.sample_x.start, sc.sample_x.end, sc.origin.x, size[0]);
+                    let ny = span(sc.sample_y.start, sc.sample_y.end, sc.origin.y, size[1]);
+                    nx.saturating_mul(ny)
                 } else {
                     1
                 };
