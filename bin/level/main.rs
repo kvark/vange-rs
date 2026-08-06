@@ -93,11 +93,16 @@ struct Cli {
     /// buffer bindings below the default.
     #[arg(long)]
     voxel_size: Option<String>,
+    /// Ray-march step budget for RayVoxelTraced, used for both the outer
+    /// (octree) and inner (leaf) loops. The default matches the web build.
+    #[arg(long, default_value_t = 40)]
+    voxel_steps: u32,
 }
 
 fn parse_terrain(
     name: &str,
     voxel_size: [u32; 3],
+    voxel_steps: u32,
     mesh_quality: f32,
 ) -> vangers::config::settings::Terrain {
     use vangers::config::settings::Terrain;
@@ -109,8 +114,8 @@ fn parse_terrain(
         // so the snapshot exercises the same path the user is benchmarking.
         "RayVoxelTraced" => Terrain::RayVoxelTraced {
             voxel_size,
-            max_outer_steps: 40,
-            max_inner_steps: 40,
+            max_outer_steps: voxel_steps,
+            max_inner_steps: voxel_steps,
             max_update_texels: 1_000_000,
         },
         "Mesh" => Terrain::Mesh {
@@ -178,6 +183,7 @@ fn main() {
                     .as_deref()
                     .map(parse_voxel_size)
                     .unwrap_or([2, 4, 1]),
+                cli.voxel_steps,
                 cli.mesh_quality,
             ),
             width: cli.width,
