@@ -48,32 +48,39 @@ pub struct MeshVertex {
 unsafe impl Pod for MeshVertex {}
 unsafe impl Zeroable for MeshVertex {}
 
+/// Side of a build chunk, in texels.
+///
+/// Large enough that the border simplification stays a small fraction of
+/// the vertex budget, small enough to keep the greedy rasterisation cheap
+/// and give rayon plenty of independent work.
+const CHUNK_SIZE: u32 = 128;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
-    /// Vertical tolerance in world altitude units. Insertion stops for a
-    /// chunk once every layer is approximated within this.
+    /// The single quality knob, in `0..=1`. Higher fits the terrain more
+    /// closely and spends more triangles.
     ///
-    /// Altitudes come from 8-bit samples scaled by `geometry.height / 256`,
-    /// so one quantisation step is `height / 256` units. Asking for less
-    /// than that makes the greedy pass chase quantisation stairs and the
-    /// triangle count explodes - on a smooth test level, dropping from 1.0
-    /// to 0.5 (with `height = 0x100`) cost 20x more triangles for no visual
-    /// gain. Keep this at or above one step.
-    pub max_error: f32,
-    /// Side of a square chunk, in texels. Chunks share their border
-    /// samples with their neighbours.
-    pub chunk_size: u32,
-    /// Safety cap on the vertices a single chunk may spend.
-    pub max_vertices_per_chunk: u32,
+    /// It maps to a vertical tolerance measured in *height quantisation
+    /// steps* (`geometry.height / 256`), which makes it independent of the
+    /// level's height scale. `1.0` asks for one step - the finest detail
+    /// 8-bit samples can carry, and asking for less just makes the greedy
+    /// pass chase quantisation stairs for no visual gain. Every 0.25 below
+    /// that doubles the tolerance, bottoming out at 16 steps.
+    pub quality: f32,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config {
-            max_error: 1.0,
-            chunk_size: 128,
-            max_vertices_per_chunk: 4096,
-        }
+        Config { quality: 0.75 }
+    }
+}
+
+impl Config {
+    /// Vertical tolerance in world altitude units, for this level's height
+    /// scale.
+    fn max_error(&self, level: &Level) -> f32 {
+        let step = level.geometry.height as f32 / 256.0;
+        step * (4.0 * (1.0 - self.quality.clamp(0.0, 1.0))).exp2()
     }
 }
 
@@ -83,6 +90,8 @@ pub struct Stats {
     pub triangles: usize,
     /// Grid samples the mesh was built from, for a reduction ratio.
     pub source_texels: usize,
+    /// Vertical tolerance the mesh was actually fitted to.
+    pub max_error: f32,
 }
 
 pub struct Mesh {
@@ -173,8 +182,8 @@ struct Tri {
 }
 
 /// One chunk's sample grid. `nx * ny` samples covering texels
-/// `[x0 ..= x0 + size]` x `[y0 ..= y0 + size]`, i.e. neighbouring chunks
-/// overlap by exactly one row/column so their boundary vertices coincide.
+/// `[x0 ..= x0 + w]` x `[y0 ..= y0 + h]`, i.e. neighbouring chunks overlap
+/// by exactly one row/column so their boundary vertices coincide.
 struct Grid {
     samples: Vec<Sample>,
     nx: u32,
@@ -184,9 +193,9 @@ struct Grid {
 }
 
 impl Grid {
-    fn new(level: &Level, x0: i32, y0: i32, size: u32) -> Self {
-        let nx = size + 1;
-        let ny = size + 1;
+    fn new(level: &Level, x0: i32, y0: i32, w: u32, h: u32) -> Self {
+        let nx = w + 1;
+        let ny = h + 1;
         let mut samples = Vec::with_capacity((nx * ny) as usize);
         for ly in 0..ny {
             for lx in 0..nx {
@@ -624,10 +633,10 @@ fn emit_chunk(chunk: &Chunk<'_>) -> ChunkMesh {
     emitter.out
 }
 
-fn build_chunk(level: &Level, x0: i32, y0: i32, config: &Config) -> ChunkMesh {
+fn build_chunk(level: &Level, x0: i32, y0: i32, w: u32, h: u32, max_error: f32) -> ChunkMesh {
     use std::collections::BinaryHeap;
 
-    let grid = Grid::new(level, x0, y0, config.chunk_size);
+    let grid = Grid::new(level, x0, y0, w, h);
     let mut chunk = Chunk::new(&grid);
 
     // Border vertices first. Both chunks sharing a border compute the same
@@ -647,7 +656,7 @@ fn build_chunk(level: &Level, x0: i32, y0: i32, config: &Config) -> ChunkMesh {
             line.push(*grid.sample(gi));
         }
         let mut picks = Vec::new();
-        simplify_line(&line, config.max_error, &mut picks);
+        simplify_line(&line, max_error, &mut picks);
         for i in picks {
             border.push(if horizontal {
                 grid.index(i, fixed)
@@ -679,7 +688,10 @@ fn build_chunk(level: &Level, x0: i32, y0: i32, config: &Config) -> ChunkMesh {
         }
     }
 
-    while (chunk.verts.len() as u32) < config.max_vertices_per_chunk {
+    // The TIN can never usefully exceed the source grid, so this is only a
+    // runaway guard, not a quality knob.
+    let max_vertices = grid.nx * grid.ny;
+    while (chunk.verts.len() as u32) < max_vertices {
         let (bits, t) = match heap.pop() {
             Some(entry) => entry,
             None => break,
@@ -690,7 +702,7 @@ fn build_chunk(level: &Level, x0: i32, y0: i32, config: &Config) -> ChunkMesh {
             if !tri.alive || tri.cand == NONE || tri.err.to_bits() != bits {
                 continue;
             }
-            if tri.err <= config.max_error {
+            if tri.err <= max_error {
                 break;
             }
         }
@@ -711,22 +723,32 @@ fn build_chunk(level: &Level, x0: i32, y0: i32, config: &Config) -> ChunkMesh {
 pub fn build(level: &Level, config: &Config) -> Mesh {
     profiling::scope!("Build Terrain TIN");
 
-    let chunk = config.chunk_size.max(4) as i32;
+    let max_error = config.max_error(level);
+    let step = CHUNK_SIZE as i32;
+    // Chunks are clipped to the level: a level smaller than `CHUNK_SIZE`, or
+    // a trailing chunk, must not extend past the edge. `Level::get` wraps,
+    // so an oversized chunk would silently mesh the level several times over.
+    let chunks_of = |total: i32| {
+        let mut spans = Vec::new();
+        let mut at = 0;
+        while at < total {
+            spans.push((at, (total - at).min(step) as u32));
+            at += step;
+        }
+        spans
+    };
     let origins = {
         let mut v = Vec::new();
-        let mut y = 0;
-        while y < level.size.1 {
-            let mut x = 0;
-            while x < level.size.0 {
-                v.push((x, y));
-                x += chunk;
+        for &(y, h) in &chunks_of(level.size.1) {
+            for &(x, w) in &chunks_of(level.size.0) {
+                v.push((x, y, w, h));
             }
-            y += chunk;
         }
         v
     };
 
-    let build_one = |&(x, y): &(i32, i32)| build_chunk(level, x, y, config);
+    let build_one =
+        |&(x, y, w, h): &(i32, i32, u32, u32)| build_chunk(level, x, y, w, h, max_error);
 
     #[cfg(not(target_arch = "wasm32"))]
     let chunks: Vec<ChunkMesh> = {
@@ -741,6 +763,7 @@ pub fn build(level: &Level, config: &Config) -> Mesh {
         indices: Vec::new(),
         stats: Stats {
             source_texels: (level.size.0 as usize) * (level.size.1 as usize),
+            max_error,
             ..Default::default()
         },
     };
@@ -753,11 +776,14 @@ pub fn build(level: &Level, config: &Config) -> Mesh {
     mesh.stats.triangles = mesh.indices.len() / 3;
 
     info!(
-        "Terrain TIN: {} vertices, {} triangles from {} texels ({:.1}x fewer triangles)",
+        "Terrain TIN at quality {}: {} vertices, {} triangles from {} texels \
+         ({:.1}x fewer triangles, max error {:.2})",
+        config.quality,
         mesh.stats.vertices,
         mesh.stats.triangles,
         mesh.stats.source_texels,
         2.0 * mesh.stats.source_texels as f32 / mesh.stats.triangles.max(1) as f32,
+        max_error,
     );
 
     mesh
@@ -886,11 +912,7 @@ mod tests {
     fn build_approximates_a_level_with_far_fewer_triangles() {
         let size = 64;
         let level = make_level(size);
-        let config = Config {
-            max_error: 1.0,
-            chunk_size: 16,
-            max_vertices_per_chunk: 4096,
-        };
+        let config = Config { quality: 1.0 };
         let mesh = build(&level, &config);
 
         assert!(mesh.stats.triangles > 0);
@@ -910,16 +932,24 @@ mod tests {
             mesh.stats.triangles,
             full
         );
+
+        // This level is smaller than `CHUNK_SIZE`, so it also pins down that
+        // chunks get clipped to the level. `Level::get` wraps, so an
+        // unclipped chunk would quietly mesh the level several times over.
+        assert!(size < CHUNK_SIZE as i32);
+        let span = size as f32 + 1.0;
+        assert!(
+            mesh.vertices
+                .iter()
+                .all(|v| v.pos[0] < span && v.pos[1] < span),
+            "the mesh spilled outside the level bounds"
+        );
     }
 
     #[test]
     fn dual_regions_emit_a_slab_ceiling_and_walls() {
         let level = make_level(64);
-        let config = Config {
-            max_error: 1.0,
-            chunk_size: 16,
-            max_vertices_per_chunk: 4096,
-        };
+        let config = Config { quality: 1.0 };
         let mesh = build(&level, &config);
 
         let has_z = |z: f32| mesh.vertices.iter().any(|v| (v.pos[2] - z).abs() < 0.5);
@@ -944,8 +974,8 @@ mod tests {
         // the same vertices along the column they share.
         let level = make_level(64);
         let size = 16u32;
-        let left = Grid::new(&level, 0, 0, size);
-        let right = Grid::new(&level, size as i32, 0, size);
+        let left = Grid::new(&level, 0, 0, size, size);
+        let right = Grid::new(&level, size as i32, 0, size, size);
 
         let column = |grid: &Grid, lx: u32| -> Vec<Sample> {
             (0..grid.ny)
@@ -972,11 +1002,7 @@ mod tests {
     #[test]
     fn build_is_deterministic() {
         let level = make_level(48);
-        let config = Config {
-            max_error: 1.5,
-            chunk_size: 16,
-            max_vertices_per_chunk: 1024,
-        };
+        let config = Config { quality: 1.0 };
         let a = build(&level, &config);
         let b = build(&level, &config);
         assert_eq!(a.indices, b.indices);

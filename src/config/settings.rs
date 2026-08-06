@@ -150,12 +150,9 @@ pub enum Terrain {
     /// Triangulated irregular network: a real triangle mesh fitted to the
     /// height map by greedy Delaunay insertion. See `level::tin`.
     Mesh {
-        /// Vertical tolerance in world altitude units.
-        max_error: f32,
-        /// Side of a build chunk, in texels.
-        chunk_size: u32,
-        /// Safety cap on the vertices one chunk may spend.
-        max_vertices_per_chunk: u32,
+        /// Fit quality in `0..=1`. Higher means more triangles and a closer
+        /// fit; see `level::tin::Config`.
+        quality: f32,
     },
 }
 

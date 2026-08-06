@@ -11,9 +11,15 @@ struct Cli {
     /// Render to a PNG file and exit (headless). Path is the output PNG.
     #[arg(long)]
     snapshot: Option<String>,
-    /// Terrain rendering mode: RayTraced, Sliced, Painted, RayVoxelTraced
+    /// Terrain rendering mode: RayTraced, Sliced, Painted, RayVoxelTraced, Mesh
     #[arg(long, default_value = "RayTraced")]
     terrain: String,
+    /// Mesh fit quality in 0..=1. Only meaningful with --terrain Mesh.
+    #[arg(long, default_value_t = 0.75)]
+    mesh_quality: f32,
+    /// Overlay the mesh triangle edges. Only meaningful with --terrain Mesh.
+    #[arg(long, default_value_t = false)]
+    mesh_wireframe: bool,
     /// Path to a level zip archive (for VFS-based loading; matches web)
     #[arg(long)]
     level_zip: Option<String>,
@@ -60,7 +66,11 @@ struct Cli {
     voxel_size: Option<String>,
 }
 
-fn parse_terrain(name: &str, voxel_size: [u32; 3]) -> vangers::config::settings::Terrain {
+fn parse_terrain(
+    name: &str,
+    voxel_size: [u32; 3],
+    mesh_quality: f32,
+) -> vangers::config::settings::Terrain {
     use vangers::config::settings::Terrain;
     match name {
         "RayTraced" => Terrain::RayTraced,
@@ -75,9 +85,7 @@ fn parse_terrain(name: &str, voxel_size: [u32; 3]) -> vangers::config::settings:
             max_update_texels: 1_000_000,
         },
         "Mesh" => Terrain::Mesh {
-            max_error: 1.0,
-            chunk_size: 128,
-            max_vertices_per_chunk: 4096,
+            quality: mesh_quality,
         },
         other => panic!(
             "Unknown terrain mode '{}'. Supported: RayTraced, Sliced, Painted, RayVoxelTraced, Mesh",
@@ -141,6 +149,7 @@ fn main() {
                     .as_deref()
                     .map(parse_voxel_size)
                     .unwrap_or([2, 4, 1]),
+                cli.mesh_quality,
             ),
             width: cli.width,
             height: cli.height,
@@ -152,6 +161,7 @@ fn main() {
             bench_out: cli.bench_out.clone(),
             shadow_voxel: cli.shadow_voxel,
             shadow_ray: cli.shadow_ray,
+            mesh_wireframe: cli.mesh_wireframe,
         };
         headless::render_snapshot(opts);
         return;

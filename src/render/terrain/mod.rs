@@ -283,6 +283,14 @@ impl MeshGeometry {
     }
 }
 
+/// The two passes behind the mesh grid view.
+struct WirePipelines {
+    /// Colour writes masked off; fills depth so hidden edges get culled.
+    depth: wgpu::RenderPipeline,
+    /// The same triangles rasterised as edges.
+    line: wgpu::RenderPipeline,
+}
+
 enum Kind {
     Ray {
         pipeline: wgpu::RenderPipeline,
@@ -309,6 +317,9 @@ enum Kind {
     },
     Mesh {
         pipeline: wgpu::RenderPipeline,
+        /// For inspecting the triangulation. `None` when the adapter lacks
+        /// `POLYGON_MODE_LINE` -- it is optional in WebGPU.
+        wire_pipeline: Option<WirePipelines>,
         config: level::tin::Config,
         /// Built on the first `update_dirty`, which is where the level data
         /// first becomes available.
@@ -317,6 +328,7 @@ enum Kind {
         /// shader derives each instance's offset from the same visible
         /// bounds, so both sides agree on the tile grid.
         tile_count: u32,
+        wireframe: bool,
     },
 }
 
@@ -649,49 +661,114 @@ impl Context {
         })
     }
 
-    fn create_mesh_pipeline(
+    /// The shaded mesh, and the same thing rasterised as edges.
+    ///
+    /// The grid view is purely pipeline state - identical shader, identical
+    /// geometry, no extra buffers - so it always shows exactly the triangles
+    /// being drawn. It takes two passes because the lines are shaded like
+    /// the surface: a depth-only prepass (colour writes masked off) fills
+    /// the depth buffer, then `PolygonMode::Line` draws the edges against
+    /// it. Without the prepass every back-facing triangle shows through and
+    /// the result is unreadable. `POLYGON_MODE_LINE` is optional in WebGPU,
+    /// so the pair may be `None`.
+    fn create_mesh_pipelines(
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
         color_format: wgpu::TextureFormat,
-    ) -> wgpu::RenderPipeline {
+    ) -> (wgpu::RenderPipeline, Option<WirePipelines>) {
         let shader = super::load_shader("terrain/mesh", &[], device).unwrap();
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("terrain-mesh"),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vertex"),
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: mem::size_of::<level::tin::MeshVertex>() as wgpu::BufferAddress,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fragment"),
-                compilation_options: Default::default(),
-                targets: &[Some(color_format.into())],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                // The slab ceilings face down and the walls face sideways,
-                // so there is no single consistent winding to cull against.
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        })
+        let vertex_buffers = [wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<level::tin::MeshVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
+        }];
+        let make = |label, polygon_mode, write_mask, depth_compare, bias| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vertex"),
+                    compilation_options: Default::default(),
+                    buffers: &vertex_buffers,
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fragment"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: color_format,
+                        blend: None,
+                        write_mask,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    // The slab ceilings face down and the walls face
+                    // sideways, so there is no single consistent winding to
+                    // cull against.
+                    cull_mode: None,
+                    polygon_mode,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(depth_compare),
+                    stencil: Default::default(),
+                    bias,
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+
+        let all = wgpu::ColorWrites::ALL;
+        let less = wgpu::CompareFunction::Less;
+        let pipeline = make(
+            "terrain-mesh",
+            wgpu::PolygonMode::Fill,
+            all,
+            less,
+            Default::default(),
+        );
+        let wire_pipelines = if device
+            .features()
+            .contains(wgpu::Features::POLYGON_MODE_LINE)
+        {
+            Some(WirePipelines {
+                depth: make(
+                    "terrain-mesh-depth",
+                    wgpu::PolygonMode::Fill,
+                    wgpu::ColorWrites::empty(),
+                    less,
+                    // Line and triangle rasterisation don't interpolate
+                    // depth identically, so coincident edges lose the test
+                    // in patches and the wireframe comes out dashed. Push
+                    // the occluder back by more than that discrepancy.
+                    wgpu::DepthBiasState {
+                        constant: 16,
+                        slope_scale: 2.0,
+                        clamp: 0.0,
+                    },
+                ),
+                // The edges sit exactly on the surface the prepass just
+                // wrote, so they need `LessEqual` to survive against it.
+                line: make(
+                    "terrain-mesh-wire",
+                    wgpu::PolygonMode::Line,
+                    all,
+                    wgpu::CompareFunction::LessEqual,
+                    Default::default(),
+                ),
+            })
+        } else {
+            info!("POLYGON_MODE_LINE unavailable; the mesh grid view is disabled");
+            None
+        };
+
+        (pipeline, wire_pipelines)
     }
 
     fn create_scatter_pipelines(
@@ -1464,22 +1541,16 @@ impl Context {
                     density,
                 }
             }
-            settings::Terrain::Mesh {
-                max_error,
-                chunk_size,
-                max_vertices_per_chunk,
-            } => {
-                let pipeline =
-                    Self::create_mesh_pipeline(&pipeline_layout, &gfx.device, gfx.color_format);
+            settings::Terrain::Mesh { quality } => {
+                let (pipeline, wire_pipeline) =
+                    Self::create_mesh_pipelines(&pipeline_layout, &gfx.device, gfx.color_format);
                 Kind::Mesh {
                     pipeline,
-                    config: level::tin::Config {
-                        max_error,
-                        chunk_size,
-                        max_vertices_per_chunk,
-                    },
+                    wire_pipeline,
+                    config: level::tin::Config { quality },
                     geo: None,
                     tile_count: 1,
+                    wireframe: false,
                 }
             }
         };
@@ -1606,10 +1677,14 @@ impl Context {
                     Self::create_paint_pipeline(&self.pipeline_layout, device, self.color_format);
             }
             Kind::Mesh {
-                ref mut pipeline, ..
+                ref mut pipeline,
+                ref mut wire_pipeline,
+                ..
             } => {
-                *pipeline =
-                    Self::create_mesh_pipeline(&self.pipeline_layout, device, self.color_format);
+                let (fill, wire) =
+                    Self::create_mesh_pipelines(&self.pipeline_layout, device, self.color_format);
+                *pipeline = fill;
+                *wire_pipeline = wire;
             }
             Kind::Scatter {
                 ref pipeline_layout,
@@ -2259,14 +2334,24 @@ impl Context {
             }
             Kind::Mesh {
                 ref pipeline,
+                ref wire_pipeline,
                 geo: Some(ref geo),
                 tile_count,
+                wireframe,
                 ..
             } => {
-                pass.set_pipeline(pipeline);
                 pass.set_vertex_buffer(0, geo.vertex_buf.slice(..));
                 pass.set_index_buffer(geo.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..geo.num_indices, 0, 0..tile_count);
+                let indices = 0..geo.num_indices;
+                if let Some(wire) = wire_pipeline.as_ref().filter(|_| wireframe) {
+                    pass.set_pipeline(&wire.depth);
+                    pass.draw_indexed(indices.clone(), 0, 0..tile_count);
+                    pass.set_pipeline(&wire.line);
+                    pass.draw_indexed(indices, 0, 0..tile_count);
+                } else {
+                    pass.set_pipeline(pipeline);
+                    pass.draw_indexed(indices, 0, 0..tile_count);
+                }
             }
             // Not built yet: the first `update_dirty` has not run.
             Kind::Mesh { geo: None, .. } => {}
@@ -2292,6 +2377,17 @@ impl Context {
                 }
                 _ => unreachable!(),
             },
+        }
+    }
+
+    /// Overlay the TIN's triangle edges on the shaded surface. No-op unless
+    /// the mesh terrain mode is active.
+    pub fn set_mesh_wireframe(&mut self, enabled: bool) {
+        if let Kind::Mesh {
+            ref mut wireframe, ..
+        } = self.kind
+        {
+            *wireframe = enabled;
         }
     }
 
@@ -2322,7 +2418,10 @@ impl Context {
                 }
             }
             Kind::Mesh {
-                geo: Some(ref geo), ..
+                geo: Some(ref geo),
+                ref mut wireframe,
+                config,
+                ..
             } => {
                 let stats = &geo.stats;
                 ui.label(format!(
@@ -2333,6 +2432,11 @@ impl Context {
                     "{:.1}x fewer than a full grid mesh",
                     2.0 * stats.source_texels as f32 / stats.triangles.max(1) as f32
                 ));
+                ui.label(format!(
+                    "quality {:.2} -> max error {:.2}",
+                    config.quality, stats.max_error
+                ));
+                ui.checkbox(wireframe, "Show mesh grid");
             }
             _ => {}
         }

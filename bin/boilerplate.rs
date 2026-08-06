@@ -93,9 +93,12 @@ impl Harness {
             .render
             .get_device_limits(&adapter.limits(), settings.game.geometry.height);
 
+        // `POLYGON_MODE_LINE` drives the mesh terrain's grid view. It is
+        // optional in WebGPU, so take it only when the adapter offers it and
+        // let the renderer disable the view otherwise.
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: None,
-            required_features: wgpu::Features::empty(),
+            required_features: adapter.features() & wgpu::Features::POLYGON_MODE_LINE,
             required_limits: limits,
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::Off,
