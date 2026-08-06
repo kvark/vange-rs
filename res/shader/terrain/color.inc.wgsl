@@ -54,6 +54,15 @@ fn get_surface_gradient(pos: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(vr - vl, vt - vb);
 }
 
+fn evaluate_color_id_n(ty: u32, pos: vec3<f32>, lit_factor: f32, gradient: vec2<f32>) -> f32 {
+    let light = u_Globals.light_pos.xyz - pos * u_Globals.light_pos.w;
+    let diff = dot(gradient / u_Surface.texture_scale.z, normalize(light.xy));
+    let material = select(vec3<f32>(1.0), vec3<f32>(5.0, 1.25, 0.5), ty == 0u);
+    let light_clr = evaluate_light(material, diff);
+    let tmp = light_clr - c_HorFactor * (1.0 - pos.z / u_Surface.texture_scale.z);
+    return evaluate_palette(ty, lit_factor * tmp);
+}
+
 fn evaluate_color_id(ty: u32, pos: vec3<f32>, lit_factor: f32) -> f32 {
     // See the original code in "land.cpp": `LINE_render()`
     //Note: the original always used horisontal difference only,
@@ -89,6 +98,38 @@ fn evaluate_color_id(ty: u32, pos: vec3<f32>, lit_factor: f32) -> f32 {
 // The toggle lives on the terrain "Locals" uniform so it costs one
 // branch on a uniform value (no dynamic divergence), and lets us A/B
 // the two looks at runtime.
+// Variant taking an explicit surface normal.
+//
+// Rasterized terrain knows the real geometric normal, so it does not have
+// to rebuild one from height map taps the way a ray marcher must. That is
+// both more faithful - vertical walls and cave ceilings have no meaningful
+// height gradient at all - and much cheaper, since the gradient costs four
+// smooth surface lookups (sixteen texture fetches) per fragment.
+fn evaluate_color_normal(
+    ty: u32,
+    pos: vec3<f32>,
+    shadow_visibility: f32,
+    normal: vec3<f32>,
+) -> vec4<f32> {
+    let terr = vec4<f32>(textureLoad(t_Table, vec2<i32>(i32(ty), 0), 0));
+    if (u_Locals.lighting_flags.x == 0u) {
+        // The baked path wants a height gradient rather than a normal;
+        // recover it from the normal (dz/dx = -nx/nz), scaled the same way
+        // `get_surface_gradient` measures it, over two cells.
+        let nz = select(normal.z, 0.001, abs(normal.z) < 0.001);
+        let gradient = -2.0 * normal.xy / nz;
+        let lit_factor = mix(c_TerrainAmbient, 1.0, shadow_visibility);
+        let color_id = evaluate_color_id_n(ty, pos, lit_factor, gradient);
+        return textureSampleLevel(t_Palette, s_Palette, vec2<f32>(color_id, 0.5), 0.0);
+    }
+    let base_id = (terr.w + 0.5) / 256.0;
+    let base = textureSampleLevel(t_Palette, s_Palette, vec2<f32>(base_id, 0.5), 0.0);
+    let light_dir = normalize(u_Globals.light_pos.xyz - pos * u_Globals.light_pos.w);
+    let n_dot_l = max(0.0, dot(normal, light_dir));
+    let modulation = c_TerrainAmbient + (1.0 - c_TerrainAmbient) * shadow_visibility * n_dot_l;
+    return vec4<f32>(base.rgb * modulation, base.a);
+}
+
 fn evaluate_color(ty: u32, pos: vec3<f32>, shadow_visibility: f32) -> vec4<f32> {
     let terr = vec4<f32>(textureLoad(t_Table, vec2<i32>(i32(ty), 0), 0));
     if (u_Locals.lighting_flags.x == 0u) {
