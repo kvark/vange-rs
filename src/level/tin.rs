@@ -231,6 +231,15 @@ impl Grid {
     fn sample(&self, index: u32) -> &Sample {
         &self.samples[index as usize]
     }
+
+    /// Lowest floor and highest slab top over the whole chunk.
+    fn altitude_range(&self) -> (f32, f32) {
+        self.samples
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), s| {
+                (lo.min(s.low), hi.max(s.high))
+            })
+    }
 }
 
 /// Greedy TIN over a single chunk.
@@ -801,6 +810,8 @@ struct ChunkState {
     y0: i32,
     w: u32,
     h: u32,
+    /// Altitude span over the chunk, for the culling bounding box.
+    alt: (f32, f32),
     lods: Vec<LodState>,
 }
 
@@ -815,6 +826,10 @@ struct LodState {
 pub struct ChunkDraw {
     /// Chunk centre in texels, for distance-based LOD selection.
     pub center: [f32; 2],
+    /// World-space bounding box of the chunk, for frustum culling. Covers
+    /// every layer, so it is valid whatever the chunk emits.
+    pub min: [f32; 3],
+    pub max: [f32; 3],
     /// `(first index, index count)` per LOD, finest first.
     pub lods: Vec<(u32, u32)>,
 }
@@ -892,6 +907,7 @@ impl Tin {
             // fine one - but refitting from scratch is cheap (the coarse
             // levels converge in a fraction of the insertions) and keeps
             // every level a genuine Delaunay triangulation.
+            let alt = grid.altitude_range();
             let mut lods = Vec::with_capacity(LOD_COUNT);
             let mut meshes = Vec::with_capacity(LOD_COUNT);
             for k in 0..LOD_COUNT {
@@ -909,6 +925,7 @@ impl Tin {
                     y0: y,
                     w,
                     h,
+                    alt,
                     lods,
                 },
                 meshes,
@@ -944,6 +961,15 @@ impl Tin {
                 center: [
                     state.x0 as f32 + state.w as f32 * 0.5,
                     state.y0 as f32 + state.h as f32 * 0.5,
+                ],
+                // Vertices sit at texel centres, so the chunk spans
+                // `[x0 + 0.5, x0 + w + 0.5]`. Pad by half a texel either
+                // way rather than tracking that exactly.
+                min: [state.x0 as f32, state.y0 as f32, state.alt.0],
+                max: [
+                    (state.x0 + state.w as i32) as f32 + 1.0,
+                    (state.y0 + state.h as i32) as f32 + 1.0,
+                    state.alt.1,
                 ],
                 lods: state
                     .lods
@@ -987,6 +1013,7 @@ impl Tin {
                 continue;
             }
             let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
+            state.alt = grid.altitude_range();
             let mut fitted = Vec::with_capacity(state.lods.len());
             for (k, lod) in state.lods.iter_mut().enumerate() {
                 refine(&mut lod.tri, &grid, max_error * (1 << k) as f32);
