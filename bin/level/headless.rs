@@ -92,6 +92,9 @@ pub struct SnapshotOptions {
     /// Stand on the `low` floor rather than the slab top -- i.e. inside a
     /// double-level region rather than on its roof.
     pub fp_under: bool,
+    /// Near clip distance. The default of 10 is fine for an orbit camera
+    /// but clips the ground out from under a first-person one.
+    pub near: f32,
 }
 
 impl Default for SnapshotOptions {
@@ -110,6 +113,7 @@ impl Default for SnapshotOptions {
             fp_yaw: 0.0,
             fp_pitch: 0.0,
             fp_under: false,
+            near: 10.0,
             width: 800,
             height: 600,
             cam_target: Vec3::new(128.0, 128.0, 0.0),
@@ -177,7 +181,7 @@ fn make_camera(opts: &SnapshotOptions, lvl: &level::Level) -> space::Camera {
             space::Projection::Perspective(space::PerspectiveParams {
                 fovy: space::PerspectiveParams::fov_from_focal_px(focal, h),
                 aspect: opts.width as f32 / h,
-                near: 10.0,
+                near: opts.near.max(0.01),
                 far: 4000.0,
                 focal_px: Some(focal),
             })
