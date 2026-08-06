@@ -59,6 +59,14 @@ jobs:
         VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
         WGPU_BACKEND=vulkan \
         cargo run --release --bin level -- --snapshot snapshots/mesh.png --terrain Mesh
+    # Exercises the incremental TIN refit: build the mesh, deform the
+    # terrain, then re-fit in place rather than rebuilding.
+    - name: Snapshot Mesh (terrain edit)
+      run: |
+        VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+        WGPU_BACKEND=vulkan \
+        cargo run --release --bin level -- --snapshot snapshots/mesh-dig.png \
+          --terrain Mesh --frames 3 --dig
 
     # Voxel-terrain reftest at the same Fostral citadel cluster used by
     # tools/bench-voxel.sh. Correctness-only: no perf gate, just a smoke

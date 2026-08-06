@@ -553,6 +553,41 @@ pub fn load(config: &LevelConfig, geometry: &settings::Geometry) -> Level {
                 meta[y * size.0 as usize + x] = h.clamp(0.0, 255.0) as u8 & 0b00111000;
             }
         }
+
+        // A double-level slab, so the test level actually exercises the
+        // multi-layer path: an overhang with drivable space underneath.
+        // Without one, no renderer's cave/ceiling/wall handling is covered
+        // by the snapshot tests at all.
+        //
+        // The dual encoding is per texel *pair*: the even texel carries
+        // `low` and the odd one `high`, while `mid` (the cave ceiling) comes
+        // from the delta bits of both, as `low + (delta << delta_power)`.
+        let (cx, cy) = (size.0 / 2, size.1 / 2);
+        let radius = (size.0.min(size.1) / 6).max(4);
+        for y in (cy - radius)..(cy + radius) {
+            // Step by 2 to stay aligned with the texel pairs.
+            let mut x = (cx - radius) & !1;
+            while x < cx + radius {
+                let (dx, dy) = ((x - cx) as f32, (y - cy) as f32);
+                if dx * dx + dy * dy > (radius * radius) as f32 {
+                    x += 2;
+                    continue;
+                }
+                let i = (y * size.0 + x) as usize;
+                let ground = height[i].min(height[i + 1]);
+                // Floor a little below the terrain, then a cave, then the
+                // slab. delta = 6 with the default power of 3 puts the
+                // ceiling 48 above the floor.
+                let low = ground.saturating_sub(20);
+                let high = low.saturating_add(90);
+                height[i] = low;
+                height[i + 1] = high;
+                meta[i] = DOUBLE_LEVEL | (2 << 3) | 0x1;
+                meta[i + 1] = DOUBLE_LEVEL | (6 << 3) | 0x2;
+                x += 2;
+            }
+        }
+
         LevelData {
             height: height.into_boxed_slice(),
             meta: meta.into_boxed_slice(),

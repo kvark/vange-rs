@@ -225,8 +225,8 @@ impl Grid {
 }
 
 /// Greedy TIN over a single chunk.
-struct Chunk<'g> {
-    grid: &'g Grid,
+#[cfg_attr(test, derive(Clone))]
+struct Chunk {
     /// Grid index of each triangulation vertex.
     verts: Vec<u32>,
     tris: Vec<Tri>,
@@ -234,17 +234,17 @@ struct Chunk<'g> {
     free: Vec<u32>,
 }
 
-impl<'g> Chunk<'g> {
-    fn pos(&self, v: u32) -> [i32; 2] {
-        self.grid.coord(self.verts[v as usize])
+impl Chunk {
+    fn pos(&self, grid: &Grid, v: u32) -> [i32; 2] {
+        grid.coord(self.verts[v as usize])
     }
 
-    fn sample(&self, v: u32) -> &Sample {
-        self.grid.sample(self.verts[v as usize])
+    fn sample<'g>(&self, grid: &'g Grid, v: u32) -> &'g Sample {
+        grid.sample(self.verts[v as usize])
     }
 
     /// Seed with the two triangles spanning the chunk rectangle.
-    fn new(grid: &'g Grid) -> Self {
+    fn new(grid: &Grid) -> Self {
         let (mx, my) = (grid.nx - 1, grid.ny - 1);
         let corners = [
             grid.index(0, 0),
@@ -269,7 +269,6 @@ impl<'g> Chunk<'g> {
             },
         ];
         Chunk {
-            grid,
             verts: corners.to_vec(),
             tris,
             free: Vec::new(),
@@ -283,14 +282,14 @@ impl<'g> Chunk<'g> {
     /// A point lying exactly *on* an edge yields `orient2d == 0`, which is
     /// not `< 0`, so we stop in one of the two triangles sharing it - which
     /// is what `insert` wants.
-    fn locate(&self, p: [i32; 2], hint: u32) -> u32 {
+    fn locate(&self, grid: &Grid, p: [i32; 2], hint: u32) -> u32 {
         let mut t = hint;
         for _ in 0..self.tris.len() + 8 {
             let tri = &self.tris[t as usize];
             let mut moved = false;
             for i in 0..3 {
-                let a = self.pos(tri.v[i]);
-                let b = self.pos(tri.v[(i + 1) % 3]);
+                let a = self.pos(grid, tri.v[i]);
+                let b = self.pos(grid, tri.v[(i + 1) % 3]);
                 if orient2d(a, b, p) < 0 && tri.n[i] != NONE {
                     t = tri.n[i];
                     moved = true;
@@ -307,8 +306,8 @@ impl<'g> Chunk<'g> {
     /// Bowyer-Watson insertion of the grid point `gi`, starting the cavity
     /// search from `seed` (which must contain the point). Returns the slots
     /// of the triangles that were created.
-    fn insert(&mut self, gi: u32, seed: u32) -> Vec<u32> {
-        let p = self.grid.coord(gi);
+    fn insert(&mut self, grid: &Grid, gi: u32, seed: u32) -> Vec<u32> {
+        let p = grid.coord(gi);
         let vid = self.verts.len() as u32;
         self.verts.push(gi);
 
@@ -327,7 +326,11 @@ impl<'g> Chunk<'g> {
                     continue;
                 }
                 let tri = &self.tris[nb as usize];
-                let (a, b, c) = (self.pos(tri.v[0]), self.pos(tri.v[1]), self.pos(tri.v[2]));
+                let (a, b, c) = (
+                    self.pos(grid, tri.v[0]),
+                    self.pos(grid, tri.v[1]),
+                    self.pos(grid, tri.v[2]),
+                );
                 if in_circle(a, b, c, p) > 0 {
                     in_cavity[nb as usize] = true;
                     cavity.push(nb);
@@ -362,7 +365,7 @@ impl<'g> Chunk<'g> {
         let mut created = Vec::with_capacity(boundary.len());
         let mut fan = Vec::with_capacity(boundary.len());
         for &(a, b, outer) in &boundary {
-            if orient2d(self.pos(a), self.pos(b), p) == 0 {
+            if orient2d(self.pos(grid, a), self.pos(grid, b), p) == 0 {
                 continue;
             }
             let tri = Tri {
@@ -423,10 +426,10 @@ impl<'g> Chunk<'g> {
     /// Straightforward bounding-box rasterisation with the edge functions
     /// doubling as barycentric weights. Cost is proportional to the
     /// triangle's area, which shrinks quickly as insertion proceeds.
-    fn compute_candidate(&mut self, t: u32) {
+    fn compute_candidate(&mut self, grid: &Grid, t: u32) {
         let tri = &self.tris[t as usize];
         let (va, vb, vc) = (tri.v[0], tri.v[1], tri.v[2]);
-        let (a, b, c) = (self.pos(va), self.pos(vb), self.pos(vc));
+        let (a, b, c) = (self.pos(grid, va), self.pos(grid, vb), self.pos(grid, vc));
         let area2 = orient2d(a, b, c);
         if area2 <= 0 {
             let tri = &mut self.tris[t as usize];
@@ -434,13 +437,17 @@ impl<'g> Chunk<'g> {
             tri.err = 0.0;
             return;
         }
-        let (sa, sb, sc) = (self.sample(va), self.sample(vb), self.sample(vc));
+        let (sa, sb, sc) = (
+            self.sample(grid, va),
+            self.sample(grid, vb),
+            self.sample(grid, vc),
+        );
         let inv = 1.0 / area2 as f64;
 
         let min_x = a[0].min(b[0]).min(c[0]).max(0);
-        let max_x = a[0].max(b[0]).max(c[0]).min(self.grid.nx as i32 - 1);
+        let max_x = a[0].max(b[0]).max(c[0]).min(grid.nx as i32 - 1);
         let min_y = a[1].min(b[1]).min(c[1]).max(0);
-        let max_y = a[1].max(b[1]).max(c[1]).min(self.grid.ny as i32 - 1);
+        let max_y = a[1].max(b[1]).max(c[1]).min(grid.ny as i32 - 1);
 
         let mut best = NONE;
         let mut best_err = 0.0f32;
@@ -463,8 +470,8 @@ impl<'g> Chunk<'g> {
                 let lerp = |pa: f32, pb: f32, pc: f32| {
                     (f0 * pa as f64 + f1 * pb as f64 + f2 * pc as f64) as f32
                 };
-                let gi = self.grid.index(x as u32, y as u32);
-                let err = self.grid.sample(gi).deviation(
+                let gi = grid.index(x as u32, y as u32);
+                let err = grid.sample(gi).deviation(
                     lerp(sa.low, sb.low, sc.low),
                     lerp(sa.mid, sb.mid, sc.mid),
                     lerp(sa.high, sb.high, sc.high),
@@ -536,7 +543,8 @@ enum Layer {
 }
 
 struct Emitter<'a> {
-    chunk: &'a Chunk<'a>,
+    chunk: &'a Chunk,
+    grid: &'a Grid,
     out: ChunkMesh,
     /// `[vertex][layer]` -> index in `out.vertices`, or `NONE`.
     cache: Vec<[u32; 3]>,
@@ -548,9 +556,9 @@ impl Emitter<'_> {
         if *slot != NONE {
             return *slot;
         }
-        let s = self.chunk.sample(v);
-        let local = self.chunk.pos(v);
-        let grid = self.chunk.grid;
+        let s = self.chunk.sample(self.grid, v);
+        let local = self.chunk.pos(self.grid, v);
+        let grid = self.grid;
         let z = match layer {
             Layer::Low => s.low,
             Layer::Mid => s.mid,
@@ -588,18 +596,19 @@ impl Emitter<'_> {
 ///   would otherwise end in mid-air, so we close it with a vertical wall
 ///   from `mid` up to `high` along that edge. Only the slab side emits the
 ///   wall, so it is never duplicated.
-fn emit_chunk(chunk: &Chunk<'_>) -> ChunkMesh {
+fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
     let is_slab = |tri: &Tri| -> bool {
-        tri.v.iter().all(|&v| chunk.sample(v).is_dual)
+        tri.v.iter().all(|&v| chunk.sample(grid, v).is_dual)
             // A zero-thickness slab has nothing to show.
             && tri.v.iter().any(|&v| {
-                let s = chunk.sample(v);
+                let s = chunk.sample(grid, v);
                 s.high > s.low
             })
     };
 
     let mut emitter = Emitter {
         chunk,
+        grid,
         out: ChunkMesh::default(),
         cache: vec![[NONE; 3]; chunk.verts.len()],
     };
@@ -633,14 +642,24 @@ fn emit_chunk(chunk: &Chunk<'_>) -> ChunkMesh {
     emitter.out
 }
 
-fn build_chunk(level: &Level, x0: i32, y0: i32, w: u32, h: u32, max_error: f32) -> ChunkMesh {
-    use std::collections::BinaryHeap;
+/// Bring a chunk's triangulation within tolerance of its (possibly just
+/// re-sampled) grid.
+///
+/// Vertices are only ever *added* - nothing is removed and nothing moves in
+/// XY - so this works equally well on a fresh chunk and on one being
+/// refined after a terrain edit. Heights are not stored in the
+/// triangulation at all; they are read from the grid at emit time, so an
+/// edit that only moves the surface up or down needs no new vertices, just
+/// a re-emit.
+fn refine(chunk: &mut Chunk, grid: &Grid, max_error: f32) {
+    use std::collections::{BinaryHeap, HashSet};
 
-    let grid = Grid::new(level, x0, y0, w, h);
-    let mut chunk = Chunk::new(&grid);
+    let existing: HashSet<u32> = chunk.verts.iter().copied().collect();
 
-    // Border vertices first. Both chunks sharing a border compute the same
-    // set from the same samples, so the seam matches exactly.
+    // Border vertices first. Both chunks sharing a border derive the same
+    // set from the same samples, so the seam matches exactly - and because
+    // we only add, re-deriving after an edit keeps them in step: both sides
+    // end up with the union of their old picks and the identical new ones.
     let (mx, my) = (grid.nx - 1, grid.ny - 1);
     let mut border = Vec::new();
     let mut line = Vec::with_capacity(grid.nx.max(grid.ny) as usize);
@@ -669,16 +688,20 @@ fn build_chunk(level: &Level, x0: i32, y0: i32, w: u32, h: u32, max_error: f32) 
     border.sort_unstable();
     border.dedup();
     for gi in border {
-        let seed = chunk.locate(grid.coord(gi), 0);
-        chunk.insert(gi, seed);
+        if existing.contains(&gi) {
+            continue;
+        }
+        let seed = chunk.locate(grid, grid.coord(gi), 0);
+        chunk.insert(grid, gi, seed);
     }
 
-    // Now the greedy interior pass. Every triangle remembers its own worst
-    // sample, so popping the global worst needs no point location at all -
-    // we already know which triangle contains it.
+    // Every triangle remembers its own worst sample, so popping the global
+    // worst needs no point location - we already know which triangle
+    // contains it. After an edit the cached candidates are stale, so they
+    // all get recomputed; that is one pass over the chunk's samples.
     for t in 0..chunk.tris.len() as u32 {
         if chunk.tris[t as usize].alive {
-            chunk.compute_candidate(t);
+            chunk.compute_candidate(grid, t);
         }
     }
     let mut heap = BinaryHeap::new();
@@ -707,85 +730,287 @@ fn build_chunk(level: &Level, x0: i32, y0: i32, w: u32, h: u32, max_error: f32) 
             }
         }
         let cand = chunk.tris[t as usize].cand;
-        for slot in chunk.insert(cand, t) {
-            chunk.compute_candidate(slot);
+        for slot in chunk.insert(grid, cand, t) {
+            chunk.compute_candidate(grid, slot);
             let tri = &chunk.tris[slot as usize];
             if tri.cand != NONE {
                 heap.push((tri.err.to_bits(), slot));
             }
         }
     }
-
-    emit_chunk(&chunk)
 }
 
-/// Build a TIN over the whole level.
-pub fn build(level: &Level, config: &Config) -> Mesh {
-    profiling::scope!("Build Terrain TIN");
+/// Where one chunk's geometry lives inside the shared buffers.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Slot {
+    pub vertex_base: u32,
+    pub vertex_cap: u32,
+    pub index_base: u32,
+    pub index_cap: u32,
+}
 
-    let max_error = config.max_error(level);
-    let step = CHUNK_SIZE as i32;
-    // Chunks are clipped to the level: a level smaller than `CHUNK_SIZE`, or
-    // a trailing chunk, must not extend past the edge. `Level::get` wraps,
-    // so an oversized chunk would silently mesh the level several times over.
-    let chunks_of = |total: i32| {
-        let mut spans = Vec::new();
-        let mut at = 0;
-        while at < total {
-            spans.push((at, (total - at).min(step) as u32));
-            at += step;
+/// One chunk's geometry, ready to be written into its slot.
+pub struct ChunkGeometry {
+    pub slot: Slot,
+    pub vertices: Vec<MeshVertex>,
+    /// Absolute (already offset by `slot.vertex_base`) and padded out to
+    /// `index_cap` with degenerate triangles, so the whole index buffer
+    /// stays drawable in a single call and a shrinking chunk leaves no
+    /// stale triangles behind.
+    pub indices: Vec<u32>,
+}
+
+/// Spare room each slot carries so edits can refine a chunk in place.
+///
+/// Overflowing it is not an error, just a relayout - but relayout costs a
+/// full re-emit, so the headroom is generous enough to make it rare.
+fn with_headroom(used: usize, granularity: usize) -> u32 {
+    let n = used * 2 + 64;
+    (n.div_ceil(granularity) * granularity) as u32
+}
+
+impl ChunkGeometry {
+    fn pack(slot: Slot, mesh: ChunkMesh) -> Self {
+        let mut indices: Vec<u32> = mesh.indices.iter().map(|i| i + slot.vertex_base).collect();
+        indices.resize(slot.index_cap as usize, slot.vertex_base);
+        ChunkGeometry {
+            slot,
+            vertices: mesh.vertices,
+            indices,
         }
-        spans
-    };
-    let origins = {
-        let mut v = Vec::new();
-        for &(y, h) in &chunks_of(level.size.1) {
-            for &(x, w) in &chunks_of(level.size.0) {
-                v.push((x, y, w, h));
+    }
+
+    fn fits(slot: &Slot, mesh: &ChunkMesh) -> bool {
+        mesh.vertices.len() as u32 <= slot.vertex_cap && mesh.indices.len() as u32 <= slot.index_cap
+    }
+}
+
+struct ChunkState {
+    x0: i32,
+    y0: i32,
+    w: u32,
+    h: u32,
+    tri: Chunk,
+    slot: Slot,
+}
+
+impl ChunkState {
+    /// Chunks own the texels `[x0 ..= x0 + w]`, i.e. they share their border
+    /// row/column with the neighbour. That overlap is what makes an edit on
+    /// a border line dirty *both* chunks, which is exactly what keeps the
+    /// seam consistent.
+    fn overlaps(&self, x: i32, y: i32, w: i32, h: i32) -> bool {
+        self.x0 <= x + w
+            && x <= self.x0 + self.w as i32
+            && self.y0 <= y + h
+            && y <= self.y0 + self.h as i32
+    }
+}
+
+/// What a terrain edit did to the mesh.
+pub enum Update {
+    /// Nothing needed re-fitting.
+    Unchanged,
+    /// Write these chunks into their slots; the buffers keep their size.
+    Patches(Vec<ChunkGeometry>),
+    /// A chunk outgrew its slot, so everything was laid out afresh.
+    /// The buffers have to be recreated from this.
+    Relaid(Mesh),
+}
+
+/// A live TIN: the triangulations stay resident so terrain edits can refine
+/// the mesh instead of rebuilding it.
+///
+/// The sample grids are *not* kept - at 129x129 samples per chunk they would
+/// dwarf everything else on a full level - so they are re-derived from the
+/// `Level` for whichever chunks an edit touches. The triangulations
+/// themselves are small (grid indices plus adjacency).
+pub struct Tin {
+    max_error: f32,
+    quality: f32,
+    chunks: Vec<ChunkState>,
+    pub stats: Stats,
+}
+
+impl Tin {
+    pub fn build(level: &Level, config: &Config) -> (Self, Mesh) {
+        profiling::scope!("Build Terrain TIN");
+
+        let max_error = config.max_error(level);
+        let step = CHUNK_SIZE as i32;
+        // Chunks are clipped to the level: a level smaller than `CHUNK_SIZE`,
+        // or a trailing chunk, must not extend past the edge. `Level::get`
+        // wraps, so an oversized chunk would quietly mesh the level twice.
+        let spans_of = |total: i32| {
+            let mut spans = Vec::new();
+            let mut at = 0;
+            while at < total {
+                spans.push((at, (total - at).min(step) as u32));
+                at += step;
             }
+            spans
+        };
+        let origins = {
+            let mut v = Vec::new();
+            for &(y, h) in &spans_of(level.size.1) {
+                for &(x, w) in &spans_of(level.size.0) {
+                    v.push((x, y, w, h));
+                }
+            }
+            v
+        };
+
+        let build_one = |&(x, y, w, h): &(i32, i32, u32, u32)| {
+            let grid = Grid::new(level, x, y, w, h);
+            let mut chunk = Chunk::new(&grid);
+            refine(&mut chunk, &grid, max_error);
+            let mesh = emit_chunk(&chunk, &grid);
+            (
+                ChunkState {
+                    x0: x,
+                    y0: y,
+                    w,
+                    h,
+                    tri: chunk,
+                    slot: Slot::default(),
+                },
+                mesh,
+            )
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let built: Vec<(ChunkState, ChunkMesh)> = {
+            use rayon::prelude::*;
+            origins.par_iter().map(build_one).collect()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let built: Vec<(ChunkState, ChunkMesh)> = origins.iter().map(build_one).collect();
+
+        let (mut chunks, meshes): (Vec<_>, Vec<_>) = built.into_iter().unzip();
+        let mesh = layout(&mut chunks, meshes, level, max_error);
+
+        let tin = Tin {
+            max_error,
+            quality: config.quality,
+            chunks,
+            stats: mesh.stats,
+        };
+        tin.log("built");
+        (tin, mesh)
+    }
+
+    fn log(&self, what: &str) {
+        info!(
+            "Terrain TIN {} at quality {}: {} vertices, {} triangles from {} texels \
+             ({:.1}x fewer triangles, max error {:.2})",
+            what,
+            self.quality,
+            self.stats.vertices,
+            self.stats.triangles,
+            self.stats.source_texels,
+            2.0 * self.stats.source_texels as f32 / self.stats.triangles.max(1) as f32,
+            self.stats.max_error,
+        );
+    }
+
+    /// Re-fit the mesh after the level changed inside the given texel rect.
+    ///
+    /// Only vertices are added: the triangulation is planar in XY and
+    /// altitudes are plain attributes, so an edit that merely raises or
+    /// lowers the surface re-emits with no topology change at all. New
+    /// vertices appear only where the edit introduced detail the existing
+    /// triangles cannot represent.
+    pub fn update(&mut self, level: &Level, x: i32, y: i32, w: i32, h: i32) -> Update {
+        profiling::scope!("Update Terrain TIN");
+
+        let max_error = self.max_error;
+        let mut patches = Vec::new();
+        let mut relayout = false;
+
+        for state in self.chunks.iter_mut() {
+            if !state.overlaps(x, y, w, h) {
+                continue;
+            }
+            let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
+            refine(&mut state.tri, &grid, max_error);
+            let mesh = emit_chunk(&state.tri, &grid);
+            if !ChunkGeometry::fits(&state.slot, &mesh) {
+                relayout = true;
+                break;
+            }
+            patches.push(ChunkGeometry::pack(state.slot, mesh));
         }
-        v
-    };
 
-    let build_one =
-        |&(x, y, w, h): &(i32, i32, u32, u32)| build_chunk(level, x, y, w, h, max_error);
+        if relayout {
+            // Rare: a chunk more than doubled its geometry. Re-emit
+            // everything against fresh slots and hand back a whole new mesh.
+            info!("Terrain TIN: a chunk outgrew its slot, relaying out");
+            let meshes = self
+                .chunks
+                .iter()
+                .map(|state| {
+                    let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
+                    emit_chunk(&state.tri, &grid)
+                })
+                .collect::<Vec<_>>();
+            let mesh = layout(&mut self.chunks, meshes, level, max_error);
+            self.stats = mesh.stats;
+            self.log("relaid out");
+            return Update::Relaid(mesh);
+        }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    let chunks: Vec<ChunkMesh> = {
-        use rayon::prelude::*;
-        origins.par_iter().map(build_one).collect()
-    };
-    #[cfg(target_arch = "wasm32")]
-    let chunks: Vec<ChunkMesh> = origins.iter().map(build_one).collect();
+        if patches.is_empty() {
+            return Update::Unchanged;
+        }
+        Update::Patches(patches)
+    }
+}
+
+/// Assign every chunk a slot and pack the whole mesh into one pair of
+/// buffers. Unused vertex slots are never indexed; unused index slots hold
+/// degenerate triangles, so a single draw call still covers everything.
+fn layout(
+    chunks: &mut [ChunkState],
+    meshes: Vec<ChunkMesh>,
+    level: &Level,
+    max_error: f32,
+) -> Mesh {
+    let mut vertex_base = 0u32;
+    let mut index_base = 0u32;
+    for (state, mesh) in chunks.iter_mut().zip(&meshes) {
+        state.slot = Slot {
+            vertex_base,
+            vertex_cap: with_headroom(mesh.vertices.len(), 1),
+            index_base,
+            // Index capacity has to stay a whole number of triangles.
+            index_cap: with_headroom(mesh.indices.len(), 3),
+        };
+        vertex_base += state.slot.vertex_cap;
+        index_base += state.slot.index_cap;
+    }
 
     let mut mesh = Mesh {
-        vertices: Vec::new(),
-        indices: Vec::new(),
+        vertices: vec![MeshVertex::zeroed(); vertex_base as usize],
+        indices: vec![0; index_base as usize],
         stats: Stats {
             source_texels: (level.size.0 as usize) * (level.size.1 as usize),
             max_error,
             ..Default::default()
         },
     };
-    for part in chunks {
-        let base = mesh.vertices.len() as u32;
-        mesh.vertices.extend(part.vertices);
-        mesh.indices.extend(part.indices.iter().map(|i| i + base));
+    let mut live_vertices = 0;
+    let mut live_indices = 0;
+    for (state, part) in chunks.iter().zip(meshes) {
+        live_vertices += part.vertices.len();
+        live_indices += part.indices.len();
+        let packed = ChunkGeometry::pack(state.slot, part);
+        let vb = state.slot.vertex_base as usize;
+        mesh.vertices[vb..vb + packed.vertices.len()].copy_from_slice(&packed.vertices);
+        let ib = state.slot.index_base as usize;
+        mesh.indices[ib..ib + packed.indices.len()].copy_from_slice(&packed.indices);
     }
-    mesh.stats.vertices = mesh.vertices.len();
-    mesh.stats.triangles = mesh.indices.len() / 3;
-
-    info!(
-        "Terrain TIN at quality {}: {} vertices, {} triangles from {} texels \
-         ({:.1}x fewer triangles, max error {:.2})",
-        config.quality,
-        mesh.stats.vertices,
-        mesh.stats.triangles,
-        mesh.stats.source_texels,
-        2.0 * mesh.stats.source_texels as f32 / mesh.stats.triangles.max(1) as f32,
-        max_error,
-    );
-
+    mesh.stats.vertices = live_vertices;
+    mesh.stats.triangles = live_indices / 3;
     mesh
 }
 
@@ -806,15 +1031,15 @@ mod tests {
     /// Every alive triangle must be CCW, and adjacency must be symmetric:
     /// if `t` names `n` across an edge, `n` must name `t` back across the
     /// same (reversed) edge.
-    fn check_invariants(chunk: &Chunk<'_>) {
+    fn check_invariants(chunk: &Chunk, grid: &Grid) {
         for (t, tri) in chunk.tris.iter().enumerate() {
             if !tri.alive {
                 continue;
             }
             let (a, b, c) = (
-                chunk.pos(tri.v[0]),
-                chunk.pos(tri.v[1]),
-                chunk.pos(tri.v[2]),
+                chunk.pos(grid, tri.v[0]),
+                chunk.pos(grid, tri.v[1]),
+                chunk.pos(grid, tri.v[2]),
             );
             assert!(orient2d(a, b, c) > 0, "triangle {} is not CCW", t);
 
@@ -835,19 +1060,19 @@ mod tests {
     }
 
     /// Delaunay's defining property: no vertex inside any circumcircle.
-    fn check_delaunay(chunk: &Chunk<'_>) {
+    fn check_delaunay(chunk: &Chunk, grid: &Grid) {
         for tri in chunk.tris.iter().filter(|t| t.alive) {
             let (a, b, c) = (
-                chunk.pos(tri.v[0]),
-                chunk.pos(tri.v[1]),
-                chunk.pos(tri.v[2]),
+                chunk.pos(grid, tri.v[0]),
+                chunk.pos(grid, tri.v[1]),
+                chunk.pos(grid, tri.v[2]),
             );
             for v in 0..chunk.verts.len() as u32 {
                 if tri.v.contains(&v) {
                     continue;
                 }
                 assert!(
-                    in_circle(a, b, c, chunk.pos(v)) <= 0,
+                    in_circle(a, b, c, chunk.pos(grid, v)) <= 0,
                     "vertex {} violates the empty-circumcircle property",
                     v
                 );
@@ -913,7 +1138,7 @@ mod tests {
         let size = 64;
         let level = make_level(size);
         let config = Config { quality: 1.0 };
-        let mesh = build(&level, &config);
+        let (_tin, mesh) = Tin::build(&level, &config);
 
         assert!(mesh.stats.triangles > 0);
         assert_eq!(mesh.indices.len() % 3, 0);
@@ -950,7 +1175,7 @@ mod tests {
     fn dual_regions_emit_a_slab_ceiling_and_walls() {
         let level = make_level(64);
         let config = Config { quality: 1.0 };
-        let mesh = build(&level, &config);
+        let (_tin, mesh) = Tin::build(&level, &config);
 
         let has_z = |z: f32| mesh.vertices.iter().any(|v| (v.pos[2] - z).abs() < 0.5);
         // low = 60, mid = 60 + (9 << 3) = 132, high = 180.
@@ -1003,8 +1228,8 @@ mod tests {
     fn build_is_deterministic() {
         let level = make_level(48);
         let config = Config { quality: 1.0 };
-        let a = build(&level, &config);
-        let b = build(&level, &config);
+        let (_, a) = Tin::build(&level, &config);
+        let (_, b) = Tin::build(&level, &config);
         assert_eq!(a.indices, b.indices);
         assert_eq!(a.vertices.len(), b.vertices.len());
         assert!(
@@ -1013,6 +1238,230 @@ mod tests {
                 .zip(&b.vertices)
                 .all(|(x, y)| x.pos == y.pos && x.layer == y.layer)
         );
+    }
+
+    /// Lower a round pit into the level, returning the dirty rect. Steep
+    /// enough that the existing triangulation cannot represent it.
+    fn dig(level: &mut Level, cx: i32, cy: i32, r: i32) -> (i32, i32, i32, i32) {
+        for y in (cy - r)..(cy + r) {
+            for x in (cx - r)..(cx + r) {
+                let (dx, dy) = ((x - cx) as f32, (y - cy) as f32);
+                let d2 = dx * dx + dy * dy;
+                if d2 > (r * r) as f32 {
+                    continue;
+                }
+                let i = (y * level.size.0 + x) as usize;
+                let depth = (60.0 * (1.0 - d2 / (r * r) as f32)) as u8;
+                level.height[i] = level.height[i].saturating_sub(depth);
+            }
+        }
+        (cx - r, cy - r, 2 * r, 2 * r)
+    }
+
+    /// Worst residual error of the whole TIN against the current level.
+    fn worst_error(tin: &Tin, level: &Level) -> f32 {
+        let mut worst = 0.0f32;
+        for st in &tin.chunks {
+            let grid = Grid::new(level, st.x0, st.y0, st.w, st.h);
+            let mut c = st.tri.clone();
+            for t in 0..c.tris.len() as u32 {
+                if c.tris[t as usize].alive {
+                    c.compute_candidate(&grid, t);
+                    worst = worst.max(c.tris[t as usize].err);
+                }
+            }
+        }
+        worst
+    }
+
+    /// Every chunk's vertices, in global texel coordinates.
+    fn vertex_sets(tin: &Tin) -> Vec<std::collections::HashSet<(i32, i32)>> {
+        tin.chunks
+            .iter()
+            .map(|st| {
+                let nx = st.w + 1;
+                st.tri
+                    .verts
+                    .iter()
+                    .map(|&gi| (st.x0 + (gi % nx) as i32, st.y0 + (gi / nx) as i32))
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn edits_only_ever_add_vertices() {
+        let mut level = make_level(96);
+        let config = Config { quality: 0.5 };
+        let (mut tin, _) = Tin::build(&level, &config);
+        let before = vertex_sets(&tin);
+
+        let (x, y, w, h) = dig(&mut level, 70, 70, 12);
+        tin.update(&level, x, y, w, h);
+        let after = vertex_sets(&tin);
+
+        for (i, (old, new)) in before.iter().zip(&after).enumerate() {
+            assert!(
+                old.is_subset(new),
+                "chunk {} lost vertices: {:?}",
+                i,
+                old.difference(new).collect::<Vec<_>>()
+            );
+        }
+        assert!(
+            after.iter().map(|s| s.len()).sum::<usize>()
+                > before.iter().map(|s| s.len()).sum::<usize>(),
+            "the pit should have needed new vertices"
+        );
+    }
+
+    #[test]
+    fn edits_refit_the_surface_to_tolerance() {
+        let mut level = make_level(96);
+        let config = Config { quality: 0.5 };
+        let (mut tin, _) = Tin::build(&level, &config);
+        let tolerance = tin.max_error;
+        assert!(worst_error(&tin, &level) <= tolerance);
+
+        let (x, y, w, h) = dig(&mut level, 70, 70, 12);
+        // Without the update the mesh is now badly wrong ...
+        assert!(worst_error(&tin, &level) > tolerance * 4.0);
+        // ... and refitting brings it back inside tolerance.
+        tin.update(&level, x, y, w, h);
+        let worst = worst_error(&tin, &level);
+        assert!(worst <= tolerance, "residual error {} after update", worst);
+    }
+
+    #[test]
+    fn a_pure_height_shift_needs_no_new_geometry() {
+        // The triangulation is planar in XY and altitudes are plain vertex
+        // attributes, so translating the surface must re-emit identically.
+        let mut level = make_level(96);
+        let config = Config { quality: 0.5 };
+        let (mut tin, mesh) = Tin::build(&level, &config);
+        let before = mesh.stats.triangles;
+
+        for h in level.height.iter_mut() {
+            *h = h.saturating_sub(3);
+        }
+        let update = tin.update(&level, 0, 0, level.size.0, level.size.1);
+        let parts = match update {
+            Update::Patches(parts) => parts,
+            _ => panic!("a uniform shift should patch in place"),
+        };
+        assert!(!parts.is_empty());
+        assert_eq!(tin.stats.triangles, before);
+    }
+
+    #[test]
+    fn edits_keep_chunk_seams_consistent() {
+        // Two chunks wide, with the edit straddling the shared column.
+        let mut level = make_level(CHUNK_SIZE as i32 + 32);
+        let config = Config { quality: 0.5 };
+        let (mut tin, _) = Tin::build(&level, &config);
+        assert!(tin.chunks.len() > 1, "need more than one chunk");
+
+        let seam = CHUNK_SIZE as i32;
+        let (x, y, w, h) = dig(&mut level, seam, 60, 14);
+        tin.update(&level, x, y, w, h);
+
+        // Compare only chunks that actually abut: same row, and the left
+        // one's right border is the right one's left border. The seam is
+        // crack-free exactly when they agree on that column.
+        let sets = vertex_sets(&tin);
+        let mut compared = 0;
+        for (i, a) in tin.chunks.iter().enumerate() {
+            for (j, b) in tin.chunks.iter().enumerate() {
+                if a.y0 != b.y0 || b.x0 != a.x0 + a.w as i32 {
+                    continue;
+                }
+                let column = b.x0;
+                let on_seam = |set: &std::collections::HashSet<(i32, i32)>| {
+                    set.iter()
+                        .filter(|&&(vx, _)| vx == column)
+                        .map(|&(_, vy)| vy)
+                        .collect::<std::collections::BTreeSet<_>>()
+                };
+                assert_eq!(
+                    on_seam(&sets[i]),
+                    on_seam(&sets[j]),
+                    "chunks disagree on the shared column {} - that is a crack",
+                    column
+                );
+                compared += 1;
+            }
+        }
+        assert!(compared > 0, "no abutting chunks were compared");
+    }
+
+    #[test]
+    fn a_drastic_edit_relays_out_and_stays_correct() {
+        let mut level = make_level(96);
+        let config = Config { quality: 0.5 };
+        let (mut tin, _) = Tin::build(&level, &config);
+
+        // Shred a region into per-texel noise. That needs far more detail
+        // than the slot headroom can absorb, so it must fall back to a
+        // relayout rather than silently truncating.
+        for y in 20..80 {
+            for x in 20..80 {
+                let i = (y * level.size.0 + x) as usize;
+                level.height[i] = if (x + y) % 2 == 0 { 40 } else { 200 };
+            }
+        }
+        let mesh = match tin.update(&level, 20, 20, 60, 60) {
+            Update::Relaid(mesh) => mesh,
+            _ => panic!("a per-texel-noise edit should have outgrown its slots"),
+        };
+
+        // The relaid mesh has to be self-consistent: every index in range,
+        // whole triangles, and the surface refitted to tolerance.
+        assert_eq!(mesh.indices.len() % 3, 0);
+        assert!(
+            mesh.indices
+                .iter()
+                .all(|&i| (i as usize) < mesh.vertices.len())
+        );
+        let worst = worst_error(&tin, &level);
+        assert!(worst <= tin.max_error, "residual error {}", worst);
+
+        // And a further edit must patch in place again against the new slots.
+        let (x, y, w, h) = dig(&mut level, 85, 85, 6);
+        assert!(matches!(
+            tin.update(&level, x, y, w, h),
+            Update::Patches(_) | Update::Unchanged
+        ));
+    }
+
+    #[test]
+    fn edits_outside_a_chunk_leave_it_alone() {
+        let mut level = make_level(CHUNK_SIZE as i32 + 32);
+        let config = Config { quality: 0.5 };
+        let (mut tin, _) = Tin::build(&level, &config);
+        let before = vertex_sets(&tin);
+
+        // Well inside the first chunk, far from any border.
+        let (x, y, w, h) = dig(&mut level, 40, 40, 10);
+        let update = tin.update(&level, x, y, w, h);
+        let touched = match update {
+            Update::Patches(parts) => parts.len(),
+            Update::Unchanged => 0,
+            Update::Relaid(_) => tin.chunks.len(),
+        };
+        assert!(
+            touched < tin.chunks.len(),
+            "a local edit touched every one of {} chunks",
+            tin.chunks.len()
+        );
+
+        let after = vertex_sets(&tin);
+        let changed = before
+            .iter()
+            .zip(&after)
+            .filter(|(a, b)| a.len() != b.len())
+            .count();
+        assert!(changed >= 1, "the edit should have refined something");
+        assert!(changed < tin.chunks.len(), "it should not have refined all");
     }
 
     #[test]
@@ -1031,24 +1480,24 @@ mod tests {
     fn insertion_keeps_a_valid_delaunay_triangulation() {
         let grid = flat_grid(9, 9);
         let mut chunk = Chunk::new(&grid);
-        check_invariants(&chunk);
+        check_invariants(&chunk, &grid);
 
         // A deterministic scatter of interior points, plus points landing
         // exactly on the hull edges to exercise the collinear path.
         let interior = [(3, 4), (5, 2), (7, 6), (1, 1), (4, 7), (6, 3), (2, 6)];
         for &(x, y) in &interior {
             let gi = grid.index(x, y);
-            let seed = chunk.locate(grid.coord(gi), 0);
-            chunk.insert(gi, seed);
-            check_invariants(&chunk);
+            let seed = chunk.locate(&grid, grid.coord(gi), 0);
+            chunk.insert(&grid, gi, seed);
+            check_invariants(&chunk, &grid);
         }
         for &(x, y) in &[(4, 0), (0, 5), (8, 3), (6, 8)] {
             let gi = grid.index(x, y);
-            let seed = chunk.locate(grid.coord(gi), 0);
-            chunk.insert(gi, seed);
-            check_invariants(&chunk);
+            let seed = chunk.locate(&grid, grid.coord(gi), 0);
+            chunk.insert(&grid, gi, seed);
+            check_invariants(&chunk, &grid);
         }
-        check_delaunay(&chunk);
+        check_delaunay(&chunk, &grid);
         assert_eq!(chunk.verts.len(), 4 + interior.len() + 4);
     }
 
@@ -1058,15 +1507,21 @@ mod tests {
         let mut chunk = Chunk::new(&grid);
         for &(x, y) in &[(2, 3), (5, 1), (3, 5), (1, 4), (4, 2)] {
             let gi = grid.index(x, y);
-            let seed = chunk.locate(grid.coord(gi), 0);
-            chunk.insert(gi, seed);
+            let seed = chunk.locate(&grid, grid.coord(gi), 0);
+            chunk.insert(&grid, gi, seed);
         }
         // Total area must still be the full rectangle: no gaps, no overlaps.
         let total: i64 = chunk
             .tris
             .iter()
             .filter(|t| t.alive)
-            .map(|t| orient2d(chunk.pos(t.v[0]), chunk.pos(t.v[1]), chunk.pos(t.v[2])))
+            .map(|t| {
+                orient2d(
+                    chunk.pos(&grid, t.v[0]),
+                    chunk.pos(&grid, t.v[1]),
+                    chunk.pos(&grid, t.v[2]),
+                )
+            })
             .sum();
         assert_eq!(total, 2 * 6 * 6);
     }
@@ -1122,7 +1577,7 @@ mod tests {
         }
         let mut chunk = Chunk::new(&grid);
         for t in 0..chunk.tris.len() as u32 {
-            chunk.compute_candidate(t);
+            chunk.compute_candidate(&grid, t);
         }
         let worst_before = chunk
             .tris
@@ -1145,12 +1600,12 @@ mod tests {
             if t == NONE || err <= 1.0 {
                 break;
             }
-            for slot in chunk.insert(cand, t) {
-                chunk.compute_candidate(slot);
+            for slot in chunk.insert(&grid, cand, t) {
+                chunk.compute_candidate(&grid, slot);
             }
         }
 
-        check_invariants(&chunk);
+        check_invariants(&chunk, &grid);
         let worst = chunk
             .tris
             .iter()

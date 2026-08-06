@@ -30,6 +30,33 @@ use log::info;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+/// Carve a round pit into the middle of the level and return the rect that
+/// changed. Used by `--dig` to exercise incremental terrain updates.
+fn dig_crater(level: &mut level::Level) -> vangers::render::Rect {
+    let (cx, cy) = (level.size.0 / 2, level.size.1 / 2);
+    let r = (level.size.0.min(level.size.1) / 5).max(8);
+    for y in (cy - r)..(cy + r) {
+        for x in (cx - r)..(cx + r) {
+            let (dx, dy) = ((x - cx) as f32, (y - cy) as f32);
+            let d2 = dx * dx + dy * dy;
+            if d2 > (r * r) as f32 {
+                continue;
+            }
+            let i = (y * level.size.0 + x) as usize;
+            let depth = (90.0 * (1.0 - d2 / (r * r) as f32)) as u8;
+            level.height[i] = level.height[i].saturating_sub(depth);
+            // A crater cuts through the slab, so drop any double level.
+            level.meta[i] &= !level::DOUBLE_LEVEL;
+        }
+    }
+    vangers::render::Rect {
+        x: (cx - r) as u16,
+        y: (cy - r) as u16,
+        w: (2 * r) as u16,
+        h: (2 * r) as u16,
+    }
+}
+
 #[derive(Clone)]
 pub struct SnapshotOptions {
     pub output_path: String,
@@ -48,6 +75,12 @@ pub struct SnapshotOptions {
     pub shadow_voxel: bool,
     pub shadow_ray: bool,
     pub mesh_wireframe: bool,
+    /// Deform the terrain after the first frame, to exercise the
+    /// incremental update path.
+    pub dig: bool,
+    /// Frame to dig on. 0 means before the mesh is ever built, which
+    /// gives a from-scratch reference to compare the incremental path to.
+    pub dig_frame: u32,
 }
 
 impl Default for SnapshotOptions {
@@ -59,6 +92,8 @@ impl Default for SnapshotOptions {
             level_path: None,
             terrain: settings::Terrain::RayTraced,
             mesh_wireframe: false,
+            dig: false,
+            dig_frame: 1,
             width: 800,
             height: 600,
             cam_target: Vec3::new(128.0, 128.0, 0.0),
@@ -213,7 +248,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
 
     // Load level data. VFS path uses an in-memory mount; native uses paths
     // resolved through the LevelConfig, plus relative .pal/.vmc files.
-    let lvl = match vfs.as_ref() {
+    let mut lvl = match vfs.as_ref() {
         Some(vfs) => level::load_from_vfs(vfs, &level_config, &geometry),
         None => level::load(&level_config, &geometry),
     };
@@ -278,6 +313,18 @@ pub fn render_snapshot(opts: SnapshotOptions) {
 
     for frame_index in 0..total_frames {
         let is_timed = frame_index >= opts.warmup;
+        if opts.dig && frame_index == opts.dig_frame {
+            let rect = dig_crater(&mut lvl);
+            info!(
+                "Dug a crater at {},{} size {}x{}",
+                rect.x, rect.y, rect.w, rect.h
+            );
+            render.terrain.dirty_rects.push(vangers::render::DirtyRect {
+                rect,
+                z_range: 0..0x100,
+                need_upload: true,
+            });
+        }
         let started = Instant::now();
 
         let mut encoder = gfx

@@ -261,25 +261,76 @@ struct MeshGeometry {
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer,
     num_indices: u32,
-    stats: level::tin::Stats,
+    /// The live triangulation, kept so terrain edits refine the mesh in
+    /// place instead of rebuilding it.
+    tin: level::tin::Tin,
 }
 
 impl MeshGeometry {
-    fn new(mesh: &level::tin::Mesh, device: &wgpu::Device) -> Self {
+    fn new(tin: level::tin::Tin, mesh: &level::tin::Mesh, device: &wgpu::Device) -> Self {
+        let (vertex_buf, index_buf, num_indices) = Self::buffers(mesh, device);
         MeshGeometry {
-            vertex_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            vertex_buf,
+            index_buf,
+            num_indices,
+            tin,
+        }
+    }
+
+    fn buffers(
+        mesh: &level::tin::Mesh,
+        device: &wgpu::Device,
+    ) -> (wgpu::Buffer, wgpu::Buffer, u32) {
+        (
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("terrain-mesh-vertex"),
                 contents: bytemuck::cast_slice(&mesh.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             }),
-            index_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("terrain-mesh-index"),
                 contents: bytemuck::cast_slice(&mesh.indices),
-                usage: wgpu::BufferUsages::INDEX,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             }),
-            num_indices: mesh.indices.len() as u32,
-            stats: mesh.stats,
-        }
+            mesh.indices.len() as u32,
+        )
+    }
+
+    /// Write one chunk's refreshed geometry into its slot. The index range
+    /// is written in full (padded with degenerate triangles by the TIN), so
+    /// a chunk that shrank leaves nothing stale behind.
+    fn patch(
+        &self,
+        part: &level::tin::ChunkGeometry,
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+    ) {
+        let vertex_size = mem::size_of::<level::tin::MeshVertex>() as wgpu::BufferAddress;
+        let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("terrain-mesh patch"),
+            contents: bytemuck::cast_slice(&part.vertices),
+            usage: wgpu::BufferUsages::COPY_SRC,
+        });
+        encoder.copy_buffer_to_buffer(
+            &staging,
+            0,
+            &self.vertex_buf,
+            part.slot.vertex_base as wgpu::BufferAddress * vertex_size,
+            part.vertices.len() as wgpu::BufferAddress * vertex_size,
+        );
+
+        let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("terrain-mesh index patch"),
+            contents: bytemuck::cast_slice(&part.indices),
+            usage: wgpu::BufferUsages::COPY_SRC,
+        });
+        encoder.copy_buffer_to_buffer(
+            &staging,
+            0,
+            &self.index_buf,
+            part.slot.index_base as wgpu::BufferAddress * 4,
+            part.indices.len() as wgpu::BufferAddress * 4,
+        );
     }
 }
 
@@ -1795,18 +1846,46 @@ impl Context {
         }
 
         // The TIN needs the level data, which `new()` never sees, so it is
-        // fitted here on the first update. Terrain edits do not invalidate
-        // the triangulation topology (it is planar in XY, altitudes are
-        // just vertex attributes) but they do move the surface, so a
-        // rebuild would be needed to track deformation -- not yet wired up.
+        // fitted on the first update and refined on every one after.
         if let Kind::Mesh {
             ref config,
-            geo: ref mut geo @ None,
+            ref mut geo,
             ..
         } = self.kind
         {
-            let mesh = level::tin::build(level, config);
-            *geo = Some(MeshGeometry::new(&mesh, device));
+            match *geo {
+                None => {
+                    let (tin, mesh) = level::tin::Tin::build(level, config);
+                    *geo = Some(MeshGeometry::new(tin, &mesh, device));
+                }
+                Some(ref mut geo) => {
+                    for dr in self.dirty_rects.iter() {
+                        if !dr.need_upload {
+                            continue;
+                        }
+                        let (x, y) = (dr.rect.x as i32, dr.rect.y as i32);
+                        let (w, h) = (dr.rect.w as i32, dr.rect.h as i32);
+                        match geo.tin.update(level, x, y, w, h) {
+                            level::tin::Update::Unchanged => {}
+                            level::tin::Update::Patches(parts) => {
+                                for part in &parts {
+                                    geo.patch(part, encoder, device);
+                                }
+                            }
+                            level::tin::Update::Relaid(mesh) => {
+                                // Slots moved, so the buffers are replaced
+                                // wholesale. The triangulation itself is
+                                // untouched and stays where it is.
+                                let (vertex_buf, index_buf, num_indices) =
+                                    MeshGeometry::buffers(&mesh, device);
+                                geo.vertex_buf = vertex_buf;
+                                geo.index_buf = index_buf;
+                                geo.num_indices = num_indices;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         if !self.dirty_rects.is_empty() {
@@ -2423,7 +2502,7 @@ impl Context {
                 config,
                 ..
             } => {
-                let stats = &geo.stats;
+                let stats = &geo.tin.stats;
                 ui.label(format!(
                     "TIN: {} verts, {} tris",
                     stats.vertices, stats.triangles
