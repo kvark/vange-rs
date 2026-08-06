@@ -26,6 +26,53 @@ fn count_tiles(size: u32) -> u32 {
 
 const MAXIMUM_UNIFORM_BUFFER_ALIGNMENT: usize = 256;
 
+/// Six frustum planes from a view-projection matrix, each as
+/// `(normal, distance)` with the interior on the positive side.
+///
+/// Standard Gribb-Hartmann extraction, with `z` rather than `w + z` for the
+/// near plane because wgpu's clip space has z in `0..1`, not `-1..1`.
+/// First wrap tile along an axis. Must mirror `tile_grid()` in
+/// `terrain/mesh.wgsl` exactly: the shader turns an instance index into a
+/// tile offset with the same arithmetic, so any disagreement draws the
+/// wrong tiles - including, when the counts differ, dropping the camera's.
+fn tile_lo(visible_lo: f32, cam: f32, period: f32) -> f32 {
+    (visible_lo / period)
+        .floor()
+        .max((cam / period).floor() - MAX_TILE_RADIUS)
+}
+
+/// Number of wrap tiles along an axis. Mirrors `tile_grid()` as above.
+fn span(lo: f32, hi: f32, cam: f32, period: f32) -> u32 {
+    let cam_tile = (cam / period).floor();
+    let lo = tile_lo(lo, cam, period);
+    let hi = (hi / period)
+        .floor()
+        .min(cam_tile + MAX_TILE_RADIUS)
+        .max(lo);
+    (hi - lo) as u32 + 1
+}
+
+fn frustum_planes(m: &glam::Mat4) -> [glam::Vec4; 6] {
+    let c = m.to_cols_array_2d();
+    let row = |i: usize| glam::Vec4::new(c[0][i], c[1][i], c[2][i], c[3][i]);
+    let (x, y, z, w) = (row(0), row(1), row(2), row(3));
+    [w + x, w - x, w + y, w - y, z, w - z]
+}
+
+/// True when the box is entirely outside at least one plane. Tests the
+/// corner furthest along each normal, so it never culls a box that still
+/// straddles the frustum.
+fn box_outside(planes: &[glam::Vec4; 6], min: glam::Vec3, max: glam::Vec3) -> bool {
+    planes.iter().any(|p| {
+        let far = glam::Vec3::new(
+            if p.x >= 0.0 { max.x } else { min.x },
+            if p.y >= 0.0 { max.y } else { min.y },
+            if p.z >= 0.0 { max.z } else { min.z },
+        );
+        p.truncate().dot(far) + p.w < 0.0
+    })
+}
+
 /// How many wrapped copies of the level the mesh terrain draws around the
 /// camera's own tile, per axis. Has to agree with `c_MaxTileRadius` in
 /// `terrain/mesh.wgsl`.
@@ -390,9 +437,9 @@ enum Kind {
         /// bounds, so both sides agree on the tile grid.
         tile_count: u32,
         wireframe: bool,
-        /// `(first index, index count)` per visible chunk, with the LOD
-        /// already chosen. Rebuilt each frame in `prepare`.
-        draws: Vec<(u32, u32)>,
+        /// `(first index, index count, wrap tile)` per visible chunk, with
+        /// the LOD already chosen. Rebuilt each frame in `prepare`.
+        draws: Vec<(u32, u32, u32, f32)>,
         /// Distance, in texels, at which the mesh drops to the next coarser
         /// LOD. Each step doubles it.
         lod_distance: f32,
@@ -2282,29 +2329,56 @@ impl Context {
                 // costs nothing but an index range swap.
                 draws.clear();
                 if let Some(geo) = geo.as_ref() {
-                    let wrap = |d: f32, period: f32| {
-                        if period > 0.0 {
-                            let d = d.rem_euclid(period);
-                            d.min(period - d)
-                        } else {
-                            d
-                        }
-                    };
-                    for chunk in geo.chunk_draws.iter() {
-                        let dx = wrap(chunk.center[0] - sc.origin.x, size[0]);
-                        let dy = wrap(chunk.center[1] - sc.origin.y, size[1]);
-                        let dist = (dx * dx + dy * dy).sqrt();
-                        let level = if lod_distance > 0.0 {
-                            ((dist / lod_distance).max(1.0).log2().floor() as usize)
-                                .min(chunk.lods.len() - 1)
-                        } else {
-                            0
-                        };
-                        let (base, count) = chunk.lods[level];
-                        if count != 0 {
-                            draws.push((base, count));
+                    // Frustum-cull every (chunk, wrap tile) pair and pick a
+                    // LOD from its distance to the camera. Without this the
+                    // whole level mesh is redrawn once per tile: on Fostral
+                    // that is millions of triangles a frame regardless of
+                    // where the camera looks.
+                    let planes = frustum_planes(&cam.get_view_proj());
+                    let tiles_x = span(sc.sample_x.start, sc.sample_x.end, sc.origin.x, size[0]);
+                    let lo_x = tile_lo(sc.sample_x.start, sc.origin.x, size[0]);
+                    let lo_y = tile_lo(sc.sample_y.start, sc.origin.y, size[1]);
+                    for tile in 0..*tile_count {
+                        let offset = glam::Vec2::new(
+                            (lo_x + (tile % tiles_x) as f32) * size[0],
+                            (lo_y + (tile / tiles_x) as f32) * size[1],
+                        );
+                        for chunk in geo.chunk_draws.iter() {
+                            let min = glam::Vec3::new(
+                                chunk.min[0] + offset.x,
+                                chunk.min[1] + offset.y,
+                                chunk.min[2],
+                            );
+                            let max = glam::Vec3::new(
+                                chunk.max[0] + offset.x,
+                                chunk.max[1] + offset.y,
+                                chunk.max[2],
+                            );
+                            if box_outside(&planes, min, max) {
+                                continue;
+                            }
+                            let center = glam::Vec2::new(
+                                chunk.center[0] + offset.x,
+                                chunk.center[1] + offset.y,
+                            );
+                            let dist = (center - sc.origin).length();
+                            let level = if lod_distance > 0.0 {
+                                ((dist / lod_distance).max(1.0).log2().floor() as usize)
+                                    .min(chunk.lods.len() - 1)
+                            } else {
+                                0
+                            };
+                            let (base, count) = chunk.lods[level];
+                            if count != 0 {
+                                draws.push((base, count, tile, dist));
+                            }
                         }
                     }
+                    // Near to far: the fragment shader is not cheap (it
+                    // re-derives the surface gradient per pixel), so letting
+                    // the depth test reject occluded chunks before shading
+                    // them is worth more than the sort costs.
+                    draws.sort_unstable_by(|a, b| a.3.total_cmp(&b.3));
                 }
             }
             Kind::Scatter {
@@ -2481,7 +2555,6 @@ impl Context {
                 ref pipeline,
                 ref wire_pipeline,
                 geo: Some(ref geo),
-                tile_count,
                 wireframe,
                 ref draws,
                 ..
@@ -2492,8 +2565,8 @@ impl Context {
                 // With `MAX_TILE_RADIUS` bounding the wrap tiles, this stays
                 // a handful of calls per frame on a level-sized mesh.
                 let emit = |pass: &mut wgpu::RenderPass<'a>| {
-                    for &(base, count) in draws.iter() {
-                        pass.draw_indexed(base..base + count, 0, 0..tile_count);
+                    for &(base, count, tile, _) in draws.iter() {
+                        pass.draw_indexed(base..base + count, 0, tile..tile + 1);
                     }
                 };
                 if let Some(wire) = wire_pipeline.as_ref().filter(|_| wireframe) {
