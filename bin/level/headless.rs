@@ -89,6 +89,9 @@ pub struct SnapshotOptions {
     pub fp_yaw: f32,
     /// Pitch in degrees; 0 is horizontal, positive looks up.
     pub fp_pitch: f32,
+    /// Stand on the `low` floor rather than the slab top -- i.e. inside a
+    /// double-level region rather than on its roof.
+    pub fp_under: bool,
 }
 
 impl Default for SnapshotOptions {
@@ -106,6 +109,7 @@ impl Default for SnapshotOptions {
             fp_height: 8.0,
             fp_yaw: 0.0,
             fp_pitch: 0.0,
+            fp_under: false,
             width: 800,
             height: 600,
             cam_target: Vec3::new(128.0, 128.0, 0.0),
@@ -127,7 +131,12 @@ fn make_camera(opts: &SnapshotOptions, lvl: &level::Level) -> space::Camera {
         // it happily puts the eye inside a hill, and the interesting cases
         // here are exactly the ones grazing the terrain.
         Some((x, y)) => {
-            let ground = lvl.get((x as i32, y as i32)).high();
+            let texel = lvl.get((x as i32, y as i32));
+            let ground = if opts.fp_under {
+                texel.low()
+            } else {
+                texel.high()
+            };
             let loc = Vec3::new(x, y, ground + opts.fp_height);
             let (yaw, pitch) = (opts.fp_yaw.to_radians(), opts.fp_pitch.to_radians());
             let forward = Vec3::new(

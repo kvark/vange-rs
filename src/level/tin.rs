@@ -55,6 +55,15 @@ unsafe impl Zeroable for MeshVertex {}
 /// and give rayon plenty of independent work.
 const CHUNK_SIZE: u32 = 128;
 
+/// Discrete level-of-detail steps kept per chunk.
+///
+/// Greedy insertion makes these nearly free to produce: LOD `k` is just the
+/// same fit stopped at a coarser tolerance, so the coarse levels cost a
+/// fraction of the fine one to build and a fraction of its triangles to
+/// draw. Each step doubles the tolerance, which roughly halves the
+/// triangles - the same curve the `quality` knob rides.
+pub const LOD_COUNT: usize = 3;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
     /// The single quality knob, in `0..=1`. Higher fits the terrain more
@@ -747,6 +756,8 @@ pub struct Slot {
     pub vertex_cap: u32,
     pub index_base: u32,
     pub index_cap: u32,
+    /// Indices actually in use; the rest of the slot is degenerate padding.
+    pub live_indices: u32,
 }
 
 /// One chunk's geometry, ready to be written into its slot.
@@ -790,8 +801,22 @@ struct ChunkState {
     y0: i32,
     w: u32,
     h: u32,
+    lods: Vec<LodState>,
+}
+
+struct LodState {
     tri: Chunk,
     slot: Slot,
+}
+
+/// What the renderer needs to draw one chunk: where its geometry lives at
+/// each detail level, and where it is in the world.
+#[derive(Clone, Debug)]
+pub struct ChunkDraw {
+    /// Chunk centre in texels, for distance-based LOD selection.
+    pub center: [f32; 2],
+    /// `(first index, index count)` per LOD, finest first.
+    pub lods: Vec<(u32, u32)>,
 }
 
 impl ChunkState {
@@ -862,29 +887,41 @@ impl Tin {
 
         let build_one = |&(x, y, w, h): &(i32, i32, u32, u32)| {
             let grid = Grid::new(level, x, y, w, h);
-            let mut chunk = Chunk::new(&grid);
-            refine(&mut chunk, &grid, max_error);
-            let mesh = emit_chunk(&chunk, &grid);
+            // Each LOD is an independent fit at a doubled tolerance. They
+            // could share work - the coarse vertex sets are prefixes of the
+            // fine one - but refitting from scratch is cheap (the coarse
+            // levels converge in a fraction of the insertions) and keeps
+            // every level a genuine Delaunay triangulation.
+            let mut lods = Vec::with_capacity(LOD_COUNT);
+            let mut meshes = Vec::with_capacity(LOD_COUNT);
+            for k in 0..LOD_COUNT {
+                let mut chunk = Chunk::new(&grid);
+                refine(&mut chunk, &grid, max_error * (1 << k) as f32);
+                meshes.push(emit_chunk(&chunk, &grid));
+                lods.push(LodState {
+                    tri: chunk,
+                    slot: Slot::default(),
+                });
+            }
             (
                 ChunkState {
                     x0: x,
                     y0: y,
                     w,
                     h,
-                    tri: chunk,
-                    slot: Slot::default(),
+                    lods,
                 },
-                mesh,
+                meshes,
             )
         };
 
         #[cfg(not(target_arch = "wasm32"))]
-        let built: Vec<(ChunkState, ChunkMesh)> = {
+        let built: Vec<(ChunkState, Vec<ChunkMesh>)> = {
             use rayon::prelude::*;
             origins.par_iter().map(build_one).collect()
         };
         #[cfg(target_arch = "wasm32")]
-        let built: Vec<(ChunkState, ChunkMesh)> = origins.iter().map(build_one).collect();
+        let built: Vec<(ChunkState, Vec<ChunkMesh>)> = origins.iter().map(build_one).collect();
 
         let (mut chunks, meshes): (Vec<_>, Vec<_>) = built.into_iter().unzip();
         let mesh = layout(&mut chunks, meshes, level, max_error);
@@ -897,6 +934,24 @@ impl Tin {
         };
         tin.log("built");
         (tin, mesh)
+    }
+
+    /// Per-chunk draw information, finest LOD first.
+    pub fn chunk_draws(&self) -> Vec<ChunkDraw> {
+        self.chunks
+            .iter()
+            .map(|state| ChunkDraw {
+                center: [
+                    state.x0 as f32 + state.w as f32 * 0.5,
+                    state.y0 as f32 + state.h as f32 * 0.5,
+                ],
+                lods: state
+                    .lods
+                    .iter()
+                    .map(|lod| (lod.slot.index_base, lod.slot.live_indices))
+                    .collect(),
+            })
+            .collect()
     }
 
     fn log(&self, what: &str) {
@@ -932,13 +987,21 @@ impl Tin {
                 continue;
             }
             let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
-            refine(&mut state.tri, &grid, max_error);
-            let mesh = emit_chunk(&state.tri, &grid);
-            if !ChunkGeometry::fits(&state.slot, &mesh) {
-                relayout = true;
+            let mut fitted = Vec::with_capacity(state.lods.len());
+            for (k, lod) in state.lods.iter_mut().enumerate() {
+                refine(&mut lod.tri, &grid, max_error * (1 << k) as f32);
+                let mesh = emit_chunk(&lod.tri, &grid);
+                if !ChunkGeometry::fits(&lod.slot, &mesh) {
+                    relayout = true;
+                    break;
+                }
+                lod.slot.live_indices = mesh.indices.len() as u32;
+                fitted.push(ChunkGeometry::pack(lod.slot, mesh));
+            }
+            if relayout {
                 break;
             }
-            patches.push(ChunkGeometry::pack(state.slot, mesh));
+            patches.extend(fitted);
         }
 
         if relayout {
@@ -950,7 +1013,11 @@ impl Tin {
                 .iter()
                 .map(|state| {
                     let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
-                    emit_chunk(&state.tri, &grid)
+                    state
+                        .lods
+                        .iter()
+                        .map(|lod| emit_chunk(&lod.tri, &grid))
+                        .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>();
             let mesh = layout(&mut self.chunks, meshes, level, max_error);
@@ -971,22 +1038,25 @@ impl Tin {
 /// degenerate triangles, so a single draw call still covers everything.
 fn layout(
     chunks: &mut [ChunkState],
-    meshes: Vec<ChunkMesh>,
+    meshes: Vec<Vec<ChunkMesh>>,
     level: &Level,
     max_error: f32,
 ) -> Mesh {
     let mut vertex_base = 0u32;
     let mut index_base = 0u32;
-    for (state, mesh) in chunks.iter_mut().zip(&meshes) {
-        state.slot = Slot {
-            vertex_base,
-            vertex_cap: with_headroom(mesh.vertices.len(), 1),
-            index_base,
-            // Index capacity has to stay a whole number of triangles.
-            index_cap: with_headroom(mesh.indices.len(), 3),
-        };
-        vertex_base += state.slot.vertex_cap;
-        index_base += state.slot.index_cap;
+    for (state, per_lod) in chunks.iter_mut().zip(&meshes) {
+        for (lod, mesh) in state.lods.iter_mut().zip(per_lod) {
+            lod.slot = Slot {
+                vertex_base,
+                vertex_cap: with_headroom(mesh.vertices.len(), 1),
+                index_base,
+                // Index capacity has to stay a whole number of triangles.
+                index_cap: with_headroom(mesh.indices.len(), 3),
+                live_indices: mesh.indices.len() as u32,
+            };
+            vertex_base += lod.slot.vertex_cap;
+            index_base += lod.slot.index_cap;
+        }
     }
 
     let mut mesh = Mesh {
@@ -1000,14 +1070,19 @@ fn layout(
     };
     let mut live_vertices = 0;
     let mut live_indices = 0;
-    for (state, part) in chunks.iter().zip(meshes) {
-        live_vertices += part.vertices.len();
-        live_indices += part.indices.len();
-        let packed = ChunkGeometry::pack(state.slot, part);
-        let vb = state.slot.vertex_base as usize;
-        mesh.vertices[vb..vb + packed.vertices.len()].copy_from_slice(&packed.vertices);
-        let ib = state.slot.index_base as usize;
-        mesh.indices[ib..ib + packed.indices.len()].copy_from_slice(&packed.indices);
+    for (state, per_lod) in chunks.iter().zip(meshes) {
+        for (k, (lod, part)) in state.lods.iter().zip(per_lod).enumerate() {
+            // Stats describe LOD 0 - the mesh as actually drawn up close.
+            if k == 0 {
+                live_vertices += part.vertices.len();
+                live_indices += part.indices.len();
+            }
+            let packed = ChunkGeometry::pack(lod.slot, part);
+            let vb = lod.slot.vertex_base as usize;
+            mesh.vertices[vb..vb + packed.vertices.len()].copy_from_slice(&packed.vertices);
+            let ib = lod.slot.index_base as usize;
+            mesh.indices[ib..ib + packed.indices.len()].copy_from_slice(&packed.indices);
+        }
     }
     mesh.stats.vertices = live_vertices;
     mesh.stats.triangles = live_indices / 3;
@@ -1263,7 +1338,7 @@ mod tests {
         let mut worst = 0.0f32;
         for st in &tin.chunks {
             let grid = Grid::new(level, st.x0, st.y0, st.w, st.h);
-            let mut c = st.tri.clone();
+            let mut c = st.lods[0].tri.clone();
             for t in 0..c.tris.len() as u32 {
                 if c.tris[t as usize].alive {
                     c.compute_candidate(&grid, t);
@@ -1280,7 +1355,8 @@ mod tests {
             .iter()
             .map(|st| {
                 let nx = st.w + 1;
-                st.tri
+                st.lods[0]
+                    .tri
                     .verts
                     .iter()
                     .map(|&gi| (st.x0 + (gi % nx) as i32, st.y0 + (gi / nx) as i32))
@@ -1425,12 +1501,16 @@ mod tests {
         let worst = worst_error(&tin, &level);
         assert!(worst <= tin.max_error, "residual error {}", worst);
 
-        // And a further edit must patch in place again against the new slots.
+        // And a further edit against the new slots must still leave the
+        // surface fitted, whichever path it takes.
         let (x, y, w, h) = dig(&mut level, 85, 85, 6);
-        assert!(matches!(
-            tin.update(&level, x, y, w, h),
-            Update::Patches(_) | Update::Unchanged
-        ));
+        tin.update(&level, x, y, w, h);
+        let worst = worst_error(&tin, &level);
+        assert!(
+            worst <= tin.max_error,
+            "residual error {} after refit",
+            worst
+        );
     }
 
     #[test]

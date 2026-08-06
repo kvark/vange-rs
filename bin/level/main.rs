@@ -41,6 +41,10 @@ struct Cli {
     /// First-person pitch in degrees; 0 is horizontal
     #[arg(long, default_value_t = 0.0)]
     fp_pitch: f32,
+    /// Stand on the lower floor of a double-level region (inside the cave)
+    /// rather than on its roof.
+    #[arg(long, default_value_t = false)]
+    fp_under: bool,
     /// Path to a level zip archive (for VFS-based loading; matches web)
     #[arg(long)]
     level_zip: Option<String>,
@@ -192,6 +196,7 @@ fn main() {
             fp_height: cli.fp_height,
             fp_yaw: cli.fp_yaw,
             fp_pitch: cli.fp_pitch,
+            fp_under: cli.fp_under,
         };
         headless::render_snapshot(opts);
         return;
