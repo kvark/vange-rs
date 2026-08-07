@@ -110,6 +110,7 @@ fn embedded_shader(name: &str) -> Option<&'static str> {
         "water.wgsl" => include_str!("../../res/shader/water.wgsl"),
         "terrain/color.inc.wgsl" => include_str!("../../res/shader/terrain/color.inc.wgsl"),
         "terrain/locals.inc.wgsl" => include_str!("../../res/shader/terrain/locals.inc.wgsl"),
+        "terrain/mesh.wgsl" => include_str!("../../res/shader/terrain/mesh.wgsl"),
         "terrain/paint.wgsl" => include_str!("../../res/shader/terrain/paint.wgsl"),
         "terrain/ray.wgsl" => include_str!("../../res/shader/terrain/ray.wgsl"),
         "terrain/scatter.wgsl" => include_str!("../../res/shader/terrain/scatter.wgsl"),

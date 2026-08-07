@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Vangers – mesh terrain</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; background: #0d1117; color: #c9d1d9;
+                     font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+        #canvas { width: 100vw; height: 100vh; display: block; background: #1a1a2e; }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-family: monospace; font-size: 17px; text-align: center; min-width: 300px;
+            transition: opacity .4s ease-out;
+        }
+        #loading.gone { opacity: 0; pointer-events: none; }
+        #loading.error { color: #f85149; }
+        #bar { margin-top: 12px; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+        #fill { height: 100%; width: 0%; background: #58a6ff; transition: width .15s linear; }
+        #fill.indet { width: 30%; animation: indet 1.2s linear infinite; }
+        @keyframes indet { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }
+        #note { margin-top: 8px; font-size: 13px; color: #8b949e; }
+        #badge {
+            position: absolute; left: 12px; bottom: 12px; font-size: 12px; color: #8b949e;
+            font-family: 'Fira Code', monospace; background: rgba(13,17,23,.72);
+            padding: 6px 10px; border-radius: 5px; pointer-events: none;
+        }
+        #badge a { color: #58a6ff; pointer-events: auto; }
+    </style>
+</head>
+<body>
+    <!-- winit binds to this exact id; see `web_main` in bin/web/main.rs. -->
+    <canvas id="canvas" tabindex="0"></canvas>
+
+    <div id="loading">
+        <div id="phase">starting…</div>
+        <div id="bar"><div id="fill" class="indet"></div></div>
+        <div id="note"></div>
+    </div>
+
+    <div id="badge">
+        third person &middot; mesh terrain &middot;
+        <a href="../">full version</a>
+    </div>
+
+    <script type="module">
+        // The Rust side calls these through `wasm_bindgen(catch)`, so any
+        // it cannot find simply degrade to a no-op. They are here to give
+        // the download of the level archives a progress indicator.
+        const loading = document.getElementById('loading');
+        const phase = document.getElementById('phase');
+        const fill = document.getElementById('fill');
+        const note = document.getElementById('note');
+
+        window.vangePhase = (label) => {
+            phase.textContent = label;
+            fill.classList.add('indet');
+            fill.style.width = '';
+        };
+        window.vangeProgress = (label, loaded, total) => {
+            phase.textContent = label;
+            if (total > 0) {
+                fill.classList.remove('indet');
+                fill.style.width = (100 * loaded / total).toFixed(1) + '%';
+                note.textContent = (loaded / 1048576).toFixed(1) + ' / '
+                                 + (total / 1048576).toFixed(1) + ' MB';
+            }
+        };
+        window.vangeProgressDone = () => {
+            // A recoverable miss earlier (a substituted level, say) may
+            // have left the error styling on; we got here, so clear it.
+            loading.classList.remove('error');
+            loading.classList.add('gone');
+            document.getElementById('canvas').focus();
+        };
+        window.vangeProgressError = (message) => {
+            loading.classList.add('error');
+            phase.textContent = message;
+            fill.style.width = '0%';
+            fill.classList.remove('indet');
+        };
+        // The data zips sit at the site root, but this page is served
+        // from /fpv/, so the default document-relative base would look
+        // for them under /fpv/data-0/ and 404.
+        window.vangeDataBase = '../data-0';
+
+        // The level picker lives on the main page; here the level comes
+        // from `#level=<id>` if present, otherwise the Rust default.
+        window.vangeSelectedLevel = () => '';
+
+        // winit listens for keyboard events on the canvas itself, so it
+        // has to hold focus for driving to work.
+        const canvas = document.getElementById('canvas');
+        canvas.addEventListener('mouseenter', () => canvas.focus());
+        window.addEventListener('click', () => canvas.focus());
+
+        // The terrain renderer is chosen from the URL path: `terrain_choice`
+        // in bin/web/main.rs picks the mesh when the path ends in /fpv.
+        const { default: init } = await import('../web.js');
+        try {
+            await init();
+        } catch (e) {
+            // winit throws a control-flow exception to escape the event
+            // loop; anything else is a real failure worth showing.
+            if (!String(e).includes('Using exceptions for control flow')) {
+                window.vangeProgressError(String(e));
+                throw e;
+            }
+        }
+    </script>
+</body>
+</html>

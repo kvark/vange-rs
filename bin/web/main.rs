@@ -93,6 +93,36 @@ fn pick_level_for_adapter(requested: String, max_texture_dim: u32) -> String {
     SMALL_LEVEL.to_string()
 }
 
+/// Which terrain renderer the page asked for.
+///
+/// Selected by URL so a link can drop straight into a particular
+/// pipeline: the path `/fpv` (or `#terrain=mesh`) picks the triangle
+/// mesh, which unlike the ray marchers needs no compute and so runs the
+/// same on WebGL2 as on WebGPU.
+#[derive(Clone, Copy, PartialEq)]
+enum TerrainChoice {
+    Auto,
+    Mesh,
+}
+
+fn terrain_choice() -> TerrainChoice {
+    let Some(window) = web_sys::window() else {
+        return TerrainChoice::Auto;
+    };
+    let path = window.location().pathname().unwrap_or_default();
+    if path.trim_end_matches('/').ends_with("/fpv") {
+        return TerrainChoice::Mesh;
+    }
+    if let Ok(hash) = window.location().hash() {
+        for pair in hash.trim_start_matches('#').split('&') {
+            if pair == "terrain=mesh" {
+                return TerrainChoice::Mesh;
+            }
+        }
+    }
+    TerrainChoice::Auto
+}
+
 /// Read the selected level id from JS (set by the level picker UI),
 /// falling back to the URL fragment `#level=<id>`, then to
 /// [`DEFAULT_LEVEL`].
@@ -376,6 +406,25 @@ impl WebApp {
         // proportionally so the new horizon still fades smoothly
         // instead of cutting hard at the far plane.
         s.game.camera.depth_range = (10.0, 6000.0);
+
+        if terrain_choice() == TerrainChoice::Mesh {
+            // A chase camera sitting just behind and above the car,
+            // rather than the default view from 240 units straight
+            // overhead. `angle` is measured so that 90 looks straight
+            // down and 0 looks along the horizon, so 16 is a shallow
+            // downward pitch; `offset` is distance behind the car and
+            // `height` is above it.
+            s.game.camera.angle = 16;
+            s.game.camera.offset = 44.0;
+            s.game.camera.height = 15.0;
+            // Snappier than the default so the camera stays behind the
+            // car through turns instead of trailing wide.
+            s.game.camera.speed = 4.0;
+            // At this height the ground is a few units from the eye, and
+            // the 10-unit near plane would clip it away - rasterized
+            // terrain then shows its own underside through the gap.
+            s.game.camera.depth_range = (1.0, 2000.0);
+        }
         s.render.fog.depth = 1000.0;
         s
     }
@@ -433,7 +482,17 @@ impl WebApp {
         // On WebGPU, override terrain to RayVoxelTraced (needs compute).
         // On WebGL2, force RayTraced (fragment-only).
         let mut render_settings = settings.render.clone();
-        if is_webgpu {
+        if terrain_choice() == TerrainChoice::Mesh {
+            // The mesh is fitted on the CPU and drawn with the plain
+            // raster pipeline, so it is the one terrain renderer that
+            // does not care which backend it got. Quality 0.25 is the
+            // cheapest setting that still matches the other renderers
+            // on open ground; see `docs/_posts/*-terrain-mesh.md`.
+            render_settings.terrain = settings::Terrain::Mesh { quality: 0.25 };
+            // Ray-traced shadows work on both backends and do not depend
+            // on the terrain renderer.
+            render_settings.light.shadow.terrain = settings::ShadowTerrain::RayTraced;
+        } else if is_webgpu {
             render_settings.terrain = settings::Terrain::RayVoxelTraced {
                 voxel_size: [2, 4, 1],
                 // 40 was too low: rays that travel far exhaust the budget and return
