@@ -566,6 +566,27 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         }
         // What `get_surface_impl` in surface.inc.wgsl decodes: it always
         // tests the *even* texel's meta for the double-level bit.
+        {
+            use vangers::level::DOUBLE_LEVEL as DL;
+            let (mut mismatch, mut dual_pairs) = (0usize, 0usize);
+            for row in lvl.meta.chunks(w) {
+                for pair in row.chunks_exact(2) {
+                    let (e, o) = (pair[0] & DL != 0, pair[1] & DL != 0);
+                    if e || o {
+                        dual_pairs += 1;
+                    }
+                    if e != o {
+                        mismatch += 1;
+                    }
+                }
+            }
+            info!(
+                "  level-wide: {} dual pairs, {} where even/odd DOUBLE_LEVEL disagree ({:.2}%)",
+                dual_pairs,
+                mismatch,
+                100.0 * mismatch as f32 / dual_pairs.max(1) as f32
+            );
+        }
         info!(
             "  shader would treat both texels as {}",
             if lvl.meta[even] & DOUBLE_LEVEL != 0 {
