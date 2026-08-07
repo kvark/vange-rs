@@ -457,7 +457,13 @@ def main():
                 if device is None:
                     device = {k: meta[k] for k in
                               ("adapter", "backend", "device_type", "driver", "driver_info")}
-                ms = meta["avg_ms"]
+                # Prefer the GPU's own view when the adapter can give it.
+                # The CPU figure brackets submit-and-poll, so it carries the
+                # round trip; on lavapipe that is ~9%, and on a real GPU with
+                # a fast frame it can be most of the number.
+                gpu = meta.get("gpu_avg_ms")
+                have_gpu = meta.get("gpu_timing") and gpu is not None and gpu == gpu
+                ms = gpu if have_gpu else meta["avg_ms"]
                 d = np.fromfile(depth, dtype="<f4").reshape(args.height, args.width)
                 empty = d >= 0.999999          # cleared depth: nothing drawn
                 see_through = 100 * (empty & ~sky).mean()
@@ -485,8 +491,15 @@ def main():
                 stats[key] = (ms, see_through, covers_sky, p50, p95, excess)
                 rows.append({
                     "view": view["name"], "pitch": pitch, "method": method[0],
-                    "avg_ms": ms, "min_ms": meta["min_ms"], "max_ms": meta["max_ms"],
-                    "frame_ms": meta["frame_ms"],
+                    "avg_ms": ms,
+                    "timing": "gpu" if have_gpu else "cpu",
+                    "cpu_avg_ms": meta["avg_ms"],
+                    "min_ms": meta.get("gpu_min_ms") if have_gpu else meta["min_ms"],
+                    "max_ms": meta["max_ms"],
+                    "frame_ms": meta["gpu_ms"] if have_gpu else meta["frame_ms"],
+                    "prep_setup_ms": meta.get("prep_setup_ms"),
+                    "prep_first_frame_ms": meta.get("prep_first_frame_ms"),
+                    "prep_warmup_ms": meta.get("prep_warmup_ms"),
                     "see_through": see_through, "covers_sky": covers_sky,
                     "depth_p50": p50, "depth_p95": p95, "speckle": excess,
                 })
@@ -495,7 +508,8 @@ def main():
                 # so rather than printing a number-shaped blank.
                 dep = ("      n/a" if p50 != p50
                        else f"p50 {p50:6.1f}u p95 {p95:7.1f}u")
-                print(f"    {method[0]:12s} {ms:7.1f} ms   "
+                tag = "gpu" if have_gpu else "cpu"
+                print(f"    {method[0]:12s} {ms:7.1f} ms {tag}  "
                       f"see-through {see_through:5.1f}%   covers-sky {covers_sky:5.1f}%   "
                       f"depth {dep}   speckle {excess:5.1f}%")
 

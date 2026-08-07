@@ -42,8 +42,9 @@ Tracked here rather than in the draft so the gaps stay visible:
       numbers rather than for the causal claim. Lower priority now that
       the single-layer worlds land at 45-182x.
 - [ ] More than one device. The harness is ready; the runs are not.
-- [ ] GPU timestamp queries. Submit-and-poll measures GPU work but
-      serially, so it reports per-frame latency and cannot see pipelining.
+- [x] GPU timestamp queries. Done; the harness prefers them and records
+      which timing each row used. Still per-frame latency rather than
+      pipelined throughput, which is a separate limitation.
 - [ ] Equal tuning across methods. The voxel step budget was found badly
       mistuned; the painter and the slicer have had no equivalent pass.
 - [ ] Memory. ~300 MB resident for the mesh at q=0.75 on a full level is

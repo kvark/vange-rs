@@ -297,7 +297,14 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     // let the renderer disable the view otherwise.
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("headless"),
-        required_features: adapter.features() & wgpu::Features::POLYGON_MODE_LINE,
+        // `POLYGON_MODE_LINE` drives the mesh wireframe. The timestamp
+        // pair is what makes the frame times mean anything: without it all
+        // we can do is bracket submit-and-poll on the CPU, which on a real
+        // GPU measures the round trip rather than the work.
+        required_features: adapter.features()
+            & (wgpu::Features::POLYGON_MODE_LINE
+                | wgpu::Features::TIMESTAMP_QUERY
+                | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS),
         required_limits: limits,
         memory_hints: wgpu::MemoryHints::default(),
         trace: wgpu::Trace::Off,
@@ -351,6 +358,11 @@ pub fn render_snapshot(opts: SnapshotOptions) {
 
     let cam = make_camera(&opts, &lvl);
 
+    // One-time setup cost, separately from per-frame cost. For the mesh
+    // this is where pipelines and the terrain texture are built; the
+    // triangulation itself lands in the first frame, and the voxel grid is
+    // spread across the warmup, so all three get reported.
+    let prep_started = Instant::now();
     let mut render = Render::new(
         &gfx,
         &level_config,
@@ -393,6 +405,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         view_formats: &[],
     });
     let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let prep_setup = prep_started.elapsed();
 
     // Warmup + timed loop. Warmup drains the bake queue so that timed
     // frames measure steady-state cost; without this, the first frame
@@ -403,6 +416,46 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     );
     let mut frame_times: Vec<Duration> = Vec::with_capacity(opts.frames as usize);
     let total_frames = opts.warmup + opts.frames.max(1);
+
+    // Two timestamps per frame, resolved in one pass at the end so no
+    // frame pays for a readback.
+    let gpu_timing = gfx
+        .device
+        .features()
+        .contains(wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
+    let query_count = 2 * total_frames;
+    let queries = gpu_timing.then(|| {
+        gfx.device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("frame timestamps"),
+            ty: wgpu::QueryType::Timestamp,
+            count: query_count,
+        })
+    });
+    let query_bytes = (query_count as u64) * 8;
+    let query_resolve = queries.as_ref().map(|_| {
+        gfx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("timestamp resolve"),
+            size: query_bytes,
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        })
+    });
+    let query_read = queries.as_ref().map(|_| {
+        gfx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("timestamp readback"),
+            size: query_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    });
+    if !gpu_timing {
+        log::warn!(
+            "Adapter has no timestamp queries; frame times are CPU submit+poll \
+             and include the round trip"
+        );
+    }
+    let mut prep_first_frame = Duration::ZERO;
+    let mut prep_warmup = Duration::ZERO;
 
     for frame_index in 0..total_frames {
         let is_timed = frame_index >= opts.warmup;
@@ -426,6 +479,10 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 label: Some("snapshot-frame"),
             });
 
+        if let Some(ref qs) = queries {
+            encoder.write_timestamp(qs, 2 * frame_index);
+        }
+
         let targets = ScreenTargets {
             extent,
             color: &color_view,
@@ -442,6 +499,10 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             &gfx.queue,
         );
 
+        if let Some(ref qs) = queries {
+            encoder.write_timestamp(qs, 2 * frame_index + 1);
+        }
+
         gfx.queue.submit(Some(encoder.finish()));
 
         // Wait for GPU completion so the timing reflects actual draw cost.
@@ -452,10 +513,69 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             })
             .expect("device poll failed");
 
-        if is_timed {
-            frame_times.push(started.elapsed());
+        let wall = started.elapsed();
+        if frame_index == 0 {
+            prep_first_frame = wall;
+        }
+        if !is_timed {
+            prep_warmup += wall;
+        } else {
+            frame_times.push(wall);
         }
     }
+
+    // Resolve the timestamps. `get_timestamp_period` is nanoseconds per
+    // tick; the difference between a frame's pair is the GPU's own view of
+    // how long its work took, with no submission or round trip in it.
+    let mut gpu_ms: Vec<f64> = Vec::new();
+    if let (Some(qs), Some(resolve), Some(read)) =
+        (queries.as_ref(), query_resolve.as_ref(), query_read.as_ref())
+    {
+        let mut enc = gfx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("resolve timestamps"),
+            });
+        enc.resolve_query_set(qs, 0..query_count, resolve, 0);
+        enc.copy_buffer_to_buffer(resolve, 0, read, 0, query_bytes);
+        gfx.queue.submit(Some(enc.finish()));
+        read.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        gfx.device
+            .poll(wgpu::PollType::Wait {
+                timeout: Some(Duration::from_secs(30)),
+                submission_index: Default::default(),
+            })
+            .expect("timestamp poll failed");
+        let period = gfx.queue.get_timestamp_period() as f64;
+        {
+            let view = read.slice(..).get_mapped_range();
+            let ticks: &[u64] = bytemuck::cast_slice(&view);
+            for frame_index in opts.warmup..total_frames {
+                let (a, b) = (
+                    ticks[2 * frame_index as usize],
+                    ticks[2 * frame_index as usize + 1],
+                );
+                gpu_ms.push(b.saturating_sub(a) as f64 * period * 1e-6);
+            }
+        }
+        read.unmap();
+        if !gpu_ms.is_empty() {
+            let sum: f64 = gpu_ms.iter().sum();
+            info!(
+                "GPU times: min={:.3}ms avg={:.3}ms max={:.3}ms (n={})",
+                gpu_ms.iter().cloned().fold(f64::INFINITY, f64::min),
+                sum / gpu_ms.len() as f64,
+                gpu_ms.iter().cloned().fold(0.0, f64::max),
+                gpu_ms.len()
+            );
+        }
+    }
+    info!(
+        "Preparation: setup={:.1}ms first-frame={:.1}ms warmup={:.1}ms",
+        prep_setup.as_secs_f64() * 1e3,
+        prep_first_frame.as_secs_f64() * 1e3,
+        prep_warmup.as_secs_f64() * 1e3,
+    );
 
     if !frame_times.is_empty() {
         let total: Duration = frame_times.iter().sum();
@@ -501,7 +621,14 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                     "  \"min_ms\": {:.4},\n",
                     "  \"avg_ms\": {:.4},\n",
                     "  \"max_ms\": {:.4},\n",
-                    "  \"frame_ms\": [{}]\n",
+                    "  \"frame_ms\": [{}],\n",
+                    "  \"gpu_timing\": {},\n",
+                    "  \"gpu_avg_ms\": {:.4},\n",
+                    "  \"gpu_min_ms\": {:.4},\n",
+                    "  \"gpu_ms\": [{}],\n",
+                    "  \"prep_setup_ms\": {:.3},\n",
+                    "  \"prep_first_frame_ms\": {:.3},\n",
+                    "  \"prep_warmup_ms\": {:.3}\n",
                     "}}\n"
                 ),
                 info.name,
@@ -522,6 +649,21 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 avg.as_secs_f64() * 1e3,
                 max.as_secs_f64() * 1e3,
                 times,
+                gpu_timing,
+                if gpu_ms.is_empty() {
+                    f64::NAN
+                } else {
+                    gpu_ms.iter().sum::<f64>() / gpu_ms.len() as f64
+                },
+                gpu_ms.iter().cloned().fold(f64::INFINITY, f64::min),
+                gpu_ms
+                    .iter()
+                    .map(|v| format!("{:.4}", v))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                prep_setup.as_secs_f64() * 1e3,
+                prep_first_frame.as_secs_f64() * 1e3,
+                prep_warmup.as_secs_f64() * 1e3,
             );
             if let Some(parent) = std::path::Path::new(path).parent() {
                 std::fs::create_dir_all(parent).ok();

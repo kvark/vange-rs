@@ -91,9 +91,16 @@ def main():
         ])
     print(table(rows, ["label", "adapter", "backend / type", "driver", "config"]))
 
+    timings = {r.get("timing", "cpu") for run in runs for r in run["rows"]}
     print(f"\n## Frame time, {args.metric} (ms)\n")
-    print("Submitted and polled to completion per frame, so this is GPU work "
-          "but per-frame latency rather than pipelined throughput.\n")
+    if timings == {"gpu"}:
+        print("From GPU timestamp queries: the device's own view of how long "
+              "its work took, with no submission or round trip in it.\n")
+    elif "cpu" in timings:
+        print("**Mixed or CPU-only timing.** Rows measured without timestamp "
+              "queries bracket submit-and-poll on the CPU and therefore "
+              "include the round trip, which can dominate a fast frame. "
+              "Check the `timing` field before comparing across devices.\n")
     for run in runs:
         if len(runs) > 1:
             print(f"\n### {run.get('label', '?')}\n")
@@ -144,6 +151,23 @@ def main():
         for label, view, pitch, m, a, b in mismatched:
             print(f"> - {m} at {view} @ {pitch:g}°: "
                   f"{base.get('label', '?')} {a:.1f}% vs {label} {b:.1f}%")
+
+    # One-time cost, which the per-frame numbers deliberately exclude.
+    print("\n## Preparation cost (ms, CPU wall time)\n")
+    print("`setup` builds pipelines and uploads the terrain texture. "
+          "`first frame` additionally carries whatever the method builds "
+          "lazily — for the mesh that is the whole triangulation. `warmup` "
+          "is every pre-timing frame, which is where an incrementally baked "
+          "voxel grid actually gets paid for.\n")
+    rows = []
+    for m in methods:
+        cells = [m]
+        for field in ("prep_setup_ms", "prep_first_frame_ms", "prep_warmup_ms"):
+            vals = [acc(base, v, p, m, field) for v, p in keys]
+            vals = [x for x in vals if x is not None]
+            cells.append(fmt(max(vals), 0) if vals else "—")
+        rows.append(cells)
+    print(table(rows, ["method", "setup", "first frame", "warmup"]))
 
     print("\n## Depth error, p50 / p95 (world units)\n")
     print("Read comparatively. The reference's own floor is dominated by "
