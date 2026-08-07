@@ -98,7 +98,8 @@ fn pick_level_for_adapter(requested: String, max_texture_dim: u32) -> String {
 /// Selected by URL, so the site can offer the same scene under three
 /// pipelines and you compare them by switching the address:
 ///
-///   * `/`       triangle mesh (default)
+///   * `/`       the full site, on the triangle mesh
+///   * `/mesh`   triangle mesh, bare page
 ///   * `/voxel`  voxel ray tracing, needs compute, so WebGPU only
 ///   * `/ray`    height-field ray tracing
 ///
@@ -131,6 +132,7 @@ fn terrain_choice() -> TerrainChoice {
     match path.trim_end_matches('/').rsplit('/').next() {
         Some("voxel") => TerrainChoice::Voxel,
         Some("ray") => TerrainChoice::Ray,
+        // `/mesh` and the site root both land here.
         _ => TerrainChoice::Mesh,
     }
 }

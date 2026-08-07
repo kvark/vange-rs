@@ -215,19 +215,31 @@ fundamental.
 ## What this is not, yet
 
 * **The reduction on real terrain is modest.** A smooth synthetic surface
-  compresses 80x; Fostral manages 4.6x at quality 0.75 and 16x at 0.0.
-  Vangers levels are hand-authored, cliff-heavy and detailed per texel —
-  not the natural DEMs the greedy-insertion literature is measured on.
+  compresses 80x; Fostral spans 19.8x at quality 0 to 3.0x at quality 1,
+  with 14.9x at the 0.25 the web build ships. Vangers levels are
+  hand-authored, cliff-heavy and detailed per texel — not the natural DEMs
+  the greedy-insertion literature is measured on. In absolute terms 14.9x
+  is one quad per 4x4 patch of ground, which is a different order from the
+  8-20 vertices per texel a cube renderer pays.
 * **Memory is the open problem.** ~300 MB resident at quality 0.75 on a
   full level. Per-chunk buffers removed the hard limit; keeping only the
   chunks near the camera resident is the remaining work, and it is what
   stands between this and the "runs on any device" goal.
 * **The LOD distance is a constant.** It has not been tuned, and the
   three-fold cost swing between views is the evidence.
-* **The double-level boundary is conservative.** Triangles straddling a
-  region's edge drop the slab rather than approximating it, which reads as
-  a gap in a tunnel roof. Constraining the triangulation to the
-  `DOUBLE_LEVEL` outline would make it exact.
+* **The double-level boundary is conservative, and it is not cheap.**
+  Triangles straddling a region's edge drop the slab rather than
+  approximating it, which reads as a gap in a tunnel roof. It also wastes
+  vertices: a single-level texel reports `mid = high = low`, so `mid` and
+  `high` step by the full slab thickness across the region's edge, and the
+  error metric chases a discontinuity no tolerance can satisfy. Counting
+  what drives each insertion on Fostral at quality 0.25: 53.5% the floor,
+  18.8% the slab's interior, 4.4% chunk-border simplification — and 23.3%
+  that boundary alone. The absolute cost barely moves with quality (338k
+  insertions at quality 0, 396k at quality 1), which is the signature of a
+  fixed geometric feature rather than a fit converging. Constraining the
+  triangulation to the `DOUBLE_LEVEL` outline would make the boundary
+  exact *and* stop it from paying per-texel for the privilege.
 * **No GPU numbers.** Every measurement here is from a software
   rasterizer, which is the one platform that cannot show what hardware
   rasterization is for.

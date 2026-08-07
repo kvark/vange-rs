@@ -1489,7 +1489,8 @@ mod tests {
 
         // Refitted buffers have to be self-consistent: every index in
         // range, whole triangles, and the surface back within tolerance.
-        for (_, c) in &changed {
+        for entry in &changed {
+            let c = &entry.1;
             assert_eq!(c.indices.len() % 3, 0);
             assert!(c.indices.iter().all(|&i| (i as usize) < c.vertices.len()));
         }
@@ -1527,7 +1528,7 @@ mod tests {
         let changed = before
             .iter()
             .zip(&after)
-            .filter(|(a, b)| a.len() != b.len())
+            .filter(|pair| pair.0.len() != pair.1.len())
             .count();
         assert!(changed >= 1, "the edit should have refined something");
         assert!(changed < tin.chunks.len(), "it should not have refined all");
