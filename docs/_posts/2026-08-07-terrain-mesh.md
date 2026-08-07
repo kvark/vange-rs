@@ -137,8 +137,31 @@ first person, eye 8 units above the surface. The number that matters is
 the fraction of solid terrain a renderer draws as sky. Reproduce with
 `tools/compare-terrain.py`.
 
-Depth agreement between renderers, as the fraction of the frame more than
-60 units apart, at a view distance of 600:
+Fostral, first person, 400x260, view distance 600, on lavapipe. Frame
+time and the fraction of solid terrain drawn as sky:
+
+| view | RayTraced | RayVoxel | Painter | Mesh q=0.25 | Mesh q=0.75 |
+|---|---|---|---|---|---|
+| tunnel interior | 5.3 ms / 55.2% | 33.1 ms / 0.0% | 572.6 ms / 0.0% | **7.3 ms / 0.0%** | 7.4 ms / 0.0% |
+| river below a span | 5.8 ms / 38.4% | 79.8 ms / 6.7% | 422.7 ms / 6.6% | **13.2 ms / 7.8%** | 27.9 ms / 7.0% |
+| deep canyon | 3.9 ms / 60.0% | 27.7 ms / 0.0% | 468.6 ms / 0.0% | **5.9 ms / 0.0%** | 12.2 ms / 0.0% |
+| open ridge | 10.0 ms / 39.7% | 42.0 ms / 7.2% | 543.1 ms / 7.1% | **4.8 ms / 7.8%** | 10.1 ms / 7.4% |
+
+The residual few percent at river and ridge is shared by all three
+converged renderers, so it is the CPU reference differing rather than any
+of them.
+
+Ray tracing the height field is fastest and wrong: 38-60% of solid
+terrain drawn as sky at eye level, at every viewpoint. It is the method
+this work exists to replace.
+
+Among the renderers that are right, the mesh is also the quickest — 3 to
+9x the voxel tracer and 40 to 100x the painter — on a *software*
+rasterizer, which is the one platform that cannot show what hardware
+rasterization is for.
+
+Depth agreement between the three, as the fraction of the frame more than
+60 units apart:
 
 | view | mesh vs voxel | mesh vs painter | painter vs voxel |
 |---|---|---|---|
@@ -147,27 +170,10 @@ Depth agreement between renderers, as the fraction of the frame more than
 | deep canyon | 6.5% | 8.3% | 1.9% |
 | open ridge | 0.3% | 0.4% | 0.1% |
 
-The voxel tracer, the painter and the mesh agree to about a percent
-everywhere except the deep canyon, which is a high-relief view where the
-fit tolerance shows: raising quality to 1.0 takes it to 2.2%. Height-field
-ray tracing is the outlier, drawing 38-60% of solid terrain as sky at eye
-level regardless of settings - it is the method this work exists to
-replace.
-
-Getting there took a detour worth recording. The mesh interpolated `mid`
-and `high` across triangles as if they were smooth fields. They are not:
-a cave ceiling steps by tens of units between neighbouring texels, and
-ramping across that step builds a roof that exists nowhere, near-vertical
-where the step is sharp. Depth against a converged voxel trace shows it —
-ground truth and voxel agree, the mesh has phantom geometry across the
-upper two thirds:
-
-![Depth comparison exposing the slab defect]({{site.baseurl}}/assets/terrain-mesh-depth.png)
-
-It went unnoticed because the metric in use scored only *see-through*
-error, which cannot detect over-drawing: the mesh scored a perfect 0%
-precisely because the phantom geometry covered everything. Comparing
-depth rather than classifying colours is what found it.
+Quality 0.25 holds up too — within 2.4% of the others everywhere except
+the deep canyon, where it drifts to 15.6%. That is the honest shape of
+the quality knob: high-relief views need the tolerance, flat ones do not,
+and the cheapest setting that is still correct depends on the terrain.
 
 Three settings have to be right or the comparison is meaningless, and
 each of them cost a wrong conclusion during development:
