@@ -62,7 +62,10 @@ struct Varyings {
     @location(0) palette_range: vec2<f32>,
     @location(1) position: vec3<f32>,
     @location(2) normal: vec3<f32>,
-    @location(3) color_id: u32,
+    // WGSL requires an integer inter-stage value to be explicitly flat;
+    // there is no other way to interpolate one. Naga and Chrome accept
+    // the omission, WebKit rejects the module outright.
+    @location(3) @interpolate(flat) color_id: u32,
 };
 
 @vertex
