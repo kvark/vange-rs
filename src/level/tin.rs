@@ -95,6 +95,8 @@ impl Config {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
+    /// Triangles emitted for the double-level slab (top, ceiling, walls).
+    pub slab_triangles: usize,
     pub vertices: usize,
     pub triangles: usize,
     /// Grid samples the mesh was built from, for a reduction ratio.
@@ -549,6 +551,8 @@ fn simplify_line(samples: &[Sample], max_error: f32, out: &mut Vec<u32>) {
 struct ChunkMesh {
     vertices: Vec<MeshVertex>,
     indices: Vec<u32>,
+    /// How many of `indices` belong to slab geometry, for diagnostics.
+    slab_indices: usize,
 }
 
 /// Which of the three surfaces an emitted vertex sits on.
@@ -686,6 +690,7 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
         if !is_slab(tri) {
             continue;
         }
+        let before = emitter.out.indices.len();
         // Slab top, and the ceiling underneath it wound the other way.
         emitter.tri((a, Layer::High), (b, Layer::High), (c, Layer::High));
         emitter.tri((c, Layer::Mid), (b, Layer::Mid), (a, Layer::Mid));
@@ -699,6 +704,7 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
             emitter.tri((e0, Layer::Mid), (e1, Layer::Mid), (e1, Layer::High));
             emitter.tri((e1, Layer::High), (e0, Layer::High), (e0, Layer::Mid));
         }
+        emitter.out.slab_indices += emitter.out.indices.len() - before;
     }
 
     emitter.out
@@ -985,7 +991,7 @@ impl Tin {
     fn log(&self, what: &str) {
         info!(
             "Terrain TIN {} at quality {}: {} vertices, {} triangles from {} texels \
-             ({:.1}x fewer triangles, max error {:.2})",
+             ({:.1}x fewer triangles, max error {:.2}), {} slab triangles ({:.1}%)",
             what,
             self.quality,
             self.stats.vertices,
@@ -993,6 +999,8 @@ impl Tin {
             self.stats.source_texels,
             2.0 * self.stats.source_texels as f32 / self.stats.triangles.max(1) as f32,
             self.stats.max_error,
+            self.stats.slab_triangles,
+            100.0 * self.stats.slab_triangles as f32 / self.stats.triangles.max(1) as f32,
         );
     }
 
@@ -1045,6 +1053,7 @@ fn assemble(
             if let Some(fine) = per_lod.first() {
                 stats.vertices += fine.vertices.len();
                 stats.triangles += fine.indices.len() / 3;
+                stats.slab_triangles += fine.slab_indices / 3;
             }
             ChunkBuffers::new(state, per_lod)
         })
