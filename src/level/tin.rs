@@ -55,6 +55,10 @@ unsafe impl Zeroable for MeshVertex {}
 /// and give rayon plenty of independent work.
 const CHUNK_SIZE: u32 = 128;
 
+/// How far `mid` or `high` may vary across one slab triangle, in altitude
+/// units, before the slab is dropped rather than ramped across the step.
+const SLAB_STEP: f32 = 8.0;
+
 /// Discrete level-of-detail steps kept per chunk.
 ///
 /// Greedy insertion makes these nearly free to produce: LOD `k` is just the
@@ -654,6 +658,24 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
         let max_x = a[0].max(b[0]).max(c[0]).min(grid.nx as i32 - 1);
         let min_y = a[1].min(b[1]).min(c[1]).max(0);
         let max_y = a[1].max(b[1]).max(c[1]).min(grid.ny as i32 - 1);
+        // `mid` and `high` are structural, not smooth: a cave ceiling can
+        // jump tens of units between neighbouring texels. Interpolating
+        // across such a step builds a sloped roof that exists nowhere in
+        // the data, and a near-vertical one where the step is sharp. The
+        // low surface has no such problem, which is why only the slab is
+        // gated here.
+        let (va, vb, vc) = (
+            chunk.sample(grid, tri.v[0]),
+            chunk.sample(grid, tri.v[1]),
+            chunk.sample(grid, tri.v[2]),
+        );
+        let spread = |f: fn(&Sample) -> f32| {
+            let (x, y, z) = (f(va), f(vb), f(vc));
+            x.max(y).max(z) - x.min(y).min(z)
+        };
+        if spread(|s| s.mid) > SLAB_STEP || spread(|s| s.high) > SLAB_STEP {
+            return false;
+        }
         let mut has_thickness = false;
         for y in min_y..=max_y {
             for x in min_x..=max_x {
