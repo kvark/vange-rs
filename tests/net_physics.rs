@@ -232,8 +232,7 @@ fn delta_variance(positions: &[Vec3]) -> f32 {
         return 0.0;
     }
     let mean = deltas.iter().sum::<f32>() / deltas.len() as f32;
-    let var = deltas.iter().map(|d| (d - mean).powi(2)).sum::<f32>() / deltas.len() as f32;
-    var
+    deltas.iter().map(|d| (d - mean).powi(2)).sum::<f32>() / deltas.len() as f32
 }
 
 #[test]
