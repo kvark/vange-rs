@@ -530,3 +530,70 @@ fn test_server_client_physics_divergence() {
     eprintln!("Server final pos: {:?}", server_transform.disp);
     eprintln!("Client final pos: {:?}", client_transform.disp);
 }
+
+/// Drive straight for `seconds` at the given frame rate, returning how far
+/// the car travelled. `max_quant` of `f32::INFINITY` disables sub-stepping,
+/// which is what the visibility gate in the game loop effectively does when
+/// it decides an agent is off screen.
+fn distance_travelled(frame_dt: f32, seconds: f32, max_quant: f32) -> f32 {
+    let level_config = level::LevelConfig::new_test();
+    let level = level::load(&level_config, &settings::Geometry::default());
+    let common = config::common::Common::test_default();
+    let car = CarPhysicsData::test_default();
+
+    let spawn = spawn_transform(&level);
+    let mut transform = spawn;
+    let mut dynamo = Dynamo::default();
+
+    let physics_dt = frame_dt * {
+        let n = &common.nature;
+        common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
+    };
+    let input_factor = frame_dt / config::common::MAIN_LOOP_TIME;
+
+    for _ in 0..(seconds / frame_dt) as usize {
+        dynamo.change_traction(input_factor * common.car.traction_incr);
+        step_physics(
+            &mut dynamo,
+            &mut transform,
+            physics_dt,
+            max_quant,
+            &car,
+            &level,
+            &common,
+        );
+    }
+    transform.disp.truncate().distance(spawn.disp.truncate())
+}
+
+/// `physics::step` is not linear in `dt`: it scales impulses by
+/// `dt / time_delta0` and applies drag and collision response once per
+/// call, both of which saturate. Folding a frame into one large step
+/// therefore travels a different distance than splitting it, and the gap
+/// grows with the step size.
+///
+/// This matters because the step size is not a constant. `physics_dt` is
+/// about nine times the frame time with the stock constants, so it tracks
+/// the frame rate, and the game loop additionally skips the split entirely
+/// for agents it decides is off screen. Both make how far the car goes depend
+/// on something that is not the car.
+#[test]
+fn one_big_step_does_not_match_sub_stepping() {
+    const QUANT: f32 = 0.01;
+    let mut worst = 0.0f32;
+    for &fps in &[60.0f32, 30.0, 20.0] {
+        let split = distance_travelled(1.0 / fps, 3.0, QUANT);
+        let single = distance_travelled(1.0 / fps, 3.0, f32::INFINITY);
+        let rel = (split - single).abs() / split.max(1e-3);
+        println!(
+            "{fps:>4} fps: sub-stepped {split:8.2}, one step {single:8.2} ({:+.1}%)",
+            100.0 * (single - split) / split.max(1e-3)
+        );
+        worst = worst.max(rel);
+    }
+    assert!(
+        worst > 0.01,
+        "expected the two integrations to diverge; if this ever stops being \
+         true the sub-stepping is dead code and the gate can go"
+    );
+}
