@@ -49,6 +49,10 @@ struct Cli {
     /// under a first-person camera; rasterized terrain then shows through.
     #[arg(long, default_value_t = 10.0)]
     near: f32,
+    /// Far clip distance. The painter needs this bounded: it emits one
+    /// instance per visible ground sample and clamps at a million.
+    #[arg(long, default_value_t = 4000.0)]
+    far: f32,
     /// Path to a level zip archive (for VFS-based loading; matches web)
     #[arg(long)]
     level_zip: Option<String>,
@@ -226,6 +230,7 @@ fn main() {
             fp_pitch: cli.fp_pitch,
             fp_under: cli.fp_under,
             near: cli.near,
+            far: cli.far,
             voxel_debug_lod: cli.voxel_debug_lod,
             voxel_probe: cli.voxel_probe.as_deref().map(|s| {
                 let v = parse_vec3(&format!("{},0", s));

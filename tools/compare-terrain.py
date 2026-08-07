@@ -47,7 +47,7 @@ Image.MAX_IMAGE_PIXELS = None
 METHODS = [
     ("RayTraced", "RayTraced", [], 3),
     ("RayVoxel", "RayVoxelTraced", ["--voxel-size", "4,8,2"], 170),
-    ("Mesh q=0.25", "Mesh", ["--mesh-quality", "0.25"], 3),
+    ("Painter", "Painted", [], 3),
     ("Mesh q=0.75", "Mesh", ["--mesh-quality", "0.75"], 3),
 ]
 
@@ -73,7 +73,9 @@ def load_layers(ron_path):
     a = np.asarray(Image.open(os.path.join(base, "height.png"))).astype(np.int16)
     low, high, delta = a[:, :, 0], a[:, :, 1], a[:, :, 2]
     dual = (high != low) | (delta != 0)
-    return low, dual, np.clip(low + delta, 0, 255), high
+    #  clamps to , matching ; some
+    # source texels encode low + delta above high.
+    return low, dual, np.minimum(low + delta, high), high
 
 
 def ground_truth(layers, view, width, height, eye_height, far):
@@ -106,7 +108,7 @@ def ground_truth(layers, view, width, height, eye_height, far):
     hit = np.zeros((height, width), bool)
     t = 0.5
     while t < far:
-        step = 0.5 if t < 250 else (2.0 if t < 900 else 6.0)
+        step = 0.5 if t < 250 else 2.0
         p = loc[None, None, :] + d * t
         z = p[..., 2]
         alive &= ~(alive & (z > 255) & (d[..., 2] > 0))
@@ -135,7 +137,7 @@ def render(args, view, method, out_dir):
         "--fp-yaw", str(view["yaw"]),
         # The default near plane clips the ground out from under a
         # first-person camera; rasterized terrain then shows through.
-        "--near", "1",
+        "--near", "1", "--far", str(args.far),
         "--width", str(args.width), "--height", str(args.height),
         "--frames", "3", "--warmup", str(warmup),
     ]
@@ -168,9 +170,12 @@ def main():
     ap.add_argument("--width", type=int, default=400)
     ap.add_argument("--height", type=int, default=260)
     ap.add_argument("--eye-height", type=float, default=8.0)
-    ap.add_argument("--far", type=float, default=4000.0,
-                    help="must match the renderer's far plane, or distant "
-                         "terrain is scored as sky")
+    ap.add_argument("--far", type=float, default=600.0,
+                    help="view distance, shared by the renderers and the "
+                         "reference. Keep it bounded: the painter emits one "
+                         "instance per visible ground sample and clamps at a "
+                         "million, so an unbounded distance leaves most of "
+                         "its frame unpainted")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)

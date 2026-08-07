@@ -95,6 +95,10 @@ pub struct SnapshotOptions {
     /// Near clip distance. The default of 10 is fine for an orbit camera
     /// but clips the ground out from under a first-person one.
     pub near: f32,
+    /// Far clip distance. The painter emits one instance per visible
+    /// ground sample, so an unbounded view distance blows its instance
+    /// budget and leaves most of the frame unpainted.
+    pub far: f32,
     /// Draw the voxel occupancy grid for LODs `[n, n+1)` instead of the
     /// terrain, to inspect what the ray marcher actually sees.
     pub voxel_debug_lod: Option<usize>,
@@ -127,6 +131,7 @@ impl Default for SnapshotOptions {
             fp_pitch: 0.0,
             fp_under: false,
             near: 10.0,
+            far: 4000.0,
             voxel_debug_lod: None,
             voxel_probe: None,
             depth_out: None,
@@ -204,7 +209,7 @@ fn make_camera(opts: &SnapshotOptions, lvl: &level::Level) -> space::Camera {
                 fovy: space::PerspectiveParams::fov_from_focal_px(focal, h),
                 aspect: opts.width as f32 / h,
                 near: opts.near.max(0.01),
-                far: 4000.0,
+                far: opts.far.max(opts.near + 1.0),
                 focal_px: Some(focal),
             })
         },

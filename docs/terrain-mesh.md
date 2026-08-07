@@ -129,12 +129,36 @@ first person, eye 8 units above the surface. The number that matters is
 the fraction of solid terrain a renderer draws as sky. Reproduce with
 `tools/compare-terrain.py`.
 
-| view | RayTraced | RayVoxel | Mesh q=0.25 | Mesh q=0.75 |
-|---|---|---|---|---|
-| tunnel interior | 50.7% | 0.0% | 0.0% | 0.0% |
-| river below a span | 46.4% | 2.1% | 0.0% | 0.0% |
-| deep canyon | 51.5% | 0.0% | 0.0% | 0.0% |
-| open ridge | 49.4% | 0.1% | 0.0% | 0.0% |
+Depth agreement between renderers, as the fraction of the frame more than
+60 units apart, at a view distance of 600:
+
+| view | mesh vs voxel | mesh vs painter | painter vs voxel |
+|---|---|---|---|
+| tunnel interior | 1.0% | 1.2% | 0.2% |
+| river below a span | 0.6% | 0.7% | 0.3% |
+| deep canyon | 6.5% | 8.3% | 1.9% |
+| open ridge | 0.3% | 0.4% | 0.1% |
+
+The voxel tracer, the painter and the mesh agree to about a percent
+everywhere except the deep canyon, which is a high-relief view where the
+fit tolerance shows: raising quality to 1.0 takes it to 2.2%. Height-field
+ray tracing is the outlier, drawing 38-60% of solid terrain as sky at eye
+level regardless of settings - it is the method this work exists to
+replace.
+
+Three settings have to be right or the comparison is meaningless, and
+each of them cost a wrong conclusion during development:
+
+* **View distance** must be bounded. The painter emits one instance per
+  visible ground sample and clamps at a million, so an unbounded distance
+  leaves 95% of its frame unpainted.
+* **The voxel grid must be fully baked.** It bakes incrementally at a
+  million texels a frame, so a 2048x16384 level needs ~150 frames. A
+  partial grid is both wrong *and* slow, because rays march on without
+  early termination.
+* **The voxel step budget must be large enough.** 40 was fine for the
+  top-down views it was tuned against; at eye level long sightlines
+  exhaust it and terrain reads as sky.
 
 Frame times, 400x260 on lavapipe — a *software* rasterizer, so these
 understate the one advantage the mesh is built around:
