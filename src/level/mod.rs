@@ -126,6 +126,25 @@ impl Level {
     }
 
     /// A faster version of query that only returns the lowest level altitude.
+    /// Height of the solid surface directly below `pos`.
+    ///
+    /// Double-level texels have two of them: inside the cave the floor is
+    /// `low`, and above the slab it is `high`. `mid` is the cave ceiling,
+    /// so everything from there to `high` is rock - a point in that band
+    /// is inside the slab and belongs above it.
+    pub fn floor_below(&self, pos: glam::Vec3) -> f32 {
+        match self.get((pos.x as i32, pos.y as i32)) {
+            Texel::Single(p) => p.0,
+            Texel::Dual { low, mid, high } => {
+                if pos.z < mid {
+                    low.0
+                } else {
+                    high.0
+                }
+            }
+        }
+    }
+
     pub fn get_low_fast(&self, coord: (i32, i32)) -> f32 {
         assert!(coord.0 >= 0 && coord.1 >= 0);
         let mut i = ((coord.1 % self.size.1) * self.size.0 + (coord.0 % self.size.0)) as usize;

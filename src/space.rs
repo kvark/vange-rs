@@ -322,6 +322,21 @@ impl Camera {
         self.loc = location * (1.0 - k) + self.loc * k;
     }
 
+    /// Push the camera up out of the ground.
+    ///
+    /// A chase camera trails the car by a fixed offset, which puts it
+    /// inside the hillside whenever the car drives up a slope or into a
+    /// dip - the view then ends up under the terrain looking at its
+    /// backfaces. Raising it to sit `clearance` above whatever surface is
+    /// below keeps the framing while never letting that happen.
+    ///
+    /// Only ever raises: a camera legitimately under a slab, in a tunnel
+    /// or cave, is above that space's own floor and is left alone.
+    pub fn keep_above_ground(&mut self, level: &crate::level::Level, clearance: f32) {
+        let floor = level.floor_below(self.loc);
+        self.loc.z = self.loc.z.max(floor + clearance);
+    }
+
     pub fn look_by(&mut self, target: &Transform, dir: &Direction) {
         debug_assert!(dir.view.z < 0.0);
         let k = (target.disp.z - self.loc.z) / -dir.view.z;
@@ -389,5 +404,88 @@ impl Camera {
                 ui.add(egui::Slider::new(&mut p.far, 50.0..=10000.0).text("Depth far"));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod ground_tests {
+    use super::*;
+    use crate::{config::settings, level};
+
+    fn test_level() -> level::Level {
+        level::load(&level::LevelConfig::new_test(), &settings::Geometry::default())
+    }
+
+    fn cam_at(loc: Vec3) -> Camera {
+        Camera {
+            loc,
+            rot: Quat::IDENTITY,
+            scale: Vec3::ONE,
+            proj: Projection::Perspective(PerspectiveParams {
+                fovy: 45f32.to_radians(),
+                aspect: 1.0,
+                near: 1.0,
+                far: 1000.0,
+                focal_px: None,
+            }),
+        }
+    }
+
+    /// A camera below the surface is pushed back up to the clearance.
+    #[test]
+    fn raises_a_camera_that_is_under_the_ground() {
+        let level = test_level();
+        let (x, y) = (10.0f32, 10.0f32);
+        let floor = level.get((x as i32, y as i32)).low();
+        let mut cam = cam_at(Vec3::new(x, y, floor - 30.0));
+        cam.keep_above_ground(&level, 4.0);
+        assert!(
+            (cam.loc.z - (floor + 4.0)).abs() < 1e-3,
+            "expected {}, got {}",
+            floor + 4.0,
+            cam.loc.z
+        );
+    }
+
+    /// ...and one already in the open is left where it is. `keep_above_ground`
+    /// only ever raises, so it cannot fight the follow camera.
+    #[test]
+    fn leaves_a_camera_in_the_open_alone() {
+        let level = test_level();
+        let (x, y) = (10.0f32, 10.0f32);
+        let floor = level.get((x as i32, y as i32)).low();
+        let mut cam = cam_at(Vec3::new(x, y, floor + 200.0));
+        cam.keep_above_ground(&level, 4.0);
+        assert_eq!(cam.loc.z, floor + 200.0);
+    }
+
+    /// The case that makes this more than a `max`: under a slab, the
+    /// surface below is the cave floor, not the slab top. Clamping to the
+    /// slab top would fling the camera through the roof every time the car
+    /// drove into a tunnel.
+    #[test]
+    fn a_camera_inside_a_cave_keeps_the_cave_floor() {
+        let level = test_level();
+        let dual = (0..level.size.1)
+            .flat_map(|y| (0..level.size.0).map(move |x| (x, y)))
+            .find_map(|(x, y)| match level.get((x, y)) {
+                level::Texel::Dual { low, mid, high } => Some((x, y, low.0, mid, high.0)),
+                level::Texel::Single(_) => None,
+            })
+            .expect("the test level is built with a double-level region");
+        let (x, y, low, mid, high) = dual;
+        assert!(mid < high, "the cave has to have a ceiling below the slab");
+
+        // Sitting in the cave, comfortably under the ceiling.
+        let inside = low + (mid - low) * 0.5;
+        let mut cam = cam_at(Vec3::new(x as f32, y as f32, inside));
+        cam.keep_above_ground(&level, 4.0);
+        assert_eq!(cam.loc.z, inside, "a camera in the cave should not move");
+
+        // Below the cave floor: raised to the floor, still under the slab.
+        let mut cam = cam_at(Vec3::new(x as f32, y as f32, low - 10.0));
+        cam.keep_above_ground(&level, 4.0);
+        assert!((cam.loc.z - (low + 4.0)).abs() < 1e-3);
+        assert!(cam.loc.z < mid, "should not be pushed through the ceiling");
     }
 }
