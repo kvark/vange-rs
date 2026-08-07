@@ -386,6 +386,11 @@ enum Kind {
         /// Pin every chunk to one detail level, ignoring distance. For
         /// inspecting what a level actually looks like.
         lod_force: Option<usize>,
+        /// Frustum-cull chunks before drawing. Off draws every chunk of
+        /// every wrap copy, which is slow but definitionally correct - so
+        /// toggling it is how you tell a culling bug apart from anything
+        /// else that makes geometry come and go.
+        cull: bool,
     },
 }
 
@@ -1616,6 +1621,7 @@ impl Context {
                     draws: Vec::new(),
                     lod_distance: 96.0,
                     lod_force: None,
+                    cull: true,
                 }
             }
         };
@@ -2227,6 +2233,7 @@ impl Context {
                 ref geo,
                 lod_distance,
                 lod_force,
+                cull,
                 ..
             } => {
                 // The TIN covers the level once; the level wraps. Instance
@@ -2269,7 +2276,7 @@ impl Context {
                                 chunk.max[1] + offset.y,
                                 chunk.max[2],
                             );
-                            if box_outside(&planes, min, max) {
+                            if cull && box_outside(&planes, min, max) {
                                 continue;
                             }
                             let center = glam::Vec2::new(
@@ -2671,6 +2678,7 @@ impl Context {
                 ref mut wireframe,
                 ref mut lod_distance,
                 ref mut lod_force,
+                ref mut cull,
                 ref draws,
                 config,
                 ..
@@ -2710,8 +2718,102 @@ impl Context {
                     );
                 });
                 *lod_force = if forced { Some(level) } else { None };
+                ui.checkbox(cull, "Frustum culling");
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod cull_tests {
+    use super::{box_outside, frustum_planes};
+
+    /// A box is *visible* under the reference test when any of its eight
+    /// corners projects inside the clip volume. That is not the same set
+    /// the plane test rejects - a box can straddle the frustum with every
+    /// corner outside - but it is a subset, which is what makes it usable
+    /// as an oracle: anything the reference calls visible must not be
+    /// culled.
+    fn any_corner_inside(m: &glam::Mat4, min: glam::Vec3, max: glam::Vec3) -> bool {
+        for i in 0..8 {
+            let p = glam::Vec3::new(
+                if i & 1 == 0 { min.x } else { max.x },
+                if i & 2 == 0 { min.y } else { max.y },
+                if i & 4 == 0 { min.z } else { max.z },
+            );
+            let c = *m * p.extend(1.0);
+            if c.w > 0.0
+                && c.x >= -c.w
+                && c.x <= c.w
+                && c.y >= -c.w
+                && c.y <= c.w
+                && c.z >= 0.0
+                && c.z <= c.w
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// wgpu clip space is z in `0..w`, so the near plane is the `z` row and
+    /// the far plane is `w - z`. Getting that pair wrong is the classic
+    /// Gribb-Hartmann mistake and it culls geometry the camera is looking
+    /// straight at.
+    #[test]
+    fn never_culls_a_box_with_a_visible_corner() {
+        let proj = glam::Mat4::perspective_rh(1.0, 1.6, 1.0, 2000.0);
+        let mut checked = 0;
+        for yaw_step in 0..16 {
+            let yaw = yaw_step as f32 * std::f32::consts::TAU / 16.0;
+            let eye = glam::Vec3::new(500.0, 500.0, 120.0);
+            let view = glam::Mat4::look_at_rh(
+                eye,
+                eye + glam::Vec3::new(yaw.cos(), yaw.sin(), -0.2),
+                glam::Vec3::Z,
+            );
+            let m = proj * view;
+            let planes = frustum_planes(&m);
+            for gx in -6..=6 {
+                for gy in -6..=6 {
+                    for gz in -1..=2 {
+                        let min = glam::Vec3::new(
+                            500.0 + gx as f32 * 128.0,
+                            500.0 + gy as f32 * 128.0,
+                            gz as f32 * 128.0,
+                        );
+                        let max = min + glam::Vec3::splat(128.0);
+                        if any_corner_inside(&m, min, max) {
+                            assert!(
+                                !box_outside(&planes, min, max),
+                                "culled a box with a visible corner: {:?}..{:?} at yaw {}",
+                                min,
+                                max,
+                                yaw
+                            );
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 100, "the sweep never produced visible boxes");
+    }
+
+    /// The other direction: a box squarely behind the camera has to go.
+    /// Without this the test above passes for a `box_outside` that always
+    /// returns false.
+    #[test]
+    fn culls_a_box_behind_the_camera() {
+        let proj = glam::Mat4::perspective_rh(1.0, 1.6, 1.0, 2000.0);
+        let eye = glam::Vec3::new(0.0, 0.0, 0.0);
+        let view = glam::Mat4::look_at_rh(eye, glam::Vec3::new(0.0, 1.0, 0.0), glam::Vec3::Z);
+        let planes = frustum_planes(&(proj * view));
+        assert!(box_outside(
+            &planes,
+            glam::Vec3::new(-50.0, -500.0, -50.0),
+            glam::Vec3::new(50.0, -400.0, 50.0),
+        ));
     }
 }
