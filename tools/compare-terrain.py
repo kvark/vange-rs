@@ -71,6 +71,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 import zipfile
 
@@ -117,6 +118,11 @@ METHODS = [
 # frame, because that is where the CPU march and the rasterizer round the
 # silhouette differently. Treat those as the noise floor: a renderer is
 # only interesting where it is worse than its neighbours in the same row.
+# The whole point of the sweep. Every method is close to correct looking
+# down; they separate as the camera comes to the horizon, which is where a
+# first-person or chase camera actually sits.
+DEFAULT_PITCHES = [0.0, -30.0, -60.0, -90.0]
+
 DEFAULT_VIEWS = [
     "tunnel:1984,624:100:under",
     "river:2006,1730:120",
@@ -419,9 +425,10 @@ def main():
                          "four Fostral viewpoints in DEFAULT_VIEWS")
     ap.add_argument("--pitch", action="append", type=float,
                     help="camera pitch in degrees, repeatable. 0 is "
-                         "horizontal, -90 straight down. Defaults to 0 alone; "
-                         "the interesting axis is that most methods degrade as "
-                         "the view flattens toward the horizon")
+                         "horizontal, -90 straight down. Defaults to the full "
+                         "sweep, which is the axis that separates these "
+                         "methods: they agree looking down and diverge at the "
+                         "horizon")
     ap.add_argument("--label", default="",
                     help="name for this machine. Defaults to the adapter the "
                          "run actually used, which is what you want unless "
@@ -430,13 +437,17 @@ def main():
                     help="results file. Defaults to "
                          "<work>/results-<adapter>.json, named from the "
                          "adapter wgpu selected")
-    ap.add_argument("--frames", type=int, default=20,
+    ap.add_argument("--quick", action="store_true",
+                    help="small and fast, for checking the harness works. Not "
+                         "a result: too few frames to be stable and too few "
+                         "pixels for the reference to agree with anything")
+    ap.add_argument("--frames", type=int, default=40,
                     help="timed frames per render. Each is submitted and "
                          "polled to completion, so this measures GPU work "
                          "rather than submission - but serially, so it is "
                          "per-frame latency, not pipelined throughput")
-    ap.add_argument("--width", type=int, default=400)
-    ap.add_argument("--height", type=int, default=260)
+    ap.add_argument("--width", type=int, default=1280)
+    ap.add_argument("--height", type=int, default=800)
     ap.add_argument("--eye-height", type=float, default=8.0)
     ap.add_argument("--far", type=float, default=600.0,
                     help="view distance, shared by the renderers and the "
@@ -445,6 +456,9 @@ def main():
                          "million, so an unbounded distance leaves most of "
                          "its frame unpainted")
     args = ap.parse_args()
+    if args.quick:
+        args.width, args.height, args.frames = 320, 200, 4
+        args.pitch = args.pitch or [0.0]
 
     ensure_tools(args)
     ensure_assets(args)
@@ -452,9 +466,17 @@ def main():
     views = [parse_view(v) for v in args.view or DEFAULT_VIEWS]
     layers = load_layers(args.layers)
 
-    pitches = args.pitch or [0.0]
+    pitches = args.pitch or DEFAULT_PITCHES
     cells, stats, rows = {}, {}, []
     device = None
+
+    # A default run is a couple of hundred renders and takes a while, so
+    # say so up front and keep a running estimate rather than going quiet.
+    total = len(pitches) * len(views) * len(METHODS)
+    done, started = 0, time.time()
+    print(f"{total} renders: {len(METHODS)} methods x {len(views)} views x "
+          f"{len(pitches)} pitches, at {args.width}x{args.height}\n")
+
     for pitch in pitches:
         for view in views:
             sky, ref_dist, dirs, _ = ground_truth(layers, view, args.width, args.height,
@@ -521,9 +543,13 @@ def main():
                 dep = ("      n/a" if p50 != p50
                        else f"p50 {p50:6.1f}u p95 {p95:7.1f}u")
                 tag = "gpu" if have_gpu else "cpu"
+                done += 1
+                elapsed = time.time() - started
+                eta = elapsed / done * (total - done)
                 print(f"    {method[0]:12s} {ms:7.1f} ms {tag}  "
                       f"see-through {see_through:5.1f}%   covers-sky {covers_sky:5.1f}%   "
-                      f"depth {dep}   speckle {excess:5.1f}%")
+                      f"depth {dep}   speckle {excess:5.1f}%"
+                      f"   [{done}/{total}, {eta / 60:.0f} min left]", flush=True)
 
     # Named from the adapter wgpu actually chose, not from anything the
     # caller had to know in advance.
