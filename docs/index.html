@@ -75,6 +75,14 @@
             padding: 8px 14px; border-radius: 6px; font-size: 13px; color: #8b949e;
             pointer-events: none;
         }
+        #renderer-links {
+            position: absolute; bottom: 16px; right: 16px; background: rgba(0,0,0,0.7);
+            padding: 8px 14px; border-radius: 6px; font-size: 13px; color: #8b949e;
+            font-family: 'Fira Code', monospace;
+        }
+        #renderer-links a { color: #58a6ff; text-decoration: none; margin-left: 8px; }
+        #renderer-links a:hover { text-decoration: underline; }
+        #renderer-links .here { color: #c9d1d9; margin-left: 8px; }
 
         /* Blog/About tabs */
         .content { max-width: 720px; margin: 0 auto; padding: 40px 20px; line-height: 1.7; }
@@ -124,6 +132,15 @@
         <canvas id="canvas" tabindex="0"></canvas>
         <div id="controls-hint">
             WASD – drive &nbsp;|&nbsp; Space – brake &nbsp;|&nbsp; Q/E – roll &nbsp;|&nbsp; Alt – jump &nbsp;|&nbsp; Shift – turbo
+        </div>
+        <!--
+            The same scene under each terrain renderer; which one a page
+            gets is decided in Rust from the URL, see `terrain_choice` in
+            bin/web/main.rs. This page is the mesh.
+        -->
+        <div id="renderer-links">
+            terrain: <span class="here">mesh</span>
+            <a href="voxel/">voxel</a> <a href="ray/">ray</a>
         </div>
     </div>
 
