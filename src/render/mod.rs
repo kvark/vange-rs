@@ -437,7 +437,11 @@ impl Render {
         };
 
         info!("Creating global context...");
-        let global = global::Context::new(gfx, shadow.as_ref().map(|shadow| &shadow.view));
+        let global = global::Context::new(
+            gfx,
+            shadow.as_ref().map(|shadow| &shadow.view),
+            matches!(settings.terrain, settings::Terrain::Scattered { .. }),
+        );
         info!("Creating terrain context...");
         let terrain = terrain::Context::new(
             gfx,

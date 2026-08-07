@@ -41,7 +41,7 @@ impl ResourceView {
 
         info!("Initializing the render");
         let pal_data = level::read_palette(settings.open_palette(), None);
-        let global = render::global::Context::new(gfx, None);
+        let global = render::global::Context::new(gfx, None, false);
         let stub_surface = render::object::create_stub_surface(&gfx.device);
         let object = render::object::Context::new(
             gfx,
