@@ -17,10 +17,24 @@ use web_sys::{ReadableStreamDefaultReader, Request, RequestInit, RequestMode, Re
 
 use crate::vfs::{Vfs, VfsError};
 
-/// Base URL for data zips. Resolved relative to the demo page at
-/// runtime, so the default works for GitHub Pages at any subpath.
-pub fn data_base() -> &'static str {
-    option_env!("VANGERS_DATA_BASE").unwrap_or("./data-0")
+/// Base URL for data zips.
+///
+/// A page can set `window.vangeDataBase` to point somewhere else, which
+/// is what pages served from a subdirectory need: the default is
+/// relative to the document, so `./data-0` resolves under the
+/// subdirectory and 404s. Falling back to the compile-time
+/// `VANGERS_DATA_BASE`, then to the default.
+pub fn data_base() -> String {
+    if let Some(window) = web_sys::window()
+        && let Ok(value) = js_sys::Reflect::get(&window, &"vangeDataBase".into())
+        && let Some(base) = value.as_string()
+        && !base.is_empty()
+    {
+        return base;
+    }
+    option_env!("VANGERS_DATA_BASE")
+        .unwrap_or("./data-0")
+        .to_string()
 }
 
 /// Archive that holds cross-level assets: resource models, sounds,
@@ -71,8 +85,8 @@ pub fn level_archive_name(level_id: &str) -> String {
 /// Fetch one data asset by filename (e.g. `"common.zip"`), reporting
 /// incremental download progress.
 pub async fn fetch_asset(name: &str, progress: ProgressFn<'_>) -> Result<Vec<u8>, FetchError> {
-    let base = data_base().trim_end_matches('/');
-    let url = format!("{}/{}", base, name);
+    let base = data_base();
+    let url = format!("{}/{}", base.trim_end_matches('/'), name);
     fetch_bytes_streaming(name, &url, progress).await
 }
 
