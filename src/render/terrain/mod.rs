@@ -31,27 +31,6 @@ const MAXIMUM_UNIFORM_BUFFER_ALIGNMENT: usize = 256;
 ///
 /// Standard Gribb-Hartmann extraction, with `z` rather than `w + z` for the
 /// near plane because wgpu's clip space has z in `0..1`, not `-1..1`.
-/// First wrap tile along an axis. Must mirror `tile_grid()` in
-/// `terrain/mesh.wgsl` exactly: the shader turns an instance index into a
-/// tile offset with the same arithmetic, so any disagreement draws the
-/// wrong tiles - including, when the counts differ, dropping the camera's.
-fn tile_lo(visible_lo: f32, cam: f32, period: f32) -> f32 {
-    (visible_lo / period)
-        .floor()
-        .max((cam / period).floor() - MAX_TILE_RADIUS)
-}
-
-/// Number of wrap tiles along an axis. Mirrors `tile_grid()` as above.
-fn span(lo: f32, hi: f32, cam: f32, period: f32) -> u32 {
-    let cam_tile = (cam / period).floor();
-    let lo = tile_lo(lo, cam, period);
-    let hi = (hi / period)
-        .floor()
-        .min(cam_tile + MAX_TILE_RADIUS)
-        .max(lo);
-    (hi - lo) as u32 + 1
-}
-
 fn frustum_planes(m: &glam::Mat4) -> [glam::Vec4; 6] {
     let c = m.to_cols_array_2d();
     let row = |i: usize| glam::Vec4::new(c[0][i], c[1][i], c[2][i], c[3][i]);
@@ -76,8 +55,6 @@ fn box_outside(planes: &[glam::Vec4; 6], min: glam::Vec3, max: glam::Vec3) -> bo
 /// How many wrapped copies of the level the mesh terrain draws around the
 /// camera's own tile, per axis. Has to agree with `c_MaxTileRadius` in
 /// `terrain/mesh.wgsl`.
-const MAX_TILE_RADIUS: f32 = 1.0;
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Vertex {
@@ -399,10 +376,6 @@ enum Kind {
         /// Built on the first `update_dirty`, which is where the level data
         /// first becomes available.
         geo: Option<MeshGeometry>,
-        /// How many wrapped copies of the level are currently in view. The
-        /// shader derives each instance's offset from the same visible
-        /// bounds, so both sides agree on the tile grid.
-        tile_count: u32,
         wireframe: bool,
         /// `(first index, index count, wrap tile)` per visible chunk, with
         /// the LOD already chosen. Rebuilt each frame in `prepare`.
@@ -1639,7 +1612,6 @@ impl Context {
                     wire_pipeline,
                     config: level::tin::Config { quality },
                     geo: None,
-                    tile_count: 1,
                     wireframe: false,
                     draws: Vec::new(),
                     lod_distance: 96.0,
@@ -2251,7 +2223,6 @@ impl Context {
                 };
             }
             Kind::Mesh {
-                ref mut tile_count,
                 ref mut draws,
                 ref geo,
                 lod_distance,
@@ -2263,47 +2234,29 @@ impl Context {
                 // from the same visible bounds the shader reads out of
                 // `u_Locals.sample_range` so the two cannot disagree.
                 let size = self.active_surface_constants.texture_scale;
-                *tile_count = if size[0] > 0.0 && size[1] > 0.0 {
-                    // Must mirror `tile_grid()` in `terrain/mesh.wgsl`
-                    // exactly: the shader turns an instance index into a
-                    // tile offset with the same arithmetic, so any
-                    // disagreement draws the wrong tiles - including,
-                    // when the counts differ, dropping the camera's own.
-                    let span = |lo: f32, hi: f32, cam: f32, period: f32| {
-                        let cam_tile = (cam / period).floor();
-                        let lo = (lo / period).floor().max(cam_tile - MAX_TILE_RADIUS);
-                        let hi = (hi / period)
-                            .floor()
-                            .min(cam_tile + MAX_TILE_RADIUS)
-                            .max(lo);
-                        (hi - lo) as u32 + 1
-                    };
-                    let nx = span(sc.sample_x.start, sc.sample_x.end, sc.origin.x, size[0]);
-                    let ny = span(sc.sample_y.start, sc.sample_y.end, sc.origin.y, size[1]);
-                    nx.saturating_mul(ny)
-                } else {
-                    1
-                };
-
-                // Pick a LOD per chunk from its distance to the camera,
-                // measured on the torus since the level wraps. Coarser
-                // levels are the same greedy fit stopped earlier, so this
-                // costs nothing but an index range swap.
                 draws.clear();
                 if let Some(geo) = geo.as_ref() {
-                    // Frustum-cull every (chunk, wrap tile) pair and pick a
-                    // LOD from its distance to the camera. Without this the
-                    // whole level mesh is redrawn once per tile: on Fostral
-                    // that is millions of triangles a frame regardless of
-                    // where the camera looks.
+                    let cam_tile = glam::Vec2::new(
+                        (sc.origin.x / size[0]).floor(),
+                        (sc.origin.y / size[1]).floor(),
+                    );
+                    // Frustum-cull every (chunk, wrapped copy) pair and pick
+                    // a LOD from its distance. Without this the whole level
+                    // mesh is redrawn per copy: on Fostral that is millions
+                    // of triangles a frame regardless of where you look.
+                    //
+                    // A 3x3 neighbourhood of copies around the camera's own
+                    // tile; anything further is a whole level away and deep
+                    // in the fog. The instance index carries which copy, and
+                    // `tile_offset` in the shader decodes it with the same
+                    // arithmetic - deriving the grid separately on each side
+                    // is what previously put wrapped terrain at the wrong
+                    // distance.
                     let planes = frustum_planes(&cam.get_view_proj());
-                    let tiles_x = span(sc.sample_x.start, sc.sample_x.end, sc.origin.x, size[0]);
-                    let lo_x = tile_lo(sc.sample_x.start, sc.origin.x, size[0]);
-                    let lo_y = tile_lo(sc.sample_y.start, sc.origin.y, size[1]);
-                    for tile in 0..*tile_count {
+                    for copy in 0..9u32 {
                         let offset = glam::Vec2::new(
-                            (lo_x + (tile % tiles_x) as f32) * size[0],
-                            (lo_y + (tile / tiles_x) as f32) * size[1],
+                            (cam_tile.x + (copy % 3) as f32 - 1.0) * size[0],
+                            (cam_tile.y + (copy / 3) as f32 - 1.0) * size[1],
                         );
                         for (ci, chunk) in geo.chunks.iter().enumerate() {
                             let min = glam::Vec3::new(
@@ -2334,7 +2287,7 @@ impl Context {
                             };
                             let (base, count) = chunk.lods[level];
                             if count != 0 {
-                                draws.push((ci as u32, base, count, tile, dist));
+                                draws.push((ci as u32, base, count, copy, dist));
                             }
                         }
                     }

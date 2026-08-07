@@ -105,6 +105,9 @@ pub struct SnapshotOptions {
     /// Lets a comparison score geometry against a reference by distance
     /// rather than by classifying colours.
     pub depth_out: Option<String>,
+    /// Print the raw packed data and the decoded surface for one texel
+    /// pair, to compare the CPU query against the shader's decoding.
+    pub dump_texel: Option<(i32, i32)>,
 }
 
 impl Default for SnapshotOptions {
@@ -127,6 +130,7 @@ impl Default for SnapshotOptions {
             voxel_debug_lod: None,
             voxel_probe: None,
             depth_out: None,
+            dump_texel: None,
             width: 800,
             height: 600,
             cam_target: Vec3::new(128.0, 128.0, 0.0),
@@ -532,6 +536,45 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     }
     drop(data);
     staging_buf.unmap();
+
+    if let Some((px, py)) = opts.dump_texel {
+        use vangers::level::{DOUBLE_LEVEL, Texel};
+        let w = lvl.size.0 as usize;
+        let even = (py as usize * w) + (px as usize & !1);
+        let odd = even | 1;
+        info!("texel pair at x={} y={} (even index {}):", px, py, px & !1);
+        info!(
+            "  raw: height[even]={:3} meta[even]=0x{:02X} (DOUBLE={})   height[odd]={:3} meta[odd]=0x{:02X} (DOUBLE={})",
+            lvl.height[even],
+            lvl.meta[even],
+            lvl.meta[even] & DOUBLE_LEVEL != 0,
+            lvl.height[odd],
+            lvl.meta[odd],
+            lvl.meta[odd] & DOUBLE_LEVEL != 0,
+        );
+        for x in [px & !1, (px & !1) + 1] {
+            match lvl.get((x, py)) {
+                Texel::Single(p) => info!(
+                    "  Level::get(x={}) -> Single   alt={:.1} ty={}",
+                    x, p.0, p.1
+                ),
+                Texel::Dual { low, mid, high } => info!(
+                    "  Level::get(x={}) -> Dual     low={:.1} mid={:.1} high={:.1} ty={}/{}",
+                    x, low.0, mid, high.0, low.1, high.1
+                ),
+            }
+        }
+        // What `get_surface_impl` in surface.inc.wgsl decodes: it always
+        // tests the *even* texel's meta for the double-level bit.
+        info!(
+            "  shader would treat both texels as {}",
+            if lvl.meta[even] & DOUBLE_LEVEL != 0 {
+                "DUAL"
+            } else {
+                "single"
+            }
+        );
+    }
 
     if let Some((px, py)) = opts.voxel_probe {
         let texel = lvl.get((px, py));

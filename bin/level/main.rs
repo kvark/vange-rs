@@ -107,6 +107,9 @@ struct Cli {
     /// Dump the depth buffer as raw f32 alongside the snapshot.
     #[arg(long)]
     depth_out: Option<String>,
+    /// Print the raw packed data and decoded surface for one texel pair.
+    #[arg(long)]
+    dump_texel: Option<String>,
 }
 
 fn parse_terrain(
@@ -214,6 +217,10 @@ fn main() {
                 (v.x, v.y)
             }),
             depth_out: cli.depth_out.clone(),
+            dump_texel: cli.dump_texel.as_deref().map(|s| {
+                let v = parse_vec3(&format!("{},0", s));
+                (v.x as i32, v.y as i32)
+            }),
             fp_height: cli.fp_height,
             fp_yaw: cli.fp_yaw,
             fp_pitch: cli.fp_pitch,
