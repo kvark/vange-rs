@@ -45,7 +45,9 @@ Tracked here rather than in the draft so the gaps stay visible:
 - [x] GPU timestamp queries. Done; the harness prefers them and records
       which timing each row used. Still per-frame latency rather than
       pipelined throughput, which is a separate limitation.
-- [ ] Equal tuning across methods. The voxel step budget was found badly
-      mistuned; the painter and the slicer have had no equivalent pass.
+- [x] Equal tuning across methods. Done: `tools/level-survey.py` sibling
+      `tools/tune-methods.py` sweeps every knob under one selection rule.
+      Caveat recorded in the draft: the reference cannot resolve mesh
+      quality at the horizon, so that one knob is tuned self-referentially.
 - [ ] Memory. ~300 MB resident for the mesh at q=0.75 on a full level is
       the honest limit on the portability claim.

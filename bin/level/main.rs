@@ -24,6 +24,12 @@ struct Cli {
     /// a top-down plot of what the renderer chose.
     #[arg(long)]
     cull_dump: Option<String>,
+    /// Horizontal slices for --terrain Sliced. Defaults to the level height.
+    #[arg(long)]
+    slice_layers: Option<u32>,
+    /// Sample density for --terrain Scattered, as `x,y,z`.
+    #[arg(long, default_value = "2,2,2")]
+    scatter_density: String,
     /// Pin the mesh to one LOD (0 = finest) instead of choosing by distance.
     #[arg(long)]
     mesh_lod: Option<usize>,
@@ -135,13 +141,14 @@ fn parse_terrain(
     voxel_size: [u32; 3],
     voxel_steps: u32,
     mesh_quality: f32,
+    scatter_density: [u32; 3],
 ) -> vangers::config::settings::Terrain {
     use vangers::config::settings::Terrain;
     match name {
         "RayTraced" => Terrain::RayTraced,
         "Sliced" => Terrain::Sliced,
         // Matches the density in `settings.template.ron`.
-        "Scattered" => Terrain::Scattered { density: [2, 2, 2] },
+        "Scattered" => Terrain::Scattered { density: scatter_density },
         "Painted" => Terrain::Painted,
         // RayVoxelTraced uses the same parameters the web build hard-codes,
         // so the snapshot exercises the same path the user is benchmarking.
@@ -219,6 +226,7 @@ fn main() {
                     .unwrap_or([2, 4, 1]),
                 cli.voxel_steps,
                 cli.mesh_quality,
+                parse_voxel_size(&cli.scatter_density),
             ),
             width: cli.width,
             height: cli.height,
@@ -233,6 +241,7 @@ fn main() {
             mesh_wireframe: cli.mesh_wireframe,
             no_cull: cli.no_cull,
             mesh_lod: cli.mesh_lod,
+            slice_layers: cli.slice_layers,
             mesh_lod_distance: cli.mesh_lod_distance,
             dig: cli.dig,
             dig_frame: cli.dig_frame,

@@ -63,8 +63,11 @@
 		terrain: RayTraced,
 		// RayTraced,
 		// Step budgets below ~100 make long first-person sightlines run out of
-		// steps and return background, so solid terrain renders as sky.
-		// RayVoxelTraced( voxel_size: (2, 4, 1), max_outer_steps: 200, max_inner_steps: 200, max_update_texels: 1_000_000 ),
+		// steps and return background, so solid terrain renders as sky: on
+		// Fostral 40 steps costs 6.4% of the frame against 2.5% at 100.
+		// Above 100 nothing improves and the frame gets 30% more expensive
+		// (67ms -> 88ms at 200), so 100 is the knee. See tools/tune-methods.py.
+		// RayVoxelTraced( voxel_size: (2, 4, 1), max_outer_steps: 100, max_inner_steps: 100, max_update_texels: 1_000_000 ),
 		// Scattered( density: (2, 2, 2) ),
 		// Sliced,
 		// Painted,

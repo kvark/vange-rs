@@ -251,6 +251,52 @@ would be: they vary only content, holding encoding, quantisation, texel
 scale and authoring pipeline fixed, so the comparison isolates one
 variable rather than four.
 
+### 5.4 Tuning
+
+Each method was swept over its own quality knob and given the cheapest
+setting within one percentage point of its own best error, so no method
+is charged for a setting that buys nothing or credited with speed it
+reaches only by being wrong. Fostral, four viewpoints at the horizon,
+400x260, view distance 600. `[lavapipe]`
+
+| method | knob | swept | chosen | error at choice |
+|---|---|---|---|---|
+| RayTraced | — | none exists | — | 40.4% |
+| Painted | — | none beyond view distance | — | 2.5% |
+| Sliced | slices | 32–512 | **256** | 14.0% |
+| Scattered | density | 1–4 | **4,4,4** | 26.8% |
+| RayVoxel | grid, steps | 2 grids × 40–400 | **4,8,2, 100 steps** | 2.9% |
+| Mesh | fit tolerance | q 0.0–1.0 | **q=0.0** | 3.1% |
+
+Three of the six results are worth stating.
+
+**The slicer does not degrade, it collapses.** One slice per altitude
+unit is not a quality setting but a correctness threshold: 256 slices
+leave 4.7% see-through, 128 leave 61.2% and move surfaces by 259 u. The
+shipped default was already at the threshold, but nothing recorded that
+it was a threshold rather than a preference.
+
+**The voxel step budget was mistuned in both directions.** 40 steps —
+the value this work inherited — leaves 6.4% see-through where 100 gets
+to 2.5%. We first corrected it to 200, which is equally accurate and 30%
+more expensive. The knee is 100.
+
+**The reference cannot resolve mesh quality at the horizon.** Every
+setting from q=0.0 to q=1.0 lands within 0.5 points of coverage error and
+1 u of depth error, against a reference whose own floor there is ~50 u
+(§6.1). The selection rule therefore picks the cheapest, which is correct
+given the measurement and wrong as a shipping default: measured against
+its own finest fit instead of against the reference, the same knob moves
+surfaces by up to 289 u. Where a parameter changes geometry more finely
+than the ground truth can see, it has to be tuned self-referentially.
+This is the same blind spot as §4.2, in a different place.
+
+A fourth result is about the platform rather than the method: the voxel
+tracer's production grid (2,4,1) needs 153 MB of storage buffer against
+llvmpipe's 134 MB limit, so every voxel figure here is for a grid eight
+times coarser than the one that ships. That is a caveat on the software
+rasterizer, not on the method, and it resolves on hardware.
+
 ## 6. Findings
 
 ### 6.1 The reference is only tight away from grazing incidence
