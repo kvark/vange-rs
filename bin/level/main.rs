@@ -140,6 +140,8 @@ fn parse_terrain(
     match name {
         "RayTraced" => Terrain::RayTraced,
         "Sliced" => Terrain::Sliced,
+        // Matches the density in `settings.template.ron`.
+        "Scattered" => Terrain::Scattered { density: [2, 2, 2] },
         "Painted" => Terrain::Painted,
         // RayVoxelTraced uses the same parameters the web build hard-codes,
         // so the snapshot exercises the same path the user is benchmarking.
@@ -153,7 +155,8 @@ fn parse_terrain(
             quality: mesh_quality,
         },
         other => panic!(
-            "Unknown terrain mode '{}'. Supported: RayTraced, Sliced, Painted, RayVoxelTraced, Mesh",
+            "Unknown terrain mode '{}'. Supported: RayTraced, Sliced, Painted, \
+             Scattered, RayVoxelTraced, Mesh",
             other
         ),
     }
