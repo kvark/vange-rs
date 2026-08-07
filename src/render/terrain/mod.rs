@@ -2734,6 +2734,20 @@ impl Context {
         }
     }
 
+    /// How many horizontal slices the sliced terrain draws. Defaults to the
+    /// level's height in units, i.e. one per altitude step; fewer is
+    /// cheaper and coarser, and this is the only quality knob the method
+    /// has.
+    pub fn set_slice_layers(&mut self, layers: u32) {
+        if let Kind::Slice {
+            ref mut layer_count,
+            ..
+        } = self.kind
+        {
+            *layer_count = layers.max(1);
+        }
+    }
+
     /// Pin every chunk to one detail level, or `None` to pick by distance.
     pub fn set_mesh_lod(&mut self, level: Option<usize>, distance: Option<f32>) {
         if let Kind::Mesh {

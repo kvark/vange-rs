@@ -84,11 +84,23 @@ Image.MAX_IMAGE_PIXELS = None
 # The voxel grid bakes incrementally under a per-frame texel budget, so it
 # needs a long warmup on a full level or it renders through terrain it has
 # not reached yet - roughly 150 frames for a 2048x16384 map.
+# Settings come from tools/tune-methods.py, which sweeps each method's own
+# knob and takes the cheapest setting within a point of that method's best
+# error. Two of these are not tunable at all, which is itself worth
+# knowing when reading their columns.
 METHODS = [
     ("RayTraced", "RayTraced", [], 3),
-    ("RayVoxel", "RayVoxelTraced", ["--voxel-size", "4,8,2"], 170),
-    ("Sliced", "Sliced", [], 3),
-    ("Scattered", "Scattered", [], 8),
+    # 100 steps is the knee: 40 leaves 6.4% of the frame see-through, 100
+    # gets to 2.5%, and 200 buys nothing for 30% more time.
+    ("RayVoxel", "RayVoxelTraced",
+     ["--voxel-size", "4,8,2", "--voxel-steps", "100"], 170),
+    # One slice per altitude unit. Below that the method does not degrade
+    # gracefully, it falls off a cliff - 128 layers leaves 61% of the frame
+    # see-through and moves surfaces by 259u.
+    ("Sliced", "Sliced", ["--slice-layers", "256"], 3),
+    # Density 4 is the best this method reaches and it is still last by a
+    # wide margin; lower densities are cheaper and worse in every column.
+    ("Scattered", "Scattered", ["--scatter-density", "4,4,4"], 8),
     ("Painter", "Painted", [], 3),
     ("Mesh q=0.25", "Mesh", ["--mesh-quality", "0.25"], 3),
     ("Mesh q=0.75", "Mesh", ["--mesh-quality", "0.75"], 3),
