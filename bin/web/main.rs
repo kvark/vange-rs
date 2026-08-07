@@ -439,8 +439,8 @@ impl WebApp {
             // above it. Shared by every route, so switching between them
             // compares the renderers and nothing else.
             s.game.camera.angle = 16;
-            s.game.camera.offset = 30.0;
-            s.game.camera.height = 10.0;
+            s.game.camera.offset = 26.0;
+            s.game.camera.height = 8.7;
             // Snappier than the default so the camera stays behind the
             // car through turns instead of trailing wide.
             s.game.camera.speed = 4.0;
