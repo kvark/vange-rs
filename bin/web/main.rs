@@ -95,32 +95,44 @@ fn pick_level_for_adapter(requested: String, max_texture_dim: u32) -> String {
 
 /// Which terrain renderer the page asked for.
 ///
-/// Selected by URL so a link can drop straight into a particular
-/// pipeline: the path `/fpv` (or `#terrain=mesh`) picks the triangle
-/// mesh, which unlike the ray marchers needs no compute and so runs the
-/// same on WebGL2 as on WebGPU.
+/// Selected by URL, so the site can offer the same scene under three
+/// pipelines and you compare them by switching the address:
+///
+///   * `/`       triangle mesh (default)
+///   * `/voxel`  voxel ray tracing, needs compute, so WebGPU only
+///   * `/ray`    height-field ray tracing
+///
+/// `#terrain=mesh|voxel|ray` overrides the path. The mesh is the default
+/// because it is the only one that does not care which backend it got:
+/// fitted on the CPU and drawn with the plain raster pipeline, it runs
+/// the same on WebGL2 as on WebGPU.
 #[derive(Clone, Copy, PartialEq)]
 enum TerrainChoice {
-    Auto,
     Mesh,
+    Voxel,
+    Ray,
 }
 
 fn terrain_choice() -> TerrainChoice {
     let Some(window) = web_sys::window() else {
-        return TerrainChoice::Auto;
-    };
-    let path = window.location().pathname().unwrap_or_default();
-    if path.trim_end_matches('/').ends_with("/fpv") {
         return TerrainChoice::Mesh;
-    }
+    };
     if let Ok(hash) = window.location().hash() {
         for pair in hash.trim_start_matches('#').split('&') {
-            if pair == "terrain=mesh" {
-                return TerrainChoice::Mesh;
+            match pair {
+                "terrain=mesh" => return TerrainChoice::Mesh,
+                "terrain=voxel" => return TerrainChoice::Voxel,
+                "terrain=ray" => return TerrainChoice::Ray,
+                _ => {}
             }
         }
     }
-    TerrainChoice::Auto
+    let path = window.location().pathname().unwrap_or_default();
+    match path.trim_end_matches('/').rsplit('/').next() {
+        Some("voxel") => TerrainChoice::Voxel,
+        Some("ray") => TerrainChoice::Ray,
+        _ => TerrainChoice::Mesh,
+    }
 }
 
 /// Read the selected level id from JS (set by the level picker UI),
@@ -407,13 +419,14 @@ impl WebApp {
         // instead of cutting hard at the far plane.
         s.game.camera.depth_range = (10.0, 6000.0);
 
-        if terrain_choice() == TerrainChoice::Mesh {
+        {
             // A chase camera sitting just behind and above the car,
-            // rather than the default view from 240 units straight
-            // overhead. `angle` is measured so that 90 looks straight
-            // down and 0 looks along the horizon, so 16 is a shallow
-            // downward pitch; `offset` is distance behind the car and
-            // `height` is above it.
+            // rather than the old view from 240 units straight overhead.
+            // `angle` is measured so that 90 looks straight down and 0
+            // looks along the horizon, so 16 is a shallow downward
+            // pitch; `offset` is distance behind the car and `height` is
+            // above it. Shared by every route, so switching between them
+            // compares the renderers and nothing else.
             s.game.camera.angle = 16;
             s.game.camera.offset = 44.0;
             s.game.camera.height = 15.0;
@@ -482,17 +495,23 @@ impl WebApp {
         // On WebGPU, override terrain to RayVoxelTraced (needs compute).
         // On WebGL2, force RayTraced (fragment-only).
         let mut render_settings = settings.render.clone();
-        if terrain_choice() == TerrainChoice::Mesh {
-            // The mesh is fitted on the CPU and drawn with the plain
-            // raster pipeline, so it is the one terrain renderer that
-            // does not care which backend it got. Quality 0.25 is the
-            // cheapest setting that still matches the other renderers
-            // on open ground; see `docs/_posts/*-terrain-mesh.md`.
+        // Voxel tracing needs compute, so it falls back to the height
+        // field on WebGL2 - the mesh and the ray tracer run anywhere.
+        let choice = match terrain_choice() {
+            TerrainChoice::Voxel if !is_webgpu => {
+                log::warn!("Voxel tracing needs WebGPU; falling back to the height-field tracer");
+                TerrainChoice::Ray
+            }
+            other => other,
+        };
+        if choice == TerrainChoice::Mesh {
+            // Quality 0.25 is the cheapest setting that still matches the
+            // other renderers on open ground; see the terrain-mesh post.
             render_settings.terrain = settings::Terrain::Mesh { quality: 0.25 };
             // Ray-traced shadows work on both backends and do not depend
             // on the terrain renderer.
             render_settings.light.shadow.terrain = settings::ShadowTerrain::RayTraced;
-        } else if is_webgpu {
+        } else if choice == TerrainChoice::Voxel {
             render_settings.terrain = settings::Terrain::RayVoxelTraced {
                 voxel_size: [2, 4, 1],
                 // 40 was too low: rays that travel far exhaust the budget and return
@@ -515,6 +534,7 @@ impl WebApp {
             };
         } else {
             render_settings.terrain = settings::Terrain::RayTraced;
+            render_settings.light.shadow.terrain = settings::ShadowTerrain::RayTraced;
         }
         let geometry = settings.game.geometry;
         let render = Render::new(
