@@ -18,6 +18,23 @@ tens of percent see-through against 0.0% covers-sky. When both move by
 the same amount it is the reference disagreeing about where the
 silhouette falls, not the renderer, and every method in the row shows it.
 
+`depth p50/p95` is how far off the surfaces are, in world units, where
+the renderer and the reference both think something is there. Read it
+comparatively, not absolutely: at the river view the three converged
+renderers agree with *each other* to 1.3u p50 while all differing from
+the reference by ~29u, at a signed median of 0.01u. That is not a bias,
+it is grazing incidence - at eye level most of the ground is nearly
+edge-on, where a sub-pixel difference in ray direction moves the hit by
+tens of units. The reference is the limiting factor there, so treat ~30u
+as its noise floor and look at differences between columns.
+
+`speckle` is the part depth agreement cannot see, and is why it exists:
+the fraction of pixels whose distance disagrees with their own 3x3
+neighbourhood, in excess of the reference doing the same. Sliced and
+Scattered score 7-8% against 0.0-0.4% for the coherent renderers, on a
+reference that is itself 0.3% rough. A renderer can put every surface at
+the right distance incoherently and still look wrong.
+
 Timing is `submit` then poll to completion, per frame, so it measures GPU
 work rather than submission - but serially, which makes it per-frame
 latency rather than pipelined throughput. `WGPU_BACKEND` selects the
@@ -60,6 +77,8 @@ Image.MAX_IMAGE_PIXELS = None
 METHODS = [
     ("RayTraced", "RayTraced", [], 3),
     ("RayVoxel", "RayVoxelTraced", ["--voxel-size", "4,8,2"], 170),
+    ("Sliced", "Sliced", [], 3),
+    ("Scattered", "Scattered", [], 8),
     ("Painter", "Painted", [], 3),
     ("Mesh q=0.25", "Mesh", ["--mesh-quality", "0.25"], 3),
     ("Mesh q=0.75", "Mesh", ["--mesh-quality", "0.75"], 3),
@@ -111,10 +130,16 @@ def load_layers(ron_path):
 
 
 def ground_truth(layers, view, width, height, eye_height, far):
-    """Sky mask from ray casting the height data with the same camera.
+    """Ray cast the height data with the same camera.
 
-    Marches coarser with distance: near geometry sets the silhouette, and
-    a fine step all the way to the far plane would be needlessly slow.
+    Returns `(sky, dist, dirs, origin)`: a sky mask, the distance along
+    each ray to the first solid sample, and the ray directions so the
+    caller can turn a renderer's depth buffer into the same quantity.
+
+    Marches coarser with distance, then bisects inside the bracketing
+    interval. The refinement matters: a march-quantised distance field is
+    fine for a sky mask but useless for measuring how far off a surface
+    is, and the step would swamp the differences being looked for.
     """
     low, dual, mid, high = layers
     H, W = low.shape
@@ -140,24 +165,95 @@ def ground_truth(layers, view, width, height, eye_height, far):
     d /= np.linalg.norm(d, axis=2, keepdims=True)
     loc = np.array([float(view["x"]), float(view["y"]), eye])
 
+    def solid(t):
+        """Is the sample at distance `t` inside terrain?"""
+        p = loc[None, None, :] + d * t[..., None]
+        z = p[..., 2]
+        xi = (p[..., 0].astype(np.int64)) % W
+        yi = (p[..., 1].astype(np.int64)) % H
+        return (
+            (z >= 0)
+            & (z <= 255)
+            & ((z < low[yi, xi]) | (dual[yi, xi] & (z >= mid[yi, xi]) & (z < high[yi, xi])))
+        )
+
     alive = np.ones((height, width), bool)
     hit = np.zeros((height, width), bool)
+    dist = np.full((height, width), np.inf)
+    prev = np.zeros((height, width))
     t = 0.5
     while t < far:
         step = 0.5 if t < 250 else 2.0
+        ts = np.full((height, width), t)
         p = loc[None, None, :] + d * t
         z = p[..., 2]
         alive &= ~(alive & (z > 255) & (d[..., 2] > 0))
-        inb = alive & (z >= 0) & (z <= 255)
-        xi = (p[..., 0].astype(np.int64)) % W
-        yi = (p[..., 1].astype(np.int64)) % H
-        s = inb & ((z < low[yi, xi]) | (dual[yi, xi] & (z >= mid[yi, xi]) & (z < high[yi, xi])))
+        s = alive & solid(ts)
+        fresh = s & ~hit
+        dist[fresh] = t
+        prev[fresh] = t - step
         hit |= s
         alive &= ~s
         if not alive.any():
             break
         t += step
-    return ~hit
+
+    # Bisect within the bracketing interval. 12 halvings take the 2-unit
+    # far step under a thousandth of a unit.
+    lo, hi = prev.copy(), np.where(hit, dist, 0.0)
+    for _ in range(12):
+        m = 0.5 * (lo + hi)
+        inside = solid(m)
+        hi = np.where(inside, m, hi)
+        lo = np.where(inside, lo, m)
+    dist = np.where(hit, hi, np.inf)
+    return ~hit, dist, d, loc
+
+
+def ray_distance(depth, dirs, near, far):
+    """A depth buffer as distance along each ray, to match the reference.
+
+    The buffer holds distance along the *view axis*; the reference marches
+    along the ray. They differ by the cosine off-centre, which reaches 20%
+    at the corners of a wide frame - enough to fake a systematic error.
+    """
+    z = np.clip(depth.astype(np.float64), 0.0, 0.9999995)
+    view_z = near * far / (far - z * (far - near))
+    fwd = dirs[dirs.shape[0] // 2, dirs.shape[1] // 2]
+    fwd = fwd / np.linalg.norm(fwd)
+    cos = np.clip(dirs @ fwd, 1e-6, 1.0)
+    return view_z / cos
+
+
+def median3(a):
+    """3x3 median, by stacking the nine shifts."""
+    p = np.pad(a, 1, mode="edge")
+    return np.median(
+        np.stack([p[y:y + a.shape[0], x:x + a.shape[1]]
+                  for y in range(3) for x in range(3)]),
+        axis=0,
+    )
+
+
+def speckle(dist, solid, rel=0.04):
+    """Pixels whose distance disagrees with their own neighbourhood.
+
+    This is the part depth agreement alone cannot see. A renderer can put
+    every surface at very nearly the right distance and still look wrong
+    if it does so incoherently - the sliced terrain draws a stack of
+    horizontal quads, and viewed edge-on those alternate between surface
+    and gap on neighbouring rows. Averaged over the frame that is a small
+    depth error; on screen it is stripes.
+
+    So: flag a pixel whose distance differs from its 3x3 median by more
+    than `rel` of its own distance. Comparing the count against the same
+    measure on the reference is what keeps genuine detail - foliage,
+    rubble, a cliff edge - from being scored as noise.
+    """
+    med = median3(np.where(solid, dist, np.nan))
+    with np.errstate(invalid="ignore"):
+        out = np.abs(dist - med) > rel * np.maximum(dist, 1.0)
+    return np.nan_to_num(out, nan=False) & solid
 
 
 def render(args, view, method, out_dir):
@@ -226,19 +322,41 @@ def main():
 
     cells, stats = {}, {}
     for view in views:
-        sky = ground_truth(layers, view, args.width, args.height,
-                           args.eye_height, args.far)
-        print(f"{view['name']}: ground truth sky = {100 * sky.mean():.1f}% of frame")
+        sky, ref_dist, dirs, _ = ground_truth(layers, view, args.width, args.height,
+                                              args.eye_height, args.far)
+        ref_solid = ~sky
+        ref_speckle = speckle(ref_dist, ref_solid)
+        print(f"{view['name']}: ground truth sky = {100 * sky.mean():.1f}% of frame, "
+              f"{100 * ref_speckle.mean():.1f}% of it genuinely rough")
         for method in METHODS:
             png, depth, ms = render(args, view, method, args.out)
             d = np.fromfile(depth, dtype="<f4").reshape(args.height, args.width)
             empty = d >= 0.999999          # cleared depth: nothing drawn
             see_through = 100 * (empty & ~sky).mean()
             covers_sky = 100 * ((~empty) & sky).mean()
+
+            # Geometry, where both agree something is there. Median rather
+            # than mean: a handful of silhouette pixels straddling a cliff
+            # edge otherwise set the number for the whole frame.
+            got = ray_distance(d, dirs, 1.0, args.far)
+            both = (~empty) & ref_solid
+            if both.any():
+                err = np.abs(got[both] - ref_dist[both])
+                p50, p95 = np.percentile(err, [50, 95])
+            else:
+                p50 = p95 = float("nan")
+
+            # Coherence, in excess of the reference's own. Counts only
+            # pixels the reference thinks are on a smooth surface, so
+            # terrain that is genuinely rough is not charged to anyone.
+            spk = speckle(got, ~empty)
+            excess = 100 * (spk & ~ref_speckle & ref_solid).mean()
+
             cells[(view["name"], method[0])] = png
-            stats[(view["name"], method[0])] = (ms, see_through, covers_sky)
+            stats[(view["name"], method[0])] = (ms, see_through, covers_sky, p50, p95, excess)
             print(f"    {method[0]:12s} {ms:7.1f} ms   "
-                  f"see-through {see_through:5.1f}%   covers-sky {covers_sky:5.1f}%")
+                  f"see-through {see_through:5.1f}%   covers-sky {covers_sky:5.1f}%   "
+                  f"depth p50 {p50:6.1f}u p95 {p95:7.1f}u   speckle {excess:5.1f}%")
 
     # Grid image: rows are viewpoints, columns are methods.
     w, h, pad, lab, hdr = args.width, args.height, 5, 18, 30
@@ -262,10 +380,12 @@ def main():
         for j, method in enumerate(METHODS):
             x = pad + j * (w + pad)
             out.paste(Image.open(cells[(view["name"], method[0])]).convert("RGB"), (x, y + lab))
-            ms, err, _ = stats[(view["name"], method[0])]
+            ms, err, _, _, _, spk = stats[(view["name"], method[0])]
             colour = (255, 120, 120) if err > 5 else ((255, 210, 130) if err > 0.5 else (150, 230, 150))
             dr.text((x + 5, y + lab + h - 16), f"{ms:.1f} ms", font=small, fill=(255, 220, 140))
             dr.text((x + 80, y + lab + h - 16), f"{err:.1f}% see-through", font=small, fill=colour)
+            sc = (255, 120, 120) if spk > 5 else ((255, 210, 130) if spk > 1 else (150, 230, 150))
+            dr.text((x + 210, y + lab + h - 16), f"{spk:.1f}% speckle", font=small, fill=sc)
     grid = os.path.join(args.out, "comparison.png")
     out.save(grid)
     print(f"\nwrote {grid}")

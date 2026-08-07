@@ -51,7 +51,23 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(gfx: &super::GraphicsContext, shadow_view: Option<&wgpu::TextureView>) -> Self {
+    /// `compute_reads_globals` extends the uniform's visibility to the
+    /// compute stage. The scatter terrain reads `u_Globals` from a compute
+    /// shader - it projects terrain samples to the screen, so it needs the
+    /// camera - and a layout that omits the stage fails pipeline creation
+    /// outright. It is a parameter rather than always-on because the
+    /// stage is not available on downlevel devices that have no compute at
+    /// all, and only the terrain context knows whether it is wanted.
+    pub fn new(
+        gfx: &super::GraphicsContext,
+        shadow_view: Option<&wgpu::TextureView>,
+        compute_reads_globals: bool,
+    ) -> Self {
+        let global_visibility = if compute_reads_globals {
+            wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE
+        } else {
+            wgpu::ShaderStages::VERTEX_FRAGMENT
+        };
         let bind_group_layout =
             gfx.device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -59,7 +75,7 @@ impl Context {
                     entries: &[
                         wgpu::BindGroupLayoutEntry {
                             binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                            visibility: global_visibility,
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Uniform,
                                 has_dynamic_offset: false,

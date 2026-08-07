@@ -232,7 +232,14 @@ impl Render {
                     ..wgpu::Limits::downlevel_defaults()
                 }
             }
-            Terrain::Scattered { .. } => wgpu::Limits::default(),
+            // Full defaults, since the scatter pass wants compute and a
+            // read-write storage buffer - but the terrain texture is as tall
+            // as it is for every other mode, and `Limits::default` caps 2D
+            // textures at 8192 against the 16384 the stock levels need.
+            Terrain::Scattered { .. } => wgpu::Limits {
+                max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+                ..wgpu::Limits::default()
+            },
         }
     }
 }
