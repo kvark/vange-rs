@@ -19,14 +19,20 @@ the same amount it is the reference disagreeing about where the
 silhouette falls, not the renderer, and every method in the row shows it.
 
 `depth p50/p95` is how far off the surfaces are, in world units, where
-the renderer and the reference both think something is there. Read it
-comparatively, not absolutely: at the river view the three converged
-renderers agree with *each other* to 1.3u p50 while all differing from
-the reference by ~29u, at a signed median of 0.01u. That is not a bias,
-it is grazing incidence - at eye level most of the ground is nearly
-edge-on, where a sub-pixel difference in ray direction moves the hit by
-tens of units. The reference is the limiting factor there, so treat ~30u
-as its noise floor and look at differences between columns.
+the renderer and the reference both think something is there. Its noise
+floor depends almost entirely on pitch, which is worth knowing before
+reading any row. The same mesh against the same reference:
+
+    pitch    0   see-through 6.70%   covers-sky 7.36%   depth p50 25.3u
+    pitch  -15   see-through 0.00%   covers-sky 0.00%   depth p50  5.5u
+    pitch  -30   see-through 0.00%   covers-sky 0.00%   depth p50  3.7u
+    pitch  -60   see-through 0.00%   covers-sky 0.00%   depth p50  1.7u
+
+Tilt the camera off the horizon and the disagreement vanishes. At eye
+level most of the ground is nearly edge-on, and a sub-pixel difference in
+ray direction moves the hit by tens of units - so at pitch 0 the
+reference, not the renderer, sets the number. Treat ~25u as its floor
+there and compare columns rather than reading a row as absolute error.
 
 `speckle` is the part depth agreement cannot see, and is why it exists:
 the fraction of pixels whose distance disagrees with their own 3x3
@@ -58,6 +64,7 @@ Example
 """
 
 import argparse
+import json
 import math
 import os
 import re
@@ -129,7 +136,7 @@ def load_layers(ron_path):
     return low, dual, np.minimum(low + delta, high), high
 
 
-def ground_truth(layers, view, width, height, eye_height, far):
+def ground_truth(layers, view, width, height, eye_height, far, pitch=0.0):
     """Ray cast the height data with the same camera.
 
     Returns `(sky, dist, dirs, origin)`: a sky mask, the distance along
@@ -145,10 +152,14 @@ def ground_truth(layers, view, width, height, eye_height, far):
     H, W = low.shape
     base = low if view["under"] else high
     eye = float(base[view["y"], view["x"]]) + eye_height
-    yaw = math.radians(view["yaw"])
-    fwd = np.array([math.sin(yaw), math.cos(yaw), 0.0])
-    right = np.cross(fwd, np.array([0.0, 0.0, 1.0]))
+    yaw, pit = math.radians(view["yaw"]), math.radians(pitch)
+    # Yaw first, then tilt within the vertical plane, matching
+    # `make_camera` in bin/level/headless.rs. `right` stays horizontal, so
+    # the horizon stays level.
+    flat = np.array([math.sin(yaw), math.cos(yaw), 0.0])
+    right = np.cross(flat, np.array([0.0, 0.0, 1.0]))
     right /= np.linalg.norm(right)
+    fwd = flat * math.cos(pit) + np.array([0.0, 0.0, 1.0]) * math.sin(pit)
     up = np.cross(right, fwd)
     # `DEFAULT_FOCAL_PX`. The renderer takes its vertical FOV from
     # `fov_from_focal_px(512, height)`, i.e. a focal length fixed in
@@ -166,16 +177,24 @@ def ground_truth(layers, view, width, height, eye_height, far):
     loc = np.array([float(view["x"]), float(view["y"]), eye])
 
     def solid(t):
-        """Is the sample at distance `t` inside terrain?"""
+        """Is the sample at distance `t` inside terrain?
+
+        `z <= 0` counts as solid. Terrain cannot go below zero, so a ray
+        that gets there has run into the bottom of the world - and the
+        alternative is worse: guarding the floor test with `z >= 0` makes
+        a texel of height 0 unhittable, since no `z` satisfies both
+        `z >= 0` and `z < 0`. Sea level is a real height on these maps, so
+        that turned every downward ray over water into sky. It cost ~23%
+        of a straight-down frame and a few percent of a level one, which
+        had been written off as silhouette noise.
+        """
         p = loc[None, None, :] + d * t[..., None]
         z = p[..., 2]
         xi = (p[..., 0].astype(np.int64)) % W
         yi = (p[..., 1].astype(np.int64)) % H
-        return (
-            (z >= 0)
-            & (z <= 255)
-            & ((z < low[yi, xi]) | (dual[yi, xi] & (z >= mid[yi, xi]) & (z < high[yi, xi])))
-        )
+        floor = (z <= 0) | (z < low[yi, xi])
+        cave = dual[yi, xi] & (z >= mid[yi, xi]) & (z < high[yi, xi])
+        return (z <= 255) & (floor | cave)
 
     alive = np.ones((height, width), bool)
     hit = np.zeros((height, width), bool)
@@ -256,22 +275,25 @@ def speckle(dist, solid, rel=0.04):
     return np.nan_to_num(out, nan=False) & solid
 
 
-def render(args, view, method, out_dir):
+def render(args, view, method, out_dir, pitch=0.0):
     label, terrain, extra, warmup = method
     tag = re.sub(r"[^A-Za-z0-9]+", "_", label)
-    png = os.path.join(out_dir, f"{view['name']}-{tag}.png")
-    depth = os.path.join(out_dir, f"{view['name']}-{tag}.f32")
+    stem = f"{view['name']}-p{int(pitch)}-{tag}"
+    png = os.path.join(out_dir, f"{stem}.png")
+    depth = os.path.join(out_dir, f"{stem}.f32")
+    bench = os.path.join(out_dir, f"{stem}.json")
     cmd = [
         args.binary, "--snapshot", png, "--depth-out", depth,
         "--terrain", terrain, *extra,
         "--fp", f"{view['x']},{view['y']}",
         "--fp-height", str(args.eye_height),
-        "--fp-yaw", str(view["yaw"]),
+        f"--fp-yaw={view['yaw']}", f"--fp-pitch={pitch}",
         # The default near plane clips the ground out from under a
         # first-person camera; rasterized terrain then shows through.
         "--near", "1", "--far", str(args.far),
         "--width", str(args.width), "--height", str(args.height),
         "--frames", str(args.frames), "--warmup", str(warmup),
+        "--bench-out", bench,
     ]
     if view["under"]:
         cmd.append("--fp-under")
@@ -284,8 +306,9 @@ def render(args, view, method, out_dir):
     if res.returncode != 0:
         print(res.stderr[-2000:], file=sys.stderr)
         raise SystemExit(f"render failed: {label} / {view['name']}")
-    m = re.search(r"avg=([0-9.]+)ms", res.stderr)
-    return png, depth, float(m.group(1)) if m else float("nan")
+    with open(bench) as f:
+        meta = json.load(f)
+    return png, depth, meta
 
 
 def main():
@@ -300,6 +323,16 @@ def main():
     ap.add_argument("--view", action="append",
                     help="name:x,y:yaw[:under], repeatable. Defaults to the "
                          "four Fostral viewpoints in DEFAULT_VIEWS")
+    ap.add_argument("--pitch", action="append", type=float,
+                    help="camera pitch in degrees, repeatable. 0 is "
+                         "horizontal, -90 straight down. Defaults to 0 alone; "
+                         "the interesting axis is that most methods degrade as "
+                         "the view flattens toward the horizon")
+    ap.add_argument("--label", default="",
+                    help="name for this machine, recorded in the results file")
+    ap.add_argument("--json-out",
+                    help="write every measurement here, for merging runs from "
+                         "several devices with tools/merge-bench.py")
     ap.add_argument("--frames", type=int, default=20,
                     help="timed frames per render. Each is submitted and "
                          "polled to completion, so this measures GPU work "
@@ -320,67 +353,96 @@ def main():
     views = [parse_view(v) for v in args.view or DEFAULT_VIEWS]
     layers = load_layers(args.layers)
 
-    cells, stats = {}, {}
-    for view in views:
-        sky, ref_dist, dirs, _ = ground_truth(layers, view, args.width, args.height,
-                                              args.eye_height, args.far)
-        ref_solid = ~sky
-        ref_speckle = speckle(ref_dist, ref_solid)
-        print(f"{view['name']}: ground truth sky = {100 * sky.mean():.1f}% of frame, "
-              f"{100 * ref_speckle.mean():.1f}% of it genuinely rough")
-        for method in METHODS:
-            png, depth, ms = render(args, view, method, args.out)
-            d = np.fromfile(depth, dtype="<f4").reshape(args.height, args.width)
-            empty = d >= 0.999999          # cleared depth: nothing drawn
-            see_through = 100 * (empty & ~sky).mean()
-            covers_sky = 100 * ((~empty) & sky).mean()
+    pitches = args.pitch or [0.0]
+    cells, stats, rows = {}, {}, []
+    device = None
+    for pitch in pitches:
+        for view in views:
+            sky, ref_dist, dirs, _ = ground_truth(layers, view, args.width, args.height,
+                                                  args.eye_height, args.far, pitch)
+            ref_solid = ~sky
+            ref_speckle = speckle(ref_dist, ref_solid)
+            print(f"{view['name']} @ pitch {pitch:g}: ground truth sky = "
+                  f"{100 * sky.mean():.1f}% of frame, "
+                  f"{100 * ref_speckle.mean():.1f}% of it genuinely rough")
+            for method in METHODS:
+                png, depth, meta = render(args, view, method, args.out, pitch)
+                if device is None:
+                    device = {k: meta[k] for k in
+                              ("adapter", "backend", "device_type", "driver", "driver_info")}
+                ms = meta["avg_ms"]
+                d = np.fromfile(depth, dtype="<f4").reshape(args.height, args.width)
+                empty = d >= 0.999999          # cleared depth: nothing drawn
+                see_through = 100 * (empty & ~sky).mean()
+                covers_sky = 100 * ((~empty) & sky).mean()
 
-            # Geometry, where both agree something is there. Median rather
-            # than mean: a handful of silhouette pixels straddling a cliff
-            # edge otherwise set the number for the whole frame.
-            got = ray_distance(d, dirs, 1.0, args.far)
-            both = (~empty) & ref_solid
-            if both.any():
-                err = np.abs(got[both] - ref_dist[both])
-                p50, p95 = np.percentile(err, [50, 95])
-            else:
-                p50 = p95 = float("nan")
+                # Geometry, where both agree something is there. Median
+                # rather than mean: a handful of silhouette pixels straddling
+                # a cliff edge otherwise set the number for the whole frame.
+                got = ray_distance(d, dirs, 1.0, args.far)
+                both = (~empty) & ref_solid
+                if both.any():
+                    err = np.abs(got[both] - ref_dist[both])
+                    p50, p95 = (float(v) for v in np.percentile(err, [50, 95]))
+                else:
+                    p50 = p95 = float("nan")
 
-            # Coherence, in excess of the reference's own. Counts only
-            # pixels the reference thinks are on a smooth surface, so
-            # terrain that is genuinely rough is not charged to anyone.
-            spk = speckle(got, ~empty)
-            excess = 100 * (spk & ~ref_speckle & ref_solid).mean()
+                # Coherence, in excess of the reference's own. Counts only
+                # pixels the reference thinks are on a smooth surface, so
+                # terrain that is genuinely rough is not charged to anyone.
+                spk = speckle(got, ~empty)
+                excess = 100 * (spk & ~ref_speckle & ref_solid).mean()
 
-            cells[(view["name"], method[0])] = png
-            stats[(view["name"], method[0])] = (ms, see_through, covers_sky, p50, p95, excess)
-            print(f"    {method[0]:12s} {ms:7.1f} ms   "
-                  f"see-through {see_through:5.1f}%   covers-sky {covers_sky:5.1f}%   "
-                  f"depth p50 {p50:6.1f}u p95 {p95:7.1f}u   speckle {excess:5.1f}%")
+                key = (view["name"], pitch, method[0])
+                cells[key] = png
+                stats[key] = (ms, see_through, covers_sky, p50, p95, excess)
+                rows.append({
+                    "view": view["name"], "pitch": pitch, "method": method[0],
+                    "avg_ms": ms, "min_ms": meta["min_ms"], "max_ms": meta["max_ms"],
+                    "frame_ms": meta["frame_ms"],
+                    "see_through": see_through, "covers_sky": covers_sky,
+                    "depth_p50": p50, "depth_p95": p95, "speckle": excess,
+                })
+                print(f"    {method[0]:12s} {ms:7.1f} ms   "
+                      f"see-through {see_through:5.1f}%   covers-sky {covers_sky:5.1f}%   "
+                      f"depth p50 {p50:6.1f}u p95 {p95:7.1f}u   speckle {excess:5.1f}%")
+
+    if args.json_out:
+        with open(args.json_out, "w") as f:
+            json.dump({
+                "label": args.label or (device or {}).get("adapter", "unknown"),
+                "device": device,
+                "width": args.width, "height": args.height,
+                "far": args.far, "frames": args.frames,
+                "rows": rows,
+            }, f, indent=1)
+        print(f"\nwrote {args.json_out}")
 
     # Grid image: rows are viewpoints, columns are methods.
     w, h, pad, lab, hdr = args.width, args.height, 5, 18, 30
     W = len(METHODS) * (w + pad) + pad
-    H = hdr + len(views) * (h + lab + pad) + pad
-    out = Image.new("RGB", (W, H), (20, 22, 26))
-    dr = ImageDraw.Draw(out)
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 15)
         small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 11)
     except OSError:
         font = small = ImageFont.load_default()
+    grid_views = [(v, p) for p in pitches for v in views]
+    H = hdr + len(grid_views) * (h + lab + pad) + pad
+    out = Image.new("RGB", (W, H), (20, 22, 26))
+    dr = ImageDraw.Draw(out)
     for j, method in enumerate(METHODS):
         dr.text((pad + j * (w + pad) + 2, 8), method[0], font=font, fill=(235, 238, 242))
-    for i, view in enumerate(views):
+    for i, (view, pitch) in enumerate(grid_views):
         y = hdr + i * (h + lab + pad)
         dr.text((pad + 2, y + 2),
-                f"{view['name']} at ({view['x']},{view['y']}) yaw {view['yaw']:g}"
-                + (" (under)" if view["under"] else ""),
+                f"{view['name']} at ({view['x']},{view['y']}) yaw {view['yaw']:g} "
+                f"pitch {pitch:g}" + (" (under)" if view["under"] else ""),
                 font=small, fill=(150, 196, 255))
         for j, method in enumerate(METHODS):
             x = pad + j * (w + pad)
-            out.paste(Image.open(cells[(view["name"], method[0])]).convert("RGB"), (x, y + lab))
-            ms, err, _, _, _, spk = stats[(view["name"], method[0])]
+            key = (view["name"], pitch, method[0])
+            out.paste(Image.open(cells[key]).convert("RGB"), (x, y + lab))
+            ms, err, _, _, _, spk = stats[key]
             colour = (255, 120, 120) if err > 5 else ((255, 210, 130) if err > 0.5 else (150, 230, 150))
             dr.text((x + 5, y + lab + h - 16), f"{ms:.1f} ms", font=small, fill=(255, 220, 140))
             dr.text((x + 80, y + lab + h - 16), f"{err:.1f}% see-through", font=small, fill=colour)
