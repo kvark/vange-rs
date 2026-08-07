@@ -20,6 +20,10 @@ struct Cli {
     /// Overlay the mesh triangle edges. Only meaningful with --terrain Mesh.
     #[arg(long, default_value_t = false)]
     mesh_wireframe: bool,
+    /// Write the frustum and the per-chunk cull/LOD decisions as JSON, for
+    /// a top-down plot of what the renderer chose.
+    #[arg(long)]
+    cull_dump: Option<String>,
     /// Pin the mesh to one LOD (0 = finest) instead of choosing by distance.
     #[arg(long)]
     mesh_lod: Option<usize>,
@@ -234,6 +238,7 @@ fn main() {
                 (v.x, v.y)
             }),
             depth_out: cli.depth_out.clone(),
+            cull_dump: cli.cull_dump.clone(),
             dump_texel: cli.dump_texel.as_deref().map(|s| {
                 let v = parse_vec3(&format!("{},0", s));
                 (v.x as i32, v.y as i32)
