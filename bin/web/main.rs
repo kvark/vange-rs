@@ -913,29 +913,48 @@ impl ApplicationHandler for WebHandler {
                 // (`navigator.gpu` exists in browsers where WebGPU
                 // is exposed but not actually working, so the
                 // namespace check alone is not enough.)
-                let webgpu_probe = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                    backends: wgpu::Backends::BROWSER_WEBGPU,
-                    ..wgpu::InstanceDescriptor::new_without_display_handle()
-                });
-                let webgpu_adapter = webgpu_probe
-                    .request_adapter(&wgpu::RequestAdapterOptions {
-                        power_preference: wgpu::PowerPreference::HighPerformance,
-                        compatible_surface: None,
-                        force_fallback_adapter: false,
-                    })
-                    .await
-                    .ok();
+                //
+                // The mesh skips the probe outright. It is fitted on
+                // the CPU and drawn with the plain raster pipeline, so
+                // WebGPU buys it nothing, and initializing a backend a
+                // route will not use is a way to inherit that
+                // backend's problems - a WGSL rule enforced by one
+                // implementation and not another takes down a page
+                // that had no need of it. The voxel tracer needs
+                // compute and so still asks.
+                let webgpu_adapter = if terrain_choice() == TerrainChoice::Mesh {
+                    log::info!("Mesh terrain runs on WebGL2; skipping the WebGPU probe");
+                    None
+                } else {
+                    let probe = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                        backends: wgpu::Backends::BROWSER_WEBGPU,
+                        ..wgpu::InstanceDescriptor::new_without_display_handle()
+                    });
+                    let adapter = probe
+                        .request_adapter(&wgpu::RequestAdapterOptions {
+                            power_preference: wgpu::PowerPreference::HighPerformance,
+                            compatible_surface: None,
+                            force_fallback_adapter: false,
+                        })
+                        .await
+                        .ok();
+                    // Keep the probe instance only if it produced the
+                    // adapter we are going to render with; the surface
+                    // has to come from the same instance.
+                    adapter.map(|a| (probe, a))
+                };
                 let is_webgpu = webgpu_adapter.is_some();
 
-                let (instance, surface, adapter) = if let Some(adapter) = webgpu_adapter {
+                let (instance, surface, adapter) = if let Some((webgpu_probe, adapter)) =
+                    webgpu_adapter
+                {
                     log::info!("Using WebGPU backend");
                     let surface = webgpu_probe
                         .create_surface(window_clone.clone())
                         .expect("Failed to create the canvas surface (WebGPU)");
                     (webgpu_probe, surface, adapter)
                 } else {
-                    drop(webgpu_probe);
-                    log::info!("WebGPU unavailable, using WebGL2");
+                    log::info!("Using WebGL2 backend");
                     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
                         backends: wgpu::Backends::GL,
                         ..wgpu::InstanceDescriptor::new_without_display_handle()
