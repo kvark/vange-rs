@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Merge `compare-terrain.py --json-out` runs from several machines.
+
+Each run records the adapter, backend and driver it was measured on, so
+the files can be collected from different devices and turned into one set
+of tables without hand-editing anything.
+
+Emits Markdown: a device roster, then frame time per device, then the
+accuracy columns (which are device-independent, so they are reported once
+and cross-checked across devices instead of repeated).
+
+Example
+-------
+    # on each machine
+    tools/compare-terrain.py --layers work/level.ron --out work/cmp \\
+        --label "RTX 4070" --json-out results-4070.json \\
+        --pitch 0 --pitch -30 --pitch -60 --pitch -90
+
+    # then, anywhere
+    tools/merge-bench.py results-*.json > results.md
+"""
+
+import argparse
+import json
+import statistics
+import sys
+
+
+def fmt(v, digits=1):
+    if v is None or v != v:  # NaN
+        return "—"
+    return f"{v:.{digits}f}"
+
+
+def table(rows, headers):
+    out = ["| " + " | ".join(headers) + " |",
+           "|" + "|".join("---" for _ in headers) + "|"]
+    out += ["| " + " | ".join(r) + " |" for r in rows]
+    return "\n".join(out)
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("results", nargs="+", help="JSON files from --json-out")
+    ap.add_argument("--metric", default="avg_ms",
+                    choices=["avg_ms", "min_ms", "median_ms"],
+                    help="which frame time to tabulate. `min_ms` is the least "
+                         "noisy on a busy machine; `avg_ms` includes hitches")
+    args = ap.parse_args()
+
+    runs = []
+    for path in args.results:
+        with open(path) as f:
+            runs.append(json.load(f))
+
+    methods, keys = [], []
+    for run in runs:
+        for r in run["rows"]:
+            if r["method"] not in methods:
+                methods.append(r["method"])
+            k = (r["view"], r["pitch"])
+            if k not in keys:
+                keys.append(k)
+
+    def value(run, view, pitch, method):
+        for r in run["rows"]:
+            if r["view"] == view and r["pitch"] == pitch and r["method"] == method:
+                if args.metric == "median_ms":
+                    return statistics.median(r["frame_ms"]) if r["frame_ms"] else None
+                return r[args.metric]
+        return None
+
+    def acc(run, view, pitch, method, field):
+        for r in run["rows"]:
+            if r["view"] == view and r["pitch"] == pitch and r["method"] == method:
+                return r[field]
+        return None
+
+    print("## Devices\n")
+    rows = []
+    for run in runs:
+        d = run.get("device") or {}
+        rows.append([
+            run.get("label", "?"),
+            d.get("adapter", "?"),
+            f"{d.get('backend', '?')} / {d.get('device_type', '?')}",
+            d.get("driver_info", d.get("driver", "?")) or "?",
+            f"{run['width']}x{run['height']}, far {run['far']:g}, {run['frames']} frames",
+        ])
+    print(table(rows, ["label", "adapter", "backend / type", "driver", "config"]))
+
+    print(f"\n## Frame time, {args.metric} (ms)\n")
+    print("Submitted and polled to completion per frame, so this is GPU work "
+          "but per-frame latency rather than pipelined throughput.\n")
+    for run in runs:
+        if len(runs) > 1:
+            print(f"\n### {run.get('label', '?')}\n")
+        rows = []
+        for view, pitch in keys:
+            cells = [f"{view} @ {pitch:g}°"]
+            for m in methods:
+                cells.append(fmt(value(run, view, pitch, m)))
+            rows.append(cells)
+        print(table(rows, ["view"] + methods))
+
+    # Accuracy does not depend on the device, so report it from the first
+    # run and say so - but check the others agree, because a mismatch means
+    # a driver is producing different geometry and that is a finding.
+    base = runs[0]
+    print("\n## Accuracy: see-through / covers-sky / speckle (%)\n")
+    print(f"Device-independent; taken from **{base.get('label', '?')}**. "
+          "`see-through` is solid terrain left as background and "
+          "`covers-sky` is background filled in — only the first moves when "
+          "a renderer is really missing geometry, and both move together "
+          "when the reference is the one disagreeing. `speckle` is what "
+          "depth agreement cannot see: pixels whose distance disagrees with "
+          "their own neighbourhood, in excess of the reference doing the "
+          "same.\n")
+    rows = []
+    for view, pitch in keys:
+        cells = [f"{view} @ {pitch:g}°"]
+        for m in methods:
+            st = acc(base, view, pitch, m, "see_through")
+            cs = acc(base, view, pitch, m, "covers_sky")
+            sp = acc(base, view, pitch, m, "speckle")
+            cells.append(f"{fmt(st)} / {fmt(cs)} / {fmt(sp)}")
+        rows.append(cells)
+    print(table(rows, ["view"] + methods))
+
+    mismatched = []
+    for run in runs[1:]:
+        for view, pitch in keys:
+            for m in methods:
+                a = acc(base, view, pitch, m, "see_through")
+                b = acc(run, view, pitch, m, "see_through")
+                if a is not None and b is not None and abs(a - b) > 0.5:
+                    mismatched.append((run.get("label", "?"), view, pitch, m, a, b))
+    if mismatched:
+        print("\n> **Devices disagree on geometry.** Accuracy should not vary "
+              "with the adapter; where it does, one of them is rendering "
+              "something different.\n")
+        for label, view, pitch, m, a, b in mismatched:
+            print(f"> - {m} at {view} @ {pitch:g}°: "
+                  f"{base.get('label', '?')} {a:.1f}% vs {label} {b:.1f}%")
+
+    print("\n## Depth error, p50 / p95 (world units)\n")
+    print("Read comparatively. The reference's own floor is dominated by "
+          "pitch — about 25u at the horizon, under 2u once the camera tilts "
+          "off it — because grazing rays move their hit point by tens of "
+          "units for a sub-pixel direction change.\n")
+    rows = []
+    for view, pitch in keys:
+        cells = [f"{view} @ {pitch:g}°"]
+        for m in methods:
+            p50 = acc(base, view, pitch, m, "depth_p50")
+            p95 = acc(base, view, pitch, m, "depth_p95")
+            cells.append(f"{fmt(p50)} / {fmt(p95)}")
+        rows.append(cells)
+    print(table(rows, ["view"] + methods))
+
+
+if __name__ == "__main__":
+    main()

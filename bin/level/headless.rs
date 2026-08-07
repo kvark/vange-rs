@@ -471,29 +471,57 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         );
 
         if let Some(ref path) = opts.bench_out {
+            // Everything needed to tell one machine's run from another's
+            // later, plus the raw frame times so percentiles can be taken
+            // after the fact - min/avg/max hides a bimodal distribution,
+            // which is exactly what a driver hitch looks like.
+            let info = adapter.get_info();
+            let times = frame_times
+                .iter()
+                .map(|d| format!("{:.4}", d.as_secs_f64() * 1e3))
+                .collect::<Vec<_>>()
+                .join(", ");
             let body = format!(
                 concat!(
                     "{{\n",
-                    "  \"adapter\": \"{}\",\n",
+                    "  \"adapter\": {:?},\n",
+                    "  \"backend\": {:?},\n",
+                    "  \"device_type\": {:?},\n",
+                    "  \"driver\": {:?},\n",
+                    "  \"driver_info\": {:?},\n",
                     "  \"width\": {},\n",
                     "  \"height\": {},\n",
                     "  \"frames\": {},\n",
                     "  \"warmup\": {},\n",
                     "  \"cam_elev_deg\": {},\n",
+                    "  \"fp_yaw_deg\": {},\n",
+                    "  \"fp_pitch_deg\": {},\n",
+                    "  \"near\": {},\n",
+                    "  \"far\": {},\n",
                     "  \"min_ms\": {:.4},\n",
                     "  \"avg_ms\": {:.4},\n",
-                    "  \"max_ms\": {:.4}\n",
+                    "  \"max_ms\": {:.4},\n",
+                    "  \"frame_ms\": [{}]\n",
                     "}}\n"
                 ),
-                adapter.get_info().name,
+                info.name,
+                format!("{:?}", info.backend),
+                format!("{:?}", info.device_type),
+                info.driver,
+                info.driver_info,
                 opts.width,
                 opts.height,
                 opts.frames,
                 opts.warmup,
                 opts.cam_elev_deg,
+                opts.fp_yaw,
+                opts.fp_pitch,
+                opts.near,
+                opts.far,
                 min.as_secs_f64() * 1e3,
                 avg.as_secs_f64() * 1e3,
                 max.as_secs_f64() * 1e3,
+                times,
             );
             if let Some(parent) = std::path::Path::new(path).parent() {
                 std::fs::create_dir_all(parent).ok();
