@@ -286,6 +286,10 @@ impl CameraStyle {
     }
 }
 
+/// How far above the ground the follow camera is held, so it does not
+/// end up inside a hillside looking at terrain backfaces.
+const CAMERA_CLEARANCE: f32 = 4.0;
+
 struct Clipper {
     mx_vp: glam::Mat4,
     threshold: f32,
@@ -915,6 +919,7 @@ impl Application for Game {
                             .high();
                     }
                     self.cam.follow(&target, delta, follow);
+                    self.cam.keep_above_ground(&self.level, CAMERA_CLEARANCE);
                 }
             }
         }

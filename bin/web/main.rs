@@ -20,6 +20,11 @@ use vangers::{
 /// is missing (404) we fall back to the procedural test level.
 const DEFAULT_LEVEL: &str = "fostral";
 
+/// How far above the ground the chase camera is held. Small enough that
+/// the framing barely moves on flat terrain, large enough that the near
+/// plane does not clip into the surface on a slope.
+const CAMERA_CLEARANCE: f32 = 4.0;
+
 /// INI path inside the per-level zip. Each `<id>.zip` stores the level
 /// files at the archive root (no `<id>/` prefix), so the INI key is
 /// just `"world.ini"`.
@@ -434,8 +439,8 @@ impl WebApp {
             // above it. Shared by every route, so switching between them
             // compares the renderers and nothing else.
             s.game.camera.angle = 16;
-            s.game.camera.offset = 44.0;
-            s.game.camera.height = 15.0;
+            s.game.camera.offset = 30.0;
+            s.game.camera.height = 10.0;
             // Snappier than the default so the camera stays behind the
             // car through turns instead of trailing wide.
             s.game.camera.speed = 4.0;
@@ -582,6 +587,7 @@ impl WebApp {
             cam.loc = a.transform.disp + glam::vec3(0.0, 0.0, 200.0);
             for _ in 0..120 {
                 cam.follow(&a.transform, 1.0 / 60.0, &follow);
+                cam.keep_above_ground(&level, CAMERA_CLEARANCE);
             }
         }
 
@@ -1406,6 +1412,7 @@ impl WebHandler {
                 }
                 agent.physics_step(left, level_ref, &common);
                 gpu.app.cam.follow(&agent.transform, dt, &follow);
+                gpu.app.cam.keep_above_ground(level_ref, CAMERA_CLEARANCE);
             }
         } else if !connected {
             // No vehicle loaded — fall back to the free camera. Same
