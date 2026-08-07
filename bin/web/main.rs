@@ -392,6 +392,10 @@ struct WebApp {
     agent: Option<Agent>,
     /// Follow-camera parameters (radius/height/smoothing).
     follow: space::Follow,
+    /// Longest physics step taken in one go. The integrator is not
+    /// linear in `dt` - drag and collision response saturate - so a
+    /// long frame has to be split, not scaled up.
+    max_quant: f32,
     /// True when running on WebGPU (vs WebGL2 fallback).
     is_webgpu: bool,
 }
@@ -589,6 +593,7 @@ impl WebApp {
             common,
             agent,
             follow,
+            max_quant: settings.game.physics.max_quant,
             is_webgpu,
         }
     }
@@ -1359,6 +1364,7 @@ impl WebHandler {
             let common = gpu.app.common.clone();
             let level_ref = &gpu.app.level;
             let follow = gpu.app.follow;
+            let max_quant = gpu.app.max_quant;
             if let Some(ref mut agent) = gpu.app.agent {
                 agent.control.motor = motor;
                 agent.control.rudder = rudder;
@@ -1384,7 +1390,21 @@ impl WebHandler {
                         * n.num_calls_analysis as f32
                 };
                 agent.apply_control(input_factor, &common);
-                agent.physics_step(physics_dt, level_ref, &common);
+                // Sub-step, as the native build does. `physics::step`
+                // is not linear in `dt` - it derives a speed
+                // correction from `dt / time_delta0` and applies drag
+                // and collision response once per call, both of which
+                // saturate - so folding a long frame into one large
+                // step loses speed rather than covering the same
+                // ground. That showed up as the car crawling whenever
+                // the frame rate dipped, which is exactly when the
+                // camera swings and more terrain comes into view.
+                let mut left = physics_dt;
+                while left > max_quant {
+                    agent.physics_step(max_quant, level_ref, &common);
+                    left -= max_quant;
+                }
+                agent.physics_step(left, level_ref, &common);
                 gpu.app.cam.follow(&agent.transform, dt, &follow);
             }
         } else if !connected {

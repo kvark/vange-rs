@@ -240,8 +240,12 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     };
 
     info!("Creating headless wgpu instance");
+    // `WGPU_BACKEND=gl` picks the GL backend, which is what the web
+    // build runs on. Worth being able to reach from here: the wrap-tile
+    // instancing the mesh relies on is emulated on GLES and cannot be
+    // exercised on the Vulkan path at all.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::PRIMARY,
+        backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY),
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
 
