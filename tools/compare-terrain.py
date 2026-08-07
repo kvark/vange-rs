@@ -10,6 +10,19 @@ bluish pixel is sky or water is guesswork on a level like Fostral.
 Produces a grid image (rows = viewpoints, columns = methods) annotated
 with frame time and see-through error, plus the numbers on stdout.
 
+Reading the two error columns together is what makes them useful.
+`see-through` is solid terrain the renderer left as background;
+`covers-sky` is background it filled in. A renderer that is genuinely
+missing geometry moves only the first - height-field ray tracing scores
+tens of percent see-through against 0.0% covers-sky. When both move by
+the same amount it is the reference disagreeing about where the
+silhouette falls, not the renderer, and every method in the row shows it.
+
+Timing is `submit` then poll to completion, per frame, so it measures GPU
+work rather than submission - but serially, which makes it per-frame
+latency rather than pipelined throughput. `WGPU_BACKEND` selects the
+backend (`vulkan`, `dx12`, `metal`, `gl`).
+
 Prerequisites
 -------------
     cargo build --release --bin level --bin convert
@@ -48,7 +61,26 @@ METHODS = [
     ("RayTraced", "RayTraced", [], 3),
     ("RayVoxel", "RayVoxelTraced", ["--voxel-size", "4,8,2"], 170),
     ("Painter", "Painted", [], 3),
+    ("Mesh q=0.25", "Mesh", ["--mesh-quality", "0.25"], 3),
     ("Mesh q=0.75", "Mesh", ["--mesh-quality", "0.75"], 3),
+]
+
+# Fostral first-person viewpoints: a tunnel interior, a river under a
+# span, a deep canyon and an open ridge. Chosen for obstructions at eye
+# level, which is where the renderers disagree; a view of open ground
+# tells you nothing.
+#
+# Each was checked against the reference before being listed here - the
+# residual disagreement of a *correct* renderer at these, in the order
+# below, is 0.0%, 5.0%, 1.8% and 8.5%. It tracks how much horizon is in
+# frame, because that is where the CPU march and the rasterizer round the
+# silhouette differently. Treat those as the noise floor: a renderer is
+# only interesting where it is worse than its neighbours in the same row.
+DEFAULT_VIEWS = [
+    "tunnel:1984,624:100:under",
+    "river:2006,1730:120",
+    "canyon:1700,4200:270",
+    "ridge:1500,900:45",
 ]
 
 
@@ -93,8 +125,12 @@ def ground_truth(layers, view, width, height, eye_height, far):
     right = np.cross(fwd, np.array([0.0, 0.0, 1.0]))
     right /= np.linalg.norm(right)
     up = np.cross(right, fwd)
-    # Matches `DEFAULT_FOCAL_PX` scaled to the render height.
-    focal = 512.0 * (height / 300.0)
+    # `DEFAULT_FOCAL_PX`. The renderer takes its vertical FOV from
+    # `fov_from_focal_px(512, height)`, i.e. a focal length fixed in
+    # *pixels*, so the reference must use the same constant and let the
+    # frame size decide the angle. Scaling it by the height instead only
+    # agreed at 300 px tall and diverged toward the frame edges elsewhere.
+    focal = 512.0
     j, i = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
     d = (
         fwd[None, None, :] * focal
@@ -139,7 +175,7 @@ def render(args, view, method, out_dir):
         # first-person camera; rasterized terrain then shows through.
         "--near", "1", "--far", str(args.far),
         "--width", str(args.width), "--height", str(args.height),
-        "--frames", "3", "--warmup", str(warmup),
+        "--frames", str(args.frames), "--warmup", str(warmup),
     ]
     if view["under"]:
         cmd.append("--fp-under")
@@ -165,8 +201,14 @@ def main():
     ap.add_argument("--layers", required=True,
                     help="level.ron written by the `convert` binary")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--view", action="append", required=True,
-                    help="name:x,y:yaw[:under], repeatable")
+    ap.add_argument("--view", action="append",
+                    help="name:x,y:yaw[:under], repeatable. Defaults to the "
+                         "four Fostral viewpoints in DEFAULT_VIEWS")
+    ap.add_argument("--frames", type=int, default=20,
+                    help="timed frames per render. Each is submitted and "
+                         "polled to completion, so this measures GPU work "
+                         "rather than submission - but serially, so it is "
+                         "per-frame latency, not pipelined throughput")
     ap.add_argument("--width", type=int, default=400)
     ap.add_argument("--height", type=int, default=260)
     ap.add_argument("--eye-height", type=float, default=8.0)
@@ -179,7 +221,7 @@ def main():
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
-    views = [parse_view(v) for v in args.view]
+    views = [parse_view(v) for v in args.view or DEFAULT_VIEWS]
     layers = load_layers(args.layers)
 
     cells, stats = {}, {}
