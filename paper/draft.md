@@ -24,11 +24,13 @@ silhouettes, and both from spatial incoherence.
 
 Three results are worth reporting. First, greedy triangulated irregular
 network fitting — the standard approach, and the strongest performer here
-— reduces triangle count by 14.9× on this data against roughly 80× on a
-smooth surface, and 23% of its vertex budget is consumed by a single
-structural feature: the boundary between single- and double-layer
-regions, where the auxiliary layers step discontinuously and an
-error-driven fit chases a discontinuity no tolerance satisfies. Second,
+— varies by a factor of 35 across the ten shipped worlds, and what
+predicts the variation is not terrain relief but the multi-layer
+encoding. Single-layer worlds compress 45–182×, in line with published
+results on elevation models; worlds that are 40–47% double-level manage
+5.2–5.7×. The correlation between reduction and the roughness of the
+terrain's own floor is −0.25; against the fraction of double-level
+geometry it is −0.88. Second,
 the methods are nearly indistinguishable when the camera looks down and
 diverge sharply as it approaches the horizon, which is the viewpoint the
 original engine never used and every modern one does. Third, we show that
@@ -50,8 +52,8 @@ Contributions:
    data, decomposed into coverage, geometric and coherence error, with
    the failure mode of the naive version documented.
 3. A public dataset, harness and reference implementations.
-4. Measurements of where greedy TIN fitting degrades on authored terrain,
-   and why.
+4. A ten-world survey isolating what actually drives fit cost, and the
+   mechanism behind it.
 
 ## 2. The Data
 
@@ -209,8 +211,11 @@ Fostral, triangles against a full grid mesh:
 | 1.0 | 1 | 11.3 M | 22.4 M | 3.0× |
 
 Against roughly 80× for a smooth synthetic surface at comparable
-tolerance. **TODO: the same sweep on a natural DEM, same code — this is
-the control that makes the claim a measurement.**
+tolerance, and 45–182× for the single-layer stock worlds (§6.2). The
+stock worlds are the better control than an external elevation model
+would be: they vary only content, holding encoding, quantisation, texel
+scale and authoring pipeline fixed, so the comparison isolates one
+variable rather than four.
 
 ## 6. Findings
 
@@ -232,11 +237,45 @@ sitting ~29 u from the reference, at a signed median of 0.01 u — scatter,
 not bias. Any ground-truth comparison of first-person terrain has this
 floor, and reporting absolute error without it overstates precision.
 
-### 6.2 Greedy TIN degrades on authored terrain
+### 6.2 The multi-layer encoding, not the terrain, sets the fit cost
 
-14.9× where a smooth surface gives ~80×. Vangers terrain is cliff-heavy
-and detailed per texel; the error-driven insertion that exploits
-smoothness has little to exploit.
+The obvious reading of a 14.9× reduction where a smooth surface gives
+~80× is that hand-authored terrain is simply harder to fit. The ten
+shipped worlds let us test that directly: same engine, same encoding,
+same 8-bit quantisation, same texel scale, same authoring tools, varying
+only content. Fitted at identical tolerance:
+
+| level | texels | triangles | reduction | slab tris | dual texels | rough(floor) | rough(surface) |
+|---|---|---|---|---|---|---|---|
+| weexow | 4.2 M | 0.05 M | 182.0× | 0.0% | 0.0% | 1.84 | 1.84 |
+| threall | 4.2 M | 0.19 M | 45.3× | 0.0% | 0.0% | 2.85 | 2.85 |
+| xplo | 8.4 M | 0.87 M | 19.4× | 17.0% | 1.4% | 7.54 | 8.80 |
+| khox | 4.2 M | 0.52 M | 16.1× | 9.3% | 4.8% | 6.94 | 7.71 |
+| boozeena | 4.2 M | 1.46 M | 5.7× | 41.5% | 13.3% | 3.44 | 25.15 |
+| hmok | 4.2 M | 1.61 M | 5.2× | 47.2% | 38.0% | 2.71 | 18.77 |
+
+`rough(floor)` is the mean absolute discrete Laplacian of the `low` layer
+alone — the terrain's own curvature, blind to the second layer.
+`rough(surface)` is the same measure on the composite surface the fitter
+sees.
+
+The hypothesis fails. Across these worlds, correlation of log reduction
+against `rough(floor)` is **−0.25**; against `rough(surface)` it is
+**−0.88**, and against the double-level fraction **−0.88**. Relief does
+not predict the fit cost; the second layer does.
+
+The clearest case is `hmok`. Its floor is *smoother* than `threall`'s
+(2.71 against 2.85), and `threall` compresses 45.3×. `hmok` manages
+5.2× — nine times worse on flatter ground — because 47% of its triangles
+are slab. Its composite roughness is seven times its floor roughness, and
+all of that excess is the encoding.
+
+So the honest claim is not that authored terrain defeats greedy TIN.
+Single-layer authored terrain compresses 45–182×, comfortably in the
+range the literature reports for elevation models, which also confirms
+the fitter itself is not the weak link. What defeats it is a second layer
+whose altitudes are structural rather than continuous. §6.3 is the
+mechanism.
 
 ### 6.3 A quarter of the vertex budget goes to one discontinuity
 
@@ -268,8 +307,11 @@ a renderer must be able to fail in both directions.
 
 ## 7. Limitations
 
-- One dataset. Generalisation beyond Vangers terrain is asserted, not
-  measured, until the DEM control and the other stock worlds are run.
+- One engine and one terrain format. The ten stock worlds span a factor
+  of 35 in fit cost and isolate the multi-layer variable cleanly, but
+  every one of them is Vangers data. Whether the mechanism in §6.3
+  generalises to other discontinuous auxiliary fields is argued, not
+  measured.
 - Timing is per-frame latency, not pipelined throughput.
 - Unequal tuning. The voxel step budget was found badly mistuned during
   this work (40 → 200 steps, worth 21.8% of a frame); the slicer and the

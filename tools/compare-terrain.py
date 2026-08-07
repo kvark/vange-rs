@@ -68,8 +68,11 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
+import urllib.request
+import zipfile
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -108,6 +111,79 @@ DEFAULT_VIEWS = [
     "canyon:1700,4200:270",
     "ridge:1500,900:45",
 ]
+
+
+RELEASE = "https://github.com/kvark/vange-rs/releases/download/data-0"
+
+
+def run(cmd, what):
+    print(f"  {what}...", flush=True)
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.stderr.write(r.stdout[-3000:] + r.stderr[-3000:])
+        raise SystemExit(f"{what} failed")
+
+
+def ensure_tools(args):
+    """Build the binaries if they are missing. Cargo is the authority on
+    whether they are up to date, so this is cheap when they already are."""
+    need = not os.path.exists(args.binary) or not os.path.exists("./target/release/convert")
+    if need:
+        run(["cargo", "build", "--release", "--bin", "level", "--bin", "convert"],
+            "building level + convert")
+
+
+def fetch(url, dest):
+    if os.path.exists(dest) and os.path.getsize(dest) > 0:
+        return
+    print(f"  fetching {os.path.basename(dest)}...", flush=True)
+    os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+    tmp = dest + ".part"
+    with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
+        shutil.copyfileobj(r, f)
+    os.replace(tmp, dest)
+
+
+def ensure_assets(args):
+    """Fetch, unpack and convert whatever is not already there.
+
+    Every step checks for its own output first, so a re-run does nothing
+    but print. The conversion is the expensive one - it writes the height
+    layers the reference ray casts against - and it is keyed on the level,
+    so switching levels does not invalidate the others.
+    """
+    work = args.work
+    lvl = args.level
+    os.makedirs(work, exist_ok=True)
+
+    if not args.level_zip:
+        args.level_zip = os.path.join(work, f"{lvl}.zip")
+        fetch(f"{RELEASE}/{lvl}.zip", args.level_zip)
+    if not args.common_zip:
+        args.common_zip = os.path.join(work, "common.zip")
+        fetch(f"{RELEASE}/common.zip", args.common_zip)
+
+    if not args.layers:
+        src = os.path.join(work, lvl, "src")
+        args.layers = os.path.join(work, lvl, "level.ron")
+        height = os.path.join(work, lvl, "height.png")
+        if not (os.path.exists(args.layers) and os.path.exists(height)):
+            os.makedirs(src, exist_ok=True)
+            ini = os.path.join(src, "world.ini")
+            if not os.path.exists(ini):
+                print(f"  unpacking {lvl}.zip...", flush=True)
+                for z in (args.level_zip, args.common_zip):
+                    with zipfile.ZipFile(z) as zf:
+                        zf.extractall(src)
+            run(["./target/release/convert", ini, args.layers],
+                f"converting {lvl} height layers")
+
+    if not args.out:
+        args.out = os.path.join(work, "compare")
+
+
+def slug(text):
+    return re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-").lower() or "unknown"
 
 
 def parse_view(spec):
@@ -315,11 +391,17 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--binary", default="./target/release/level")
-    ap.add_argument("--level-zip")
-    ap.add_argument("--common-zip")
-    ap.add_argument("--layers", required=True,
-                    help="level.ron written by the `convert` binary")
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--level", default="fostral",
+                    help="stock level id. Its archive is fetched from the "
+                         "data-0 release if not already in --work")
+    ap.add_argument("--work", default="work",
+                    help="cache for archives, unpacked data and the converted "
+                         "height layers. Everything here is reused on a "
+                         "re-run, so only the first invocation pays for it")
+    ap.add_argument("--level-zip", help="override the fetched archive")
+    ap.add_argument("--common-zip", help="override the fetched common.zip")
+    ap.add_argument("--layers", help="override the converted level.ron")
+    ap.add_argument("--out", help="where snapshots go; defaults under --work")
     ap.add_argument("--view", action="append",
                     help="name:x,y:yaw[:under], repeatable. Defaults to the "
                          "four Fostral viewpoints in DEFAULT_VIEWS")
@@ -329,10 +411,13 @@ def main():
                          "the interesting axis is that most methods degrade as "
                          "the view flattens toward the horizon")
     ap.add_argument("--label", default="",
-                    help="name for this machine, recorded in the results file")
+                    help="name for this machine. Defaults to the adapter the "
+                         "run actually used, which is what you want unless "
+                         "one box has several")
     ap.add_argument("--json-out",
-                    help="write every measurement here, for merging runs from "
-                         "several devices with tools/merge-bench.py")
+                    help="results file. Defaults to "
+                         "<work>/results-<adapter>.json, named from the "
+                         "adapter wgpu selected")
     ap.add_argument("--frames", type=int, default=20,
                     help="timed frames per render. Each is submitted and "
                          "polled to completion, so this measures GPU work "
@@ -349,6 +434,8 @@ def main():
                          "its frame unpainted")
     args = ap.parse_args()
 
+    ensure_tools(args)
+    ensure_assets(args)
     os.makedirs(args.out, exist_ok=True)
     views = [parse_view(v) for v in args.view or DEFAULT_VIEWS]
     layers = load_layers(args.layers)
@@ -403,20 +490,31 @@ def main():
                     "see_through": see_through, "covers_sky": covers_sky,
                     "depth_p50": p50, "depth_p95": p95, "speckle": excess,
                 })
+                # `nan` when the renderer and the reference never agree
+                # anything is there - which is itself the finding, so say
+                # so rather than printing a number-shaped blank.
+                dep = ("      n/a" if p50 != p50
+                       else f"p50 {p50:6.1f}u p95 {p95:7.1f}u")
                 print(f"    {method[0]:12s} {ms:7.1f} ms   "
                       f"see-through {see_through:5.1f}%   covers-sky {covers_sky:5.1f}%   "
-                      f"depth p50 {p50:6.1f}u p95 {p95:7.1f}u   speckle {excess:5.1f}%")
+                      f"depth {dep}   speckle {excess:5.1f}%")
 
-    if args.json_out:
-        with open(args.json_out, "w") as f:
+    # Named from the adapter wgpu actually chose, not from anything the
+    # caller had to know in advance.
+    json_out = args.json_out
+    if json_out is None and device:
+        json_out = os.path.join(args.work, f"results-{slug(device['adapter'])}.json")
+    if json_out:
+        with open(json_out, "w") as f:
             json.dump({
                 "label": args.label or (device or {}).get("adapter", "unknown"),
+                "level": args.level,
                 "device": device,
                 "width": args.width, "height": args.height,
                 "far": args.far, "frames": args.frames,
                 "rows": rows,
             }, f, indent=1)
-        print(f"\nwrote {args.json_out}")
+        print(f"\nwrote {json_out}")
 
     # Grid image: rows are viewpoints, columns are methods.
     w, h, pad, lab, hdr = args.width, args.height, 5, 18, 30
