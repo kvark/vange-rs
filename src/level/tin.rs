@@ -147,6 +147,22 @@ impl Sample {
 
     /// Largest deviation of any layer from the given interpolated values.
     /// This is the "insert if *any* layer needs it" criterion.
+    ///
+    /// Measured cost of the criterion on Fostral at quality 0.25, by
+    /// counting what drove each insertion: 53.5% `low`, 18.8% the slab
+    /// interior, 4.4% chunk-border simplification, and 23.3% the boundary
+    /// between single- and double-level regions.
+    ///
+    /// That last share is waste. A single-level texel reports
+    /// `mid = high = low`, so both step by the full slab thickness across a
+    /// region's edge, and this metric then chases a discontinuity that no
+    /// tolerance can satisfy - it only shrinks triangles toward texel size
+    /// along every boundary. Its absolute cost is near-constant in quality
+    /// (338k insertions at 0, 396k at 1) while `low`'s grows 444k -> 6.1M,
+    /// which is a fixed geometric feature rather than a fit converging.
+    /// Constraining the triangulation to the `DOUBLE_LEVEL` outline would
+    /// remove it, and is the same change that would stop `is_slab` from
+    /// dropping the slab on straddling triangles.
     fn deviation(&self, low: f32, mid: f32, high: f32) -> f32 {
         (self.low - low)
             .abs()
