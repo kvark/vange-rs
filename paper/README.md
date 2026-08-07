@@ -11,15 +11,21 @@ number without one is marked `TODO`.
 ## Reproducing every figure
 
 ```bash
-# On each machine. Builds what is missing, fetches and converts the level
-# on first run, reuses all of it afterwards, and names the results file
-# after whichever adapter wgpu chose.
-tools/compare-terrain.py --pitch 0 --pitch -30 --pitch -60 --pitch -90 \
-    --width 1280 --height 800 --frames 40
+# On each machine. That is the whole invocation - the defaults are the
+# publication configuration: every method, four viewpoints, four pitches,
+# 1280x800, 40 frames. It builds what is missing, fetches and converts the
+# level on first run, reuses all of it afterwards, and names the results
+# file after whichever adapter wgpu chose. Expect roughly an hour, with a
+# running estimate printed as it goes.
+tools/compare-terrain.py
 
 # Collect the work/results-*.json files from every machine, then
 tools/merge-bench.py work/results-*.json > paper/results.md
 ```
+
+`--quick` shrinks it to a few seconds for checking the harness runs at
+all. Those numbers are not results: too few frames to be stable, and too
+few pixels for the reference to agree with anything.
 
 The ten-world fit survey behind §6.2:
 
