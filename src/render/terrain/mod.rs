@@ -401,6 +401,28 @@ enum Kind {
     },
 }
 
+/// One chunk's footprint, in level texels.
+pub struct MeshDebugChunk {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
+/// One surviving (chunk, wrap copy) pair and the level it drew at.
+pub struct MeshDebugDraw {
+    pub chunk: u32,
+    pub copy: u32,
+    pub lod: u32,
+    pub distance: f32,
+}
+
+pub struct MeshDebug {
+    pub chunks: Vec<MeshDebugChunk>,
+    pub draws: Vec<MeshDebugDraw>,
+    pub lod_distance: f32,
+    pub culling: bool,
+    pub level_size: [f32; 2],
+}
+
 enum ShadowKind {
     Ray {
         pipeline: wgpu::RenderPipeline,
@@ -2652,6 +2674,55 @@ impl Context {
         {
             *wireframe = enabled;
         }
+    }
+
+    /// What the last `prepare` decided, for a top-down debug plot: every
+    /// chunk's footprint, and for the ones that survived the frustum test
+    /// which wrap copy and detail level they were drawn at.
+    ///
+    /// The LOD is recovered by matching the draw's first index against the
+    /// chunk's per-level ranges rather than being carried in the draw
+    /// list, so this costs the render path nothing.
+    pub fn mesh_debug(&self) -> Option<MeshDebug> {
+        let Kind::Mesh {
+            geo: Some(ref geo),
+            ref draws,
+            lod_distance,
+            cull,
+            ..
+        } = self.kind
+        else {
+            return None;
+        };
+        Some(MeshDebug {
+            chunks: geo
+                .chunks
+                .iter()
+                .map(|c| MeshDebugChunk {
+                    min: c.min,
+                    max: c.max,
+                })
+                .collect(),
+            draws: draws
+                .iter()
+                .map(|&(ci, base, _, copy, dist)| {
+                    let lods = &geo.chunks[ci as usize].lods;
+                    let lod = lods.iter().position(|&(b, _)| b == base).unwrap_or(0);
+                    MeshDebugDraw {
+                        chunk: ci,
+                        copy,
+                        lod: lod as u32,
+                        distance: dist,
+                    }
+                })
+                .collect(),
+            lod_distance,
+            culling: cull,
+            level_size: [
+                self.active_surface_constants.texture_scale[0],
+                self.active_surface_constants.texture_scale[1],
+            ],
+        })
     }
 
     /// Turn frustum culling off, so every chunk of every wrap copy is

@@ -112,6 +112,7 @@ pub struct SnapshotOptions {
     /// Lets a comparison score geometry against a reference by distance
     /// rather than by classifying colours.
     pub depth_out: Option<String>,
+    pub cull_dump: Option<String>,
     /// Print the raw packed data and the decoded surface for one texel
     /// pair, to compare the CPU query against the shader's decoding.
     pub dump_texel: Option<(i32, i32)>,
@@ -141,6 +142,7 @@ impl Default for SnapshotOptions {
             voxel_debug_lod: None,
             voxel_probe: None,
             depth_out: None,
+            cull_dump: None,
             dump_texel: None,
             width: 800,
             height: 600,
@@ -642,6 +644,85 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             low,
             (low / 2.0) as i32
         );
+    }
+
+    // Top-down debug data: the frustum, and what the frustum test and the
+    // LOD picker actually decided for every chunk of every wrap copy. Read
+    // out of the renderer rather than recomputed here, so the picture
+    // cannot drift from what was drawn.
+    if let Some(ref path) = opts.cull_dump
+        && let Some(dbg) = render.terrain.mesh_debug()
+    {
+        use std::fmt::Write as _;
+        // The frustum as eight world-space corners, by pushing the clip
+        // cube back through the inverse of the matrix the culling used.
+        let inv = cam.get_view_proj().inverse();
+        let mut corners = Vec::with_capacity(8);
+        for i in 0..8u32 {
+            let clip = glam::Vec4::new(
+                if i & 1 == 0 { -1.0 } else { 1.0 },
+                if i & 2 == 0 { -1.0 } else { 1.0 },
+                if i & 4 == 0 { 0.0 } else { 1.0 },
+                1.0,
+            );
+            let p = inv * clip;
+            corners.push(p.truncate() / p.w);
+        }
+
+        let mut out = String::new();
+        out.push_str("{\n");
+        let _ = writeln!(
+            out,
+            "  \"camera\": [{}, {}, {}],",
+            cam.loc.x, cam.loc.y, cam.loc.z
+        );
+        let d = cam.dir();
+        let _ = writeln!(out, "  \"dir\": [{}, {}, {}],", d.x, d.y, d.z);
+        let _ = writeln!(
+            out,
+            "  \"level_size\": [{}, {}],",
+            dbg.level_size[0], dbg.level_size[1]
+        );
+        let _ = writeln!(out, "  \"lod_distance\": {},", dbg.lod_distance);
+        let _ = writeln!(out, "  \"culling\": {},", dbg.culling);
+        out.push_str("  \"frustum\": [");
+        for (i, c) in corners.iter().enumerate() {
+            let _ = write!(
+                out,
+                "{}[{}, {}, {}]",
+                if i == 0 { "" } else { ", " },
+                c.x,
+                c.y,
+                c.z
+            );
+        }
+        out.push_str("],\n  \"chunks\": [");
+        for (i, c) in dbg.chunks.iter().enumerate() {
+            let _ = write!(
+                out,
+                "{}[{}, {}, {}, {}]",
+                if i == 0 { "" } else { ", " },
+                c.min[0],
+                c.min[1],
+                c.max[0],
+                c.max[1]
+            );
+        }
+        out.push_str("],\n  \"draws\": [");
+        for (i, d) in dbg.draws.iter().enumerate() {
+            let _ = write!(
+                out,
+                "{}[{}, {}, {}, {}]",
+                if i == 0 { "" } else { ", " },
+                d.chunk,
+                d.copy,
+                d.lod,
+                d.distance
+            );
+        }
+        out.push_str("]\n}\n");
+        std::fs::write(path, out).expect("failed to write the cull dump");
+        info!("Wrote cull dump to {}", path);
     }
 
     if let Some(ref path) = opts.depth_out {
