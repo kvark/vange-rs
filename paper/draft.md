@@ -193,10 +193,44 @@ hardware. The two-row table above is a sample, not the result.)*
 
 ### 5.2 Frame time
 
-`[lavapipe]` and one consumer GPU run that was floor-limited — every mesh
-figure landed in 0.8–1.0 ms including quality settings that differ 3× in
-triangle count, which means submission cost dominated. **TODO: re-run at
-4K with timestamp queries.**
+Measured with GPU timestamp queries bracketing the frame's command
+encoder, so the figure is the device's own view of its work with no
+submission or round trip in it. On lavapipe the CPU-side submit-and-poll
+bracket runs about 9% higher than the timestamp pair; on a fast GPU with
+a sub-millisecond frame it can be most of the number, which is why an
+earlier consumer-GPU run reported every mesh configuration at 0.8–1.0 ms
+regardless of a 3× difference in triangle count.
+
+**TODO: hardware runs. The harness reports both figures and records which
+one each row used.**
+
+### 5.3 Preparation cost
+
+Per-frame numbers exclude one-time work, which differs by two orders of
+magnitude between these methods. khox, CPU wall time in milliseconds:
+`[lavapipe]`
+
+| method | setup | first frame | warmup |
+|---|---|---|---|
+| RayTraced | 68 | 35 | 36 |
+| RayVoxel | 71 | 310 | **7535** |
+| Sliced | 44 | 31 | 39 |
+| Scattered | 44 | 33 | 56 |
+| Painter | 47 | 144 | 345 |
+| Mesh q=0.25 | 38 | **1319** | 1324 |
+| Mesh q=0.75 | 38 | **2173** | 2182 |
+
+`setup` builds pipelines and uploads the terrain texture; `first frame`
+adds whatever the method builds lazily; `warmup` covers every pre-timing
+frame. The two methods that pay anything substantial pay it differently.
+The mesh fits its triangulation once, on the CPU, in a single blocking
+1.3 s — a load-time cost that a level cannot be entered without. The
+voxel grid bakes incrementally under a per-frame texel budget, spreading
+7.5 s across frames that are individually playable but render through
+terrain the bake has not reached yet.
+
+Neither is visible in a steady-state frame time, and for a level-loading
+budget the difference between them matters more than the per-frame gap.
 
 ### 5.3 Fit cost
 
@@ -312,7 +346,10 @@ a renderer must be able to fail in both directions.
   every one of them is Vangers data. Whether the mechanism in §6.3
   generalises to other discontinuous auxiliary fields is argued, not
   measured.
-- Timing is per-frame latency, not pipelined throughput.
+- Frame timing is per-frame latency, not pipelined throughput: each frame
+  is submitted and awaited in isolation, so nothing overlaps. The
+  timestamps make the number GPU work rather than round trip, but they do
+  not make it a frame rate.
 - Unequal tuning. The voxel step budget was found badly mistuned during
   this work (40 → 200 steps, worth 21.8% of a frame); the slicer and the
   painter have had no equivalent pass, and their numbers should be read
