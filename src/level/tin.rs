@@ -757,7 +757,18 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
 /// triangulation at all; they are read from the grid at emit time, so an
 /// edit that only moves the surface up or down needs no new vertices, just
 /// a re-emit.
-fn refine(chunk: &mut Chunk, grid: &Grid, max_error: f32) {
+/// `border_error` is deliberately separate from `max_error`: it is the
+/// *finest* tolerance across all detail levels, not this level's own.
+///
+/// The seam between two chunks is crack-free because both derive the same
+/// vertices from the same samples - but only if they use the same
+/// tolerance to do it. Two neighbours at different detail levels do not,
+/// so simplifying the border at the chunk's own tolerance opens a gap
+/// wherever the levels differ. Fitting every border at the finest
+/// tolerance makes the shared edge identical no matter which levels meet
+/// there. It costs little: a chunk's border is `4 * CHUNK_SIZE` samples
+/// against `CHUNK_SIZE^2` in the interior.
+fn refine(chunk: &mut Chunk, grid: &Grid, max_error: f32, border_error: f32) {
     use std::collections::{BinaryHeap, HashSet};
 
     let existing: HashSet<u32> = chunk.verts.iter().copied().collect();
@@ -781,7 +792,7 @@ fn refine(chunk: &mut Chunk, grid: &Grid, max_error: f32) {
             line.push(*grid.sample(gi));
         }
         let mut picks = Vec::new();
-        simplify_line(&line, max_error, &mut picks);
+        simplify_line(&line, border_error, &mut picks);
         for i in picks {
             border.push(if horizontal {
                 grid.index(i, fixed)
@@ -988,7 +999,7 @@ impl Tin {
             let mut meshes = Vec::with_capacity(LOD_COUNT);
             for k in 0..LOD_COUNT {
                 let mut chunk = Chunk::new(&grid);
-                refine(&mut chunk, &grid, max_error * (1 << k) as f32);
+                refine(&mut chunk, &grid, max_error * (1 << k) as f32, max_error);
                 meshes.push(emit_chunk(&chunk, &grid));
                 lods.push(LodState { tri: chunk });
             }
@@ -1062,7 +1073,7 @@ impl Tin {
             state.alt = grid.altitude_range();
             let mut per_lod = Vec::with_capacity(state.lods.len());
             for (k, lod) in state.lods.iter_mut().enumerate() {
-                refine(&mut lod.tri, &grid, max_error * (1 << k) as f32);
+                refine(&mut lod.tri, &grid, max_error * (1 << k) as f32, max_error);
                 per_lod.push(emit_chunk(&lod.tri, &grid));
             }
             changed.push((index, ChunkBuffers::new(state, per_lod)));
@@ -1313,6 +1324,65 @@ mod tests {
         let mut picks_b = Vec::new();
         simplify_line(&b, 1.0, &mut picks_b);
         assert_eq!(picks_a, picks_b);
+    }
+
+    /// The seam also has to survive the two chunks being at *different*
+    /// detail levels, which is the normal case as soon as one is further
+    /// from the camera than the other. Simplifying each border at its own
+    /// level's tolerance is what used to open a visible crack there.
+    #[test]
+    fn adjacent_chunks_agree_across_detail_levels() {
+        let level = make_level(64);
+        let size = 16u32;
+        let left = Grid::new(&level, 0, 0, size, size);
+        let right = Grid::new(&level, size as i32, 0, size, size);
+        let base_error = 1.0f32;
+
+        let border_of = |grid: &Grid, lx: u32| -> Vec<u32> {
+            let line: Vec<Sample> = (0..grid.ny)
+                .map(|y| *grid.sample(grid.index(lx, y)))
+                .collect();
+            let mut picks = Vec::new();
+            // Every level fits its border at the base tolerance, whatever
+            // its own interior tolerance is.
+            simplify_line(&line, base_error, &mut picks);
+            picks
+        };
+
+        // The finest chunk on the left, the coarsest on the right.
+        for k in 0..LOD_COUNT {
+            let mut fine = Chunk::new(&left);
+            refine(&mut fine, &left, base_error, base_error);
+            let mut coarse = Chunk::new(&right);
+            let coarse_error = base_error * (1 << k) as f32;
+            refine(&mut coarse, &right, coarse_error, base_error);
+
+            assert_eq!(
+                border_of(&left, size),
+                border_of(&right, 0),
+                "level {} border disagrees with the finest one",
+                k
+            );
+
+            // And the vertices actually present on the shared column match.
+            let on_column = |chunk: &Chunk, grid: &Grid, lx: u32| -> Vec<i32> {
+                let mut ys: Vec<i32> = chunk
+                    .verts
+                    .iter()
+                    .map(|&gi| grid.coord(gi))
+                    .filter(|c| c[0] == lx as i32)
+                    .map(|c| c[1])
+                    .collect();
+                ys.sort_unstable();
+                ys
+            };
+            assert_eq!(
+                on_column(&fine, &left, size),
+                on_column(&coarse, &right, 0),
+                "level {} does not place the same vertices on the seam",
+                k
+            );
+        }
     }
 
     #[test]
