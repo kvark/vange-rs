@@ -75,6 +75,9 @@ pub struct SnapshotOptions {
     pub shadow_voxel: bool,
     pub shadow_ray: bool,
     pub mesh_wireframe: bool,
+    pub no_cull: bool,
+    pub mesh_lod: Option<usize>,
+    pub mesh_lod_distance: Option<f32>,
     /// Deform the terrain after the first frame, to exercise the
     /// incremental update path.
     pub dig: bool,
@@ -123,6 +126,9 @@ impl Default for SnapshotOptions {
             level_path: None,
             terrain: settings::Terrain::RayTraced,
             mesh_wireframe: false,
+            no_cull: false,
+            mesh_lod: None,
+            mesh_lod_distance: None,
             dig: false,
             dig_frame: 1,
             fp: None,
@@ -353,6 +359,10 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     );
     render.resize(extent, &gfx.device);
     render.terrain.set_mesh_wireframe(opts.mesh_wireframe);
+    render.terrain.set_mesh_culling(!opts.no_cull);
+    render
+        .terrain
+        .set_mesh_lod(opts.mesh_lod, opts.mesh_lod_distance);
     render
         .terrain
         .set_voxel_debug_lods(opts.voxel_debug_lod.map(|n| n..n + 1));

@@ -20,6 +20,16 @@ struct Cli {
     /// Overlay the mesh triangle edges. Only meaningful with --terrain Mesh.
     #[arg(long, default_value_t = false)]
     mesh_wireframe: bool,
+    /// Pin the mesh to one LOD (0 = finest) instead of choosing by distance.
+    #[arg(long)]
+    mesh_lod: Option<usize>,
+    /// Distance in texels at which the mesh drops to the next coarser LOD.
+    #[arg(long)]
+    mesh_lod_distance: Option<f32>,
+    /// Draw every chunk of every wrap copy, skipping the frustum test.
+    /// Slow, but it is the reference a culled render has to match.
+    #[arg(long, default_value_t = false)]
+    no_cull: bool,
     /// Carve a crater into the level after the first frame, exercising the
     /// incremental terrain-update path.
     #[arg(long, default_value_t = false)]
@@ -214,6 +224,9 @@ fn main() {
             shadow_voxel: cli.shadow_voxel,
             shadow_ray: cli.shadow_ray,
             mesh_wireframe: cli.mesh_wireframe,
+            no_cull: cli.no_cull,
+            mesh_lod: cli.mesh_lod,
+            mesh_lod_distance: cli.mesh_lod_distance,
             dig: cli.dig,
             dig_frame: cli.dig_frame,
             fp: cli.fp.as_deref().map(|s| {

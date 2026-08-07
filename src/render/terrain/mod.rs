@@ -382,6 +382,13 @@ enum Kind {
         draws: Vec<(u32, u32, u32, u32, f32)>,
         /// Distance, in texels, at which the mesh drops to the next coarser
         /// LOD. Each step doubles it.
+        ///
+        /// Measured against a forced-finest render on Fostral, view
+        /// distance 600: at 96 the coarser levels move the surface by up
+        /// to 289 units on 4-6% of the frame, which reads as terrain
+        /// changing shape as you drive. At 256 that falls to 0.02-0.27%.
+        /// The frame time is the same either way here (12.9 vs 13.7 ms),
+        /// so the low value was buying nothing.
         lod_distance: f32,
         /// Pin every chunk to one detail level, ignoring distance. For
         /// inspecting what a level actually looks like.
@@ -1619,7 +1626,7 @@ impl Context {
                     geo: None,
                     wireframe: false,
                     draws: Vec::new(),
-                    lod_distance: 96.0,
+                    lod_distance: 256.0,
                     lod_force: None,
                     cull: true,
                 }
@@ -2644,6 +2651,30 @@ impl Context {
         } = self.kind
         {
             *wireframe = enabled;
+        }
+    }
+
+    /// Turn frustum culling off, so every chunk of every wrap copy is
+    /// drawn. Slow, but definitionally correct - the reference to check
+    /// the culled render against.
+    pub fn set_mesh_culling(&mut self, enabled: bool) {
+        if let Kind::Mesh { ref mut cull, .. } = self.kind {
+            *cull = enabled;
+        }
+    }
+
+    /// Pin every chunk to one detail level, or `None` to pick by distance.
+    pub fn set_mesh_lod(&mut self, level: Option<usize>, distance: Option<f32>) {
+        if let Kind::Mesh {
+            ref mut lod_force,
+            ref mut lod_distance,
+            ..
+        } = self.kind
+        {
+            *lod_force = level;
+            if let Some(d) = distance {
+                *lod_distance = d;
+            }
         }
     }
 
