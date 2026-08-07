@@ -19,6 +19,8 @@ rasterizer is the part of the GPU most likely to be fast on the widest
 range of devices — which matters if the goal is to run everywhere,
 WebGL included.
 
+![Mesh vs the other renderers]({{site.baseurl}}/assets/terrain-mesh-comparison.png)
+
 ## Fitting the mesh
 
 The level is a height map, so the obvious mesh is two triangles per
@@ -76,6 +78,12 @@ coarse triangle can have three dual corners while spanning terrain that
 mostly is not. Interpolating `high` across that gap builds a roof sloping
 up to some distant vertex's slab, walled off at its edges — which on a
 river view covered the entire sky.
+
+The grid view below shows the fit at four qualities. Density follows the
+terrain: triangles pile up along ridges and terrain-type boundaries, and
+smooth slopes stay coarse.
+
+![The fit at four quality settings]({{site.baseurl}}/assets/terrain-mesh-lod.png)
 
 ## Chunking, LOD and updates
 
@@ -145,6 +153,21 @@ fit tolerance shows: raising quality to 1.0 takes it to 2.2%. Height-field
 ray tracing is the outlier, drawing 38-60% of solid terrain as sky at eye
 level regardless of settings - it is the method this work exists to
 replace.
+
+Getting there took a detour worth recording. The mesh interpolated `mid`
+and `high` across triangles as if they were smooth fields. They are not:
+a cave ceiling steps by tens of units between neighbouring texels, and
+ramping across that step builds a roof that exists nowhere, near-vertical
+where the step is sharp. Depth against a converged voxel trace shows it —
+ground truth and voxel agree, the mesh has phantom geometry across the
+upper two thirds:
+
+![Depth comparison exposing the slab defect]({{site.baseurl}}/assets/terrain-mesh-depth.png)
+
+It went unnoticed because the metric in use scored only *see-through*
+error, which cannot detect over-drawing: the mesh scored a perfect 0%
+precisely because the phantom geometry covered everything. Comparing
+depth rather than classifying colours is what found it.
 
 Three settings have to be right or the comparison is meaningless, and
 each of them cost a wrong conclusion during development:
