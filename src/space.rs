@@ -390,7 +390,73 @@ impl Camera {
         }
     }
 
+    /// Heading and elevation, in degrees. Yaw is 0 along +Y and grows
+    /// clockwise; pitch is 0 at the horizon and positive looking up.
+    pub fn angles(&self) -> (f32, f32) {
+        let fwd = self.dir();
+        (
+            fwd.x.atan2(fwd.y).to_degrees().rem_euclid(360.0),
+            fwd.z.clamp(-1.0, 1.0).asin().to_degrees(),
+        )
+    }
+
+    /// Point the camera at a heading and elevation, keeping the horizon
+    /// level. Matches the basis `--fp-yaw`/`--fp-pitch` build, so a view
+    /// set here reproduces exactly under the snapshot binary.
+    pub fn set_angles(&mut self, yaw_deg: f32, pitch_deg: f32) {
+        let (yaw, pitch) = (yaw_deg.to_radians(), pitch_deg.to_radians());
+        let fwd = Vec3::new(
+            yaw.sin() * pitch.cos(),
+            yaw.cos() * pitch.cos(),
+            pitch.sin(),
+        )
+        .normalize();
+        let right = fwd.cross(Vec3::Z).normalize();
+        let up = right.cross(fwd);
+        self.rot = Quat::from_mat3(&glam::Mat3::from_cols(right, up, -fwd));
+    }
+
     pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        // Read the angles back from the rotation every frame so flying
+        // with the keyboard keeps these in step, and only write when the
+        // user actually drags one - otherwise the round trip through
+        // degrees would slowly rewrite the orientation.
+        let (mut yaw, mut pitch) = self.angles();
+        let mut aimed = false;
+        ui.horizontal(|ui| {
+            ui.label("Yaw");
+            aimed |= ui
+                .add(
+                    egui::DragValue::new(&mut yaw)
+                        .speed(0.5)
+                        .range(0.0..=360.0)
+                        .suffix("°"),
+                )
+                .changed();
+            ui.label("Pitch");
+            aimed |= ui
+                .add(
+                    egui::DragValue::new(&mut pitch)
+                        .speed(0.5)
+                        .range(-89.0..=89.0)
+                        .suffix("°"),
+                )
+                .changed();
+        });
+        // Quarter turns, since that is the interval a bug is most likely
+        // to be described in.
+        ui.horizontal(|ui| {
+            for step in [-90.0f32, -15.0, 15.0, 90.0] {
+                if ui.button(format!("{step:+.0}°")).clicked() {
+                    yaw = (yaw + step).rem_euclid(360.0);
+                    aimed = true;
+                }
+            }
+        });
+        if aimed {
+            self.set_angles(yaw, pitch);
+        }
+
         match self.proj {
             Projection::Ortho {
                 ref mut p,
@@ -428,6 +494,51 @@ mod ground_tests {
                 far: 1000.0,
                 focal_px: None,
             }),
+        }
+    }
+
+    /// `set_angles` and `angles` have to be exact inverses, and have to
+    /// agree with the basis `--fp-yaw`/`--fp-pitch` build in the snapshot
+    /// binary. If they drift, an angle dialled in the viewer renders as a
+    /// different view under the harness, which is the one thing the
+    /// control exists to prevent.
+    #[test]
+    fn angles_round_trip() {
+        let mut cam = cam_at(Vec3::new(100.0, 100.0, 50.0));
+        for yaw_step in 0..24 {
+            for pitch_step in -4..=4 {
+                let (yaw, pitch) = (yaw_step as f32 * 15.0, pitch_step as f32 * 20.0);
+                cam.set_angles(yaw, pitch);
+                let (got_yaw, got_pitch) = cam.angles();
+                assert!(
+                    (got_pitch - pitch).abs() < 1e-3,
+                    "pitch {pitch} came back as {got_pitch}"
+                );
+                // Yaw is meaningless looking straight up or down, and 0
+                // and 360 are the same heading.
+                if pitch.abs() < 89.0 {
+                    let d = (got_yaw - yaw).rem_euclid(360.0);
+                    let d = d.min(360.0 - d);
+                    assert!(d < 1e-2, "yaw {yaw} came back as {got_yaw}");
+                }
+            }
+        }
+    }
+
+    /// The forward vector `set_angles` produces must be the one
+    /// `bin/level/headless.rs` builds from the same numbers.
+    #[test]
+    fn angles_match_the_snapshot_camera() {
+        let mut cam = cam_at(Vec3::ZERO);
+        for (yaw, pitch) in [(0.0f32, 0.0f32), (122.0, -12.0), (275.0, 10.0), (150.0, -1.0)] {
+            cam.set_angles(yaw, pitch);
+            let (y, p) = (yaw.to_radians(), pitch.to_radians());
+            let expected = Vec3::new(y.sin() * p.cos(), y.cos() * p.cos(), p.sin()).normalize();
+            let got = cam.dir();
+            assert!(
+                (got - expected).length() < 1e-5,
+                "yaw {yaw} pitch {pitch}: {got:?} vs {expected:?}"
+            );
         }
     }
 

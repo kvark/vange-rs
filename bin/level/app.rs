@@ -28,6 +28,9 @@ pub struct LevelView {
 
     last_mouse_pos: glam::Vec2,
     alt_button_pressed: bool,
+    /// Whether the tweaks panel is showing. Collapsed it is one button, so
+    /// a framed shot is not half controls.
+    ui_expanded: bool,
     mouse_button_pressed: bool,
 }
 
@@ -211,6 +214,7 @@ impl LevelView {
             ui: settings.ui,
             last_mouse_pos: glam::Vec2::new(-1.0, -1.0),
             alt_button_pressed: false,
+            ui_expanded: true,
             mouse_button_pressed: false,
         }
     }
@@ -413,11 +417,40 @@ impl Application for LevelView {
         if !self.ui.enabled {
             return;
         }
+        // Collapsed, the panel is a single button, so a view can be framed
+        // and captured without the controls covering the thing being
+        // looked at. The state lives on the app rather than in egui's
+        // memory so it survives a UI rebuild.
+        if !self.ui_expanded {
+            egui::Area::new("Tweaks toggle".into())
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
+                .show(context, |ui| {
+                    if ui.button("<").on_hover_text("Show controls").clicked() {
+                        self.ui_expanded = true;
+                    }
+                });
+            return;
+        }
+
         #[allow(deprecated)]
         egui::SidePanel::right("Tweaks").show(context, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button(">").on_hover_text("Hide controls").clicked() {
+                    self.ui_expanded = false;
+                }
+                ui.label("Tweaks");
+            });
             ui.group(|ui| {
                 ui.label("Camera:");
                 self.cam.draw_ui(ui);
+                if ui
+                    .button("Copy view spec (F9)")
+                    .on_hover_text("Print this camera as a --view spec and a \
+                                    runnable level command line")
+                    .clicked()
+                {
+                    self.dump_camera();
+                }
             });
             ui.group(|ui| {
                 ui.label("Level:");
