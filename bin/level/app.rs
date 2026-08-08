@@ -47,7 +47,16 @@ impl LevelView {
         let yaw = fwd.x.atan2(fwd.y).to_degrees().rem_euclid(360.0);
         let pitch = fwd.z.clamp(-1.0, 1.0).asin().to_degrees();
 
-        let texel = (loc.x as i32, loc.y as i32);
+        // Wrap into the level's own range. The viewer's camera roams a
+        // continuous plane and the level repeats under it, so a position
+        // found by flying is routinely negative or past the width - which
+        // `Level::get` handles, but a `--view` spec does not: the reference
+        // ray cast indexes the height array directly, where a negative
+        // wraps by luck and an oversized one is an index error.
+        let texel = (
+            (loc.x as i32).rem_euclid(self.level.size.0),
+            (loc.y as i32).rem_euclid(self.level.size.1),
+        );
         let ground = self.level.get(texel);
         let under = match ground {
             level::Texel::Dual { mid, .. } => loc.z < mid,
