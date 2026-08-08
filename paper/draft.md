@@ -1,4 +1,4 @@
-# Six Ways to Draw a Voxel World: A Controlled Comparison on Hand-Authored Multi-Layer Terrain
+# Six Ways to Draw Vangers: Terrain Rendering on Hand-Authored Multi-Layer Height Fields
 
 **Status: draft.** Numbers marked `[lavapipe]` are from a software
 rasterizer and are placeholders for hardware runs. Numbers marked `TODO`
@@ -9,34 +9,35 @@ submission.
 
 ## Abstract
 
-*(Draft — to be tightened once the hardware runs land.)*
+Terrain level-of-detail is measured almost exclusively on digital
+elevation models: single-valued, smooth at the sampling scale, sampled
+from real topography. Game terrain is often none of these. We compare six
+rendering methods — height-field ray marching, voxel-octree ray marching,
+sliced proxy geometry, per-sample bar rasterization, compute scattering,
+and a fitted triangle mesh — implemented in a single engine over a single
+data path, on the hand-authored multi-layer terrain of *Vangers* (1998),
+scored against a CPU ray cast of the same source data.
 
-Terrain level-of-detail is usually measured on digital elevation models:
-single-valued, smooth at the sampling scale, derived from real
-topography. We report what happens to six rendering methods when the
-terrain is none of those things. Our dataset is the terrain of *Vangers*
-(1998), a hand-authored 2048×16384 height map with a two-layer encoding
-that admits caves and overhangs, and per-texel detail that no natural
-surface exhibits. We implement all six methods in one engine over one
-data path, and score them against a CPU ray cast of the same source data
-using metrics that separate missing geometry from disagreement about
-silhouettes, and both from spatial incoherence.
+We report three results. First, the cost of fitting a triangulated
+irregular network to this terrain varies by more than an order of
+magnitude across the ten shipped worlds, and what predicts the variation
+is not the terrain's relief but the fraction of it carrying a second
+layer. Worlds with a single layer compress in line with published
+elevation-model results; heavily double-level worlds are several times
+worse, and a large share of the fit's vertex budget is spent resolving
+one discontinuity — at a cost that does not fall as the tolerance
+tightens, which is the signature of a geometric feature rather than a fit
+converging. Second, the six methods are nearly indistinguishable when the
+camera looks down and separate sharply as it comes to the horizon: the
+viewpoint the original engine never used, and a modern one cannot avoid.
+Third, a correctness metric based on coverage alone cannot detect
+over-drawing; ours concealed a real geometric defect through several
+rounds of apparently passing measurement, and we give the decomposition
+that exposes it, along with the conditions under which a ground-truth
+comparison stops being able to resolve a method's own quality setting.
 
-Three results are worth reporting. First, greedy triangulated irregular
-network fitting — the standard approach, and the strongest performer here
-— varies by a factor of 35 across the ten shipped worlds, and what
-predicts the variation is not terrain relief but the multi-layer
-encoding. Single-layer worlds compress 45–182×, in line with published
-results on elevation models; worlds that are 40–47% double-level manage
-5.2–5.7×. The correlation between reduction and the roughness of the
-terrain's own floor is −0.25; against the fraction of double-level
-geometry it is −0.88. Second,
-the methods are nearly indistinguishable when the camera looks down and
-diverge sharply as it approaches the horizon, which is the viewpoint the
-original engine never used and every modern one does. Third, we show that
-a correctness metric based on coverage alone is structurally unable to
-detect over-drawing, and that this hid a geometric defect in our own
-implementation through several rounds of apparently passing measurement.
+We release the engine, the evaluation harness, and a per-device
+measurement protocol that reduces a full run to a single command.
 
 ## 1. Introduction
 

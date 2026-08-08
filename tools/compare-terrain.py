@@ -143,12 +143,15 @@ def run(cmd, what):
 
 
 def ensure_tools(args):
-    """Build the binaries if they are missing. Cargo is the authority on
-    whether they are up to date, so this is cheap when they already are."""
-    need = not os.path.exists(args.binary) or not os.path.exists("./target/release/convert")
-    if need:
-        run(["cargo", "build", "--release", "--bin", "level", "--bin", "convert"],
-            "building level + convert")
+    """Build the binaries. Always - cargo is the authority on whether they
+    are current, and asking it is nearly free when they are.
+
+    Skipping this when the file merely exists is wrong: a binary left over
+    from an older checkout runs happily and writes an older result format,
+    which surfaces much later as a missing field rather than as "your build
+    is stale"."""
+    run(["cargo", "build", "--release", "--bin", "level", "--bin", "convert"],
+        "building level + convert")
 
 
 def fetch(url, dest):
@@ -489,8 +492,15 @@ def main():
             for method in METHODS:
                 png, depth, meta = render(args, view, method, args.out, pitch)
                 if device is None:
-                    device = {k: meta[k] for k in
-                              ("adapter", "backend", "device_type", "driver", "driver_info")}
+                    fields = ("adapter", "backend", "device_type", "driver",
+                              "driver_info")
+                    missing = [k for k in fields if k not in meta]
+                    if missing:
+                        raise SystemExit(
+                            f"{args.binary} wrote a result without {missing}. "
+                            "That binary predates the fields this script needs; "
+                            "`cargo build --release --bin level` and re-run.")
+                    device = {k: meta[k] for k in fields}
                 # Prefer the GPU's own view when the adapter can give it.
                 # The CPU figure brackets submit-and-poll, so it carries the
                 # round trip; on lavapipe that is ~9%, and on a real GPU with
