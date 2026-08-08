@@ -32,6 +32,60 @@ pub struct LevelView {
 }
 
 impl LevelView {
+    /// Log the camera as a `tools/compare-terrain.py --view` spec and as a
+    /// runnable `level` command line.
+    ///
+    /// `--fp` stands the camera on the surface at an XY and looks along a
+    /// heading, so this reports eye height above the local ground rather
+    /// than an absolute Z, and sets `--fp-under` when the camera is
+    /// beneath a slab. That conversion is the whole point: it is the
+    /// fiddly step between flying somewhere worth measuring and being able
+    /// to measure it.
+    fn dump_camera(&self) {
+        let loc = self.cam.loc;
+        let fwd = self.cam.dir();
+        let yaw = fwd.x.atan2(fwd.y).to_degrees().rem_euclid(360.0);
+        let pitch = fwd.z.clamp(-1.0, 1.0).asin().to_degrees();
+
+        let texel = (loc.x as i32, loc.y as i32);
+        let ground = self.level.get(texel);
+        let under = match ground {
+            level::Texel::Dual { mid, .. } => loc.z < mid,
+            level::Texel::Single(_) => false,
+        };
+        let base = match ground {
+            level::Texel::Single(p) => p.0,
+            level::Texel::Dual { low, high, .. } => {
+                if under {
+                    low.0
+                } else {
+                    high.0
+                }
+            }
+        };
+        let eye = (loc.z - base).max(1.0);
+
+        println!(
+            "\n--view \"spot:{},{}:{:.0}{}\"   --pitch {:.0}",
+            texel.0,
+            texel.1,
+            yaw,
+            if under { ":under" } else { "" },
+            pitch
+        );
+        println!(
+            "cargo run --release --bin level -- --terrain Mesh \\\n  \
+             --fp {},{} --fp-height {:.0} --fp-yaw={:.0} --fp-pitch={:.0}{} \\\n  \
+             --near 1 --far 600 --snapshot view.png\n",
+            texel.0,
+            texel.1,
+            eye,
+            yaw,
+            pitch,
+            if under { " --fp-under" } else { "" },
+        );
+    }
+
     pub fn new(
         override_path: Option<&str>,
         settings: &config::settings::Settings,
@@ -242,6 +296,10 @@ impl Application for LevelView {
                         alt,
                     }
                 }
+                // Print the current camera as something the comparison
+                // harness accepts, so a viewpoint found by flying around
+                // can be reproduced exactly rather than described.
+                KeyCode::F9 => self.dump_camera(),
                 KeyCode::AltLeft => self.alt_button_pressed = true,
                 _ => (),
             },
