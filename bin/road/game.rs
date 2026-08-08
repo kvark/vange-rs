@@ -349,59 +349,6 @@ pub struct Game {
 }
 
 impl Game {
-    /// Log the camera as a `tools/compare-terrain.py --view` spec and as a
-    /// ready-to-run `level` command line.
-    ///
-    /// `--fp` stands the camera on the surface at an XY and looks along a
-    /// heading, so the eye height is reported relative to the ground here
-    /// rather than as an absolute Z - that is the number the flag wants,
-    /// and computing it by hand from a world position is exactly the
-    /// fiddly step this exists to remove.
-    fn dump_camera(&self) {
-        let loc = self.cam.loc;
-        let fwd = self.cam.dir();
-        let yaw = fwd.x.atan2(fwd.y).to_degrees();
-        let pitch = fwd.z.clamp(-1.0, 1.0).asin().to_degrees();
-
-        let texel = (loc.x as i32, loc.y as i32);
-        let ground = self.level.get(texel);
-        // Under a slab, `--fp-under` stands on the cave floor instead of
-        // the roof, and the height is measured from there.
-        let under = match ground {
-            level::Texel::Dual { mid, .. } => loc.z < mid,
-            level::Texel::Single(_) => false,
-        };
-        let base = match ground {
-            level::Texel::Single(p) => p.0,
-            level::Texel::Dual { low, high, .. } => {
-                if under {
-                    low.0
-                } else {
-                    high.0
-                }
-            }
-        };
-        let eye = loc.z - base;
-
-        let name = "spot";
-        let suffix = if under { ":under" } else { "" };
-        println!(
-            "\n--view \"{}:{},{}:{:.0}{}\"   (pitch {:.0})",
-            name, texel.0, texel.1, yaw, suffix, pitch
-        );
-        println!(
-            "cargo run --release --bin level -- --terrain Mesh \\\n  \
-             --fp {},{} --fp-height {:.0} --fp-yaw={:.0} --fp-pitch={:.0}{} \\\n  \
-             --near 1 --far 600 --snapshot view.png",
-            texel.0,
-            texel.1,
-            eye.max(1.0),
-            yaw,
-            pitch,
-            if under { " --fp-under" } else { "" },
-        );
-    }
-
     pub fn new(
         settings: &config::Settings,
         gfx: &GraphicsContext,
@@ -628,10 +575,6 @@ impl Application for Game {
                         self.cam.focus_on(&center);
                     }
                 }
-                // Print the current camera as something the comparison
-                // harness accepts, so a viewpoint found by flying around
-                // can be reproduced exactly instead of described.
-                KeyCode::F9 => self.dump_camera(),
                 KeyCode::Comma => self.input.tick = Some(-1.0),
                 KeyCode::Period => self.input.tick = Some(1.0),
                 KeyCode::ShiftLeft => self.input.turbo = true,
