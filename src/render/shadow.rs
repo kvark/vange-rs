@@ -77,13 +77,39 @@ fn shadow_view(light_pos: &[f32; 4], cam: &Camera, max_height: f32) -> (Quat, Ve
     // Mat3 cols are local axes in world coordinates -> local->world, which
     // is exactly what `cam.rot` stores.
     let rot = Quat::from_mat3(&glam::Mat3::from_cols(right, up_corrected, -forward));
-    let loc = cam.intersect_height(0.0);
 
-    // Limit the shadow region to a box around the camera centre rather
-    // than covering the whole view frustum, so texel density stays high
-    // near the player. The radius is capped so a camera with a very long
-    // far plane does not ask for a continent-sized shadow map.
+    // Centre the map on the ground ahead of the camera.
+    //
+    // This used to be `cam.intersect_height(0.0)`, which does not do what
+    // its name suggests. It clamps the ray parameter to the depth range
+    // and returns a point regardless, so it reports a hit even when the
+    // ray never meets the ground: level or looking up it hands back the
+    // near plane - the camera itself - and on a shallow downward pitch it
+    // hands back a point still tens of units in the air, clipped by the
+    // far plane. Measured on a camera 120 up: at -30 degrees it really is
+    // on the ground, at -4 degrees it is at z = 50, and at 0 degrees and
+    // above it is the camera. Only steep angles worked.
+    //
+    // The horizontal heading is always defined, so use that instead and
+    // step half the radius along it. The covered band then runs from half
+    // a radius behind the camera to one and a half ahead, whatever the
+    // pitch, and nothing about it can degenerate.
+    let flat = {
+        let d = cam.dir();
+        let f = Vec3::new(d.x, d.y, 0.0);
+        if f.length_squared() > 1e-6 {
+            f.normalize()
+        } else {
+            // Straight up or down: any heading covers the same ground.
+            Vec3::Y
+        }
+    };
     let shadow_radius = 600.0f32;
+    let loc = Vec3::new(cam.loc.x, cam.loc.y, 0.0) + flat * (0.5 * shadow_radius);
+
+    // A box around that centre rather than the whole view frustum, so
+    // texel density stays high near the player and a camera with a very
+    // long far plane does not ask for a continent-sized shadow map.
     let corners = [
         Vec3::new(loc.x - shadow_radius, loc.y - shadow_radius, 0.0),
         Vec3::new(loc.x + shadow_radius, loc.y - shadow_radius, 0.0),
@@ -141,6 +167,10 @@ mod tests {
                 fovy: 60f32.to_radians(),
                 aspect: 1.6,
                 near: 1.0,
+                // The shipped default. The failure window depends on it:
+                // a shallow downward pitch only reaches the ground within
+                // the far plane at some distances, and that is exactly
+                // where the old centre went wrong.
                 far: 2000.0,
                 focal_px: None,
             }),
@@ -228,6 +258,46 @@ mod tests {
                  outside the clip range",
                 ndc.z
             );
+        }
+    }
+
+    /// The box has to cover the ground the camera is *looking at*, not
+    /// merely the ground beneath it.
+    ///
+    /// This is the check the earlier tests were missing. They asserted the
+    /// box was finite, non-empty and contained its own centre, all of
+    /// which stayed true while the centre itself was wrong - derived from
+    /// a ray/ground intersection that does not exist at level or upward
+    /// pitch, and that gets clamped into mid-air on a shallow one.
+    #[test]
+    fn shadow_box_covers_what_the_camera_looks_at() {
+        // -1 is the case seen in play: shallow enough that the ground
+        // intersection is real but nearly a kilometre away, so a box
+        // centred on it leaves the player standing outside their own
+        // shadow map.
+        for pitch in [-30.0f32, -12.0, -4.0, -2.0, -1.0, -0.5, 0.0, 4.0, 10.0] {
+            for step in 0..12 {
+                let yaw = step as f32 * 30.0;
+                let cam = chase_cam(yaw, pitch);
+                let (rot, loc, p) = shadow_view(&LIGHT, &cam, 256.0);
+                let inv = rot.inverse();
+
+                // The ground under the camera, and the ground ahead along
+                // the heading at a few distances a player would notice.
+                let flat = {
+                    let d = cam.dir();
+                    Vec3::new(d.x, d.y, 0.0).normalize()
+                };
+                for reach in [0.0f32, 100.0, 250.0, 400.0] {
+                    let probe = Vec3::new(cam.loc.x, cam.loc.y, 0.0) + flat * reach;
+                    let l = inv * (probe - loc);
+                    assert!(
+                        l.x >= p.left && l.x <= p.right && l.y >= p.bottom && l.y <= p.top,
+                        "pitch {pitch} yaw {yaw}: ground {reach} units ahead is \
+                         outside the shadow box"
+                    );
+                }
+            }
         }
     }
 

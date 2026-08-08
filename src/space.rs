@@ -497,6 +497,24 @@ mod ground_tests {
         }
     }
 
+    /// Where the shadow map gets centred, per pitch. `intersect_height`
+    /// clamps to the depth range, so a camera that is level or looking up
+    /// has no ground intersection at all and silently returns a point at
+    /// the near plane - i.e. the camera itself.
+    #[test]
+    fn diagnose_ground_intersection() {
+        let mut cam = cam_at(Vec3::new(1000.0, 1000.0, 120.0));
+        for pitch in [-30.0f32, -12.0, -4.0, -1.0, 0.0, 4.0, 10.0, 30.0] {
+            cam.set_angles(0.0, pitch);
+            let hit = cam.intersect_height(0.0);
+            let ahead = (hit.truncate() - cam.loc.truncate()).length();
+            println!(
+                "pitch {pitch:>6.1}  ground hit {:>8.1} units ahead, z {:>7.1}",
+                ahead, hit.z
+            );
+        }
+    }
+
     /// `set_angles` and `angles` have to be exact inverses, and have to
     /// agree with the basis `--fp-yaw`/`--fp-pitch` build in the snapshot
     /// binary. If they drift, an angle dialled in the viewer renders as a
