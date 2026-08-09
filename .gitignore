@@ -14,3 +14,4 @@ res/data
 /docs/data-0/
 /.claude
 work/
+__pycache__/
