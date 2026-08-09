@@ -11,10 +11,14 @@ fn main_vs(
     @builtin(instance_index) inst_index: u32,
 ) -> Varyings {
     let r = u_Locals.sample_range;
+    // Slices are spread over the whole `0..height` range: the last
+    // instance always lands at z = 0. Anchoring them at unit spacing
+    // instead would make a reduced count truncate the *bottom* of the
+    // range, deleting low terrain rather than coarsening all of it.
     let vpos = vec4<f32>(
         select(r.x, r.y, (vert_index & 1u) != 0u),
         select(r.z, r.w, (vert_index & 2u) != 0u),
-        u_Surface.texture_scale.z - f32(inst_index + 1u),
+        u_Surface.texture_scale.z - f32(inst_index + 1u) * u_Locals.terrain_params.x,
         1.0);
     return Varyings(vpos, u_Globals.view_proj * vpos);
 }

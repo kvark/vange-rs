@@ -101,6 +101,9 @@ def main():
                     help="percentage points of error a setting may give up "
                          "against the method's own best to count as good "
                          "enough")
+    ap.add_argument("--only", action="append",
+                    help="sweep only these methods (by label, e.g. Sliced); "
+                         "repeatable. Default: all of them")
     ap.add_argument("--out", default="work/tuning.md")
     args = ap.parse_args()
 
@@ -121,7 +124,12 @@ def main():
     os.makedirs(tmp, exist_ok=True)
     report, chosen = [], {}
 
-    for label, terrain, settings in SWEEPS:
+    sweeps = [s for s in SWEEPS if not args.only or s[0] in args.only]
+    if args.only and not sweeps:
+        sys.exit(f"no method matches {args.only}; "
+                 f"labels are {[s[0] for s in SWEEPS]}")
+
+    for label, terrain, settings in sweeps:
         print(f"\n### {label}", flush=True)
         rows, failures = [], []
         for name, extra, warmup in settings:

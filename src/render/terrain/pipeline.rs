@@ -1,4 +1,7 @@
-use super::types::*;
+// The parent module owns the GPU-facing structs; an earlier `types` module
+// duplicated them here and silently diverged (its `Constants` was missing
+// a field the shaders declare), so it was removed rather than repaired.
+use super::{SCATTER_GROUP_SIZE, VOXEL_TILE_SIZE, Vertex};
 use crate::render::{DEPTH_FORMAT, PipelineKind, SHADOW_FORMAT};
 
 use std::mem;
