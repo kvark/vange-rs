@@ -411,9 +411,23 @@ impl Camera {
             pitch.sin(),
         )
         .normalize();
-        let right = fwd.cross(Vec3::Z).normalize();
-        let up = right.cross(fwd);
-        self.rot = Quat::from_mat3(&glam::Mat3::from_cols(right, up, -fwd));
+        // Looking straight up or down leaves the heading undefined, so
+        // pick a reference that is not parallel to it.
+        let up_ref = if fwd.cross(Vec3::Z).length_squared() > 1e-6 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        let right = fwd.cross(up_ref).normalize();
+        let up = right.cross(fwd).normalize();
+        // The engine folds a `scale` of (1, -1, 1) into the view matrix to
+        // make the camera left-handed, so what points up on *screen* is
+        // `-(rot * Y)`, not `rot * Y`. Negating two columns keeps the
+        // rotation proper while accounting for it. Building the naive
+        // right-handed basis instead renders the world upside down - and
+        // `dir()` cannot tell, because it reads the third column, which is
+        // identical either way.
+        self.rot = Quat::from_mat3(&glam::Mat3::from_cols(-right, -up, -fwd));
     }
 
     pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
@@ -438,7 +452,7 @@ impl Camera {
                 .add(
                     egui::DragValue::new(&mut pitch)
                         .speed(0.5)
-                        .range(-89.0..=89.0)
+                        .range(-90.0..=90.0)
                         .suffix("°"),
                 )
                 .changed();
@@ -497,24 +511,6 @@ mod ground_tests {
         }
     }
 
-    /// Where the shadow map gets centred, per pitch. `intersect_height`
-    /// clamps to the depth range, so a camera that is level or looking up
-    /// has no ground intersection at all and silently returns a point at
-    /// the near plane - i.e. the camera itself.
-    #[test]
-    fn diagnose_ground_intersection() {
-        let mut cam = cam_at(Vec3::new(1000.0, 1000.0, 120.0));
-        for pitch in [-30.0f32, -12.0, -4.0, -1.0, 0.0, 4.0, 10.0, 30.0] {
-            cam.set_angles(0.0, pitch);
-            let hit = cam.intersect_height(0.0);
-            let ahead = (hit.truncate() - cam.loc.truncate()).length();
-            println!(
-                "pitch {pitch:>6.1}  ground hit {:>8.1} units ahead, z {:>7.1}",
-                ahead, hit.z
-            );
-        }
-    }
-
     /// `set_angles` and `angles` have to be exact inverses, and have to
     /// agree with the basis `--fp-yaw`/`--fp-pitch` build in the snapshot
     /// binary. If they drift, an angle dialled in the viewer renders as a
@@ -543,20 +539,62 @@ mod ground_tests {
         }
     }
 
-    /// The forward vector `set_angles` produces must be the one
-    /// `bin/level/headless.rs` builds from the same numbers.
+    /// `set_angles` must build the whole basis the snapshot binary does,
+    /// not just aim in the same direction.
+    ///
+    /// Comparing `dir()` alone is not enough and was the hole in the first
+    /// version of this test: `dir()` reads the third column of the
+    /// rotation, which is the same whether or not the other two are
+    /// negated for the engine's left-handed `scale`. A camera built the
+    /// naive right-handed way points exactly where you asked and renders
+    /// the world upside down, and `dir()` reports success throughout.
     #[test]
     fn angles_match_the_snapshot_camera() {
         let mut cam = cam_at(Vec3::ZERO);
-        for (yaw, pitch) in [(0.0f32, 0.0f32), (122.0, -12.0), (275.0, 10.0), (150.0, -1.0)] {
+        for (yaw, pitch) in [
+            (0.0f32, 0.0f32),
+            (122.0, -12.0),
+            (275.0, 10.0),
+            (150.0, -1.0),
+            (30.0, 89.0),
+            (30.0, -89.0),
+        ] {
             cam.set_angles(yaw, pitch);
             let (y, p) = (yaw.to_radians(), pitch.to_radians());
-            let expected = Vec3::new(y.sin() * p.cos(), y.cos() * p.cos(), p.sin()).normalize();
-            let got = cam.dir();
+            let fwd = Vec3::new(y.sin() * p.cos(), y.cos() * p.cos(), p.sin()).normalize();
             assert!(
-                (got - expected).length() < 1e-5,
-                "yaw {yaw} pitch {pitch}: {got:?} vs {expected:?}"
+                (cam.dir() - fwd).length() < 1e-5,
+                "yaw {yaw} pitch {pitch}: aimed at {:?}, wanted {fwd:?}",
+                cam.dir()
             );
+
+            // Rebuild the basis exactly as `make_camera` does, including
+            // the two negations that account for the left-handed scale.
+            let up_ref = if fwd.cross(Vec3::Z).length_squared() > 1e-6 {
+                Vec3::Z
+            } else {
+                Vec3::Y
+            };
+            let right = fwd.cross(up_ref).normalize();
+            let up = right.cross(fwd).normalize();
+            let want = Quat::from_mat3(&glam::Mat3::from_cols(-right, -up, -fwd));
+            assert!(
+                (cam.rot * Vec3::X - want * Vec3::X).length() < 1e-4
+                    && (cam.rot * Vec3::Y - want * Vec3::Y).length() < 1e-4,
+                "yaw {yaw} pitch {pitch}: basis differs from the snapshot camera"
+            );
+
+            // And the thing a player notices: with the engine's scale
+            // folded in, screen-up has to have a positive world Z whenever
+            // the camera is not pointing straight at the zenith.
+            if pitch < 89.0 {
+                let screen_up = -(cam.rot * Vec3::Y);
+                assert!(
+                    screen_up.z > 0.0,
+                    "yaw {yaw} pitch {pitch}: screen-up is {screen_up:?}, \
+                     the view is upside down"
+                );
+            }
         }
     }
 
