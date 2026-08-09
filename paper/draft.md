@@ -12,11 +12,11 @@ submission.
 Terrain level-of-detail is measured almost exclusively on digital
 elevation models: single-valued, smooth at the sampling scale, sampled
 from real topography. Game terrain is often none of these. We compare six
-rendering methods — height-field ray marching, voxel-octree ray marching,
-sliced proxy geometry, per-sample bar rasterization, compute scattering,
-and a fitted triangle mesh — implemented in a single engine over a single
-data path, on the hand-authored multi-layer terrain of *Vangers* (1998),
-scored against a CPU ray cast of the same source data.
+rendering methods — height-field ray marching, voxel-accelerated ray
+marching, sliced proxy geometry, per-sample bar rasterization, compute
+scattering, and a fitted triangle mesh — implemented in a single engine
+over a single data path, on the hand-authored multi-layer terrain of
+*Vangers* (1998), scored against a CPU ray cast of the same source data.
 
 We report three results. First, the cost of fitting a triangulated
 irregular network to this terrain varies by more than an order of
@@ -42,19 +42,34 @@ measurement protocol that reduces a full run to a single command.
 ## 1. Introduction
 
 *(TODO — frame around the gap: terrain LOD literature is measured on
-DEMs, games ship authored terrain, nobody has published the comparison.)*
+DEMs, games ship authored terrain, nobody has published the comparison.
+JCGT prefers short introductions and only directly relevant citations,
+so the related work belongs here as one tight paragraph per method
+family — marching, voxel traversal, TIN/LOD — not as its own section.)*
 
 Contributions:
 
 1. A controlled comparison of six terrain rendering methods sharing one
-   engine, one data path and one camera, so differences are attributable
-   to the method rather than the surrounding system.
+   engine, one data path, one camera and one fragment-stage shading
+   path, so differences are attributable to the method rather than the
+   surrounding system.
 2. An evaluation methodology scoring against a CPU ray cast of the source
    data, decomposed into coverage, geometric and coherence error, with
    the failure mode of the naive version documented.
-3. A public dataset, harness and reference implementations.
+3. The engine, the harness and the measurement protocol, released under
+   a permissive license (see *Data availability* below).
 4. A ten-world survey isolating what actually drives fit cost, and the
    mechanism behind it.
+
+**Data availability.** *(TODO — resolve before submission; JCGT requires
+provided code and data to carry a non-restrictive open-source license.)*
+The engine and every tool in the harness are Apache-2.0. The terrain
+itself is the original game's content: the harness fetches the stock
+level archives from a public release and converts them on first run, and
+the paper must state the redistribution terms of that data explicitly —
+it is the one artifact here whose license is not ours to choose. The
+fallback, if redistribution cannot be cleared, is to publish the
+converter and fetch scripts and point at the game's own distribution.
 
 ## 2. The Data
 
@@ -78,21 +93,97 @@ region.)*
 ## 3. Methods Compared
 
 All six are implemented in the same engine, share the terrain texture and
-palette, and are driven by the same camera. They differ only in how they
-turn the height data into pixels.
+palette, and are driven by the same camera. More than that: **all six
+colour through one shared function** over the same surface data. Five
+evaluate it per output pixel in the fragment stage, so terrain-type
+boundaries stay at full texel resolution however coarse the geometry;
+the scatterer evaluates the same function per sample in compute and
+splats the resulting palette index, so its colour resolution is its
+sample density. What varies between methods is how a pixel finds its
+piece of surface — which is exactly the variable under test. (The one
+other shading difference: the mesh takes its normal from the polygon's
+own screen-space derivatives, which is what makes its vertical walls and
+cave ceilings shade sensibly where a height gradient is undefined.)
+
+The organising taxonomy is *who asks the question*. Two methods are
+backward, image-order: each pixel casts a ray and asks the height data
+what it hits. Three are forward, object-order: pieces of terrain are
+enumerated and ask the screen where they land — as proxy volume slices,
+as rasterized bars, or as compute-splatted points. The sixth fits an
+explicit surface at load time and lets the rasterizer do what it is
+built for.
 
 | method | order | primitive | needs compute |
 |---|---|---|---|
 | Height-field ray march | image | per-pixel ray | no |
-| Voxel-octree ray march | image | per-pixel ray | yes (bake) |
-| Sliced | object | horizontal quads | no |
-| Painted | object | one bar per ground sample | no |
-| Scattered | object | compute-scattered samples | yes |
+| Voxel-accelerated ray march | image | per-pixel ray | yes (bake) |
+| Sliced | object | horizontal proxy quads | no |
+| Painted | object | bars per ground sample | no |
+| Scattered | object | compute-scattered points | yes |
 | **Mesh (TIN)** | object | fitted triangles | no |
 
-*(TODO: one paragraph per method. The taxonomy — backward per-pixel
-marching vs forward per-sample splatting vs proxy geometry vs a fitted
-surface — is the organising idea and should be stated as such.)*
+### 3.1 Height-field ray march
+
+A full-screen pass; each fragment reconstructs its world-space ray from
+the inverse view-projection and marches the height field: fixed forward
+steps to bracket the first crossing, then binary refinement (16 and 4,
+compile-time constants). The dual layer makes the march stateful: a ray
+that passes under a cave ceiling continues *underneath* the slab,
+testing against the floor, with the right to re-emerge past the slab's
+far edge. Depth is written from the hit point, so everything composes
+with rasterized geometry. There is no preprocessing and no per-level
+state; the failure mode is the fixed step budget, which under-samples
+exactly when rays run flat along the ground (§5).
+
+### 3.2 Voxel-accelerated ray march
+
+The same per-pixel cast, accelerated by a conservative occupancy
+structure baked on the GPU: one bit per voxel, Morton-tiled in a storage
+buffer, with a pyramid of levels each halving the resolution — an
+implicit octree over the height field. Traversal is hierarchical DDA:
+descend a level on hitting an occupied cell, skip whole cells where
+empty, climb back up when leaving an octant. Inside an occupied leaf the
+hit is refined by linearly sampling the *actual* height data. The
+voxels only skip empty space — the surface rendered is the exact
+height-field geometry, which is why this method scores with the
+converged group in §5 rather than at voxel resolution. The bake spreads
+over frames under a per-frame texel budget, which is a real cost the
+per-frame numbers hide (§5.3).
+
+### 3.3 Sliced
+
+The level's height range is divided into `N` horizontal quads spanning
+the visible sample range, drawn instanced from the top down. Each
+fragment reads the surface under it and keeps the pixel only if the
+slice's altitude is inside the solid column — below the floor, or
+between the cave ceiling and the slab top — discarding otherwise. The
+union of cross-sections approximates the volume; at the default of one
+slice per altitude unit the quantised heights make it exact. Cave
+interiors are dimmed by a constant factor rather than shadowed.
+
+### 3.4 Painted
+
+One instance per ground sample in view, rasterizing the sample's column
+directly: a bar from zero to the floor height, and a second bar from
+cave ceiling to slab top where the texel is double-level. Only the three
+camera-facing faces of each bar are emitted, chosen by comparing the
+camera position against the bar's centre, and instances are generated
+in front-to-back order along the dominant camera axis. *(TODO: confirm
+against the original source before claiming it — this is believed to be
+the closest of the six to the original engine's software renderer.)*
+
+### 3.5 Scattered
+
+A compute pass distributes point samples over a camera-aligned footprint
+of the visible ground, warped so that sample density falls off with
+distance. Each sample reads the surface and splats single pixels — along
+the column's vertical extent, both layers — with a 32-bit `atomicMin`
+into a storage buffer, packing 24 bits of depth over 8 bits of palette
+index so the depth test and the colour resolve are one atomic. A
+full-screen pass then unpacks the buffer into colour and depth.
+Under-sampling shows up not as missing spans but as isolated wrong
+pixels, which is precisely the artifact class the coherence metric
+(§4.2) exists to count.
 
 ### 3.6 Mesh
 
@@ -114,10 +205,10 @@ is where floating-point orientation and incircle tests go inconsistent.
 Chunk-local integer coordinates keep both exact in `i64`.
 
 The level is cut into 128×128 chunks with three detail levels, frustum
-culled, and drawn near-to-far. Chunk borders are simplified at the
-*finest* tolerance regardless of the chunk's own level, so neighbouring
-chunks at different levels derive identical boundary vertices and the
-seam cannot crack.
+culled, and drawn near-to-far. Chunk borders are simplified with
+Douglas–Peucker [1973] at the *finest* tolerance regardless of the
+chunk's own level, so neighbouring chunks at different levels derive
+identical boundary vertices and the seam cannot crack.
 
 ## 4. Evaluation
 
@@ -164,6 +255,29 @@ across region boundaries and building a roof over everything. Comparing
 depth rather than classifying pixels found it; comparing coherence finds
 the class of artifact — striping, speckle, cracks — that correct-on-average
 depth still misses.
+
+### 4.3 Protocol
+
+Every number in this paper is produced by one command with no arguments
+(`tools/compare-terrain.py`), whose defaults *are* the publication
+configuration: every method, four viewpoints, four pitches (0°, −30°,
+−60°, −90°), 1280×800, 40 timed frames after per-method warmup. The
+harness builds the binaries, fetches and converts the level on first
+run, and names its output after the adapter wgpu selected, so runs
+collected from different machines merge without hand-labelling
+(`tools/merge-bench.py`). The design goal is that a measurement session
+on a new device costs its owner one invocation and about an hour — the
+protocol is only as reproducible as it is cheap to follow.
+
+Frame times come from GPU timestamp queries bracketing the frame's
+command encoder, falling back to a CPU submit-and-poll bracket where the
+device lacks them; each row records which timing it used, because the
+two disagree in exactly the regime where these methods are fast (§5.2).
+One-time costs are recorded separately as setup / first frame / warmup
+(§5.3), since per-frame figures structurally exclude them. Accuracy
+metrics are device-independent; the merge tool reports them once and
+cross-checks the other devices against the first, because an adapter
+that disagrees about geometry is a finding, not noise.
 
 ## 5. Results
 
@@ -233,7 +347,7 @@ terrain the bake has not reached yet.
 Neither is visible in a steady-state frame time, and for a level-loading
 budget the difference between them matters more than the per-frame gap.
 
-### 5.3 Fit cost
+### 5.4 Fit cost
 
 Fostral, triangles against a full grid mesh:
 
@@ -246,13 +360,14 @@ Fostral, triangles against a full grid mesh:
 | 1.0 | 1 | 11.3 M | 22.4 M | 3.0× |
 
 Against roughly 80× for a smooth synthetic surface at comparable
-tolerance, and 45–182× for the single-layer stock worlds (§6.2). The
+tolerance (our own control, not a literature figure), and 45–182× for
+the single-layer stock worlds (§6.2). The
 stock worlds are the better control than an external elevation model
 would be: they vary only content, holding encoding, quantisation, texel
 scale and authoring pipeline fixed, so the comparison isolates one
 variable rather than four.
 
-### 5.4 Tuning
+### 5.5 Tuning
 
 Each method was swept over its own quality knob and given the cheapest
 setting within one percentage point of its own best error, so no method
@@ -262,20 +377,35 @@ reaches only by being wrong. Fostral, four viewpoints at the horizon,
 
 | method | knob | swept | chosen | error at choice |
 |---|---|---|---|---|
-| RayTraced | — | none exists | — | 40.4% |
+| RayTraced | — | compile-time steps (16 fwd / 4 binary) | — | 40.4% |
 | Painted | — | none beyond view distance | — | 2.5% |
-| Sliced | slices | 32–512 | **256** | 14.0% |
+| Sliced | slices | 32–512 | **256** (kept; see text) | 14.0% |
 | Scattered | density | 1–4 | **4,4,4** | 26.8% |
 | RayVoxel | grid, steps | 2 grids × 40–400 | **4,8,2, 100 steps** | 2.9% |
 | Mesh | fit tolerance | q 0.0–1.0 | **q=0.0** | 3.1% |
 
-Three of the six results are worth stating.
+Four of the results are worth stating.
 
-**The slicer does not degrade, it collapses.** One slice per altitude
-unit is not a quality setting but a correctness threshold: 256 slices
-leave 4.7% see-through, 128 leave 61.2% and move surfaces by 259 u. The
-shipped default was already at the threshold, but nothing recorded that
-it was a threshold rather than a preference.
+**The first slicer sweep measured the knob, not the method.** The slice
+count was exposed for this comparison, and its first implementation kept
+unit spacing and truncated slices off the *bottom* of the height range —
+so "128 slices" silently deleted all terrain below half height, which
+the sweep read as a collapse: 61.2% see-through and surfaces moved by
+259 u. With the count honestly spreading slices over the whole range,
+128 slices leave 6.2%. A tuning sweep validates the knob's
+implementation as much as the method behind it, and a result this
+discontinuous is a reason to suspect the former.
+
+**The corrected slicer knob barely moves total error — it changes its
+kind.** From 32 to 512 slices, cost rises 11.5× (4.4 → 51 ms) while
+see-through falls 12.7% → 3.5% and speckle rises 1.3% → 9.3%: slices
+convert missing spans into isolated wrong pixels, and their sum stays
+within 2.4 points across the whole sweep. A knob whose total error is
+flat relative to the measurement cannot be tuned by an error-based rule
+— the selection is then decided entirely by the slack parameter, which
+is the rule admitting it has nothing to say. We keep one slice per
+altitude unit, the setting at which the quantised heights make the
+cross-sections exact.
 
 **The voxel step budget was mistuned in both directions.** 40 steps —
 the value this work inherited — leaves 6.4% see-through where 100 gets
@@ -292,7 +422,7 @@ surfaces by up to 289 u. Where a parameter changes geometry more finely
 than the ground truth can see, it has to be tuned self-referentially.
 This is the same blind spot as §4.2, in a different place.
 
-A fourth result is about the platform rather than the method: the voxel
+A fifth result is about the platform rather than the method: the voxel
 tracer's production grid (2,4,1) needs 153 MB of storage buffer against
 llvmpipe's 134 MB limit, so every voxel figure here is for a grid eight
 times coarser than the one that ships. That is a caveat on the software
@@ -329,9 +459,13 @@ only content. Fitted at identical tolerance:
 | level | texels | triangles | reduction | slab tris | dual texels | rough(floor) | rough(surface) |
 |---|---|---|---|---|---|---|---|
 | weexow | 4.2 M | 0.05 M | 182.0× | 0.0% | 0.0% | 1.84 | 1.84 |
+| ark-a-znoy | 4.2 M | 0.05 M | 154.8× | 0.0% | 0.0% | 5.52 | 5.52 |
 | threall | 4.2 M | 0.19 M | 45.3× | 0.0% | 0.0% | 2.85 | 2.85 |
 | xplo | 8.4 M | 0.87 M | 19.4× | 17.0% | 1.4% | 7.54 | 8.80 |
 | khox | 4.2 M | 0.52 M | 16.1× | 9.3% | 4.8% | 6.94 | 7.71 |
+| fostral | 33.6 M | 4.50 M | 14.9× | 35.6% | 10.9% | 3.44 | 6.54 |
+| necross | 33.6 M | 8.41 M | 8.0× | 42.5% | 17.0% | 4.41 | 14.43 |
+| glorx | 33.6 M | 10.97 M | 6.1× | 37.2% | 30.0% | 6.53 | 14.66 |
 | boozeena | 4.2 M | 1.46 M | 5.7× | 41.5% | 13.3% | 3.44 | 25.15 |
 | hmok | 4.2 M | 1.61 M | 5.2× | 47.2% | 38.0% | 2.71 | 18.77 |
 
@@ -340,10 +474,18 @@ alone — the terrain's own curvature, blind to the second layer.
 `rough(surface)` is the same measure on the composite surface the fitter
 sees.
 
-The hypothesis fails. Across these worlds, correlation of log reduction
-against `rough(floor)` is **−0.25**; against `rough(surface)` it is
-**−0.88**, and against the double-level fraction **−0.88**. Relief does
-not predict the fit cost; the second layer does.
+The hypothesis fails. Across all ten worlds, correlation of log
+reduction against `rough(floor)` is **−0.17**; against the double-level
+texel fraction it is **−0.77**, and against `rough(surface)` — the data
+the fitter actually sees, curvature the slab edges put there — it is
+**−0.82**. (The share of the fitted triangles that end up on slab
+surfaces correlates at −0.89, which is the fit's own account of where
+its budget went rather than an independent predictor.) Relief does not
+predict the fit cost; the second layer does. `ark-a-znoy` makes the
+floor-relief hypothesis fail in the other direction too: it is *twice*
+as rough as `weexow` on the floor (5.52 against 1.84) and compresses
+essentially as well (154.8× against 182.0×), because neither world has
+a slab.
 
 The clearest case is `hmok`. Its floor is *smoother* than `threall`'s
 (2.71 against 2.85), and `threall` compresses 45.3×. `hmok` manages
@@ -386,6 +528,16 @@ is the same change that would stop straddling triangles dropping the slab.
 §4.2. Worth stating as a methodological result: a correctness measure for
 a renderer must be able to fail in both directions.
 
+The same shape recurred twice more during this work, each time as a
+measurement that held something true while the thing that mattered was
+wrong: a sweep parameter whose implementation did not do what its name
+said (§5.5, the slicer's "count" that truncated), and a camera test
+asserting a direction that survives a flipped basis. The common failure
+is asserting a property the defect preserves. The practical defence we
+ended with is to require every metric, knob and fixture to demonstrate
+that it *can* fail: reproduce a known-bad configuration and check the
+measurement moves.
+
 ## 7. Limitations
 
 - One engine and one terrain format. The ten stock worlds span a factor
@@ -397,10 +549,12 @@ a renderer must be able to fail in both directions.
   is submitted and awaited in isolation, so nothing overlaps. The
   timestamps make the number GPU work rather than round trip, but they do
   not make it a frame rate.
-- Unequal tuning. The voxel step budget was found badly mistuned during
-  this work (40 → 200 steps, worth 21.8% of a frame); the slicer and the
-  painter have had no equivalent pass, and their numbers should be read
-  as a lower bound on their potential.
+- Residual unequal tuning, after the uniform pass of §5.5. The
+  height-field marcher's step counts are compile-time constants and were
+  set by eye against its WebGL2 silhouette quality, not swept under the
+  rule; and the mesh quality is tuned self-referentially because the
+  reference cannot resolve it (§5.5). Both are documented rather than
+  eliminated.
 - The mesh needs ~300 MB resident at q=0.75 on a full level. Chunk
   streaming is not implemented, and until it is, "runs on low-end
   devices" is a claim about the pipeline, not the memory budget.
@@ -408,6 +562,30 @@ a renderer must be able to fail in both directions.
 ## 8. Conclusion
 
 *(TODO)*
+
+## Planned figures
+
+The draft currently has none, which for a graphics journal is the
+largest single gap. Each figure below has (or needs) a generating
+command, same rule as the numbers:
+
+1. **Teaser** — the six methods side by side at the horizon viewpoint
+   where they differ, plus the reference. The harness's `--out` PNGs
+   are the source; needs a layout script.
+2. **§2** — texel-pair encoding diagram, and a vertical slice through a
+   double-level region (floor, cave, slab) rendered from the data.
+3. **§4.2** — error decomposition triptych for one frame: see-through
+   mask, covers-sky mask, speckle mask, over the rendered image. The
+   harness already emits the masks.
+4. **§5.1** — pitch sweep chart: error vs pitch per method, the
+   "separate sharply at the horizon" curve.
+5. **§6.2** — scatter plot of log reduction vs double-level fraction
+   across the ten worlds, the r = −0.77 picture (`tools/level-survey.py`
+   output).
+6. **§6.3** — mesh wireframe at a single/double-level region boundary,
+   showing triangles shrinking to texel size along the discontinuity.
+7. **§3.6 / appendix** — top-down frustum + per-chunk LOD/culling plan
+   (`tools/plot-cull.py`, already implemented).
 
 ## References
 
@@ -417,9 +595,28 @@ a renderer must be able to fail in both directions.
   network digital terrain models.* SIGGRAPH.
 - Shewchuk, J. R. 1997. *Adaptive Precision Floating-Point Arithmetic and
   Fast Robust Geometric Predicates.*
+- Douglas, D. and Peucker, T. 1973. *Algorithms for the reduction of the
+  number of points required to represent a digitized line or its
+  caricature.* Cartographica. (Chunk-border simplification, §3.6.)
 - Duchaineau, M. et al. 1997. *ROAMing terrain: real-time optimally
   adapting meshes.* IEEE Visualization.
 - Ulrich, T. 2002. *Rendering massive terrains using chunked level of
   detail control.* SIGGRAPH course.
 - Losasso, F. and Hoppe, H. 2004. *Geometry clipmaps.* SIGGRAPH.
-- *(TODO: voxel/ray-march terrain lineage; Vangers technical history.)*
+- Amanatides, J. and Woo, A. 1987. *A fast voxel traversal algorithm for
+  ray tracing.* Eurographics. (The DDA that §3.2 runs hierarchically.)
+- Laine, S. and Karras, T. 2010. *Efficient sparse voxel octrees.* I3D.
+  (The contrast: §3.2's voxels accelerate an exact height field rather
+  than replace it.)
+- Policarpo, F., Oliveira, M. and Comba, J. 2005. *Real-time relief
+  mapping on arbitrary polygonal surfaces.* I3D. (Per-pixel height-field
+  marching lineage for §3.1.)
+- Tevs, A., Ihrke, I. and Seidel, H.-P. 2008. *Maximum mipmaps for fast,
+  accurate, and scalable dynamic height field rendering.* I3D.
+- *(TODO: Vangers technical history — K-D Lab 1998; the open-source
+  release of the original engine is the citable artifact for the
+  "Surmap" column renderer that §3.4 mirrors.)*
+- *(TODO: a citable source for the DEM reduction ratios that §5.4/§6.2
+  compare against — Garland–Heckbert's own reported ratios if they
+  suffice, otherwise a survey; the "~80×" smooth-surface figure is our
+  own synthetic control and must be labelled as such where used.)*

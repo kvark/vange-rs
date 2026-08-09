@@ -1,7 +1,5 @@
 #[allow(dead_code)]
 mod pipeline;
-#[allow(dead_code)]
-mod types;
 
 use crate::{
     config::settings,
@@ -88,6 +86,9 @@ struct Constants {
     /// Vangers look), 1 = unbaked albedo + cosine diffuse + shadow.
     /// The remaining slots are reserved.
     lighting_flags: [u32; 4],
+    /// `[0]` = vertical spacing between slices, in altitude units
+    /// (`Sliced` only, 1.0 otherwise). The remaining slots are reserved.
+    terrain_params: [f32; 4],
 }
 unsafe impl Pod for Constants {}
 unsafe impl Zeroable for Constants {}
@@ -2207,6 +2208,7 @@ impl Context {
                     pad: 1.0,
                     fog_params: [depth_range.end - fog.depth, depth_range.end, 0.0, 0.0],
                     lighting_flags: [self.unbaked_lighting as u32, 0, 0, 0],
+                    terrain_params: [self.slice_spacing(), 0.0, 0.0, 0.0],
                 }),
                 usage: wgpu::BufferUsages::COPY_SRC,
             });
@@ -2394,6 +2396,7 @@ impl Context {
                     pad: 1.0,
                     fog_params: [10000000.0, 10000000.0, 0.0, 0.0],
                     lighting_flags: [self.unbaked_lighting as u32, 0, 0, 0],
+                    terrain_params: [self.slice_spacing(), 0.0, 0.0, 0.0],
                 }),
                 usage: wgpu::BufferUsages::COPY_SRC,
             });
@@ -2734,10 +2737,27 @@ impl Context {
         }
     }
 
-    /// How many horizontal slices the sliced terrain draws. Defaults to the
-    /// level's height in units, i.e. one per altitude step; fewer is
-    /// cheaper and coarser, and this is the only quality knob the method
-    /// has.
+    /// Vertical distance between consecutive slices, chosen so the whole
+    /// `0..height` range is always covered whatever the count.
+    fn slice_spacing(&self) -> f32 {
+        match self.kind {
+            Kind::Slice { layer_count, .. } => {
+                self.active_surface_constants.texture_scale[2] / layer_count as f32
+            }
+            _ => 1.0,
+        }
+    }
+
+    /// How many horizontal slices the sliced terrain draws, spread evenly
+    /// over the level's height range. Defaults to the level's height in
+    /// units, i.e. one per altitude step; fewer is cheaper and coarser,
+    /// and this is the only quality knob the method has.
+    ///
+    /// The spread matters: an earlier version kept unit spacing and let a
+    /// smaller count truncate slices off the *bottom* of the range, so
+    /// "fewer slices" deleted the low terrain outright instead of
+    /// sampling all of it more coarsely — and a tuning sweep read that
+    /// as the method collapsing.
     pub fn set_slice_layers(&mut self, layers: u32) {
         if let Kind::Slice {
             ref mut layer_count,
