@@ -21,8 +21,8 @@ drew incoherently. `covers-sky` is deliberately excluded, since it moves
 with the reference rather than the renderer.
 
 Depth error is reported but not used to select, because at the horizon it
-cannot: the reference's own floor there is ~50u, and on Fostral every
-mesh quality from 0.0 to 1.0 lands within 1u of it. Where a knob changes
+cannot: the reference's own floor there is ~25u, and on Fostral every
+mesh quality from 0.0 to 1.0 lands within a few u of it. Where a knob changes
 geometry too finely for the reference to see, tune it against the
 method's own finest setting instead - `--mesh-lod`/`--mesh-lod-distance`
 with `tools/compare-terrain.py` does exactly that, and resolves

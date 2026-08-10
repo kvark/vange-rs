@@ -59,8 +59,8 @@ Example
     tools/compare-terrain.py \\
         --level-zip fostral.zip --common-zip common.zip \\
         --layers work/level.ron --out work/compare \\
-        --view "tunnel:1984,624:100:under" \\
-        --view "river:2006,1730:120"
+        --view "span:1108,15875:227" \\
+        --view "cave:1492,15833:180:under"
 """
 
 import argparse
@@ -91,43 +91,52 @@ Image.MAX_IMAGE_PIXELS = None
 # knowing when reading their columns.
 METHODS = [
     ("RayTraced", "RayTraced", [], 3),
-    # 100 steps is the knee: 40 leaves 6.4% of the frame see-through, 100
-    # gets to 2.5%, and 200 buys nothing for 30% more time.
+    # The step budget the fixture's sightlines set: 40 steps lands within a
+    # point of 100 on these views (5.5% vs 4.8% error), so the selection
+    # rule keeps it. The old fixture's long sightlines exhausted it - 6.4%
+    # see-through at 40 where 100 got to 2.5% - which is a fact about that
+    # fixture, not a different method.
     ("RayVoxel", "RayVoxelTraced",
-     ["--voxel-size", "4,8,2", "--voxel-steps", "100"], 170),
-    # One slice per altitude unit. Below that the method does not degrade
-    # gracefully, it falls off a cliff - 128 layers leaves 61% of the frame
-    # see-through and moves surfaces by 259u.
-    ("Sliced", "Sliced", ["--slice-layers", "256"], 3),
+     ["--voxel-size", "4,8,2", "--voxel-steps", "40"], 170),
+    # Two slices per altitude unit, the setting the selection rule picks
+    # once slices spread honestly over the height range: see-through keeps
+    # falling (17.2% at 32 to 5.4% at 512) while speckle peaks mid-sweep
+    # (10.9% at 256), slices converting missing spans into isolated wrong
+    # pixels.
+    ("Sliced", "Sliced", ["--slice-layers", "512"], 3),
     # Density 4 is the best this method reaches and it is still last by a
     # wide margin; lower densities are cheaper and worse in every column.
     ("Scattered", "Scattered", ["--scatter-density", "4,4,4"], 8),
     ("Painter", "Painted", [], 3),
-    ("Mesh q=0.25", "Mesh", ["--mesh-quality", "0.25"], 3),
+    # The selection rule picks the cheapest fit: the reference cannot
+    # resolve mesh quality at the horizon, so every q lands within a point
+    # of the same error. The q=0.75 row stays as the prep-cost contrast.
+    ("Mesh q=0.0", "Mesh", ["--mesh-quality", "0.0"], 3),
     ("Mesh q=0.75", "Mesh", ["--mesh-quality", "0.75"], 3),
 ]
 
-# Fostral first-person viewpoints: a tunnel interior, a river under a
-# span, a deep canyon and an open ridge. Chosen for obstructions at eye
-# level, which is where the renderers disagree; a view of open ground
-# tells you nothing.
+# Fostral first-person viewpoints: a cliff line over water with a slab
+# bridge overhead, an open floor under a slab span, and a cave interior
+# looking out. Chosen for obstructions at eye level and depth layering,
+# which is where the renderers disagree; a view of open ground - or of a
+# wall - tells you nothing.
 #
 # Each was checked against the reference before being listed here - the
 # residual disagreement of a *correct* renderer at these, in the order
-# below, is 0.0%, 5.0%, 1.8% and 8.5%. It tracks how much horizon is in
+# below, is 3%, 15% and 4% at pitch 0. It tracks how much horizon is in
 # frame, because that is where the CPU march and the rasterizer round the
-# silhouette differently. Treat those as the noise floor: a renderer is
-# only interesting where it is worse than its neighbours in the same row.
-# The whole point of the sweep. Every method is close to correct looking
-# down; they separate as the camera comes to the horizon, which is where a
-# first-person or chase camera actually sits.
+# silhouette differently, and both error columns move together when that
+# is all it is. Treat those as the noise floor: a renderer is only
+# interesting where it is worse than its neighbours in the same row. The
+# whole point of the sweep: every method is close to correct looking
+# down; they separate as the camera comes to the horizon, which is where
+# a first-person or chase camera actually sits.
 DEFAULT_PITCHES = [0.0, -30.0, -60.0, -90.0]
 
 DEFAULT_VIEWS = [
-    "tunnel:1984,624:100:under",
-    "river:2006,1730:120",
-    "canyon:1700,4200:270",
-    "ridge:1500,900:45",
+    "cliffs:211,59:195",
+    "span:1108,15875:227",
+    "cave:1492,15833:180:under",
 ]
 
 
@@ -467,6 +476,16 @@ def main():
     ensure_assets(args)
     os.makedirs(args.out, exist_ok=True)
     views = [parse_view(v) for v in args.view or DEFAULT_VIEWS]
+    # Rows, cells and the grid are keyed by view name, so two views sharing
+    # one would silently overwrite each other. `level` dumps every camera
+    # as "spot:", which is exactly how a collision sneaks in.
+    names = [v["name"] for v in views]
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        raise SystemExit(
+            f"duplicate view name(s) {', '.join(dupes)}: give each view its "
+            "own name (the level viewer dumps them all as 'spot:')"
+        )
     layers = load_layers(args.layers)
 
     pitches = args.pitch or DEFAULT_PITCHES
