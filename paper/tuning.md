@@ -1,62 +1,62 @@
 # Per-method tuning
 
-Level fostral, pitch 0°, 400x260, view distance 600, averaged over 4 viewpoints.
+Level fostral, pitch 0°, 400x260, view distance 600, averaged over 3 viewpoints.
 
 Selection rule: the cheapest setting within 1 percentage points of that method's own best error, where error is see-through + speckle.
 
 ## RayTraced
 
-| setting | GPU ms | see-through | speckle | error |
-|---|---|---|---|---|
-| (none) **<-** | 5.16 | 48.4% | 1.8% | 50.3% |
+| setting | GPU ms | see-through | speckle | error | depth p50 |
+|---|---|---|---|---|---|
+| (none) **<-** | 0.11 | 64.5% | 1.6% | 66.1% | 12.7u |
 
 ## Painter
 
-| setting | GPU ms | see-through | speckle | error |
-|---|---|---|---|---|
-| (none) **<-** | 579.48 | 2.3% | 0.2% | 2.5% |
+| setting | GPU ms | see-through | speckle | error | depth p50 |
+|---|---|---|---|---|---|
+| (none) **<-** | 2.70 | 4.0% | 0.5% | 4.5% | 17.6u |
 
 ## Sliced
 
-| setting | GPU ms | see-through | speckle | error |
-|---|---|---|---|---|
-| 32 layers | 3.64 | 82.9% | 0.0% | 82.9% |
-| 64 layers | 6.98 | 77.6% | 0.7% | 78.3% |
-| 128 layers | 15.46 | 61.2% | 1.8% | 63.0% |
-| 256 layers **<-** | 41.09 | 4.7% | 9.3% | 14.0% |
-| 512 layers | 46.89 | 4.7% | 9.3% | 14.0% |
+| setting | GPU ms | see-through | speckle | error | depth p50 |
+|---|---|---|---|---|---|
+| 32 layers | 0.19 | 17.2% | 2.4% | 19.7% | 54.9u |
+| 64 layers | 0.32 | 13.1% | 4.8% | 17.8% | 39.6u |
+| 128 layers | 0.48 | 10.1% | 8.2% | 18.3% | 27.6u |
+| 256 layers | 0.67 | 7.1% | 10.9% | 18.0% | 20.8u |
+| 512 layers **<-** | 1.44 | 5.4% | 4.4% | 9.8% | 20.2u |
 
 ## Scattered
 
-| setting | GPU ms | see-through | speckle | error |
-|---|---|---|---|---|
-| density 1,1,1 | 5.48 | 62.0% | 0.9% | 62.9% |
-| density 2,2,2 | 27.35 | 35.8% | 6.9% | 42.7% |
-| density 3,3,3 | 77.28 | 25.9% | 5.8% | 31.7% |
-| density 4,4,4 **<-** | 151.55 | 21.9% | 4.9% | 26.8% |
+| setting | GPU ms | see-through | speckle | error | depth p50 |
+|---|---|---|---|---|---|
+| density 1,1,1 | 0.19 | 79.3% | 0.3% | 79.6% | 90.2u |
+| density 2,2,2 | 0.78 | 66.2% | 5.6% | 71.8% | 97.8u |
+| density 3,3,3 | 2.48 | 59.4% | 4.4% | 63.8% | 105.7u |
+| density 4,4,4 **<-** | 3.84 | 53.2% | 4.1% | 57.3% | 106.6u |
 
 ## RayVoxel
 
-| setting | GPU ms | see-through | speckle | error |
-|---|---|---|---|---|
-| grid 4,8,2, 40 steps | 46.27 | 6.4% | 0.3% | 6.7% |
-| grid 4,8,2, 100 steps **<-** | 67.20 | 2.5% | 0.4% | 2.9% |
-| grid 4,8,2, 200 steps | 87.85 | 2.4% | 0.4% | 2.8% |
-| grid 4,8,2, 400 steps | 127.11 | 2.4% | 0.4% | 2.8% |
-| grid 2,4,1, 40 steps | — | — | — | not available: panicked at bin/level/headless.rs:315:6: |
-| grid 2,4,1, 100 steps | — | — | — | not available: panicked at bin/level/headless.rs:315:6: |
-| grid 2,4,1, 200 steps | — | — | — | not available: panicked at bin/level/headless.rs:315:6: |
-| grid 2,4,1, 400 steps | — | — | — | not available: panicked at bin/level/headless.rs:315:6: |
+| setting | GPU ms | see-through | speckle | error | depth p50 |
+|---|---|---|---|---|---|
+| grid 4,8,2, 40 steps **<-** | 0.75 | 4.8% | 0.6% | 5.5% | 17.4u |
+| grid 4,8,2, 100 steps | 0.94 | 4.1% | 0.7% | 4.8% | 17.7u |
+| grid 4,8,2, 200 steps | 1.19 | 4.1% | 0.7% | 4.8% | 17.7u |
+| grid 4,8,2, 400 steps | 1.38 | 4.1% | 0.7% | 4.8% | 17.7u |
+| grid 2,4,1, 40 steps | 0.72 | 6.4% | 0.5% | 6.9% | 17.0u |
+| grid 2,4,1, 100 steps | 1.02 | 4.1% | 0.6% | 4.7% | 17.7u |
+| grid 2,4,1, 200 steps | 1.10 | 4.1% | 0.6% | 4.7% | 17.7u |
+| grid 2,4,1, 400 steps | 1.57 | 4.1% | 0.6% | 4.7% | 17.7u |
 
 ## Mesh
 
-| setting | GPU ms | see-through | speckle | error |
-|---|---|---|---|---|
-| q=0.0 **<-** | 11.44 | 3.0% | 0.1% | 3.1% |
-| q=0.25 | 13.34 | 2.6% | 0.1% | 2.7% |
-| q=0.5 | 25.54 | 2.5% | 0.1% | 2.6% |
-| q=0.75 | 28.46 | 2.5% | 0.1% | 2.6% |
-| q=1.0 | 40.51 | 2.5% | 0.1% | 2.6% |
+| setting | GPU ms | see-through | speckle | error | depth p50 |
+|---|---|---|---|---|---|
+| q=0.0 **<-** | 0.11 | 4.3% | 0.1% | 4.4% | 20.5u |
+| q=0.25 | 0.11 | 4.4% | 0.1% | 4.5% | 22.6u |
+| q=0.5 | 0.15 | 4.3% | 0.2% | 4.4% | 20.4u |
+| q=0.75 | 0.19 | 4.2% | 0.2% | 4.4% | 20.7u |
+| q=1.0 | 0.23 | 4.2% | 0.2% | 4.4% | 18.0u |
 
 ## Chosen
 
@@ -64,9 +64,9 @@ Selection rule: the cheapest setting within 1 percentage points of that method's
 METHODS = [
     ("RayTraced", "RayTraced", [], ...),  # (none)
     ("Painter", "Painted", [], ...),  # (none)
-    ("Sliced", "Sliced", ["--slice-layers", "256"], ...),  # 256 layers
+    ("Sliced", "Sliced", ["--slice-layers", "512"], ...),  # 512 layers
     ("Scattered", "Scattered", ["--scatter-density", "4,4,4"], ...),  # density 4,4,4
-    ("RayVoxel", "RayVoxelTraced", ["--voxel-size", "4,8,2", "--voxel-steps", "100"], ...),  # grid 4,8,2, 100 steps
+    ("RayVoxel", "RayVoxelTraced", ["--voxel-size", "4,8,2", "--voxel-steps", "40"], ...),  # grid 4,8,2, 40 steps
     ("Mesh", "Mesh", ["--mesh-quality", "0.0"], ...),  # q=0.0
 ]
 ```

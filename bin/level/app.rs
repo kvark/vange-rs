@@ -10,8 +10,8 @@ use winit::{event, keyboard::KeyCode};
 
 #[derive(Debug)]
 enum Input {
-    Hor { dir: f32, alt: bool, shift: bool },
-    Ver { dir: f32, alt: bool, shift: bool },
+    Hor { dir: f32, alt: bool },
+    Ver { dir: f32, alt: bool },
     Dep { dir: f32, alt: bool },
     DepQuant(f32),
     PlaneQuant(glam::Vec2),
@@ -28,6 +28,7 @@ pub struct LevelView {
 
     last_mouse_pos: glam::Vec2,
     alt_button_pressed: bool,
+    shift_button_pressed: bool,
     /// Whether the tweaks panel is showing. Collapsed it is one button, so
     /// a framed shot is not half controls.
     ui_expanded: bool,
@@ -214,6 +215,7 @@ impl LevelView {
             ui: settings.ui,
             last_mouse_pos: glam::Vec2::new(-1.0, -1.0),
             alt_button_pressed: false,
+            shift_button_pressed: false,
             ui_expanded: true,
             mouse_button_pressed: false,
         }
@@ -269,32 +271,29 @@ impl Application for LevelView {
         match state {
             ElementState::Pressed => match key {
                 KeyCode::Escape => return false,
+                KeyCode::ShiftLeft | KeyCode::ShiftRight => self.shift_button_pressed = true,
                 KeyCode::KeyW => {
                     *i = Input::Ver {
                         dir: self.cam.scale.y,
                         alt,
-                        shift: false,
                     }
                 }
                 KeyCode::KeyS => {
                     *i = Input::Ver {
                         dir: -self.cam.scale.y,
                         alt,
-                        shift: false,
                     }
                 }
                 KeyCode::KeyA => {
                     *i = Input::Hor {
                         dir: -self.cam.scale.x,
                         alt,
-                        shift: false,
                     }
                 }
                 KeyCode::KeyD => {
                     *i = Input::Hor {
                         dir: self.cam.scale.x,
                         alt,
-                        shift: false,
                     }
                 }
                 KeyCode::KeyZ => {
@@ -323,6 +322,7 @@ impl Application for LevelView {
                 | KeyCode::KeyD
                 | KeyCode::KeyZ
                 | KeyCode::KeyX => *i = Input::Empty,
+                KeyCode::ShiftLeft | KeyCode::ShiftRight => self.shift_button_pressed = false,
                 KeyCode::AltLeft => self.alt_button_pressed = false,
                 _ => (),
             },
@@ -337,65 +337,79 @@ impl Application for LevelView {
             space::Projection::Ortho { .. } => 500.0,
         };
         let rotation_speed = 1.0;
-        let fast_move_speed = 5.0 * move_speed;
+        // Shift is the turbo, matching the game binary: everything moves
+        // and rotates five times faster while it is held.
+        let turbo = if self.shift_button_pressed { 5.0 } else { 1.0 };
         match self.input {
-            Input::Hor {
-                dir,
-                alt: false,
-                shift,
-            } if dir != 0.0 => {
+            Input::Hor { dir, alt: false } if dir != 0.0 => {
                 let mut vec = self.cam.rot * glam::Vec3::X;
                 vec.z = 0.0;
-                let speed = if shift { fast_move_speed } else { move_speed };
-                self.cam.loc += speed * delta * dir * vec.normalize();
+                self.cam.loc += move_speed * turbo * delta * dir * vec.normalize();
             }
-            Input::Ver {
-                dir,
-                alt: false,
-                shift,
-            } if dir != 0.0 => {
-                let mut vec = self.cam.rot * glam::Vec3::Y;
-                vec.z = 0.0;
-                let speed = if shift { fast_move_speed } else { move_speed };
-                self.cam.loc += speed * delta * dir * vec.normalize();
+            Input::Ver { dir, alt: false } if dir != 0.0 => {
+                // Move along the heading projected onto the ground plane,
+                // so W keeps meaning "forward" once the view is rotated to
+                // the horizon (see `Camera::ground_forward`).
+                let vec = self.cam.ground_forward();
+                self.cam.loc -= move_speed * turbo * delta * dir * vec;
             }
             Input::Dep { dir, alt: false } if dir != 0.0 => {
                 let vec = glam::Vec3::Z;
-                self.cam.loc += move_speed * delta * dir * vec.normalize();
+                self.cam.loc += move_speed * turbo * delta * dir * vec.normalize();
             }
             Input::Hor { dir, alt: true, .. } if dir != 0.0 => {
-                let rot = glam::Quat::from_rotation_z(rotation_speed * delta * dir);
+                let rot = glam::Quat::from_rotation_z(rotation_speed * turbo * delta * dir);
                 self.cam.rot = rot * self.cam.rot;
             }
             Input::Ver { dir, alt: true, .. } if dir != 0.0 => {
-                let rot = glam::Quat::from_rotation_x(rotation_speed * delta * dir);
+                let rot = glam::Quat::from_rotation_x(rotation_speed * turbo * delta * dir);
                 self.cam.rot *= rot;
             }
             Input::DepQuant(dir) => {
                 let vec = glam::Vec3::Z;
-                self.cam.loc += 1000.0 * delta * dir * vec.normalize();
+                self.cam.loc += 1000.0 * turbo * delta * dir * vec.normalize();
                 self.input = Input::Empty;
             }
             Input::PlaneQuant(dir) => {
-                let vec_x = self.cam.rot * glam::Vec3::new(-dir.x, 0.0, 0.0);
-                let vec_y = self.cam.rot * glam::Vec3::new(0.0, dir.y, 0.0);
-
-                let mut vec = vec_x + vec_y;
-
+                let mut vec = self.cam.rot * glam::Vec3::new(-dir.x, dir.y, 0.0);
                 let norm1 = vec.length();
                 if norm1 > 0.0 {
                     vec.z = 0.0;
-                    let norm = vec.length();
-                    vec *= norm1 / norm;
-                    self.cam.loc += self.cam.loc.z * 0.2 * delta * vec;
+                    let mut norm = vec.length();
+                    if norm < 1e-6 {
+                        // The camera's Y axis is vertical once the view is
+                        // level, so a vertical drag has no ground component
+                        // left; pan along the heading instead, with a drag
+                        // down pulling the world down (camera forward).
+                        let mut fwd = self.cam.dir();
+                        fwd.z = 0.0;
+                        vec = fwd * -dir.y;
+                        norm = vec.length();
+                    }
+                    if norm > 1e-6 {
+                        vec *= norm1 / norm;
+                        self.cam.loc += self.cam.loc.z * 0.2 * turbo * delta * vec;
+                    }
                 }
                 self.input = Input::Empty;
             }
             Input::RotQuant(dir) => {
-                let speed = 0.3;
-                let rot_x = glam::Quat::from_rotation_z(speed * delta * dir.x);
-                let rot_y = glam::Quat::from_rotation_x(-speed * delta * dir.y);
-                self.cam.rot = rot_x * self.cam.rot * rot_y;
+                let speed = 0.3 * turbo;
+                let yaw = glam::Quat::from_rotation_z(speed * delta * dir.x);
+                let pitch = glam::Quat::from_rotation_x(-speed * delta * dir.y);
+                let rot = yaw * self.cam.rot * pitch;
+                // One drag direction from the top-down view crosses the
+                // horizon upside down, and either one past the zenith
+                // flips it. Keep the horizon level and right side up:
+                // the screen's up vector must stay above the ground
+                // plane (it is exactly horizontal looking straight down,
+                // hence the epsilon).
+                let screen_up = -(rot * glam::Vec3::Y);
+                self.cam.rot = if screen_up.z < -1e-4 {
+                    yaw * self.cam.rot
+                } else {
+                    rot
+                };
                 self.input = Input::Empty;
             }
             _ => {}

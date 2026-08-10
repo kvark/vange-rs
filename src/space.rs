@@ -390,6 +390,25 @@ impl Camera {
         }
     }
 
+    /// The horizontal unit vector that moves toward the top of the
+    /// screen: the heading projected onto the ground plane. Looking
+    /// straight down or up the heading has no ground component, and
+    /// "forward" is the screen's up direction instead.
+    ///
+    /// This is the axis W/S travel along. It has to switch because the
+    /// camera's Y axis - the old axis - is horizontal only in the
+    /// top-down view; once pitched to the horizon its ground projection
+    /// vanishes, and normalizing it turns the position into NaN.
+    pub fn ground_forward(&self) -> Vec3 {
+        let mut v = self.dir();
+        v.z = 0.0;
+        if v.length_squared() < 1e-6 {
+            v = -(self.rot * Vec3::Y);
+            v.z = 0.0;
+        }
+        v.normalize()
+    }
+
     /// Heading and elevation, in degrees. Yaw is 0 along +Y and grows
     /// clockwise; pitch is 0 at the horizon and positive looking up.
     pub fn angles(&self) -> (f32, f32) {
@@ -596,6 +615,37 @@ mod ground_tests {
                 );
             }
         }
+    }
+
+    /// `ground_forward` is the axis W/S travel along, and it has to
+    /// survive the rotation to the horizon: the previous axis (the
+    /// camera's Y projected onto the ground) vanishes there, and
+    /// normalizing it turned the position into NaN.
+    #[test]
+    fn ground_forward_survives_the_horizon() {
+        let mut cam = cam_at(Vec3::ZERO);
+        // Top-down: forward is the top of the screen.
+        assert!((cam.ground_forward() - Vec3::new(0.0, -1.0, 0.0)).length() < 1e-4);
+        for pitch in [-89.0f32, -45.0, -1.0, 0.0, 30.0, 89.0] {
+            for yaw in [0.0f32, 90.0, 195.0, 270.0] {
+                cam.set_angles(yaw, pitch);
+                let fwd = cam.ground_forward();
+                assert!(
+                    fwd.z.abs() < 1e-4 && fwd.length() > 0.999,
+                    "yaw {yaw} pitch {pitch}: {fwd:?} is not a horizontal unit vector"
+                );
+                // It points where the camera looks, horizontally.
+                let mut want = cam.dir();
+                want.z = 0.0;
+                assert!(
+                    (fwd - want.normalize()).length() < 1e-3,
+                    "yaw {yaw} pitch {pitch}: forward {fwd:?} disagrees with the heading"
+                );
+            }
+        }
+        // Straight down, the heading degenerates and the screen top takes over.
+        cam.set_angles(0.0, -90.0);
+        assert!((cam.ground_forward() - Vec3::new(0.0, 1.0, 0.0)).length() < 1e-4);
     }
 
     /// A camera below the surface is pushed back up to the clearance.

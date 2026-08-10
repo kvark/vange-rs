@@ -126,8 +126,8 @@ built for.
 
 A full-screen pass; each fragment reconstructs its world-space ray from
 the inverse view-projection and marches the height field: fixed forward
-steps to bracket the first crossing, then binary refinement (16 and 4,
-compile-time constants). The dual layer makes the march stateful: a ray
+steps to bracket the first crossing, then binary refinement (16 and 4
+above ground, 12 and 3 under a slab; compile-time constants). The dual layer makes the march stateful: a ray
 that passes under a cave ceiling continues *underneath* the slab,
 testing against the floor, with the right to re-emerge past the slab's
 far edge. Depth is written from the hit point, so everything composes
@@ -157,8 +157,9 @@ the visible sample range, drawn instanced from the top down. Each
 fragment reads the surface under it and keeps the pixel only if the
 slice's altitude is inside the solid column — below the floor, or
 between the cave ceiling and the slab top — discarding otherwise. The
-union of cross-sections approximates the volume; at the default of one
-slice per altitude unit the quantised heights make it exact. Cave
+union of cross-sections approximates the volume; at one slice per
+altitude unit the quantised heights make it exact, and the publication
+default (§5.5) runs two. Cave
 interiors are dimmed by a constant factor rather than shadowed.
 
 ### 3.4 Painted
@@ -260,7 +261,7 @@ depth still misses.
 
 Every number in this paper is produced by one command with no arguments
 (`tools/compare-terrain.py`), whose defaults *are* the publication
-configuration: every method, four viewpoints, four pitches (0°, −30°,
+configuration: every method, three viewpoints, four pitches (0°, −30°,
 −60°, −90°), 1280×800, 40 timed frames after per-method warmup. The
 harness builds the binaries, fetches and converts the level on first
 run, and names its output after the adapter wgpu selected, so runs
@@ -303,8 +304,10 @@ was every screenshot used to check the reimplementations. The
 differences that matter appear only at eye level, which is where a
 first-person or chase camera lives.
 
-*(TODO: full sweep at 0/−30/−60/−90 across all four viewpoints, on
-hardware. The two-row table above is a sample, not the result.)*
+*(TODO: the full sweep on the current viewpoints — a hardware sweep over
+all four pitches on the previous fixture is recorded and has the same
+shape, and the protocol makes the re-run one command. The two-row table
+above is a sample, not the result.)*
 
 ### 5.2 Frame time
 
@@ -316,13 +319,27 @@ a sub-millisecond frame it can be most of the number, which is why an
 earlier consumer-GPU run reported every mesh configuration at 0.8–1.0 ms
 regardless of a 3× difference in triangle count.
 
-**TODO: hardware runs. The harness reports both figures and records which
-one each row used.**
+The first hardware pass (Radeon 890M, RADV, GPU timestamps; river view
+of the earlier fixture) is the pitch axis of §5.1 as frame time:
+
+| pitch | RayTraced | RayVoxel | Sliced | Scattered | Painter | Mesh q=0.25 |
+|---|---|---|---|---|---|---|
+| 0° | 0.38 | 5.00 | 5.88 | 7.47 | 9.16 | 0.24 |
+| −30° | 0.65 | 3.46 | 2.06 | 7.88 | 9.81 | 0.18 |
+| −60° | 0.75 | 2.07 | 0.96 | 6.48 | 0.24 | 0.12 |
+| −90° | 0.69 | 2.00 | 0.85 | 7.64 | 0.26 | 0.16 |
+
+*(ms per frame)* The painter's 35× swing between the horizon and
+straight down is the timing version of the coverage story: cost tracks
+how much of the scene the method has to emit, and looking down emits
+almost nothing. The ray marcher is the mirror image — cheaper at the
+horizon than against a full frame of ground. *(TODO: re-run on the
+current viewpoints; the protocol makes that one command.)*
 
 ### 5.3 Preparation cost
 
 Per-frame numbers exclude one-time work, which differs by two orders of
-magnitude between these methods. khox, CPU wall time in milliseconds:
+magnitude between these methods. Fostral, CPU wall time in milliseconds:
 `[lavapipe]`
 
 | method | setup | first frame | warmup |
@@ -372,17 +389,19 @@ variable rather than four.
 Each method was swept over its own quality knob and given the cheapest
 setting within one percentage point of its own best error, so no method
 is charged for a setting that buys nothing or credited with speed it
-reaches only by being wrong. Fostral, four viewpoints at the horizon,
-400x260, view distance 600. `[lavapipe]`
+reaches only by being wrong. Fostral, three viewpoints at the horizon,
+400x260, view distance 600. Accuracy is device-independent (§4.3), so
+the sweep runs wherever is convenient; the numbers below are from the
+GPU pass recorded in `paper/tuning.md`.
 
 | method | knob | swept | chosen | error at choice |
 |---|---|---|---|---|
-| RayTraced | — | compile-time steps (16 fwd / 4 binary) | — | 40.4% |
-| Painted | — | none beyond view distance | — | 2.5% |
-| Sliced | slices | 32–512 | **256** (kept; see text) | 14.0% |
-| Scattered | density | 1–4 | **4,4,4** | 26.8% |
-| RayVoxel | grid, steps | 2 grids × 40–400 | **4,8,2, 100 steps** | 2.9% |
-| Mesh | fit tolerance | q 0.0–1.0 | **q=0.0** | 3.1% |
+| RayTraced | — | compile-time steps (16 fwd / 4 binary) | — | 66.1% |
+| Painted | — | none beyond view distance | — | 4.5% |
+| Sliced | slices | 32–512 | **512** | 9.8% |
+| Scattered | density | 1–4 | **4,4,4** | 57.3% |
+| RayVoxel | grid, steps | 2 grids × 40–400 | **4,8,2, 40 steps** | 5.5% |
+| Mesh | fit tolerance | q 0.0–1.0 | **q=0.0** | 4.4% |
 
 Four of the results are worth stating.
 
@@ -396,31 +415,41 @@ the sweep read as a collapse: 61.2% see-through and surfaces moved by
 implementation as much as the method behind it, and a result this
 discontinuous is a reason to suspect the former.
 
-**The corrected slicer knob barely moves total error — it changes its
-kind.** From 32 to 512 slices, cost rises 11.5× (4.4 → 51 ms) while
-see-through falls 12.7% → 3.5% and speckle rises 1.3% → 9.3%: slices
-convert missing spans into isolated wrong pixels, and their sum stays
-within 2.4 points across the whole sweep. A knob whose total error is
-flat relative to the measurement cannot be tuned by an error-based rule
-— the selection is then decided entirely by the slack parameter, which
-is the rule admitting it has nothing to say. We keep one slice per
-altitude unit, the setting at which the quantised heights make the
-cross-sections exact.
+**The corrected slicer knob changes the error's kind, and the fixture
+decides the setting.** From 32 to 512 slices, cost rises 7.6× (0.19 →
+1.44 ms) while see-through falls 17.2% → 5.4% and speckle rises 2.4% →
+4.4%, peaking at 10.9% at 256: slices convert missing spans into
+isolated wrong pixels. On the first corrected fixture the sum stayed
+within 2.4 points across the whole sweep, the rule had nothing to say,
+and we kept one slice per altitude unit — the setting at which the
+quantised heights make the cross-sections exact. On the current fixture,
+whose views carry more wall and slab in frame, 512 pulls eight points
+clear of the next-best setting and the rule takes it. The lesson does
+not change: a knob whose total error is flat relative to the measurement
+cannot be tuned by an error-based rule, and a sweep whose outcome moves
+this much when the fixture changes is a reason to re-read the knob's
+implementation before trusting either number.
 
-**The voxel step budget was mistuned in both directions.** 40 steps —
-the value this work inherited — leaves 6.4% see-through where 100 gets
-to 2.5%. We first corrected it to 200, which is equally accurate and 30%
-more expensive. The knee is 100.
+**The voxel step budget is a property of the fixture, not the method.**
+40 steps — the value this work inherited — left 6.4% see-through on the
+first fixture's long sightlines, where 100 got to 2.5%; we first
+"corrected" it to 200, which was equally accurate and 30% more
+expensive. On the current fixture the sightlines are shorter: 40 steps
+lands within a point of 100 (5.5% against 4.8%), and the rule keeps the
+inherited value. A step budget tunes the longest sightline the
+viewpoints put in frame; change the viewpoints and it needs re-tuning,
+which is what the protocol's tuning pass is for.
 
 **The reference cannot resolve mesh quality at the horizon.** Every
-setting from q=0.0 to q=1.0 lands within 0.5 points of coverage error and
-1 u of depth error, against a reference whose own floor there is ~50 u
-(§6.1). The selection rule therefore picks the cheapest, which is correct
-given the measurement and wrong as a shipping default: measured against
-its own finest fit instead of against the reference, the same knob moves
-surfaces by up to 289 u. Where a parameter changes geometry more finely
-than the ground truth can see, it has to be tuned self-referentially.
-This is the same blind spot as §4.2, in a different place.
+setting from q=0.0 to q=1.0 lands within 0.1 points of coverage error
+(4.2–4.5%) and 5 u of depth error, against a reference whose own floor
+there is ~25 u (§6.1). The selection rule therefore picks the cheapest,
+which is correct given the measurement and wrong as a shipping default:
+measured against its own finest fit instead of against the reference,
+the same knob moves surfaces by up to 289 u. Where a parameter changes
+geometry more finely than the ground truth can see, it has to be tuned
+self-referentially. This is the same blind spot as §4.2, in a different
+place.
 
 A fifth result is about the platform rather than the method: the voxel
 tracer's production grid (2,4,1) needs 153 MB of storage buffer against
@@ -444,7 +473,7 @@ Same renderer, same reference, varying pitch:
 At eye level most of the ground is nearly edge-on, and a sub-pixel
 difference in ray direction moves the hit by tens of units. At pitch 0
 the converged renderers agree with *each other* to 1.3 u while all
-sitting ~29 u from the reference, at a signed median of 0.01 u — scatter,
+sitting ~25 u from the reference, at a signed median of 0.01 u — scatter,
 not bias. Any ground-truth comparison of first-person terrain has this
 floor, and reporting absolute error without it overstates precision.
 
@@ -482,10 +511,10 @@ the fitter actually sees, curvature the slab edges put there — it is
 surfaces correlates at −0.89, which is the fit's own account of where
 its budget went rather than an independent predictor.) Relief does not
 predict the fit cost; the second layer does. `ark-a-znoy` makes the
-floor-relief hypothesis fail in the other direction too: it is *twice*
-as rough as `weexow` on the floor (5.52 against 1.84) and compresses
-essentially as well (154.8× against 182.0×), because neither world has
-a slab.
+floor-relief hypothesis fail in the other direction too: it is *three*
+times as rough as `weexow` on the floor (5.52 against 1.84) and
+compresses essentially as well (154.8× against 182.0×), because neither
+world has a slab.
 
 The clearest case is `hmok`. Its floor is *smoother* than `threall`'s
 (2.71 against 2.85), and `threall` compresses 45.3×. `hmok` manages
