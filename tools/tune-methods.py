@@ -32,7 +32,7 @@ Emits a Markdown table per method and a suggested METHODS block.
 
 Example
 -------
-    tools/tune-methods.py --level fostral --view "river:2006,1730:120"
+    tools/tune-methods.py --level fostral --view "portal:1176,11567:293:83" --pitch -30
 """
 
 import argparse
@@ -88,7 +88,8 @@ def main():
     ap.add_argument("--work", default="work")
     ap.add_argument("--binary", default="./target/release/level")
     ap.add_argument("--view", action="append",
-                    help="name:x,y:yaw[:under]; defaults to the standard set")
+                    help="name:x,y:yaw[:height][:under]; defaults to the views "
+                         "of the chosen pitch in compare-terrain's DEFAULT_VIEWS")
     ap.add_argument("--pitch", type=float, default=0.0,
                     help="the horizon is where these methods differ, so tune "
                          "there rather than at a top-down angle where they "
@@ -111,12 +112,19 @@ def main():
                              level_zip=None, common_zip=None, layers=None, out=None)
     ct.ensure_tools(sub)
     ct.ensure_assets(sub)
-    views = [ct.parse_view(v) for v in (args.view or ct.DEFAULT_VIEWS)]
+    # The defaults pair each view with a pitch; this tool tunes every method
+    # at one pitch (the horizon, where they differ), so it takes the views
+    # of that pitch. Override with --view for anything else.
+    if args.view:
+        views = [ct.parse_view(v) for v in args.view]
+    else:
+        views = [ct.parse_view(v) for v in ct.DEFAULT_VIEWS[args.pitch]]
 
     refs = {}
     for v in views:
+        eye = v["eye_height"] if v["eye_height"] is not None else 8.0
         sky, dist, dirs, _ = ct.ground_truth(
-            ct.load_layers(sub.layers), v, args.width, args.height, 8.0,
+            ct.load_layers(sub.layers), v, args.width, args.height, eye,
             args.far, args.pitch)
         refs[v["name"]] = (sky, dist, dirs, ct.speckle(dist, ~sky))
 
@@ -137,10 +145,11 @@ def main():
             for v in views:
                 stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]+", "_",
                                                 f"{label}-{name}-{v['name']}"))
+                eye = v["eye_height"] if v["eye_height"] is not None else 8.0
                 cmd = [args.binary, "--snapshot", stem + ".png",
                        "--depth-out", stem + ".f32", "--bench-out", stem + ".json",
                        "--terrain", terrain, *extra,
-                       "--fp", f"{v['x']},{v['y']}", "--fp-height", "8",
+                       "--fp", f"{v['x']},{v['y']}", "--fp-height", str(eye),
                        f"--fp-yaw={v['yaw']}", f"--fp-pitch={args.pitch}",
                        "--near", "1", "--far", str(args.far),
                        "--width", str(args.width), "--height", str(args.height),

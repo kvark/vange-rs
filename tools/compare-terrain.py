@@ -115,29 +115,50 @@ METHODS = [
     ("Mesh q=0.75", "Mesh", ["--mesh-quality", "0.75"], 3),
 ]
 
-# Fostral first-person viewpoints: a cliff line over water with a slab
-# bridge overhead, an open floor under a slab span, and a cave interior
-# looking out. Chosen for obstructions at eye level and depth layering,
-# which is where the renderers disagree; a view of open ground - or of a
-# wall - tells you nothing.
+# Fostral viewpoints, three per pitch. Each view runs at its own pitch -
+# a camera looking down renders a different subject than one at the
+# horizon, so a view is defined by where it looks from *and* how far it
+# tilts. The eye height is part of the spec too: these were picked by
+# walking the map in the viewer, so each one has the height that framed
+# its subject.
 #
-# Each was checked against the reference before being listed here - the
-# residual disagreement of a *correct* renderer at these, in the order
-# below, is 3%, 15% and 4% at pitch 0. It tracks how much horizon is in
-# frame, because that is where the CPU march and the rasterizer round the
-# silhouette differently, and both error columns move together when that
-# is all it is. Treat those as the noise floor: a renderer is only
-# interesting where it is worse than its neighbours in the same row. The
-# whole point of the sweep: every method is close to correct looking
-# down; they separate as the camera comes to the horizon, which is where
-# a first-person or chase camera actually sits.
+# The pitch-0 views were chosen for obstructions at eye level and depth
+# layering - a cliff line over water with a slab bridge overhead, an open
+# floor under a slab span, and a cave interior looking out. Each was
+# checked against the reference before being listed: the residual
+# disagreement of a *correct* renderer at these, in order, is 3%, 15% and
+# 4%. It tracks how much horizon is in frame, because that is where the
+# CPU march and the rasterizer round the silhouette differently, and both
+# error columns move together when that is all it is. Treat that as the
+# noise floor: a renderer is only interesting where it is worse than its
+# neighbours in the same row. The whole point of the sweep: every method
+# is close to correct looking down; they separate as the camera comes to
+# the horizon, which is where a first-person or chase camera actually
+# sits.
 DEFAULT_PITCHES = [0.0, -30.0, -60.0, -90.0]
 
-DEFAULT_VIEWS = [
-    "cliffs:211,59:195",
-    "span:1108,15875:227",
-    "cave:1492,15833:180:under",
-]
+DEFAULT_VIEWS = {
+    0.0: [
+        "cliffs:211,59:195",
+        "span:1108,15875:227",
+        "cave:1492,15833:180:under",
+    ],
+    -30.0: [
+        "portal:1176,11567:293:83",
+        "entrance:1764,15254:293:108",
+        "river:457,12337:158:180",
+    ],
+    -60.0: [
+        "stash:1929,13864:293:161",
+        "copterig charger:1727,4805:199:297",
+        "wires:519,14910:293:192",
+    ],
+    -90.0: [
+        "spiral charger:1554,7798:10:312",
+        "gorb charger:471,892:13:332",
+        "secret:237,12065:10:376",
+    ],
+}
 
 
 RELEASE = "https://github.com/kvark/vange-rs/releases/download/data-0"
@@ -217,16 +238,17 @@ def slug(text):
 
 
 def parse_view(spec):
-    """`name:x,y:yaw[:under]` -> dict."""
+    """`name:x,y:yaw[:height][:under]` -> dict."""
     parts = spec.split(":")
     if len(parts) < 3:
-        raise ValueError(f"view needs name:x,y:yaw, got {spec!r}")
+        raise ValueError(f"view needs name:x,y:yaw[:height][:under], got {spec!r}")
     x, y = (int(v) for v in parts[1].split(","))
     return {
         "name": parts[0],
         "x": x,
         "y": y,
         "yaw": float(parts[2]),
+        "eye_height": float(parts[3]) if len(parts) > 3 and parts[3] != "under" else None,
         "under": len(parts) > 3 and parts[3] == "under",
     }
 
@@ -392,7 +414,7 @@ def render(args, view, method, out_dir, pitch=0.0):
         args.binary, "--snapshot", png, "--depth-out", depth,
         "--terrain", terrain, *extra,
         "--fp", f"{view['x']},{view['y']}",
-        "--fp-height", str(args.eye_height),
+        "--fp-height", str(view["eye_height"] if view["eye_height"] is not None else args.eye_height),
         f"--fp-yaw={view['yaw']}", f"--fp-pitch={pitch}",
         # The default near plane clips the ground out from under a
         # first-person camera; rasterized terrain then shows through.
@@ -433,14 +455,14 @@ def main():
     ap.add_argument("--layers", help="override the converted level.ron")
     ap.add_argument("--out", help="where snapshots go; defaults under --work")
     ap.add_argument("--view", action="append",
-                    help="name:x,y:yaw[:under], repeatable. Defaults to the "
-                         "four Fostral viewpoints in DEFAULT_VIEWS")
+                    help="name:x,y:yaw[:height][:under], repeatable. Defaults "
+                         "to DEFAULT_VIEWS, which pairs three views with each "
+                         "pitch")
     ap.add_argument("--pitch", action="append", type=float,
                     help="camera pitch in degrees, repeatable. 0 is "
-                         "horizontal, -90 straight down. Defaults to the full "
-                         "sweep, which is the axis that separates these "
-                         "methods: they agree looking down and diverge at the "
-                         "horizon")
+                         "horizontal, -90 straight down. Only meaningful with "
+                         "--view, where it pairs with every view given; the "
+                         "defaults already carry their own pitches")
     ap.add_argument("--label", default="",
                     help="name for this machine. Defaults to the adapter the "
                          "run actually used, which is what you want unless "
@@ -460,7 +482,9 @@ def main():
                          "per-frame latency, not pipelined throughput")
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--height", type=int, default=800)
-    ap.add_argument("--eye-height", type=float, default=8.0)
+    ap.add_argument("--eye-height", type=float, default=8.0,
+                    help="eye height above terrain. Per-view override via the "
+                         "fourth field of --view")
     ap.add_argument("--far", type=float, default=600.0,
                     help="view distance, shared by the renderers and the "
                          "reference. Keep it bounded: the painter emits one "
@@ -470,12 +494,24 @@ def main():
     args = ap.parse_args()
     if args.quick:
         args.width, args.height, args.frames = 320, 200, 4
+        args.view = args.view or ["quick:200,200:0"]
         args.pitch = args.pitch or [0.0]
 
     ensure_tools(args)
     ensure_assets(args)
     os.makedirs(args.out, exist_ok=True)
-    views = [parse_view(v) for v in args.view or DEFAULT_VIEWS]
+    # A "scene" is a view at the pitch it was framed at. DEFAULT_VIEWS
+    # already pairs each view with its pitch; --view/--pitch overrides fall
+    # back to the old cross product for ad-hoc sweeps.
+    if args.view:
+        scenes = [(parse_view(v), p)
+                  for p in (args.pitch or DEFAULT_PITCHES)
+                  for v in args.view]
+    else:
+        scenes = [(parse_view(v), p)
+                  for p, vlist in DEFAULT_VIEWS.items()
+                  for v in vlist]
+    views = [v for v, _ in scenes]
     # Rows, cells and the grid are keyed by view name, so two views sharing
     # one would silently overwrite each other. `level` dumps every camera
     # as "spot:", which is exactly how a collision sneaks in.
@@ -488,97 +524,96 @@ def main():
         )
     layers = load_layers(args.layers)
 
-    pitches = args.pitch or DEFAULT_PITCHES
     cells, stats, rows = {}, {}, []
     device = None
 
     # A default run is a couple of hundred renders and takes a while, so
     # say so up front and keep a running estimate rather than going quiet.
-    total = len(pitches) * len(views) * len(METHODS)
+    total = len(scenes) * len(METHODS)
     done, started = 0, time.time()
-    print(f"{total} renders: {len(METHODS)} methods x {len(views)} views x "
-          f"{len(pitches)} pitches, at {args.width}x{args.height}\n")
+    print(f"{total} renders: {len(METHODS)} methods x {len(scenes)} scenes, "
+          f"at {args.width}x{args.height}\n")
 
-    for pitch in pitches:
-        for view in views:
-            sky, ref_dist, dirs, _ = ground_truth(layers, view, args.width, args.height,
-                                                  args.eye_height, args.far, pitch)
-            ref_solid = ~sky
-            ref_speckle = speckle(ref_dist, ref_solid)
-            print(f"{view['name']} @ pitch {pitch:g}: ground truth sky = "
-                  f"{100 * sky.mean():.1f}% of frame, "
-                  f"{100 * ref_speckle.mean():.1f}% of it genuinely rough")
-            for method in METHODS:
-                png, depth, meta = render(args, view, method, args.out, pitch)
-                if device is None:
-                    fields = ("adapter", "backend", "device_type", "driver",
-                              "driver_info")
-                    missing = [k for k in fields if k not in meta]
-                    if missing:
-                        raise SystemExit(
-                            f"{args.binary} wrote a result without {missing}. "
-                            "That binary predates the fields this script needs; "
-                            "`cargo build --release --bin level` and re-run.")
-                    device = {k: meta[k] for k in fields}
-                # Prefer the GPU's own view when the adapter can give it.
-                # The CPU figure brackets submit-and-poll, so it carries the
-                # round trip; on lavapipe that is ~9%, and on a real GPU with
-                # a fast frame it can be most of the number.
-                gpu = meta.get("gpu_avg_ms")
-                have_gpu = meta.get("gpu_timing") and gpu is not None and gpu == gpu
-                ms = gpu if have_gpu else meta["avg_ms"]
-                d = np.fromfile(depth, dtype="<f4").reshape(args.height, args.width)
-                empty = d >= 0.999999          # cleared depth: nothing drawn
-                see_through = 100 * (empty & ~sky).mean()
-                covers_sky = 100 * ((~empty) & sky).mean()
+    for view, pitch in scenes:
+        eye = view["eye_height"] if view["eye_height"] is not None else args.eye_height
+        sky, ref_dist, dirs, _ = ground_truth(layers, view, args.width, args.height,
+                                              eye, args.far, pitch)
+        ref_solid = ~sky
+        ref_speckle = speckle(ref_dist, ref_solid)
+        print(f"{view['name']} @ pitch {pitch:g}: ground truth sky = "
+              f"{100 * sky.mean():.1f}% of frame, "
+              f"{100 * ref_speckle.mean():.1f}% of it genuinely rough")
+        for method in METHODS:
+            png, depth, meta = render(args, view, method, args.out, pitch)
+            if device is None:
+                fields = ("adapter", "backend", "device_type", "driver",
+                          "driver_info")
+                missing = [k for k in fields if k not in meta]
+                if missing:
+                    raise SystemExit(
+                        f"{args.binary} wrote a result without {missing}. "
+                        "That binary predates the fields this script needs; "
+                        "`cargo build --release --bin level` and re-run.")
+                device = {k: meta[k] for k in fields}
+            # Prefer the GPU's own view when the adapter can give it.
+            # The CPU figure brackets submit-and-poll, so it carries the
+            # round trip; on lavapipe that is ~9%, and on a real GPU with
+            # a fast frame it can be most of the number.
+            gpu = meta.get("gpu_avg_ms")
+            have_gpu = meta.get("gpu_timing") and gpu is not None and gpu == gpu
+            ms = gpu if have_gpu else meta["avg_ms"]
+            d = np.fromfile(depth, dtype="<f4").reshape(args.height, args.width)
+            empty = d >= 0.999999          # cleared depth: nothing drawn
+            see_through = 100 * (empty & ~sky).mean()
+            covers_sky = 100 * ((~empty) & sky).mean()
 
-                # Geometry, where both agree something is there. Median
-                # rather than mean: a handful of silhouette pixels straddling
-                # a cliff edge otherwise set the number for the whole frame.
-                got = ray_distance(d, dirs, 1.0, args.far)
-                both = (~empty) & ref_solid
-                if both.any():
-                    err = np.abs(got[both] - ref_dist[both])
-                    p50, p95 = (float(v) for v in np.percentile(err, [50, 95]))
-                else:
-                    p50 = p95 = float("nan")
+            # Geometry, where both agree something is there. Median
+            # rather than mean: a handful of silhouette pixels straddling
+            # a cliff edge otherwise set the number for the whole frame.
+            got = ray_distance(d, dirs, 1.0, args.far)
+            both = (~empty) & ref_solid
+            if both.any():
+                err = np.abs(got[both] - ref_dist[both])
+                p50, p95 = (float(v) for v in np.percentile(err, [50, 95]))
+            else:
+                p50 = p95 = float("nan")
 
-                # Coherence, in excess of the reference's own. Counts only
-                # pixels the reference thinks are on a smooth surface, so
-                # terrain that is genuinely rough is not charged to anyone.
-                spk = speckle(got, ~empty)
-                excess = 100 * (spk & ~ref_speckle & ref_solid).mean()
+            # Coherence, in excess of the reference's own. Counts only
+            # pixels the reference thinks are on a smooth surface, so
+            # terrain that is genuinely rough is not charged to anyone.
+            spk = speckle(got, ~empty)
+            excess = 100 * (spk & ~ref_speckle & ref_solid).mean()
 
-                key = (view["name"], pitch, method[0])
-                cells[key] = png
-                stats[key] = (ms, see_through, covers_sky, p50, p95, excess)
-                rows.append({
-                    "view": view["name"], "pitch": pitch, "method": method[0],
-                    "avg_ms": ms,
-                    "timing": "gpu" if have_gpu else "cpu",
-                    "cpu_avg_ms": meta["avg_ms"],
-                    "min_ms": meta.get("gpu_min_ms") if have_gpu else meta["min_ms"],
-                    "max_ms": meta["max_ms"],
-                    "frame_ms": meta["gpu_ms"] if have_gpu else meta["frame_ms"],
-                    "prep_setup_ms": meta.get("prep_setup_ms"),
-                    "prep_first_frame_ms": meta.get("prep_first_frame_ms"),
-                    "prep_warmup_ms": meta.get("prep_warmup_ms"),
-                    "see_through": see_through, "covers_sky": covers_sky,
-                    "depth_p50": p50, "depth_p95": p95, "speckle": excess,
-                })
-                # `nan` when the renderer and the reference never agree
-                # anything is there - which is itself the finding, so say
-                # so rather than printing a number-shaped blank.
-                dep = ("      n/a" if p50 != p50
-                       else f"p50 {p50:6.1f}u p95 {p95:7.1f}u")
-                tag = "gpu" if have_gpu else "cpu"
-                done += 1
-                elapsed = time.time() - started
-                eta = elapsed / done * (total - done)
-                print(f"    {method[0]:12s} {ms:7.1f} ms {tag}  "
-                      f"see-through {see_through:5.1f}%   covers-sky {covers_sky:5.1f}%   "
-                      f"depth {dep}   speckle {excess:5.1f}%"
-                      f"   [{done}/{total}, {eta / 60:.0f} min left]", flush=True)
+            key = (view["name"], pitch, method[0])
+            cells[key] = png
+            stats[key] = (ms, see_through, covers_sky, p50, p95, excess)
+            rows.append({
+                "view": view["name"], "pitch": pitch, "method": method[0],
+                "avg_ms": ms,
+                "timing": "gpu" if have_gpu else "cpu",
+                "cpu_avg_ms": meta["avg_ms"],
+                "min_ms": meta.get("gpu_min_ms") if have_gpu else meta["min_ms"],
+                "max_ms": meta["max_ms"],
+                "frame_ms": meta["gpu_ms"] if have_gpu else meta["frame_ms"],
+                "prep_setup_ms": meta.get("prep_setup_ms"),
+                "prep_first_frame_ms": meta.get("prep_first_frame_ms"),
+                "prep_warmup_ms": meta.get("prep_warmup_ms"),
+                "see_through": see_through, "covers_sky": covers_sky,
+                "depth_p50": p50, "depth_p95": p95, "speckle": excess,
+            })
+            # `nan` when the renderer and the reference never agree
+            # anything is there - which is itself the finding, so say
+            # so rather than printing a number-shaped blank.
+            dep = ("      n/a" if p50 != p50
+                   else f"p50 {p50:6.1f}u p95 {p95:7.1f}u")
+            tag = "gpu" if have_gpu else "cpu"
+            done += 1
+            elapsed = time.time() - started
+            eta = elapsed / done * (total - done)
+            print(f"    {method[0]:12s} {ms:7.1f} ms {tag}  "
+                  f"see-through {see_through:5.1f}%   covers-sky {covers_sky:5.1f}%   "
+                  f"depth {dep}   speckle {excess:5.1f}%"
+                  f"   [{done}/{total}, {eta / 60:.0f} min left]", flush=True)
 
     # Named from the adapter wgpu actually chose, not from anything the
     # caller had to know in advance.
@@ -605,7 +640,7 @@ def main():
         small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 11)
     except OSError:
         font = small = ImageFont.load_default()
-    grid_views = [(v, p) for p in pitches for v in views]
+    grid_views = scenes
     H = hdr + len(grid_views) * (h + lab + pad) + pad
     out = Image.new("RGB", (W, H), (20, 22, 26))
     dr = ImageDraw.Draw(out)

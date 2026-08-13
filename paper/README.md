@@ -12,8 +12,8 @@ number without one is marked `TODO`.
 
 ```bash
 # On each machine. That is the whole invocation - the defaults are the
-# publication configuration: every method, three viewpoints, four pitches,
-# 1280x800, 40 frames. It builds what is missing, fetches and converts the
+# publication configuration: every method, twelve viewpoints (three per
+# pitch: 0, -30, -60, -90 degrees), 1280x800, 40 frames. It builds what is missing, fetches and converts the
 # level on first run, reuses all of it afterwards, and names the results
 # file after whichever adapter wgpu chose. Expect roughly an hour, with a
 # running estimate printed as it goes.
