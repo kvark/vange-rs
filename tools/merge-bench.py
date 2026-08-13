@@ -11,10 +11,9 @@ and cross-checked across devices instead of repeated).
 
 Example
 -------
-    # on each machine
+    # on each machine (defaults: three views per pitch, four pitches)
     tools/compare-terrain.py --layers work/level.ron --out work/cmp \\
-        --label "RTX 4070" --json-out results-4070.json \\
-        --pitch 0 --pitch -30 --pitch -60 --pitch -90
+        --label "RTX 4070" --json-out results-4070.json
 
     # then, anywhere
     tools/merge-bench.py results-*.json > results.md

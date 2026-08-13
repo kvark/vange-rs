@@ -261,9 +261,9 @@ depth still misses.
 
 Every number in this paper is produced by one command with no arguments
 (`tools/compare-terrain.py`), whose defaults *are* the publication
-configuration: every method, three viewpoints, four pitches (0°, −30°,
-−60°, −90°), 1280×800, 40 timed frames after per-method warmup. The
-harness builds the binaries, fetches and converts the level on first
+configuration: every method, twelve viewpoints (three per pitch, at 0°,
+−30°, −60°, −90°), 1280×800, 40 timed frames after per-method warmup.
+The harness builds the binaries, fetches and converts the level on first
 run, and names its output after the adapter wgpu selected, so runs
 collected from different machines merge without hand-labelling
 (`tools/merge-bench.py`). The design goal is that a measurement session
