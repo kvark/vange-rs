@@ -122,26 +122,17 @@ METHODS = [
 # walking the map in the viewer, so each one has the height that framed
 # its subject.
 #
-# The pitch-0 views were chosen for obstructions at eye level and depth
-# layering - a cliff line over water with a slab bridge overhead, an open
-# floor under a slab span, and a cave interior looking out. Each was
-# checked against the reference before being listed: the residual
-# disagreement of a *correct* renderer at these, in order, is 3%, 15% and
-# 4%. It tracks how much horizon is in frame, because that is where the
-# CPU march and the rasterizer round the silhouette differently, and both
-# error columns move together when that is all it is. Treat that as the
-# noise floor: a renderer is only interesting where it is worse than its
-# neighbours in the same row. The whole point of the sweep: every method
-# is close to correct looking down; they separate as the camera comes to
-# the horizon, which is where a first-person or chase camera actually
-# sits.
+# The pitch-0 views are deliberately elevated above the local surface so
+# obstructions and depth layering remain visible at the horizon. Keep the
+# per-view eye height in the spec: omitting it silently falls back to the
+# global eight-unit default and no longer reproduces the framed shot.
 DEFAULT_PITCHES = [0.0, -30.0, -60.0, -90.0]
 
 DEFAULT_VIEWS = {
     0.0: [
-        "cliffs:211,59:195",
-        "span:1108,15875:227",
-        "cave:1492,15833:180:under",
+        "horizon-a:1498,15663:171:29",
+        "horizon-b:599,12241:176:77",
+        "horizon-under:122,9410:344:28:under",
     ],
     -30.0: [
         "portal:1176,11567:293:83",
@@ -240,16 +231,22 @@ def slug(text):
 def parse_view(spec):
     """`name:x,y:yaw[:height][:under]` -> dict."""
     parts = spec.split(":")
-    if len(parts) < 3:
+    if len(parts) < 3 or len(parts) > 5:
         raise ValueError(f"view needs name:x,y:yaw[:height][:under], got {spec!r}")
     x, y = (int(v) for v in parts[1].split(","))
+    tail = parts[3:]
+    under = bool(tail and tail[-1] == "under")
+    if under:
+        tail = tail[:-1]
+    if len(tail) > 1 or any(value == "under" for value in tail):
+        raise ValueError(f"view needs name:x,y:yaw[:height][:under], got {spec!r}")
     return {
         "name": parts[0],
         "x": x,
         "y": y,
         "yaw": float(parts[2]),
-        "eye_height": float(parts[3]) if len(parts) > 3 and parts[3] != "under" else None,
-        "under": len(parts) > 3 and parts[3] == "under",
+        "eye_height": float(tail[0]) if tail else None,
+        "under": under,
     }
 
 
@@ -259,8 +256,8 @@ def load_layers(ron_path):
     a = np.asarray(Image.open(os.path.join(base, "height.png"))).astype(np.int16)
     low, high, delta = a[:, :, 0], a[:, :, 1], a[:, :, 2]
     dual = (high != low) | (delta != 0)
-    #  clamps to , matching ; some
-    # source texels encode low + delta above high.
+    # Clamp `mid` to `high`, matching `Level::get_mid_altitude`; some source
+    # texels encode low + delta above high.
     return low, dual, np.minimum(low + delta, high), high
 
 
@@ -628,6 +625,8 @@ def main():
                 "device": device,
                 "width": args.width, "height": args.height,
                 "far": args.far, "frames": args.frames,
+                "shadows": "disabled",
+                "lighting": "unbaked diffuse",
                 "rows": rows,
             }, f, indent=1)
         print(f"\nwrote {json_out}")

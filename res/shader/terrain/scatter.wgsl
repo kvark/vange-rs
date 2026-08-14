@@ -1,4 +1,4 @@
-//!include globals.inc terrain/locals.inc surface.inc terrain/color.inc
+//!include globals.inc terrain/locals.inc surface.inc shadow.inc terrain/color.inc
 
 struct Storage {
     data: array<atomic<u32>>,
@@ -33,8 +33,20 @@ struct CopyOutput {
 @fragment
 fn copy_fs(@builtin(position) pos: vec4<f32>) -> CopyOutput {
     let value = atomicLoad(&s_Storage.data[u32(pos.y) * u_Locals.screen_rect.z + u32(pos.x)]);
-    let color = textureLoad(t_Palette, vec2<i32>(i32(value & 255u), 0), 0);
-    let depth = f32(value >> 8u) / 16777215.0; //TODO: 0xFFFFFFu
+    let depth_bits = value >> 8u;
+    let depth = f32(depth_bits) / 16777215.0; //TODO: 0xFFFFFFu
+    if (depth_bits == 16777215u) {
+        return CopyOutput(u_Locals.fog_color, depth);
+    }
+    let world_pos = get_frag_world(pos.xy, depth);
+    let surface = get_surface(world_pos.xy);
+    let cave_visibility = select(
+        0.25,
+        1.0,
+        world_pos.z > surface.low_alt || surface.low_alt == surface.high_alt,
+    );
+    let visibility = cave_visibility * fetch_shadow_visibility(world_pos);
+    let color = evaluate_color(value & 255u, world_pos, visibility);
     return CopyOutput(color, depth);
 }
 
@@ -45,16 +57,15 @@ fn is_visible(p: vec4<f32>) -> bool {
         p.y >= -p.w && p.y <= p.w;
 }
 
-fn add_voxel(pos: vec2<f32>, altitude: f32, ty: u32, lit_factor: f32) {
+fn add_voxel(pos: vec2<f32>, altitude: f32, ty: u32) {
     let screen_pos = u_Globals.view_proj * vec4<f32>(pos, altitude, 1.0);
     if (!is_visible(screen_pos)) {
         return;
     }
     var ndc = screen_pos.xyz / screen_pos.w;
     ndc.y *= -1.0; // flip Y
-    let color_id = evaluate_color_id(ty, vec3<f32>(pos, altitude), lit_factor);
     let depth = clamp(ndc.z, 0.0, 1.0);
-    let value = (u32(depth * 16777215.0) << 8u) | u32(color_id * 255.0); //TODO: 0xFFFFFF, 0xFF
+    let value = (u32(depth * 16777215.0) << 8u) | (ty & 255u); //TODO: 0xFFFFFFu
 
     let r = u_Locals.screen_rect;
     let tc = r.xy + clamp(
@@ -104,11 +115,11 @@ fn main(
 
     if (suf.low_alt < suf.high_alt) {
         let alt = mix(suf.low_alt, 0.0, t);
-        add_voxel(pos, alt, suf.low_type, 0.25);
+        add_voxel(pos, alt, suf.low_type);
         base = suf.mid_alt;
     }
     if (true) {
         let alt = mix(suf.high_alt, base, t);
-        add_voxel(pos, alt, suf.high_type, 1.0);
+        add_voxel(pos, alt, suf.high_type);
     }
 }

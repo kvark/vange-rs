@@ -1,8 +1,10 @@
 # Six Ways to Draw Vangers: Terrain Rendering on Hand-Authored Multi-Layer Height Fields
 
-**Status: draft.** Numbers marked `[lavapipe]` are from a software
-rasterizer and are placeholders for hardware runs. Numbers marked `TODO`
-have no measurement behind them yet and must not survive into a
+**Status: draft after hardware batch 1.** Three-device measurements are
+now available, but they are not submission numbers: the horizon fixture
+has since been replaced, and visual inspection exposed a shading-path
+mismatch in the scatterer that has now been corrected. Numbers marked
+`TODO` still have no measurement behind them and must not survive into a
 submission.
 
 ---
@@ -22,13 +24,13 @@ We report three results. First, the cost of fitting a triangulated
 irregular network to this terrain varies by more than an order of
 magnitude across the ten shipped worlds, and what predicts the variation
 is not the terrain's relief but the fraction of it carrying a second
-layer. Worlds with a single layer compress in line with published
-elevation-model results; heavily double-level worlds are several times
-worse, and a large share of the fit's vertex budget is spent resolving
-one discontinuity — at a cost that does not fall as the tolerance
-tightens, which is the signature of a geometric feature rather than a fit
-converging. Second, the six methods are nearly indistinguishable when the
-camera looks down and separate sharply as it comes to the horizon: the
+layer. Worlds with a single layer compress by 45–182×; heavily double-level
+worlds are several times worse, and a large share of the fit's vertex
+budget is spent resolving one discontinuity — at a cost that does not fall
+as the tolerance tightens, which is the signature of a geometric feature
+rather than a fit converging. Second, the six methods are nearly
+indistinguishable when the camera looks down and separate sharply as it
+comes to the horizon: the
 viewpoint the original engine never used, and a modern one cannot avoid.
 Third, a correctness metric based on coverage alone cannot detect
 over-drawing; ours concealed a real geometric defect through several
@@ -41,11 +43,25 @@ measurement protocol that reduces a full run to a single command.
 
 ## 1. Introduction
 
-*(TODO — frame around the gap: terrain LOD literature is measured on
-DEMs, games ship authored terrain, nobody has published the comparison.
-JCGT prefers short introductions and only directly relevant citations,
-so the related work belongs here as one tight paragraph per method
-family — marching, voxel traversal, TIN/LOD — not as its own section.)*
+Terrain rendering research usually starts with a digital elevation model:
+a single-valued surface whose resolution can be traded against screen-space
+error. Authored game terrain can violate each part of that model. It may be
+quantised, intentionally discontinuous, and multi-layered, and it is judged
+from cameras that the original authoring tool never showed. Those
+differences make familiar reduction ratios and quality settings poor
+predictors until they are measured on the actual data.
+
+The relevant method families are well established but are rarely compared
+under one implementation. Relief and height-field mapping cast image-order
+rays through height data [Policarpo et al. 2005; Tevs et al. 2008]. Empty
+space can instead be skipped with hierarchical voxel traversal [Amanatides
+and Woo 1987; Laine and Karras 2010]. Terrain meshes reduce a regular grid
+to an irregular network [Fowler and Little 1979; Garland and Heckbert 1995]
+and manage it at runtime with view-dependent or chunked LOD [Duchaineau et
+al. 1997; Ulrich 2002; Losasso and Hoppe 2004]. This paper does not propose
+a seventh method. It puts six representatives behind the same camera,
+surface decoder, shading code and measurement harness so their different
+failure modes become comparable.
 
 Contributions:
 
@@ -61,15 +77,18 @@ Contributions:
 4. A ten-world survey isolating what actually drives fit cost, and the
    mechanism behind it.
 
-**Data availability.** *(TODO — resolve before submission; JCGT requires
-provided code and data to carry a non-restrictive open-source license.)*
-The engine and every tool in the harness are Apache-2.0. The terrain
-itself is the original game's content: the harness fetches the stock
-level archives from a public release and converts them on first run, and
-the paper must state the redistribution terms of that data explicitly —
-it is the one artifact here whose license is not ours to choose. The
-fallback, if redistribution cannot be cleared, is to publish the
-converter and fetch scripts and point at the game's own distribution.
+**Data availability.** The engine and every tool in the harness are
+Apache-2.0. The terrain itself is content from the original game and is not
+covered by that license. Permission to use and redistribute Fostral, from
+which all rendering measurements were collected, is still being sought.
+The ten-world fit survey also reports derived statistics from other shipped
+levels, so its permission scope must be checked separately rather than
+implicitly covered by a Fostral grant. Until these questions are resolved,
+neither level archives nor derived publication data should be represented
+as redistributable. If permission is not obtained, the artifact must be
+limited to the converter and harness, with users supplying lawfully
+obtained archives; whether that satisfies the venue's artifact policy must
+be confirmed before submission.
 
 ## 2. The Data
 
@@ -94,16 +113,18 @@ region.)*
 
 All six are implemented in the same engine, share the terrain texture and
 palette, and are driven by the same camera. More than that: **all six
-colour through one shared function** over the same surface data. Five
-evaluate it per output pixel in the fragment stage, so terrain-type
-boundaries stay at full texel resolution however coarse the geometry;
-the scatterer evaluates the same function per sample in compute and
-splats the resulting palette index, so its colour resolution is its
-sample density. What varies between methods is how a pixel finds its
-piece of surface — which is exactly the variable under test. (The one
-other shading difference: the mesh takes its normal from the polygon's
-own screen-space derivatives, which is what makes its vertical walls and
-cave ceilings shade sensibly where a height gradient is undefined.)
+colour through one shared function** over the same surface data. Terrain
+type is resolved before the shared fragment-stage path applies albedo,
+diffuse lighting and optional shadow visibility. This is a lesson from
+hardware batch 1: the scatterer originally packed an already shaded
+palette index per sample, bypassing the current unbaked-lighting path and
+making its whole column visibly darker. It now packs terrain type with
+depth and shades the winning sample in the resolve pass. What varies
+between methods is how a pixel finds its piece of surface — the variable
+under test. The one deliberate shading difference is that the mesh takes
+its normal from the polygon's screen-space derivatives, which makes
+vertical walls and cave ceilings meaningful where a height-field gradient
+is undefined.
 
 The organising taxonomy is *who asks the question*. Two methods are
 backward, image-order: each pixel casts a ray and asks the height data
@@ -159,8 +180,8 @@ slice's altitude is inside the solid column — below the floor, or
 between the cave ceiling and the slab top — discarding otherwise. The
 union of cross-sections approximates the volume; at one slice per
 altitude unit the quantised heights make it exact, and the publication
-default (§5.5) runs two. Cave
-interiors are dimmed by a constant factor rather than shadowed.
+default (§5.5) runs two. Cave interiors receive the same shadow lookup as
+the other methods plus a constant ambient factor.
 
 ### 3.4 Painted
 
@@ -179,9 +200,10 @@ A compute pass distributes point samples over a camera-aligned footprint
 of the visible ground, warped so that sample density falls off with
 distance. Each sample reads the surface and splats single pixels — along
 the column's vertical extent, both layers — with a 32-bit `atomicMin`
-into a storage buffer, packing 24 bits of depth over 8 bits of palette
-index so the depth test and the colour resolve are one atomic. A
-full-screen pass then unpacks the buffer into colour and depth.
+into a storage buffer, packing 24 bits of depth over 8 bits of terrain
+type so the depth test and material resolve are one atomic. A full-screen
+pass reconstructs the winning world position and applies the shared colour
+and shadow function before writing colour and depth.
 Under-sampling shows up not as missing spans but as isolated wrong
 pixels, which is precisely the artifact class the coherence metric
 (§4.2) exists to count.
@@ -242,7 +264,8 @@ the one disagreeing about a silhouette.
 
 **Geometry.** Median and 95th-percentile distance error where renderer and
 reference agree something is present. This must be read comparatively:
-its floor is set almost entirely by pitch (§6.1).
+its floor is set by grazing incidence and by the scene's sampling
+discontinuities (§6.1).
 
 **Coherence.** The fraction of pixels whose distance disagrees with their
 own 3×3 neighbourhood, in excess of the reference doing the same.
@@ -274,29 +297,54 @@ Frame times come from GPU timestamp queries bracketing the frame's
 command encoder, falling back to a CPU submit-and-poll bracket where the
 device lacks them; each row records which timing it used, because the
 two disagree in exactly the regime where these methods are fast (§5.2).
+The publication comparison disables the shadow map uniformly: it isolates
+surface discovery and avoids adding the same shadow-generation pass to
+every method. All methods still run the same unbaked diffuse shading, and
+shadow-enabled parity is checked separately rather than inferred from the
+timing images.
 One-time costs are recorded separately as setup / first frame / warmup
-(§5.3), since per-frame figures structurally exclude them. Accuracy
-metrics are device-independent; the merge tool reports them once and
-cross-checks the other devices against the first, because an adapter
+(§5.3), since per-frame figures structurally exclude them. Accuracy is
+expected to be device-independent; the merge tool reports a baseline once
+and cross-checks every field from the other devices, because an adapter
 that disagrees about geometry is a finding, not noise.
 
 ## 5. Results
 
+Hardware batch 1 contains 84 rows on each of three Vulkan devices: an AMD
+Radeon 780M (Mesa 25.2.8), AMD Radeon RX 7900 XT (Mesa 26.0.3), and NVIDIA
+GeForce RTX 5070 (595.71.05), at 1280×800, far distance 600 and 40 timed
+frames. The complete per-view tables can be regenerated as
+`paper/results.md` with the command in `paper/README.md`.
+This batch is diagnostic rather than final: its three 0° views have been
+superseded, and the scatterer's shading path changed after the image audit.
+
 ### 5.1 Pitch is the axis that separates them
 
-Fostral, river viewpoint, view distance 600. `[lavapipe]`
+The first batch supports the shape of the claim, though its horizon row
+must be repeated at the new locations. Values below use the 780M baseline
+and are arithmetic means over the three views at each pitch, reported as
+see-through / coherence error (%). Coverage against the reference's sky
+mask is omitted here because it is largely common-mode (§6.1). Coverage
+agrees across devices
+within 0.2 points and median depth within 0.3 u. Coherence does not fully
+agree: NVIDIA's sliced horizon rows are 0.8 and 2.0 points higher than the
+AMD baseline, and one p95 depth differs by 4.5 u. This is evidence that
+raster rules or precision affect the bands.
 
-| pitch | RayTraced | RayVoxel | Sliced | Scattered | Painter | Mesh q=0.25 |
+| pitch | RayTraced | RayVoxel | Sliced | Scattered | Painter | Mesh q=0.0 |
 |---|---|---|---|---|---|---|
-| 0° (horizon) | 25.6 / 0.0 / 3.9 | 8.4 / 9.3 / 0.3 | 14.3 / 8.3 / 7.3 | 22.8 / 3.3 / 5.1 | 8.1 / 9.3 / 0.2 | 8.3 / 9.1 / 0.1 |
-| −45° | 0.0 / 0.0 / 0.0 | 0.0 / 0.0 / 0.1 | 0.0 / 0.0 / 0.9 | 29.9 / 0.0 / 29.9 | 0.0 / 0.0 / 0.0 | 0.0 / 0.0 / 0.0 |
+| 0°* | 44.8 / 0.6 | 9.7 / 0.2 | 7.7 / 1.9 | 48.7 / 3.6 | 7.2 / 0.1 | 7.7 / 0.0 |
+| −30° | 23.8 / 0.7 | 4.2 / 0.3 | 5.5 / 1.1 | 16.2 / 3.4 | 4.5 / 0.1 | 4.7 / 0.1 |
+| −60° | 13.2 / 0.8 | 0.0 / 0.3 | 0.0 / 0.2 | 0.1 / 5.4 | 1.3 / 0.2 | 0.0 / 0.1 |
+| −90° | 0.0 / 0.8 | 0.0 / 0.2 | 0.0 / 0.2 | 0.1 / 3.4 | 0.4 / 0.2 | 0.0 / 0.1 |
 
-*(see-through / covers-sky / speckle, %)*
-
-Tilt the camera 45° down and five of the six become indistinguishable:
-every coverage figure is 0.0%. At the horizon they diverge by more than
-an order of magnitude. Frame time behaves the same way — the painter goes
-from 209 ms to 1.4 ms on the same scene.
+*Superseded fixture; re-run required.* The fixed-budget height-field march
+is the clearest failure: it leaves 45% of reference-solid pixels empty at
+the horizon and remains incomplete at −60°. The sliced renderer's apparent
+"shadow" in the comparison grid is instead its expected horizontal-band
+artifact: shadows were disabled for this batch, and its excess coherence
+error is 3–10× the converged raster methods. The scatterer retains isolated
+wrong pixels even looking straight down.
 
 This is the central result. **These methods were developed and validated
 at the viewpoint where they agree.** The original engine was top-down; so
@@ -304,62 +352,62 @@ was every screenshot used to check the reimplementations. The
 differences that matter appear only at eye level, which is where a
 first-person or chase camera lives.
 
-*(TODO: the full sweep on the current viewpoints — a hardware sweep over
-all four pitches on the previous fixture is recorded and has the same
-shape, and the protocol makes the re-run one command. The two-row table
-above is a sample, not the result.)*
-
 ### 5.2 Frame time
 
 Measured with GPU timestamp queries bracketing the frame's command
 encoder, so the figure is the device's own view of its work with no
-submission or round trip in it. On lavapipe the CPU-side submit-and-poll
-bracket runs about 9% higher than the timestamp pair; on a fast GPU with
-a sub-millisecond frame it can be most of the number, which is why an
-earlier consumer-GPU run reported every mesh configuration at 0.8–1.0 ms
-regardless of a 3× difference in triangle count.
+submission or round trip. Arithmetic means over three views, in ms:
 
-The first hardware pass (Radeon 890M, RADV, GPU timestamps; river view
-of the earlier fixture) is the pitch axis of §5.1 as frame time:
-
-| pitch | RayTraced | RayVoxel | Sliced | Scattered | Painter | Mesh q=0.25 |
+| device / pitch | RayTraced | RayVoxel | Sliced | Scattered† | Painter | Mesh q=0.0 |
 |---|---|---|---|---|---|---|
-| 0° | 0.38 | 5.00 | 5.88 | 7.47 | 9.16 | 0.24 |
-| −30° | 0.65 | 3.46 | 2.06 | 7.88 | 9.81 | 0.18 |
-| −60° | 0.75 | 2.07 | 0.96 | 6.48 | 0.24 | 0.12 |
-| −90° | 0.69 | 2.00 | 0.85 | 7.64 | 0.26 | 0.16 |
+| 780M / 0°* | 0.623 | 5.410 | 6.299 | 19.976 | 6.046 | 0.457 |
+| 780M / −30° | 0.832 | 6.009 | 5.652 | 8.082 | 10.706 | 0.701 |
+| 780M / −60° | 0.945 | 6.135 | 6.474 | 7.047 | 17.686 | 0.615 |
+| 780M / −90° | 1.118 | 5.779 | 7.433 | 6.945 | 17.518 | 0.620 |
+| 7900 XT / 0°* | 0.063 | 0.872 | 1.025 | 12.541 | 2.848 | 0.046 |
+| 7900 XT / −30° | 0.077 | 0.978 | 0.917 | 1.153 | 4.335 | 0.073 |
+| 7900 XT / −60° | 0.083 | 1.034 | 1.111 | 0.954 | 6.519 | 0.056 |
+| 7900 XT / −90° | 0.098 | 0.960 | 1.270 | 0.933 | 5.863 | 0.062 |
+| RTX 5070 / 0°* | 0.044 | 0.659 | 1.192 | 2.502 | 3.051 | 0.024 |
+| RTX 5070 / −30° | 0.056 | 0.731 | 0.944 | 1.448 | 3.710 | 0.035 |
+| RTX 5070 / −60° | 0.064 | 0.748 | 1.102 | 1.468 | 5.241 | 0.036 |
+| RTX 5070 / −90° | 0.077 | 0.695 | 1.322 | 1.451 | 5.008 | 0.038 |
 
-*(ms per frame)* The painter's 35× swing between the horizon and
-straight down is the timing version of the coverage story: cost tracks
-how much of the scene the method has to emit, and looking down emits
-almost nothing. The ray marcher is the mirror image — cheaper at the
-horizon than against a full frame of ground. *(TODO: re-run on the
-current viewpoints; the protocol makes that one command.)*
+*Superseded horizon fixture.* †The scatter shading correction changes its
+work distribution, so those timings are diagnostic only. The stable result
+is that the fitted mesh is fastest on every device and pitch in this batch,
+while the very fast plain ray march buys its speed by missing geometry.
+The painter gets 1.7–2.9× slower from horizon to top-down because more
+ground samples enter its emitted footprint. Scattering shows the inverse
+trend on AMD and a much larger vendor interaction at the horizon: the 7900
+XT takes 12.5 ms against 2.5 ms on the 5070 despite being comparable away
+from 0°. That interaction needs a profile, not a story inferred from three
+devices.
 
 ### 5.3 Preparation cost
 
-Per-frame numbers exclude one-time work, which differs by two orders of
-magnitude between these methods. Fostral, CPU wall time in milliseconds:
-`[lavapipe]`
+Per-frame numbers exclude one-time work. A representative batch-1 run on
+the 780M host gives the following CPU wall times in milliseconds (maximum
+over its twelve scenes):
 
 | method | setup | first frame | warmup |
 |---|---|---|---|
-| RayTraced | 68 | 35 | 36 |
-| RayVoxel | 71 | 310 | **7535** |
-| Sliced | 44 | 31 | 39 |
-| Scattered | 44 | 33 | 56 |
-| Painter | 47 | 144 | 345 |
-| Mesh q=0.25 | 38 | **1319** | 1324 |
-| Mesh q=0.75 | 38 | **2173** | 2182 |
+| RayTraced | 117 | 71 | 87 |
+| RayVoxel | 72 | 100 | **2290** |
+| Sliced | 43 | 84 | 134 |
+| Scattered | 33 | 130 | 357 |
+| Painter | 45 | 114 | 187 |
+| Mesh q=0.0 | 26 | **1434** | 1441 |
+| Mesh q=0.75 | 19 | **3555** | 3583 |
 
 `setup` builds pipelines and uploads the terrain texture; `first frame`
 adds whatever the method builds lazily; `warmup` covers every pre-timing
 frame. The two methods that pay anything substantial pay it differently.
 The mesh fits its triangulation once, on the CPU, in a single blocking
-1.3 s — a load-time cost that a level cannot be entered without. The
-voxel grid bakes incrementally under a per-frame texel budget, spreading
-7.5 s across frames that are individually playable but render through
-terrain the bake has not reached yet.
+1.4 s at q=0.0 — a load-time cost that a level cannot be entered without.
+The voxel grid bakes incrementally under a per-frame texel budget,
+spreading 2.3 s across frames that are individually playable but render
+through terrain the bake has not reached yet.
 
 Neither is visible in a steady-state frame time, and for a level-loading
 budget the difference between them matters more than the per-frame gap.
@@ -390,9 +438,11 @@ Each method was swept over its own quality knob and given the cheapest
 setting within one percentage point of its own best error, so no method
 is charged for a setting that buys nothing or credited with speed it
 reaches only by being wrong. Fostral, three viewpoints at the horizon,
-400x260, view distance 600. Accuracy is device-independent (§4.3), so
-the sweep runs wherever is convenient; the numbers below are from the
-GPU pass recorded in `paper/tuning.md`.
+400x260, view distance 600. Geometry scores should be device-independent,
+but batch 1's sliced coherence mismatch (§5.1) means the selected setting
+must also be cross-checked on hardware. The numbers below are from the GPU
+pass recorded in `paper/tuning.md`. **This sweep used the superseded
+horizon fixture and must be repeated on the new views before batch 2.**
 
 | method | knob | swept | chosen | error at choice |
 |---|---|---|---|---|
@@ -451,17 +501,21 @@ geometry more finely than the ground truth can see, it has to be tuned
 self-referentially. This is the same blind spot as §4.2, in a different
 place.
 
-A fifth result is about the platform rather than the method: the voxel
-tracer's production grid (2,4,1) needs 153 MB of storage buffer against
-llvmpipe's 134 MB limit, so every voxel figure here is for a grid eight
-times coarser than the one that ships. That is a caveat on the software
-rasterizer, not on the method, and it resolves on hardware.
+A fifth result is about configuration rather than the method: the voxel
+tracer's production grid (2,4,1) needs 153 MB of storage buffer and did not
+fit the software rasterizer used for tuning. Batch 1 ran the selected
+(4,8,2) grid even though all three hardware devices can accommodate the
+production grid. The reported comparison therefore characterises the
+tuned coarse configuration, not the renderer's shipping configuration;
+batch 2 should either retune both supported grids or use the production
+grid and state the memory requirement explicitly.
 
 ## 6. Findings
 
-### 6.1 The reference is only tight away from grazing incidence
+### 6.1 Reference error is common-mode and scene-dependent
 
-Same renderer, same reference, varying pitch:
+An early calibration fixture suggested that pitch alone controlled the
+reference floor:
 
 | pitch | see-through | covers-sky | depth p50 |
 |---|---|---|---|
@@ -472,10 +526,22 @@ Same renderer, same reference, varying pitch:
 
 At eye level most of the ground is nearly edge-on, and a sub-pixel
 difference in ray direction moves the hit by tens of units. At pitch 0
-the converged renderers agree with *each other* to 1.3 u while all
-sitting ~25 u from the reference, at a signed median of 0.01 u — scatter,
-not bias. Any ground-truth comparison of first-person terrain has this
-floor, and reporting absolute error without it overstates precision.
+the converged renderers agreed with *each other* to 1.3 u while all sat
+~25 u from the reference, at a signed median of 0.01 u — scatter, not
+bias.
+
+Batch 1 shows that the stronger claim — that tilting down makes the
+reference absolutely tight — is false. At the three −90° views, five
+independent methods cluster within a few units of one another while their
+median distance errors against the reference are approximately 45, 21 and
+24 u. At the same views, every method also shares 13.9%, 0.0% and 7.0%
+`covers-sky`, respectively. This is common-mode disagreement with the
+reference, not five renderers developing the same defect. Pitch remains a
+major conditioning variable, but local quantisation, layer boundaries and
+the CPU/GPU sampling convention also set the floor. Absolute depth error
+must therefore be accompanied by inter-method agreement, and the remaining
+top-down offset must be diagnosed before the depth metric supports a final
+quality claim.
 
 ### 6.2 The multi-layer encoding, not the terrain, sets the fit cost
 
@@ -523,11 +589,11 @@ are slab. Its composite roughness is seven times its floor roughness, and
 all of that excess is the encoding.
 
 So the honest claim is not that authored terrain defeats greedy TIN.
-Single-layer authored terrain compresses 45–182×, comfortably in the
-range the literature reports for elevation models, which also confirms
-the fitter itself is not the weak link. What defeats it is a second layer
-whose altitudes are structural rather than continuous. §6.3 is the
-mechanism.
+Single-layer authored terrain compresses 45–182× in our own controls,
+which confirms the fitter itself is not the weak link without importing a
+ratio from a differently sampled elevation model. What defeats it is a
+second layer whose altitudes are structural rather than continuous. §6.3
+is the mechanism.
 
 ### 6.3 A quarter of the vertex budget goes to one discontinuity
 
@@ -574,6 +640,15 @@ measurement moves.
   every one of them is Vangers data. Whether the mechanism in §6.3
   generalises to other discontinuous auxiliary fields is argued, not
   measured.
+- All rendering comparisons use Fostral, whose publication and
+  redistribution permission is unresolved; the fit survey additionally
+  derives statistics from nine other shipped worlds. The study cannot
+  claim an independently reproducible data artifact until the applicable
+  permissions or a venue-acceptable user-supplied-data workflow exist.
+- Hardware batch 1 is preliminary. Its horizon views were replaced after
+  collection, and the image audit found that the scatterer bypassed the
+  shared shading path. The batch establishes problems and broad trends;
+  it does not supply final timing or teaser images.
 - Frame timing is per-frame latency, not pipelined throughput: each frame
   is submitted and awaited in isolation, so nothing overlaps. The
   timestamps make the number GPU work rather than round trip, but they do
@@ -590,17 +665,33 @@ measurement moves.
 
 ## 8. Conclusion
 
-*(TODO)*
+Six terrain renderers that look interchangeable from the original game's
+top-down camera behave differently once the same authored data is viewed
+at eye level. A fixed-step height-field march loses long spans, horizontal
+slices trade missing coverage for bands, and point scattering trades it
+for incoherent pixels. The fitted mesh is the fastest method on all three
+devices in the first hardware batch, but its memory and one-time fit costs
+remain material.
+
+The larger result is about the data and the measurement. Single-layer
+worlds fit by 45–182×, while the structural second layer, not floor relief,
+predicts the collapse in reduction; nearly a quarter of Fostral's vertex
+insertions serve one layer-boundary discontinuity. Coverage alone hid an
+over-drawing defect, and absolute depth against one CPU reference hid
+common-mode disagreement between that reference and every renderer. A
+credible comparison needs bidirectional coverage, coherence, inter-method
+agreement, equal tuning, explicit preparation costs, and visual parity
+checks in addition to a timing table.
 
 ## Planned figures
 
-The draft currently has none, which for a graphics journal is the
-largest single gap. Each figure below has (or needs) a generating
-command, same rule as the numbers:
+Batch 1 produced three full comparison grids, but none is publication-ready
+because the horizon locations and scatter shading changed. Each figure
+below has (or needs) a generating command, same rule as the numbers:
 
 1. **Teaser** — the six methods side by side at the horizon viewpoint
-   where they differ, plus the reference. The harness's `--out` PNGs
-   are the source; needs a layout script.
+   where they differ, plus the reference. The harness's `--out` PNGs are
+   the source; re-render batch 2, then add a layout script.
 2. **§2** — texel-pair encoding diagram, and a vertical slice through a
    double-level region (floor, cave, slab) rendered from the data.
 3. **§4.2** — error decomposition triptych for one frame: see-through
@@ -642,10 +733,6 @@ command, same rule as the numbers:
   marching lineage for §3.1.)
 - Tevs, A., Ihrke, I. and Seidel, H.-P. 2008. *Maximum mipmaps for fast,
   accurate, and scalable dynamic height field rendering.* I3D.
-- *(TODO: Vangers technical history — K-D Lab 1998; the open-source
-  release of the original engine is the citable artifact for the
-  "Surmap" column renderer that §3.4 mirrors.)*
-- *(TODO: a citable source for the DEM reduction ratios that §5.4/§6.2
-  compare against — Garland–Heckbert's own reported ratios if they
-  suffice, otherwise a survey; the "~80×" smooth-surface figure is our
-  own synthetic control and must be labelled as such where used.)*
+- K-D Lab / KranX. *Vangers* source release, `KranX/Vangers`, GPL-3.0,
+  `https://github.com/KranX/Vangers`. (Primary source for the original
+  renderer; game resources are explicitly obtained separately.)
