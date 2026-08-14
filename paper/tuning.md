@@ -1,5 +1,8 @@
 # Per-method tuning
 
+> **Stale fixture:** these choices were measured on the first set of 0°
+> views. Re-run the sweep on the new horizon views before hardware batch 2.
+
 Level fostral, pitch 0°, 400x260, view distance 600, averaged over 3 viewpoints.
 
 Selection rule: the cheapest setting within 1 percentage points of that method's own best error, where error is see-through + speckle.

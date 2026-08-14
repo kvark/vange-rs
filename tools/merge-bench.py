@@ -86,7 +86,8 @@ def main():
             d.get("adapter", "?"),
             f"{d.get('backend', '?')} / {d.get('device_type', '?')}",
             d.get("driver_info", d.get("driver", "?")) or "?",
-            f"{run['width']}x{run['height']}, far {run['far']:g}, {run['frames']} frames",
+            f"{run['width']}x{run['height']}, far {run['far']:g}, {run['frames']} frames; "
+            f"shadows {run.get('shadows', 'disabled (legacy default)')}",
         ])
     print(table(rows, ["label", "adapter", "backend / type", "driver", "config"]))
 
@@ -110,13 +111,25 @@ def main():
                 cells.append(fmt(value(run, view, pitch, m)))
             rows.append(cells)
         print(table(rows, ["view"] + methods))
+        pitch_rows = []
+        for pitch in dict.fromkeys(p for _, p in keys):
+            cells = [f"{pitch:g}°"]
+            pitch_keys = [(view, p) for view, p in keys if p == pitch]
+            for m in methods:
+                values = [value(run, view, p, m) for view, p in pitch_keys]
+                values = [v for v in values if v is not None]
+                cells.append(fmt(statistics.mean(values), 3) if values else "—")
+            pitch_rows.append(cells)
+        print("\nArithmetic mean over the views at each pitch:\n")
+        print(table(pitch_rows, ["pitch"] + methods))
 
-    # Accuracy does not depend on the device, so report it from the first
-    # run and say so - but check the others agree, because a mismatch means
-    # a driver is producing different geometry and that is a finding.
+    # Accuracy should not depend on the device, so report it from the first
+    # run as a baseline - but check the others agree, because a mismatch
+    # means a driver is producing something different and that is a finding.
     base = runs[0]
     print("\n## Accuracy: see-through / covers-sky / speckle (%)\n")
-    print(f"Device-independent; taken from **{base.get('label', '?')}**. "
+    print(f"Expected to be device-independent; baseline taken from "
+          f"**{base.get('label', '?')}** and cross-checked below. "
           "`see-through` is solid terrain left as background and "
           "`covers-sky` is background filled in — only the first moves when "
           "a renderer is really missing geometry, and both move together "
@@ -134,22 +147,46 @@ def main():
             cells.append(f"{fmt(st)} / {fmt(cs)} / {fmt(sp)}")
         rows.append(cells)
     print(table(rows, ["view"] + methods))
+    pitch_rows = []
+    for pitch in dict.fromkeys(p for _, p in keys):
+        cells = [f"{pitch:g}°"]
+        pitch_keys = [(view, p) for view, p in keys if p == pitch]
+        for m in methods:
+            means = []
+            for field in ("see_through", "speckle"):
+                values = [acc(base, view, p, m, field) for view, p in pitch_keys]
+                values = [v for v in values if v is not None]
+                means.append(statistics.mean(values) if values else None)
+            cells.append(f"{fmt(means[0])} / {fmt(means[1])}")
+        pitch_rows.append(cells)
+    print("\nArithmetic mean over the views at each pitch, see-through / speckle (%):\n")
+    print(table(pitch_rows, ["pitch"] + methods))
 
+    mismatch_fields = {
+        "see_through": (0.5, "%"),
+        "covers_sky": (0.5, "%"),
+        "speckle": (0.5, "%"),
+        "depth_p50": (0.5, "u"),
+        "depth_p95": (2.0, "u"),
+    }
     mismatched = []
     for run in runs[1:]:
         for view, pitch in keys:
             for m in methods:
-                a = acc(base, view, pitch, m, "see_through")
-                b = acc(run, view, pitch, m, "see_through")
-                if a is not None and b is not None and abs(a - b) > 0.5:
-                    mismatched.append((run.get("label", "?"), view, pitch, m, a, b))
+                for field, (threshold, unit) in mismatch_fields.items():
+                    a = acc(base, view, pitch, m, field)
+                    b = acc(run, view, pitch, m, field)
+                    if a is not None and b is not None and abs(a - b) > threshold:
+                        mismatched.append(
+                            (run.get("label", "?"), view, pitch, m, field, unit, a, b)
+                        )
     if mismatched:
         print("\n> **Devices disagree on geometry.** Accuracy should not vary "
               "with the adapter; where it does, one of them is rendering "
               "something different.\n")
-        for label, view, pitch, m, a, b in mismatched:
-            print(f"> - {m} at {view} @ {pitch:g}°: "
-                  f"{base.get('label', '?')} {a:.1f}% vs {label} {b:.1f}%")
+        for label, view, pitch, m, field, unit, a, b in mismatched:
+            print(f"> - {m} `{field}` at {view} @ {pitch:g}°: "
+                  f"{base.get('label', '?')} {a:.1f}{unit} vs {label} {b:.1f}{unit}")
 
     # One-time cost, which the per-frame numbers deliberately exclude.
     print("\n## Preparation cost (ms, CPU wall time)\n")
@@ -169,10 +206,11 @@ def main():
     print(table(rows, ["method", "setup", "first frame", "warmup"]))
 
     print("\n## Depth error, p50 / p95 (world units)\n")
-    print("Read comparatively. The reference's own floor is dominated by "
-          "pitch — about 25u at the horizon, under 2u once the camera tilts "
-          "off it — because grazing rays move their hit point by tens of "
-          "units for a sub-pixel direction change.\n")
+    print("Read comparatively. Grazing rays can move their hit point by tens "
+          "of units for a sub-pixel direction change, while batch 1 also "
+          "shows scene-dependent common-mode offsets away from the horizon. "
+          "Inter-method agreement is therefore as important as the absolute "
+          "error against this reference.\n")
     rows = []
     for view, pitch in keys:
         cells = [f"{view} @ {pitch:g}°"]

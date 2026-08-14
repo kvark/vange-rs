@@ -1,4 +1,4 @@
-//!include globals.inc terrain/locals.inc surface.inc terrain/color.inc
+//!include globals.inc terrain/locals.inc surface.inc shadow.inc terrain/color.inc
 
 struct Varyings {
     @location(0) vpos: vec4<f32>,
@@ -38,6 +38,7 @@ fn main_fs(in: Varyings) -> @location(0) vec4<f32> {
         discard;
     };
 
-    let lit_factor = select(0.25, 1.0, in.vpos.z > surface.low_alt || surface.low_alt == surface.high_alt);
-    return evaluate_color(ty, in.vpos.xyz, lit_factor);
+    let cave_visibility = select(0.25, 1.0, in.vpos.z > surface.low_alt || surface.low_alt == surface.high_alt);
+    let visibility = cave_visibility * fetch_shadow_visibility(in.vpos.xyz);
+    return evaluate_color(ty, in.vpos.xyz, visibility);
 }

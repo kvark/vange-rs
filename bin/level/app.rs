@@ -79,10 +79,11 @@ impl LevelView {
         let eye = (loc.z - base).max(1.0);
 
         println!(
-            "\n--view \"spot:{},{}:{:.0}{}\"   --pitch {:.0}",
+            "\n--view \"spot:{},{}:{:.0}:{:.0}{}\"   --pitch {:.0}",
             texel.0,
             texel.1,
             yaw,
+            eye,
             if under { ":under" } else { "" },
             pitch
         );

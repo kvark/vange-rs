@@ -21,6 +21,9 @@ tools/compare-terrain.py
 
 # Collect the work/results-*.json files from every machine, then
 tools/merge-bench.py work/results-*.json > paper/results.md
+
+# Batch 1 is retained under remote/; regenerate its complete tables with
+tools/merge-bench.py remote/results-*.json > paper/results.md
 ```
 
 `--quick` shrinks it to a few seconds for checking the harness runs at
@@ -48,7 +51,9 @@ Tracked here rather than in the draft so the gaps stay visible:
 - [ ] An external elevation model, for comparability with published
       numbers rather than for the causal claim. Lower priority now that
       the single-layer worlds land at 45-182x.
-- [ ] More than one device. The harness is ready; the runs are not.
+- [x] More than one device. Batch 1 covers a Radeon 780M, Radeon RX 7900
+      XT and GeForce RTX 5070. Its horizon rows and scatter timings are
+      preliminary and need batch 2 after the fixture/shading corrections.
 - [x] GPU timestamp queries. Done; the harness prefers them and records
       which timing each row used. Still per-frame latency rather than
       pipelined throughput, which is a separate limitation.
@@ -63,13 +68,14 @@ Tracked here rather than in the draft so the gaps stay visible:
       the honest limit on the portability claim.
 - [ ] Data license. JCGT requires provided code and data under a
       non-restrictive OSS license. The engine and harness are Apache-2.0;
-      the level archives fetched by the harness are the game's content
-      and their redistribution terms must be stated in the paper (see
-      the *Data availability* TODO in the draft). Only kvark can resolve
-      this one.
-- [ ] Figures. None exist yet; the draft now carries a "Planned figures"
-      list with a generating command per figure. The teaser layout script
-      and the §6.2 scatter plot are the two not yet implemented.
+      the Fostral level is separate game content and permission to use and
+      redistribute it is still being sought. The ten-world fit survey also
+      derives statistics from nine other shipped levels, so verify that
+      scope separately. Do not publish archives or derived data as an open
+      artifact until this is resolved.
+- [ ] Figures. Batch 1 produced three diagnostic comparison grids, but the
+      new horizon views and shading parity fix require fresh source images.
+      The teaser layout script and §6.2 scatter plot remain unimplemented.
 - [ ] Author block. JCGT review is single-blind — names and affiliation
       go on the submission.
 - [ ] Supplemental video. JCGT explicitly prefers "shorter articles with
