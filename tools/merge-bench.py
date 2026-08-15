@@ -207,8 +207,9 @@ def main():
 
     print("\n## Depth error, p50 / p95 (world units)\n")
     print("Read comparatively. Grazing rays can move their hit point by tens "
-          "of units for a sub-pixel direction change, while batch 1 also "
-          "shows scene-dependent common-mode offsets away from the horizon. "
+          "of units for a sub-pixel direction change, while a diagnostic "
+          "batch also shows scene-dependent common-mode offsets away from "
+          "the horizon. "
           "Inter-method agreement is therefore as important as the absolute "
           "error against this reference.\n")
     rows = []

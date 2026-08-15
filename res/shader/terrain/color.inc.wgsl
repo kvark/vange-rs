@@ -13,8 +13,7 @@ const c_ShadowDepthScale: f32 = 0.6; //~ 2.0 / 3.0;
 // Floor brightness applied to terrain in deep shadow. Matches the
 // `c_Ambient` used by `fetch_shadow` so unobstructed surfaces and
 // fully-shadowed ones meet at the same darkness when the cosine term
-// is zero. Defined here because `scatter.wgsl` includes color.inc but
-// not shadow.inc, so it can't pull in `c_Ambient`.
+// is zero. Defined here so every terrain method uses the same floor.
 const c_TerrainAmbient: f32 = 0.25;
 
 // see `RenderPrepare` in `land.cpp` for the original game logic

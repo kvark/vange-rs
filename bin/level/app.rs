@@ -313,7 +313,7 @@ impl Application for LevelView {
                 // harness accepts, so a viewpoint found by flying around
                 // can be reproduced exactly rather than described.
                 KeyCode::F9 => self.dump_camera(),
-                KeyCode::AltLeft => self.alt_button_pressed = true,
+                KeyCode::AltLeft | KeyCode::AltRight => self.alt_button_pressed = true,
                 _ => (),
             },
             ElementState::Released => match key {
@@ -324,12 +324,31 @@ impl Application for LevelView {
                 | KeyCode::KeyZ
                 | KeyCode::KeyX => *i = Input::Empty,
                 KeyCode::ShiftLeft | KeyCode::ShiftRight => self.shift_button_pressed = false,
-                KeyCode::AltLeft => self.alt_button_pressed = false,
+                KeyCode::AltLeft | KeyCode::AltRight => self.alt_button_pressed = false,
                 _ => (),
             },
         }
 
         true
+    }
+
+    fn on_modifiers_changed(&mut self, modifiers: winit::keyboard::ModifiersState) {
+        let alt_pressed = modifiers.alt_key();
+        if self.alt_button_pressed != alt_pressed {
+            self.input = Input::Empty;
+        }
+        self.alt_button_pressed = alt_pressed;
+        self.shift_button_pressed = modifiers.shift_key();
+    }
+
+    fn on_focus_changed(&mut self, focused: bool) {
+        if !focused {
+            self.input = Input::Empty;
+            self.alt_button_pressed = false;
+            self.shift_button_pressed = false;
+            self.mouse_button_pressed = false;
+            self.last_mouse_pos = glam::Vec2::new(-1.0, -1.0);
+        }
     }
 
     fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
@@ -460,8 +479,10 @@ impl Application for LevelView {
                 self.cam.draw_ui(ui);
                 if ui
                     .button("Copy view spec (F9)")
-                    .on_hover_text("Print this camera as a --view spec and a \
-                                    runnable level command line")
+                    .on_hover_text(
+                        "Print this camera as a --view spec and a \
+                                    runnable level command line",
+                    )
                     .clicked()
                 {
                     self.dump_camera();

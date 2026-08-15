@@ -462,6 +462,7 @@ pub struct Context {
     /// unbaked albedo + explicit cosine diffuse + shadow visibility.
     /// Wired into `evaluate_color` via `Locals::lighting_flags`.
     pub unbaked_lighting: bool,
+    ray_steps: u32,
 }
 
 impl Context {
@@ -961,6 +962,7 @@ impl Context {
         global: &GlobalContext,
         config: &settings::Terrain,
         shadow_config: &settings::ShadowTerrain,
+        ray_steps: u32,
     ) -> Self {
         profiling::scope!("Init Terrain");
 
@@ -1728,6 +1730,7 @@ impl Context {
             // we tuned in the cosine-lighting commit. Toggle in the UI
             // to A/B against the original baked-palette path.
             unbaked_lighting: true,
+            ray_steps,
         }
     }
 
@@ -2208,7 +2211,7 @@ impl Context {
                     pad: 1.0,
                     fog_params: [depth_range.end - fog.depth, depth_range.end, 0.0, 0.0],
                     lighting_flags: [self.unbaked_lighting as u32, 0, 0, 0],
-                    terrain_params: [self.slice_spacing(), 0.0, 0.0, 0.0],
+                    terrain_params: [self.slice_spacing(), self.ray_steps as f32, 0.0, 0.0],
                 }),
                 usage: wgpu::BufferUsages::COPY_SRC,
             });
@@ -2396,7 +2399,7 @@ impl Context {
                     pad: 1.0,
                     fog_params: [10000000.0, 10000000.0, 0.0, 0.0],
                     lighting_flags: [self.unbaked_lighting as u32, 0, 0, 0],
-                    terrain_params: [self.slice_spacing(), 0.0, 0.0, 0.0],
+                    terrain_params: [self.slice_spacing(), self.ray_steps as f32, 0.0, 0.0],
                 }),
                 usage: wgpu::BufferUsages::COPY_SRC,
             });

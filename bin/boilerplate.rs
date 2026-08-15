@@ -9,12 +9,14 @@ use winit::{
     application::ApplicationHandler,
     event::{self, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
+    keyboard::{KeyCode, ModifiersState, PhysicalKey},
     window::Window,
 };
 
 pub trait Application {
     fn on_key(&mut self, key: KeyCode, state: event::ElementState) -> bool;
+    fn on_modifiers_changed(&mut self, _modifiers: ModifiersState) {}
+    fn on_focus_changed(&mut self, _focused: bool) {}
     fn on_mouse_wheel(&mut self, _delta: event::MouseScrollDelta) {}
     fn on_cursor_move(&mut self, _position: (f64, f64)) {}
     fn on_mouse_button(&mut self, _state: event::ElementState, _button: event::MouseButton) {}
@@ -225,7 +227,32 @@ impl<A: Application> ApplicationHandler for HarnessHandler<A> {
             .win
             .egui_state
             .on_window_event(&self.win.window, &event);
+
+        // Modifier changes and focus loss are state synchronization events,
+        // not UI actions. Deliver them even when egui consumes the event so
+        // navigation cannot retain a key that the OS has already released.
+        match &event {
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.app.on_modifiers_changed(modifiers.state())
+            }
+            WindowEvent::Focused(focused) => self.app.on_focus_changed(*focused),
+            _ => {}
+        }
         if response.consumed {
+            // A menu can gain keyboard focus between a movement-key press and
+            // release. The release must still stop navigation.
+            if let WindowEvent::KeyboardInput {
+                event:
+                    event::KeyEvent {
+                        physical_key: PhysicalKey::Code(key),
+                        state: event::ElementState::Released,
+                        ..
+                    },
+                ..
+            } = event
+            {
+                self.app.on_key(key, event::ElementState::Released);
+            }
             return;
         }
 

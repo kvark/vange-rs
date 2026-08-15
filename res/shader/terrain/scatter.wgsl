@@ -46,7 +46,7 @@ fn copy_fs(@builtin(position) pos: vec4<f32>) -> CopyOutput {
         world_pos.z > surface.low_alt || surface.low_alt == surface.high_alt,
     );
     let visibility = cave_visibility * fetch_shadow_visibility(world_pos);
-    let color = evaluate_color(value & 255u, world_pos, visibility);
+    let color = apply_fog(evaluate_color(value & 255u, world_pos, visibility), world_pos.xy);
     return CopyOutput(color, depth);
 }
 
