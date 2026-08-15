@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="525" viewBox="0 0 900 525" role="img" aria-label="TIN reduction against double-level terrain fraction">
+<style>text{font-family:Inter,DejaVu Sans,sans-serif;fill:#20252b}.title{font-size:23px;font-weight:700}.subtitle{font-size:13px;fill:#68717b}.panel-title{font-size:15px;font-weight:700}.axis{font-size:11px;fill:#68717b}.label{font-size:12px}.value{font-size:10px;font-weight:700}.light{fill:#f8fafc}</style>
+<rect width="900" height="525" fill="#fbfaf7" rx="14"/>
+<text x="34.0" y="38.0" class="title" text-anchor="start" >A second terrain layer predicts the collapse in mesh reduction</text>
+<text x="34.0" y="61.0" class="subtitle" text-anchor="start" >Ten shipped worlds · TIN quality 0.25 · reduction axis is logarithmic</text>
+<rect x="92" y="96" width="730" height="340" fill="#ffffff" stroke="#d9dde1" rx="8"/>
+<rect x="92" y="96" width="36.5" height="340" fill="#e9f4ec" opacity="0.9"/>
+<line x1="92.0" y1="96" x2="92.0" y2="436" stroke="#d9dde1"/>
+<text x="92.0" y="458.0" class="axis" text-anchor="middle" >0</text>
+<line x1="183.2" y1="96" x2="183.2" y2="436" stroke="#d9dde1"/>
+<text x="183.2" y="458.0" class="axis" text-anchor="middle" >5</text>
+<line x1="274.5" y1="96" x2="274.5" y2="436" stroke="#d9dde1"/>
+<text x="274.5" y="458.0" class="axis" text-anchor="middle" >10</text>
+<line x1="457.0" y1="96" x2="457.0" y2="436" stroke="#d9dde1"/>
+<text x="457.0" y="458.0" class="axis" text-anchor="middle" >20</text>
+<line x1="639.5" y1="96" x2="639.5" y2="436" stroke="#d9dde1"/>
+<text x="639.5" y="458.0" class="axis" text-anchor="middle" >30</text>
+<line x1="822.0" y1="96" x2="822.0" y2="436" stroke="#d9dde1"/>
+<text x="822.0" y="458.0" class="axis" text-anchor="middle" >40</text>
+<line x1="92" y1="417.1" x2="822" y2="417.1" stroke="#d9dde1"/>
+<text x="82.0" y="421.1" class="axis" text-anchor="end" >5×</text>
+<line x1="92" y1="358.3" x2="822" y2="358.3" stroke="#d9dde1"/>
+<text x="82.0" y="362.3" class="axis" text-anchor="end" >10×</text>
+<line x1="92" y1="299.4" x2="822" y2="299.4" stroke="#d9dde1"/>
+<text x="82.0" y="303.4" class="axis" text-anchor="end" >20×</text>
+<line x1="92" y1="221.7" x2="822" y2="221.7" stroke="#d9dde1"/>
+<text x="82.0" y="225.7" class="axis" text-anchor="end" >50×</text>
+<line x1="92" y1="162.9" x2="822" y2="162.9" stroke="#d9dde1"/>
+<text x="82.0" y="166.9" class="axis" text-anchor="end" >100×</text>
+<line x1="92" y1="104.1" x2="822" y2="104.1" stroke="#d9dde1"/>
+<text x="82.0" y="108.1" class="axis" text-anchor="end" >200×</text>
+<line x1="92.0" y1="227.7" x2="822.0" y2="436.0" stroke="#8b949e" stroke-width="2" stroke-dasharray="7 5"/>
+<circle cx="92.0" cy="112.1" r="6" fill="#168c9e" stroke="white" stroke-width="2"/>
+<text x="100.0" y="104.1" class="label" text-anchor="start" >weexow</text>
+<circle cx="92.0" cy="125.8" r="6" fill="#168c9e" stroke="white" stroke-width="2"/>
+<text x="100.0" y="140.8" class="label" text-anchor="start" >ark-a-znoy</text>
+<circle cx="92.0" cy="230.1" r="6" fill="#168c9e" stroke="white" stroke-width="2"/>
+<text x="100.0" y="234.1" class="label" text-anchor="start" >threall</text>
+<circle cx="117.5" cy="302.0" r="6" fill="#24764a" stroke="white" stroke-width="2"/>
+<text x="125.5" y="294.0" class="label" text-anchor="start" >xplo</text>
+<circle cx="179.6" cy="317.9" r="6" fill="#24764a" stroke="white" stroke-width="2"/>
+<text x="187.6" y="332.9" class="label" text-anchor="start" >khox</text>
+<circle cx="290.9" cy="324.4" r="8" fill="#d65757" stroke="white" stroke-width="2"/>
+<text x="300.9" y="314.4" class="label" text-anchor="start" >fostral</text>
+<circle cx="402.2" cy="377.2" r="6" fill="#24764a" stroke="white" stroke-width="2"/>
+<text x="410.2" y="369.2" class="label" text-anchor="start" >necross</text>
+<circle cx="639.5" cy="400.2" r="6" fill="#24764a" stroke="white" stroke-width="2"/>
+<text x="631.5" y="390.2" class="label" text-anchor="end" >glorx</text>
+<circle cx="334.7" cy="406.0" r="6" fill="#24764a" stroke="white" stroke-width="2"/>
+<text x="342.7" y="422.0" class="label" text-anchor="start" >boozeena</text>
+<circle cx="785.5" cy="413.7" r="6" fill="#24764a" stroke="white" stroke-width="2"/>
+<text x="777.5" y="429.7" class="label" text-anchor="end" >hmok</text>
+<text x="457.0" y="486.0" class="axis" text-anchor="middle" >double-level texels (%)</text>
+<text x="25.0" y="266.0" class="axis" text-anchor="middle" transform="rotate(-90 25 266.0)">grid-to-TIN reduction</text>
+<text x="810.0" y="82.0" class="panel-title" text-anchor="end" >r = −0.77</text>
+<text x="810.0" y="100.0" class="axis" text-anchor="end" >corr(log reduction, dual fraction)</text>
+</svg>

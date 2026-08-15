@@ -45,6 +45,8 @@ WGSL path, including its validation, limits, and robust-access requirements.
 We release the engine, the evaluation harness, and a per-device measurement
 protocol that reduces a full run to a single command.
 
+![The seven measured configurations at the hangar horizon scene. Scattered loses coverage, while the coarse mesh misses a wall recovered by the finer fit.](figures/teaser.svg)
+
 ## 1. Introduction
 
 Terrain rendering research usually starts with a digital elevation model:
@@ -193,6 +195,8 @@ A texel is either single-valued, or carries three altitudes: a floor
 texel of a pair storing `low`, the odd one `high`, and `mid` derived from
 delta bits in both. Fostral, the level used throughout, is 2048×16384 and
 10.9% double-level.
+
+![Two adjacent source texels decode into a lower solid and, where present, an upper slab separated by traversable cave space.](figures/encoding.svg)
 
 Two properties matter for everything that follows. The surface is
 **authored, not sampled**: cliffs are vertical by construction rather than
@@ -358,6 +362,23 @@ full-level resident mesh can reach roughly 300 MB, and edits require local
 refinement. Once present, the geometry uses the conventional raster pipeline
 and supplies derivatives for smooth lighting.
 
+The explicit representation also has two system-level advantages that a frame
+time table does not price. First, the finest render LOD can be handed directly
+to a conventional triangle-mesh physics collider. The original engine could
+collide against its native voxel-like height-column state by rasterizing
+collision shapes over the terrain, but mainstream rigid-body libraries have
+no corresponding two-interval height-map primitive; indexed triangles are
+standard input. The follow-up *Vandals and Heroes* prototype uses the same
+per-chunk TIN for both drawing and Rapier collision, so the visible and
+physical surfaces agree [Malyshau 2026]. Second, triangulation separates the
+2D parameter grid from its 3D embedding. That prototype maps the fitted
+vertices onto cylinders, spheres,
+and tori, adding a curvature-error lattice where a planar chord would depart
+from the intended world surface. These are downstream engineering advantages,
+not additional measurements in the present comparison. Physics reuse also
+widens the edit obligation: a refitted visual chunk needs its collider replaced
+on the same consistency boundary.
+
 ## 4. Evaluation
 
 ### 4.1 Reference
@@ -469,6 +490,8 @@ Values below use the 780M as the accuracy baseline and are arithmetic means
 over the three views at each pitch, reported as see-through / coherence error
 (%). `covers-sky` is omitted because it is largely common-mode (§6.1).
 
+![Missing terrain and local incoherence separate sharply near the horizon. The logarithmic scale keeps both catastrophic and sub-percent errors visible.](figures/quality-pitch.svg)
+
 | pitch | RayTraced | RayVoxel | Sliced | Scattered | Painter | Mesh q=0.0 | Mesh q=0.75 |
 |---|---|---|---|---|---|---|---|
 | 0° | 4.1 / 0.3 | 4.4 / 0.3 | 3.9 / 2.7 | **41.0 / 1.8** | 3.1 / 0.1 | 6.6 / 0.0 | 3.3 / 0.1 |
@@ -509,6 +532,8 @@ the image-order methods and the painter remain mutually coherent.
 The Vulkan table uses GPU timestamps and reports arithmetic means over the
 three views at each pitch, in ms:
 
+![Mean frame time across the twelve scenes. RayTraced records the lowest mean on three adapters, but the mesh configurations remain close and the ordering is not portable across devices.](figures/performance.svg)
+
 | device / pitch | RayTraced | RayVoxel | Sliced | Scattered† | Painter | Mesh q=0.0 | Mesh q=0.75 |
 |---|---|---|---|---|---|---|---|
 | 780M / 0° | **3.552** | 7.310 | 10.442 | 14.172 | 8.472 | 4.309 | 3.950 |
@@ -528,7 +553,7 @@ three views at each pitch, in ms:
 | RTX 5070 / −60° | **0.449** | 1.189 | 1.775 | 1.329 | 5.682 | 0.474 | 0.559 |
 | RTX 5070 / −90° | 0.481 | 1.133 | 2.019 | 1.305 | 5.686 | **0.470** | 0.602 |
 
-At the selected 64 steps RayTraced is the fastest method overall on the 780M,
+At the selected 64 steps RayTraced has the lowest mean GPU time on the 780M,
 Intel, and NVIDIA devices. Mesh q=0.75 narrowly wins on the 7900 XT (0.482 ms
 overall against 0.572 ms for RayTraced), and the difference between the two is
 under 0.15 ms at every 7900 pitch. This reverses the earlier 128-step result:
@@ -559,6 +584,8 @@ a scene-and-adapter interaction and is not a general horizon cost.
 
 Per-frame numbers exclude one-time work. The final 780M run gives the
 following CPU wall times in milliseconds (maximum over its twelve scenes):
+
+![First-frame and total warmup costs reveal work excluded from the steady-state timing table.](figures/preparation.svg)
 
 | method | setup | first frame | warmup |
 |---|---|---|---|
@@ -662,7 +689,8 @@ which is what the protocol's tuning pass is for.
 **Resolution changes whether the reference can resolve mesh quality.** In the
 400×260 tuning pass every setting from q=0.0 to q=1.0 lands within 0.1 points
 of coverage error (4.2–4.5%) and 5 u of depth error, so the rule picks the
-cheapest. At the full 1280×800 hangar scene in the final batch, however, q=0.0 leaves
+cheapest. At the full 1280×800 hangar scene in the final batch, however,
+q=0.0 leaves
 16.3% uncovered and q=0.75 leaves 6.5%, at effectively equal frame cost. The
 small tuning image hid a scene-specific wall that the publication resolution
 can resolve. Mesh quality must therefore be selected at full resolution or
@@ -674,7 +702,7 @@ scenes, 16 → 256 steps costs 0.25 → 1.26 ms while total error falls 12.5% �
 8.4%. The 64-step setting is the cheapest within one point of the best (9.4%).
 The final five-device batch uses 64 throughout. Relative to the earlier
 128-step batch this saves about 1.2 ms on the 780M and 0.3–0.4 ms on the
-discrete GPUs, enough to reverse the fastest-method result (§5.2).
+discrete GPUs, enough to reverse the lowest-time method in §5.2.
 
 A sixth result is about configuration rather than the method: the voxel
 tracer's production grid (2,4,1) needs 153 MB of storage buffer and did not
@@ -684,6 +712,25 @@ production grid. The reported comparison therefore characterises the
 tuned coarse configuration, not the renderer's shipping configuration;
 the memory requirement is part of the configuration disclosure rather than
 an unreported advantage.
+
+### 5.6 Fastest is not best
+
+The 64-step RayTraced configuration records the lowest mean GPU time on more
+devices, but that is not a general recommendation over Mesh. Its fixed
+sampling budget is visible as blocky or missed close-up detail, and grazing
+rays are the worst possible
+workload: preserving thin geometry requires more samples, while holding the
+budget fixed admits the horizon artifacts measured in §5.1. The selected
+setting is deliberately the cheapest point within the tuning rule, not a
+quality match for the q=0.75 mesh. The mesh spends memory and preparation time
+to make geometry explicit, then rasterizes continuously interpolated triangles
+without a view-dependent traversal budget.
+
+The choice is consequently workload-level. RayTraced is compelling when load
+time, memory, and immediate edits dominate. Mesh is the stronger production
+candidate when close-range quality, grazing views, physics reuse, or a curved
+world representation matters enough to amortise fitting and local refits.
+Neither statement follows from frame time alone.
 
 ## 6. Findings
 
@@ -725,6 +772,8 @@ The obvious reading of a 14.9× reduction where a smooth surface gives
 shipped worlds let us test that directly: same engine, same encoding,
 same 8-bit quantisation, same texel scale, same authoring tools, varying
 only content. Fitted at identical tolerance:
+
+![Across the ten shipped worlds, increasing double-level coverage tracks a steep loss of grid-to-TIN reduction.](figures/fit-survey.svg)
 
 | level | texels | triangles | reduction | slab tris | dual texels | rough(floor) | rough(surface) |
 |---|---|---|---|---|---|---|---|
@@ -848,10 +897,14 @@ top-down camera behave differently once the same authored data is viewed
 at eye level. Horizontal slices expose bands and point scattering exposes
 incoherent pixels. The audit also showed that a projected proxy envelope can
 be mistaken for a ray-marching limitation; the corrected marcher now casts
-the full screen and tests the dual-layer solid in both directions. At the
-selected 64 steps that marcher is fastest overall on three of four Vulkan
-devices; the mesh narrowly wins the fourth, but its memory and one-time fit
-costs remain material.
+the full screen and tests the dual-layer solid in both directions. Its selected
+64-step configuration has the lowest mean GPU time on three of four Vulkan
+devices, but that result is a speed/quality operating point, not an overall
+victory. Close detail remains blocky, and grazing views either consume more
+samples or expose
+missed thin geometry. The finer mesh is more consistent at those views and
+feeds ordinary rasterization, triangle-mesh physics, and curved-world
+embeddings, at the cost of substantial memory, fitting, and edit maintenance.
 
 The larger result is about the data and the measurement. Single-layer
 worlds fit by 45–182×, while the structural second layer, not floor relief,
@@ -863,33 +916,23 @@ credible comparison needs bidirectional coverage, coherence, inter-method
 agreement, equal tuning, explicit preparation costs, and visual parity
 checks in addition to a timing table. It also needs to treat post-edit
 maintenance as a first-class result: a static hierarchy can win a frame and
-still fail the workload if terrain destruction forces a reload.
+still fail the workload if terrain destruction forces a reload. Conversely, a
+method can win the timing table and still lose the application if its quality
+budget is view-dependent or its representation cannot be reused by the rest
+of the engine.
 
-## Planned figures
+## Figure provenance
 
-The final batch produced five full comparison grids with the final cameras and
-common shadows. Each remaining figure has (or needs) a generating command,
-under the same reproducibility rule as the numbers:
-
-1. **§3** — complete: six consistent vector schematics show image order,
-   object order, or precomputation with a shared visual vocabulary.
-2. **Teaser** — the six methods side by side at the horizon viewpoint
-   where they differ, plus the reference. The harness's `--out` PNGs are
-   the source; select a row and add a layout script.
-3. **§2** — texel-pair encoding diagram, and a vertical slice through a
-   double-level region (floor, cave, slab) rendered from the data.
-4. **§4.2** — error decomposition triptych for one frame: see-through
-   mask, covers-sky mask, speckle mask, over the rendered image. The
-   harness already emits the masks.
-5. **§5.1** — pitch sweep chart: error vs pitch per method, the
-   "separate sharply at the horizon" curve.
-6. **§6.2** — scatter plot of log reduction vs double-level fraction
-   across the ten worlds, the r = −0.77 picture (`tools/level-survey.py`
-   output).
-7. **§6.3** — mesh wireframe at a single/double-level region boundary,
-   showing triangles shrinking to texel size along the discontinuity.
-8. **§3.6 / appendix** — top-down frustum + per-chunk LOD/culling plan
-   (`tools/plot-cull.py`, already implemented).
+The paper now uses figures rather than treating them as a future pass. The six
+method schematics are hand-authored SVGs with one vocabulary. The encoding,
+pitch/quality, Vulkan performance, preparation, and ten-world fit figures are
+generated by `tools/plot-paper.py`; hardware plots read the retained JSON
+directly and the survey plot reads `paper/survey.json`, replaceable by
+`tools/level-survey.py --json-out paper/survey.json`. The teaser crops one row
+from a full final comparison grid with `examples/paper-teaser.rs` before the
+same plotting command lays it out and labels it. Full five-device grids and
+per-view tables remain supplemental evidence rather than being shrunk into
+unreadable paper pages.
 
 ## References
 
@@ -954,3 +997,6 @@ under the same reproducibility rule as the numbers:
   [WGSL specification](https://www.w3.org/TR/WGSL/).
 - Malyshau, D. 2021. *Pure Rust.* vange-rs development log.
   [Project article](https://vange.rs/2021/08/25/pure-rust.html).
+- Malyshau, D. 2026. *Vandals and Heroes.* Follow-up prototype using a shared
+  render/physics TIN on cylindrical, spherical, and toroidal worlds.
+  [Project repository](https://github.com/kvark/vandals-and-heroes).

@@ -1,0 +1,15 @@
+{
+  "quality": 0.25,
+  "rows": [
+    {"level": "weexow", "texels_m": 4.2, "triangles_m": 0.05, "reduction": 182.0, "slab_pct": 0.0, "dual_pct": 0.0, "rough_floor": 1.84, "rough_surface": 1.84},
+    {"level": "ark-a-znoy", "texels_m": 4.2, "triangles_m": 0.05, "reduction": 154.8, "slab_pct": 0.0, "dual_pct": 0.0, "rough_floor": 5.52, "rough_surface": 5.52},
+    {"level": "threall", "texels_m": 4.2, "triangles_m": 0.19, "reduction": 45.3, "slab_pct": 0.0, "dual_pct": 0.0, "rough_floor": 2.85, "rough_surface": 2.85},
+    {"level": "xplo", "texels_m": 8.4, "triangles_m": 0.87, "reduction": 19.4, "slab_pct": 17.0, "dual_pct": 1.4, "rough_floor": 7.54, "rough_surface": 8.80},
+    {"level": "khox", "texels_m": 4.2, "triangles_m": 0.52, "reduction": 16.1, "slab_pct": 9.3, "dual_pct": 4.8, "rough_floor": 6.94, "rough_surface": 7.71},
+    {"level": "fostral", "texels_m": 33.6, "triangles_m": 4.50, "reduction": 14.9, "slab_pct": 35.6, "dual_pct": 10.9, "rough_floor": 3.44, "rough_surface": 6.54},
+    {"level": "necross", "texels_m": 33.6, "triangles_m": 8.41, "reduction": 8.0, "slab_pct": 42.5, "dual_pct": 17.0, "rough_floor": 4.41, "rough_surface": 14.43},
+    {"level": "glorx", "texels_m": 33.6, "triangles_m": 10.97, "reduction": 6.1, "slab_pct": 37.2, "dual_pct": 30.0, "rough_floor": 6.53, "rough_surface": 14.66},
+    {"level": "boozeena", "texels_m": 4.2, "triangles_m": 1.46, "reduction": 5.7, "slab_pct": 41.5, "dual_pct": 13.3, "rough_floor": 3.44, "rough_surface": 25.15},
+    {"level": "hmok", "texels_m": 4.2, "triangles_m": 1.61, "reduction": 5.2, "slab_pct": 47.2, "dual_pct": 38.0, "rough_floor": 2.71, "rough_surface": 18.77}
+  ]
+}
