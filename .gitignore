@@ -17,4 +17,4 @@ res/data
 __pycache__/
 /*.zip
 /remote/
-
+/paper/figures/teaser-*.png

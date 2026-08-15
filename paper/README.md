@@ -41,7 +41,10 @@ or other protocol fields instead of silently combining unlike batches. The
 retained final batch uses the selected 64-step RayTraced setting throughout.
 Vulkan rows use GPU timestamps; Apple Metal uses the retained CPU
 submit-and-wait average because encoder timestamps did not reliably bracket
-the multipass frame. The merge output keeps those timing classes explicit.
+the multipass frame. wgpu does not promise strict ordering for arbitrary
+command-encoder timestamps, so this was an invalid harness assumption rather
+than evidence of incorrect rendering. The merge output keeps those timing
+classes explicit.
 The measurement snapshot is tagged `terrain-paper-v1`. Raw runs identify
 `21875dc`, the clean renderer revision they measured; the tag additionally
 contains the conservative Metal timing fallback. Editorial and figure work can
@@ -108,8 +111,9 @@ Tracked here rather than in the draft so the gaps stay visible:
       the already failing Scattered hangar row.
 - [x] Timing-source validation. Vulkan uses GPU timestamps. Implausibly short,
       method-invariant Metal intervals exposed that encoder-level timestamps
-      did not bracket the multipass frame, so Metal now falls back to CPU
-      submit-and-wait and is reported separately.
+      did not bracket the multipass frame. The API does not guarantee that
+      ordering, so Metal now falls back to CPU submit-and-wait and is reported
+      separately; pass-level instrumentation is the future GPU-only fix.
 - [~] Equal tuning across methods. `tools/level-survey.py` sibling
       `tools/tune-methods.py` sweeps every knob under one selection rule.
       Caveat recorded in the draft: the small tuning image cannot resolve

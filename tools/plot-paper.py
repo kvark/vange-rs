@@ -10,6 +10,7 @@ with the Python standard library.
 """
 
 import argparse
+import base64
 import glob
 import html
 import json
@@ -324,7 +325,9 @@ def figure_teaser(out):
         svg.add(f'<rect x="{x - 5}" y="{y - 30}" width="290" height="245" rx="8" '
                 f'fill="white" stroke="{colour}" stroke-width="2"/>')
         svg.text(x + 140, y - 10, name, "panel-title", "middle")
-        svg.add(f'<image href="{file}" x="{x}" y="{y}" width="280" height="175" '
+        with open(os.path.join(os.path.dirname(out), file), "rb") as source:
+            encoded = base64.b64encode(source.read()).decode("ascii")
+        svg.add(f'<image href="data:image/png;base64,{encoded}" x="{x}" y="{y}" width="280" height="175" '
                 f'preserveAspectRatio="xMidYMid slice"/>')
         row = "image-order" if index < 2 else "forward samples" if index < 5 else "fitted triangles"
         svg.text(x + 140, y + 202, row, "axis", "middle")
