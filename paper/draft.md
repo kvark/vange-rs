@@ -57,6 +57,18 @@ from cameras that the original authoring tool never showed. Those
 differences make familiar reduction ratios and quality settings poor
 predictors until they are measured on the actual data.
 
+The historical baseline deserves emphasis. Almost three decades ago,
+*Vangers* rendered this destructible, multi-layer world in software on consumer
+CPUs while fitting the game and its streamed terrain into a 16 MB-era memory
+budget [K-D Lab / KranX; Malyshau 2019]. It succeeded by co-designing the
+encoding, renderer, and a narrow oblique top-down camera. The distance since
+then is simultaneously large and small: modern GPUs make arbitrary cameras,
+common shadowing, and portable programmable shading practical, yet the horizon
+and cave cases below still punish a representation that is not matched to the
+data.
+
+![The original Vangers software renderer presents volumetric, destructible terrain through a deliberately constrained oblique top-down view.](../docs/assets/original.jpg)
+
 This study has three non-negotiable system constraints. First, the renderer
 must preserve multiple vertical solid intervals, including the underside of
 an upper slab. Second, it must run inside an interactive frame budget rather
@@ -442,11 +454,16 @@ protocol is only as reproducible as it is cheap to follow.
 On Vulkan, frame times come from GPU timestamp queries around the frame's
 command encoder. Encoder-level timestamps did not reliably bracket this
 multipass workload on Metal: the returned intervals were quantised,
-nearly method-independent, and much shorter than submit-to-completion.
-The Apple run therefore uses the retained CPU submit-and-wait average and is
-reported separately. The collector now disables these timestamp pairs on
-Metal. Each row records its timing source because the two mechanisms are not
-directly comparable (§5.2).
+nearly method-independent, and much shorter than submit-to-completion. This is
+a measurement failure, not evidence that Metal rendered incorrectly. wgpu
+explicitly does not guarantee strict ordering for arbitrary command-encoder
+timestamps, and its Metal backend may defer such a write to the next native
+pass. We treated the pair as a guaranteed enclosing interval, which the API
+does not promise. A future GPU-only measurement must timestamp each render and
+compute pass and sum those intervals; the present Apple run conservatively
+uses the retained CPU submit-and-wait average instead. The collector now
+disables the invalid pair on Metal. Each row records its timing source because
+the two mechanisms are not directly comparable (§5.2).
 The publication configuration renders the same 1024² height-field shadow
 map for every method. This deliberately measures a complete, visually
 comparable terrain frame rather than an isolated discovery pass. The JSON
@@ -997,6 +1014,8 @@ unreadable paper pages.
   [WGSL specification](https://www.w3.org/TR/WGSL/).
 - Malyshau, D. 2021. *Pure Rust.* vange-rs development log.
   [Project article](https://vange.rs/2021/08/25/pure-rust.html).
+- Malyshau, D. 2019. *Data Formats.* vange-rs development log.
+  [Project article](https://vange.rs/2019/12/12/data-formats.html).
 - Malyshau, D. 2026. *Vandals and Heroes.* Follow-up prototype using a shared
   render/physics TIN on cylindrical, spherical, and toroidal worlds.
   [Project repository](https://github.com/kvark/vandals-and-heroes).
