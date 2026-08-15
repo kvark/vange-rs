@@ -19,6 +19,9 @@ number without one is marked `TODO`.
 # running estimate printed as it goes.
 tools/compare-terrain.py
 
+# Verify the checkout and exact camera plan without starting a render.
+tools/compare-terrain.py --list-scenes
+
 # Collect the work/results-*.json files from every machine, then
 tools/merge-bench.py work/results-*.json > paper/results.md
 
@@ -26,6 +29,12 @@ tools/merge-bench.py work/results-*.json > paper/results.md
 # complete tables with
 tools/merge-bench.py remote/results-*.json > paper/results.md
 ```
+
+At startup the harness removes any previous `work/compare/comparison.png` and
+writes `work/compare/run-manifest.json` with the checkout revision and exact
+camera coordinates. The comparison PNG is published atomically only after all
+renders finish. If the manifest still says `"status": "running"`, there is no
+current comparison to collect; an older PNG must not be mistaken for this run.
 
 `--quick` shrinks it to a few seconds for checking the harness runs at
 all. Those numbers are not results: too few frames to be stable, and too

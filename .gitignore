@@ -13,9 +13,8 @@ res/data
 /docs/web_bg.wasm.d.ts
 /docs/data-0/
 /.claude
-work/
+/work/
 __pycache__/
-/common.zip
-/fostral.zip
+/*.zip
 /remote/
-/remote1/
+
