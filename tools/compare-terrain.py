@@ -63,6 +63,7 @@ Example
 """
 
 import argparse
+import datetime
 import json
 import math
 import os
@@ -73,11 +74,6 @@ import sys
 import time
 import urllib.request
 import zipfile
-
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-
-Image.MAX_IMAGE_PIXELS = None
 
 # (label, --terrain value, extra args, warmup frames)
 #
@@ -160,6 +156,52 @@ def run(cmd, what):
     if r.returncode != 0:
         sys.stderr.write(r.stdout[-3000:] + r.stderr[-3000:])
         raise SystemExit(f"{what} failed")
+
+
+def source_state():
+    """Identify the checkout that produced a long-running benchmark."""
+    try:
+        revision = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True,
+            stderr=subprocess.DEVNULL).strip()
+        dirty = bool(subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            text=True, stderr=subprocess.DEVNULL).strip())
+    except (OSError, subprocess.CalledProcessError):
+        revision, dirty = "unknown", None
+    return {"revision": revision, "dirty": dirty}
+
+
+def write_json_atomic(path, value):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(value, f, indent=1)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+def start_run(out_dir, manifest):
+    """Invalidate prior output before a long run can be mistaken for it."""
+    os.makedirs(out_dir, exist_ok=True)
+    grid = os.path.join(out_dir, "comparison.png")
+    partial = os.path.join(out_dir, "comparison.partial.png")
+    for path in (grid, partial):
+        if os.path.exists(path):
+            os.remove(path)
+    manifest_path = os.path.join(out_dir, "run-manifest.json")
+    write_json_atomic(manifest_path, manifest)
+    return manifest_path, grid, partial
+
+
+def print_run_plan(source, scenes):
+    revision = source["revision"][:12]
+    dirty = " dirty" if source["dirty"] else ""
+    print(f"source {revision}{dirty}")
+    print("scenes: " + ", ".join(
+        f"{scene['name']}=({scene['x']},{scene['y']}) yaw {scene['yaw']:g} "
+        f"pitch {scene['pitch']:g} height {scene['eye_height']:g}" +
+        (" under" if scene["under"] else "")
+        for scene in scenes))
 
 
 def ensure_tools(args):
@@ -495,15 +537,15 @@ def main():
     ap.add_argument("--no-shadows", action="store_true",
                     help="omit the common shadow pass for a method-only "
                          "diagnostic; publication defaults keep it enabled")
+    ap.add_argument("--list-scenes", action="store_true",
+                    help="print source revision and exact camera plan, then "
+                         "exit without building, fetching, or rendering")
     args = ap.parse_args()
     if args.quick:
         args.width, args.height, args.frames = 320, 200, 4
         args.view = args.view or ["quick:200,200:0"]
         args.pitch = args.pitch or [0.0]
 
-    ensure_tools(args)
-    ensure_assets(args)
-    os.makedirs(args.out, exist_ok=True)
     # A "scene" is a view at the pitch it was framed at. DEFAULT_VIEWS
     # already pairs each view with its pitch; --view/--pitch overrides fall
     # back to the old cross product for ad-hoc sweeps.
@@ -526,6 +568,48 @@ def main():
             f"duplicate view name(s) {', '.join(dupes)}: give each view its "
             "own name (the level viewer dumps them all as 'spot:')"
         )
+
+    source = source_state()
+    scene_records = [
+        {
+            "name": view["name"], "x": view["x"], "y": view["y"],
+            "yaw": view["yaw"], "pitch": pitch,
+            "eye_height": (view["eye_height"] if view["eye_height"] is not None
+                           else args.eye_height),
+            "under": view["under"],
+        }
+        for view, pitch in scenes
+    ]
+    if args.list_scenes:
+        print_run_plan(source, scene_records)
+        return
+
+    if not args.out:
+        args.out = os.path.join(args.work, "compare")
+    manifest = {
+        "status": "running",
+        "started_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "source": source,
+        "level": args.level,
+        "width": args.width, "height": args.height,
+        "far": args.far, "frames": args.frames,
+        "shadows": ("disabled" if args.no_shadows else
+                    "ray-traced 1024x1024"),
+        "scenes": scene_records,
+    }
+    # A full run takes about an hour. Invalidate the previous aggregate before
+    # builds, downloads, or rendering begin, then publish its replacement only
+    # after every cell succeeds.
+    manifest_path, grid, grid_tmp = start_run(args.out, manifest)
+
+    global np, Image, ImageDraw, ImageFont
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFont
+    Image.MAX_IMAGE_PIXELS = None
+
+    ensure_tools(args)
+    ensure_assets(args)
+
     layers = load_layers(args.layers)
 
     cells, stats, rows = {}, {}, []
@@ -535,6 +619,7 @@ def main():
     # say so up front and keep a running estimate rather than going quiet.
     total = len(scenes) * len(METHODS)
     done, started = 0, time.time()
+    print_run_plan(source, scene_records)
     print(f"{total} renders: {len(METHODS)} methods x {len(scenes)} scenes, "
           f"at {args.width}x{args.height}\n")
 
@@ -593,6 +678,8 @@ def main():
             stats[key] = (ms, see_through, covers_sky, p50, p95, excess)
             rows.append({
                 "view": view["name"], "pitch": pitch, "method": method[0],
+                "x": view["x"], "y": view["y"], "yaw": view["yaw"],
+                "eye_height": eye, "under": view["under"],
                 "avg_ms": ms,
                 "timing": "gpu" if have_gpu else "cpu",
                 "cpu_avg_ms": meta["avg_ms"],
@@ -625,18 +712,19 @@ def main():
     if json_out is None and device:
         json_out = os.path.join(args.work, f"results-{slug(device['adapter'])}.json")
     if json_out:
-        with open(json_out, "w") as f:
-            json.dump({
-                "label": args.label or (device or {}).get("adapter", "unknown"),
-                "level": args.level,
-                "device": device,
-                "width": args.width, "height": args.height,
-                "far": args.far, "frames": args.frames,
-                "shadows": ("disabled" if args.no_shadows else
-                            "ray-traced 1024x1024"),
-                "lighting": "unbaked diffuse",
-                "rows": rows,
-            }, f, indent=1)
+        write_json_atomic(json_out, {
+            "label": args.label or (device or {}).get("adapter", "unknown"),
+            "source": source,
+            "level": args.level,
+            "device": device,
+            "width": args.width, "height": args.height,
+            "far": args.far, "frames": args.frames,
+            "shadows": ("disabled" if args.no_shadows else
+                        "ray-traced 1024x1024"),
+            "lighting": "unbaked diffuse",
+            "scenes": scene_records,
+            "rows": rows,
+        })
         print(f"\nwrote {json_out}")
 
     # Grid image: rows are viewpoints, columns are methods.
@@ -655,10 +743,14 @@ def main():
         dr.text((pad + j * (w + pad) + 2, 8), method[0], font=font, fill=(235, 238, 242))
     for i, (view, pitch) in enumerate(grid_views):
         y = hdr + i * (h + lab + pad)
-        dr.text((pad + 2, y + 2),
-                f"{view['name']} at ({view['x']},{view['y']}) yaw {view['yaw']:g} "
-                f"pitch {pitch:g}" + (" (under)" if view["under"] else ""),
-                font=small, fill=(150, 196, 255))
+        eye_height = (view["eye_height"] if view["eye_height"] is not None
+                      else args.eye_height)
+        label = (
+            f"{view['name']} at ({view['x']},{view['y']}) yaw {view['yaw']:g} "
+            f"pitch {pitch:g} height {eye_height:g}" +
+            (" (under)" if view["under"] else "")
+        )
+        dr.text((pad + 2, y + 2), label, font=small, fill=(150, 196, 255))
         for j, method in enumerate(METHODS):
             x = pad + j * (w + pad)
             key = (view["name"], pitch, method[0])
@@ -669,9 +761,18 @@ def main():
             dr.text((x + 80, y + lab + h - 16), f"{err:.1f}% see-through", font=small, fill=colour)
             sc = (255, 120, 120) if spk > 5 else ((255, 210, 130) if spk > 1 else (150, 230, 150))
             dr.text((x + 210, y + lab + h - 16), f"{spk:.1f}% speckle", font=small, fill=sc)
-    grid = os.path.join(args.out, "comparison.png")
-    out.save(grid)
+    out.save(grid_tmp)
+    os.replace(grid_tmp, grid)
     print(f"\nwrote {grid}")
+
+    manifest.update({
+        "status": "complete",
+        "completed_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "device": device,
+        "results": json_out,
+        "comparison": grid,
+    })
+    write_json_atomic(manifest_path, manifest)
 
 
 if __name__ == "__main__":
