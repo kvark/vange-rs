@@ -73,9 +73,10 @@ Tracked here rather than in the draft so the gaps stay visible:
       derives statistics from nine other shipped levels, so verify that
       scope separately. Do not publish archives or derived data as an open
       artifact until this is resolved.
-- [ ] Figures. Batch 1 produced three diagnostic comparison grids, but the
-      new horizon views and shading parity fix require fresh source images.
-      The teaser layout script and §6.2 scatter plot remain unimplemented.
+- [~] Figures. §3 now carries six hand-authored method schematics
+      (`figures/*.svg`) borrowed in spirit from the blog diagrams. Still
+      missing: the teaser layout script and the §6.2 scatter plot, which
+      need fresh batch-2 source images.
 - [ ] Author block. JCGT review is single-blind — names and affiliation
       go on the submission.
 - [ ] Supplemental video. JCGT explicitly prefers "shorter articles with
