@@ -1,13 +1,14 @@
 # Per-method tuning
 
-> **Stale fixture:** these choices were measured on the first set of 0°
-> views. Re-run the sweep on the new horizon views before hardware batch 2.
+> **Stale fixture and ray path:** these choices were measured on an older
+> set of 0° views before the full-screen ray fix. Re-run the sweep on the
+> river/hangar/ramp views before hardware batch 3.
 
 Level fostral, pitch 0°, 400x260, view distance 600, averaged over 3 viewpoints.
 
 Selection rule: the cheapest setting within 1 percentage points of that method's own best error, where error is see-through + speckle.
 
-## RayTraced
+## RayTraced (superseded implementation)
 
 | setting | GPU ms | see-through | speckle | error | depth p50 |
 |---|---|---|---|---|---|
@@ -65,7 +66,7 @@ Selection rule: the cheapest setting within 1 percentage points of that method's
 
 ```python
 METHODS = [
-    ("RayTraced", "RayTraced", [], ...),  # (none)
+    ("RayTraced", "RayTraced", ["--ray-steps", "128"], ...),  # provisional
     ("Painter", "Painted", [], ...),  # (none)
     ("Sliced", "Sliced", ["--slice-layers", "512"], ...),  # 512 layers
     ("Scattered", "Scattered", ["--scatter-density", "4,4,4"], ...),  # density 4,4,4

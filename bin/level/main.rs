@@ -14,6 +14,10 @@ struct Cli {
     /// Terrain rendering mode: RayTraced, Sliced, Painted, RayVoxelTraced, Mesh
     #[arg(long, default_value = "RayTraced")]
     terrain: String,
+    /// Forward samples for --terrain RayTraced. Larger values preserve more
+    /// thin features on long, grazing rays.
+    #[arg(long, default_value_t = 128)]
+    ray_steps: u32,
     /// Mesh fit quality in 0..=1. Only meaningful with --terrain Mesh.
     #[arg(long, default_value_t = 0.75)]
     mesh_quality: f32,
@@ -148,7 +152,9 @@ fn parse_terrain(
         "RayTraced" => Terrain::RayTraced,
         "Sliced" => Terrain::Sliced,
         // Matches the density in `settings.template.ron`.
-        "Scattered" => Terrain::Scattered { density: scatter_density },
+        "Scattered" => Terrain::Scattered {
+            density: scatter_density,
+        },
         "Painted" => Terrain::Painted,
         // RayVoxelTraced uses the same parameters the web build hard-codes,
         // so the snapshot exercises the same path the user is benchmarking.
@@ -228,6 +234,7 @@ fn main() {
                 cli.mesh_quality,
                 parse_voxel_size(&cli.scatter_density),
             ),
+            ray_steps: cli.ray_steps,
             width: cli.width,
             height: cli.height,
             cam_target: parse_vec3(&cli.cam_target),

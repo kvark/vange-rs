@@ -13,10 +13,9 @@ with frame time and see-through error, plus the numbers on stdout.
 Reading the two error columns together is what makes them useful.
 `see-through` is solid terrain the renderer left as background;
 `covers-sky` is background it filled in. A renderer that is genuinely
-missing geometry moves only the first - height-field ray tracing scores
-tens of percent see-through against 0.0% covers-sky. When both move by
-the same amount it is the reference disagreeing about where the
-silhouette falls, not the renderer, and every method in the row shows it.
+missing geometry moves only the first. When both move by the same amount it
+is usually the reference disagreeing about where the silhouette falls, not
+the renderer, especially when every method in the row shows it.
 
 `depth p50/p95` is how far off the surfaces are, in world units, where
 the renderer and the reference both think something is there. Its noise
@@ -87,10 +86,10 @@ Image.MAX_IMAGE_PIXELS = None
 # not reached yet - roughly 150 frames for a 2048x16384 map.
 # Settings come from tools/tune-methods.py, which sweeps each method's own
 # knob and takes the cheapest setting within a point of that method's best
-# error. Two of these are not tunable at all, which is itself worth
+# error. One of these is not tunable at all, which is itself worth
 # knowing when reading their columns.
 METHODS = [
-    ("RayTraced", "RayTraced", [], 3),
+    ("RayTraced", "RayTraced", ["--ray-steps", "128"], 3),
     # The step budget the fixture's sightlines set: 40 steps lands within a
     # point of 100 on these views (5.5% vs 4.8% error), so the selection
     # rule keeps it. The old fixture's long sightlines exhausted it - 6.4%
@@ -130,14 +129,14 @@ DEFAULT_PITCHES = [0.0, -30.0, -60.0, -90.0]
 
 DEFAULT_VIEWS = {
     0.0: [
-        "horizon-a:1498,15663:171:29",
-        "horizon-b:599,12241:176:77",
-        "horizon-under:122,9410:344:28:under",
+        "river:837,3984:299:78",
+        "hangar:1588,4101:286:12",
+        "ramp:1513,15659:172:28",
     ],
     -30.0: [
         "portal:1176,11567:293:83",
         "entrance:1764,15254:293:108",
-        "river:457,12337:158:180",
+        "river-down:457,12337:158:180",
     ],
     -60.0: [
         "stash:1929,13864:293:161",
@@ -420,6 +419,11 @@ def render(args, view, method, out_dir, pitch=0.0):
         "--frames", str(args.frames), "--warmup", str(warmup),
         "--bench-out", bench,
     ]
+    # Visual parity is part of the publication protocol. Every method
+    # receives the same 1024² height-field shadow pass unless an explicitly
+    # method-only diagnostic run asks to omit it.
+    if not args.no_shadows:
+        cmd.append("--shadow-ray")
     if view["under"]:
         cmd.append("--fp-under")
     if args.level_zip:
@@ -488,6 +492,9 @@ def main():
                          "instance per visible ground sample and clamps at a "
                          "million, so an unbounded distance leaves most of "
                          "its frame unpainted")
+    ap.add_argument("--no-shadows", action="store_true",
+                    help="omit the common shadow pass for a method-only "
+                         "diagnostic; publication defaults keep it enabled")
     args = ap.parse_args()
     if args.quick:
         args.width, args.height, args.frames = 320, 200, 4
@@ -625,7 +632,8 @@ def main():
                 "device": device,
                 "width": args.width, "height": args.height,
                 "far": args.far, "frames": args.frames,
-                "shadows": "disabled",
+                "shadows": ("disabled" if args.no_shadows else
+                            "ray-traced 1024x1024"),
                 "lighting": "unbaked diffuse",
                 "rows": rows,
             }, f, indent=1)

@@ -40,5 +40,5 @@ fn main_fs(in: Varyings) -> @location(0) vec4<f32> {
 
     let cave_visibility = select(0.25, 1.0, in.vpos.z > surface.low_alt || surface.low_alt == surface.high_alt);
     let visibility = cave_visibility * fetch_shadow_visibility(in.vpos.xyz);
-    return evaluate_color(ty, in.vpos.xyz, visibility);
+    return apply_fog(evaluate_color(ty, in.vpos.xyz, visibility), in.vpos.xy);
 }

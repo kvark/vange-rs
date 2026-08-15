@@ -179,6 +179,7 @@ impl Default for Render {
                 },
             },
             terrain: Terrain::RayTraced,
+            ray_steps: 128,
             water: Water {},
             fog: Fog {
                 color: [0.1, 0.2, 0.3],
@@ -197,10 +198,18 @@ pub struct Render {
     pub allow_tearing: bool,
     pub light: Light,
     pub terrain: Terrain,
+    /// Forward samples used by the plain height-field marcher. This stays
+    /// outside `Terrain::RayTraced` so existing RON enum syntax remains valid.
+    #[serde(default = "default_ray_steps")]
+    pub ray_steps: u32,
     pub water: Water,
     pub fog: Fog,
     #[serde(default)]
     pub debug: DebugRender,
+}
+
+fn default_ray_steps() -> u32 {
+    128
 }
 
 impl Render {

@@ -5,8 +5,8 @@ A comparison between methods is only meaningful if each was given a fair
 chance, and these have very different numbers of dials: the voxel tracer
 has a grid size and two step budgets, the mesh has a fit tolerance, the
 slicer has a slice count, the scatterer has a sample density, and the
-height-field marcher and the painter have none at all beyond the shared
-view distance.
+height-field marcher has a forward-step budget, while the painter has no
+method-specific knob beyond the shared view distance.
 
 The selection rule is uniform, and applied to every method including the
 ones we wrote:
@@ -53,11 +53,13 @@ spec.loader.exec_module(ct)
 
 # (label, --terrain, [(setting label, extra args, warmup frames)])
 #
-# `RayTraced` and `Painted` appear with a single entry because they have
-# no knob; listing them keeps the table honest about which methods could
-# be tuned at all, rather than quietly omitting them.
+# `Painted` appears with a single entry because it has no method-specific
+# knob; listing it keeps the table honest rather than quietly omitting it.
 SWEEPS = [
-    ("RayTraced", "RayTraced", [("(none)", [], 3)]),
+    ("RayTraced", "RayTraced", [
+        (f"{n} steps", ["--ray-steps", str(n)], 3)
+        for n in (16, 32, 64, 128, 256)
+    ]),
     ("Painter", "Painted", [("(none)", [], 3)]),
     ("Sliced", "Sliced", [
         (f"{n} layers", ["--slice-layers", str(n)], 3)

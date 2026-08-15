@@ -64,6 +64,7 @@ pub struct SnapshotOptions {
     pub common_zip: Option<String>,
     pub level_path: Option<String>,
     pub terrain: settings::Terrain,
+    pub ray_steps: u32,
     pub width: u32,
     pub height: u32,
     pub cam_target: Vec3,
@@ -127,6 +128,7 @@ impl Default for SnapshotOptions {
             common_zip: None,
             level_path: None,
             terrain: settings::Terrain::RayTraced,
+            ray_steps: 128,
             mesh_wireframe: false,
             no_cull: false,
             mesh_lod: None,
@@ -270,6 +272,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
 
     let mut render_settings = settings::Render {
         terrain: opts.terrain,
+        ray_steps: opts.ray_steps,
         ..Default::default()
     };
     if opts.shadow_voxel {
@@ -424,10 +427,9 @@ pub fn render_snapshot(opts: SnapshotOptions) {
 
     // Two timestamps per frame, resolved in one pass at the end so no
     // frame pays for a readback.
-    let gpu_timing = gfx
-        .device
-        .features()
-        .contains(wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
+    let gpu_timing = gfx.device.features().contains(
+        wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
+    );
     let query_count = 2 * total_frames;
     let queries = gpu_timing.then(|| {
         gfx.device.create_query_set(&wgpu::QuerySetDescriptor {
@@ -533,9 +535,11 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     // tick; the difference between a frame's pair is the GPU's own view of
     // how long its work took, with no submission or round trip in it.
     let mut gpu_ms: Vec<f64> = Vec::new();
-    if let (Some(qs), Some(resolve), Some(read)) =
-        (queries.as_ref(), query_resolve.as_ref(), query_read.as_ref())
-    {
+    if let (Some(qs), Some(resolve), Some(read)) = (
+        queries.as_ref(),
+        query_resolve.as_ref(),
+        query_read.as_ref(),
+    ) {
         let mut enc = gfx
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -623,6 +627,8 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                     "  \"fp_pitch_deg\": {},\n",
                     "  \"near\": {},\n",
                     "  \"far\": {},\n",
+                    "  \"dig\": {},\n",
+                    "  \"dig_frame\": {},\n",
                     "  \"min_ms\": {:.4},\n",
                     "  \"avg_ms\": {:.4},\n",
                     "  \"max_ms\": {:.4},\n",
@@ -650,6 +656,8 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 opts.fp_pitch,
                 opts.near,
                 opts.far,
+                opts.dig,
+                opts.dig_frame,
                 min.as_secs_f64() * 1e3,
                 avg.as_secs_f64() * 1e3,
                 max.as_secs_f64() * 1e3,

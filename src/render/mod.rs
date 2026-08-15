@@ -450,6 +450,7 @@ impl Render {
             &global,
             &settings.terrain,
             &settings.light.shadow.terrain,
+            settings.ray_steps,
         );
         info!("Creating object context...");
         let terrain_view = terrain

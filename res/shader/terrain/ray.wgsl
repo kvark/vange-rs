@@ -2,13 +2,11 @@
 
 @vertex
 fn main(@location(0) pos: vec4<i32>) -> @builtin(position) vec4<f32> {
-    // orhto projections don't like infinite values
-    return select(
-        u_Globals.view_proj * vec4<f32>(pos),
-        // the expected geometry is 4 trianges meeting in the center
-        vec4<f32>(vec2<f32>(pos.xy), 0.0, 0.5),
-        u_Globals.view_proj[2][3] == 0.0
-    );
+    // Four triangles meet at the centre; w=0.5 expands their cardinal
+    // vertices into a full-screen diamond. Projecting the old infinite
+    // ground fan clipped every ray above the horizon, including visible cave
+    // ceilings, so the marcher now decides whether each screen ray misses.
+    return vec4<f32>(vec2<f32>(pos.xy), 0.0, 0.5);
 }
 
 //imported: Surface, u_Surface, get_surface, evaluate_color
@@ -22,41 +20,45 @@ struct CastResult {
     surface: Surface,
     a: vec3<f32>,
     b: vec3<f32>,
+    hit: bool,
 };
 
 fn cast_ray_impl(
     a_in: vec3<f32>, b_in: vec3<f32>,
-    high_in: bool, num_forward: i32, num_binary: i32
+    num_forward: i32, num_binary: i32
 ) -> CastResult {
     let step = (1.0 / f32(num_forward + 1)) * (b_in - a_in);
     var a = a_in;
     var b = b_in;
-    var high = high_in;
+    var hit = false;
 
     for (var i = 0; i < num_forward; i = i + 1) {
         let c = a + step;
         let suf = get_surface_alt(c.xy);
-
-        if (c.z > suf.high) {
-            high = true; // re-appear on the surface
-            a = c;
+        let inside = c.z <= suf.low ||
+            (suf.low < suf.high && c.z >= suf.mid && c.z <= suf.high);
+        if (inside) {
+            b = c;
+            hit = true;
+            break;
         } else {
-            let height = select(suf.low, suf.high, high);
-            if (c.z <= height) {
-                b = c;
-                break;
-            } else {
-                a = c;
-            }
+            a = c;
         }
     }
 
-    for (var i = 0; i < num_binary; i += 1) {
+    if (!hit) {
+        let end_surface = get_surface_alt(b_in.xy);
+        hit = b_in.z <= end_surface.low ||
+            (end_surface.low < end_surface.high &&
+             b_in.z >= end_surface.mid && b_in.z <= end_surface.high);
+    }
+
+    for (var i = 0; i < num_binary && hit; i += 1) {
         let c = mix(a, b, 0.5);
         let suf = get_surface_alt(c.xy);
-
-        let height = select(suf.low, suf.high, high);
-        if (c.z <= height) {
+        let inside = c.z <= suf.low ||
+            (suf.low < suf.high && c.z >= suf.mid && c.z <= suf.high);
+        if (inside) {
             b = c;
         } else {
             a = c;
@@ -64,105 +66,45 @@ fn cast_ray_impl(
     }
 
     let result = get_surface(b.xy);
-    return CastResult(result, a, b);
-}
-
-fn cast_ray_impl_smooth(
-    a_in: vec3<f32>, b_in: vec3<f32>,
-    high_in: bool, num_forward: i32, num_binary: i32
-) -> CastResult {
-    let step = (1.0 / f32(num_forward + 1)) * (b_in - a_in);
-    var a = a_in;
-    var b = b_in;
-    var high = high_in;
-
-    for (var i = 0; i < num_forward; i = i + 1) {
-        let c = a + step;
-        let suf = get_surface_alt_smooth(c.xy);
-
-        if (c.z > suf.high) {
-            high = true; // re-appear on the surface
-            a = c;
-        } else {
-            let height = select(suf.low, suf.high, high);
-            if (c.z <= height) {
-                b = c;
-                break;
-            } else {
-                a = c;
-            }
-        }
-    }
-
-    for (var i = 0; i < num_binary; i += 1) {
-        let c = mix(a, b, 0.5);
-        let suf = get_surface_alt_smooth(c.xy);
-
-        let height = select(suf.low, suf.high, high);
-        if (c.z <= height) {
-            b = c;
-        } else {
-            a = c;
-        }
-    }
-
-    let result = get_surface_smooth(b.xy);
-    return CastResult(result, a, b);
+    return CastResult(result, a, b, hit);
 }
 
 struct CastPoint {
     pos: vec3<f32>,
     ty: u32,
     is_underground: bool,
+    hit: bool,
     //is_shadowed: bool,
 };
 
-fn cast_ray_to_map(base: vec3<f32>, dir: vec3<f32>) -> CastPoint {
+fn cast_ray_to_map(base: vec3<f32>, far: vec3<f32>) -> CastPoint {
     var pt: CastPoint;
+    let dir = normalize(far - base);
 
-    let a_in = select(
-        base,
-        cast_ray_to_plane(u_Surface.texture_scale.z, base, dir),
-        base.z > u_Surface.texture_scale.z,
+    let far_distance = distance(base, far);
+    let floor_distance = select(
+        far_distance,
+        max(0.0, (0.0 - base.z) / dir.z),
+        dir.z < -0.00001,
     );
-    var c = cast_ray_to_plane(0.0, base, dir);
+    let c = base + dir * min(far_distance, floor_distance);
 
-    // Forward step counts doubled (8 → 16, 6 → 12). The previous values
-    // skipped over thin columns at oblique angles, leaving jagged
-    // silhouettes; doubling roughly halves the maximum step length and
-    // costs ~2× fragment work, but the WebGL2 fallback is fragment-bound
-    // and this is its primary visible quality issue.
-    let cast_result = cast_ray_impl(a_in, c, true, 16, 4);
-    var a = cast_result.a;
-    var b = cast_result.b;
-    var suf = cast_result.surface;
-    pt.ty = suf.high_type;
-    pt.is_underground = false;
-
-    if (suf.low_alt < suf.high_alt && b.z < suf.mid_alt) {
-        // continue the cast underground, but reserve
-        // the right to re-appear above the surface.
-        let cr = cast_ray_impl(b, c, false, 12, 3);
-        a = cr.a;
-        b = cr.b;
-        suf = cr.surface;
-        if (b.z >= suf.mid_alt) {
-            pt.ty = suf.high_type;
-        } else {
-            pt.ty = suf.low_type;
-            // underground is better indicated by a real shadow
-            //pt.is_underground = true;
-        }
-    }
-
-    pt.pos = b;
+    let forward_steps = max(1, i32(u_Locals.terrain_params.y));
+    let cast_result = cast_ray_impl(base, c, forward_steps, 4);
+    let suf = cast_result.surface;
+    pt.is_underground = cast_result.hit &&
+        suf.low_alt < suf.high_alt && cast_result.b.z <= suf.low_alt;
+    pt.ty = select(suf.high_type, suf.low_type, pt.is_underground);
+    pt.pos = cast_result.b;
+    pt.hit = cast_result.hit;
     //pt.is_shadowed = suf.is_shadowed;
 
     return pt;
 }
 
 fn color_point(pt: CastPoint, visibility: f32) -> vec4<f32> {
-    return evaluate_color(pt.ty, pt.pos, visibility);
+    let cave_visibility = select(1.0, 0.25, pt.is_underground);
+    return evaluate_color(pt.ty, pt.pos, cave_visibility * visibility);
 }
 
 struct RayInput {
@@ -173,11 +115,10 @@ struct RayInput {
 fn ray_depth(in: RayInput) -> @builtin(frag_depth) f32 {
     let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
-    let view = normalize(sp_far_world - sp_near_world);
-    let pt = cast_ray_to_map(sp_near_world, view);
+    let pt = cast_ray_to_map(sp_near_world, sp_far_world);
 
     let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
-    return target_ndc.z / target_ndc.w + c_DepthBias;
+    return select(1.0, target_ndc.z / target_ndc.w + c_DepthBias, pt.hit);
 }
 
 struct FragOutput {
@@ -201,11 +142,14 @@ fn ray_color_debug(in: RayInput) -> FragOutput {
 fn ray_color(in: RayInput) -> FragOutput {
     let sp_near_world = get_frag_world(in.frag_coord.xy, 0.0);
     let sp_far_world = get_frag_world(in.frag_coord.xy, 1.0);
-    let view = normalize(sp_far_world - sp_near_world);
-    let pt = cast_ray_to_map(sp_near_world, view);
+    let pt = cast_ray_to_map(sp_near_world, sp_far_world);
+
+    if (!pt.hit) {
+        return FragOutput(u_Locals.fog_color, 1.0);
+    }
 
     let visibility = fetch_shadow_visibility(pt.pos);
-    var frag_color = color_point(pt, visibility);
+    let frag_color = apply_fog(color_point(pt, visibility), pt.pos.xy);
 
     let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
     let depth = target_ndc.z / target_ndc.w;
