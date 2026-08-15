@@ -31,9 +31,14 @@ tools/merge-bench.py remote/results-*.json > paper/results.md
 ```
 
 The merge tool rejects different cameras, renderer arguments, shadow modes,
-or other protocol fields instead of silently combining unlike batches. Batch
-3 predates the selected 64-step RayTraced setting and must not be mixed with
-new runs produced by the current defaults.
+or other protocol fields instead of silently combining unlike batches. The
+retained final batch uses the selected 64-step RayTraced setting throughout.
+Vulkan rows use GPU timestamps; Apple Metal uses the retained CPU
+submit-and-wait average because encoder timestamps did not reliably bracket
+the multipass frame. The merge output keeps those timing classes explicit.
+The publication snapshot is tagged `terrain-paper-v1`. Raw runs identify
+`21875dc`, the clean renderer revision they measured; the tag additionally
+contains the final analysis and the conservative Metal timing fallback.
 
 At startup the harness removes any previous `work/compare/comparison.png` and
 writes `work/compare/run-manifest.json` with the checkout revision and exact
@@ -79,7 +84,7 @@ Tracked here rather than in the draft so the gaps stay visible:
       literature. The contribution is explicitly the controlled comparison,
       not priority for the underlying method families.
 - [~] Dynamic terrain edits. All six paths consume dirty rectangles and the
-      headless `--dig` probe exercises them. Batch 3 still needs the §4.4
+      headless `--dig` probe exercises them. The final batch still needs the §4.4
       measurement: first post-edit frame, frames to consistency, and a
       snapshot/depth comparison against a fresh build of the edited level.
 - [x] A control isolating what drives fit cost. Done: all ten stock
@@ -90,13 +95,14 @@ Tracked here rather than in the draft so the gaps stay visible:
 - [ ] An external elevation model, for comparability with published
       numbers rather than for the causal claim. Lower priority now that
       the single-layer worlds land at 45-182x.
-- [x] More than one device. Batch 3 covers a Radeon 780M, Radeon RX 7900
-      XT and GeForce RTX 5070 with the final scenes, full-screen ray path,
-      common shadows, and device-independent geometry within measurement
-      noise. Intel and Metal remain useful additions rather than blockers.
-- [x] GPU timestamp queries. Done; the harness prefers them and records
-      which timing each row used. Still per-frame latency rather than
-      pipelined throughput, which is a separate limitation.
+- [x] More than one device. The final batch covers a Radeon 780M, Radeon RX
+      7900 XT, Intel RPL-U, GeForce RTX 5070, and Apple M3 across Vulkan and
+      Metal. The five grids agree geometrically outside a small spread within
+      the already failing Scattered hangar row.
+- [x] Timing-source validation. Vulkan uses GPU timestamps. Implausibly short,
+      method-invariant Metal intervals exposed that encoder-level timestamps
+      did not bracket the multipass frame, so Metal now falls back to CPU
+      submit-and-wait and is reported separately.
 - [~] Equal tuning across methods. `tools/level-survey.py` sibling
       `tools/tune-methods.py` sweeps every knob under one selection rule.
       Caveat recorded in the draft: the small tuning image cannot resolve
@@ -104,9 +110,9 @@ Tracked here rather than in the draft so the gaps stay visible:
       a full-resolution or self-referential selection.
       The first slicer sweep also measured a knob artifact (bottom
       truncation rather than coarser spacing) — fixed and re-swept, and
-      recorded in §5.5 as a finding of its own. The corrected RayTraced
-      sweep selects 64 steps; batch 3 used 128, so refresh that timing row
-      on the existing devices before submission.
+      recorded in §5.5 as a finding of its own. The corrected RayTraced sweep
+      selects 64 steps and the final batch uses it on all five devices. Mesh
+      quality still needs a publication-resolution selection.
 - [ ] Memory. ~300 MB resident for the mesh at q=0.75 on a full level is
       the honest limit on the portability claim.
 - [~] Data license. A Fostral license is expected. Before release, record
@@ -119,7 +125,7 @@ Tracked here rather than in the draft so the gaps stay visible:
       informal permission during artifact packaging.
 - [~] Figures. §3 now uses six consistent vector algorithm schematics.
       Still missing: the teaser layout, the §2 encoding diagram, and the
-      §6.2 scatter plot; batch-3 grids provide the benchmark-derived sources.
+      §6.2 scatter plot; the five final grids provide the benchmark sources.
 - [ ] Author block. JCGT review is single-blind — names and affiliation
       go on the submission.
 - [ ] Supplemental video. JCGT explicitly prefers "shorter articles with

@@ -268,7 +268,8 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     }))
     .expect("No suitable GPU adapter found for headless rendering");
 
-    info!("Adapter: {:?}", adapter.get_info().name);
+    let adapter_info = adapter.get_info();
+    info!("Adapter: {:?}", adapter_info.name);
 
     let mut render_settings = settings::Render {
         terrain: opts.terrain,
@@ -300,6 +301,14 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     // `POLYGON_MODE_LINE` drives the mesh terrain's grid view. It is
     // optional in WebGPU, so take it only when the adapter offers it and
     // let the renderer disable the view otherwise.
+    // Encoder-level timestamp writes are not a reliable enclosing pair on
+    // Metal: wgpu-hal may defer them to the next native command encoder.
+    // Fall back to the already measured submit-and-wait interval there.
+    let timestamp_features = if adapter_info.backend == wgpu::Backend::Metal {
+        wgpu::Features::empty()
+    } else {
+        wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
+    };
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("headless"),
         // `POLYGON_MODE_LINE` drives the mesh wireframe. The timestamp
@@ -307,9 +316,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         // we can do is bracket submit-and-poll on the CPU, which on a real
         // GPU measures the round trip rather than the work.
         required_features: adapter.features()
-            & (wgpu::Features::POLYGON_MODE_LINE
-                | wgpu::Features::TIMESTAMP_QUERY
-                | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS),
+            & (wgpu::Features::POLYGON_MODE_LINE | timestamp_features),
         required_limits: limits,
         memory_hints: wgpu::MemoryHints::default(),
         trace: wgpu::Trace::Off,
@@ -455,7 +462,12 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             mapped_at_creation: false,
         })
     });
-    if !gpu_timing {
+    if adapter_info.backend == wgpu::Backend::Metal {
+        log::warn!(
+            "Metal encoder timestamps do not reliably bracket this multipass frame; \
+             frame times are CPU submit+poll and include the round trip"
+        );
+    } else if !gpu_timing {
         log::warn!(
             "Adapter has no timestamp queries; frame times are CPU submit+poll \
              and include the round trip"
@@ -604,7 +616,6 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             // later, plus the raw frame times so percentiles can be taken
             // after the fact - min/avg/max hides a bimodal distribution,
             // which is exactly what a driver hitch looks like.
-            let info = adapter.get_info();
             let times = frame_times
                 .iter()
                 .map(|d| format!("{:.4}", d.as_secs_f64() * 1e3))
@@ -642,11 +653,11 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                     "  \"prep_warmup_ms\": {:.3}\n",
                     "}}\n"
                 ),
-                info.name,
-                format!("{:?}", info.backend),
-                format!("{:?}", info.device_type),
-                info.driver,
-                info.driver_info,
+                adapter_info.name,
+                format!("{:?}", adapter_info.backend),
+                format!("{:?}", adapter_info.device_type),
+                adapter_info.driver,
+                adapter_info.driver_info,
                 opts.width,
                 opts.height,
                 opts.frames,
