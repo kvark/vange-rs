@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 360" role="img" aria-labelledby="title desc">
+  <title id="title">Per-sample bar painting</title>
+  <desc id="desc">Each ground texel becomes a floor bar and optionally an upper slab bar. Camera-facing faces rasterize into the depth buffer.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#e76f51"/></marker>
+    <style>.ink{stroke:#24324a;stroke-width:2;fill:none}.label{font:14px system-ui,sans-serif;fill:#24324a}.small{font:12px system-ui,sans-serif;fill:#5f6b7a}.floor{fill:#e7c98d;stroke:#9a6f2f;stroke-width:2}.side{fill:#cba55e;stroke:#9a6f2f;stroke-width:2}.slab{fill:#8db8df;stroke:#477aa8;stroke-width:2}.slabside{fill:#679ac8;stroke:#477aa8;stroke-width:2}.accent{stroke:#e76f51;stroke-width:3;fill:none}</style>
+  </defs>
+  <rect width="760" height="360" fill="#fff"/><rect x="24" y="22" width="122" height="25" rx="12" fill="#edf6f1"/><text x="85" y="39" text-anchor="middle" class="small">OBJECT ORDER</text>
+  <g transform="translate(42 83)"><g fill="#f5f7fa" stroke="#d9e0e8"><path d="M0 160L155 205L310 125L155 80Z"/><path d="M0 120L155 165L310 85"/><path d="M0 80L155 125L310 45"/><path d="M52 175L207 95"/><path d="M103 190L258 110"/><path d="M52 95L207 140"/><path d="M103 68L258 113"/></g>
+    <g transform="translate(78 41)"><path d="M0 76L42 88V170L0 158Z" class="side"/><path d="M42 88L75 71V153L42 170Z" fill="#bb914d" stroke="#9a6f2f" stroke-width="2"/><path d="M0 76L33 59L75 71L42 88Z" class="floor"/></g>
+    <g transform="translate(172 47)"><path d="M0 84L42 96V174L0 162Z" class="side"/><path d="M42 96L75 79V157L42 174Z" fill="#bb914d" stroke="#9a6f2f" stroke-width="2"/><path d="M0 84L33 67L75 79L42 96Z" class="floor"/><path d="M0 22L42 34V62L0 50Z" class="slabside"/><path d="M42 34L75 17V45L42 62Z" fill="#5688b5" stroke="#477aa8" stroke-width="2"/><path d="M0 22L33 5L75 17L42 34Z" class="slab"/></g></g>
+  <g transform="translate(30 252)"><rect width="102" height="54" rx="5" fill="#f5f7fa" stroke="#24324a" stroke-width="2"/><g fill="#d9e0e8"><rect x="12" y="12" width="16" height="16"/><rect x="34" y="12" width="16" height="16"/><rect x="56" y="12" width="16" height="16"/><rect x="78" y="12" width="12" height="16"/></g><rect x="56" y="12" width="16" height="16" fill="#8db8df"/><text x="51" y="74" text-anchor="middle" class="small">height texels</text></g>
+  <path d="M136 275L189 245" class="accent" marker-end="url(#arrow)"/><text x="140" y="320" class="small">one instance / texel</text>
+  <circle cx="480" cy="91" r="9" fill="#24324a"/><path d="M470 98L437 126" class="ink"/><path d="M461 107L329 205" class="accent" marker-end="url(#arrow)"/><text x="390" y="83" class="label">emit three camera-facing faces</text>
+  <path d="M490 129L612 169" class="accent" marker-end="url(#arrow)"/><g transform="translate(620 80)"><rect width="90" height="210" rx="5" fill="#f5f7fa" stroke="#24324a" stroke-width="2"/><path d="M12 172L32 92L61 111L78 57V190H12Z" fill="#e7c98d"/><path d="M41 64L72 45V83L41 94Z" fill="#8db8df"/><g stroke="#d9e0e8"><path d="M0 30H90M0 60H90M0 90H90M0 120H90M0 150H90M0 180H90"/></g></g>
+  <text x="665" y="313" text-anchor="middle" class="label">raster + early depth</text><text x="250" y="336" class="small">floor bar</text><text x="313" y="147" class="small">optional upper bar</text>
+</svg>

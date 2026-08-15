@@ -25,10 +25,15 @@ tools/compare-terrain.py --list-scenes
 # Collect the work/results-*.json files from every machine, then
 tools/merge-bench.py work/results-*.json > paper/results.md
 
-# Diagnostic hardware batch 2 is retained under remote/; regenerate its
-# complete tables with
+# The current final-scene hardware batch is retained under remote/;
+# regenerate its complete tables with
 tools/merge-bench.py remote/results-*.json > paper/results.md
 ```
+
+The merge tool rejects different cameras, renderer arguments, shadow modes,
+or other protocol fields instead of silently combining unlike batches. Batch
+3 predates the selected 64-step RayTraced setting and must not be mixed with
+new runs produced by the current defaults.
 
 At startup the harness removes any previous `work/compare/comparison.png` and
 writes `work/compare/run-manifest.json` with the checkout revision and exact
@@ -85,20 +90,23 @@ Tracked here rather than in the draft so the gaps stay visible:
 - [ ] An external elevation model, for comparability with published
       numbers rather than for the causal claim. Lower priority now that
       the single-layer worlds land at 45-182x.
-- [x] More than one device. Batch 2 covers a Radeon 780M, Radeon RX 7900
-      XT and GeForce RTX 5070. It is integrated as diagnostic data; batch 3
-      must use the final scenes, full-screen ray path, and common shadows.
+- [x] More than one device. Batch 3 covers a Radeon 780M, Radeon RX 7900
+      XT and GeForce RTX 5070 with the final scenes, full-screen ray path,
+      common shadows, and device-independent geometry within measurement
+      noise. Intel and Metal remain useful additions rather than blockers.
 - [x] GPU timestamp queries. Done; the harness prefers them and records
       which timing each row used. Still per-frame latency rather than
       pipelined throughput, which is a separate limitation.
 - [~] Equal tuning across methods. `tools/level-survey.py` sibling
       `tools/tune-methods.py` sweeps every knob under one selection rule.
-      Caveat recorded in the draft: the reference cannot resolve mesh
-      quality at the horizon, so that one knob is tuned self-referentially.
+      Caveat recorded in the draft: the small tuning image cannot resolve
+      mesh quality that the full-size hangar scene does, so that knob needs
+      a full-resolution or self-referential selection.
       The first slicer sweep also measured a knob artifact (bottom
       truncation rather than coarser spacing) — fixed and re-swept, and
-      recorded in §5.5 as a finding of its own. Re-run the newly exposed
-      RayTraced step sweep on river/hangar/ramp before batch 3.
+      recorded in §5.5 as a finding of its own. The corrected RayTraced
+      sweep selects 64 steps; batch 3 used 128, so refresh that timing row
+      on the existing devices before submission.
 - [ ] Memory. ~300 MB resident for the mesh at q=0.75 on a full level is
       the honest limit on the portability claim.
 - [~] Data license. A Fostral license is expected. Before release, record
@@ -109,10 +117,9 @@ Tracked here rather than in the draft so the gaps stay visible:
       bundle before execution.
       Use `DATA-LICENSE.md` as the release gate rather than interpreting
       informal permission during artifact packaging.
-- [~] Figures. §3 now uses six real engine captures instead of provisional
-      generic schematics. Still missing: consistent crops/colour treatment,
-      the teaser layout, the §2 encoding diagram, and the §6.2 scatter plot;
-      the benchmark-derived panels need batch-3 source images.
+- [~] Figures. §3 now uses six consistent vector algorithm schematics.
+      Still missing: the teaser layout, the §2 encoding diagram, and the
+      §6.2 scatter plot; batch-3 grids provide the benchmark-derived sources.
 - [ ] Author block. JCGT review is single-blind — names and affiliation
       go on the submission.
 - [ ] Supplemental video. JCGT explicitly prefers "shorter articles with
