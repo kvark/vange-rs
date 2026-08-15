@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 460" font-family="Arial, Helvetica, sans-serif">
+  <rect width="700" height="460" fill="#ffffff"/>
+
+  <!-- voxel cells -->
+  <g>
+    <rect x="0"   y="390" width="700" height="70" fill="#dcd5cf"/>
+    <rect x="210" y="320" width="490" height="70" fill="#dcd5cf"/>
+    <rect x="350" y="250" width="350" height="70" fill="#dcd5cf"/>
+    <rect x="490" y="180" width="210" height="70" fill="#dcd5cf"/>
+    <rect x="560" y="110" width="140" height="70" fill="#dcd5cf"/>
+  </g>
+
+  <!-- cell grid -->
+  <g stroke="#a9a9a9" stroke-width="1.5">
+    <line x1="70"  y1="40"  x2="70"  y2="460"/>
+    <line x1="140" y1="40"  x2="140" y2="460"/>
+    <line x1="210" y1="40"  x2="210" y2="460"/>
+    <line x1="280" y1="40"  x2="280" y2="460"/>
+    <line x1="350" y1="40"  x2="350" y2="460"/>
+    <line x1="420" y1="40"  x2="420" y2="460"/>
+    <line x1="490" y1="40"  x2="490" y2="460"/>
+    <line x1="560" y1="40"  x2="560" y2="460"/>
+    <line x1="630" y1="40"  x2="630" y2="460"/>
+    <line x1="0" y1="110" x2="700" y2="110"/>
+    <line x1="0" y1="180" x2="700" y2="180"/>
+    <line x1="0" y1="250" x2="700" y2="250"/>
+    <line x1="0" y1="320" x2="700" y2="320"/>
+    <line x1="0" y1="390" x2="700" y2="390"/>
+    <rect x="0" y="40" width="700" height="420" fill="none"/>
+  </g>
+
+  <!-- ray skips empty cells -->
+  <line x1="20" y1="225" x2="490" y2="225" stroke="#3b5ba5" stroke-width="2.5"/>
+  <g fill="#3b5ba5">
+    <polygon points="120,225 108,219 108,231"/>
+    <polygon points="260,225 248,219 248,231"/>
+    <polygon points="400,225 388,219 388,231"/>
+    <polygon points="530,225 518,219 518,231"/>
+  </g>
+
+  <!-- refinement inside the occupied cell -->
+  <g fill="#3b5ba5">
+    <circle cx="525" cy="221" r="3.5"/>
+    <circle cx="534" cy="216" r="3.5"/>
+    <circle cx="544" cy="210" r="3.5"/>
+  </g>
+  <circle cx="553" cy="205" r="5" fill="#c0392b"/>
+
+  <text x="150" y="260" font-size="13" fill="#888">skip empty cells in one jump</text>
+  <text x="497" y="175" font-size="13" fill="#555">occupied &#8594; descend &amp; sample the real heights</text>
+  <text x="440" y="432" font-size="13" fill="#888">one bit per voxel, Morton-tiled pyramid</text>
+</svg>

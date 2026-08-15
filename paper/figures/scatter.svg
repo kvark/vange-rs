@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 460" font-family="Arial, Helvetica, sans-serif">
+  <rect width="700" height="460" fill="#ffffff"/>
+
+  <!-- camera footprint -->
+  <polygon points="120,392 580,392 400,150 300,150" fill="#f4f6fa" stroke="#9db3d0" stroke-width="1.5" stroke-dasharray="6,4"/>
+
+  <!-- samples: dense near, sparse far -->
+  <g fill="#3b5ba5">
+    <circle cx="150" cy="372" r="3.5"/>
+    <circle cx="190" cy="372" r="3.5"/>
+    <circle cx="230" cy="372" r="3.5"/>
+    <circle cx="270" cy="372" r="3.5"/>
+    <circle cx="310" cy="372" r="3.5"/>
+    <circle cx="390" cy="372" r="3.5"/>
+    <circle cx="430" cy="372" r="3.5"/>
+    <circle cx="470" cy="372" r="3.5"/>
+    <circle cx="510" cy="372" r="3.5"/>
+    <circle cx="550" cy="372" r="3.5"/>
+
+    <circle cx="170" cy="346" r="3.5"/>
+    <circle cx="215" cy="346" r="3.5"/>
+    <circle cx="260" cy="346" r="3.5"/>
+    <circle cx="305" cy="346" r="3.5"/>
+    <circle cx="395" cy="346" r="3.5"/>
+    <circle cx="440" cy="346" r="3.5"/>
+    <circle cx="485" cy="346" r="3.5"/>
+    <circle cx="530" cy="346" r="3.5"/>
+
+    <circle cx="240" cy="300" r="3.5"/>
+    <circle cx="300" cy="300" r="3.5"/>
+    <circle cx="360" cy="300" r="3.5"/>
+    <circle cx="420" cy="300" r="3.5"/>
+    <circle cx="480" cy="300" r="3.5"/>
+
+    <circle cx="270" cy="256" r="3.5"/>
+    <circle cx="330" cy="256" r="3.5"/>
+    <circle cx="390" cy="256" r="3.5"/>
+    <circle cx="450" cy="256" r="3.5"/>
+
+    <circle cx="315" cy="210" r="3.5"/>
+    <circle cx="355" cy="210" r="3.5"/>
+    <circle cx="395" cy="210" r="3.5"/>
+
+    <circle cx="340" cy="170" r="3.5"/>
+    <circle cx="370" cy="170" r="3.5"/>
+  </g>
+
+  <!-- highlighted sample splats its whole column -->
+  <rect x="344" y="186" width="12" height="188" fill="#e7c9a3" stroke="#b98a5a" stroke-width="1.5"/>
+  <rect x="344" y="186" width="12" height="94" fill="#d8a878" stroke="#a97f4f" stroke-width="1.5"/>
+  <line x1="350" y1="150" x2="350" y2="392" stroke="#c0392b" stroke-width="1" stroke-dasharray="3,3"/>
+
+  <g fill="#3b5ba5">
+    <circle cx="350" cy="372" r="4.5"/>
+  </g>
+
+  <text x="20" y="50" font-size="14" fill="#555">a compute pass seeds samples over a camera-aligned footprint</text>
+  <text x="20" y="70" font-size="13" fill="#888">density falls with distance &#8212; near ground dense, far ground sparse</text>
+  <text x="366" y="150" font-size="13" fill="#c0392b">each sample splats its column, both layers</text>
+  <text x="20" y="120" font-size="13" fill="#888">32-bit atomicMin: 24 bits depth | 8 bits terrain type</text>
+</svg>

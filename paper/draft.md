@@ -127,12 +127,14 @@ vertical walls and cave ceilings meaningful where a height-field gradient
 is undefined.
 
 The organising taxonomy is *who asks the question*. Two methods are
-backward, image-order: each pixel casts a ray and asks the height data
-what it hits. Three are forward, object-order: pieces of terrain are
-enumerated and ask the screen where they land — as proxy volume slices,
-as rasterized bars, or as compute-splatted points. The sixth fits an
-explicit surface at load time and lets the rasterizer do what it is
-built for.
+backward and image-order: each pixel casts a ray and asks the height data
+what it hits. Three are forward and object-order: pieces of terrain are
+enumerated and ask the screen where they land — as proxy volume slices, as
+rasterized bars, or as compute-splatted points. The sixth asks once, at
+load time, fits an explicit surface, and lets the rasterizer do what it is
+built for. Interrogate the field, enumerate the field, or approximate the
+field and stop asking: those three postures put every difference in §5
+into a lineage.
 
 | method | order | primitive | needs compute |
 |---|---|---|---|
@@ -145,82 +147,152 @@ built for.
 
 ### 3.1 Height-field ray march
 
-A full-screen pass; each fragment reconstructs its world-space ray from
-the inverse view-projection and marches the height field: fixed forward
-steps to bracket the first crossing, then binary refinement (16 and 4
-above ground, 12 and 3 under a slab; compile-time constants). The dual layer makes the march stateful: a ray
-that passes under a cave ceiling continues *underneath* the slab,
-testing against the floor, with the right to re-emerge past the slab's
-far edge. Depth is written from the hit point, so everything composes
-with rasterized geometry. There is no preprocessing and no per-level
-state; the failure mode is the fixed step budget, which under-samples
-exactly when rays run flat along the ground (§5).
+![The height-field ray march: fixed steps to a first crossing, then a binary bracket.](figures/ray.svg)
+
+The oldest of the six and the most direct: the method that asks the
+terrain nothing but what is actually in front of it. Each fragment of a
+full-screen pass reconstructs its world-space ray from the inverse
+view-projection and walks the height field with fixed forward steps until
+it brackets the first crossing, then refines the bracket with binary
+search — 16 steps and 4 refinements above ground, 12 and 3 under a slab,
+compile-time constants. Whatever the step, any feature thinner than it can
+be jumped over in one stride; that is the original sin of fixed-step
+marching, and every later backward method exists to repair it [Policarpo
+et al. 2005; Tevs et al. 2008].
+
+Two details lift this from toy to method. The dual layer makes the march
+stateful: a ray that passes under a cave ceiling continues *underneath*
+the slab, testing against the floor, with the right to re-emerge past the
+slab's far edge — so a single cast resolves caves, not just the top
+surface. And the hit writes a true depth, so the output composes with
+rasterized geometry as if it had always belonged to the scene.
+
+There is no preprocessing and no per-level state: the method *is* the data,
+and its frame cost is exactly the price of asking. The price is paid at
+the horizon, where rays run flat along the ground and the fixed step
+budget runs out first (§5.1).
 
 ### 3.2 Voxel-accelerated ray march
 
-The same per-pixel cast, accelerated by a conservative occupancy
-structure baked on the GPU: one bit per voxel, Morton-tiled in a storage
-buffer, with a pyramid of levels each halving the resolution — an
-implicit octree over the height field. Traversal is hierarchical DDA:
-descend a level on hitting an occupied cell, skip whole cells where
-empty, climb back up when leaving an octant. Inside an occupied leaf the
-hit is refined by linearly sampling the *actual* height data. The
-voxels only skip empty space — the surface rendered is the exact
-height-field geometry, which is why this method scores with the
-converged group in §5 rather than at voxel resolution. The bake spreads
-over frames under a per-frame texel budget, which is a real cost the
-per-frame numbers hide (§5.3).
+![The occupancy pyramid: a ray jumps whole empty cells and only descends inside an occupied one.](figures/voxel.svg)
+
+The same per-pixel cast, given a map of the empty space so it can stop
+asking. A conservative occupancy pyramid is baked on the GPU — one bit per
+voxel, Morton-tiled in a storage buffer, resolution halving at each level,
+an implicit octree over the height field — and the cast traverses it with
+hierarchical DDA: descend a level on an occupied cell, skip whole cells
+where empty, climb back up when leaving an octant. The guiding principle,
+in the words of the original blog post: *jump from one border of a voxel
+straight to the opposite if you know the voxel has nothing in it* — and
+the bigger the voxel you can trust, the better.
+
+The crucial choice is that the voxels only skip empty space. Inside an
+occupied leaf the hit is refined by sampling the *actual* height data, so
+the surface rendered is the exact height-field geometry — which is why
+this method scores with the converged group in §5 rather than at voxel
+resolution. The exactness is paid for in preparation, not in the image:
+the bake spreads over frames under a per-frame texel budget, a real cost
+the per-frame numbers hide (§5.3). Its ancestry shows in two weaknesses —
+near walls, where steep vertical variation "sucks the rays in" and eats
+the traversal budget, and on platforms without storage buffers, which
+exclude WebGL entirely.
 
 ### 3.3 Sliced
 
-The level's height range is divided into `N` horizontal quads spanning
-the visible sample range, drawn instanced from the top down. Each
-fragment reads the surface under it and keeps the pixel only if the
-slice's altitude is inside the solid column — below the floor, or
-between the cave ceiling and the slab top — discarding otherwise. The
-union of cross-sections approximates the volume; at one slice per
-altitude unit the quantised heights make it exact, and the publication
-default (§5.5) runs two. Cave interiors receive the same shadow lookup as
-the other methods plus a constant ambient factor.
+![Horizontal slices: a quad survives only where it lies inside the solid column.](figures/slice.svg)
+
+If the height field is a solid, the oldest trick in the book is to cut it
+open. The level's height range is divided into `N` horizontal quads
+spanning the visible sample range, drawn instanced from the top down.
+Each fragment reads the surface under it and keeps the pixel only if the
+slice's altitude sits inside the solid column — below the floor, or
+between the cave ceiling and the slab top — and discards otherwise. The
+union of cross-sections approximates the volume, and at one slice per
+altitude unit the quantised heights make it *exact*: a terrain that is
+itself a stack of slabs is reproduced by a stack of slabs.
+
+Slices convert the hard problem of hitting a surface into the easy problem
+of testing a height, and they inherit the shared shading pipeline
+unchanged, cave interiors receiving the same shadow lookup plus a constant
+ambient factor. The cost is that a surface is never hit, only bracketed.
+With few slices the missing spans show as horizontal bands; with many, the
+same silhouette is over-drawn into speckle; and the tuning sweep in §5.5
+shows the total error barely moving as the one artifact trades against
+the other. It is the method whose knob most directly buys exactness, and
+whose artifacts are the most legible to the coherence metric (§4.2).
 
 ### 3.4 Painted
 
-One instance per ground sample in view, rasterizing the sample's column
-directly: a bar from zero to the floor height, and a second bar from
-cave ceiling to slab top where the texel is double-level. Only the three
-camera-facing faces of each bar are emitted, chosen by comparing the
-camera position against the bar's centre, and instances are generated
-in front-to-back order along the dominant camera axis. *(TODO: confirm
-against the original source before claiming it — this is believed to be
-the closest of the six to the original engine's software renderer.)*
+![One instance per ground sample: the floor bar, and the slab bar where the texel is double-level.](figures/paint.svg)
+
+The bar painter is the brute-force champion, and it knows it: *draw the
+input data in the most brute way possible — each point of the map is
+represented as two vertical bars, one for the lower layer, one for the
+higher*. One instance per ground sample in view rasterizes the sample's
+column directly: a bar from zero to the floor height, and, where the texel
+is double-level, a second bar from cave ceiling to slab top. Only the
+three camera-facing faces of each bar are emitted, chosen by comparing the
+camera position against the bar's centre.
+
+Two optimisations make this practical rather than absurd. The visible
+ground is reduced to a rough camera footprint — the 2D bounds of the
+frustum projected onto the floor, carried in uniforms — so the vertex
+shader synthesises positions from an instance index with nothing uploaded
+per bar; and instances are generated front-to-back along the dominant
+camera axis, which lets the depth test reject 96% of fragments before
+shading. It is dumb in GPU features and exact in output; the blog post
+called it "the only practical way we can get non-top-down cameras
+working" in this engine, and it is believed to be the closest of the six
+to the original engine's software renderer. *(TODO: confirm against the
+original source before claiming this.)* Its weakness is that it pays for
+every ground sample that enters the footprint, whether it earns screen
+space or not — which is why it slows down rather than up as the camera
+tilts toward the ground (§5.2).
 
 ### 3.5 Scattered
 
-A compute pass distributes point samples over a camera-aligned footprint
-of the visible ground, warped so that sample density falls off with
-distance. Each sample reads the surface and splats single pixels — along
-the column's vertical extent, both layers — with a 32-bit `atomicMin`
-into a storage buffer, packing 24 bits of depth over 8 bits of terrain
-type so the depth test and material resolve are one atomic. A full-screen
-pass reconstructs the winning world position and applies the shared colour
-and shadow function before writing colour and depth.
-Under-sampling shows up not as missing spans but as isolated wrong
-pixels, which is precisely the artifact class the coherence metric
-(§4.2) exists to count.
+![A scatter footprint: samples dense near the camera, sparse far.](figures/scatter.svg)
+
+The most modern of the forward methods, and the most radical: it does not
+render geometry, it *seeds* it. A compute pass distributes point samples
+over a camera-aligned footprint of the visible ground, warped so that
+sample density falls off with distance — near ground dense, far ground
+sparse, mirroring what a rasterizer would spend anyway. Each sample reads
+the surface and splats single pixels along the column's vertical extent,
+both layers, with a 32-bit `atomicMin` into a storage buffer packing 24
+bits of depth over 8 bits of terrain type, so the depth test and the
+material resolve are one atomic. A full-screen pass reconstructs the
+winning world position and applies the shared colour and shadow function.
+
+The scatterer trades the rasterizer's guaranteed coverage for the freedom
+to spend work where it matters: its knob is a *density*, not a geometry
+budget. The tax is that coverage is no longer guaranteed at all.
+Under-sampling does not show up as missing spans — the way a march or a
+mesh fails — but as isolated wrong pixels on an otherwise correct surface,
+precisely the artifact class the coherence metric (§4.2) exists to count.
 
 ### 3.6 Mesh
 
-Greedy insertion following Garland and Heckbert [1995]: start from a
-coarse triangulation, repeatedly insert the sample with the largest
-vertical error, stop at a tolerance. Each triangle caches its own worst
-sample, so extracting the global worst needs no point location.
+![The greedy triangulation: dense where the terrain changes direction, coarse on the flat.](figures/mesh.svg)
+
+The only method that refuses to ask at render time. At load it builds an
+explicit surface once: greedy insertion following Garland and Heckbert
+[1995], starting from a coarse triangulation and repeatedly inserting the
+sample with the largest vertical error until the whole surface is within
+tolerance. Each triangle caches its own worst sample, so extracting the
+global worst needs no point location. The result is triangles where the
+terrain changes direction — exactly as a cartographer would place them —
+and nothing where the ground is flat. Once built, the rasterizer does what
+thirty years of hardware is built for, and a frame is nearly free: the
+fastest method on every device in §5.2.
 
 Two details are specific to this data.
 
 **One triangulation, three surfaces.** All three altitudes of a texel
 share a single planar triangulation. A point is inserted when *any* layer
-needs it, and every vertex carries all three altitudes. Vertical walls
-appear where the slab ends.
+needs it, and every vertex carries all three altitudes, so the slab
+appears wherever the second layer does and is closed by vertical walls
+where it ends.
 
 **Exact predicates on integer coordinates.** A height-map grid is
 massively cocircular — every axis-aligned square of four samples — which
@@ -229,9 +301,15 @@ Chunk-local integer coordinates keep both exact in `i64`.
 
 The level is cut into 128×128 chunks with three detail levels, frustum
 culled, and drawn near-to-far. Chunk borders are simplified with
-Douglas–Peucker [1973] at the *finest* tolerance regardless of the
-chunk's own level, so neighbouring chunks at different levels derive
-identical boundary vertices and the seam cannot crack.
+Douglas–Peucker [1973] at the *finest* tolerance regardless of the chunk's
+own level, so neighbouring chunks at different levels derive identical
+boundary vertices and the seam cannot crack.
+
+The price of asking once is that the answer must be trusted. The fit is a
+single blocking CPU pass measured in seconds (§5.3), resident memory in
+the hundreds of megabytes, and terrain edits must be refined in place. In
+exchange it earns the blog post's claim in full: it runs on old hardware,
+has a real quality knob, and looks smooth from any viewpoint.
 
 ## 4. Evaluation
 
@@ -689,22 +767,27 @@ Batch 1 produced three full comparison grids, but none is publication-ready
 because the horizon locations and scatter shading changed. Each figure
 below has (or needs) a generating command, same rule as the numbers:
 
-1. **Teaser** — the six methods side by side at the horizon viewpoint
+1. **§3** — the per-method diagrams (`figures/ray.svg`, `voxel.svg`,
+   `slice.svg`, `paint.svg`, `scatter.svg`, `mesh.svg`) are hand-authored
+   schematics of each method's primitive. Swap in engine-rendered panels
+   once the teaser pipeline exists, or keep the schematics and only render
+   the comparison below from the harness.
+2. **Teaser** — the six methods side by side at the horizon viewpoint
    where they differ, plus the reference. The harness's `--out` PNGs are
    the source; re-render batch 2, then add a layout script.
-2. **§2** — texel-pair encoding diagram, and a vertical slice through a
+3. **§2** — texel-pair encoding diagram, and a vertical slice through a
    double-level region (floor, cave, slab) rendered from the data.
-3. **§4.2** — error decomposition triptych for one frame: see-through
+4. **§4.2** — error decomposition triptych for one frame: see-through
    mask, covers-sky mask, speckle mask, over the rendered image. The
    harness already emits the masks.
-4. **§5.1** — pitch sweep chart: error vs pitch per method, the
+5. **§5.1** — pitch sweep chart: error vs pitch per method, the
    "separate sharply at the horizon" curve.
-5. **§6.2** — scatter plot of log reduction vs double-level fraction
+6. **§6.2** — scatter plot of log reduction vs double-level fraction
    across the ten worlds, the r = −0.77 picture (`tools/level-survey.py`
    output).
-6. **§6.3** — mesh wireframe at a single/double-level region boundary,
+7. **§6.3** — mesh wireframe at a single/double-level region boundary,
    showing triangles shrinking to texel size along the discontinuity.
-7. **§3.6 / appendix** — top-down frustum + per-chunk LOD/culling plan
+8. **§3.6 / appendix** — top-down frustum + per-chunk LOD/culling plan
    (`tools/plot-cull.py`, already implemented).
 
 ## References
