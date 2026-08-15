@@ -54,6 +54,12 @@ def main():
         with open(path) as f:
             runs.append(json.load(f))
 
+    metal_runs = [run for run in runs
+                  if (run.get("device") or {}).get("backend") == "Metal"]
+    if metal_runs and args.metric != "avg_ms":
+        sys.exit("Metal results retain only the CPU average alongside the "
+                 "invalid encoder timestamps; use --metric avg_ms")
+
     protocol_fields = ("level", "width", "height", "far", "frames",
                        "shadows", "lighting", "scenes", "methods")
     baseline = {field: runs[0].get(field) for field in protocol_fields}
@@ -76,6 +82,9 @@ def main():
     def value(run, view, pitch, method):
         for r in run["rows"]:
             if r["view"] == view and r["pitch"] == pitch and r["method"] == method:
+                if ((run.get("device") or {}).get("backend") == "Metal" and
+                        args.metric == "avg_ms"):
+                    return r.get("cpu_avg_ms")
                 if args.metric == "median_ms":
                     return statistics.median(r["frame_ms"]) if r["frame_ms"] else None
                 return r[args.metric]
@@ -101,16 +110,21 @@ def main():
         ])
     print(table(rows, ["label", "adapter", "backend / type", "driver", "config"]))
 
-    timings = {r.get("timing", "cpu") for run in runs for r in run["rows"]}
+    timings = {
+        "cpu" if (run.get("device") or {}).get("backend") == "Metal"
+        else r.get("timing", "cpu")
+        for run in runs for r in run["rows"]
+    }
     print(f"\n## Frame time, {args.metric} (ms)\n")
     if timings == {"gpu"}:
         print("From GPU timestamp queries: the device's own view of how long "
               "its work took, with no submission or round trip in it.\n")
     elif "cpu" in timings:
-        print("**Mixed or CPU-only timing.** Rows measured without timestamp "
-              "queries bracket submit-and-poll on the CPU and therefore "
-              "include the round trip, which can dominate a fast frame. "
-              "Check the `timing` field before comparing across devices.\n")
+        print("**Mixed timing.** Vulkan rows use GPU timestamp queries. Metal "
+              "uses its retained CPU submit-and-wait average because encoder "
+              "timestamps did not reliably bracket this multipass workload. "
+              "The Metal values include the round trip and must not be compared "
+              "directly with Vulkan GPU times.\n")
     for run in runs:
         if len(runs) > 1:
             print(f"\n### {run.get('label', '?')}\n")
@@ -191,9 +205,9 @@ def main():
                             (run.get("label", "?"), view, pitch, m, field, unit, a, b)
                         )
     if mismatched:
-        print("\n> **Devices disagree on geometry.** Accuracy should not vary "
-              "with the adapter; where it does, one of them is rendering "
-              "something different.\n")
+        print("\n> **Cross-device threshold crossings.** Accuracy should not "
+              "normally vary with the adapter; inspect these rows before "
+              "deciding whether the spread is material.\n")
         for label, view, pitch, m, field, unit, a, b in mismatched:
             print(f"> - {m} `{field}` at {view} @ {pitch:g}°: "
                   f"{base.get('label', '?')} {a:.1f}{unit} vs {label} {b:.1f}{unit}")

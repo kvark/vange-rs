@@ -666,7 +666,11 @@ def main():
             # round trip; on lavapipe that is ~9%, and on a real GPU with
             # a fast frame it can be most of the number.
             gpu = meta.get("gpu_avg_ms")
-            have_gpu = meta.get("gpu_timing") and gpu is not None and gpu == gpu
+            # Encoder-level timestamp writes are not a reliable enclosing
+            # pair on Metal for this multipass frame. Older collectors may
+            # still report them, so reject them here as well as in Rust.
+            have_gpu = (meta.get("backend") != "Metal" and
+                        meta.get("gpu_timing") and gpu is not None and gpu == gpu)
             ms = gpu if have_gpu else meta["avg_ms"]
             d = np.fromfile(depth, dtype="<f4").reshape(args.height, args.width)
             empty = d >= 0.999999          # cleared depth: nothing drawn
