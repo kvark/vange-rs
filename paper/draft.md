@@ -61,11 +61,13 @@ The historical baseline deserves emphasis. Almost three decades ago,
 *Vangers* rendered this destructible, multi-layer world in software on consumer
 CPUs while fitting the game and its streamed terrain into a 16 MB-era memory
 budget [K-D Lab / KranX; Malyshau 2019]. It succeeded by co-designing the
-encoding, renderer, and a narrow oblique top-down camera. The distance since
-then is simultaneously large and small: modern GPUs make arbitrary cameras,
-common shadowing, and portable programmable shading practical, yet the horizon
-and cave cases below still punish a representation that is not matched to the
-data.
+encoding, renderer, and modestly angled oblique top-down views. Its software
+renderer used a painter's algorithm, traversing terrain line by line from back
+to front; that object-order projection later inspired the Scattered method in
+this study. The distance since then is simultaneously large and small: modern
+GPUs make arbitrary cameras, common shadowing, and portable programmable
+shading practical, yet the horizon and cave cases below still punish a
+representation that is not matched to the data.
 
 ![The original Vangers software renderer presents volumetric, destructible terrain through a deliberately constrained oblique top-down view.](../docs/assets/original.jpg)
 
@@ -331,20 +333,23 @@ terrain. Ordering the generated samples front-to-back lets early depth tests
 remove most covered fragments; the original implementation measured 96%
 early-Z rejection for its test view. Cost still scales with ground samples
 inside the footprint rather than with visible pixels, which explains its
-poor downward-looking timings. This method is related to, but not claimed
-to reproduce, the original game's software renderer.
+poor downward-looking timings. Although it also processes terrain in object
+order, its explicit bar geometry is not a reconstruction of the original
+software renderer.
 
 ### 3.5 Scattered
 
 ![A warped footprint spends point samples near the camera; projected samples contend through an atomic depth write.](figures/scatter.svg)
 
-A compute grid samples a camera-aligned ground footprint whose longitudinal
-coordinate is warped to spend more samples nearby. Each invocation walks
-both encoded vertical intervals and projects point samples into a screen
-buffer. A 32-bit `atomicMin` selects the nearest result while retaining 24
-bits of depth and 8 bits of terrain type. A full-screen resolve reconstructs
-world position and performs material, diffuse, fog, cave-ambient, and shadow
-evaluation.
+Scattered is the direct conceptual descendant of the original renderer's
+back-to-front, line-by-line painter. A compute grid instead samples a
+camera-aligned ground footprint whose longitudinal coordinate is warped to
+spend more samples nearby. Each invocation walks both encoded vertical
+intervals and projects point samples into a screen buffer. Parallel GPU work
+cannot rely on painter ordering, so a 32-bit `atomicMin` selects the nearest
+result while retaining 24 bits of depth and 8 bits of terrain type. A
+full-screen resolve reconstructs world position and performs material,
+diffuse, fog, cave-ambient, and shadow evaluation.
 
 The density vector controls the compute grid. Unlike rasterization, point
 projection does not guarantee pixel coverage; undersampling appears as
