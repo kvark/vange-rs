@@ -54,6 +54,16 @@ def main():
         with open(path) as f:
             runs.append(json.load(f))
 
+    protocol_fields = ("level", "width", "height", "far", "frames",
+                       "shadows", "lighting", "scenes", "methods")
+    baseline = {field: runs[0].get(field) for field in protocol_fields}
+    for path, run in zip(args.results[1:], runs[1:]):
+        changed = [field for field in protocol_fields
+                   if run.get(field) != baseline[field]]
+        if changed:
+            sys.exit(f"{path}: benchmark protocol differs in "
+                     f"{', '.join(changed)}; do not merge unlike runs")
+
     methods, keys = [], []
     for run in runs:
         for r in run["rows"]:

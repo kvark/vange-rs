@@ -85,7 +85,7 @@ import zipfile
 # error. One of these is not tunable at all, which is itself worth
 # knowing when reading their columns.
 METHODS = [
-    ("RayTraced", "RayTraced", ["--ray-steps", "128"], 3),
+    ("RayTraced", "RayTraced", ["--ray-steps", "64"], 3),
     # The step budget the fixture's sightlines set: 40 steps lands within a
     # point of 100 on these views (5.5% vs 4.8% error), so the selection
     # rule keeps it. The old fixture's long sightlines exhausted it - 6.4%
@@ -103,9 +103,9 @@ METHODS = [
     # wide margin; lower densities are cheaper and worse in every column.
     ("Scattered", "Scattered", ["--scatter-density", "4,4,4"], 8),
     ("Painter", "Painted", [], 3),
-    # The selection rule picks the cheapest fit: the reference cannot
-    # resolve mesh quality at the horizon, so every q lands within a point
-    # of the same error. The q=0.75 row stays as the prep-cost contrast.
+    # The tuning-resolution reference picks the cheapest fit. Keep q=0.75
+    # beside it because the full-size hangar scene resolves a coverage
+    # difference that the smaller tuning pass does not.
     ("Mesh q=0.0", "Mesh", ["--mesh-quality", "0.0"], 3),
     ("Mesh q=0.75", "Mesh", ["--mesh-quality", "0.75"], 3),
 ]
@@ -148,6 +148,15 @@ DEFAULT_VIEWS = {
 
 
 RELEASE = "https://github.com/kvark/vange-rs/releases/download/data-0"
+
+
+def load_dependencies():
+    global np, Image, ImageDraw, ImageFont
+    if "np" in globals():
+        return
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFont
+    Image.MAX_IMAGE_PIXELS = None
 
 
 def run(cmd, what):
@@ -193,7 +202,7 @@ def start_run(out_dir, manifest):
     return manifest_path, grid, partial
 
 
-def print_run_plan(source, scenes):
+def print_run_plan(source, scenes, methods=None):
     revision = source["revision"][:12]
     dirty = " dirty" if source["dirty"] else ""
     print(f"source {revision}{dirty}")
@@ -202,6 +211,11 @@ def print_run_plan(source, scenes):
         f"pitch {scene['pitch']:g} height {scene['eye_height']:g}" +
         (" under" if scene["under"] else "")
         for scene in scenes))
+    if methods is not None:
+        print("methods: " + ", ".join(
+            method["label"] +
+            (" (" + " ".join(method["args"]) + ")" if method["args"] else "")
+            for method in methods))
 
 
 def ensure_tools(args):
@@ -580,8 +594,13 @@ def main():
         }
         for view, pitch in scenes
     ]
+    method_records = [
+        {"label": label, "terrain": terrain, "args": extra,
+         "warmup_frames": warmup}
+        for label, terrain, extra, warmup in METHODS
+    ]
     if args.list_scenes:
-        print_run_plan(source, scene_records)
+        print_run_plan(source, scene_records, method_records)
         return
 
     if not args.out:
@@ -596,16 +615,14 @@ def main():
         "shadows": ("disabled" if args.no_shadows else
                     "ray-traced 1024x1024"),
         "scenes": scene_records,
+        "methods": method_records,
     }
     # A full run takes about an hour. Invalidate the previous aggregate before
     # builds, downloads, or rendering begin, then publish its replacement only
     # after every cell succeeds.
     manifest_path, grid, grid_tmp = start_run(args.out, manifest)
 
-    global np, Image, ImageDraw, ImageFont
-    import numpy as np
-    from PIL import Image, ImageDraw, ImageFont
-    Image.MAX_IMAGE_PIXELS = None
+    load_dependencies()
 
     ensure_tools(args)
     ensure_assets(args)
@@ -619,7 +636,7 @@ def main():
     # say so up front and keep a running estimate rather than going quiet.
     total = len(scenes) * len(METHODS)
     done, started = 0, time.time()
-    print_run_plan(source, scene_records)
+    print_run_plan(source, scene_records, method_records)
     print(f"{total} renders: {len(METHODS)} methods x {len(scenes)} scenes, "
           f"at {args.width}x{args.height}\n")
 
@@ -723,6 +740,7 @@ def main():
                         "ray-traced 1024x1024"),
             "lighting": "unbaked diffuse",
             "scenes": scene_records,
+            "methods": method_records,
             "rows": rows,
         })
         print(f"\nwrote {json_out}")

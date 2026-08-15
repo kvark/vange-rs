@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 360" role="img" aria-labelledby="title desc">
+  <title id="title">Horizontal terrain slicing</title>
+  <desc id="desc">Horizontal proxy planes are retained where they lie inside either encoded solid interval, producing discrete bands at grazing angles.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#e76f51"/></marker>
+    <style>.ink{stroke:#24324a;stroke-width:2;fill:none}.slice{stroke:#49a078;stroke-width:2;stroke-dasharray:8 5}.label{font:14px system-ui,sans-serif;fill:#24324a}.small{font:12px system-ui,sans-serif;fill:#5f6b7a}.floor{fill:#e7c98d;stroke:#9a6f2f;stroke-width:2}.slab{fill:#8db8df;stroke:#477aa8;stroke-width:2}.accent{stroke:#e76f51;stroke-width:3;fill:none}</style>
+  </defs>
+  <rect width="760" height="360" fill="#fff"/><rect x="24" y="22" width="122" height="25" rx="12" fill="#edf6f1"/><text x="85" y="39" text-anchor="middle" class="small">OBJECT ORDER</text>
+  <path d="M55 290L115 270L175 281L235 235L295 248L355 218L415 230L475 196L525 205V330H55Z" class="floor"/>
+  <path d="M245 151L315 143L380 158L445 130L500 143V183L445 170L380 198L315 183L245 191Z" class="slab"/>
+  <g class="slice"><path d="M35 90H540"/><path d="M35 120H540"/><path d="M35 150H540"/><path d="M35 180H540"/><path d="M35 210H540"/><path d="M35 240H540"/><path d="M35 270H540"/><path d="M35 300H540"/></g>
+  <g fill="#49a078"><circle cx="263" cy="150" r="5"/><circle cx="354" cy="150" r="5"/><circle cx="462" cy="150" r="5"/><circle cx="251" cy="180" r="5"/><circle cx="421" cy="180" r="5"/><circle cx="377" cy="210" r="5"/><circle cx="265" cy="240" r="5"/><circle cx="144" cy="270" r="5"/><circle cx="102" cy="300" r="5"/><circle cx="469" cy="210" r="5"/></g>
+  <text x="55" y="77" class="label">N horizontal proxy planes</text><text x="272" y="118" class="small">keep fragments inside either solid</text><text x="328" y="210" class="small">discard cave air</text>
+  <path d="M512 182L600 154" class="accent" marker-end="url(#arrow)"/><path d="M500 213L600 182" class="accent" marker-end="url(#arrow)"/><path d="M472 245L600 210" class="accent" marker-end="url(#arrow)"/>
+  <g transform="translate(610 82)"><rect width="76" height="210" rx="4" fill="#f5f7fa" stroke="#24324a" stroke-width="2"/><g fill="#d9e0e8"><rect x="10" y="15" width="56" height="18"/><rect x="10" y="41" width="56" height="18"/><rect x="10" y="67" width="56" height="18"/><rect x="10" y="93" width="56" height="18"/><rect x="10" y="119" width="56" height="18"/><rect x="10" y="145" width="56" height="18"/><rect x="10" y="171" width="56" height="18"/></g><g fill="#49a078"><rect x="10" y="67" width="56" height="8"/><rect x="10" y="93" width="56" height="8"/><rect x="10" y="119" width="56" height="8"/></g></g>
+  <text x="648" y="314" text-anchor="middle" class="label">screen bands</text><path d="M569 322H686" stroke="#e76f51" stroke-width="3"/><text x="648" y="341" text-anchor="middle" class="small">spacing trades gaps for overdraw</text>
+</svg>

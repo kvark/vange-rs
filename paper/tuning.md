@@ -1,18 +1,22 @@
 # Per-method tuning
 
-> **Stale fixture and ray path:** these choices were measured on an older
-> set of 0° views before the full-screen ray fix. Re-run the sweep on the
-> river/hangar/ramp views before hardware batch 3.
+> RayTraced was re-swept after the full-screen fix on the final
+> river/hangar/ramp views. The remaining rows predate that implementation
+> change but already use those scenes.
 
 Level fostral, pitch 0°, 400x260, view distance 600, averaged over 3 viewpoints.
 
-Selection rule: the cheapest setting within 1 percentage points of that method's own best error, where error is see-through + speckle.
+Selection rule: the cheapest setting within one percentage point of that method's own best error, where error is see-through + speckle.
 
-## RayTraced (superseded implementation)
+## RayTraced
 
 | setting | GPU ms | see-through | speckle | error | depth p50 |
 |---|---|---|---|---|---|
-| (none) **<-** | 0.11 | 64.5% | 1.6% | 66.1% | 12.7u |
+| 16 steps | 0.25 | 12.0% | 0.5% | 12.5% | 16.9u |
+| 32 steps | 0.35 | 10.0% | 0.5% | 10.4% | 16.5u |
+| 64 steps **<-** | 0.55 | 8.9% | 0.4% | 9.4% | 15.2u |
+| 128 steps | 0.91 | 8.4% | 0.4% | 8.8% | 15.5u |
+| 256 steps | 1.26 | 8.1% | 0.3% | 8.4% | 15.3u |
 
 ## Painter
 
@@ -66,7 +70,7 @@ Selection rule: the cheapest setting within 1 percentage points of that method's
 
 ```python
 METHODS = [
-    ("RayTraced", "RayTraced", ["--ray-steps", "128"], ...),  # provisional
+    ("RayTraced", "RayTraced", ["--ray-steps", "64"], ...),  # 64 steps
     ("Painter", "Painted", [], ...),  # (none)
     ("Sliced", "Sliced", ["--slice-layers", "512"], ...),  # 512 layers
     ("Scattered", "Scattered", ["--scatter-density", "4,4,4"], ...),  # density 4,4,4

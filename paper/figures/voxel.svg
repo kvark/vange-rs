@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 360" role="img" aria-labelledby="title desc">
+  <title id="title">Voxel-accelerated ray marching</title>
+  <desc id="desc">A hierarchical occupancy grid lets the ray skip empty cells, descend through occupied cells, and sample the source height data only at leaves.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#e76f51"/></marker>
+    <style>.ink{stroke:#24324a;stroke-width:2;fill:none}.major{stroke:#9eabb9;stroke-width:2;fill:none}.minor{stroke:#d9e0e8;stroke-width:1;fill:none}.label{font:14px system-ui,sans-serif;fill:#24324a}.small{font:12px system-ui,sans-serif;fill:#5f6b7a}.floor{fill:#e7c98d;stroke:#9a6f2f;stroke-width:2}.slab{fill:#8db8df;stroke:#477aa8;stroke-width:2}.accent{stroke:#e76f51;stroke-width:3;fill:none}</style>
+  </defs>
+  <rect width="760" height="360" fill="#fff"/><rect x="24" y="22" width="116" height="25" rx="12" fill="#e8f1f8"/><text x="82" y="39" text-anchor="middle" class="small">IMAGE ORDER</text>
+  <path d="M40 310H720V338H40Z" class="floor"/><path d="M430 224H610V258H430Z" class="slab"/>
+  <g transform="translate(160 66)">
+    <g class="minor"><path d="M0 0V240M40 0V240M80 0V240M120 0V240M160 0V240M200 0V240M240 0V240M280 0V240M320 0V240M360 0V240M400 0V240M440 0V240M480 0V240M520 0V240M560 0V240"/><path d="M0 0H560M0 40H560M0 80H560M0 120H560M0 160H560M0 200H560M0 240H560"/></g>
+    <g class="major"><rect width="160" height="160"/><rect x="160" width="160" height="160"/><rect x="320" width="160" height="160"/><rect x="480" width="80" height="160"/><rect y="160" width="160" height="80"/><rect x="160" y="160" width="160" height="80"/><rect x="320" y="160" width="160" height="80"/><rect x="480" y="160" width="80" height="80"/></g>
+    <g fill="#8db8df" opacity=".32"><rect x="280" y="160" width="40" height="40"/><rect x="320" y="120" width="40" height="40"/><rect x="360" y="120" width="40" height="40"/><rect x="400" y="120" width="40" height="40"/><rect x="440" y="120" width="40" height="40"/></g>
+  </g>
+  <circle cx="70" cy="86" r="9" fill="#24324a"/><path d="M79 89L132 112" class="ink"/>
+  <path d="M79 86L690 282" stroke="#477aa8" stroke-width="2.5" fill="none"/>
+  <path d="M132 103L300 157" class="accent" marker-end="url(#arrow)"/><text x="196" y="114" class="label">skip empty cell</text>
+  <path d="M315 164L449 207" class="accent" marker-end="url(#arrow)"/><text x="326" y="184" class="small">skip</text>
+  <rect x="440" y="184" width="80" height="80" fill="none" stroke="#e76f51" stroke-width="3"/><rect x="480" y="224" width="40" height="40" fill="#e76f51" opacity=".18" stroke="#e76f51" stroke-width="2"/>
+  <path d="M470 174L486 219" class="accent" marker-end="url(#arrow)"/><text x="486" y="165" class="label">occupied: descend</text>
+  <g fill="#fff" stroke="#477aa8" stroke-width="2"><circle cx="504" cy="222" r="4"/><circle cx="521" cy="228" r="4"/><circle cx="538" cy="233" r="4"/></g><circle cx="552" cy="238" r="6" fill="#e76f51"/>
+  <text x="535" y="286" class="label">leaf: sample source field</text><path d="M558 278L554 246" class="accent" marker-end="url(#arrow)"/>
+  <g transform="translate(44 220)"><rect width="78" height="48" rx="5" fill="#f5f7fa" stroke="#24324a" stroke-width="2"/><rect x="10" y="10" width="14" height="14" fill="#d9e0e8"/><rect x="31" y="10" width="14" height="14" fill="#8db8df"/><rect x="52" y="10" width="14" height="14" fill="#d9e0e8"/><text x="39" y="67" text-anchor="middle" class="small">occupancy pyramid</text></g>
+</svg>

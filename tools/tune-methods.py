@@ -114,6 +114,7 @@ def main():
                              level_zip=None, common_zip=None, layers=None, out=None)
     ct.ensure_tools(sub)
     ct.ensure_assets(sub)
+    ct.load_dependencies()
     # The defaults pair each view with a pitch; this tool tunes every method
     # at one pitch (the horizon, where they differ), so it takes the views
     # of that pitch. Override with --view for anything else.

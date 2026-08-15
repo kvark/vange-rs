@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 360" role="img" aria-labelledby="title desc">
+  <title id="title">Height-field ray marching</title>
+  <desc id="desc">One screen pixel casts a ray. Fixed samples find the first solid interval and bisection refines the hit.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#e76f51"/></marker>
+    <style>.ink{stroke:#24324a;stroke-width:2;fill:none}.grid{stroke:#d9e0e8;stroke-width:1}.label{font:14px system-ui,sans-serif;fill:#24324a}.small{font:12px system-ui,sans-serif;fill:#5f6b7a}.floor{fill:#e7c98d;stroke:#9a6f2f;stroke-width:2}.slab{fill:#8db8df;stroke:#477aa8;stroke-width:2}.accent{stroke:#e76f51;stroke-width:3;fill:none}.sample{fill:#fff;stroke:#477aa8;stroke-width:2}</style>
+  </defs>
+  <rect width="760" height="360" fill="#fff"/>
+  <rect x="24" y="22" width="116" height="25" rx="12" fill="#e8f1f8"/><text x="82" y="39" text-anchor="middle" class="small">IMAGE ORDER</text>
+  <g transform="translate(38 78)">
+    <rect x="0" y="0" width="70" height="70" rx="6" fill="#f5f7fa" stroke="#24324a" stroke-width="2"/>
+    <g fill="#d9e0e8"><rect x="10" y="10" width="12" height="12"/><rect x="29" y="10" width="12" height="12"/><rect x="48" y="10" width="12" height="12"/><rect x="10" y="29" width="12" height="12"/><rect x="48" y="29" width="12" height="12"/><rect x="10" y="48" width="12" height="12"/><rect x="29" y="48" width="12" height="12"/><rect x="48" y="48" width="12" height="12"/></g>
+    <rect x="29" y="29" width="12" height="12" fill="#e76f51"/>
+    <text x="35" y="92" text-anchor="middle" class="label">one pixel</text>
+  </g>
+  <path d="M121 113H176" class="accent" marker-end="url(#arrow)"/>
+  <line x1="183" y1="71" x2="183" y2="155" class="ink"/>
+  <circle cx="209" cy="113" r="8" fill="#24324a"/><path d="M217 113L244 129" class="ink"/>
+  <text x="183" y="174" text-anchor="middle" class="small">near plane</text>
+  <g class="grid"><line x1="255" y1="70" x2="255" y2="310"/><line x1="325" y1="70" x2="325" y2="310"/><line x1="395" y1="70" x2="395" y2="310"/><line x1="465" y1="70" x2="465" y2="310"/><line x1="535" y1="70" x2="535" y2="310"/><line x1="605" y1="70" x2="605" y2="310"/><line x1="675" y1="70" x2="675" y2="310"/></g>
+  <path d="M220 286L280 274L340 281L400 251L460 260L520 235L580 244L640 218L720 228V330H220Z" class="floor"/>
+  <path d="M405 196L455 185L505 193L550 171L598 180V222L550 213L505 234L455 226L405 237Z" class="slab"/>
+  <path d="M217 113L661 229" stroke="#477aa8" stroke-width="2.5" fill="none"/>
+  <g><circle cx="270" cy="127" r="5" class="sample"/><circle cx="327" cy="142" r="5" class="sample"/><circle cx="384" cy="157" r="5" class="sample"/><circle cx="441" cy="172" r="5" class="sample"/><circle cx="498" cy="187" r="5" class="sample"/><circle cx="555" cy="201" r="5" class="sample"/></g>
+  <circle cx="584" cy="209" r="6" fill="#e76f51"/><circle cx="570" cy="205" r="4" fill="#fff" stroke="#e76f51" stroke-width="2"/><circle cx="577" cy="207" r="4" fill="#fff" stroke="#e76f51" stroke-width="2"/>
+  <path d="M555 184V218M584 192V226" class="accent"/><path d="M555 178H584" class="accent" marker-end="url(#arrow)"/>
+  <text x="425" y="95" class="label">fixed forward steps</text><text x="586" y="151" class="label">first crossing</text><text x="586" y="168" class="small">binary refinement</text>
+  <text x="438" y="283" class="small">floor solid</text><text x="470" y="213" class="small">upper solid</text><text x="474" y="246" class="small">cave air</text>
+  <path d="M584 209L713 244" class="accent" marker-end="url(#arrow)"/><text x="651" y="217" class="small">write depth</text>
+</svg>
