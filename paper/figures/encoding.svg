@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="500" viewBox="0 0 1080 500" role="img" aria-label="Vangers dual-layer terrain encoding">
+<style>text{font-family:Inter,DejaVu Sans,sans-serif;fill:#20252b}.title{font-size:23px;font-weight:700}.subtitle{font-size:13px;fill:#68717b}.panel-title{font-size:15px;font-weight:700}.axis{font-size:11px;fill:#68717b}.label{font-size:12px}.value{font-size:10px;font-weight:700}.light{fill:#f8fafc}</style>
+<rect width="1080" height="500" fill="#fbfaf7" rx="14"/>
+<text x="34.0" y="38.0" class="title" text-anchor="start" >Two texels encode two vertical solids</text>
+<text x="34.0" y="61.0" class="subtitle" text-anchor="start" >The compact simulation state stores a floor, a cave ceiling, and a slab top</text>
+<text x="160.0" y="104.0" class="panel-title" text-anchor="middle" >paired source samples</text>
+<rect x="55" y="130" width="175" height="230" rx="12" fill="white" stroke="#168c9e" stroke-width="3"/>
+<text x="142.5" y="160.0" class="panel-title" text-anchor="middle" >even texel</text>
+<rect x="73" y="185" width="139" height="38" rx="5" fill="#168c9e" opacity="0.16"/>
+<text x="83.0" y="201.0" class="axis" text-anchor="start" >height byte</text>
+<text x="202.0" y="212.0" class="value" text-anchor="end" >low</text>
+<rect x="73" y="237" width="139" height="38" rx="5" fill="#168c9e" opacity="0.2"/>
+<text x="83.0" y="253.0" class="axis" text-anchor="start" >delta bits</text>
+<text x="202.0" y="264.0" class="value" text-anchor="end" >part of mid</text>
+<rect x="73" y="289" width="139" height="38" rx="5" fill="#168c9e" opacity="0.24"/>
+<text x="83.0" y="305.0" class="axis" text-anchor="start" >material</text>
+<text x="202.0" y="316.0" class="value" text-anchor="end" >surface type</text>
+<rect x="265" y="130" width="175" height="230" rx="12" fill="white" stroke="#8b62c6" stroke-width="3"/>
+<text x="352.5" y="160.0" class="panel-title" text-anchor="middle" >odd texel</text>
+<rect x="283" y="185" width="139" height="38" rx="5" fill="#8b62c6" opacity="0.16"/>
+<text x="293.0" y="201.0" class="axis" text-anchor="start" >height byte</text>
+<text x="412.0" y="212.0" class="value" text-anchor="end" >high</text>
+<rect x="283" y="237" width="139" height="38" rx="5" fill="#8b62c6" opacity="0.2"/>
+<text x="293.0" y="253.0" class="axis" text-anchor="start" >delta bits</text>
+<text x="412.0" y="264.0" class="value" text-anchor="end" >part of mid</text>
+<rect x="283" y="289" width="139" height="38" rx="5" fill="#8b62c6" opacity="0.24"/>
+<text x="293.0" y="305.0" class="axis" text-anchor="start" >material</text>
+<text x="412.0" y="316.0" class="value" text-anchor="end" >surface type</text>
+<path d="M 440 244 C 485 244, 500 244, 545 244" fill="none" stroke="#68717b" stroke-width="3" marker-end="url(#arrow)"/>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#68717b"/></marker></defs>
+<text x="492.0" y="224.0" class="axis" text-anchor="middle" >decode</text>
+<text x="790.0" y="104.0" class="panel-title" text-anchor="middle" >one vertical terrain column</text>
+<rect x="660" y="130" width="265" height="275" rx="10" fill="#e7f0f7" stroke="#d9dde1"/>
+<rect x="660" y="315" width="265" height="90" fill="#776858"/>
+<rect x="660" y="175" width="265" height="58" fill="#8d8171"/>
+<rect x="660" y="233" width="265" height="82" fill="#283643"/>
+<line x1="642" y1="175" x2="943" y2="175" stroke="#8b62c6" stroke-width="3"/>
+<text x="955.0" y="179.0" class="label" text-anchor="start" >high · slab top</text>
+<line x1="642" y1="233" x2="943" y2="233" stroke="#d99125" stroke-width="3"/>
+<text x="955.0" y="237.0" class="label" text-anchor="start" >mid · cave ceiling</text>
+<line x1="642" y1="315" x2="943" y2="315" stroke="#168c9e" stroke-width="3"/>
+<text x="955.0" y="319.0" class="label" text-anchor="start" >low · floor</text>
+<text x="792.5" y="208.0" class="label light" text-anchor="middle" >upper solid</text>
+<text x="792.5" y="279.0" class="label light" text-anchor="middle" >cave / empty</text>
+<text x="792.5" y="367.0" class="label light" text-anchor="middle" >lower solid</text>
+<text x="540.0" y="462.0" class="subtitle" text-anchor="middle" >A renderer must preserve both intervals and their vertical boundary walls.</text>
+</svg>

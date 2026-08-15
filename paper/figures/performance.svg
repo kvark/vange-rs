@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="430" viewBox="0 0 1240 430" role="img" aria-label="Steady-state terrain frame time on four Vulkan adapters">
+<style>text{font-family:Inter,DejaVu Sans,sans-serif;fill:#20252b}.title{font-size:23px;font-weight:700}.subtitle{font-size:13px;fill:#68717b}.panel-title{font-size:15px;font-weight:700}.axis{font-size:11px;fill:#68717b}.label{font-size:12px}.value{font-size:10px;font-weight:700}.light{fill:#f8fafc}</style>
+<rect width="1240" height="430" fill="#fbfaf7" rx="14"/>
+<text x="34.0" y="36.0" class="title" text-anchor="start" >Performance is portable only in the broad sense</text>
+<text x="34.0" y="58.0" class="subtitle" text-anchor="start" >Mean GPU time over 12 scenes · logarithmic scale · common 1024² shadow pass</text>
+<rect x="38" y="92" width="288" height="250" fill="#ffffff" stroke="#d9dde1" rx="8"/>
+<text x="50.0" y="114.0" class="panel-title" text-anchor="start" >Radeon 780M</text>
+<line x1="76" y1="290.7" x2="318" y2="290.7" stroke="#d9dde1" stroke-width="1"/>
+<text x="70.0" y="294.7" class="axis" text-anchor="end" >0.5</text>
+<line x1="76" y1="269.3" x2="318" y2="269.3" stroke="#d9dde1" stroke-width="1"/>
+<text x="70.0" y="273.3" class="axis" text-anchor="end" >1</text>
+<line x1="76" y1="248.0" x2="318" y2="248.0" stroke="#d9dde1" stroke-width="1"/>
+<text x="70.0" y="252.0" class="axis" text-anchor="end" >2</text>
+<line x1="76" y1="226.7" x2="318" y2="226.7" stroke="#d9dde1" stroke-width="1"/>
+<text x="70.0" y="230.7" class="axis" text-anchor="end" >4</text>
+<line x1="76" y1="205.3" x2="318" y2="205.3" stroke="#d9dde1" stroke-width="1"/>
+<text x="70.0" y="209.3" class="axis" text-anchor="end" >8</text>
+<line x1="76" y1="184.0" x2="318" y2="184.0" stroke="#d9dde1" stroke-width="1"/>
+<text x="70.0" y="188.0" class="axis" text-anchor="end" >16</text>
+<line x1="76" y1="162.7" x2="318" y2="162.7" stroke="#d9dde1" stroke-width="1"/>
+<text x="70.0" y="166.7" class="axis" text-anchor="end" >32</text>
+<line x1="76" y1="141.3" x2="318" y2="141.3" stroke="#d9dde1" stroke-width="1"/>
+<text x="70.0" y="145.3" class="axis" text-anchor="end" >64</text>
+<line x1="76" y1="120.0" x2="318" y2="120.0" stroke="#d9dde1" stroke-width="1"/>
+<text x="70.0" y="124.0" class="axis" text-anchor="end" >128</text>
+<rect x="83" y="228.9" width="23" height="83.1" fill="#168c9e" rx="3"/>
+<text x="94.5" y="223.9" class="value" text-anchor="middle" >3.72</text>
+<text x="94.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 94.5 330.0)">Ray 64</text>
+<rect x="116" y="206.4" width="23" height="105.6" fill="#4776c5" rx="3"/>
+<text x="127.5" y="201.4" class="value" text-anchor="middle" >7.72</text>
+<text x="127.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 127.5 330.0)">Voxel</text>
+<rect x="149" y="200.6" width="23" height="111.4" fill="#d99125" rx="3"/>
+<text x="160.5" y="195.6" class="value" text-anchor="middle" >9.34</text>
+<text x="160.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 160.5 330.0)">Sliced</text>
+<rect x="182" y="201.0" width="23" height="111.0" fill="#d65757" rx="3"/>
+<text x="193.5" y="196.0" class="value" text-anchor="middle" >9.22</text>
+<text x="193.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 193.5 330.0)">Scatter</text>
+<rect x="215" y="184.3" width="23" height="127.7" fill="#8b62c6" rx="3"/>
+<text x="226.5" y="179.3" class="value" text-anchor="middle" >15.8</text>
+<text x="226.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 226.5 330.0)">Painter</text>
+<rect x="248" y="224.9" width="23" height="87.1" fill="#69a879" rx="3"/>
+<text x="259.5" y="219.9" class="value" text-anchor="middle" >4.24</text>
+<text x="259.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 259.5 330.0)">Mesh 0</text>
+<rect x="281" y="227.2" width="23" height="84.8" fill="#24764a" rx="3"/>
+<text x="292.5" y="222.2" class="value" text-anchor="middle" >3.93</text>
+<text x="292.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 292.5 330.0)">Mesh .75</text>
+<line x1="76" y1="182.7" x2="318" y2="182.7" stroke="#a84f4f" stroke-width="1.5" stroke-dasharray="5 4"/>
+<rect x="334" y="92" width="288" height="250" fill="#ffffff" stroke="#d9dde1" rx="8"/>
+<text x="346.0" y="114.0" class="panel-title" text-anchor="start" >Radeon 7900 XT</text>
+<line x1="372" y1="290.7" x2="614" y2="290.7" stroke="#d9dde1" stroke-width="1"/>
+<line x1="372" y1="269.3" x2="614" y2="269.3" stroke="#d9dde1" stroke-width="1"/>
+<line x1="372" y1="248.0" x2="614" y2="248.0" stroke="#d9dde1" stroke-width="1"/>
+<line x1="372" y1="226.7" x2="614" y2="226.7" stroke="#d9dde1" stroke-width="1"/>
+<line x1="372" y1="205.3" x2="614" y2="205.3" stroke="#d9dde1" stroke-width="1"/>
+<line x1="372" y1="184.0" x2="614" y2="184.0" stroke="#d9dde1" stroke-width="1"/>
+<line x1="372" y1="162.7" x2="614" y2="162.7" stroke="#d9dde1" stroke-width="1"/>
+<line x1="372" y1="141.3" x2="614" y2="141.3" stroke="#d9dde1" stroke-width="1"/>
+<line x1="372" y1="120.0" x2="614" y2="120.0" stroke="#d9dde1" stroke-width="1"/>
+<rect x="379" y="286.5" width="23" height="25.5" fill="#168c9e" rx="3"/>
+<text x="390.5" y="281.5" class="value" text-anchor="middle" >0.57</text>
+<text x="390.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 390.5 330.0)">Ray 64</text>
+<rect x="412" y="261.6" width="23" height="50.4" fill="#4776c5" rx="3"/>
+<text x="423.5" y="256.6" class="value" text-anchor="middle" >1.28</text>
+<text x="423.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 423.5 330.0)">Voxel</text>
+<rect x="445" y="250.1" width="23" height="61.9" fill="#d99125" rx="3"/>
+<text x="456.5" y="245.1" class="value" text-anchor="middle" >1.87</text>
+<text x="456.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 456.5 330.0)">Sliced</text>
+<rect x="478" y="235.9" width="23" height="76.1" fill="#d65757" rx="3"/>
+<text x="489.5" y="230.9" class="value" text-anchor="middle" >2.96</text>
+<text x="489.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 489.5 330.0)">Scatter</text>
+<rect x="511" y="217.6" width="23" height="94.4" fill="#8b62c6" rx="3"/>
+<text x="522.5" y="212.6" class="value" text-anchor="middle" >5.38</text>
+<text x="522.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 522.5 330.0)">Painter</text>
+<rect x="544" y="290.9" width="23" height="21.1" fill="#69a879" rx="3"/>
+<text x="555.5" y="285.9" class="value" text-anchor="middle" >0.50</text>
+<text x="555.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 555.5 330.0)">Mesh 0</text>
+<rect x="577" y="291.8" width="23" height="20.2" fill="#24764a" rx="3"/>
+<text x="588.5" y="286.8" class="value" text-anchor="middle" >0.48</text>
+<text x="588.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 588.5 330.0)">Mesh .75</text>
+<line x1="372" y1="182.7" x2="614" y2="182.7" stroke="#a84f4f" stroke-width="1.5" stroke-dasharray="5 4"/>
+<rect x="630" y="92" width="288" height="250" fill="#ffffff" stroke="#d9dde1" rx="8"/>
+<text x="642.0" y="114.0" class="panel-title" text-anchor="start" >Intel RPL-U</text>
+<line x1="668" y1="290.7" x2="910" y2="290.7" stroke="#d9dde1" stroke-width="1"/>
+<line x1="668" y1="269.3" x2="910" y2="269.3" stroke="#d9dde1" stroke-width="1"/>
+<line x1="668" y1="248.0" x2="910" y2="248.0" stroke="#d9dde1" stroke-width="1"/>
+<line x1="668" y1="226.7" x2="910" y2="226.7" stroke="#d9dde1" stroke-width="1"/>
+<line x1="668" y1="205.3" x2="910" y2="205.3" stroke="#d9dde1" stroke-width="1"/>
+<line x1="668" y1="184.0" x2="910" y2="184.0" stroke="#d9dde1" stroke-width="1"/>
+<line x1="668" y1="162.7" x2="910" y2="162.7" stroke="#d9dde1" stroke-width="1"/>
+<line x1="668" y1="141.3" x2="910" y2="141.3" stroke="#d9dde1" stroke-width="1"/>
+<line x1="668" y1="120.0" x2="910" y2="120.0" stroke="#d9dde1" stroke-width="1"/>
+<rect x="675" y="198.8" width="23" height="113.2" fill="#168c9e" rx="3"/>
+<text x="686.5" y="193.8" class="value" text-anchor="middle" >9.89</text>
+<text x="686.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 686.5 330.0)">Ray 64</text>
+<rect x="708" y="166.7" width="23" height="145.3" fill="#4776c5" rx="3"/>
+<text x="719.5" y="161.7" class="value" text-anchor="middle" >28.1</text>
+<text x="719.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 719.5 330.0)">Voxel</text>
+<rect x="741" y="159.2" width="23" height="152.8" fill="#d99125" rx="3"/>
+<text x="752.5" y="154.2" class="value" text-anchor="middle" >35.8</text>
+<text x="752.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 752.5 330.0)">Sliced</text>
+<rect x="774" y="131.9" width="23" height="180.1" fill="#d65757" rx="3"/>
+<text x="785.5" y="126.9" class="value" text-anchor="middle" >87.0</text>
+<text x="785.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 785.5 330.0)">Scatter</text>
+<rect x="807" y="138.1" width="23" height="173.9" fill="#8b62c6" rx="3"/>
+<text x="818.5" y="133.1" class="value" text-anchor="middle" >71.1</text>
+<text x="818.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 818.5 330.0)">Painter</text>
+<rect x="840" y="195.7" width="23" height="116.3" fill="#69a879" rx="3"/>
+<text x="851.5" y="190.7" class="value" text-anchor="middle" >10.9</text>
+<text x="851.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 851.5 330.0)">Mesh 0</text>
+<rect x="873" y="194.0" width="23" height="118.0" fill="#24764a" rx="3"/>
+<text x="884.5" y="189.0" class="value" text-anchor="middle" >11.5</text>
+<text x="884.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 884.5 330.0)">Mesh .75</text>
+<line x1="668" y1="182.7" x2="910" y2="182.7" stroke="#a84f4f" stroke-width="1.5" stroke-dasharray="5 4"/>
+<rect x="926" y="92" width="288" height="250" fill="#ffffff" stroke="#d9dde1" rx="8"/>
+<text x="938.0" y="114.0" class="panel-title" text-anchor="start" >GeForce RTX 5070</text>
+<line x1="964" y1="290.7" x2="1206" y2="290.7" stroke="#d9dde1" stroke-width="1"/>
+<line x1="964" y1="269.3" x2="1206" y2="269.3" stroke="#d9dde1" stroke-width="1"/>
+<line x1="964" y1="248.0" x2="1206" y2="248.0" stroke="#d9dde1" stroke-width="1"/>
+<line x1="964" y1="226.7" x2="1206" y2="226.7" stroke="#d9dde1" stroke-width="1"/>
+<line x1="964" y1="205.3" x2="1206" y2="205.3" stroke="#d9dde1" stroke-width="1"/>
+<line x1="964" y1="184.0" x2="1206" y2="184.0" stroke="#d9dde1" stroke-width="1"/>
+<line x1="964" y1="162.7" x2="1206" y2="162.7" stroke="#d9dde1" stroke-width="1"/>
+<line x1="964" y1="141.3" x2="1206" y2="141.3" stroke="#d9dde1" stroke-width="1"/>
+<line x1="964" y1="120.0" x2="1206" y2="120.0" stroke="#d9dde1" stroke-width="1"/>
+<rect x="971" y="293.7" width="23" height="18.3" fill="#168c9e" rx="3"/>
+<text x="982.5" y="288.7" class="value" text-anchor="middle" >0.45</text>
+<text x="982.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 982.5 330.0)">Ray 64</text>
+<rect x="1004" y="265.0" width="23" height="47.0" fill="#4776c5" rx="3"/>
+<text x="1015.5" y="260.0" class="value" text-anchor="middle" >1.15</text>
+<text x="1015.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 1015.5 330.0)">Voxel</text>
+<rect x="1037" y="249.6" width="23" height="62.4" fill="#d99125" rx="3"/>
+<text x="1048.5" y="244.6" class="value" text-anchor="middle" >1.90</text>
+<text x="1048.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 1048.5 330.0)">Sliced</text>
+<rect x="1070" y="257.4" width="23" height="54.6" fill="#d65757" rx="3"/>
+<text x="1081.5" y="252.4" class="value" text-anchor="middle" >1.47</text>
+<text x="1081.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 1081.5 330.0)">Scatter</text>
+<rect x="1103" y="221.7" width="23" height="90.3" fill="#8b62c6" rx="3"/>
+<text x="1114.5" y="216.7" class="value" text-anchor="middle" >4.70</text>
+<text x="1114.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 1114.5 330.0)">Painter</text>
+<rect x="1136" y="292.0" width="23" height="20.0" fill="#69a879" rx="3"/>
+<text x="1147.5" y="287.0" class="value" text-anchor="middle" >0.48</text>
+<text x="1147.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 1147.5 330.0)">Mesh 0</text>
+<rect x="1169" y="286.1" width="23" height="25.9" fill="#24764a" rx="3"/>
+<text x="1180.5" y="281.1" class="value" text-anchor="middle" >0.58</text>
+<text x="1180.5" y="330.0" class="axis" text-anchor="end" transform="rotate(-48 1180.5 330.0)">Mesh .75</text>
+<line x1="964" y1="182.7" x2="1206" y2="182.7" stroke="#a84f4f" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="22.0" y="230.0" class="axis" text-anchor="middle" transform="rotate(-90 22 230)">GPU time (ms, log)</text>
+<text x="620.0" y="411.0" class="subtitle" text-anchor="middle" >Ray 64 has the lowest mean on three devices; this chart does not score image quality or reuse.</text>
+</svg>

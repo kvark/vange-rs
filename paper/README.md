@@ -28,6 +28,12 @@ tools/merge-bench.py work/results-*.json > paper/results.md
 # The current final-scene hardware batch is retained under remote/;
 # regenerate its complete tables with
 tools/merge-bench.py remote/results-*.json > paper/results.md
+
+# Extract the hangar row from one final 9000x9911 grid without loading it
+# repeatedly, then generate every data-driven SVG.
+cargo run --release --example paper-teaser -- \
+  remote/cmp-k6.png paper/figures 1
+tools/plot-paper.py
 ```
 
 The merge tool rejects different cameras, renderer arguments, shadow modes,
@@ -36,9 +42,10 @@ retained final batch uses the selected 64-step RayTraced setting throughout.
 Vulkan rows use GPU timestamps; Apple Metal uses the retained CPU
 submit-and-wait average because encoder timestamps did not reliably bracket
 the multipass frame. The merge output keeps those timing classes explicit.
-The publication snapshot is tagged `terrain-paper-v1`. Raw runs identify
+The measurement snapshot is tagged `terrain-paper-v1`. Raw runs identify
 `21875dc`, the clean renderer revision they measured; the tag additionally
-contains the final analysis and the conservative Metal timing fallback.
+contains the conservative Metal timing fallback. Editorial and figure work can
+continue on `shift` without moving the frozen measurement tag.
 
 At startup the harness removes any previous `work/compare/comparison.png` and
 writes `work/compare/run-manifest.json` with the checkout revision and exact
@@ -50,10 +57,10 @@ current comparison to collect; an older PNG must not be mistaken for this run.
 all. Those numbers are not results: too few frames to be stable, and too
 few pixels for the reference to agree with anything.
 
-The ten-world fit survey behind §6.2:
+The ten-world fit survey behind §6.2 and its graph input:
 
 ```bash
-tools/level-survey.py            # add --quality to sweep tolerance
+tools/level-survey.py --json-out paper/survey.json
 ```
 
 `tools/plot-cull.py` produces the frustum/LOD plan figures from
@@ -123,9 +130,10 @@ Tracked here rather than in the draft so the gaps stay visible:
       bundle before execution.
       Use `DATA-LICENSE.md` as the release gate rather than interpreting
       informal permission during artifact packaging.
-- [~] Figures. §3 now uses six consistent vector algorithm schematics.
-      Still missing: the teaser layout, the §2 encoding diagram, and the
-      §6.2 scatter plot; the five final grids provide the benchmark sources.
+- [x] Core figures. §3 uses six consistent vector algorithm schematics;
+      `tools/plot-paper.py` generates the encoding, pitch/quality, Vulkan
+      performance, preparation, and fit-survey SVGs; the Rust crop example
+      extracts a readable teaser from a final full-resolution grid.
 - [ ] Author block. JCGT review is single-blind — names and affiliation
       go on the submission.
 - [ ] Supplemental video. JCGT explicitly prefers "shorter articles with

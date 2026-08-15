@@ -22,6 +22,7 @@ Example
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -61,6 +62,8 @@ def main():
     ap.add_argument("--quality", type=float, default=0.25)
     ap.add_argument("--work", default="work")
     ap.add_argument("--binary", default="./target/release/level")
+    ap.add_argument("--json-out",
+                    help="write the measured rows as JSON for paper figures")
     args = ap.parse_args()
 
     import importlib.util
@@ -132,6 +135,12 @@ def main():
             rho = np.corrcoef(np.log(red), v)[0, 1]
             print(f"\ncorr(log reduction, {name}) = {rho:+.2f}", end="")
     print()
+
+    if args.json_out:
+        with open(args.json_out, "w") as f:
+            json.dump({"quality": args.quality, "rows": rows}, f, indent=2)
+            f.write("\n")
+        print(f"wrote {args.json_out}")
 
 
 if __name__ == "__main__":

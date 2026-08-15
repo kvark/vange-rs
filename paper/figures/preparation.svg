@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="475" viewBox="0 0 900 475" role="img" aria-label="One-time preparation cost by terrain method">
+<style>text{font-family:Inter,DejaVu Sans,sans-serif;fill:#20252b}.title{font-size:23px;font-weight:700}.subtitle{font-size:13px;fill:#68717b}.panel-title{font-size:15px;font-weight:700}.axis{font-size:11px;fill:#68717b}.label{font-size:12px}.value{font-size:10px;font-weight:700}.light{fill:#f8fafc}</style>
+<rect width="900" height="475" fill="#fbfaf7" rx="14"/>
+<text x="34.0" y="38.0" class="title" text-anchor="start" >Fast frames can hide seconds of preparation</text>
+<text x="34.0" y="61.0" class="subtitle" text-anchor="start" >Maximum over 12 scenes on Radeon 780M · CPU wall time · logarithmic scale</text>
+<line x1="203.3" y1="87" x2="203.3" y2="402" stroke="#d9dde1"/>
+<text x="203.3" y="78.0" class="axis" text-anchor="middle" >10 ms</text>
+<line x1="317.7" y1="87" x2="317.7" y2="402" stroke="#d9dde1"/>
+<text x="317.7" y="78.0" class="axis" text-anchor="middle" >30 ms</text>
+<line x1="443.2" y1="87" x2="443.2" y2="402" stroke="#d9dde1"/>
+<text x="443.2" y="78.0" class="axis" text-anchor="middle" >100 ms</text>
+<line x1="557.6" y1="87" x2="557.6" y2="402" stroke="#d9dde1"/>
+<text x="557.6" y="78.0" class="axis" text-anchor="middle" >300 ms</text>
+<line x1="683.1" y1="87" x2="683.1" y2="402" stroke="#d9dde1"/>
+<text x="683.1" y="78.0" class="axis" text-anchor="middle" >1000 ms</text>
+<line x1="797.6" y1="87" x2="797.6" y2="402" stroke="#d9dde1"/>
+<text x="797.6" y="78.0" class="axis" text-anchor="middle" >3000 ms</text>
+<text x="164.0" y="109.0" class="label" text-anchor="end" >Ray 64</text>
+<line x1="383.3" y1="105" x2="429.2" y2="105" stroke="#168c9e" stroke-width="7" stroke-linecap="round" opacity="0.65"/>
+<circle cx="383.3" cy="105" r="5" fill="white" stroke="#168c9e" stroke-width="3"/>
+<circle cx="429.2" cy="105" r="5" fill="#168c9e"/>
+<text x="438.2" y="109.0" class="value" text-anchor="start" >87</text>
+<text x="164.0" y="152.0" class="label" text-anchor="end" >Voxel</text>
+<line x1="442.1" y1="148" x2="784.4" y2="148" stroke="#4776c5" stroke-width="7" stroke-linecap="round" opacity="0.65"/>
+<circle cx="442.1" cy="148" r="5" fill="white" stroke="#4776c5" stroke-width="3"/>
+<circle cx="784.4" cy="148" r="5" fill="#4776c5"/>
+<text x="793.4" y="152.0" class="value" text-anchor="start" >2644</text>
+<text x="164.0" y="195.0" class="label" text-anchor="end" >Sliced</text>
+<line x1="430.0" y1="191" x2="484.1" y2="191" stroke="#d99125" stroke-width="7" stroke-linecap="round" opacity="0.65"/>
+<circle cx="430.0" cy="191" r="5" fill="white" stroke="#d99125" stroke-width="3"/>
+<circle cx="484.1" cy="191" r="5" fill="#d99125"/>
+<text x="493.1" y="195.0" class="value" text-anchor="start" >148</text>
+<text x="164.0" y="238.0" class="label" text-anchor="end" >Scatter</text>
+<line x1="469.2" y1="234" x2="578.7" y2="234" stroke="#d65757" stroke-width="7" stroke-linecap="round" opacity="0.65"/>
+<circle cx="469.2" cy="234" r="5" fill="white" stroke="#d65757" stroke-width="3"/>
+<circle cx="578.7" cy="234" r="5" fill="#d65757"/>
+<text x="587.7" y="238.0" class="value" text-anchor="start" >367</text>
+<text x="164.0" y="281.0" class="label" text-anchor="end" >Painter</text>
+<line x1="462.8" y1="277" x2="516.4" y2="277" stroke="#8b62c6" stroke-width="7" stroke-linecap="round" opacity="0.65"/>
+<circle cx="462.8" cy="277" r="5" fill="white" stroke="#8b62c6" stroke-width="3"/>
+<circle cx="516.4" cy="277" r="5" fill="#8b62c6"/>
+<text x="525.4" y="281.0" class="value" text-anchor="start" >202</text>
+<text x="164.0" y="324.0" class="label" text-anchor="end" >Mesh 0</text>
+<line x1="720.2" y1="320" x2="721.9" y2="320" stroke="#69a879" stroke-width="7" stroke-linecap="round" opacity="0.65"/>
+<circle cx="720.2" cy="320" r="5" fill="white" stroke="#69a879" stroke-width="3"/>
+<circle cx="721.9" cy="320" r="5" fill="#69a879"/>
+<text x="730.9" y="324.0" class="value" text-anchor="start" >1452</text>
+<text x="164.0" y="367.0" class="label" text-anchor="end" >Mesh .75</text>
+<line x1="814.6" y1="363" x2="815.6" y2="363" stroke="#24764a" stroke-width="7" stroke-linecap="round" opacity="0.65"/>
+<circle cx="814.6" cy="363" r="5" fill="white" stroke="#24764a" stroke-width="3"/>
+<circle cx="815.6" cy="363" r="5" fill="#24764a"/>
+<text x="824.6" y="367.0" class="value" text-anchor="start" >3566</text>
+<circle cx="610" cy="431" r="5" fill="white" stroke="#68717b" stroke-width="2"/>
+<text x="622.0" y="435.0" class="axis" text-anchor="start" >first frame</text>
+<circle cx="713" cy="431" r="5" fill="#68717b"/>
+<text x="725.0" y="435.0" class="axis" text-anchor="start" >all warmup</text>
+</svg>
