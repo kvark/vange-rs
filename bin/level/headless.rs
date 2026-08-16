@@ -100,9 +100,9 @@ pub struct SnapshotOptions {
     pub dig_radius: Option<i32>,
     /// First-person camera: stand at this XY instead of orbiting a target.
     pub fp: Option<(f32, f32)>,
-    /// End Y coordinate for a linear first-person camera move across timed
-    /// frames. Warmup frames stay at the starting position.
-    pub fp_y_end: Option<f32>,
+    /// Distance to move horizontally in the viewing direction across timed
+    /// frames. Warmup frames stay at the start and altitude remains fixed.
+    pub fp_travel: Option<f32>,
     /// Eye height above the local ground surface.
     pub fp_height: f32,
     /// Heading in degrees; 0 looks along +Y.
@@ -156,7 +156,7 @@ impl Default for SnapshotOptions {
             dig_center: None,
             dig_radius: None,
             fp: None,
-            fp_y_end: None,
+            fp_travel: None,
             fp_height: 8.0,
             fp_yaw: 0.0,
             fp_pitch: 0.0,
@@ -460,6 +460,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     };
 
     let mut cam = make_camera(&opts, &lvl);
+    let animation_start = cam.loc;
 
     // One-time setup cost, separately from per-frame cost. For the mesh
     // this is where pipelines and the terrain texture are built; the
@@ -571,7 +572,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
 
     for frame_index in 0..total_frames {
         let is_timed = frame_index >= opts.warmup;
-        if let (Some((x, start_y)), Some(end_y)) = (opts.fp, opts.fp_y_end) {
+        if let (Some((start_x, start_y)), Some(distance)) = (opts.fp, opts.fp_travel) {
             let timed_index = frame_index.saturating_sub(opts.warmup);
             let denominator = opts.frames.saturating_sub(1).max(1);
             let progress = if is_timed {
@@ -579,9 +580,12 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             } else {
                 0.0
             };
-            let mut frame_opts = opts.clone();
-            frame_opts.fp = Some((x, start_y + (end_y - start_y) * progress));
-            cam = make_camera(&frame_opts, &lvl);
+            let yaw = opts.fp_yaw.to_radians();
+            cam.loc = Vec3::new(
+                start_x + yaw.sin() * distance * progress,
+                start_y + yaw.cos() * distance * progress,
+                animation_start.z,
+            );
         }
         if opts.dig && frame_index == opts.dig_frame {
             let rect = dig_crater(&mut lvl, opts.dig_center, opts.dig_radius);

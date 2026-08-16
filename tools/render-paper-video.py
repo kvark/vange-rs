@@ -2,9 +2,10 @@
 """Render a synchronized mosaic flythrough of all publication methods.
 
 The level binary renders one numbered PNG sequence per method while moving a
-first-person camera linearly along Y. ffmpeg labels and assembles the seven
-sequences into a single H.264 mosaic. Output stays under ``work/`` until the
-terrain-image license permits publication.
+first-person camera horizontally in its viewing direction at constant world
+altitude. ffmpeg labels and assembles the seven sequences into a single H.264
+mosaic. Output stays under ``work/`` until the terrain-image license permits
+publication.
 """
 
 import argparse
@@ -40,7 +41,8 @@ def main():
     parser.add_argument("--output", default="work/paper-video/terrain-methods.mp4")
     parser.add_argument("--start", default="837,3984",
                         help="starting first-person X,Y")
-    parser.add_argument("--end-y", type=float, default=5184.0)
+    parser.add_argument("--distance", type=float, default=800.0,
+                        help="horizontal travel distance in terrain units")
     parser.add_argument("--yaw", type=float, default=299.0)
     parser.add_argument("--pitch", type=float, default=-30.0)
     parser.add_argument("--eye-height", type=float, default=78.0)
@@ -85,7 +87,7 @@ def main():
             "--frame-dir", str(frame_dir),
             "--terrain", terrain, *extra,
             "--fp", args.start,
-            "--fp-y-end", str(args.end_y),
+            "--fp-travel", str(args.distance),
             "--fp-height", str(args.eye_height),
             f"--fp-yaw={args.yaw}", f"--fp-pitch={args.pitch}",
             "--near", "1", "--far", "600",

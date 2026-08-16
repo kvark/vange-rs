@@ -135,6 +135,7 @@ EDIT_CENTER = (1024, 8192)
 EDIT_RADIUS = 48
 EDIT_FRAME_COUNTS = (1, 2, 4, 8, 16)
 EDIT_TIMING_REPEATS = 5
+PROTOCOL_VERSION = 3
 
 DEFAULT_VIEWS = {
     0.0: [
@@ -329,6 +330,38 @@ def load_layers(ron_path):
     return low, dual, np.minimum(low + delta, high), high
 
 
+def camera_rays(width, height, yaw_degrees, pitch_degrees):
+    """World-space pixel-center rays matching the headless camera basis."""
+    yaw, pit = math.radians(yaw_degrees), math.radians(pitch_degrees)
+    # Yaw first, then tilt within the vertical plane, matching
+    # `make_camera` in bin/level/headless.rs. `right` stays horizontal, so
+    # the horizon stays level.
+    flat = np.array([math.sin(yaw), math.cos(yaw), 0.0])
+    right = np.cross(flat, np.array([0.0, 0.0, 1.0]))
+    right /= np.linalg.norm(right)
+    fwd = flat * math.cos(pit) + np.array([0.0, 0.0, 1.0]) * math.sin(pit)
+    up = np.cross(right, fwd)
+    # `DEFAULT_FOCAL_PX`. The renderer takes its vertical FOV from
+    # `fov_from_focal_px(512, height)`, i.e. a focal length fixed in
+    # *pixels*, so the reference must use the same constant and let the
+    # frame size decide the angle. Scaling it by the height instead only
+    # agreed at 300 px tall and diverged toward the frame edges elsewhere.
+    focal = 512.0
+    j, i = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
+    # `make_camera` folds a Y reflection into the view matrix and stores
+    # `-right` in the rotation's X column. Consequently increasing screen X
+    # points along world `-right`, not `right`. The old sign horizontally
+    # mirrored the CPU reference: the centre ray still agreed, while wide
+    # top-down frames compared each rendered pixel with unrelated terrain.
+    d = (
+        fwd[None, None, :] * focal
+        - right[None, None, :] * (i - width / 2 + 0.5)[..., None]
+        + up[None, None, :] * (height / 2 - j - 0.5)[..., None]
+    )
+    d /= np.linalg.norm(d, axis=2, keepdims=True)
+    return d, fwd
+
+
 def ground_truth(layers, view, width, height, eye_height, far, pitch=0.0):
     """Ray cast the height data with the same camera.
 
@@ -345,29 +378,16 @@ def ground_truth(layers, view, width, height, eye_height, far, pitch=0.0):
     H, W = low.shape
     base = low if view["under"] else high
     eye = float(base[view["y"], view["x"]]) + eye_height
-    yaw, pit = math.radians(view["yaw"]), math.radians(pitch)
-    # Yaw first, then tilt within the vertical plane, matching
-    # `make_camera` in bin/level/headless.rs. `right` stays horizontal, so
-    # the horizon stays level.
-    flat = np.array([math.sin(yaw), math.cos(yaw), 0.0])
-    right = np.cross(flat, np.array([0.0, 0.0, 1.0]))
-    right /= np.linalg.norm(right)
-    fwd = flat * math.cos(pit) + np.array([0.0, 0.0, 1.0]) * math.sin(pit)
-    up = np.cross(right, fwd)
-    # `DEFAULT_FOCAL_PX`. The renderer takes its vertical FOV from
-    # `fov_from_focal_px(512, height)`, i.e. a focal length fixed in
-    # *pixels*, so the reference must use the same constant and let the
-    # frame size decide the angle. Scaling it by the height instead only
-    # agreed at 300 px tall and diverged toward the frame edges elsewhere.
-    focal = 512.0
-    j, i = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
-    d = (
-        fwd[None, None, :] * focal
-        + right[None, None, :] * (i - width / 2 + 0.5)[..., None]
-        + up[None, None, :] * (height / 2 - j - 0.5)[..., None]
-    )
-    d /= np.linalg.norm(d, axis=2, keepdims=True)
+    d, fwd = camera_rays(width, height, view["yaw"], pitch)
     loc = np.array([float(view["x"]), float(view["y"]), eye])
+    # Perspective near/far planes are distances along the view axis, not
+    # spherical distances from the eye. An off-axis ray therefore reaches
+    # `far / cos(theta)` before the GPU clips it. Stopping every CPU ray at
+    # `far` made the wide top-down frames report common-mode "covers sky"
+    # and large depth errors near their edges even when all renderers agreed.
+    cos_view = np.clip(d @ fwd, 1e-6, 1.0)
+    near_t = 1.0 / cos_view
+    far_t = far / cos_view
 
     def solid(t):
         """Is the sample at distance `t` inside terrain?
@@ -394,16 +414,17 @@ def ground_truth(layers, view, width, height, eye_height, far, pitch=0.0):
     dist = np.full((height, width), np.inf)
     prev = np.zeros((height, width))
     t = 0.5
-    while t < far:
+    while t <= float(far_t.max()):
         step = 0.5 if t < 250 else 2.0
         ts = np.full((height, width), t)
         p = loc[None, None, :] + d * t
         z = p[..., 2]
+        alive &= t <= far_t
         alive &= ~(alive & (z > 255) & (d[..., 2] > 0))
-        s = alive & solid(ts)
+        s = alive & (t >= near_t) & solid(ts)
         fresh = s & ~hit
         dist[fresh] = t
-        prev[fresh] = t - step
+        prev[fresh] = np.maximum(t - step, near_t[fresh])
         hit |= s
         alive &= ~s
         if not alive.any():
@@ -431,7 +452,9 @@ def ray_distance(depth, dirs, near, far):
     """
     z = np.clip(depth.astype(np.float64), 0.0, 0.9999995)
     view_z = near * far / (far - z * (far - near))
-    fwd = dirs[dirs.shape[0] // 2, dirs.shape[1] // 2]
+    # Symmetric pixel-center rays average to the true camera forward vector;
+    # choosing one of the four middle pixels in an even-sized image does not.
+    fwd = dirs.mean(axis=(0, 1))
     fwd = fwd / np.linalg.norm(fwd)
     cos = np.clip(dirs @ fwd, 1e-6, 1.0)
     return view_z / cos
@@ -665,6 +688,12 @@ def main():
                     help="small and fast, for checking the harness works. Not "
                          "a result: too few frames to be stable and too few "
                          "pixels for the reference to agree with anything")
+    ap.add_argument("--accuracy-only", action="store_true",
+                    help="rebuild the corrected geometry baseline with one "
+                         "timed frame per cell; timings from this run are not "
+                         "publication measurements")
+    ap.add_argument("--allow-dirty", action="store_true",
+                    help="permit a non-reproducible run from a dirty checkout")
     ap.add_argument("--frames", type=int, default=40,
                     help="timed frames per render. Each is submitted and "
                          "polled to completion, so this measures GPU work "
@@ -693,6 +722,9 @@ def main():
                     help="run only the short dynamic-edit and memory protocol; "
                          "use this to supplement an older complete batch")
     args = ap.parse_args()
+    if args.accuracy_only:
+        args.frames = 1
+        args.skip_edits = True
     if args.quick:
         args.width, args.height, args.frames = 320, 200, 4
         args.view = args.view or ["quick:200,200:0"]
@@ -724,6 +756,10 @@ def main():
         )
 
     source = source_state()
+    if source["dirty"] and not args.allow_dirty:
+        raise SystemExit(
+            "refusing to collect from a dirty checkout; commit/stash changes "
+            "or pass --allow-dirty for a non-publication diagnostic")
     scene_records = [
         {
             "name": view["name"], "x": view["x"], "y": view["y"],
@@ -747,6 +783,8 @@ def main():
         args.out = os.path.join(args.work, "compare")
     manifest = {
         "status": "running",
+        "protocol_version": PROTOCOL_VERSION,
+        "purpose": "accuracy-only" if args.accuracy_only else "publication",
         "started_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "source": source,
         "level": args.level,
@@ -778,6 +816,8 @@ def main():
         json_out = args.json_out or os.path.join(
             args.work, f"edit-results-{slug(device['adapter'])}.json")
         write_json_atomic(json_out, {
+            "protocol_version": PROTOCOL_VERSION,
+            "purpose": "edit-and-memory",
             "label": args.label or device["adapter"],
             "source": source,
             "level": args.level,
@@ -820,16 +860,38 @@ def main():
               f"{100 * ref_speckle.mean():.1f}% of it genuinely rough")
         for method in METHODS:
             png, depth, meta = render(args, view, method, args.out, pitch)
+            fields = ("adapter", "backend", "device_type", "driver",
+                      "driver_info")
+            missing = [key for key in fields if key not in meta]
+            if missing:
+                raise SystemExit(
+                    f"{args.binary} wrote a result without {missing}. "
+                    "That binary predates the fields this script needs; "
+                    "`cargo build --release --bin level` and re-run.")
+            cell_device = {key: meta[key] for key in fields}
             if device is None:
-                fields = ("adapter", "backend", "device_type", "driver",
-                          "driver_info")
-                missing = [k for k in fields if k not in meta]
-                if missing:
-                    raise SystemExit(
-                        f"{args.binary} wrote a result without {missing}. "
-                        "That binary predates the fields this script needs; "
-                        "`cargo build --release --bin level` and re-run.")
-                device = {k: meta[k] for k in fields}
+                device = cell_device
+            elif cell_device != device:
+                raise SystemExit(
+                    f"adapter changed during collection: {device['adapter']} "
+                    f"to {cell_device['adapter']}")
+            expected_meta = {
+                "width": args.width,
+                "height": args.height,
+                "frames": args.frames,
+                "fp_yaw_deg": view["yaw"],
+                "fp_pitch_deg": pitch,
+                "near": 1.0,
+                "far": args.far,
+            }
+            wrong = [key for key, value in expected_meta.items()
+                     if key not in meta or abs(meta[key] - value) > 1e-5]
+            frame_count = len(meta.get("frame_ms", []))
+            if wrong or frame_count != args.frames:
+                raise SystemExit(
+                    f"{method[0]} / {view['name']} wrote incompatible "
+                    f"benchmark metadata (fields {wrong}, frames "
+                    f"{frame_count}); rebuild and re-run")
             # Prefer the GPU's own view when the adapter can give it.
             # The CPU figure brackets submit-and-poll, so it carries the
             # round trip; on lavapipe that is ~9%, and on a real GPU with
@@ -841,6 +903,7 @@ def main():
             have_gpu = (meta.get("backend") != "Metal" and
                         meta.get("gpu_timing") and gpu is not None and gpu == gpu)
             ms = gpu if have_gpu else meta["avg_ms"]
+            selected_samples = meta["gpu_ms"] if have_gpu else meta["frame_ms"]
             d = np.fromfile(depth, dtype="<f4").reshape(args.height, args.width)
             empty = d >= 0.999999          # cleared depth: nothing drawn
             see_through = 100 * (empty & ~sky).mean()
@@ -873,9 +936,11 @@ def main():
                 "avg_ms": ms,
                 "timing": "gpu" if have_gpu else "cpu",
                 "cpu_avg_ms": meta["avg_ms"],
-                "min_ms": meta.get("gpu_min_ms") if have_gpu else meta["min_ms"],
-                "max_ms": meta["max_ms"],
-                "frame_ms": meta["gpu_ms"] if have_gpu else meta["frame_ms"],
+                "min_ms": min(selected_samples),
+                "max_ms": max(selected_samples),
+                "frame_ms": selected_samples,
+                "cpu_frame_ms": meta["frame_ms"],
+                "gpu_frame_ms": meta["gpu_ms"],
                 "prep_setup_ms": meta.get("prep_setup_ms"),
                 "prep_first_frame_ms": meta.get("prep_first_frame_ms"),
                 "prep_warmup_ms": meta.get("prep_warmup_ms"),
@@ -908,9 +973,13 @@ def main():
     # caller had to know in advance.
     json_out = args.json_out
     if json_out is None and device:
-        json_out = os.path.join(args.work, f"results-{slug(device['adapter'])}.json")
+        prefix = "accuracy-results" if args.accuracy_only else "results"
+        json_out = os.path.join(
+            args.work, f"{prefix}-{slug(device['adapter'])}.json")
     if json_out:
         write_json_atomic(json_out, {
+            "protocol_version": PROTOCOL_VERSION,
+            "purpose": "accuracy-only" if args.accuracy_only else "publication",
             "label": args.label or (device or {}).get("adapter", "unknown"),
             "source": source,
             "level": args.level,
