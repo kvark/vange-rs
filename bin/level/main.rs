@@ -58,6 +58,24 @@ struct Cli {
     /// Crater radius in terrain texels.
     #[arg(long)]
     dig_radius: Option<i32>,
+    /// Load the world's moving land (`data.vot`) and location engines
+    /// (`location.lst`).
+    #[arg(long, default_value_t = false)]
+    moving_land: bool,
+    /// Quants of moving land to run before the snapshot.
+    #[arg(long, default_value_t = 0)]
+    ml_quants: u32,
+    /// Frame to run the moving land on; 0 is a from-scratch reference,
+    /// 1 exercises the incremental terrain update.
+    #[arg(long, default_value_t = 1)]
+    ml_frame: u32,
+    /// Stand an object at "x,y,z" so proximity engines fire.
+    #[arg(long)]
+    ml_touch: Option<String>,
+    /// Release every location from its parked start so it animates without
+    /// anything driving it.
+    #[arg(long, default_value_t = false)]
+    ml_free_run: bool,
     /// First-person camera: stand at "x,y" on the terrain instead of
     /// orbiting a target. Overrides --cam-target/--cam-distance/--cam-elev.
     #[arg(long)]
@@ -269,6 +287,18 @@ fn main() {
                 (v.x as i32, v.y as i32)
             }),
             dig_radius: cli.dig_radius,
+            moving_land: cli.moving_land,
+            ml_quants: cli.ml_quants,
+            ml_frame: cli.ml_frame,
+            ml_touch: cli.ml_touch.as_deref().map(|s| {
+                let v = s
+                    .split(',')
+                    .map(|t| t.trim().parse::<i32>().expect("--ml-touch wants x,y,z"))
+                    .collect::<Vec<_>>();
+                assert_eq!(v.len(), 3, "--ml-touch wants x,y,z");
+                (v[0], v[1], v[2])
+            }),
+            ml_free_run: cli.ml_free_run,
             fp: cli.fp.as_deref().map(|s| {
                 let v = parse_vec3(&format!("{},0", s));
                 (v.x, v.y)
