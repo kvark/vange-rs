@@ -380,7 +380,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", default="remote/results-*.json")
     parser.add_argument("--accuracy-results", required=True,
-                        help="upgraded protocol-v3 accuracy-only JSON")
+                        help="protocol-v3 accuracy-only or publication JSON")
     parser.add_argument("--survey", default="paper/survey.json")
     parser.add_argument("--out", default="paper/figures")
     parser.add_argument("--edit-dir", default="work/edit-figure",
@@ -389,9 +389,10 @@ def main():
     runs = load_runs(args.results)
     with open(args.accuracy_results) as source:
         accuracy = json.load(source)
-    if (accuracy.get("purpose") != "accuracy-only" or
-            accuracy.get("protocol_version", 0) < 3):
-        raise SystemExit("--accuracy-results must be a protocol-v3 accuracy-only run")
+    if (accuracy.get("protocol_version", 0) < 3 or
+            accuracy.get("purpose") not in ("accuracy-only", "publication")):
+        raise SystemExit("--accuracy-results must be a protocol-v3 "
+                         "accuracy-only or publication run")
     survey = json.load(open(args.survey))
     figures = {
         "performance.svg": lambda path: figure_performance(runs, path),
