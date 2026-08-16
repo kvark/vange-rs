@@ -1,7 +1,8 @@
 use crate::boilerplate::Application;
+use crate::moving_ui::MovingLandUi;
 use vangers::{
     config, level,
-    render::{Batcher, GraphicsContext, Render, ScreenTargets},
+    render::{Batcher, DirtyRect, GraphicsContext, Rect, Render, ScreenTargets},
     space,
 };
 
@@ -22,6 +23,8 @@ enum Input {
 pub struct LevelView {
     render: Render,
     level: level::Level,
+    /// `None` when the level has no `data.vot` to animate.
+    moving_land: Option<MovingLandUi>,
     cam: space::Camera,
     input: Input,
     ui: config::settings::Ui,
@@ -208,9 +211,15 @@ impl LevelView {
             level.palette = level::read_palette(pal_file, Some(&level_config.terrains));
         }
 
+        let moving_land = MovingLandUi::load(&level_config);
+        if moving_land.is_none() {
+            info!("This level has no moving land");
+        }
+
         LevelView {
             render,
             level,
+            moving_land,
             cam,
             input: Input::Empty,
             ui: settings.ui,
@@ -352,6 +361,25 @@ impl Application for LevelView {
     }
 
     fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
+        if let Some(ref mut moving) = self.moving_land {
+            let z_range = 0..self.level.geometry.height as u16;
+            for r in moving.update(&mut self.level, delta) {
+                self.render.terrain.dirty_rects.push(DirtyRect {
+                    rect: Rect {
+                        x: r.x as u16,
+                        y: r.y as u16,
+                        w: r.w as u16,
+                        h: r.h as u16,
+                    },
+                    z_range: z_range.clone(),
+                    need_upload: true,
+                });
+            }
+            if let Some((target, distance)) = moving.focus.take() {
+                self.cam.orbit_to(target, distance, 45f32.to_radians());
+            }
+        }
+
         let move_speed = match self.cam.proj {
             space::Projection::Perspective(_) => 100.0,
             space::Projection::Ortho { .. } => 500.0,
@@ -492,6 +520,12 @@ impl Application for LevelView {
                 ui.label("Level:");
                 self.level.draw_ui(ui);
             });
+            if let Some(ref mut moving) = self.moving_land {
+                ui.group(|ui| {
+                    ui.label("Moving land:");
+                    moving.draw_ui(ui, &self.level);
+                });
+            }
             ui.group(|ui| {
                 ui.label("Renderer:");
                 self.render.draw_ui(ui);
