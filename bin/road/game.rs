@@ -468,7 +468,6 @@ impl Game {
                 // Engines park their location at the closed phase; anything
                 // no engine drives keeps looping on its own.
                 triggers.reset_locations(&mut land);
-                triggers.free_unowned(&mut land);
                 (land, triggers)
             }
             None => Default::default(),

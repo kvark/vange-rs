@@ -135,6 +135,19 @@ pub struct SnapshotOptions {
     /// Print the raw packed data and the decoded surface for one texel
     /// pair, to compare the CPU query against the shader's decoding.
     pub dump_texel: Option<(i32, i32)>,
+    /// Load the world's moving land and location engines.
+    pub moving_land: bool,
+    /// Quants of moving land to run before rendering.
+    pub ml_quants: u32,
+    /// Frame to run them on. 0 applies them before the terrain structures
+    /// are built (from-scratch reference), 1 exercises the incremental
+    /// dirty-rect path the game actually uses.
+    pub ml_frame: u32,
+    /// Stand an object at `x,y,z` so proximity engines fire.
+    pub ml_touch: Option<(i32, i32, i32)>,
+    /// Release every location from its parked start, so locations without a
+    /// self-driving engine animate anyway.
+    pub ml_free_run: bool,
 }
 
 impl Default for SnapshotOptions {
@@ -169,6 +182,11 @@ impl Default for SnapshotOptions {
             frame_dir: None,
             cull_dump: None,
             dump_texel: None,
+            moving_land: false,
+            ml_quants: 0,
+            ml_frame: 1,
+            ml_touch: None,
+            ml_free_run: false,
             width: 800,
             height: 600,
             cam_target: Vec3::new(128.0, 128.0, 0.0),
@@ -459,6 +477,35 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         None => (0..256).map(|_| [255u8, 255, 255, 255]).collect(),
     };
 
+    // Moving land, loaded from the same folder as the world INI. Only the
+    // native path has one; the VFS mount does not carry `data.vot`.
+    let mut moving_land = if opts.moving_land {
+        let world_dir = opts
+            .level_path
+            .as_ref()
+            .map(|p| std::path::Path::new(p).parent().unwrap().to_path_buf())
+            .expect("--moving-land needs a native level path");
+        let data_vot = world_dir.join("data.vot");
+        let mut land =
+            level::moving::MovingLand::load_dir(&data_vot, level_config.terrains.len() as i32);
+        let triggers = level::trigger::Triggers::load(&world_dir, &data_vot, &land);
+        triggers.reset_locations(&mut land);
+        if opts.ml_free_run {
+            for location in land.locations.iter_mut() {
+                location.set_go_phase(level::moving::FREE_RUNNING);
+            }
+        }
+        info!(
+            "Moving land: {} locations, {} engines, {} sensors",
+            land.locations.len(),
+            triggers.engines.len(),
+            triggers.sensors.len()
+        );
+        Some((land, triggers))
+    } else {
+        None
+    };
+
     let mut cam = make_camera(&opts, &lvl);
     let animation_start = cam.loc;
 
@@ -598,6 +645,38 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 z_range: 0..0x100,
                 need_upload: true,
             });
+        }
+        if let Some((ref mut land, ref mut triggers)) = moving_land
+            && frame_index == opts.ml_frame
+            && opts.ml_quants > 0
+        {
+            let mut regions = Vec::new();
+            for _ in 0..opts.ml_quants {
+                if let Some(pos) = opts.ml_touch {
+                    triggers.touch(pos, 3, (lvl.size.0, lvl.size.1));
+                }
+                triggers.update(land);
+                land.update(&mut lvl, &mut regions);
+            }
+            regions.sort_unstable();
+            regions.dedup();
+            info!(
+                "Moving land: {} quants touched {} distinct regions",
+                opts.ml_quants,
+                regions.len()
+            );
+            for r in regions {
+                render.terrain.dirty_rects.push(vangers::render::DirtyRect {
+                    rect: vangers::render::Rect {
+                        x: r.x as u16,
+                        y: r.y as u16,
+                        w: r.w as u16,
+                        h: r.h as u16,
+                    },
+                    z_range: 0..0x100,
+                    need_upload: true,
+                });
+            }
         }
         let started = Instant::now();
 

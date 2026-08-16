@@ -57,6 +57,13 @@ pub struct Location {
 }
 
 impl Location {
+    /// A new location starts parked at phase 0.
+    ///
+    /// That is what `MobileLocation::checkQuant` leaves behind the first time
+    /// a location's rows are resident: it unfreezes, rewinds, and sets
+    /// `goPh = 0`. Levels are always fully resident here, so every location
+    /// begins in that state - a bridge sits still until an engine sends it
+    /// somewhere, rather than waving on its own.
     pub fn new(source: Arc<MobileLocation>, offset: (i32, i32)) -> Self {
         let (max_x, max_y) = source.max_frame_size();
         let steps = vec![0; source.frames.len()];
@@ -69,7 +76,7 @@ impl Location {
             alt: vec![0; max_x as usize * max_y as usize],
             stage: -1,
             max_stage,
-            go_phase: FREE_RUNNING,
+            go_phase: 0,
         }
     }
 
@@ -528,8 +535,12 @@ mod tests {
         }
     }
 
+    /// A location released from its parked start, for the tests that are
+    /// about the animation itself rather than the phase policy.
     fn location(mode: Mode, frames: Vec<Frame>) -> Location {
-        location_with_keys(mode, frames, [0; MAX_KEY_PHASE])
+        let mut ml = location_with_keys(mode, frames, [0; MAX_KEY_PHASE]);
+        ml.set_go_phase(FREE_RUNNING);
+        ml
     }
 
     fn location_with_keys(
@@ -548,6 +559,25 @@ mod tests {
             }),
             (0, 0),
         )
+    }
+
+    #[test]
+    fn a_new_location_starts_parked_at_phase_zero() {
+        let mut level = test_level();
+        let mut ml = location_with_keys(
+            Mode::Absolute,
+            vec![frame((0, 0), (1, 1), vec![42], 1)],
+            [0; MAX_KEY_PHASE],
+        );
+        assert_eq!(ml.go_phase(), 0);
+        assert!(ml.is_go_finish());
+
+        let mut regions = Vec::new();
+        for _ in 0..5 {
+            ml.update(&mut level, &mut regions);
+        }
+        assert!(regions.is_empty(), "a parked location must not animate");
+        assert_eq!(level.height[0], 100);
     }
 
     fn heights(level: &Level, x: i32, y: i32, w: i32, h: i32) -> Vec<u8> {
@@ -604,6 +634,54 @@ mod tests {
             ml.update(&mut level, &mut regions);
             assert_eq!(level.height[0], expected);
         }
+    }
+
+    /// A relative animation whose deltas cancel returns the surface exactly
+    /// where it started, as long as nothing hits an altitude clamp. The
+    /// rounding bias `MLFrame::start` seeds into the accumulator is what
+    /// makes the interpolated path exact rather than merely close.
+    #[test]
+    fn a_balanced_loop_restores_the_surface_exactly() {
+        for period in [1, 2, 3, 5, 7, 10, 20] {
+            for delta in [1u8, 3, 7, 9, 16, 33, 100] {
+                let mut level = test_level();
+                let before = level.height.clone();
+                let mut up = frame((1, 1), (3, 2), vec![delta; 6], period);
+                let mut down = frame((1, 1), (3, 2), vec![delta; 6], period);
+                // Every texel of the second frame moves the other way.
+                down.sign_bits[0] = u32::MAX;
+                up.sign_bits[0] = 0;
+                let mut ml = location(Mode::Relative, vec![up, down]);
+
+                let mut regions = Vec::new();
+                let loop_len = 2 * period;
+                for _ in 0..3 * loop_len {
+                    ml.update(&mut level, &mut regions);
+                }
+                assert_eq!(
+                    level.height, before,
+                    "period {period}, delta {delta} did not come back"
+                );
+            }
+        }
+    }
+
+    /// The counterpart: an intermediate clamp is lossy, which is how the
+    /// original behaves and why some shipped locations do not round-trip.
+    #[test]
+    fn a_clamped_excursion_loses_the_difference() {
+        let mut level = test_level();
+        // Ground is at 100, so -120 clamps at 0 and +120 overshoots.
+        let mut down = frame((0, 0), (1, 1), vec![120], 1);
+        down.sign_bits[0] = 1;
+        let up = frame((0, 0), (1, 1), vec![120], 1);
+        let mut ml = location(Mode::Relative, vec![down, up]);
+
+        let mut regions = Vec::new();
+        ml.update(&mut level, &mut regions);
+        assert_eq!(level.height[0], 0, "clamped instead of going negative");
+        ml.update(&mut level, &mut regions);
+        assert_eq!(level.height[0], 120, "the clamped 20 units are gone");
     }
 
     #[test]
@@ -769,6 +847,10 @@ mod tests {
 
         let mut level = test_level();
         let mut regions = Vec::new();
+        // Loaded locations start parked, so release them first.
+        for location in land.locations.iter_mut() {
+            location.set_go_phase(FREE_RUNNING);
+        }
         land.update(&mut level, &mut regions);
         // Both locations write the same texel, in order.
         assert_eq!(level.height[0], 103);
@@ -790,9 +872,9 @@ mod tests {
     }
 
     /// Three absolute frames, so one quant lands one frame and the stage
-    /// counter tracks the frame index.
+    /// counter tracks the frame index. Released from its parked start.
     fn three_step_stairs() -> Location {
-        location_with_keys(
+        let mut ml = location_with_keys(
             Mode::Absolute,
             vec![
                 frame((0, 0), (1, 1), vec![10], 1),
@@ -800,7 +882,9 @@ mod tests {
                 frame((0, 0), (1, 1), vec![30], 1),
             ],
             [0, 2, 0, 0],
-        )
+        );
+        ml.set_go_phase(FREE_RUNNING);
+        ml
     }
 
     #[test]

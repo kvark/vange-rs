@@ -125,7 +125,6 @@ impl World {
         let mut land = MovingLand::load_dir(&self.data_vot(), 8);
         let triggers = Triggers::load(&self.dir, &self.data_vot(), &land);
         triggers.reset_locations(&mut land);
-        triggers.free_unowned(&mut land);
         (land, triggers)
     }
 }

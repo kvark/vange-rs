@@ -19,7 +19,7 @@
 //! inventory systems this port does not have, so they are parsed far enough
 //! to be skipped and reported.
 
-use crate::level::moving::{FREE_RUNNING, MovingLand};
+use crate::level::moving::MovingLand;
 use crate::level::vlc::{self, Sensor};
 
 use std::path::Path;
@@ -404,36 +404,23 @@ impl Triggers {
         linked
     }
 
-    /// Sends every engine's location to its closed phase, which is what
-    /// `LocationEngine::Open` does once the level is up.
+    /// Sends every engine's location to its closed phase, which is what the
+    /// `Open` of each engine type does once the level is up.
+    ///
+    /// Locations start parked at phase 0 already, so this only matters for an
+    /// engine whose `DeactivePhase` names some other key. Engine types this
+    /// port skips are left alone, matching the original: of those, only
+    /// `SignPlayEngine` parks its location at all, and every `DeactivePhase`
+    /// in the shipped levels is key 0 regardless.
     pub fn reset_locations(&self, land: &mut MovingLand) {
         for engine in self.engines.iter() {
             let Some(index) = engine.location else {
                 continue;
             };
-            let phase = match engine.kind {
-                Kind::Unsupported(_) => continue,
-                _ => engine.deactive_phase,
-            };
-            land.locations[index].go_key_phase(phase);
-        }
-    }
-
-    /// Frees any location that no engine drives, so it keeps looping the way
-    /// an unattached bridge does in the original.
-    pub fn free_unowned(&self, land: &mut MovingLand) {
-        let mut owned = vec![false; land.locations.len()];
-        for engine in self.engines.iter() {
-            if let (Some(index), false) =
-                (engine.location, matches!(engine.kind, Kind::Unsupported(_)))
-            {
-                owned[index] = true;
+            if matches!(engine.kind, Kind::Unsupported(_)) {
+                continue;
             }
-        }
-        for (location, owned) in land.locations.iter_mut().zip(owned) {
-            if !owned {
-                location.set_go_phase(FREE_RUNNING);
-            }
+            land.locations[index].go_key_phase(engine.deactive_phase);
         }
     }
 
@@ -913,14 +900,22 @@ Luck 0
     }
 
     #[test]
-    fn locations_without_an_engine_keep_looping() {
+    fn locations_without_an_engine_sit_still() {
+        let mut level = level_for(SIZE);
         let mut land = land_with(&["bridge", "waterfall"]);
         let triggers = triggers_with(Vec::new(), DOOR_LST, &land);
         triggers.reset_locations(&mut land);
-        triggers.free_unowned(&mut land);
 
-        assert_eq!(land.locations[0].go_phase(), 0, "the door is parked");
-        assert_eq!(land.locations[1].go_phase(), FREE_RUNNING);
+        // Both are parked at phase 0 - the engine-less one included, which is
+        // where `checkQuant` leaves every location in the original.
+        assert_eq!(land.locations[0].go_phase(), 0);
+        assert_eq!(land.locations[1].go_phase(), 0);
+
+        let mut regions = Vec::new();
+        for _ in 0..10 {
+            land.update(&mut level, &mut regions);
+        }
+        assert!(regions.is_empty(), "nothing should animate unprompted");
     }
 
     #[test]
