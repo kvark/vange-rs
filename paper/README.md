@@ -60,12 +60,8 @@ the multipass frame. wgpu does not promise strict ordering for arbitrary
 command-encoder timestamps, so this was an invalid harness assumption rather
 than evidence of incorrect rendering. The merge output keeps those timing
 classes explicit.
-The benchmarking checkout is tagged `terrain-paper`. That is the only
-measurement tag; editorial work can continue without moving it. The five
-JSONs record `2d86ce0`, the head of
-[PR #332](https://github.com/kvark/vange-rs/pull/332) before a rebase
-merge. The published equivalent is `5586e2a` on `master` (same tree).
-The tag points at that rebased commit.
+The benchmarking checkout is tagged `terrain-paper` (`5586e2a`). That is
+the only measurement tag; editorial work can continue without moving it.
 
 At startup the harness removes any previous `work/compare/comparison.png` and
 writes `work/compare/run-manifest.json` with the checkout revision and exact
