@@ -52,10 +52,19 @@ struct Cli {
     /// reference), 1 exercises the incremental refit.
     #[arg(long, default_value_t = 1)]
     dig_frame: u32,
+    /// Crater center as "x,y"; defaults to the middle of the level.
+    #[arg(long)]
+    dig_center: Option<String>,
+    /// Crater radius in terrain texels.
+    #[arg(long)]
+    dig_radius: Option<i32>,
     /// First-person camera: stand at "x,y" on the terrain instead of
     /// orbiting a target. Overrides --cam-target/--cam-distance/--cam-elev.
     #[arg(long)]
     fp: Option<String>,
+    /// End Y coordinate for a linear camera move across timed frames.
+    #[arg(long)]
+    fp_y_end: Option<f32>,
     /// Eye height above the local ground surface
     #[arg(long, default_value_t = 8.0)]
     fp_height: f32,
@@ -135,6 +144,9 @@ struct Cli {
     /// Dump the depth buffer as raw f32 alongside the snapshot.
     #[arg(long)]
     depth_out: Option<String>,
+    /// Save every timed color frame as a numbered PNG in this directory.
+    #[arg(long)]
+    frame_dir: Option<String>,
     /// Print the raw packed data and decoded surface for one texel pair.
     #[arg(long)]
     dump_texel: Option<String>,
@@ -252,11 +264,18 @@ fn main() {
             mesh_lod_distance: cli.mesh_lod_distance,
             dig: cli.dig,
             dig_frame: cli.dig_frame,
+            dig_center: cli.dig_center.as_deref().map(|s| {
+                let v = parse_vec3(&format!("{},0", s));
+                (v.x as i32, v.y as i32)
+            }),
+            dig_radius: cli.dig_radius,
             fp: cli.fp.as_deref().map(|s| {
                 let v = parse_vec3(&format!("{},0", s));
                 (v.x, v.y)
             }),
+            fp_y_end: cli.fp_y_end,
             depth_out: cli.depth_out.clone(),
+            frame_dir: cli.frame_dir.clone(),
             cull_dump: cli.cull_dump.clone(),
             dump_texel: cli.dump_texel.as_deref().map(|s| {
                 let v = parse_vec3(&format!("{},0", s));

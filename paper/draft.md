@@ -1,5 +1,9 @@
 # Six Ways to Draw Vangers with WebGPU: Real-Time Rendering of Editable Multi-Layer Height Fields
 
+**Dzmitry Malyshau**<br>
+Independent Researcher<br>
+<kvark@fastmail.com>
+
 **Status: submission draft after the final hardware batch.** Five-device
 results from the final scenes, 64-step full-screen dual-solid ray marcher,
 and common shadow protocol are integrated below. The dynamic-edit experiment,

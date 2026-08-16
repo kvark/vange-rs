@@ -267,6 +267,7 @@ struct VoxelDebugRender {
 
 struct RayVoxelData {
     grid: wgpu::Buffer,
+    grid_bytes: u64,
     bake_pipeline_layout: wgpu::PipelineLayout,
     draw_pipeline_layout: wgpu::PipelineLayout,
     draw_shader: wgpu::ShaderModule,
@@ -331,16 +332,29 @@ struct MeshGeometry {
     /// The live triangulation, kept so terrain edits refine the mesh in
     /// place instead of rebuilding it.
     tin: level::tin::Tin,
+    gpu_bytes: u64,
 }
 
 impl MeshGeometry {
     fn new(tin: level::tin::Tin, mesh: &level::tin::Mesh, device: &wgpu::Device) -> Self {
+        let gpu_bytes = mesh
+            .chunks
+            .iter()
+            .map(|chunk| {
+                (chunk.vertices.len() * mem::size_of::<level::tin::MeshVertex>()
+                    + chunk.indices.len() * mem::size_of::<u32>()) as u64
+            })
+            .sum();
         let chunks = mesh
             .chunks
             .iter()
             .map(|c| ChunkBufs::new(c, device))
             .collect();
-        MeshGeometry { chunks, tin }
+        MeshGeometry {
+            chunks,
+            tin,
+            gpu_bytes,
+        }
     }
 }
 
@@ -367,6 +381,7 @@ enum Kind {
         bind_group: wgpu::BindGroup,
         compute_groups: [u32; 3],
         density: [u32; 3],
+        storage_bytes: u64,
     },
     Mesh {
         pipeline: wgpu::RenderPipeline,
@@ -400,6 +415,16 @@ enum Kind {
         /// else that makes geometry come and go.
         cull: bool,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MemoryStats {
+    /// Explicit persistent GPU data unique to the selected terrain method.
+    /// Shared terrain textures, targets, pipelines, and driver allocations
+    /// are deliberately excluded.
+    pub method_gpu_bytes: u64,
+    /// Explicit persistent CPU data unique to the selected terrain method.
+    pub method_cpu_bytes: u64,
 }
 
 /// One chunk's footprint, in level texels.
@@ -466,6 +491,31 @@ pub struct Context {
 }
 
 impl Context {
+    pub fn memory_stats(&self) -> MemoryStats {
+        match self.kind {
+            Kind::Ray { .. } | Kind::Slice { .. } => MemoryStats::default(),
+            Kind::Paint { .. } => MemoryStats {
+                method_gpu_bytes: (mem::size_of::<Vertex>() + 36 * mem::size_of::<u16>()) as u64,
+                method_cpu_bytes: 0,
+            },
+            Kind::Scatter { storage_bytes, .. } => MemoryStats {
+                method_gpu_bytes: storage_bytes,
+                method_cpu_bytes: 0,
+            },
+            Kind::RayVoxel(ref data) => MemoryStats {
+                method_gpu_bytes: data.grid_bytes,
+                method_cpu_bytes: (data.mips.capacity() * mem::size_of::<VoxelMip>()) as u64,
+            },
+            Kind::Mesh {
+                geo: Some(ref geo), ..
+            } => MemoryStats {
+                method_gpu_bytes: geo.gpu_bytes,
+                method_cpu_bytes: geo.tin.allocated_bytes() as u64,
+            },
+            Kind::Mesh { geo: None, .. } => MemoryStats::default(),
+        }
+    }
+
     fn create_ray_pipeline(
         layout: &wgpu::PipelineLayout,
         device: &wgpu::Device,
@@ -1443,9 +1493,11 @@ impl Context {
                     data_offset_in_words >> 18
                 );
 
+                let grid_bytes =
+                    (mem::size_of::<VoxelHeader>() + data_offset_in_words as usize * 4) as u64;
                 let grid = gfx.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Grid"),
-                    size: (mem::size_of::<VoxelHeader>() + data_offset_in_words as usize * 4) as _,
+                    size: grid_bytes,
                     // COPY_SRC so `debug_voxel_occupancy` can read the
                     // acceleration structure back and check it against the
                     // height map.
@@ -1533,6 +1585,7 @@ impl Context {
 
                 Kind::RayVoxel(Box::new(RayVoxelData {
                     grid,
+                    grid_bytes,
                     bake_pipeline_layout,
                     draw_pipeline_layout,
                     draw_shader,
@@ -1639,6 +1692,7 @@ impl Context {
                     bind_group: local_bg,
                     compute_groups,
                     density,
+                    storage_bytes: 4 * (gfx.screen_size.width * gfx.screen_size.height) as u64,
                 }
             }
             settings::Terrain::Mesh { quality } => {

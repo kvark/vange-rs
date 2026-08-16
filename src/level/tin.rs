@@ -960,6 +960,21 @@ pub struct Tin {
 }
 
 impl Tin {
+    /// Heap memory retained by the editable triangulation, excluding the
+    /// render-ready vertex/index buffers owned by the renderer.
+    pub fn allocated_bytes(&self) -> usize {
+        let mut bytes = self.chunks.capacity() * std::mem::size_of::<ChunkState>();
+        for state in &self.chunks {
+            bytes += state.lods.capacity() * std::mem::size_of::<LodState>();
+            for lod in &state.lods {
+                bytes += lod.tri.verts.capacity() * std::mem::size_of::<u32>();
+                bytes += lod.tri.tris.capacity() * std::mem::size_of::<Tri>();
+                bytes += lod.tri.free.capacity() * std::mem::size_of::<u32>();
+            }
+        }
+        bytes
+    }
+
     pub fn build(level: &Level, config: &Config) -> (Self, Mesh) {
         profiling::scope!("Build Terrain TIN");
 
