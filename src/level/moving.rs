@@ -11,13 +11,17 @@
 
 use crate::level::{DOUBLE_LEVEL, Level};
 
-use std::{io, path::Path};
+use std::{io, path::Path, sync::Arc};
 
 pub use vot::{Frame, MAX_KEY_PHASE, MobileLocation, Mode};
 
 /// `MLPREC` of the original: the fractional bits of the interpolation
 /// accumulator. Altitudes are bytes, so an `i32` leaves plenty of headroom.
 const PRECISION: u32 = 16;
+
+/// `goPh == -1` of the original: the location loops forever instead of
+/// stopping at a phase.
+pub const FREE_RUNNING: i32 = -1;
 
 /// A rectangle of level texels, guaranteed not to wrap around the level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -29,9 +33,12 @@ pub struct Region {
 }
 
 /// A single moving-land instance: the shared frame data plus the playback
-/// state (`cFrame`/`steps`/`alt` of the original).
+/// state (`cFrame`/`cStage`/`steps`/`alt` of the original).
+///
+/// The frame data is shared so that clones - copies of a location placed at
+/// a different spot - cost only their own playback state.
 pub struct Location {
-    pub source: MobileLocation,
+    pub source: Arc<MobileLocation>,
     /// `(dx, dy)` - offset of this instance, non-zero only for clones.
     pub offset: (i32, i32),
     /// Index of the frame currently being played.
@@ -41,18 +48,28 @@ pub struct Location {
     /// Fixed-point altitude accumulator, one entry per texel of the frame
     /// being interpolated. Sized for the largest frame.
     alt: Vec<i32>,
+    /// `cStage` - quants elapsed in this loop, `-1` before the first one.
+    stage: i32,
+    /// `maxStage` - quants in a full loop.
+    max_stage: i32,
+    /// `goPh` - the phase to stop at, or [`FREE_RUNNING`].
+    go_phase: i32,
 }
 
 impl Location {
-    pub fn new(source: MobileLocation, offset: (i32, i32)) -> Self {
+    pub fn new(source: Arc<MobileLocation>, offset: (i32, i32)) -> Self {
         let (max_x, max_y) = source.max_frame_size();
         let steps = vec![0; source.frames.len()];
+        let max_stage = source.max_stage();
         Location {
             source,
             offset,
             frame: 0,
             steps,
             alt: vec![0; max_x as usize * max_y as usize],
+            stage: -1,
+            max_stage,
+            go_phase: FREE_RUNNING,
         }
     }
 
@@ -61,10 +78,69 @@ impl Location {
         self.frame
     }
 
-    /// Rewind to the very beginning without touching the level.
+    /// `getCurPhase` - the stage this location is about to enter. Phases and
+    /// stages share a numbering, so this is what [`Self::set_go_phase`] is
+    /// compared against.
+    pub fn current_phase(&self) -> i32 {
+        if self.stage == self.max_stage - 1 {
+            0
+        } else {
+            self.stage + 1
+        }
+    }
+
+    /// `isGoFinish` - the location has reached the phase it was sent to and
+    /// is parked there.
+    pub fn is_go_finish(&self) -> bool {
+        self.go_phase == self.current_phase()
+    }
+
+    /// `goPhase` - park at `phase` once it comes around. [`FREE_RUNNING`]
+    /// puts the location back into its endless loop.
+    pub fn set_go_phase(&mut self, phase: i32) {
+        self.go_phase = phase;
+    }
+
+    pub fn go_phase(&self) -> i32 {
+        self.go_phase
+    }
+
+    /// `goKeyPhase` - park at one of the location's authored key phases.
+    /// A negative index means [`FREE_RUNNING`].
+    pub fn go_key_phase(&mut self, index: i32) {
+        self.go_phase = match self.source.key_phases.get(index.max(0) as usize) {
+            Some(&phase) if index >= 0 => phase,
+            _ => FREE_RUNNING,
+        };
+    }
+
+    /// Rewind to the very beginning without touching the level -
+    /// `setPhase(0, noChange)` of the original.
     pub fn reset(&mut self) {
         self.frame = 0;
+        self.stage = -1;
         self.steps.iter_mut().for_each(|s| *s = 0);
+    }
+
+    /// `setPhase` - jump straight to `frame`, applying every frame along the
+    /// way in one go rather than interpolating them.
+    pub fn set_phase(&mut self, frame: usize, level: &mut Level, regions: &mut Vec<Region>) {
+        if frame >= self.source.frames.len() {
+            return;
+        }
+        let saved = self.go_phase;
+        self.go_phase = FREE_RUNNING;
+        // Each frame takes two fast steps: one to apply, one to hand over.
+        for _ in 0..2 * self.source.frames.len() + 2 {
+            if self.frame == frame && self.steps[self.frame] == 0 {
+                break;
+            }
+            self.stage += 1;
+            if self.step_frame(level, regions, true) {
+                self.advance_frame();
+            }
+        }
+        self.go_phase = saved;
     }
 
     /// Advance the animation by one quant, writing into `level` and pushing
@@ -73,33 +149,46 @@ impl Location {
     /// A frame that has just run out of steps hands over to the next one
     /// within the same quant, exactly like `MobileLocation::quant` does.
     pub fn update(&mut self, level: &mut Level, regions: &mut Vec<Region>) {
-        if self.source.frames.is_empty() {
+        if self.source.frames.is_empty() || self.is_go_finish() {
             return;
         }
-        if self.step_frame(level, regions) {
-            self.frame = (self.frame + 1) % self.source.frames.len();
-            self.step_frame(level, regions);
+        self.stage += 1;
+        if self.step_frame(level, regions, false) {
+            self.advance_frame();
+            self.step_frame(level, regions, false);
+        }
+    }
+
+    fn advance_frame(&mut self) {
+        self.frame += 1;
+        if self.frame == self.source.frames.len() {
+            self.frame = 0;
+            self.stage = 0;
         }
     }
 
     /// Runs one quant of the current frame. Returns `true` when the frame is
     /// finished and the next one should take over.
-    fn step_frame(&mut self, level: &mut Level, regions: &mut Vec<Region>) -> bool {
+    ///
+    /// `fast` is `fastMode` of the original: the frame is applied in a single
+    /// step, skipping the interpolation. It is how a location seeks to a
+    /// phase without animating through it.
+    fn step_frame(&mut self, level: &mut Level, regions: &mut Vec<Region>, fast: bool) -> bool {
         let frame = &self.source.frames[self.frame];
         let step = &mut self.steps[self.frame];
-        let interpolated = self.source.mode.is_relative() && frame.period > 1;
+        // `quantAbs` ignores the period entirely, and so does a fast seek.
+        let period = if self.source.mode.is_relative() && !fast {
+            frame.period
+        } else {
+            1
+        };
+        let interpolated = period > 1;
 
         if interpolated && *step == 0 {
             snapshot(frame, self.offset, level, &mut self.alt);
         }
 
         *step += 1;
-        let period = if self.source.mode.is_relative() {
-            frame.period
-        } else {
-            // `quantAbs` ignores the period entirely.
-            1
-        };
         if *step > period {
             *step = 0;
             return true;
@@ -363,7 +452,7 @@ impl MovingLand {
                         ml.frames.len(),
                         ml.mode
                     );
-                    locations.push(Location::new(ml, (0, 0)));
+                    locations.push(Location::new(Arc::new(ml), (0, 0)));
                 }
                 Err(e) => log::error!("Unable to load {:?}: {}", path, e),
             }
@@ -379,6 +468,20 @@ impl MovingLand {
 
     pub fn is_empty(&self) -> bool {
         self.locations.is_empty()
+    }
+
+    /// Index of the location named `name`, which is how `location.lst`
+    /// addresses them - `FindMobileLocation` of the original.
+    pub fn find(&self, name: &str) -> Option<usize> {
+        self.locations.iter().position(|l| l.source.name == name)
+    }
+
+    /// `MobileLocation::cloning` - adds another instance of an already loaded
+    /// location, shifted by `offset`, with its own playback state.
+    pub fn add_clone(&mut self, index: usize, offset: (i32, i32)) -> usize {
+        let source = Arc::clone(&self.locations[index].source);
+        self.locations.push(Location::new(source, offset));
+        self.locations.len() - 1
     }
 
     /// Advances every location by one quant, appending the touched rectangles
@@ -426,15 +529,23 @@ mod tests {
     }
 
     fn location(mode: Mode, frames: Vec<Frame>) -> Location {
+        location_with_keys(mode, frames, [0; MAX_KEY_PHASE])
+    }
+
+    fn location_with_keys(
+        mode: Mode,
+        frames: Vec<Frame>,
+        key_phases: [i32; MAX_KEY_PHASE],
+    ) -> Location {
         Location::new(
-            MobileLocation {
+            Arc::new(MobileLocation {
                 name: "test".to_string(),
                 mode,
                 dry_terrain: 0,
                 impulse: 0,
-                key_phases: [0; MAX_KEY_PHASE],
+                key_phases,
                 frames,
-            },
+            }),
             (0, 0),
         )
     }
@@ -676,5 +787,168 @@ mod tests {
         let mut regions = Vec::new();
         ml.update(&mut level, &mut regions);
         assert!(regions.is_empty());
+    }
+
+    /// Three absolute frames, so one quant lands one frame and the stage
+    /// counter tracks the frame index.
+    fn three_step_stairs() -> Location {
+        location_with_keys(
+            Mode::Absolute,
+            vec![
+                frame((0, 0), (1, 1), vec![10], 1),
+                frame((0, 0), (1, 1), vec![20], 1),
+                frame((0, 0), (1, 1), vec![30], 1),
+            ],
+            [0, 2, 0, 0],
+        )
+    }
+
+    #[test]
+    fn free_running_never_parks() {
+        let mut level = test_level();
+        let mut ml = three_step_stairs();
+        let mut regions = Vec::new();
+        assert_eq!(ml.go_phase(), FREE_RUNNING);
+
+        for expected in [10, 20, 30, 10, 20, 30] {
+            ml.update(&mut level, &mut regions);
+            assert_eq!(level.height[0], expected);
+        }
+    }
+
+    #[test]
+    fn go_phase_parks_and_releases() {
+        let mut level = test_level();
+        let mut ml = three_step_stairs();
+        let mut regions = Vec::new();
+
+        // Key phase 1 is stage 2, the last frame.
+        ml.go_key_phase(1);
+        for _ in 0..6 {
+            ml.update(&mut level, &mut regions);
+        }
+        assert!(ml.is_go_finish());
+        assert_eq!(level.height[0], 20, "parked before entering stage 2");
+
+        // Further quants do nothing at all.
+        regions.clear();
+        ml.update(&mut level, &mut regions);
+        assert!(regions.is_empty());
+
+        // Sending it back to the start releases it.
+        ml.go_key_phase(0);
+        ml.update(&mut level, &mut regions);
+        assert_eq!(level.height[0], 30);
+    }
+
+    #[test]
+    fn negative_key_phase_frees_the_location() {
+        let mut ml = three_step_stairs();
+        ml.go_key_phase(1);
+        assert_eq!(ml.go_phase(), 2);
+        ml.go_key_phase(-1);
+        assert_eq!(ml.go_phase(), FREE_RUNNING);
+    }
+
+    #[test]
+    fn set_phase_seeks_without_interpolating() {
+        let mut level = test_level();
+        // A long period would take 5 quants per frame when animated.
+        let mut ml = location(
+            Mode::Relative,
+            vec![
+                frame((0, 0), (1, 1), vec![10], 5),
+                frame((0, 0), (1, 1), vec![20], 5),
+            ],
+        );
+        let mut regions = Vec::new();
+
+        ml.set_phase(1, &mut level, &mut regions);
+        assert_eq!(ml.current_frame(), 1);
+        // Frame 0 was applied whole rather than a fifth at a time.
+        assert_eq!(level.height[0], 110);
+    }
+
+    #[test]
+    fn set_phase_to_the_current_frame_is_a_no_op() {
+        let mut level = test_level();
+        let mut ml = three_step_stairs();
+        let mut regions = Vec::new();
+
+        ml.set_phase(0, &mut level, &mut regions);
+        assert!(regions.is_empty());
+        assert_eq!(level.height[0], 100);
+    }
+
+    #[test]
+    fn set_phase_out_of_range_is_ignored() {
+        let mut level = test_level();
+        let mut ml = three_step_stairs();
+        let mut regions = Vec::new();
+
+        ml.set_phase(9, &mut level, &mut regions);
+        assert_eq!(ml.current_frame(), 0);
+        assert!(regions.is_empty());
+    }
+
+    #[test]
+    fn reset_rewinds_without_touching_the_level() {
+        let mut level = test_level();
+        let mut ml = three_step_stairs();
+        let mut regions = Vec::new();
+
+        ml.update(&mut level, &mut regions);
+        ml.update(&mut level, &mut regions);
+        assert_eq!(ml.current_frame(), 1);
+
+        let before = level.height[0];
+        regions.clear();
+        ml.reset();
+        assert_eq!(ml.current_frame(), 0);
+        assert_eq!(ml.current_phase(), 0);
+        assert_eq!(level.height[0], before);
+        assert!(regions.is_empty());
+    }
+
+    #[test]
+    fn clones_share_frames_and_run_independently() {
+        let mut level = test_level();
+        let mut land = MovingLand::default();
+        land.locations.push(location(
+            Mode::Absolute,
+            vec![
+                frame((0, 0), (1, 1), vec![10], 1),
+                frame((0, 0), (1, 1), vec![20], 1),
+            ],
+        ));
+        let clone = land.add_clone(0, (4, 0));
+        assert_eq!(clone, 1);
+        assert!(Arc::ptr_eq(
+            &land.locations[0].source,
+            &land.locations[1].source
+        ));
+
+        // Park the clone right away; the original keeps going.
+        land.locations[1].set_go_phase(0);
+        let mut regions = Vec::new();
+        land.update(&mut level, &mut regions);
+        assert_eq!(level.height[0], 10, "original ran");
+        assert_eq!(level.height[4], 100, "clone is parked");
+
+        land.locations[1].set_go_phase(FREE_RUNNING);
+        land.update(&mut level, &mut regions);
+        assert_eq!(level.height[0], 20);
+        assert_eq!(level.height[4], 10, "clone applies at its own offset");
+    }
+
+    #[test]
+    fn find_locates_by_name() {
+        let mut land = MovingLand::default();
+        land.locations.push(location(
+            Mode::Absolute,
+            vec![frame((0, 0), (1, 1), vec![1], 1)],
+        ));
+        assert_eq!(land.find("test"), Some(0));
+        assert_eq!(land.find("absent"), None);
     }
 }
