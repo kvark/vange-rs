@@ -1906,6 +1906,7 @@ impl Context {
         encoder: &mut wgpu::CommandEncoder,
         level: &level::Level,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
     ) {
         let surface_constants = {
             let bits = level.terrain_bits();
@@ -1987,45 +1988,53 @@ impl Context {
                 if !dr.need_upload {
                     continue;
                 }
-                //Note: we are uploading the whole rows currently. We could instead upload
-                // only the relevant sub-rectangle, but managing `bytes_per_row` becomes annoying.
-
-                let row_stride = level.size.0 as usize * 2;
-                let mut staging_data = vec![0u8; dr.rect.h as usize * row_stride];
-                for (y_off, line) in staging_data.chunks_mut(row_stride).enumerate() {
+                // Only the sub-rectangle, not the whole row. A moving-land
+                // patch is a couple of hundred texels across on a level that
+                // can be 2048 wide, and a level animating several of them at
+                // once spends the whole frame budget interleaving rows that
+                // did not change.
+                //
+                // One texture texel packs a *pair* of level texels, so the
+                // span has to be widened to a pair boundary at both ends.
+                // `write_texture` takes care of the staging copy, which also
+                // gets rid of a buffer allocation per rectangle.
+                let x0 = dr.rect.x as usize & !1;
+                let x1 = (((dr.rect.x + dr.rect.w) as usize + 1) & !1).min(level.size.0 as usize);
+                if x1 <= x0 || dr.rect.h == 0 {
+                    dr.need_upload = false;
+                    continue;
+                }
+                let row_bytes = (x1 - x0) * 2;
+                let mut staging_data = vec![0u8; dr.rect.h as usize * row_bytes];
+                for (y_off, line) in staging_data.chunks_mut(row_bytes).enumerate() {
                     let base = (dr.rect.y as usize + y_off) * level.size.0 as usize;
-                    for x in 0..level.size.0 as usize {
-                        line[2 * x] = level.height[base + x];
-                        line[2 * x + 1] = level.meta[base + x];
+                    let heights = &level.height[base + x0..base + x1];
+                    let metas = &level.meta[base + x0..base + x1];
+                    for (i, (&h, &m)) in heights.iter().zip(metas).enumerate() {
+                        line[2 * i] = h;
+                        line[2 * i + 1] = m;
                     }
                 }
-                let staging_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("staging level update"),
-                    contents: &staging_data,
-                    usage: wgpu::BufferUsages::COPY_SRC,
-                });
 
-                encoder.copy_buffer_to_texture(
-                    wgpu::TexelCopyBufferInfo {
-                        buffer: &staging_buf,
-                        layout: wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(level.size.0 as u32 * 2),
-                            rows_per_image: None,
-                        },
-                    },
+                queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
                         texture: &self.terrain_texture,
                         mip_level: 0,
                         origin: wgpu::Origin3d {
-                            x: 0,
+                            x: (x0 / 2) as u32,
                             y: dr.rect.y as u32,
                             z: 0,
                         },
                         aspect: wgpu::TextureAspect::All,
                     },
+                    &staging_data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(row_bytes as u32),
+                        rows_per_image: None,
+                    },
                     wgpu::Extent3d {
-                        width: level.size.0 as u32 / 2,
+                        width: ((x1 - x0) / 2) as u32,
                         height: dr.rect.h as u32,
                         depth_or_array_layers: 1,
                     },
