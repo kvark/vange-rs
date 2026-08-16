@@ -1,9 +1,10 @@
 # Six Ways to Draw Vangers with WebGPU: Real-Time Rendering of Editable Multi-Layer Height Fields
 
-**Status: measurement draft after the final hardware batch.** Five-device
+**Status: submission draft after the final hardware batch.** Five-device
 results from the final scenes, 64-step full-screen dual-solid ray marcher,
-and common shadow protocol are integrated below. The dynamic-edit experiment
-and execution of the terrain-data license remain before submission.
+and common shadow protocol are integrated below. The dynamic-edit experiment,
+reference-floor disposition, final mesh selection and memory accounting,
+submission package, and terrain-data license remain before submission.
 
 ---
 
@@ -190,8 +191,10 @@ special-cased. Agreement of the five result grids across four Vulkan adapters
 and Apple Metal is the direct portability result; timing remains backend- and
 device-specific, and §5.2 keeps unlike timing mechanisms separate.
 
-**Data availability.** The engine and evaluation tools are Apache-2.0. The
-terrain is original-game content and is not covered by that license. The
+**Data availability.** The engine and evaluation tools are Apache-2.0 and the
+measurement implementation is frozen at
+[`terrain-paper-v1`](https://github.com/kvark/vange-rs/tree/terrain-paper-v1).
+The terrain is original-game content and is not covered by that license. The
 rights holder has indicated that a license for Fostral is forthcoming; the
 paper and artifact will identify the grant, rights holder, permitted uses,
 and redistribution terms once it is executed. Until then, Fostral archives
@@ -551,10 +554,12 @@ the image-order methods and the painter remain mutually coherent.
 
 ### 5.2 Frame time
 
-The Vulkan table uses GPU timestamps and reports arithmetic means over the
-three views at each pitch, in ms:
+The table reports arithmetic means over the three views at each pitch, in ms.
+Vulkan rows use GPU timestamps; Apple M3 rows marked `*` use CPU
+submit-and-wait timing because encoder-level timestamps do not enclose the
+Metal workload (§4.3):
 
-![Mean frame time across the twelve scenes. RayTraced records the lowest mean on three adapters, but the mesh configurations remain close and the ordering is not portable across devices.](figures/performance.svg)
+![Mean Vulkan GPU time across the twelve scenes. RayTraced records the lowest mean on three adapters, but the mesh configurations remain close and the ordering is not portable across devices.](figures/performance.svg)
 
 | device / pitch | RayTraced | RayVoxel | Sliced | Scattered† | Painter | Mesh q=0.0 | Mesh q=0.75 |
 |---|---|---|---|---|---|---|---|
@@ -574,26 +579,24 @@ three views at each pitch, in ms:
 | RTX 5070 / −30° | **0.465** | 1.189 | 1.546 | 1.534 | 4.159 | 0.487 | 0.614 |
 | RTX 5070 / −60° | **0.449** | 1.189 | 1.775 | 1.329 | 5.682 | 0.474 | 0.559 |
 | RTX 5070 / −90° | 0.481 | 1.133 | 2.019 | 1.305 | 5.686 | **0.470** | 0.602 |
+| Apple M3* / 0° | 5.606 | 10.740 | 12.292 | 40.515 | 17.338 | **5.584** | 6.132 |
+| Apple M3* / −30° | **5.334** | 11.825 | 11.442 | 12.155 | 32.564 | 5.534 | 6.136 |
+| Apple M3* / −60° | **5.337** | 12.261 | 11.869 | 10.975 | 49.864 | 5.884 | 5.811 |
+| Apple M3* / −90° | **5.327** | 11.291 | 12.710 | 11.046 | 31.304 | 5.405 | 6.078 |
+
+**\* Apple M3 values are CPU submit-and-wait means.** They include command
+submission and the completion round trip, so they support comparisons among
+methods on that device but not absolute comparisons with the Vulkan GPU rows.
 
 At the selected 64 steps RayTraced has the lowest mean GPU time on the 780M,
-Intel, and NVIDIA devices. Mesh q=0.75 narrowly wins on the 7900 XT (0.482 ms
-overall against 0.572 ms for RayTraced), and the difference between the two is
-under 0.15 ms at every 7900 pitch. This reverses the earlier 128-step result:
+Intel, and NVIDIA devices. Mesh q=0.75 records the lower 7900 XT mean in this
+batch (0.482 ms overall against 0.572 ms for RayTraced), and the difference
+between the two is under 0.15 ms at every pitch. This reverses the earlier
+128-step result:
 the quality sweep did not merely remove invisible work, it changed which
 method wins. On Intel, only RayTraced and the meshes stay near 8.8–11.6 ms;
 the derived-volume and forward methods cost 26–104 ms. Portability of an API
 and shader does not imply portability of a performance ranking.
-
-The Apple M3 values below are CPU submit-and-wait means. They include command
-submission and the completion round trip, so they validate practical latency
-and method ordering on Metal but are not comparable to the Vulkan table:
-
-| Apple M3 / pitch | RayTraced | RayVoxel | Sliced | Scattered† | Painter | Mesh q=0.0 | Mesh q=0.75 |
-|---|---|---|---|---|---|---|---|
-| 0° | 5.606 | 10.740 | 12.292 | 40.515 | 17.338 | **5.584** | 6.132 |
-| −30° | **5.334** | 11.825 | 11.442 | 12.155 | 32.564 | 5.534 | 6.136 |
-| −60° | **5.337** | 12.261 | 11.869 | 10.975 | 49.864 | 5.884 | 5.811 |
-| −90° | **5.327** | 11.291 | 12.710 | 11.046 | 31.304 | 5.405 | 6.078 |
 
 Painter retains the clearest orientation dependence on every Vulkan adapter,
 becoming progressively slower as more ground samples enter its emitted
@@ -899,7 +902,7 @@ measurement moves.
   Vulkan timestamps make those numbers GPU work rather than round trip, but
   they do not make them a frame rate. Metal uses CPU submit-and-wait because
   its encoder timestamps failed the bracketing sanity check; those values are
-  useful within the M3 table but cannot be compared directly with Vulkan.
+  useful within the M3 rows but cannot be compared directly with Vulkan.
 - Residual tuning uncertainty remains after the uniform pass of §5.5. The
   selected 64 height-field steps are now measured everywhere, but mesh quality
   still needs selection at publication resolution because the small tuning

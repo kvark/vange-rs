@@ -102,9 +102,10 @@ Tracked here rather than in the draft so the gaps stay visible:
       framing - floor relief does not predict the reduction (r = -0.17
       over all ten), the multi-layer encoding does (dual fraction
       r = -0.77, composite-surface roughness r = -0.82).
-- [ ] An external elevation model, for comparability with published
-      numbers rather than for the causal claim. Lower priority now that
-      the single-layer worlds land at 45-182x.
+- [—] An external elevation model is not a submission gate. The single-layer
+      stock worlds are the tighter control because they hold encoding,
+      quantisation, texel scale, and authoring pipeline fixed; they already
+      establish the 45–182× comparison range.
 - [x] More than one device. The final batch covers a Radeon 780M, Radeon RX
       7900 XT, Intel RPL-U, GeForce RTX 5070, and Apple M3 across Vulkan and
       Metal. The five grids agree geometrically outside a small spread within
@@ -113,7 +114,8 @@ Tracked here rather than in the draft so the gaps stay visible:
       method-invariant Metal intervals exposed that encoder-level timestamps
       did not bracket the multipass frame. The API does not guarantee that
       ordering, so Metal now falls back to CPU submit-and-wait and is reported
-      separately; pass-level instrumentation is the future GPU-only fix.
+      with `*` in the same table; pass-level instrumentation is the future
+      GPU-only fix.
 - [~] Equal tuning across methods. `tools/level-survey.py` sibling
       `tools/tune-methods.py` sweeps every knob under one selection rule.
       Caveat recorded in the draft: the small tuning image cannot resolve
@@ -124,8 +126,10 @@ Tracked here rather than in the draft so the gaps stay visible:
       recorded in §5.5 as a finding of its own. The corrected RayTraced sweep
       selects 64 steps and the final batch uses it on all five devices. Mesh
       quality still needs a publication-resolution selection.
-- [ ] Memory. ~300 MB resident for the mesh at q=0.75 on a full level is
-      the honest limit on the portability claim.
+- [ ] Complete memory accounting. Report peak resident GPU and CPU memory for
+      every method/configuration, not only the ~300 MB mesh and 153 MB
+      RayVoxel examples. This is required to make the portability comparison
+      actionable.
 - [~] Data license. A Fostral license is expected. Before release, record
       the executed grant, rights holder, permitted uses, redistribution
       terms, and whether derived images/measurements are covered. The
@@ -140,6 +144,26 @@ Tracked here rather than in the draft so the gaps stay visible:
       extracts a readable teaser from a final full-resolution grid.
 - [ ] Author block. JCGT review is single-blind — names and affiliation
       go on the submission.
+- [ ] Reference-floor diagnosis. Resolve the common top-down CPU/GPU offset
+      described in §6.1, or narrow the final depth-quality claims so they do
+      not depend on absolute reference accuracy.
+- [ ] Timing uncertainty. Report within-scene distributions and repeat enough
+      representative runs to distinguish stable ordering from driver/session
+      noise. In particular, do not turn sub-millisecond differences in the
+      7900 XT means into a general winner without uncertainty bounds.
+- [ ] Browser WebGPU smoke test. The native Vulkan/Metal batch validates wgpu
+      portability, but the title names WebGPU and the history discusses web
+      deployment. Archive at least one current Firefox or Chromium run with
+      build instructions and image agreement, or explicitly scope the title
+      and claims to WebGPU's native wgpu/WGSL programming model.
+- [ ] Submission PDF and archive. Produce a complete PDF with author contact
+      information and high-resolution color figures, then test a supplemental
+      source-code snapshot from a clean checkout. JCGT accepts any reasonable
+      template for review; conversion to its LaTeX/BibTeX template is required
+      after acceptance.
+- [ ] Bibliography pass. Convert references to complete BibTeX entries with
+      stable URLs/DOIs, remove citations that are not discussed directly, and
+      verify the original-game screenshot attribution.
 - [ ] Supplemental video. JCGT explicitly prefers "shorter articles with
       supplemental code, data, and video"; a single flythrough rendered
       once per method (same path, same seed) would carry §5.1 better

@@ -434,9 +434,10 @@ pub fn render_snapshot(opts: SnapshotOptions) {
 
     // Two timestamps per frame, resolved in one pass at the end so no
     // frame pays for a readback.
-    let gpu_timing = gfx.device.features().contains(
-        wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
-    );
+    let gpu_timing = adapter_info.backend != wgpu::Backend::Metal
+        && gfx.device.features().contains(
+            wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
+        );
     let query_count = 2 * total_frames;
     let queries = gpu_timing.then(|| {
         gfx.device.create_query_set(&wgpu::QuerySetDescriptor {

@@ -11,6 +11,9 @@ levels need a separate documented grant before public artifact release.
 - [ ] Quote or cite the governing license terms in the paper and artifact.
 - [ ] Confirm that publication figures and supplemental video are permitted.
 - [ ] Confirm that converted terrain and derived measurements may be shared.
+- [ ] If terrain or derived data are supplemental files, confirm that their
+      redistribution terms satisfy JCGT's non-restrictive open-data rule;
+      otherwise omit them and document the user-supplied-data workflow.
 - [ ] Confirm whether original archives may be redistributed or only fetched
       or supplied by the user.
 - [ ] Confirm commercial/non-commercial, geographic, and time restrictions.
