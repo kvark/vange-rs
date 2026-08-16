@@ -2,7 +2,7 @@
 name = "m3d"
 version = "0.1.0"
 workspace = "../.."
-authors = ["Dzmitry Malyshau <kvarkus@gmail.com>"]
+authors = ["kvark"]
 edition = "2021"
 publish = false
 
