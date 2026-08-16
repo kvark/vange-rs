@@ -742,6 +742,25 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 .map(|d| format!("{:.4}", d.as_secs_f64() * 1e3))
                 .collect::<Vec<_>>()
                 .join(", ");
+            // An adapter without timestamp queries leaves `gpu_ms` empty, and
+            // the natural identities for those folds - NaN and infinity - are
+            // not JSON. `inf` in particular is not even readable by a parser
+            // that tolerates `NaN`, so it failed the whole run at the first
+            // cell. `null` is the honest encoding of "no GPU samples", and
+            // readers already treat a missing average as "fall back to CPU".
+            let gpu_avg_ms = if gpu_ms.is_empty() {
+                "null".to_string()
+            } else {
+                format!("{:.4}", gpu_ms.iter().sum::<f64>() / gpu_ms.len() as f64)
+            };
+            let gpu_min_ms = if gpu_ms.is_empty() {
+                "null".to_string()
+            } else {
+                format!(
+                    "{:.4}",
+                    gpu_ms.iter().cloned().fold(f64::INFINITY, f64::min)
+                )
+            };
             let body = format!(
                 concat!(
                     "{{\n",
@@ -766,8 +785,8 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                     "  \"max_ms\": {:.4},\n",
                     "  \"frame_ms\": [{}],\n",
                     "  \"gpu_timing\": {},\n",
-                    "  \"gpu_avg_ms\": {:.4},\n",
-                    "  \"gpu_min_ms\": {:.4},\n",
+                    "  \"gpu_avg_ms\": {},\n",
+                    "  \"gpu_min_ms\": {},\n",
                     "  \"gpu_ms\": [{}],\n",
                     "  \"method_gpu_bytes\": {},\n",
                     "  \"method_cpu_bytes\": {},\n",
@@ -797,12 +816,8 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 max.as_secs_f64() * 1e3,
                 times,
                 gpu_timing,
-                if gpu_ms.is_empty() {
-                    f64::NAN
-                } else {
-                    gpu_ms.iter().sum::<f64>() / gpu_ms.len() as f64
-                },
-                gpu_ms.iter().cloned().fold(f64::INFINITY, f64::min),
+                gpu_avg_ms,
+                gpu_min_ms,
                 gpu_ms
                     .iter()
                     .map(|v| format!("{:.4}", v))
