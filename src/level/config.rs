@@ -61,6 +61,16 @@ impl LevelConfig {
         }
     }
 
+    /// Folder holding the level's moving land, next to the world INI.
+    /// `None` for the built-in test level, which has no data on disk.
+    pub fn path_moving_land(&self) -> Option<PathBuf> {
+        if self.path_data.to_str() == Some("") {
+            None
+        } else {
+            Some(self.path_data.with_file_name("data.vot"))
+        }
+    }
+
     pub fn load(ini_path: &Path) -> Self {
         let ini = Ini::load_from_file(ini_path).unwrap_or_else(|_| {
             panic!("Unable to read the level's INI description: {:?}", ini_path)

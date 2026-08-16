@@ -15,6 +15,7 @@ members = [
     "lib/net",
     "lib/splay",
     "lib/tiff",
+    "lib/vot",
 ]
 
 [lib]
@@ -54,6 +55,7 @@ m3d = { path = "lib/m3d" }
 splay = { path = "lib/splay" }
 tiff = { path = "lib/tiff" }
 vangers-net = { path = "lib/net" }
+vot = { path = "lib/vot" }
 # library
 bytemuck = "1"
 byteorder = "1.0"
