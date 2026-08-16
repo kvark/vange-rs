@@ -253,7 +253,8 @@ def main():
     }
     mismatched = []
     comparable_runs = [run for run in runs
-                       if run.get("protocol_version", 0) >= 3]
+                       if run.get("protocol_version", 0) >= 3 and
+                       run.get("accuracy_valid", True)]
     for run in comparable_runs:
         if run is base:
             continue

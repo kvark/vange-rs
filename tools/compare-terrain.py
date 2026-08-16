@@ -18,26 +18,17 @@ is usually the reference disagreeing about where the silhouette falls, not
 the renderer, especially when every method in the row shows it.
 
 `depth p50/p95` is how far off the surfaces are, in world units, where
-the renderer and the reference both think something is there. Its noise
-floor depends almost entirely on pitch, which is worth knowing before
-reading any row. The same mesh against the same reference:
-
-    pitch    0   see-through 6.70%   covers-sky 7.36%   depth p50 25.3u
-    pitch  -15   see-through 0.00%   covers-sky 0.00%   depth p50  5.5u
-    pitch  -30   see-through 0.00%   covers-sky 0.00%   depth p50  3.7u
-    pitch  -60   see-through 0.00%   covers-sky 0.00%   depth p50  1.7u
-
-Tilt the camera off the horizon and the disagreement vanishes. At eye
-level most of the ground is nearly edge-on, and a sub-pixel difference in
-ray direction moves the hit by tens of units - so at pitch 0 the
-reference, not the renderer, sets the number. Treat ~25u as its floor
-there and compare columns rather than reading a row as absolute error.
+the renderer and the reference both think something is there. Read it
+comparatively: grazing rays amplify pixel-centre and cell-boundary choices,
+while extremely wide off-axis top-down rays retain a common point-marching
+offset. Coverage, coherence, and agreement between renderers are stronger
+evidence than a small absolute difference against this one CPU reference.
 
 `speckle` is the part depth agreement cannot see, and is why it exists:
 the fraction of pixels whose distance disagrees with their own 3x3
 neighbourhood, in excess of the reference doing the same. Sliced and
 Scattered score 7-8% against 0.0-0.4% for the coherent renderers, on a
-reference that is itself 0.3% rough. A renderer can put every surface at
+reference that is itself slightly rough. A renderer can put every surface at
 the right distance incoherently and still look wrong.
 
 Timing is `submit` then poll to completion, per frame, so it measures GPU
@@ -85,30 +76,28 @@ import zipfile
 # error. One of these is not tunable at all, which is itself worth
 # knowing when reading their columns.
 METHODS = [
-    ("RayTraced", "RayTraced", ["--ray-steps", "64"], 3),
-    # The step budget the fixture's sightlines set: 40 steps lands within a
-    # point of 100 on these views (5.5% vs 4.8% error), so the selection
-    # rule keeps it. The old fixture's long sightlines exhausted it - 6.4%
-    # see-through at 40 where 100 got to 2.5% - which is a fact about that
-    # fixture, not a different method.
+    ("RayTraced", "RayTraced", ["--ray-steps", "128"], 3),
+    # The corrected reference puts 100 steps at 0.3% total error; 40 steps
+    # leaves 2.5%, outside the one-point selection window.
     ("RayVoxel", "RayVoxelTraced",
-     ["--voxel-size", "4,8,2", "--voxel-steps", "40"], 170),
-    # Two slices per altitude unit, the setting the selection rule picks
-    # once slices spread honestly over the height range: see-through keeps
-    # falling (17.2% at 32 to 5.4% at 512) while speckle peaks mid-sweep
-    # (10.9% at 256), slices converting missing spans into isolated wrong
-    # pixels.
+     ["--voxel-size", "4,8,2", "--voxel-steps", "100"], 170),
+    # Two slices per altitude unit. It is the only setting within one point
+    # of the corrected sweep's best error.
     ("Sliced", "Sliced", ["--slice-layers", "512"], 3),
     # Density 4 is the best this method reaches and it is still last by a
     # wide margin; lower densities are cheaper and worse in every column.
     ("Scattered", "Scattered", ["--scatter-density", "4,4,4"], 8),
     ("Painter", "Painted", [], 3),
-    # The tuning-resolution reference picks the cheapest fit. Keep q=0.75
-    # beside it because the full-size hangar scene resolves a coverage
-    # difference that the smaller tuning pass does not.
-    ("Mesh q=0.0", "Mesh", ["--mesh-quality", "0.0"], 3),
-    ("Mesh q=0.75", "Mesh", ["--mesh-quality", "0.75"], 3),
+    # Publication-resolution tuning selects q=0.25. The prior q=0.0/q=0.75
+    # pair remains useful as a quality bracket, but it is not the fair single
+    # operating point used in the six-method comparison.
+    ("Mesh q=0.25", "Mesh", ["--mesh-quality", "0.25"], 3),
 ]
+
+# The final five-machine batch predates the corrected reference. These are
+# the three selected configurations whose settings changed after retuning;
+# Sliced, Scattered, and Painter rows can be reused byte-for-byte.
+SUPPLEMENT_METHODS = [METHODS[0], METHODS[1], METHODS[-1]]
 
 # Fostral viewpoints, three per pitch. Each view runs at its own pitch -
 # a camera looking down renders a different subject than one at the
@@ -595,7 +584,7 @@ def edit_agreement(reference_png, reference_depth, candidate_png,
     }
 
 
-def run_edit_protocol(args, layers):
+def run_edit_protocol(args, layers, methods=METHODS):
     out_dir = os.path.join(args.work, "edit-protocol")
     os.makedirs(out_dir, exist_ok=True)
     _, _, dirs, _ = ground_truth(
@@ -604,7 +593,7 @@ def run_edit_protocol(args, layers):
     rows = []
     device = None
     print("\nDynamic-edit protocol:", flush=True)
-    for method in METHODS:
+    for method in methods:
         label = method[0]
         fresh_png, fresh_depth, fresh_meta = render_edit_case(
             args, method, out_dir, 10, True)
@@ -692,6 +681,10 @@ def main():
                     help="rebuild the corrected geometry baseline with one "
                          "timed frame per cell; timings from this run are not "
                          "publication measurements")
+    ap.add_argument("--supplement-only", action="store_true",
+                    help="collect only the retuned RayTraced, RayVoxel, and "
+                         "Mesh configurations needed to upgrade the frozen "
+                         "five-machine batch")
     ap.add_argument("--allow-dirty", action="store_true",
                     help="permit a non-reproducible run from a dirty checkout")
     ap.add_argument("--frames", type=int, default=40,
@@ -722,6 +715,8 @@ def main():
                     help="run only the short dynamic-edit and memory protocol; "
                          "use this to supplement an older complete batch")
     args = ap.parse_args()
+    if args.accuracy_only and args.supplement_only:
+        ap.error("--accuracy-only and --supplement-only are mutually exclusive")
     if args.accuracy_only:
         args.frames = 1
         args.skip_edits = True
@@ -731,6 +726,7 @@ def main():
         args.pitch = args.pitch or [0.0]
         if not args.edits_only:
             args.skip_edits = True
+    methods = SUPPLEMENT_METHODS if args.supplement_only else METHODS
 
     # A "scene" is a view at the pitch it was framed at. DEFAULT_VIEWS
     # already pairs each view with its pitch; --view/--pitch overrides fall
@@ -773,7 +769,7 @@ def main():
     method_records = [
         {"label": label, "terrain": terrain, "args": extra,
          "warmup_frames": warmup}
-        for label, terrain, extra, warmup in METHODS
+        for label, terrain, extra, warmup in methods
     ]
     if args.list_scenes:
         print_run_plan(source, scene_records, method_records)
@@ -784,7 +780,9 @@ def main():
     manifest = {
         "status": "running",
         "protocol_version": PROTOCOL_VERSION,
-        "purpose": "accuracy-only" if args.accuracy_only else "publication",
+        "purpose": ("accuracy-only" if args.accuracy_only else
+                    "publication-supplement" if args.supplement_only else
+                    "publication"),
         "started_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "source": source,
         "level": args.level,
@@ -843,10 +841,10 @@ def main():
 
     # A default run is a couple of hundred renders and takes a while, so
     # say so up front and keep a running estimate rather than going quiet.
-    total = len(scenes) * len(METHODS)
+    total = len(scenes) * len(methods)
     done, started = 0, time.time()
     print_run_plan(source, scene_records, method_records)
-    print(f"{total} renders: {len(METHODS)} methods x {len(scenes)} scenes, "
+    print(f"{total} renders: {len(methods)} methods x {len(scenes)} scenes, "
           f"at {args.width}x{args.height}\n")
 
     for view, pitch in scenes:
@@ -858,7 +856,7 @@ def main():
         print(f"{view['name']} @ pitch {pitch:g}: ground truth sky = "
               f"{100 * sky.mean():.1f}% of frame, "
               f"{100 * ref_speckle.mean():.1f}% of it genuinely rough")
-        for method in METHODS:
+        for method in methods:
             png, depth, meta = render(args, view, method, args.out, pitch)
             fields = ("adapter", "backend", "device_type", "driver",
                       "driver_info")
@@ -965,7 +963,7 @@ def main():
 
     edit_rows = []
     if not args.skip_edits:
-        edit_device, edit_rows = run_edit_protocol(args, layers)
+        edit_device, edit_rows = run_edit_protocol(args, layers, METHODS)
         if edit_device != device:
             raise SystemExit("edit protocol selected a different adapter")
 
@@ -973,13 +971,16 @@ def main():
     # caller had to know in advance.
     json_out = args.json_out
     if json_out is None and device:
-        prefix = "accuracy-results" if args.accuracy_only else "results"
+        prefix = ("accuracy-results" if args.accuracy_only else
+                  "supplement-results" if args.supplement_only else "results")
         json_out = os.path.join(
             args.work, f"{prefix}-{slug(device['adapter'])}.json")
     if json_out:
         write_json_atomic(json_out, {
             "protocol_version": PROTOCOL_VERSION,
-            "purpose": "accuracy-only" if args.accuracy_only else "publication",
+            "purpose": ("accuracy-only" if args.accuracy_only else
+                        "publication-supplement" if args.supplement_only else
+                        "publication"),
             "label": args.label or (device or {}).get("adapter", "unknown"),
             "source": source,
             "level": args.level,
@@ -991,6 +992,11 @@ def main():
             "lighting": "unbaked diffuse",
             "scenes": scene_records,
             "methods": method_records,
+            "publication_methods": ([
+                {"label": label, "terrain": terrain, "args": extra,
+                 "warmup_frames": warmup}
+                for label, terrain, extra, warmup in METHODS
+            ] if args.supplement_only else method_records),
             "rows": rows,
             "edit_protocol": ({
                 "view": EDIT_VIEW, "pitch": EDIT_PITCH,
@@ -1005,7 +1011,7 @@ def main():
 
     # Grid image: rows are viewpoints, columns are methods.
     w, h, pad, lab, hdr = args.width, args.height, 5, 18, 30
-    W = len(METHODS) * (w + pad) + pad
+    W = len(methods) * (w + pad) + pad
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 15)
         small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 11)
@@ -1015,7 +1021,7 @@ def main():
     H = hdr + len(grid_views) * (h + lab + pad) + pad
     out = Image.new("RGB", (W, H), (20, 22, 26))
     dr = ImageDraw.Draw(out)
-    for j, method in enumerate(METHODS):
+    for j, method in enumerate(methods):
         dr.text((pad + j * (w + pad) + 2, 8), method[0], font=font, fill=(235, 238, 242))
     for i, (view, pitch) in enumerate(grid_views):
         y = hdr + i * (h + lab + pad)
@@ -1027,7 +1033,7 @@ def main():
             (" (under)" if view["under"] else "")
         )
         dr.text((pad + 2, y + 2), label, font=small, fill=(150, 196, 255))
-        for j, method in enumerate(METHODS):
+        for j, method in enumerate(methods):
             x = pad + j * (w + pad)
             key = (view["name"], pitch, method[0])
             out.paste(Image.open(cells[key]).convert("RGB"), (x, y + lab))

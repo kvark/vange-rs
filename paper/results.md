@@ -143,39 +143,45 @@ Arithmetic mean over the views at each pitch:
 | -60° | 0.449 | 1.189 | 1.775 | 1.329 | 5.682 | 0.474 | 0.559 |
 | -90° | 0.481 | 1.133 | 2.019 | 1.305 | 5.686 | 0.470 | 0.602 |
 
+## Within-run timing uncertainty
+
+Each cell is the fixed-fixture mean over twelve scenes ± an approximate 95% interval propagated from the 40 within-scene frame samples. It measures frame-to-frame noise in this session, not driver-to-driver or session-to-session variation. The original Metal collector retained CPU row means but replaced its raw CPU samples with invalid encoder timestamps, so no honest interval can be reconstructed for that run.
+
+| device | RayTraced | RayVoxel | Sliced | Scattered | Painter | Mesh q=0.0 | Mesh q=0.75 |
+|---|---|---|---|---|---|---|---|
+| AMD Radeon 780M Graphics (RADV PHOENIX) | 3.717 ± 0.072 | 7.722 ± 0.009 | 9.343 ± 0.122 | 9.222 ± 0.042 | 15.832 ± 0.085 | 4.236 ± 0.070 | 3.930 ± 0.034 |
+| AMD Radeon RX 7900 XT (RADV NAVI31) | 0.572 ± 0.005 | 1.284 ± 0.001 | 1.870 ± 0.030 | 2.960 ± 0.014 | 5.376 ± 0.037 | 0.495 ± 0.015 | 0.482 ± 0.015 |
+| Apple M3 | — | — | — | — | — | — | — |
+| Intel(R) Graphics (RPL-U) | 9.886 ± 0.004 | 28.094 ± 0.028 | 35.805 ± 0.187 | 87.000 ± 0.025 | 71.069 ± 0.178 | 10.930 ± 0.006 | 11.547 ± 0.005 |
+| NVIDIA GeForce RTX 5070 | 0.453 ± 0.000 | 1.150 ± 0.001 | 1.901 ± 0.001 | 1.472 ± 0.001 | 4.696 ± 0.001 | 0.479 ± 0.000 | 0.580 ± 0.005 |
+
 ## Accuracy: see-through / covers-sky / speckle (%)
 
-Expected to be device-independent; baseline taken from **AMD Radeon 780M Graphics (RADV PHOENIX)** and cross-checked below. `see-through` is solid terrain left as background and `covers-sky` is background filled in — only the first moves when a renderer is really missing geometry, and both move together when the reference is the one disagreeing. `speckle` is what depth agreement cannot see: pixels whose distance disagrees with their own neighbourhood, in excess of the reference doing the same.
+Expected to be device-independent; baseline taken from **AMD Radeon 890M Graphics (RADV STRIX1)** and cross-checked below. `see-through` is solid terrain left as background and `covers-sky` is background filled in — only the first moves when a renderer is really missing geometry, and both move together when the reference is the one disagreeing. `speckle` is what depth agreement cannot see: pixels whose distance disagrees with their own neighbourhood, in excess of the reference doing the same.
 
 | view | RayTraced | RayVoxel | Sliced | Scattered | Painter | Mesh q=0.0 | Mesh q=0.75 |
 |---|---|---|---|---|---|---|---|
-| river @ 0° | 3.9 / 3.1 / 0.2 | 5.1 / 2.9 / 0.1 | 4.1 / 3.0 / 1.1 | 29.4 / 0.6 / 1.6 | 3.0 / 3.3 / 0.1 | 3.4 / 3.2 / 0.0 | 3.1 / 3.2 / 0.0 |
-| hangar @ 0° | 8.1 / 6.1 / 0.4 | 7.7 / 5.4 / 0.2 | 7.3 / 6.3 / 2.7 | 74.5 / 1.5 / 1.4 | 6.1 / 6.4 / 0.1 | 16.3 / 5.5 / 0.0 | 6.5 / 6.3 / 0.1 |
-| ramp @ 0° | 0.3 / 0.2 / 0.3 | 0.5 / 0.2 / 0.4 | 0.2 / 0.2 / 4.3 | 19.1 / 0.0 / 2.5 | 0.2 / 0.2 / 0.1 | 0.2 / 0.2 / 0.0 | 0.2 / 0.2 / 0.1 |
-| portal @ -30° | 2.4 / 3.9 / 1.0 | 1.8 / 4.6 / 0.4 | 2.6 / 3.4 / 1.7 | 4.5 / 3.1 / 4.3 | 1.9 / 4.6 / 0.2 | 2.0 / 3.8 / 0.1 | 1.9 / 4.5 / 0.1 |
-| entrance @ -30° | 5.1 / 5.2 / 0.5 | 3.7 / 6.2 / 0.2 | 5.8 / 5.2 / 0.8 | 31.7 / 0.6 / 2.2 | 4.5 / 6.2 / 0.1 | 4.1 / 6.0 / 0.1 | 3.8 / 6.1 / 0.1 |
-| river-down @ -30° | 8.2 / 8.0 / 0.8 | 7.0 / 8.9 / 0.3 | 8.2 / 7.7 / 0.7 | 12.3 / 5.3 / 3.8 | 7.1 / 9.0 / 0.1 | 8.1 / 7.7 / 0.1 | 7.2 / 8.8 / 0.1 |
-| stash @ -60° | 0.0 / 2.3 / 0.6 | 0.0 / 2.5 / 0.3 | 0.0 / 2.3 / 0.2 | 0.0 / 2.3 / 5.3 | 1.5 / 1.3 / 0.2 | 0.0 / 2.3 / 0.1 | 0.0 / 2.3 / 0.1 |
-| copterig charger @ -60° | 0.1 / 8.8 / 0.5 | 0.0 / 9.1 / 0.2 | 0.0 / 9.0 / 0.2 | 0.2 / 8.4 / 4.3 | 1.7 / 6.5 / 0.1 | 0.0 / 9.0 / 0.1 | 0.0 / 9.0 / 0.1 |
-| wires @ -60° | 0.0 / 1.8 / 0.8 | 0.0 / 1.8 / 0.4 | 0.0 / 1.8 / 0.3 | 0.0 / 1.8 / 6.4 | 0.7 / 1.2 / 0.2 | 0.0 / 1.8 / 0.1 | 0.0 / 1.8 / 0.1 |
-| spiral charger @ -90° | 0.0 / 13.9 / 0.7 | 0.0 / 13.9 / 0.3 | 0.0 / 13.9 / 0.3 | 0.0 / 13.8 / 3.5 | 1.3 / 12.7 / 0.2 | 0.0 / 13.9 / 0.2 | 0.0 / 13.9 / 0.2 |
+| river @ 0° | 1.0 / 0.0 / 0.2 | 2.6 / 0.3 / 0.1 | 1.3 / 0.0 / 1.1 | 29.0 / 0.0 / 1.6 | 0.0 / 0.2 / 0.1 | 0.6 / 0.2 / 0.0 | 0.2 / 0.1 / 0.0 |
+| hangar @ 0° | 2.1 / 0.0 / 0.4 | 2.5 / 0.1 / 0.2 | 1.2 / 0.1 / 2.9 | 73.2 / 0.0 / 1.4 | 0.0 / 0.2 / 0.1 | 11.0 / 0.1 / 0.0 | 0.4 / 0.1 / 0.1 |
+| ramp @ 0° | 0.2 / 0.0 / 0.3 | 0.3 / 0.0 / 0.4 | 0.1 / 0.0 / 4.2 | 19.1 / 0.0 / 2.5 | 0.0 / 0.0 / 0.1 | 0.0 / 0.0 / 0.0 | 0.0 / 0.0 / 0.1 |
+| portal @ -30° | 1.1 / 0.0 / 1.0 | 0.1 / 0.3 / 0.3 | 1.8 / 0.0 / 1.8 | 4.1 / 0.1 / 4.5 | 0.0 / 0.2 / 0.1 | 1.0 / 0.2 / 0.1 | 0.2 / 0.1 / 0.1 |
+| entrance @ -30° | 2.3 / 0.0 / 0.6 | 0.0 / 0.2 / 0.2 | 2.9 / 0.0 / 1.6 | 33.4 / 0.0 / 2.1 | 0.8 / 0.1 / 0.1 | 0.5 / 0.1 / 0.1 | 0.1 / 0.1 / 0.1 |
+| river-down @ -30° | 1.9 / 0.0 / 0.9 | 0.0 / 0.4 / 0.3 | 2.2 / 0.0 / 0.8 | 8.6 / 0.1 / 4.0 | 0.0 / 0.3 / 0.1 | 2.2 / 0.2 / 0.1 | 0.2 / 0.2 / 0.1 |
+| stash @ -60° | 0.0 / 0.0 / 0.6 | 0.0 / 0.1 / 0.3 | 0.0 / 0.0 / 0.2 | 0.1 / 0.0 / 5.6 | 2.6 / 0.0 / 0.1 | 0.0 / 0.0 / 0.1 | 0.0 / 0.0 / 0.1 |
+| copterig charger @ -60° | 0.2 / 0.0 / 0.7 | 0.0 / 0.1 / 0.2 | 0.0 / 0.0 / 0.2 | 0.8 / 0.0 / 4.8 | 4.2 / 0.0 / 0.1 | 0.1 / 0.1 / 0.1 | 0.0 / 0.0 / 0.1 |
+| wires @ -60° | 0.0 / 0.0 / 0.8 | 0.0 / 0.0 / 0.4 | 0.0 / 0.0 / 0.3 | 0.0 / 0.0 / 6.7 | 1.3 / 0.0 / 0.2 | 0.0 / 0.0 / 0.1 | 0.0 / 0.0 / 0.1 |
+| spiral charger @ -90° | 0.0 / 0.0 / 0.8 | 0.0 / 0.0 / 0.3 | 0.0 / 0.0 / 0.3 | 0.1 / 0.0 / 4.1 | 2.5 / 0.0 / 0.3 | 0.0 / 0.0 / 0.2 | 0.0 / 0.0 / 0.2 |
 | gorb charger @ -90° | 0.0 / 0.0 / 0.6 | 0.0 / 0.0 / 0.2 | 0.0 / 0.0 / 0.2 | 0.0 / 0.0 / 4.1 | 0.0 / 0.0 / 0.2 | 0.0 / 0.0 / 0.1 | 0.0 / 0.0 / 0.1 |
-| secret @ -90° | 0.2 / 7.0 / 0.6 | 0.0 / 7.0 / 0.2 | 0.0 / 7.0 / 0.2 | 0.3 / 7.0 / 2.6 | 0.0 / 7.0 / 0.2 | 0.0 / 7.0 / 0.1 | 0.0 / 7.0 / 0.1 |
+| secret @ -90° | 0.2 / 0.0 / 0.7 | 0.0 / 0.0 / 0.3 | 0.0 / 0.0 / 0.2 | 0.3 / 0.0 / 2.8 | 0.0 / 0.0 / 0.2 | 0.0 / 0.0 / 0.2 | 0.0 / 0.0 / 0.2 |
 
 Arithmetic mean over the views at each pitch, see-through / speckle (%):
 
 | pitch | RayTraced | RayVoxel | Sliced | Scattered | Painter | Mesh q=0.0 | Mesh q=0.75 |
 |---|---|---|---|---|---|---|---|
-| 0° | 4.1 / 0.3 | 4.4 / 0.3 | 3.9 / 2.7 | 41.0 / 1.8 | 3.1 / 0.1 | 6.6 / 0.0 | 3.3 / 0.1 |
-| -30° | 5.2 / 0.8 | 4.2 / 0.3 | 5.5 / 1.1 | 16.2 / 3.4 | 4.5 / 0.1 | 4.7 / 0.1 | 4.3 / 0.1 |
-| -60° | 0.0 / 0.6 | 0.0 / 0.3 | 0.0 / 0.2 | 0.1 / 5.4 | 1.3 / 0.2 | 0.0 / 0.1 | 0.0 / 0.1 |
-| -90° | 0.1 / 0.6 | 0.0 / 0.2 | 0.0 / 0.2 | 0.1 / 3.4 | 0.4 / 0.2 | 0.0 / 0.1 | 0.0 / 0.1 |
-
-> **Cross-device threshold crossings.** Accuracy should not normally vary with the adapter; inspect these rows before deciding whether the spread is material.
-
-> - Scattered `see_through` at hangar @ 0°: AMD Radeon 780M Graphics (RADV PHOENIX) 74.5% vs Apple M3 75.2%
-> - Scattered `depth_p50` at hangar @ 0°: AMD Radeon 780M Graphics (RADV PHOENIX) 123.0u vs Apple M3 124.3u
-> - Scattered `depth_p95` at hangar @ 0°: AMD Radeon 780M Graphics (RADV PHOENIX) 345.1u vs Apple M3 348.0u
+| 0° | 1.1 / 0.3 | 1.8 / 0.2 | 0.9 / 2.7 | 40.4 / 1.8 | 0.0 / 0.1 | 3.9 / 0.0 | 0.2 / 0.1 |
+| -30° | 1.8 / 0.8 | 0.0 / 0.2 | 2.3 / 1.4 | 15.4 / 3.5 | 0.3 / 0.1 | 1.2 / 0.1 | 0.2 / 0.1 |
+| -60° | 0.1 / 0.7 | 0.0 / 0.3 | 0.0 / 0.2 | 0.3 / 5.7 | 2.7 / 0.1 | 0.0 / 0.1 | 0.0 / 0.1 |
+| -90° | 0.1 / 0.7 | 0.0 / 0.3 | 0.0 / 0.2 | 0.1 / 3.7 | 0.8 / 0.2 | 0.0 / 0.1 | 0.0 / 0.1 |
 
 ## Preparation cost (ms, CPU wall time)
 
@@ -197,15 +203,15 @@ Read comparatively. Grazing rays can move their hit point by tens of units for a
 
 | view | RayTraced | RayVoxel | Sliced | Scattered | Painter | Mesh q=0.0 | Mesh q=0.75 |
 |---|---|---|---|---|---|---|---|
-| river @ 0° | 46.0 / 259.2 | 50.5 / 257.9 | 45.7 / 240.4 | 41.6 / 222.2 | 47.0 / 254.3 | 49.0 / 251.3 | 47.4 / 253.9 |
-| hangar @ 0° | 5.5 / 179.5 | 4.6 / 151.2 | 5.7 / 164.4 | 123.0 / 345.1 | 4.7 / 156.3 | 10.6 / 171.9 | 4.7 / 156.6 |
-| ramp @ 0° | 9.8 / 75.4 | 9.3 / 81.8 | 9.2 / 85.8 | 19.1 / 147.6 | 9.4 / 84.3 | 10.9 / 80.2 | 9.4 / 79.7 |
-| portal @ -30° | 9.8 / 248.4 | 10.9 / 281.2 | 10.3 / 243.5 | 14.8 / 290.5 | 10.8 / 281.1 | 12.0 / 281.5 | 11.0 / 281.4 |
-| entrance @ -30° | 14.4 / 248.5 | 14.6 / 256.2 | 14.1 / 244.9 | 12.1 / 100.9 | 14.3 / 248.4 | 14.3 / 260.8 | 14.7 / 256.8 |
-| river-down @ -30° | 17.9 / 216.1 | 17.4 / 212.6 | 17.1 / 214.4 | 18.6 / 219.5 | 17.1 / 211.9 | 17.3 / 217.0 | 18.3 / 212.7 |
-| stash @ -60° | 19.3 / 146.3 | 18.5 / 136.9 | 18.8 / 144.3 | 26.1 / 179.3 | 18.3 / 144.9 | 28.2 / 167.0 | 19.3 / 145.0 |
-| copterig charger @ -60° | 56.4 / 217.6 | 56.0 / 213.8 | 56.2 / 214.6 | 59.6 / 229.3 | 54.4 / 213.0 | 55.7 / 216.9 | 56.1 / 214.7 |
-| wires @ -60° | 52.5 / 168.4 | 51.3 / 167.6 | 52.0 / 168.8 | 57.2 / 186.0 | 52.0 / 168.1 | 52.3 / 169.3 | 51.8 / 168.7 |
-| spiral charger @ -90° | 45.5 / 142.6 | 45.5 / 123.3 | 45.7 / 126.1 | 47.4 / 158.4 | 44.6 / 118.8 | 50.0 / 153.0 | 45.7 / 131.4 |
-| gorb charger @ -90° | 21.1 / 99.4 | 21.7 / 99.6 | 21.8 / 99.6 | 23.6 / 101.6 | 21.8 / 99.7 | 22.0 / 98.9 | 21.8 / 99.5 |
-| secret @ -90° | 23.8 / 174.5 | 24.0 / 170.5 | 24.1 / 171.6 | 24.3 / 175.0 | 24.1 / 171.4 | 24.3 / 170.9 | 23.9 / 172.1 |
+| river @ 0° | 0.2 / 15.9 | 0.5 / 2.0 | 0.4 / 8.0 | 28.3 / 195.3 | 0.0 / 0.9 | 0.4 / 16.4 | 0.3 / 2.8 |
+| hangar @ 0° | 0.3 / 128.1 | 0.5 / 1.1 | 0.3 / 35.1 | 109.8 / 347.2 | 0.0 / 0.9 | 4.0 / 75.4 | 0.3 / 6.8 |
+| ramp @ 0° | 0.2 / 50.9 | 0.5 / 1.1 | 0.6 / 10.3 | 16.3 / 147.7 | 0.0 / 0.4 | 1.1 / 51.5 | 0.5 / 23.5 |
+| portal @ -30° | 0.3 / 172.7 | 0.6 / 1.6 | 0.2 / 11.6 | 0.9 / 267.3 | 0.0 / 0.1 | 0.5 / 20.5 | 0.3 / 2.9 |
+| entrance @ -30° | 0.3 / 74.6 | 0.6 / 1.7 | 0.5 / 7.4 | 1.7 / 69.9 | 0.0 / 0.1 | 0.8 / 9.4 | 0.5 / 2.9 |
+| river-down @ -30° | 0.4 / 36.5 | 0.7 / 2.9 | 0.2 / 8.0 | 0.3 / 131.6 | 0.0 / 0.3 | 0.6 / 20.1 | 0.4 / 3.9 |
+| stash @ -60° | 0.3 / 20.9 | 0.5 / 7.5 | 0.1 / 1.1 | 0.2 / 94.0 | 0.0 / 1.0 | 1.3 / 117.5 | 0.5 / 4.6 |
+| copterig charger @ -60° | 0.3 / 42.5 | 0.5 / 2.6 | 0.1 / 1.5 | 0.5 / 177.3 | 0.0 / 1.7 | 0.9 / 34.8 | 0.6 / 2.9 |
+| wires @ -60° | 0.4 / 85.5 | 0.6 / 4.0 | 0.1 / 1.4 | 0.4 / 145.3 | 0.0 / 1.6 | 1.2 / 16.9 | 0.5 / 4.0 |
+| spiral charger @ -90° | 14.2 / 136.1 | 14.6 / 126.7 | 14.5 / 131.3 | 15.1 / 143.1 | 14.0 / 128.4 | 17.3 / 150.9 | 14.5 / 132.8 |
+| gorb charger @ -90° | 8.4 / 82.6 | 8.5 / 81.0 | 8.6 / 81.1 | 9.7 / 90.0 | 8.6 / 81.1 | 9.5 / 80.2 | 8.5 / 81.4 |
+| secret @ -90° | 10.5 / 165.3 | 10.8 / 160.1 | 10.5 / 162.1 | 10.7 / 167.7 | 10.6 / 162.0 | 10.6 / 161.5 | 10.5 / 163.0 |
