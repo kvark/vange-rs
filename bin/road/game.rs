@@ -5,7 +5,8 @@ use vangers::{
     config, level, model,
     physics::{self, CarPhysicsData},
     render::{
-        Batcher, GraphicsContext, Render, ScreenTargets, debug::LineBuffer, object::BodyColor,
+        Batcher, DirtyRect, GraphicsContext, Rect, Render, ScreenTargets, debug::LineBuffer,
+        object::BodyColor,
     },
     space,
 };
@@ -332,6 +333,11 @@ pub struct Game {
     batcher: Batcher,
     line_buffer: LineBuffer,
     level: level::Level,
+    moving_land: level::moving::MovingLand,
+    /// Time carried over towards the next moving-land quant.
+    moving_land_time: f32,
+    /// Scratch buffer for the rectangles a moving-land quant touched.
+    moving_land_regions: Vec<level::moving::Region>,
     agents: Vec<Agent>,
     remote_agents: HashMap<PlayerId, RemoteAgent>,
     net: Option<NetworkClient>,
@@ -445,6 +451,14 @@ impl Game {
         log::info!("Loading the level");
         let level = level::load(&level_config, &settings.game.geometry);
 
+        let moving_land = match level_config.path_moving_land() {
+            Some(path) => {
+                log::info!("Loading the moving land from {:?}", path);
+                level::moving::MovingLand::load_dir(&path, level_config.terrains.len() as i32)
+            }
+            None => level::moving::MovingLand::default(),
+        };
+
         log::info!("Spawning agents");
         let car_names = db.cars.keys().cloned().collect::<Vec<_>>();
         let mut player_agent = Agent::spawn(
@@ -519,6 +533,9 @@ impl Game {
             batcher: Batcher::new(),
             line_buffer: LineBuffer::new(),
             level,
+            moving_land,
+            moving_land_time: 0.0,
+            moving_land_regions: Vec::new(),
             agents,
             remote_agents: HashMap::new(),
             net,
@@ -539,6 +556,49 @@ impl Game {
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
             input: Input::default(),
+        }
+    }
+
+    /// Advances the moving land and hands the touched rectangles to the
+    /// renderer. The original ticks it once per main loop iteration, so the
+    /// animation speed is tied to `MAIN_LOOP_TIME` rather than the frame rate.
+    fn step_moving_land(&mut self, delta: f32) {
+        if self.moving_land.is_empty() {
+            return;
+        }
+
+        self.moving_land_time += delta;
+        let quants = (self.moving_land_time / config::common::MAIN_LOOP_TIME) as u32;
+        if quants == 0 {
+            return;
+        }
+        self.moving_land_time -= quants as f32 * config::common::MAIN_LOOP_TIME;
+        // After a long stall, drop the backlog instead of animating through it.
+        const MAX_CATCH_UP: u32 = 4;
+
+        self.moving_land_regions.clear();
+        for _ in 0..quants.min(MAX_CATCH_UP) {
+            self.moving_land
+                .update(&mut self.level, &mut self.moving_land_regions);
+        }
+
+        // A frame keeps redrawing the same rectangle for its whole period, so
+        // the same region shows up once per quant.
+        self.moving_land_regions.sort_unstable();
+        self.moving_land_regions.dedup();
+
+        let z_range = 0..self.level.geometry.height as u16;
+        for r in self.moving_land_regions.drain(..) {
+            self.render.terrain.dirty_rects.push(DirtyRect {
+                rect: Rect {
+                    x: r.x as u16,
+                    y: r.y as u16,
+                    w: r.w as u16,
+                    h: r.h as u16,
+                },
+                z_range: z_range.clone(),
+                need_upload: true,
+            });
         }
     }
 
@@ -688,6 +748,8 @@ impl Application for Game {
                 None => 0.0,
             };
         }
+
+        self.step_moving_land(delta);
 
         const TIME_HACK: f32 = 1.0;
         // Note: the equations below make the game absolutely match the original

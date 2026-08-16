@@ -7,6 +7,7 @@ use std::{
 };
 
 mod config;
+pub mod moving;
 pub mod tin;
 
 pub use self::config::{LevelConfig, Power, TerrainConfig};

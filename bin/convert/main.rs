@@ -2,6 +2,7 @@ mod layers;
 mod level_obj;
 mod level_png;
 mod model_obj;
+mod vot_ron;
 
 use std::{
     fs::{File, read as fs_read},
@@ -62,6 +63,10 @@ struct Cli {
     /// Number of chunks to split into (for large levels)
     #[arg(short, long)]
     chunks: Option<i32>,
+    /// Terrain count of the level a VOT belongs to. Decides whether its
+    /// frames carry a per-texel terrain plane.
+    #[arg(short, long, default_value_t = 8)]
+    terrains: i32,
 }
 
 fn main() {
@@ -177,6 +182,10 @@ fn main() {
             println!("\tSaving VMP...");
             let level_data = layers.export();
             level_data.save_vmp(&dst_path);
+        }
+        ("vot", "ron") => {
+            println!("\tLoading the VOT...");
+            vot_ron::export(&src_path, &dst_path, cli.terrains);
         }
         ("pal", "mtl") => {
             println!("\tConverting object palette to MTL...");
