@@ -1041,10 +1041,10 @@ from a full final comparison grid with `examples/paper-teaser.rs` before the
 same plotting command lays it out and labels it. Full five-device grids and
 per-view tables remain supplemental evidence rather than being shrunk into
 unreadable paper pages. `tools/render-paper-video.py` renders a synchronized
-seven-configuration mosaic from the river camera at (837, 3984), moving to
-Y=5184 at yaw 299°, pitch −30°, and eye height 78 over eight seconds at 30
-frames/s. The local H.264 video and poster remain unpublished until the data
-grant covers derived imagery.
+seven-configuration mosaic from the river camera at (837, 3984), moving 800
+world units horizontally along yaw 299° at fixed altitude, pitch −30°, over
+eight seconds at 30 frames/s. The local H.264 video and poster remain
+unpublished until the data grant covers derived imagery.
 
 ## References
 

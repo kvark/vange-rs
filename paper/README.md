@@ -40,7 +40,7 @@ cargo run --release --example paper-teaser -- \
 tools/plot-paper.py
 
 # Generate the synchronized seven-method supplemental flythrough. It starts
-# at the river spot, pitches down 30 degrees, and moves linearly along +Y.
+# at the river spot, pitches down 30 degrees, and flies forward at fixed Z.
 # The derived video remains under work/ until the data grant is executed.
 tools/render-paper-video.py
 ```

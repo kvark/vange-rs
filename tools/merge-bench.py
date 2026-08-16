@@ -21,6 +21,7 @@ Example
 
 import argparse
 import json
+import math
 import statistics
 import sys
 
@@ -47,12 +48,30 @@ def main():
                     choices=["avg_ms", "min_ms", "median_ms"],
                     help="which frame time to tabulate. `min_ms` is the least "
                          "noisy on a busy machine; `avg_ms` includes hitches")
+    ap.add_argument("--accuracy-results",
+                    help="protocol-v3 accuracy-only JSON used instead of the "
+                         "legacy mirrored CPU-reference scores embedded in "
+                         "the timing runs")
     args = ap.parse_args()
 
     runs = []
     for path in args.results:
         with open(path) as f:
             runs.append(json.load(f))
+
+    wrong_purpose = [path for path, run in zip(args.results, runs)
+                     if run.get("purpose", "publication") != "publication"]
+    if wrong_purpose:
+        sys.exit("refusing to merge non-publication timing run(s): " +
+                 ", ".join(wrong_purpose))
+    accuracy_run = None
+    if args.accuracy_results:
+        with open(args.accuracy_results) as source:
+            accuracy_run = json.load(source)
+        if (accuracy_run.get("purpose") != "accuracy-only" or
+                accuracy_run.get("protocol_version", 0) < 3):
+            sys.exit(f"{args.accuracy_results}: expected protocol-v3 "
+                     "accuracy-only results")
 
     metal_runs = [run for run in runs
                   if (run.get("device") or {}).get("backend") == "Metal"]
@@ -147,10 +166,49 @@ def main():
         print("\nArithmetic mean over the views at each pitch:\n")
         print(table(pitch_rows, ["pitch"] + methods))
 
+    print("\n## Within-run timing uncertainty\n")
+    print("Each cell is the fixed-fixture mean over twelve scenes ± an "
+          "approximate 95% interval propagated from the 40 within-scene "
+          "frame samples. It measures frame-to-frame noise in this session, "
+          "not driver-to-driver or session-to-session variation. The original "
+          "Metal collector retained CPU row means but replaced its raw CPU "
+          "samples with invalid encoder timestamps, so no honest interval can "
+          "be reconstructed for that run.\n")
+
+    def timing_samples(run, row):
+        if (run.get("device") or {}).get("backend") == "Metal":
+            if row.get("timing") == "cpu":
+                return row.get("frame_ms")
+            return row.get("cpu_frame_ms")
+        return row.get("frame_ms")
+
+    uncertainty_rows = []
+    for run in runs:
+        cells = [run.get("label", "?")]
+        for method in methods:
+            method_rows = [row for row in run["rows"]
+                           if row["method"] == method]
+            samples = [timing_samples(run, row) for row in method_rows]
+            if not method_rows or any(not values or len(values) < 2
+                                      for values in samples):
+                cells.append("—")
+                continue
+            means = [statistics.mean(values) for values in samples]
+            standard_error = math.sqrt(sum(
+                statistics.stdev(values) ** 2 / len(values)
+                for values in samples)) / len(samples)
+            cells.append(f"{statistics.mean(means):.3f} ± {1.96 * standard_error:.3f}")
+        uncertainty_rows.append(cells)
+    print(table(uncertainty_rows, ["device"] + methods))
+
     # Accuracy should not depend on the device, so report it from the first
     # run as a baseline - but check the others agree, because a mismatch
     # means a driver is producing something different and that is a finding.
-    base = runs[0]
+    base = accuracy_run or runs[0]
+    if accuracy_run is None and base.get("protocol_version", 0) < 3:
+        sys.exit("these timing runs contain legacy mirrored-reference "
+                 "accuracy scores; pass --accuracy-results from "
+                 "compare-terrain.py --accuracy-only")
     print("\n## Accuracy: see-through / covers-sky / speckle (%)\n")
     print(f"Expected to be device-independent; baseline taken from "
           f"**{base.get('label', '?')}** and cross-checked below. "
@@ -194,7 +252,11 @@ def main():
         "depth_p95": (2.0, "u"),
     }
     mismatched = []
-    for run in runs[1:]:
+    comparable_runs = [run for run in runs
+                       if run.get("protocol_version", 0) >= 3]
+    for run in comparable_runs:
+        if run is base:
+            continue
         for view, pitch in keys:
             for m in methods:
                 for field, (threshold, unit) in mismatch_fields.items():
@@ -220,10 +282,11 @@ def main():
           "is every pre-timing frame, which is where an incrementally baked "
           "voxel grid actually gets paid for.\n")
     rows = []
+    timing_base = runs[0]
     for m in methods:
         cells = [m]
         for field in ("prep_setup_ms", "prep_first_frame_ms", "prep_warmup_ms"):
-            vals = [acc(base, v, p, m, field) for v, p in keys]
+            vals = [acc(timing_base, v, p, m, field) for v, p in keys]
             vals = [x for x in vals if x is not None]
             cells.append(fmt(max(vals), 0) if vals else "—")
         rows.append(cells)

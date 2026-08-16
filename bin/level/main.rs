@@ -62,9 +62,9 @@ struct Cli {
     /// orbiting a target. Overrides --cam-target/--cam-distance/--cam-elev.
     #[arg(long)]
     fp: Option<String>,
-    /// End Y coordinate for a linear camera move across timed frames.
+    /// Horizontal distance to move in the viewing direction at fixed altitude.
     #[arg(long)]
-    fp_y_end: Option<f32>,
+    fp_travel: Option<f32>,
     /// Eye height above the local ground surface
     #[arg(long, default_value_t = 8.0)]
     fp_height: f32,
@@ -273,7 +273,7 @@ fn main() {
                 let v = parse_vec3(&format!("{},0", s));
                 (v.x, v.y)
             }),
-            fp_y_end: cli.fp_y_end,
+            fp_travel: cli.fp_travel,
             depth_out: cli.depth_out.clone(),
             frame_dir: cli.frame_dir.clone(),
             cull_dump: cli.cull_dump.clone(),
