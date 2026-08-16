@@ -41,7 +41,7 @@ def main():
     parser.add_argument("--output", default="work/paper-video/terrain-methods.mp4")
     parser.add_argument("--start", default="837,3984",
                         help="starting first-person X,Y")
-    parser.add_argument("--distance", type=float, default=800.0,
+    parser.add_argument("--distance", type=float, default=250.0,
                         help="horizontal travel distance in terrain units")
     parser.add_argument("--yaw", type=float, default=299.0)
     parser.add_argument("--pitch", type=float, default=-30.0)

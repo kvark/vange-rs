@@ -4,12 +4,12 @@
 Independent Researcher<br>
 <kvark@fastmail.com>
 
-**Status: submission draft after the final hardware batch.** Five-device
-results from the final scenes, 64-step full-screen dual-solid ray marcher,
-common shadow protocol, and a dynamic-edit and memory probe are integrated
-below. Reference-floor disposition, final mesh selection, timing uncertainty,
-browser validation, the submission package, and the terrain-data license
-remain before submission.
+**Status: submission-candidate draft.** The reference, tuning, dynamic-edit,
+memory, and within-session uncertainty protocols are complete. The frozen
+five-device batch remains valid for its original configurations; three retuned
+configurations require the short supplement described in `paper/README.md`
+before the final cross-device timing table is regenerated. Browser validation,
+the submission package, and the terrain-data license remain release gates.
 
 ---
 
@@ -45,11 +45,11 @@ over-drawing; ours concealed a real geometric defect through several
 rounds of apparently passing measurement, and we give the decomposition
 that exposes it, along with the conditions under which a ground-truth
 comparison stops being able to resolve a method's own quality setting.
-Fourth, five methods reproduce a fresh edited build on their first updated
-frame and the fine mesh meets the geometric threshold immediately, while the
-coarse insertion-only mesh remains slightly history-dependent. Making the
-mesh editable also exposes its full retained cost at the finer setting: 526
-MiB of GPU geometry and 913 MiB of CPU triangulation for this level.
+Fourth, the five direct or regularly rebuilt methods reproduce a fresh edited
+build on their first updated frame, while the selected insertion-only mesh
+remains slightly history-dependent after 16 frames. Making that mesh editable
+also exposes its retained cost: 204 MiB of GPU geometry and 337 MiB of CPU
+triangulation for this level.
 
 All six implementations use the same WebGPU-compatible wgpu and canonical
 WGSL path, including its validation, limits, and robust-access requirements.
@@ -201,6 +201,13 @@ special-cased. Agreement of the five result grids across four Vulkan adapters
 and Apple Metal is the direct portability result; timing remains backend- and
 device-specific, and §5.2 keeps unlike timing mechanisms separate.
 
+A current browser smoke test builds the same source for
+`wasm32-unknown-unknown` and runs the WebGPU-only voxel route in Firefox 152.
+On a Radeon 890M, Firefox selected its Vulkan WebGPU backend, accepted the
+canonical WGSL, loaded Fostral, and rendered a 1280×714 canvas. This establishes
+browser execution and visual parity, not browser performance; exact commands,
+versions, and artifact hashes are archived in `paper/browser-smoke.md`.
+
 **Data availability.** The engine and evaluation tools are Apache-2.0. The
 five-device steady-state implementation is frozen at
 [`terrain-paper-v1`](https://github.com/kvark/vange-rs/tree/terrain-paper-v1),
@@ -289,7 +296,7 @@ texel, `z <= low` and `mid <= z <= high` are solid. Testing this predicate
 directly is important: it detects floors, slab tops, and cave ceilings for
 rays travelling in either vertical direction.
 
-The publication setting uses 64 forward samples over the clipped ray
+The publication setting uses 128 forward samples over the clipped ray
 segment. The budget is exposed as `--ray-steps` and is included in the
 uniform tuning sweep. A sample interval can still skip a thinner feature;
 that is the method's characteristic quality/performance tradeoff. Misses
@@ -391,9 +398,9 @@ Chunks are frustum culled and selected by camera distance. Boundaries use a
 stable finest-level vertex sequence so neighbouring LODs do not crack. The
 tradeoff moves out of the frame loop: fitting is a blocking CPU cost, the
 full-level renderer retains all three GPU LODs plus the editable CPU
-triangulation, and edits require local refinement. At q=0.75 those explicit
-method-specific allocations are 526 MiB on the GPU and 913 MiB on the CPU
-(§5.4), substantially more than the roughly 300 MiB finest-LOD estimate.
+triangulation, and edits require local refinement. At the selected q=0.25
+those explicit method-specific allocations are 204 MiB on the GPU and 337 MiB
+on the CPU (§5.4), substantially more than counting only the finest LOD.
 Once present, the geometry uses the conventional raster pipeline and supplies
 derivatives for smooth lighting.
 
@@ -523,51 +530,54 @@ constraint exists to expose.
 
 ## 5. Results
 
-The final batch contains 84 rows on each of five devices: AMD Radeon 780M,
+The frozen hardware batch contains 84 rows on each of five devices: AMD Radeon 780M,
 AMD Radeon RX 7900 XT, Intel RPL-U integrated graphics, NVIDIA GeForce RTX
 5070, and Apple M3. The first four use Vulkan; the M3 uses Metal. Every run is
 1280×800 with far distance 600, 40 timed frames, a common 1024² ray-traced
-shadow pass, the selected 64 RayTraced steps, the same clean source revision
-(`21875dc`), and the same twelve complete camera records. Complete per-view
-tables and driver versions are in `paper/results.md`, regenerated by the
-command in `paper/README.md`.
+shadow pass, the same clean source revision (`21875dc`), and the same twelve
+complete camera records. Corrected reference and full-resolution tuning later
+selected 128 RayTraced steps, 100 RayVoxel steps, and Mesh q=0.25. Only these
+three configurations need recollection; Sliced, Scattered, and Painter rows
+are reused exactly. Protocol v3 records the supplement's clean revision,
+rejects unlike fixtures, and composes the two batches explicitly rather than
+silently merging rows. Complete per-view tables and driver versions are in
+`paper/results.md`, regenerated by the command in `paper/README.md`.
 
 ### 5.1 Pitch is the axis that separates them
 
-Values below use the 780M as the accuracy baseline and are arithmetic means
+Values below use the corrected Radeon 890M CPU-reference run as the accuracy
+baseline and are arithmetic means
 over the three views at each pitch, reported as see-through / coherence error
-(%). `covers-sky` is omitted because it is largely common-mode (§6.1).
+(%). `covers-sky` is omitted because its pitch mean is at most 0.2% for every
+selected configuration (§6.1).
 
 ![Missing terrain and local incoherence separate sharply near the horizon. The logarithmic scale keeps both catastrophic and sub-percent errors visible.](figures/quality-pitch.svg)
 
-| pitch | RayTraced | RayVoxel | Sliced | Scattered | Painter | Mesh q=0.0 | Mesh q=0.75 |
-|---|---|---|---|---|---|---|---|
-| 0° | 4.1 / 0.3 | 4.4 / 0.3 | 3.9 / 2.7 | **41.0 / 1.8** | 3.1 / 0.1 | 6.6 / 0.0 | 3.3 / 0.1 |
-| −30° | 5.2 / 0.8 | 4.2 / 0.3 | 5.5 / 1.1 | **16.2 / 3.4** | 4.5 / 0.1 | 4.7 / 0.1 | 4.3 / 0.1 |
-| −60° | 0.0 / 0.6 | 0.0 / 0.3 | 0.0 / 0.2 | 0.1 / **5.4** | 1.3 / 0.2 | 0.0 / 0.1 | 0.0 / 0.1 |
-| −90° | 0.1 / 0.6 | 0.0 / 0.2 | 0.0 / 0.2 | 0.1 / **3.4** | 0.4 / 0.2 | 0.0 / 0.1 | 0.0 / 0.1 |
+| pitch | RayTraced 128 | RayVoxel 100 | Sliced | Scattered | Painter | Mesh q=0.25 |
+|---|---|---|---|---|---|---|
+| 0° | 0.6 / 0.4 | 0.0 / 0.2 | 0.9 / 2.7 | **40.4 / 1.8** | 0.0 / 0.1 | 0.7 / 0.0 |
+| −30° | 0.6 / 0.9 | 0.0 / 0.2 | 2.3 / 1.4 | **15.4 / 3.5** | 0.3 / 0.1 | 0.9 / 0.1 |
+| −60° | 0.1 / 0.7 | 0.0 / 0.3 | 0.0 / 0.2 | 0.3 / **5.7** | 2.7 / 0.1 | 0.0 / 0.1 |
+| −90° | 0.1 / 0.5 | 0.0 / 0.3 | 0.0 / 0.2 | 0.1 / **3.7** | 0.8 / 0.2 | 0.0 / 0.1 |
 
 The corrected full-screen ray marcher now joins the coherent group instead of
 losing the upper half of horizon frames. Scattering is the actual horizon
-outlier: its three scenes leave 19.1–74.5% of reference terrain uncovered,
-while the other methods' pitch means lie between 3.1% and 6.6%. Looking down
+outlier: its three scenes leave 19.1–73.2% of reference terrain uncovered,
+while the other methods' pitch means lie between 0.0% and 0.9%. Looking down
 removes its coverage deficit but not its point-scale incoherence. Slicing
 shows the complementary signature: good coverage but visible horizontal
 bands, measured as 2.7% coherence error at 0°.
 
-The two mesh settings expose a real quality trade rather than a shading bug.
-At the hangar view q=0.0 leaves 16.3% uncovered, while q=0.75 leaves 6.5%; the
-other scenes are much closer. The shared shadow pass and material resolve are
-visually consistent across columns in all five grids.
+The mesh-quality diagnostic exposes a real quality trade rather than a
+shading bug. At the hangar view q=0.0 leaves 11.0% uncovered, q=0.75 leaves
+0.4%, and the selected q=0.25 leaves 1.7%. The shared shadow pass and material
+resolve are visually consistent across columns in the retained grids.
 
-Accuracy is strongly reproducible across devices. Outside the already broken
-Scattered hangar row, the largest cross-device spreads are 0.064 percentage
-points for coverage, 0.38 points for coherence (a sliced horizon row), 0.11
-world units for median depth, and 0.80 units for p95 depth. On the Scattered
-hangar row Apple differs from the 780M by 0.70 coverage points, 1.34 median
-units, and 2.89 p95 units while both leave about three quarters of the terrain
-uncovered. This is a small device sensitivity inside a catastrophic method
-failure, not evidence that the other renderers produce different geometry.
+The corrected geometry score is run once because the reference and method
+outputs are deterministic for a fixed fixture. The five retained image grids
+provide the cross-device visual check; their old embedded numerical scores are
+not reused because they were computed with the mirrored reference described in
+§6.1.
 
 The central observation is narrower and stronger than the preliminary one:
 **methods developed from top-down screenshots can conceal failure modes that
@@ -575,10 +585,13 @@ become dominant at eye level.** Point scattering loses coverage, slicing
 bands, and an aggressively simplified mesh can miss a scene-specific wall;
 the image-order methods and the painter remain mutually coherent.
 
-### 5.2 Frame time
+### 5.2 Frame time (frozen configuration batch)
 
-The table reports arithmetic means over the three views at each pitch, in ms.
-Vulkan rows use GPU timestamps; Apple M3 rows marked `*` use CPU
+The table reports the frozen batch's arithmetic means over the three views at
+each pitch, in ms. It uses RayTraced 64, RayVoxel 40, and the q=0.0/q=0.75
+mesh bracket; these rows remain useful diagnostics but are not the final
+selected-configuration comparison. The protocol-v3 supplement recollects only
+RayTraced 128, RayVoxel 100, and Mesh q=0.25 on each device. Vulkan rows use GPU timestamps; Apple M3 rows marked `*` use CPU
 submit-and-wait timing because encoder-level timestamps do not enclose the
 Metal workload (§4.3):
 
@@ -611,13 +624,13 @@ Metal workload (§4.3):
 submission and the completion round trip, so they support comparisons among
 methods on that device but not absolute comparisons with the Vulkan GPU rows.
 
-At the selected 64 steps RayTraced has the lowest mean GPU time on the 780M,
+At 64 steps RayTraced has the lowest mean GPU time on the 780M,
 Intel, and NVIDIA devices. Mesh q=0.75 records the lower 7900 XT mean in this
 batch (0.482 ms overall against 0.572 ms for RayTraced), and the difference
 between the two is under 0.15 ms at every pitch. This reverses the earlier
 128-step result:
-the quality sweep did not merely remove invisible work, it changed which
-method wins. On Intel, only RayTraced and the meshes stay near 8.8–11.6 ms;
+the operating point changes which method appears to win. On Intel, only
+RayTraced and the meshes stay near 8.8–11.6 ms;
 the derived-volume and forward methods cost 26–104 ms. Portability of an API
 and shader does not imply portability of a performance ranking.
 
@@ -627,6 +640,26 @@ footprint. Scattered is less orderly: the hangar takes 29.3 ms on the 780M,
 21.6 ms on the 7900 XT, 148.8 ms on Intel, and 99.8 ms CPU time on Apple, but
 only 2.5 ms on NVIDIA. †The pitch-0 arithmetic mean is therefore dominated by
 a scene-and-adapter interaction and is not a general horizon cost.
+
+Within each fixed session, propagating the 40 frame samples through the
+twelve-scene mean gives the following approximate 95% intervals (ms). These
+describe frame-to-frame noise in one run, not driver or session-to-session
+variation:
+
+| device | Ray 64 | Voxel 40 | Sliced | Scattered | Painter | Mesh 0 | Mesh .75 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Radeon 780M | 3.717±0.072 | 7.722±0.009 | 9.343±0.122 | 9.222±0.042 | 15.832±0.085 | 4.236±0.070 | 3.930±0.034 |
+| Radeon 7900 XT | 0.572±0.005 | 1.284±0.001 | 1.870±0.030 | 2.960±0.014 | 5.376±0.037 | 0.495±0.015 | 0.482±0.015 |
+| Intel RPL-U | 9.886±0.004 | 28.094±0.028 | 35.805±0.187 | 87.000±0.025 | 71.069±0.178 | 10.930±0.006 | 11.547±0.005 |
+| RTX 5070 | 0.453±0.000 | 1.150±0.001 | 1.901±0.001 | 1.472±0.001 | 4.696±0.001 | 0.479±0.000 | 0.580±0.005 |
+| Apple M3* | — | — | — | — | — | — | — |
+
+The 7900 XT mesh intervals overlap, so the 0.013 ms difference between their
+overall means is not evidence of a general winner. The legacy Metal collector
+retained CPU row means but overwrote its raw CPU arrays with the invalid
+encoder timestamps, so an honest M3 interval cannot be reconstructed. Its
+full CPU means remain in the table with a large asterisk; only a new Apple run
+can add uncertainty.
 
 ### 5.3 Preparation cost
 
@@ -659,7 +692,7 @@ budget the difference between them matters more than the per-frame gap.
 
 ### 5.4 Editing and retained method data
 
-The supplemental edit run used revision `d76661b` on an AMD Radeon 890M with
+The selected-configuration supplement used revision `f654215` on an AMD Radeon 890M with
 RADV/Mesa 26.1.4 at the publication resolution and shadow configuration.
 Times below are CPU submit-and-wait medians; `first edit` has five independent
 samples, while `steady` is the median of ten frames from a fresh build of the
@@ -667,24 +700,20 @@ edited level.
 
 | method | steady (ms) | first edit (ms) | delta (ms) | fresh-build equivalence |
 |---|---:|---:|---:|---|
-| RayTraced | 4.85 | 4.85 | 0.00 | exact after 1 frame |
-| RayVoxel | 7.63 | 7.31 | −0.32 | exact after 1 frame |
-| Sliced | 9.12 | 13.89 | +4.77 | exact after 1 frame |
-| Scattered | 11.26 | 11.45 | +0.19 | exact after 1 frame |
-| Painter | 20.47 | 24.10 | +3.63 | exact after 1 frame |
-| Mesh q=0.0 | 6.23 | 12.20 | +5.98 | not equivalent by 16 frames |
-| Mesh q=0.75 | 8.09 | 16.11 | +8.02 | within threshold after 1 frame |
+| RayTraced 128 | 5.67 | 7.85 | +2.18 | exact after 1 frame |
+| RayVoxel 100 | 7.66 | 8.94 | +1.27 | exact after 1 frame |
+| Sliced | 6.97 | 11.43 | +4.46 | exact after 1 frame |
+| Scattered | 8.57 | 10.31 | +1.74 | exact after 1 frame |
+| Painter | 19.91 | 21.97 | +2.06 | exact after 1 frame |
+| Mesh q=0.25 | 5.69 | 12.27 | +6.58 | not equivalent by 16 frames |
 
-The small negative RayVoxel delta is run-to-run noise, not an edit speedup;
-its first-edit interquartile range is 6.78–7.92 ms. All direct paths and the
-voxel hierarchy reproduce the fresh build exactly on the first updated frame.
-The fine mesh also passes immediately (0% hit/miss disagreement and 0.040 u
-p95 depth difference). The coarse mesh remains history-dependent: its live
+All direct paths and the voxel hierarchy reproduce the fresh build exactly on
+the first updated frame. The selected mesh remains history-dependent: its live
 TIN only inserts vertices, whereas a fresh fit may choose a different coarse
 topology. At 16 frames it still differs from the fresh fit by 0.0098% hit/miss
-classification, 1.044 u p95 depth, and 1.24 levels of
+classification, 1.215 u p95 depth, and 1.09 levels of
 8-bit color MAE. This is not asynchronous lag, and it remains well inside the
-q=0.0 fit tolerance; exact rebuild equivalence is nevertheless a stronger
+q=0.25 fit tolerance; exact rebuild equivalence is nevertheless a stronger
 property than this implementation provides.
 
 At 1280×800 the same run reports the following explicit, persistent,
@@ -693,17 +722,15 @@ data beyond the shared renderer resources excluded in §4.4.
 
 | method | GPU data (MiB) | CPU data (MiB) |
 |---|---:|---:|
-| RayTraced | 0 | 0 |
+| RayTraced 128 | 0 | 0 |
 | RayVoxel (4,8,2) | 18.29 | <0.01 |
 | Sliced | 0 | 0 |
 | Scattered | 3.91 | 0 |
 | Painter | <0.01 | 0 |
-| Mesh q=0.0 | 140.11 | 222.69 |
-| Mesh q=0.75 | 526.15 | 912.95 |
+| Mesh q=0.25 | 203.88 | 336.80 |
 
-The mesh numbers change the engineering conclusion. The earlier ~300 MiB
-estimate counted only q=0.75's finest GPU geometry. The renderer actually
-retains three LODs, while dynamic refinement also keeps every chunk's live
+The mesh numbers change the engineering conclusion. The renderer retains
+three LODs, while dynamic refinement also keeps every chunk's live
 triangulation on the CPU. RayVoxel's tuned coarse grid is only 18.29 MiB; its
 153 MiB production grid remains a distinct, disclosed configuration (§5.6).
 Scattered's 3.91 MiB is one 32-bit value per output pixel and therefore scales
@@ -736,19 +763,19 @@ Each method was swept over its own quality knob and given the cheapest
 setting within one percentage point of its own best error, so no method
 is charged for a setting that buys nothing or credited with speed it
 reaches only by being wrong. Fostral, three viewpoints at the horizon,
-400x260, view distance 600. Geometry scores are device-independent to the
-small spreads measured in §5.1. The numbers below are from the GPU pass
-recorded in `paper/tuning.md`; RayTraced was re-swept after the full-screen
-fix, while the other methods already used the final river/hangar/ramp scenes.
+400x260, view distance 600. The CPU reference was re-swept after correcting
+its screen-X basis and far-plane convention. The mesh received an additional
+1280×800 pass because its wall coverage was not resolved at tuning resolution.
+The complete sweeps are recorded in `paper/tuning.md`.
 
 | method | knob | swept | chosen | error at choice |
 |---|---|---|---|---|
-| RayTraced | forward steps | 16–256 | **64** | 9.4% |
-| Painted | — | none beyond view distance | — | 4.5% |
-| Sliced | slices | 32–512 | **512** | 9.8% |
-| Scattered | density | 1–4 | **4,4,4** | 57.3% |
-| RayVoxel | grid, steps | 2 grids × 40–400 | **4,8,2, 40 steps** | 5.5% |
-| Mesh | fit tolerance | q 0.0–1.0 | **q=0.0** | 4.4% |
+| RayTraced | forward steps | 16–256 | **128** | 1.2% |
+| Painted | — | none beyond view distance | — | 0.1% |
+| Sliced | slices | 32–512 | **512** | 6.5% |
+| Scattered | density | 1–4 | **4,4,4** | 39.2% |
+| RayVoxel | grid, steps | 2 grids × 40–400 | **4,8,2, 100 steps** | 0.3% |
+| Mesh | fit tolerance | q 0.0–1.0 | **q=0.25** | 0.8% at 1280×800 |
 
 Five of the results are worth stating.
 
@@ -758,56 +785,39 @@ unit spacing and truncated slices off the *bottom* of the height range —
 so "128 slices" silently deleted all terrain below half height, which
 the sweep read as a collapse: 61.2% see-through and surfaces moved by
 259 u. With the count honestly spreading slices over the whole range,
-128 slices leave 6.2%. A tuning sweep validates the knob's
+128 slices leave 6.8% see-through in the corrected current sweep. A tuning sweep validates the knob's
 implementation as much as the method behind it, and a result this
 discontinuous is a reason to suspect the former.
 
-**The corrected slicer knob changes the error's kind, and the fixture
-decides the setting.** From 32 to 512 slices, cost rises 7.6× (0.19 →
-1.44 ms) while see-through falls 17.2% → 5.4% and speckle rises 2.4% →
-4.4%, peaking at 10.9% at 256: slices convert missing spans into
-isolated wrong pixels. On the first corrected fixture the sum stayed
-within 2.4 points across the whole sweep, the rule had nothing to say,
-and we kept one slice per altitude unit — the setting at which the
-quantised heights make the cross-sections exact. On the current fixture,
-whose views carry more wall and slab in frame, 512 pulls eight points
-clear of the next-best setting and the rule takes it. The lesson does
-not change: a knob whose total error is flat relative to the measurement
-cannot be tuned by an error-based rule, and a sweep whose outcome moves
-this much when the fixture changes is a reason to re-read the knob's
-implementation before trusting either number.
+**The corrected slicer knob changes the error's kind.** From 32 to 512 slices,
+cost rises 0.31 → 1.54 ms while see-through falls 15.5% → 3.0%. Speckle is
+non-monotonic because additional slices convert missing spans into isolated
+wrong pixels before coverage becomes dense enough; the combined error falls
+16.7% → 6.5%, so the rule selects 512.
 
 **The voxel step budget is a property of the fixture, not the method.**
-40 steps — the value this work inherited — left 6.4% see-through on the
-first fixture's long sightlines, where 100 got to 2.5%; we first
-"corrected" it to 200, which was equally accurate and 30% more
-expensive. On the current fixture the sightlines are shorter: 40 steps
-lands within a point of 100 (5.5% against 4.8%), and the rule keeps the
-inherited value. A step budget tunes the longest sightline the
+40 steps leaves 2.5% combined error, while 100 reaches 0.3%; 200 and 400
+remain at 0.3% and only add work. The rule therefore selects 100. A step
+budget tunes the longest sightline the
 viewpoints put in frame; change the viewpoints and it needs re-tuning,
 which is what the protocol's tuning pass is for.
 
-**Resolution changes whether the reference can resolve mesh quality.** In the
-400×260 tuning pass every setting from q=0.0 to q=1.0 lands within 0.1 points
-of coverage error (4.2–4.5%) and 5 u of depth error, so the rule picks the
-cheapest. At the full 1280×800 hangar scene in the final batch, however,
-q=0.0 leaves
-16.3% uncovered and q=0.75 leaves 6.5%, at effectively equal frame cost. The
-small tuning image hid a scene-specific wall that the publication resolution
-can resolve. Mesh quality must therefore be selected at full resolution or
-against its own finest fit; the latter moves surfaces by up to 289 u and
-remains the stronger self-reference.
+**Resolution changes whether the reference can resolve mesh quality.** At
+400×260 q=0.0 and q=0.25 both have 1.8% combined error, so the rule initially
+chooses q=0.5 as the first point within one point of the 0.7% best. At
+1280×800, q=0.0 leaves 3.9%, q=0.25 leaves 0.8%, and q=0.5–1.0 leave 0.3%; the
+same rule selects q=0.25. This full-resolution pass resolves the
+scene-specific wall that the small image hid.
 
-**The corrected ray marcher selects 64 steps.** Across the final horizon
-scenes, 16 → 256 steps costs 0.25 → 1.26 ms while total error falls 12.5% →
-8.4%. The 64-step setting is the cheapest within one point of the best (9.4%).
-The final five-device batch uses 64 throughout. Relative to the earlier
-128-step batch this saves about 1.2 ms on the 780M and 0.3–0.4 ms on the
-discrete GPUs, enough to reverse the lowest-time method in §5.2.
+**The corrected ray marcher selects 128 steps.** Across the final horizon
+scenes, 16 → 256 steps costs 0.24 → 1.29 ms while total error falls 6.9% →
+0.6%. The 128-step setting is the cheapest within one point of the best
+(1.2%). The older 64-step timing rows remain valid measurements of that
+configuration, but they are not substituted for the selected one.
 
 A sixth result is about configuration rather than the method: the voxel
 tracer's production grid (2,4,1) needs 153 MB of storage buffer and did not
-fit the software rasterizer used for tuning. The final batch ran the selected
+fit the software rasterizer used for tuning. The selected comparison runs the
 (4,8,2) grid even though all five hardware devices can accommodate the
 production grid. The reported comparison therefore characterises the
 tuned coarse configuration, not the renderer's shipping configuration;
@@ -816,14 +826,15 @@ an unreported advantage.
 
 ### 5.7 Fastest is not best
 
-The 64-step RayTraced configuration records the lowest mean GPU time on more
-devices, but that is not a general recommendation over Mesh. Its fixed
+The older 64-step RayTraced configuration records the lowest mean GPU time on
+more devices, but it is not the selected quality point and is not a general
+recommendation over Mesh. Ray marching's fixed
 sampling budget is visible as blocky or missed close-up detail, and grazing
 rays are the worst possible
 workload: preserving thin geometry requires more samples, while holding the
 budget fixed admits the horizon artifacts measured in §5.1. The selected
-setting is deliberately the cheapest point within the tuning rule, not a
-quality match for the q=0.75 mesh. The mesh spends memory and preparation time
+128-step setting is deliberately the cheapest point within the tuning rule,
+not a universal quality match for the mesh. The mesh spends memory and preparation time
 to make geometry explicit, then rasterizes continuously interpolated triangles
 without a view-dependent traversal budget.
 
@@ -835,36 +846,32 @@ Neither statement follows from frame time alone.
 
 ## 6. Findings
 
-### 6.1 Reference error is common-mode and scene-dependent
+### 6.1 Plausible reference results can still be wrong
 
-An early calibration fixture suggested that pitch alone controlled the
-reference floor:
+The common coverage offset had two concrete causes. First, the CPU camera used
+the positive screen-right basis while the renderer's view matrix stores its
+negative; the centre ray agreed, so tests that asserted only forward direction
+could not detect the horizontal reflection. Second, the CPU march stopped at a
+spherical distance of 600 while the GPU clips at a plane 600 units along the
+view axis. Off-axis rays therefore ended early. Regression tests now assert
+the screen-right ray, yaw direction, and view-axis far-plane semantics.
 
-| pitch | see-through | covers-sky | depth p50 |
-|---|---|---|---|
-| 0° | 6.70% | 7.36% | 25.3u |
-| −15° | 0.00% | 0.00% | 5.5u |
-| −30° | 0.00% | 0.00% | 3.7u |
-| −60° | 0.00% | 0.00% | 1.7u |
+After correction, `covers-sky` at all three −90° scenes is exactly 0.0% for
+every method, and the pitch means remain at or below 0.2%. At the horizon the
+selected coherent methods leave at most 0.9% uncovered, rather than the former
+shared 3–7% offset. The correction also changes the tuning decision: it selects
+128 rather than 64 RayTraced steps and 100 rather than 40 RayVoxel steps.
 
-At eye level most of the ground is nearly edge-on, and a sub-pixel
-difference in ray direction moves the hit by tens of units. At pitch 0
-the converged renderers agreed with *each other* to 1.3 u while all sat
-~25 u from the reference, at a signed median of 0.01 u — scatter, not
-bias.
-
-The final batch shows that the stronger claim — that tilting down makes the
-reference absolutely tight — is false. At the three −90° views, five
-independent methods cluster within a few units of one another while their
-median distance errors against the reference are approximately 45, 21 and
-24 u. At the same views, every method also shares 13.9%, 0.0% and 7.0%
-`covers-sky`, respectively. This is common-mode disagreement with the
-reference, not five renderers developing the same defect. Pitch remains a
-major conditioning variable, but local quantisation, layer boundaries and
-the CPU/GPU sampling convention also set the floor. Absolute depth error
-must therefore be accompanied by inter-method agreement, and the remaining
-top-down offset must be diagnosed before the depth metric supports a final
-quality claim.
+One limitation remains deliberately visible. In extremely wide off-axis
+top-down pixels, otherwise agreeing methods share median absolute offsets of
+roughly 8–14 world units against the CPU point marcher. Halving its step did
+not remove the offset, indicating a point-sampling/cell-boundary convention
+rather than insufficient convergence. We therefore use absolute depth only as
+a diagnostic, not as evidence for sub-unit ranking. The final quality claims
+rest on bidirectional coverage, coherence, visual agreement, and relative
+agreement between independent renderers. The general lesson is methodological:
+a reference needs fixtures that break each symmetry its implementation could
+accidentally preserve.
 
 ### 6.2 The multi-layer encoding, not the terrain, sets the fit cost
 
@@ -979,17 +986,17 @@ measurement moves.
   they do not make them a frame rate. Metal uses CPU submit-and-wait because
   its encoder timestamps failed the bracketing sanity check; those values are
   useful within the M3 rows but cannot be compared directly with Vulkan.
-- Residual tuning uncertainty remains after the uniform pass of §5.6. The
-  selected 64 height-field steps are now measured everywhere, but mesh quality
-  still needs selection at publication resolution because the small tuning
-  image misses the hangar difference (§5.6).
+- Tuning uses one fixed three-scene horizon fixture. It selects 128
+  height-field steps, 100 voxel steps, and q=0.25 at publication resolution;
+  changing the view-distance or scene distribution can select another
+  operating point (§5.6).
 - The edit experiment covers one crater shape, one location, and one Vulkan
   adapter. It establishes first-frame correctness and exposes the coarse
   mesh's history dependence, but cross-device update latency still requires
-  the short `--edits-only` supplement on the five final-batch machines.
+  the protocol-v3 supplement on the remaining final-batch machines.
 - Explicit method payloads are accounted for, but portable wgpu does not
   expose opaque driver allocations or a backend-independent peak heap. The
-  q=0.75 mesh already retains 526 MiB of GPU buffers and 913 MiB of CPU TIN
+  selected q=0.25 mesh retains 204 MiB of GPU buffers and 337 MiB of CPU TIN
   state before those hidden costs. Chunk streaming is not implemented, so
   "runs on low-end devices" describes the pipeline, not its memory budget.
 
@@ -1000,10 +1007,10 @@ top-down camera behave differently once the same authored data is viewed
 at eye level. Horizontal slices expose bands and point scattering exposes
 incoherent pixels. The audit also showed that a projected proxy envelope can
 be mistaken for a ray-marching limitation; the corrected marcher now casts
-the full screen and tests the dual-layer solid in both directions. Its selected
-64-step configuration has the lowest mean GPU time on three of four Vulkan
-devices, but that result is a speed/quality operating point, not an overall
-victory. Close detail remains blocky, and grazing views either consume more
+the full screen and tests the dual-layer solid in both directions. The older
+64-step timing point is fast on three of four Vulkan devices, but corrected
+tuning selects 128 steps and neither result is an overall victory. Close detail
+remains blocky, and grazing views either consume more
 samples or expose
 missed thin geometry. The finer mesh is more consistent at those views and
 feeds ordinary rasterization, triangle-mesh physics, and curved-world
@@ -1012,14 +1019,14 @@ embeddings, at the cost of substantial memory, fitting, and edit maintenance.
 The larger result is about the data and the measurement. Single-layer
 worlds fit by 45–182×, while the structural second layer, not floor relief,
 predicts the collapse in reduction; nearly a quarter of Fostral's vertex
-insertions serve one layer-boundary discontinuity. Five methods reproduce a
-fresh edited build on their first updated frame and the fine mesh meets the
-geometric threshold immediately, but the insertion-only coarse mesh retains a
-small history-dependent difference. The memory audit likewise turns a hidden
-tradeoff into a result: q=0.75 retains 526 MiB of explicit GPU geometry and
-913 MiB of editable CPU triangulation. Coverage alone hid an
-over-drawing defect, and absolute depth against one CPU reference hid
-common-mode disagreement between that reference and every renderer. A
+insertions serve one layer-boundary discontinuity. The five direct or
+regularly rebuilt methods reproduce a fresh edited build on their first
+updated frame, but the selected insertion-only mesh retains a small
+history-dependent difference. The memory audit likewise turns a hidden
+tradeoff into a result: q=0.25 retains 204 MiB of explicit GPU geometry and
+337 MiB of editable CPU triangulation. Coverage alone hid an over-drawing
+defect, while a mirrored camera basis and wrong far-plane convention produced
+plausible common-mode reference error. A
 credible comparison needs bidirectional coverage, coherence, inter-method
 agreement, equal tuning, explicit preparation costs, and visual parity
 checks in addition to a timing table. It also needs to treat post-edit
@@ -1041,7 +1048,7 @@ from a full final comparison grid with `examples/paper-teaser.rs` before the
 same plotting command lays it out and labels it. Full five-device grids and
 per-view tables remain supplemental evidence rather than being shrunk into
 unreadable paper pages. `tools/render-paper-video.py` renders a synchronized
-seven-configuration mosaic from the river camera at (837, 3984), moving 800
+six-configuration mosaic from the river camera at (837, 3984), moving 250
 world units horizontally along yaw 299° at fixed altitude, pitch −30°, over
 eight seconds at 30 frames/s. The local H.264 video and poster remain
 unpublished until the data grant covers derived imagery.

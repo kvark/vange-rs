@@ -27,6 +27,8 @@ levels need a separate documented grant before public artifact release.
       their rows and claims from the camera-ready paper.
 - [ ] Verify that no music, character art, fonts, or unrelated game assets are
       included in the benchmark bundle.
+- [ ] Record who captured `docs/assets/original.jpg`, from which game release,
+      and the screenshot permission/attribution required by the grant.
 
 ## Release check
 
