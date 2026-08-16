@@ -53,7 +53,7 @@ tools/render-paper-video.py
 
 # From a clean checkout, build the internal review PDF and revision-pinned
 # source archive. Both stay under work/ until the data checklist is complete.
-nix-shell -p pandoc weasyprint --run tools/build-paper-package.py
+nix-shell -p pandoc python3Packages.weasyprint --run tools/build-paper-package.py
 ```
 
 The comparison tools require Python with NumPy and Pillow. Video generation
