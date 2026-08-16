@@ -3,7 +3,7 @@
 
 The level binary renders one numbered PNG sequence per method while moving a
 first-person camera horizontally in its viewing direction at constant world
-altitude. ffmpeg labels and assembles the seven sequences into a single H.264
+altitude. ffmpeg labels and assembles the six sequences into a single H.264
 mosaic. Output stays under ``work/`` until the terrain-image license permits
 publication.
 """
@@ -50,6 +50,7 @@ def main():
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=400)
+    parser.add_argument("--far", type=float, default=600.0)
     parser.add_argument("--work", default="work")
     parser.add_argument("--keep-frames", action="store_true")
     args = parser.parse_args()
@@ -90,7 +91,7 @@ def main():
             "--fp-travel", str(args.distance),
             "--fp-height", str(args.eye_height),
             f"--fp-yaw={args.yaw}", f"--fp-pitch={args.pitch}",
-            "--near", "1", "--far", "600",
+            "--near", "1", "--far", str(args.far),
             "--width", str(args.width), "--height", str(args.height),
             "--frames", str(frame_count), "--warmup", str(warmup),
             "--shadow-ray",
@@ -109,7 +110,11 @@ def main():
             "drawbox=x=0:y=0:w=iw:h=38:color=black@0.62:t=fill,"
             f"drawtext=text='{escaped}':fontcolor=white:fontsize=24:x=12:y=8[v{index}]"
         )
-    layout = "0_0|480_0|960_0|0_300|480_300|960_300|480_600"
+    columns = 3
+    layout = "|".join(
+        f"{(index % columns) * 480}_{(index // columns) * 300}"
+        for index in range(len(labels))
+    )
     filters.append(
         "".join(f"[v{index}]" for index in range(len(labels)))
         + f"xstack=inputs={len(labels)}:layout={layout}:fill=0x111318[v]"

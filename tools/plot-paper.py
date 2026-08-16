@@ -25,16 +25,17 @@ MUTED = "#68717b"
 GRID = "#d9dde1"
 PANEL = "#ffffff"
 METHODS = ["RayTraced", "RayVoxel", "Sliced", "Scattered", "Painter",
-           "Mesh q=0.0", "Mesh q=0.75"]
-SHORT = ["Ray 64", "Voxel", "Sliced", "Scatter", "Painter", "Mesh 0", "Mesh .75"]
+           "Mesh q=0.25"]
+SHORT = ["Ray 128", "Voxel 100", "Sliced", "Scatter", "Painter", "Mesh .25"]
 COLOURS = {
     "RayTraced": "#168c9e",
     "RayVoxel": "#4776c5",
     "Sliced": "#d99125",
     "Scattered": "#d65757",
     "Painter": "#8b62c6",
+    "Mesh q=0.25": "#24764a",
     "Mesh q=0.0": "#69a879",
-    "Mesh q=0.75": "#24764a",
+    "Mesh q=0.75": "#155d38",
 }
 
 
@@ -121,17 +122,16 @@ def figure_performance(runs, out):
         svg.add(f'<line x1="{x0 + 38}" y1="{budget_y:.1f}" x2="{x0 + panel_width - 8}" '
                 f'y2="{budget_y:.1f}" stroke="#a84f4f" stroke-width="1.5" stroke-dasharray="5 4"/>')
     svg.text(22, 230, "GPU time (ms, log)", "axis", "middle", transform="rotate(-90 22 230)")
-    svg.text(620, 411, "Ray 64 has the lowest mean on three devices; this chart does not score image quality or reuse.",
+    svg.text(620, 411, "Frame time alone does not score close-view quality, edit cost, memory, physics reuse, or uncertainty.",
              "subtitle", "middle")
     svg.save(out)
 
 
-def figure_quality(runs, out):
-    baseline = next(run for run in runs if "780M" in run["device"]["adapter"])
+def figure_quality(baseline, out):
     width, height = 1240, 490
     svg = Svg(width, height, "Terrain artifacts as camera pitch changes")
     svg.text(34, 36, "The horizon separates methods that look alike from above", "title")
-    svg.text(34, 58, "Mean over three scenes · AMD 780M geometry baseline · logarithmic percentage scale", "subtitle")
+    svg.text(34, 58, f"Mean over three scenes · {baseline['label']} corrected CPU reference · logarithmic scale", "subtitle")
     pitches = [0.0, -30.0, -60.0, -90.0]
     panels = [("see_through", "Missing reference terrain"), ("speckle", "Excess local incoherence")]
     y_low, y_high = 0.05, 100.0
@@ -340,14 +340,21 @@ def figure_teaser(out):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", default="remote/results-*.json")
+    parser.add_argument("--accuracy-results", required=True,
+                        help="upgraded protocol-v3 accuracy-only JSON")
     parser.add_argument("--survey", default="paper/survey.json")
     parser.add_argument("--out", default="paper/figures")
     args = parser.parse_args()
     runs = load_runs(args.results)
+    with open(args.accuracy_results) as source:
+        accuracy = json.load(source)
+    if (accuracy.get("purpose") != "accuracy-only" or
+            accuracy.get("protocol_version", 0) < 3):
+        raise SystemExit("--accuracy-results must be a protocol-v3 accuracy-only run")
     survey = json.load(open(args.survey))
     figures = {
         "performance.svg": lambda path: figure_performance(runs, path),
-        "quality-pitch.svg": lambda path: figure_quality(runs, path),
+        "quality-pitch.svg": lambda path: figure_quality(accuracy, path),
         "fit-survey.svg": lambda path: figure_fit(survey, path),
         "preparation.svg": lambda path: figure_preparation(runs, path),
         "encoding.svg": figure_encoding,
