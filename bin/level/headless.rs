@@ -148,6 +148,9 @@ pub struct SnapshotOptions {
     /// Release every location from its parked start, so locations without a
     /// self-driving engine animate anyway.
     pub ml_free_run: bool,
+    /// Run `ml_quants` on *every* frame rather than once, so the frame timing
+    /// includes the terrain update the viewer does continuously.
+    pub ml_continuous: bool,
 }
 
 impl Default for SnapshotOptions {
@@ -187,6 +190,7 @@ impl Default for SnapshotOptions {
             ml_frame: 1,
             ml_touch: None,
             ml_free_run: false,
+            ml_continuous: false,
             width: 800,
             height: 600,
             cam_target: Vec3::new(128.0, 128.0, 0.0),
@@ -647,7 +651,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             });
         }
         if let Some((ref mut land, ref mut triggers)) = moving_land
-            && frame_index == opts.ml_frame
+            && (opts.ml_continuous || frame_index == opts.ml_frame)
             && opts.ml_quants > 0
         {
             let mut regions = Vec::new();

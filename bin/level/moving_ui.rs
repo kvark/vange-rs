@@ -1,13 +1,18 @@
 //! Interactive moving-land controls for the level viewer.
 //!
 //! Loads the world's `data.vot` and `location.lst` and lets you play the
-//! animations by hand: run the clock, send any location to any of its key
-//! phases, hold a sensor down to work the door it drives, and fly the camera
-//! to whatever you just triggered.
+//! animations by hand: send any location to any of its key phases, hold a
+//! sensor down to work the door it drives, and fly the camera to whatever you
+//! just triggered.
 //!
-//! Locations start parked exactly as they do in the game, so nothing moves
-//! until either a self-driving engine reaches its timer or you press
-//! something here.
+//! Nothing runs until you ask it to. The level opens exactly as it is on
+//! disk: every location parked at phase 0, the clock stopped, and the
+//! location engines not simulated - otherwise the cyclic ones (34 of them on
+//! Fostral) would start cycling the moment the level appeared. Pressing a
+//! trigger starts the clock for you.
+//!
+//! To put a location back, send it to key phase 0. A moving land is a closed
+//! cycle, so that restores the surface rather than merely stopping it.
 
 use vangers::level::{
     Level, LevelConfig,
@@ -24,13 +29,21 @@ pub struct MovingLandUi {
     triggers: Triggers,
     /// Sensors the user is holding down, parallel to `triggers.sensors`.
     held: Vec<bool>,
+    /// Whether the clock is running. Off until something is triggered.
     playing: bool,
+    /// Whether the location engines are simulated. Off by default: the
+    /// cyclic ones drive themselves, and a viewer that starts by animating
+    /// half the map is not showing you the level.
+    run_engines: bool,
     /// Quants per second. The game runs 20.
     rate: f32,
     /// Fractional quants carried between frames.
     carry: f32,
     /// Set by the Step button, consumed by the next update.
     step_once: bool,
+    /// Whether anything has been triggered yet, so the "nothing is running"
+    /// hint stops once the user has found the controls.
+    ever_triggered: bool,
     selected: Option<usize>,
     filter: String,
     /// Set by a "Look" button; the app consumes it to move the camera.
@@ -54,10 +67,12 @@ impl MovingLandUi {
             held: vec![false; triggers.sensors.len()],
             land,
             triggers,
-            playing: true,
+            playing: false,
+            run_engines: false,
             rate: 20.0,
             carry: 0.0,
             step_once: false,
+            ever_triggered: false,
             selected: None,
             filter: String::new(),
             focus: None,
@@ -81,12 +96,14 @@ impl MovingLandUi {
         }
 
         for _ in 0..quants.min(MAX_QUANTS_PER_FRAME) {
-            for (index, &held) in self.held.iter().enumerate() {
-                if held {
-                    self.triggers.touch_sensor(index);
+            if self.run_engines {
+                for (index, &held) in self.held.iter().enumerate() {
+                    if held {
+                        self.triggers.touch_sensor(index);
+                    }
                 }
+                self.triggers.update(&mut self.land);
             }
-            self.triggers.update(&mut self.land);
             self.land.update(level, &mut self.regions);
         }
 
@@ -127,14 +144,29 @@ impl MovingLandUi {
                 self.step_once = true;
             }
             if ui
-                .button("Rewind all")
-                .on_hover_text("Send every location back to phase 0")
+                .button("Stop all")
+                .on_hover_text("Park every location where it stands and stop the clock")
                 .clicked()
             {
                 for location in self.land.locations.iter_mut() {
-                    location.reset();
-                    location.set_go_phase(0);
+                    location.park();
                 }
+                self.playing = false;
+                self.run_engines = false;
+                self.held.iter_mut().for_each(|h| *h = false);
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui
+                .checkbox(&mut self.run_engines, "Run engines")
+                .on_hover_text(
+                    "Simulate location.lst. Cyclic engines start cycling on \
+                     their own, and sensors begin working doors",
+                )
+                .changed()
+                && self.run_engines
+            {
+                self.playing = true;
             }
         });
         ui.add(
@@ -144,12 +176,21 @@ impl MovingLandUi {
         )
         .on_hover_text("The game runs the moving land at 20 quants a second");
 
+        let moving = self
+            .land
+            .locations
+            .iter()
+            .filter(|l| l.go_phase() == FREE_RUNNING || !l.is_go_finish())
+            .count();
         ui.label(format!(
-            "{} locations, {} engines, {} sensors",
+            "{} locations ({moving} moving), {} engines, {} sensors",
             self.land.locations.len(),
             self.triggers.engines.len(),
             self.triggers.sensors.len(),
         ));
+        if !self.ever_triggered && !self.run_engines {
+            ui.weak("Nothing is running - pick a location and send it to a key phase.");
+        }
 
         ui.horizontal(|ui| {
             ui.label("Filter:");
@@ -227,10 +268,19 @@ impl MovingLandUi {
                     }
                     if ui
                         .button(format!("Key {slot}"))
-                        .on_hover_text(format!("Run to phase {phase} and park"))
+                        .on_hover_text(format!(
+                            "Run to phase {phase} and park.{}",
+                            if slot == 0 {
+                                " Key 0 is the start, so this puts the surface back."
+                            } else {
+                                ""
+                            }
+                        ))
                         .clicked()
                     {
                         self.land.locations[index].go_key_phase(slot as i32);
+                        self.playing = true;
+                        self.ever_triggered = true;
                     }
                 }
                 if ui
@@ -239,6 +289,8 @@ impl MovingLandUi {
                     .clicked()
                 {
                     self.land.locations[index].set_go_phase(FREE_RUNNING);
+                    self.playing = true;
+                    self.ever_triggered = true;
                 }
                 if ui
                     .button("Freeze")
@@ -346,6 +398,12 @@ impl MovingLandUi {
                 for s in sensors {
                     self.held[s] = all;
                 }
+                if all {
+                    // Holding a sensor is pointless unless the engines run.
+                    self.run_engines = true;
+                    self.playing = true;
+                    self.ever_triggered = true;
+                }
             }
             ui.label(text);
         });
@@ -370,14 +428,26 @@ impl MovingLandUi {
                         );
                         let owned = self.triggers.sensor_owner(index).is_some();
                         ui.horizontal(|ui| {
-                            ui.add_enabled_ui(owned, |ui| {
-                                ui.toggle_value(&mut self.held[index], "Hold")
-                                    .on_hover_text(if owned {
-                                        "Keep something standing in this sensor"
-                                    } else {
-                                        "No engine listens to this sensor"
-                                    });
-                            });
+                            let mut held = self.held[index];
+                            let changed = ui
+                                .add_enabled_ui(owned, |ui| {
+                                    ui.toggle_value(&mut held, "Hold")
+                                        .on_hover_text(if owned {
+                                            "Keep something standing in this sensor"
+                                        } else {
+                                            "No engine listens to this sensor"
+                                        })
+                                        .changed()
+                                })
+                                .inner;
+                            if changed {
+                                self.held[index] = held;
+                                if held {
+                                    self.run_engines = true;
+                                    self.playing = true;
+                                    self.ever_triggered = true;
+                                }
+                            }
                             if self.triggers.sensor_enabled(index) {
                                 ui.label(text);
                             } else {

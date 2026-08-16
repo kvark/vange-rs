@@ -77,6 +77,10 @@ struct Cli {
     /// anything driving it.
     #[arg(long, default_value_t = false)]
     ml_free_run: bool,
+    /// Run the moving land on every frame instead of once, so the frame
+    /// timing includes the continuous terrain update.
+    #[arg(long, default_value_t = false)]
+    ml_continuous: bool,
     /// First-person camera: stand at "x,y" on the terrain instead of
     /// orbiting a target. Overrides --cam-target/--cam-distance/--cam-elev.
     #[arg(long)]
@@ -300,6 +304,7 @@ fn main() {
                 (v[0], v[1], v[2])
             }),
             ml_free_run: cli.ml_free_run,
+            ml_continuous: cli.ml_continuous,
             fp: cli.fp.as_deref().map(|s| {
                 let v = parse_vec3(&format!("{},0", s));
                 (v.x, v.y)
