@@ -14,7 +14,7 @@ Selection rule: the cheapest setting within 1 percentage points of that method's
 | 128 steps **<-** | 0.87 | 0.8% | 0.4% | 1.2% | 0.2u |
 | 256 steps | 1.29 | 0.4% | 0.3% | 0.6% | 0.1u |
 
-## Painter
+## Painted
 
 | setting | GPU ms | see-through | speckle | error | depth p50 |
 |---|---|---|---|---|---|
@@ -67,11 +67,26 @@ Selection rule: the cheapest setting within 1 percentage points of that method's
 ```python
 METHODS = [
     ("RayTraced", "RayTraced", ["--ray-steps", "128"], ...),  # 128 steps
-    ("Painter", "Painted", [], ...),  # (none)
+    ("Painted", "Painted", [], ...),  # (none)
     ("Sliced", "Sliced", ["--slice-layers", "512"], ...),  # 512 layers
     ("Scattered", "Scattered", ["--scatter-density", "4,4,4"], ...),  # density 4,4,4
     ("RayVoxel", "RayVoxelTraced", ["--voxel-size", "4,8,2", "--voxel-steps", "100"], ...),  # grid 4,8,2, 100 steps
-    ("Mesh", "Mesh", ["--mesh-quality", "0.5"], ...),  # q=0.5
+    ("Mesh q=0.5", "Mesh", ["--mesh-quality", "0.5"], ...),  # q=0.5
 ]
 ```
-\n## Mesh at publication resolution\n\nLevel fostral, pitch 0°, 1280x800, view distance 600, averaged over 3 viewpoints.\n\n| setting | GPU ms | see-through | speckle | error | depth p50 |\n|---|---|---|---|---|---|\n| q=0.0 | 0.44 | 3.9% | 0.0% | 3.9% | 1.8u |\n| q=0.25 **<-** | 0.51 | 0.7% | 0.0% | 0.8% | 0.7u |\n| q=0.5 | 0.59 | 0.3% | 0.1% | 0.3% | 0.4u |\n| q=0.75 | 0.78 | 0.2% | 0.1% | 0.3% | 0.4u |\n| q=1.0 | 1.05 | 0.2% | 0.1% | 0.3% | 0.3u |\n\nThe one-percentage-point selection rule chooses q=0.25 at publication resolution.\n
+
+
+## Mesh at publication resolution
+
+Level fostral, pitch 0°, 1280x800, view distance 600, averaged over 3 viewpoints.
+
+| setting | GPU ms | see-through | speckle | error | depth p50 |
+|---|---|---|---|---|---|
+| q=0.0 | 0.44 | 3.9% | 0.0% | 3.9% | 1.8u |
+| q=0.25 | 0.51 | 0.7% | 0.0% | 0.8% | 0.7u |
+| q=0.5 **<-** | 0.59 | 0.3% | 0.1% | 0.3% | 0.4u |
+| q=0.75 | 0.78 | 0.2% | 0.1% | 0.3% | 0.4u |
+| q=1.0 | 1.05 | 0.2% | 0.1% | 0.3% | 0.3u |
+
+The one-percentage-point rule would choose q=0.25. The paper publishes q=0.5: the coarsest setting that matches the 0.3% full-resolution error floor, so the comparison, teaser, and video share one mesh.
+

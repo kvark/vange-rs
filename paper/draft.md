@@ -4,12 +4,11 @@
 Independent Researcher<br>
 <kvark@fastmail.com>
 
-**Status: submission-candidate draft.** The reference, tuning, dynamic-edit,
-memory, and within-session uncertainty protocols are complete. The frozen
-five-device batch remains valid for its original configurations; three retuned
-configurations require the short supplement described in `paper/README.md`
-before the final cross-device timing table is regenerated. Browser validation,
-the submission package, and the terrain-data license remain release gates.
+**Status: submission-candidate draft.** The six selected configurations are
+now RayTraced 128, RayVoxel 100, Sliced 512, Scattered 4,4,4, Painted, and
+Mesh q=0.5. Quality (§5.1) and timing (§5.2) use that same set; the
+five-device timing table is being recollected at these settings. The
+terrain-data license remains a release gate.
 
 ---
 
@@ -48,15 +47,17 @@ comparison stops being able to resolve a method's own quality setting.
 Fourth, the five direct or regularly rebuilt methods reproduce a fresh edited
 build on their first updated frame, while the selected insertion-only mesh
 remains slightly history-dependent after 16 frames. Making that mesh editable
-also exposes its retained cost: 204 MiB of GPU geometry and 337 MiB of CPU
-triangulation for this level.
+also exposes its retained cost: the selected mesh keeps 319 MiB of GPU
+geometry and 535 MiB of CPU triangulation for this level (§5.4).
 
-All six implementations use the same WebGPU-compatible wgpu and canonical
-WGSL path, including its validation, limits, and robust-access requirements.
-We release the engine, the evaluation harness, and a per-device measurement
-protocol that reduces a full run to a single command.
+All six implementations use the same native wgpu / WebGPU API and
+canonical WGSL path, including its validation, limits, and robust-access
+requirements. A browser build of one route is only a path-to-the-web
+check, not a second comparison. We release the engine, the evaluation
+harness, and a per-device measurement protocol that reduces a full run to
+a single command.
 
-![The seven measured configurations at the hangar horizon scene. Scattered loses coverage, while the coarse mesh misses a wall recovered by the finer fit.](figures/teaser.svg)
+![The six selected methods at the hangar horizon scene. Scattered loses coverage; slicing shows grazing bands; the selected mesh keeps the wall.](figures/teaser.svg)
 
 ## 1. Introduction
 
@@ -184,29 +185,30 @@ WGSL migration in 2021, RayVoxel in 2022, and the current fitted mesh in 2026.
 The techniques therefore accumulated gradually as the engine, API, shader
 language, and available hardware matured.
 
-The project served as an early non-trivial integration testbed for the native
-wgpu stack developed alongside Firefox's WebGPU implementation. Firefox uses
-wgpu-core to validate WebGPU operations and route them through native graphics
-APIs, while Naga validates and translates WGSL [Malyshau 2020; gfx-rs; W3C
-WebGPU; W3C WGSL]. vange-rs moved to wgpu 0.2 in March 2019, migrated all
-terrain, object, and debug shaders to WGSL in 2021 [Malyshau 2021], and
-subsequently deployed the same renderer to the web. This history is evidence
-of integration pressure, not a priority claim.
+The comparison vehicle is the *native* WebGPU API as implemented by wgpu:
+one validated WGSL source, no backend-specific shaders, no unchecked native
+commands. Firefox uses wgpu-core to validate WebGPU operations and route
+them through native graphics APIs, while Naga validates and translates WGSL
+[Malyshau 2020; gfx-rs; W3C WebGPU; W3C WGSL]. vange-rs moved to wgpu 0.2
+in March 2019 and migrated all terrain, object, and debug shaders to WGSL
+in 2021 [Malyshau 2021]. The same source can be compiled to the web; that
+is a path-to-the-web proof, not a second evaluation. The numbers in this
+paper are native Vulkan and Metal runs of that API.
 
-No method in this paper bypasses that stack with backend-specific shaders or
-unchecked native commands. The comparison therefore asks what quality and
-performance these unusual terrain techniques achieve *inside* WebGPU's
-portable, validated programming model, rather than how far one backend can be
-special-cased. Agreement of the five result grids across four Vulkan adapters
-and Apple Metal is the direct portability result; timing remains backend- and
-device-specific, and §5.2 keeps unlike timing mechanisms separate.
+No method bypasses the stack. The comparison therefore asks what quality
+and performance these unusual terrain techniques achieve *inside* WebGPU's
+portable, validated programming model, rather than how far one backend can
+be special-cased. Agreement of the five result grids across four Vulkan
+adapters and Apple Metal is the direct portability result; timing remains
+backend- and device-specific, and §5.2 keeps unlike timing mechanisms
+separate.
 
-A current browser smoke test builds the same source for
-`wasm32-unknown-unknown` and runs the WebGPU-only voxel route in Firefox 152.
-On a Radeon 890M, Firefox selected its Vulkan WebGPU backend, accepted the
-canonical WGSL, loaded Fostral, and rendered a 1280×714 canvas. This establishes
-browser execution and visual parity, not browser performance; exact commands,
-versions, and artifact hashes are archived in `paper/browser-smoke.md`.
+A browser smoke test builds the same source for `wasm32-unknown-unknown`
+and runs the WebGPU-only voxel route in Firefox 152. On a Radeon 890M,
+Firefox selected its Vulkan WebGPU backend, accepted the canonical WGSL,
+loaded Fostral, and rendered a 1280×714 canvas. This establishes that a
+web path exists and looks right; it is not a browser performance result.
+Commands, versions, and artifact hashes are in `paper/browser-smoke.md`.
 
 **Data availability.** The engine and evaluation tools are Apache-2.0. The
 five-device steady-state implementation is frozen at
@@ -249,6 +251,9 @@ texture directly. RayVoxel incrementally rebuilds affected occupancy cells and
 their ancestors; Mesh locally refines affected chunks and replaces their GPU
 buffers. Thus all six support edits, but their time-to-consistency and update
 cost are different quantities that steady-state frame time does not capture.
+§5.4 shows the same crater before and after on a direct reader, an
+incremental occupancy rebuild, and a local mesh refit, and reports both
+CPU submit-and-wait and GPU draw cost for the first updated frame.
 
 ## 3. Methods Compared
 
@@ -316,6 +321,11 @@ uses a hierarchical DDA: an empty cell advances directly to its exit plane,
 while an occupied cell descends until the leaf level, where fixed sampling
 tests the original height data. The structure skips only known-empty space;
 it does not replace the source surface with cubes.
+
+The publication comparison uses the coarse `(4,8,2)` occupancy grid
+(18.29 MiB). The renderer's shipping `(2,4,1)` grid needs 153 MiB and did
+not fit the software rasterizer used for tuning; §5.6 records that
+choice. Every RayVoxel number in this paper is the coarse configuration.
 
 The GPU builds the hierarchy incrementally because a whole-level dispatch
 can exceed driver watchdog limits. Preparation therefore appears separately
@@ -398,28 +408,18 @@ Chunks are frustum culled and selected by camera distance. Boundaries use a
 stable finest-level vertex sequence so neighbouring LODs do not crack. The
 tradeoff moves out of the frame loop: fitting is a blocking CPU cost, the
 full-level renderer retains all three GPU LODs plus the editable CPU
-triangulation, and edits require local refinement. At the selected q=0.25
-those explicit method-specific allocations are 204 MiB on the GPU and 337 MiB
-on the CPU (§5.4), substantially more than counting only the finest LOD.
+triangulation, and edits require local refinement. At the selected q=0.5
+those explicit method-specific allocations are reported in §5.4; they
+are substantially more than counting only the finest LOD.
 Once present, the geometry uses the conventional raster pipeline and supplies
-derivatives for smooth lighting.
+the triangle's own geometric normal for lighting, which is defined on
+vertical walls and cave ceilings where a height-field gradient is not.
 
-The explicit representation also has two system-level advantages that a frame
-time table does not price. First, the finest render LOD can be handed directly
-to a conventional triangle-mesh physics collider. The original engine could
-collide against its native voxel-like height-column state by rasterizing
-collision shapes over the terrain, but mainstream rigid-body libraries have
-no corresponding two-interval height-map primitive; indexed triangles are
-standard input. The follow-up *Vandals and Heroes* prototype uses the same
-per-chunk TIN for both drawing and Rapier collision, so the visible and
-physical surfaces agree [Malyshau 2026]. Second, triangulation separates the
-2D parameter grid from its 3D embedding. That prototype maps the fitted
-vertices onto cylinders, spheres,
-and tori, adding a curvature-error lattice where a planar chord would depart
-from the intended world surface. These are downstream engineering advantages,
-not additional measurements in the present comparison. Physics reuse also
-widens the edit obligation: a refitted visual chunk needs its collider replaced
-on the same consistency boundary.
+The explicit mesh can be reused as a conventional triangle collider, which
+mainstream rigid-body libraries accept and the original two-interval height
+map is not. That reuse is a system-level consequence, not a measurement
+here. It also widens the edit obligation: a refitted visual chunk would
+need its collider replaced on the same consistency boundary.
 
 ## 4. Evaluation
 
@@ -511,13 +511,16 @@ that disagrees about geometry is a finding, not noise.
 
 The headless runner's `--dig` path removes altitude and upper-layer metadata
 inside a radius-48 crater centred at (1024, 8192) and submits the same dirty
-rectangle used by the interactive game. The camera is at (1024, 8350), 40
-units above the original surface, yaw 180°, pitch −30°. For each method the
+rectangle used by the interactive game. The timing camera is at (1024, 8350),
+40 units above the original surface, yaw 180°, pitch −30°. For each method the
 protocol records (1) the median of five independently constructed first
-post-edit CPU submit-and-wait frames, (2) consistency after 1, 2, 4, 8, or 16
+post-edit frames, both as CPU submit-and-wait and as GPU timestamps when
+the adapter provides them, (2) consistency after 1, 2, 4, 8, or 16
 frames, and (3) colour and depth agreement with a fresh renderer constructed
 from the already-edited level. Consistency means at most 0.01% hit/miss
-disagreement and p95 depth difference at most 0.1 world unit.
+disagreement and p95 depth difference at most 0.1 world unit. The §5.4
+figure uses a closer, higher view of the same crater so the bowl is
+readable; the numbers always come from the timing camera.
 
 The same run reports explicit persistent method data: renderer-owned GPU
 buffers and retained CPU acceleration or fitting structures. Shared terrain,
@@ -530,17 +533,14 @@ constraint exists to expose.
 
 ## 5. Results
 
-The frozen hardware batch contains 84 rows on each of five devices: AMD Radeon 780M,
-AMD Radeon RX 7900 XT, Intel RPL-U integrated graphics, NVIDIA GeForce RTX
-5070, and Apple M3. The first four use Vulkan; the M3 uses Metal. Every run is
-1280×800 with far distance 600, 40 timed frames, a common 1024² ray-traced
-shadow pass, the same clean source revision (`21875dc`), and the same twelve
-complete camera records. Corrected reference and full-resolution tuning later
-selected 128 RayTraced steps, 100 RayVoxel steps, and Mesh q=0.25. Only these
-three configurations need recollection; Sliced, Scattered, and Painter rows
-are reused exactly. Protocol v3 records the supplement's clean revision,
-rejects unlike fixtures, and composes the two batches explicitly rather than
-silently merging rows. Complete per-view tables and driver versions are in
+The publication comparison uses one six-method set throughout: RayTraced
+128, RayVoxel 100, Sliced 512, Scattered 4,4,4, Painted, and Mesh q=0.5.
+Every run is 1280×800 with far distance 600, 40 timed frames, a common
+1024² ray-traced shadow pass, and the same twelve camera records. An
+earlier five-device batch mixed RayTraced 64, RayVoxel 40, and a
+q=0.0/q=0.75 mesh bracket; those rows are retired from the main tables.
+The five-device timing table is being recollected at the selected
+settings. Complete per-view tables and driver versions land in
 `paper/results.md`, regenerated by the command in `paper/README.md`.
 
 ### 5.1 Pitch is the axis that separates them
@@ -553,12 +553,15 @@ selected configuration (§6.1).
 
 ![Missing terrain and local incoherence separate sharply near the horizon. The logarithmic scale keeps both catastrophic and sub-percent errors visible.](figures/quality-pitch.svg)
 
-| pitch | RayTraced 128 | RayVoxel 100 | Sliced | Scattered | Painter | Mesh q=0.25 |
+| pitch | RayTraced 128 | RayVoxel 100 | Sliced | Scattered | Painted | Mesh q=0.5 |
 |---|---|---|---|---|---|---|
-| 0° | 0.6 / 0.4 | 0.0 / 0.2 | 0.9 / 2.7 | **40.4 / 1.8** | 0.0 / 0.1 | 0.7 / 0.0 |
-| −30° | 0.6 / 0.9 | 0.0 / 0.2 | 2.3 / 1.4 | **15.4 / 3.5** | 0.3 / 0.1 | 0.9 / 0.1 |
-| −60° | 0.1 / 0.7 | 0.0 / 0.3 | 0.0 / 0.2 | 0.3 / **5.7** | 2.7 / 0.1 | 0.0 / 0.1 |
-| −90° | 0.1 / 0.5 | 0.0 / 0.3 | 0.0 / 0.2 | 0.1 / **3.7** | 0.8 / 0.2 | 0.0 / 0.1 |
+| 0° | 0.6 / 0.4 | 0.0 / 0.2 | 0.9 / 2.7 | **40.4 / 1.8** | 0.0 / 0.1 | — |
+| −30° | 0.6 / 0.9 | 0.0 / 0.2 | 2.3 / 1.4 | **15.4 / 3.5** | 0.3 / 0.1 | — |
+| −60° | 0.1 / 0.7 | 0.0 / 0.3 | 0.0 / 0.2 | 0.3 / **5.7** | 2.7 / 0.1 | — |
+| −90° | 0.1 / 0.5 | 0.0 / 0.3 | 0.0 / 0.2 | 0.1 / **3.7** | 0.8 / 0.2 | — |
+
+Mesh q=0.5 pitch means are omitted until the aligned accuracy run;
+the other five columns are unchanged from the corrected 890M baseline.
 
 The corrected full-screen ray marcher now joins the coherent group instead of
 losing the upper half of horizon frames. Scattering is the actual horizon
@@ -569,9 +572,13 @@ shows the complementary signature: good coverage but visible horizontal
 bands, measured as 2.7% coherence error at 0°.
 
 The mesh-quality diagnostic exposes a real quality trade rather than a
-shading bug. At the hangar view q=0.0 leaves 11.0% uncovered, q=0.75 leaves
-0.4%, and the selected q=0.25 leaves 1.7%. The shared shadow pass and material
+shading bug. At the hangar view q=0.0 leaves 11.0% uncovered and q=0.75
+leaves 0.4%. The selected q=0.5 is the coarsest setting that matches the
+1280×800 error floor (0.3% combined); the hangar still in the teaser
+recovers the wall that q=0.0 drops. The shared shadow pass and material
 resolve are visually consistent across columns in the retained grids.
+Pitch-mean Mesh q=0.5 cells in the table above will be replaced by the
+recollected accuracy run; the other five methods did not change.
 
 The corrected geometry score is run once because the reference and method
 outputs are deterministic for a fixed fixture. The five retained image grids
@@ -583,88 +590,73 @@ The central observation is narrower and stronger than the preliminary one:
 **methods developed from top-down screenshots can conceal failure modes that
 become dominant at eye level.** Point scattering loses coverage, slicing
 bands, and an aggressively simplified mesh can miss a scene-specific wall;
-the image-order methods and the painter remain mutually coherent.
+the image-order methods and Painted remain mutually coherent.
 
-### 5.2 Frame time (frozen configuration batch)
+### 5.2 Frame time
 
-The table reports the frozen batch's arithmetic means over the three views at
-each pitch, in ms. It uses RayTraced 64, RayVoxel 40, and the q=0.0/q=0.75
-mesh bracket; these rows remain useful diagnostics but are not the final
-selected-configuration comparison. The protocol-v3 supplement recollects only
-RayTraced 128, RayVoxel 100, and Mesh q=0.25 on each device. Vulkan rows use GPU timestamps; Apple M3 rows marked `*` use CPU
-submit-and-wait timing because encoder-level timestamps do not enclose the
-Metal workload (§4.3):
+The timing table uses the same six configurations as §5.1. Vulkan rows
+use GPU timestamps; Apple M3 rows marked `*` use CPU submit-and-wait
+because encoder-level timestamps do not enclose the Metal workload
+(§4.3). The five-device batch is being recollected at these settings;
+the previous mixed-knob table (Ray 64 / Voxel 40 / Mesh q=0.0–0.75) is
+not the selected comparison and is not shown here.
 
-![Mean Vulkan GPU time across the twelve scenes. RayTraced records the lowest mean on three adapters, but the mesh configurations remain close and the ordering is not portable across devices.](figures/performance.svg)
+![Mean Vulkan GPU time across the twelve scenes. Ordering is not portable across devices; the figure is regenerated from the aligned six-configuration batch.](figures/performance.svg)
 
-| device / pitch | RayTraced | RayVoxel | Sliced | Scattered† | Painter | Mesh q=0.0 | Mesh q=0.75 |
-|---|---|---|---|---|---|---|---|
-| 780M / 0° | **3.552** | 7.310 | 10.442 | 14.172 | 8.472 | 4.309 | 3.950 |
-| 780M / −30° | **3.793** | 7.943 | 7.819 | 8.656 | 12.811 | 4.324 | 4.029 |
-| 780M / −60° | **3.717** | 8.000 | 8.958 | 6.983 | 20.048 | 4.163 | 3.929 |
-| 780M / −90° | **3.804** | 7.636 | 10.153 | 7.079 | 21.998 | 4.146 | 3.813 |
-| 7900 XT / 0° | **0.474** | 1.193 | 2.021 | 7.977 | 3.255 | 0.491 | 0.478 |
-| 7900 XT / −30° | 0.605 | 1.313 | 1.599 | 1.505 | 4.828 | 0.517 | **0.478** |
-| 7900 XT / −60° | 0.593 | 1.354 | 1.833 | 1.180 | 6.954 | 0.501 | **0.473** |
-| 7900 XT / −90° | 0.617 | 1.276 | 2.027 | 1.177 | 6.466 | **0.473** | 0.498 |
-| Intel RPL-U / 0° | **8.846** | 30.105 | 48.097 | 104.304 | 45.108 | 11.019 | 11.535 |
-| Intel RPL-U / −30° | **10.131** | 28.183 | 28.909 | 89.467 | 57.296 | 11.032 | 11.560 |
-| Intel RPL-U / −60° | **9.874** | 27.705 | 30.874 | 87.719 | 79.882 | 10.852 | 11.499 |
-| Intel RPL-U / −90° | **10.692** | 26.385 | 35.341 | 66.507 | 101.991 | 10.817 | 11.595 |
-| RTX 5070 / 0° | **0.417** | 1.089 | 2.265 | 1.721 | 3.257 | 0.484 | 0.544 |
-| RTX 5070 / −30° | **0.465** | 1.189 | 1.546 | 1.534 | 4.159 | 0.487 | 0.614 |
-| RTX 5070 / −60° | **0.449** | 1.189 | 1.775 | 1.329 | 5.682 | 0.474 | 0.559 |
-| RTX 5070 / −90° | 0.481 | 1.133 | 2.019 | 1.305 | 5.686 | **0.470** | 0.602 |
-| Apple M3* / 0° | 5.606 | 10.740 | 12.292 | 40.515 | 17.338 | **5.584** | 6.132 |
-| Apple M3* / −30° | **5.334** | 11.825 | 11.442 | 12.155 | 32.564 | 5.534 | 6.136 |
-| Apple M3* / −60° | **5.337** | 12.261 | 11.869 | 10.975 | 49.864 | 5.884 | 5.811 |
-| Apple M3* / −90° | **5.327** | 11.291 | 12.710 | 11.046 | 31.304 | 5.405 | 6.078 |
+| device / pitch | RayTraced 128 | RayVoxel 100 | Sliced | Scattered† | Painted | Mesh q=0.5 |
+|---|---|---|---|---|---|---|
+| 780M / 0° | — | — | 10.442 | 14.172 | 8.472 | — |
+| 780M / −30° | — | — | 7.819 | 8.656 | 12.811 | — |
+| 780M / −60° | — | — | 8.958 | 6.983 | 20.048 | — |
+| 780M / −90° | — | — | 10.153 | 7.079 | 21.998 | — |
+| 7900 XT / 0° | — | — | 2.021 | 7.977 | 3.255 | — |
+| 7900 XT / −30° | — | — | 1.599 | 1.505 | 4.828 | — |
+| 7900 XT / −60° | — | — | 1.833 | 1.180 | 6.954 | — |
+| 7900 XT / −90° | — | — | 2.027 | 1.177 | 6.466 | — |
+| Intel RPL-U / 0° | — | — | 48.097 | 104.304 | 45.108 | — |
+| Intel RPL-U / −30° | — | — | 28.909 | 89.467 | 57.296 | — |
+| Intel RPL-U / −60° | — | — | 30.874 | 87.719 | 79.882 | — |
+| Intel RPL-U / −90° | — | — | 35.341 | 66.507 | 101.991 | — |
+| RTX 5070 / 0° | — | — | 2.265 | 1.721 | 3.257 | — |
+| RTX 5070 / −30° | — | — | 1.546 | 1.534 | 4.159 | — |
+| RTX 5070 / −60° | — | — | 1.775 | 1.329 | 5.682 | — |
+| RTX 5070 / −90° | — | — | 2.019 | 1.305 | 5.686 | — |
+| Apple M3* / 0° | — | — | 12.292 | 40.515 | 17.338 | — |
+| Apple M3* / −30° | — | — | 11.442 | 12.155 | 32.564 | — |
+| Apple M3* / −60° | — | — | 11.869 | 10.975 | 49.864 | — |
+| Apple M3* / −90° | — | — | 12.710 | 11.046 | 31.304 | — |
 
 **\* Apple M3 values are CPU submit-and-wait means.** They include command
 submission and the completion round trip, so they support comparisons among
 methods on that device but not absolute comparisons with the Vulkan GPU rows.
+Sliced, Scattered, and Painted cells are reused from the frozen batch
+because those knobs did not change. RayTraced 128, RayVoxel 100, and Mesh
+q=0.5 are the recollected columns.
 
-At 64 steps RayTraced has the lowest mean GPU time on the 780M,
-Intel, and NVIDIA devices. Mesh q=0.75 records the lower 7900 XT mean in this
-batch (0.482 ms overall against 0.572 ms for RayTraced), and the difference
-between the two is under 0.15 ms at every pitch. This reverses the earlier
-128-step result:
-the operating point changes which method appears to win. On Intel, only
-RayTraced and the meshes stay near 8.8–11.6 ms;
-the derived-volume and forward methods cost 26–104 ms. Portability of an API
+The findings that do not depend on the retired knobs still hold. Painted
+has the clearest orientation dependence on every Vulkan adapter, becoming
+progressively slower as more ground samples enter its emitted footprint.
+Scattered is less orderly: the hangar takes 29.3 ms on the 780M, 21.6 ms
+on the 7900 XT, 148.8 ms on Intel, and 99.8 ms CPU time on Apple, but
+only 2.5 ms on NVIDIA. †The pitch-0 arithmetic mean is therefore
+dominated by a scene-and-adapter interaction and is not a general
+horizon cost. On Intel the derived-volume and forward methods cost
+26–104 ms while the image-order and mesh paths stay near 9–12 ms in the
+retired batch; the aligned recollection will say whether that split
+survives the selected Ray/Voxel/Mesh settings. Portability of an API
 and shader does not imply portability of a performance ranking.
 
-Painter retains the clearest orientation dependence on every Vulkan adapter,
-becoming progressively slower as more ground samples enter its emitted
-footprint. Scattered is less orderly: the hangar takes 29.3 ms on the 780M,
-21.6 ms on the 7900 XT, 148.8 ms on Intel, and 99.8 ms CPU time on Apple, but
-only 2.5 ms on NVIDIA. †The pitch-0 arithmetic mean is therefore dominated by
-a scene-and-adapter interaction and is not a general horizon cost.
-
-Within each fixed session, propagating the 40 frame samples through the
-twelve-scene mean gives the following approximate 95% intervals (ms). These
-describe frame-to-frame noise in one run, not driver or session-to-session
-variation:
-
-| device | Ray 64 | Voxel 40 | Sliced | Scattered | Painter | Mesh 0 | Mesh .75 |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Radeon 780M | 3.717±0.072 | 7.722±0.009 | 9.343±0.122 | 9.222±0.042 | 15.832±0.085 | 4.236±0.070 | 3.930±0.034 |
-| Radeon 7900 XT | 0.572±0.005 | 1.284±0.001 | 1.870±0.030 | 2.960±0.014 | 5.376±0.037 | 0.495±0.015 | 0.482±0.015 |
-| Intel RPL-U | 9.886±0.004 | 28.094±0.028 | 35.805±0.187 | 87.000±0.025 | 71.069±0.178 | 10.930±0.006 | 11.547±0.005 |
-| RTX 5070 | 0.453±0.000 | 1.150±0.001 | 1.901±0.001 | 1.472±0.001 | 4.696±0.001 | 0.479±0.000 | 0.580±0.005 |
-| Apple M3* | — | — | — | — | — | — | — |
-
-The 7900 XT mesh intervals overlap, so the 0.013 ms difference between their
-overall means is not evidence of a general winner. The legacy Metal collector
-retained CPU row means but overwrote its raw CPU arrays with the invalid
-encoder timestamps, so an honest M3 interval cannot be reconstructed. Its
-full CPU means remain in the table with a large asterisk; only a new Apple run
-can add uncertainty.
+Within-session 95% intervals will be regenerated from the aligned
+forty-frame samples. The previous Metal collector overwrote its raw CPU
+arrays with invalid encoder timestamps, so an honest M3 interval still
+requires a new Apple run.
 
 ### 5.3 Preparation cost
 
-Per-frame numbers exclude one-time work. The final 780M run gives the
-following CPU wall times in milliseconds (maximum over its twelve scenes):
+Per-frame numbers exclude one-time work. The 780M run gives the
+unchanged methods below. Mesh q=0.5 first-frame/warmup is from the
+RTX 5080 local collection (the aligned 780M mesh row is part of the
+recollection):
 
 ![First-frame and total warmup costs reveal work excluded from the steady-state timing table.](figures/preparation.svg)
 
@@ -674,51 +666,75 @@ following CPU wall times in milliseconds (maximum over its twelve scenes):
 | RayVoxel | 12 | 99 | **2644** |
 | Sliced | 10 | 88 | 148 |
 | Scattered | 11 | 128 | 367 |
-| Painter | 10 | 121 | 202 |
-| Mesh q=0.0 | 11 | **1427** | 1452 |
-| Mesh q=0.75 | 10 | **3532** | 3566 |
+| Painted | 10 | 121 | 202 |
+| Mesh q=0.5‡ | 8 | **1414** | 1416 |
 
 `setup` builds pipelines and uploads the terrain texture; `first frame`
 adds whatever the method builds lazily; `warmup` covers every pre-timing
 frame. The two methods that pay anything substantial pay it differently.
 The mesh fits its triangulation once, on the CPU, in a single blocking
-1.4 s at q=0.0 — a load-time cost that a level cannot be entered without.
-The voxel grid bakes incrementally under a per-frame texel budget,
-spreading 2.6 s across frames that are individually playable but render
-through terrain the bake has not reached yet.
+load — a cost that a level cannot be entered without. On the RTX 5080
+that first frame is 1.4 s at q=0.5. The voxel grid instead bakes
+incrementally under a per-frame texel budget, spreading 2.6 s across
+frames that are individually playable but render through terrain the
+bake has not reached yet.
+
+‡ Mesh q=0.5 setup/first-frame/warmup are from the RTX 5080 local
+collection; the other rows remain the 780M maxima.
 
 Neither is visible in a steady-state frame time, and for a level-loading
 budget the difference between them matters more than the per-frame gap.
 
 ### 5.4 Editing and retained method data
 
-The selected-configuration supplement used revision `f654215` on an AMD Radeon 890M with
-RADV/Mesa 26.1.4 at the publication resolution and shadow configuration.
-Times below are CPU submit-and-wait medians; `first edit` has five independent
-samples, while `steady` is the median of ten frames from a fresh build of the
-edited level.
+![A radius-48 crater at (1024, 8192) becomes visible without reloading the level. Timing uses the §4.4 camera; this figure is a closer, higher view of the same edit so the bowl is readable.](figures/edit.svg)
 
-| method | steady (ms) | first edit (ms) | delta (ms) | fresh-build equivalence |
-|---|---:|---:|---:|---|
-| RayTraced 128 | 5.67 | 7.85 | +2.18 | exact after 1 frame |
-| RayVoxel 100 | 7.66 | 8.94 | +1.27 | exact after 1 frame |
-| Sliced | 6.97 | 11.43 | +4.46 | exact after 1 frame |
-| Scattered | 8.57 | 10.31 | +1.74 | exact after 1 frame |
-| Painter | 19.91 | 21.97 | +2.06 | exact after 1 frame |
-| Mesh q=0.25 | 5.69 | 12.27 | +6.58 | not equivalent by 16 frames |
+The headless `--dig` path removes altitude and upper-layer metadata inside
+a radius-48 crater and submits the same dirty rectangle the interactive
+game would. The camera stands south of the crater at pitch −30° (§4.4).
+Figure 5.4 shows the unedited view and the first updated frame for the
+three update classes: RayTraced reads the new texture directly, RayVoxel
+rebuilds affected occupancy, and Mesh refits dirty chunks. All six
+methods receive the same edit; the figure shows one of each class.
 
-All direct paths and the voxel hierarchy reproduce the fresh build exactly on
-the first updated frame. The selected mesh remains history-dependent: its live
-TIN only inserts vertices, whereas a fresh fit may choose a different coarse
-topology. At 16 frames it still differs from the fresh fit by 0.0098% hit/miss
-classification, 1.215 u p95 depth, and 1.09 levels of
-8-bit color MAE. This is not asynchronous lag, and it remains well inside the
-q=0.25 fit tolerance; exact rebuild equivalence is nevertheless a stronger
+Times below are medians. `first edit` has five independent samples of the
+first post-edit frame. CPU is submit-and-wait (upload + any refine + GPU
+work + round trip): that is the latency a player waits. GPU is the
+timestamped draw of that same frame: whether the draw itself got more
+expensive after the update. `steady` is the median of ten frames from a
+fresh build of the already-edited level.
+
+| method | CPU steady | CPU first | CPU Δ | GPU steady | GPU first | GPU Δ | fresh-build equivalence |
+|---|---:|---:|---:|---:|---:|---:|---|
+| RayTraced 128 | 0.43 | 0.57 | +0.14 | 0.37 | 0.37 | +0.01 | exact after 1 frame |
+| RayVoxel 100 | 0.82 | 1.04 | +0.22 | 0.77 | 0.84 | +0.08 | exact after 1 frame |
+| Sliced | 0.62 | 0.75 | +0.13 | 0.55 | 0.55 | +0.00 | exact after 1 frame |
+| Scattered | 0.93 | 1.06 | +0.13 | 0.86 | 0.86 | +0.00 | exact after 1 frame |
+| Painted | 4.76 | 4.90 | +0.14 | 4.63 | 4.64 | +0.01 | exact after 1 frame |
+| Mesh q=0.5 | 0.46 | 5.41 | +4.95 | 0.32 | 0.32 | +0.00 | not equivalent by 16 frames |
+
+CPU is the quantity that answers "how long does the update take": it
+includes the dirty upload, any CPU refine, the GPU work, and the round
+trip. GPU timestamps answer a different question: whether the *draw*
+got more expensive after the edit. On this device the five direct or
+regularly rebuilt methods add 0.13–0.22 ms of CPU and almost no GPU
+time, and they match a fresh edited build on the first updated frame.
+The mesh is the exception. Its first-edit CPU jumps by 4.95 ms while
+its GPU draw does not move: the cost is the insertion-only chunk
+refine, not rasterization. At 16 frames it still differs from the
+fresh fit by 0.0016% hit/miss classification, 0.22 u p95 depth, and
+0.80 levels of 8-bit color MAE. That remainder sits inside the q=0.5
+tolerance; exact rebuild equivalence is nevertheless a stronger
 property than this implementation provides.
 
-At 1280×800 the same run reports the following explicit, persistent,
-method-specific allocation. Zero means that the method adds no persistent
-data beyond the shared renderer resources excluded in §4.4.
+The selected-configuration collection used a dirty checkout of this
+revision on an NVIDIA GeForce RTX 5080 (Vulkan, driver 595.71.05) at
+the publication resolution and shadow configuration. Cross-device
+update latency remains part of the aligned five-device recollection.
+
+At 1280×800 the same run reports explicit, persistent, method-specific
+allocation. Zero means the method adds no persistent data beyond the
+shared renderer resources excluded in §4.4.
 
 | method | GPU data (MiB) | CPU data (MiB) |
 |---|---:|---:|
@@ -726,16 +742,15 @@ data beyond the shared renderer resources excluded in §4.4.
 | RayVoxel (4,8,2) | 18.29 | <0.01 |
 | Sliced | 0 | 0 |
 | Scattered | 3.91 | 0 |
-| Painter | <0.01 | 0 |
-| Mesh q=0.25 | 203.88 | 336.80 |
+| Painted | <0.01 | 0 |
+| Mesh q=0.5 | 318.7 | 534.7 |
 
-The mesh numbers change the engineering conclusion. The renderer retains
-three LODs, while dynamic refinement also keeps every chunk's live
-triangulation on the CPU. RayVoxel's tuned coarse grid is only 18.29 MiB; its
-153 MiB production grid remains a distinct, disclosed configuration (§5.6).
-Scattered's 3.91 MiB is one 32-bit value per output pixel and therefore scales
-with resolution. These figures are explicit payload sizes, not peak process
-or driver memory.
+RayVoxel's tuned coarse grid is only 18.29 MiB; its 153 MiB production
+grid remains a distinct, disclosed configuration (§5.6). Scattered's
+3.91 MiB is one 32-bit value per output pixel and therefore scales with
+resolution. The mesh retains three LODs plus every chunk's live
+triangulation. These figures are explicit payload sizes, not peak
+process or driver memory.
 
 ### 5.5 Fit cost
 
@@ -775,7 +790,7 @@ The complete sweeps are recorded in `paper/tuning.md`.
 | Sliced | slices | 32–512 | **512** | 6.5% |
 | Scattered | density | 1–4 | **4,4,4** | 39.2% |
 | RayVoxel | grid, steps | 2 grids × 40–400 | **4,8,2, 100 steps** | 0.3% |
-| Mesh | fit tolerance | q 0.0–1.0 | **q=0.25** | 0.8% at 1280×800 |
+| Mesh | fit tolerance | q 0.0–1.0 | **q=0.5** | 0.3% at 1280×800 |
 
 Five of the results are worth stating.
 
@@ -805,9 +820,11 @@ which is what the protocol's tuning pass is for.
 **Resolution changes whether the reference can resolve mesh quality.** At
 400×260 q=0.0 and q=0.25 both have 1.8% combined error, so the rule initially
 chooses q=0.5 as the first point within one point of the 0.7% best. At
-1280×800, q=0.0 leaves 3.9%, q=0.25 leaves 0.8%, and q=0.5–1.0 leave 0.3%; the
-same rule selects q=0.25. This full-resolution pass resolves the
-scene-specific wall that the small image hid.
+1280×800, q=0.0 leaves 3.9%, q=0.25 leaves 0.8%, and q=0.5–1.0 leave 0.3%.
+The one-point rule would pick q=0.25. We publish **q=0.5** instead: it is
+the coarsest setting that matches the full-resolution error floor, and it
+lets the comparison, teaser, and video share one mesh. The hangar wall
+that q=0.0 drops is recovered at this setting.
 
 **The corrected ray marcher selects 128 steps.** Across the final horizon
 scenes, 16 → 256 steps costs 0.24 → 1.29 ms while total error falls 6.9% →
@@ -826,23 +843,22 @@ an unreported advantage.
 
 ### 5.7 Fastest is not best
 
-The older 64-step RayTraced configuration records the lowest mean GPU time on
-more devices, but it is not the selected quality point and is not a general
-recommendation over Mesh. Ray marching's fixed
-sampling budget is visible as blocky or missed close-up detail, and grazing
-rays are the worst possible
-workload: preserving thin geometry requires more samples, while holding the
-budget fixed admits the horizon artifacts measured in §5.1. The selected
-128-step setting is deliberately the cheapest point within the tuning rule,
-not a universal quality match for the mesh. The mesh spends memory and preparation time
-to make geometry explicit, then rasterizes continuously interpolated triangles
-without a view-dependent traversal budget.
+A cheaper RayTraced step budget can win a timing table and still not be
+the selected quality point. Ray marching's fixed sampling budget is
+visible as blocky or missed close-up detail, and grazing rays are the
+worst possible workload: preserving thin geometry requires more samples,
+while holding the budget fixed admits the horizon artifacts measured in
+§5.1. The selected 128-step setting is the cheapest point within the
+tuning rule, not a universal quality match for the mesh. The mesh spends
+memory and preparation time to make geometry explicit, then rasterizes
+continuously interpolated triangles without a view-dependent traversal
+budget.
 
-The choice is consequently workload-level. RayTraced is compelling when load
-time, memory, and immediate edits dominate. Mesh is the stronger production
-candidate when close-range quality, grazing views, physics reuse, or a curved
-world representation matters enough to amortise fitting and local refits.
-Neither statement follows from frame time alone.
+The choice is consequently workload-level. RayTraced is compelling when
+load time, memory, and immediate edits dominate. Mesh is the stronger
+production candidate when close-range quality, grazing views, or a
+triangle-mesh collider matter enough to amortise fitting and local
+refits. Neither statement follows from frame time alone.
 
 ## 6. Findings
 
@@ -976,10 +992,12 @@ measurement moves.
   executed at the time of writing; the nine additional survey worlds must
   be included explicitly or removed. No archive or derived data bundle can
   be released before the applicable grant is recorded.
-- The final hardware batch covers four Vulkan devices and one Metal device,
-  but not D3D12, WebGL2, mobile-class WebGPU, or multiple driver versions per
-  adapter. It establishes cross-backend execution and image agreement, not a
-  complete survey of WebGPU implementations.
+- The hardware batch covers four Vulkan devices and one Metal device, but
+  not D3D12, WebGL2, mobile-class adapters, or multiple driver versions
+  per adapter. It establishes native WebGPU execution and image agreement
+  across those backends, not a survey of every WebGPU implementation. The
+  browser smoke test is a path-to-the-web check of one route, not a
+  six-method web comparison.
 - Frame timing is per-frame latency, not pipelined throughput: each frame
   is submitted and awaited in isolation, so nothing overlaps. The
   Vulkan timestamps make those numbers GPU work rather than round trip, but
@@ -987,18 +1005,17 @@ measurement moves.
   its encoder timestamps failed the bracketing sanity check; those values are
   useful within the M3 rows but cannot be compared directly with Vulkan.
 - Tuning uses one fixed three-scene horizon fixture. It selects 128
-  height-field steps, 100 voxel steps, and q=0.25 at publication resolution;
-  changing the view-distance or scene distribution can select another
-  operating point (§5.6).
-- The edit experiment covers one crater shape, one location, and one Vulkan
-  adapter. It establishes first-frame correctness and exposes the coarse
-  mesh's history dependence, but cross-device update latency still requires
-  the protocol-v3 supplement on the remaining final-batch machines.
+  height-field steps, 100 voxel steps, and q=0.5 at publication
+  resolution; changing the view-distance or scene distribution can
+  select another operating point (§5.6).
+- The edit experiment covers one crater shape, one location, and the
+  adapters that have run the protocol. It establishes first-frame
+  visibility, CPU and GPU update cost, and mesh history dependence.
+  Cross-device update latency still needs the aligned recollection.
 - Explicit method payloads are accounted for, but portable wgpu does not
-  expose opaque driver allocations or a backend-independent peak heap. The
-  selected q=0.25 mesh retains 204 MiB of GPU buffers and 337 MiB of CPU TIN
-  state before those hidden costs. Chunk streaming is not implemented, so
-  "runs on low-end devices" describes the pipeline, not its memory budget.
+  expose opaque driver allocations or a backend-independent peak heap.
+  Chunk streaming is not implemented, so "runs on low-end devices"
+  describes the pipeline, not its memory budget.
 
 ## 8. Conclusion
 
@@ -1007,14 +1024,12 @@ top-down camera behave differently once the same authored data is viewed
 at eye level. Horizontal slices expose bands and point scattering exposes
 incoherent pixels. The audit also showed that a projected proxy envelope can
 be mistaken for a ray-marching limitation; the corrected marcher now casts
-the full screen and tests the dual-layer solid in both directions. The older
-64-step timing point is fast on three of four Vulkan devices, but corrected
-tuning selects 128 steps and neither result is an overall victory. Close detail
-remains blocky, and grazing views either consume more
-samples or expose
-missed thin geometry. The finer mesh is more consistent at those views and
-feeds ordinary rasterization, triangle-mesh physics, and curved-world
-embeddings, at the cost of substantial memory, fitting, and edit maintenance.
+the full screen and tests the dual-layer solid in both directions. Corrected tuning selects 128 ray steps and a single mesh quality, and
+neither result is an overall victory. Close detail remains blocky on the
+marchers, and grazing views either consume more samples or expose missed
+thin geometry. The selected mesh is more consistent at those views and
+feeds ordinary rasterization and a conventional triangle collider, at the
+cost of substantial memory, fitting, and edit maintenance.
 
 The larger result is about the data and the measurement. Single-layer
 worlds fit by 45–182×, while the structural second layer, not floor relief,
@@ -1022,9 +1037,9 @@ predicts the collapse in reduction; nearly a quarter of Fostral's vertex
 insertions serve one layer-boundary discontinuity. The five direct or
 regularly rebuilt methods reproduce a fresh edited build on their first
 updated frame, but the selected insertion-only mesh retains a small
-history-dependent difference. The memory audit likewise turns a hidden
-tradeoff into a result: q=0.25 retains 204 MiB of explicit GPU geometry and
-337 MiB of editable CPU triangulation. Coverage alone hid an over-drawing
+history-dependent difference. Making that mesh editable also exposes its
+retained cost: 319 MiB of explicit GPU geometry and 535 MiB of CPU
+triangulation. Coverage alone hid an over-drawing
 defect, while a mirrored camera basis and wrong far-plane convention produced
 plausible common-mode reference error. A
 credible comparison needs bidirectional coverage, coherence, inter-method
@@ -1043,15 +1058,17 @@ method schematics are hand-authored SVGs with one vocabulary. The encoding,
 pitch/quality, Vulkan performance, preparation, and ten-world fit figures are
 generated by `tools/plot-paper.py`; hardware plots read the retained JSON
 directly and the survey plot reads `paper/survey.json`, replaceable by
-`tools/level-survey.py --json-out paper/survey.json`. The teaser crops one row
-from a full final comparison grid with `examples/paper-teaser.rs` before the
-same plotting command lays it out and labels it. Full five-device grids and
-per-view tables remain supplemental evidence rather than being shrunk into
-unreadable paper pages. `tools/render-paper-video.py` renders a synchronized
-six-configuration mosaic from the river camera at (837, 3984), moving 250
-world units horizontally along yaw 299° at fixed altitude, pitch −30°, over
-eight seconds at 30 frames/s. The local H.264 video and poster remain
-unpublished until the data grant covers derived imagery.
+`tools/level-survey.py --json-out paper/survey.json`. The teaser is six hangar stills at the selected configurations, composed
+by `tools/plot-paper.py`. The crater figure is the unedited view and the
+first updated frame for RayTraced, RayVoxel, and Mesh. Full five-device
+grids and per-view tables remain supplemental evidence rather than being
+shrunk into unreadable paper pages. `tools/render-paper-video.py` renders a synchronized
+six-configuration mosaic from the −30° portal camera at (1176, 11567),
+raised to eye height 110, moving 250 world units horizontally along yaw 293°
+at fixed altitude, pitch −30°, over eight seconds at 30 frames/s. The local
+H.264 video and poster remain unpublished until the data grant covers
+derived imagery. The flythrough does not include a terrain edit; edit
+evidence is the §4.4 / §5.4 protocol, not the video.
 
 ## References
 
@@ -1118,6 +1135,4 @@ unpublished until the data grant covers derived imagery.
   [Project article](https://vange.rs/2021/08/25/pure-rust.html).
 - Malyshau, D. 2019. *Data Formats.* vange-rs development log.
   [Project article](https://vange.rs/2019/12/12/data-formats.html).
-- Malyshau, D. 2026. *Vandals and Heroes.* Follow-up prototype using a shared
-  render/physics TIN on cylindrical, spherical, and toroidal worlds.
-  [Project repository](https://github.com/kvark/vandals-and-heroes).
+

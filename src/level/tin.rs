@@ -32,12 +32,13 @@ const NONE: u32 = u32::MAX;
 
 /// A render-ready mesh vertex.
 ///
-/// Lighting is derived in the shader from the height map gradient (see
-/// `evaluate_color` in `terrain/color.inc.wgsl`), and so is the terrain
-/// type - looking it up per fragment keeps the type boundaries at full
-/// texel resolution even where the triangles are coarse, which is what
-/// makes this match the ray traced output. All the vertex has to say is
-/// *which* of the stacked surfaces it belongs to.
+/// Terrain type is sampled from the height texture in the fragment shader,
+/// so material boundaries stay at full texel resolution on coarse
+/// triangles. Lighting uses the triangle's geometric normal
+/// (`evaluate_color_normal` in `terrain/color.inc.wgsl`) rather than a
+/// height-field gradient, which is undefined on vertical walls and cave
+/// ceilings. All the vertex has to say is *which* of the stacked surfaces
+/// it belongs to.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct MeshVertex {

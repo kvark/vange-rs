@@ -1,7 +1,7 @@
 //! Extract one scene row from a full `compare-terrain.py` grid.
 //!
 //! The source grids are intentionally publication-resolution and very large.
-//! This decodes one grid once, downsamples its seven method cells, and writes
+//! This decodes one grid once, downsamples its six method cells, and writes
 //! compact PNGs referenced by `paper/figures/teaser.svg`.
 
 use std::{
@@ -11,7 +11,7 @@ use std::{
     path::Path,
 };
 
-const METHODS: usize = 7;
+const METHODS: usize = 6;
 const CELL_WIDTH: usize = 1280;
 const CELL_HEIGHT: usize = 800;
 const PAD: usize = 5;
