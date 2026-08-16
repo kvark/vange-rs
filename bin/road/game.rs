@@ -219,6 +219,11 @@ impl Agent {
             Physics::Cpu { ref transform, .. } => transform.disp,
         }
     }
+
+    /// Bounding radius in level texels, which is what the sensors measure in.
+    fn touch_radius(&self) -> i32 {
+        (self.phys_data.bbox.radius * self.car.scale) as i32
+    }
 }
 
 /// A remote player received via network, rendered locally with interpolation.
@@ -334,6 +339,8 @@ pub struct Game {
     line_buffer: LineBuffer,
     level: level::Level,
     moving_land: level::moving::MovingLand,
+    /// Sensors and location engines that steer the moving land.
+    triggers: level::trigger::Triggers,
     /// Time carried over towards the next moving-land quant.
     moving_land_time: f32,
     /// Scratch buffer for the rectangles a moving-land quant touched.
@@ -451,12 +458,20 @@ impl Game {
         log::info!("Loading the level");
         let level = level::load(&level_config, &settings.game.geometry);
 
-        let moving_land = match level_config.path_moving_land() {
+        let (moving_land, triggers) = match level_config.path_moving_land() {
             Some(path) => {
                 log::info!("Loading the moving land from {:?}", path);
-                level::moving::MovingLand::load_dir(&path, level_config.terrains.len() as i32)
+                let mut land =
+                    level::moving::MovingLand::load_dir(&path, level_config.terrains.len() as i32);
+                let world_dir = path.parent().unwrap_or(&path).to_path_buf();
+                let triggers = level::trigger::Triggers::load(&world_dir, &path, &land);
+                // Engines park their location at the closed phase; anything
+                // no engine drives keeps looping on its own.
+                triggers.reset_locations(&mut land);
+                triggers.free_unowned(&mut land);
+                (land, triggers)
             }
-            None => level::moving::MovingLand::default(),
+            None => Default::default(),
         };
 
         log::info!("Spawning agents");
@@ -534,6 +549,7 @@ impl Game {
             line_buffer: LineBuffer::new(),
             level,
             moving_land,
+            triggers,
             moving_land_time: 0.0,
             moving_land_regions: Vec::new(),
             agents,
@@ -578,6 +594,20 @@ impl Game {
 
         self.moving_land_regions.clear();
         for _ in 0..quants.min(MAX_CATCH_UP) {
+            // Sensors first, so an engine sees this quant's touches before
+            // it decides where to send its location.
+            if !self.triggers.is_empty() {
+                let size = (self.level.size.0, self.level.size.1);
+                for agent in self.agents.iter() {
+                    let pos = agent.position();
+                    self.triggers.touch(
+                        (pos.x as i32, pos.y as i32, pos.z as i32),
+                        agent.touch_radius(),
+                        size,
+                    );
+                }
+                self.triggers.update(&mut self.moving_land);
+            }
             self.moving_land
                 .update(&mut self.level, &mut self.moving_land_regions);
         }
@@ -599,6 +629,44 @@ impl Game {
                 z_range: z_range.clone(),
                 need_upload: true,
             });
+        }
+    }
+
+    /// Lists each location with its playback state, and each engine with the
+    /// location it drives - enough to tell a stuck bridge from an idle one.
+    fn draw_moving_land_ui(
+        land: &level::moving::MovingLand,
+        triggers: &level::trigger::Triggers,
+        ui: &mut egui::Ui,
+    ) {
+        for location in land.locations.iter() {
+            let go = location.go_phase();
+            ui.label(format!(
+                "{}: frame {} phase {}{}",
+                location.source.name,
+                location.current_frame(),
+                location.current_phase(),
+                if go == level::moving::FREE_RUNNING {
+                    String::new()
+                } else if location.is_go_finish() {
+                    format!(" (parked at {go})")
+                } else {
+                    format!(" (heading to {go})")
+                },
+            ));
+        }
+        for engine in triggers.engines.iter() {
+            let name = match engine.location {
+                Some(index) => land.locations[index].source.name.as_str(),
+                None => "<unlinked>",
+            };
+            ui.label(format!(
+                "engine on {}: {} sensors, {} touching{}",
+                name,
+                engine.sensors().len(),
+                engine.touch_count(),
+                if engine.is_open() { ", open" } else { "" },
+            ));
         }
     }
 
@@ -1090,6 +1158,12 @@ impl Application for Game {
                 ui.label("Level:");
                 self.level.draw_ui(ui);
             });
+            if !self.moving_land.is_empty() {
+                ui.group(|ui| {
+                    ui.label("Moving land:");
+                    Self::draw_moving_land_ui(&self.moving_land, &self.triggers, ui);
+                });
+            }
             ui.group(|ui| {
                 ui.label("Renderer:");
                 self.render.draw_ui(ui);

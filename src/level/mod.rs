@@ -9,6 +9,8 @@ use std::{
 mod config;
 pub mod moving;
 pub mod tin;
+pub mod trigger;
+pub mod vlc;
 
 pub use self::config::{LevelConfig, Power, TerrainConfig};
 use crate::config::settings;
