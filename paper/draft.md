@@ -715,8 +715,9 @@ hit/miss classification, 0.22 u p95 depth, and 0.78–0.80 levels of
 inside the q=0.5 tolerance; exact rebuild equivalence is nevertheless a
 stronger property than this implementation provides.
 
-The publication batch recorded a clean checkout of collector revision
-`2d86ce0` on all five machines.
+The publication batch recorded a clean checkout of `2d86ce0` on all five
+machines — the head of PR #332 before it was rebase-merged to `master`
+as `5586e2a` (same tree, tagged `terrain-paper`).
 
 At 1280×800 the same run reports explicit, persistent, method-specific
 allocation. Zero means the method adds no persistent data beyond the
