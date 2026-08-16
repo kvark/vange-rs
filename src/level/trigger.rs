@@ -116,6 +116,11 @@ impl Engine {
         self.mode == Mode::Open
     }
 
+    /// Which state of its cycle the engine is in.
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
     /// Sensors this engine listens to, as indices into [`Triggers::sensors`].
     pub fn sensors(&self) -> &[usize] {
         match self.kind {
@@ -448,6 +453,23 @@ impl Triggers {
                 self.engines[engine].touch();
             }
         }
+    }
+
+    /// Fires one sensor directly, as if something were standing inside it -
+    /// `SensorDataType::Touch` without the proximity test. This is what a
+    /// tool uses to work a door without a vehicle to drive onto the pad.
+    pub fn touch_sensor(&mut self, index: usize) {
+        if !self.enabled[index] {
+            return;
+        }
+        if let Some(engine) = self.owners[index] {
+            self.engines[engine].touch();
+        }
+    }
+
+    /// The engine a sensor belongs to, if any claimed it.
+    pub fn sensor_owner(&self, index: usize) -> Option<usize> {
+        self.owners[index]
     }
 
     /// Runs every engine for one quant.

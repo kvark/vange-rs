@@ -2,6 +2,7 @@ mod app;
 #[path = "../boilerplate.rs"]
 mod boilerplate;
 mod headless;
+mod moving_ui;
 
 /// Vangers level viewer / snapshot benchmark
 #[derive(clap::Parser)]

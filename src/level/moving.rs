@@ -112,6 +112,11 @@ impl Location {
         self.go_phase
     }
 
+    /// Park right where the location is, whatever phase that happens to be.
+    pub fn park(&mut self) {
+        self.go_phase = self.current_phase();
+    }
+
     /// `goKeyPhase` - park at one of the location's authored key phases.
     /// A negative index means [`FREE_RUNNING`].
     pub fn go_key_phase(&mut self, index: i32) {

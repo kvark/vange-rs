@@ -382,6 +382,33 @@ impl Camera {
         self.rot = view.rot;
     }
 
+    /// Rotation that looks along `forward` with the horizon level.
+    ///
+    /// The engine folds a `scale` of (1, -1, 1) into the view matrix to make
+    /// the camera left-handed (see `get_view_proj`), so what ends up pointing
+    /// up on screen is `-(rot * Y)`, not `rot * Y`. The basis is built
+    /// accordingly; negating two columns keeps the rotation proper.
+    pub fn look_rotation(forward: Vec3) -> Quat {
+        let forward = forward.normalize_or(Vec3::Y);
+        // World-up is +Z, except when forward is parallel to it.
+        let up_ref = if forward.cross(Vec3::Z).length_squared() > 1e-6 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        let right = forward.cross(up_ref).normalize();
+        let up = right.cross(forward).normalize();
+        Quat::from_mat3(&glam::Mat3::from_cols(-right, -up, -forward))
+    }
+
+    /// Places the camera `distance` from `target`, `elevation` radians above
+    /// the horizontal, looking at it.
+    pub fn orbit_to(&mut self, target: Vec3, distance: f32, elevation: f32) {
+        let offset = distance * Vec3::new(0.0, -elevation.cos(), elevation.sin());
+        self.loc = target + offset;
+        self.rot = Self::look_rotation(-offset);
+    }
+
     pub fn front_face(&self) -> wgpu::FrontFace {
         if self.scale.x * self.scale.y > 0.0 {
             wgpu::FrontFace::Cw
