@@ -2,7 +2,7 @@
 """Combine a frozen seven-configuration batch with its retuned supplement.
 
 The corrected tuning pass changed only RayTraced, RayVoxel, and Mesh.  This
-tool preserves the Sliced, Scattered, and Painter rows from an existing batch
+tool preserves the Sliced, Scattered, and Painted rows from an existing batch
 and takes the three changed configurations (plus the edit protocol) from
 ``compare-terrain.py --supplement-only``.  It refuses unlike machines or
 fixtures instead of manufacturing a mixed result.
@@ -15,7 +15,7 @@ import os
 import tempfile
 
 
-REUSED_METHODS = {"Sliced", "Scattered", "Painter"}
+REUSED_METHODS = {"Sliced", "Scattered", "Painted"}
 
 
 def fail(message):

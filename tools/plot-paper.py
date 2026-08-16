@@ -24,17 +24,18 @@ INK = "#20252b"
 MUTED = "#68717b"
 GRID = "#d9dde1"
 PANEL = "#ffffff"
-METHODS = ["RayTraced", "RayVoxel", "Sliced", "Scattered", "Painter",
-           "Mesh q=0.25"]
-SHORT = ["Ray 128", "Voxel 100", "Sliced", "Scatter", "Painter", "Mesh .25"]
+METHODS = ["RayTraced", "RayVoxel", "Sliced", "Scattered", "Painted",
+           "Mesh q=0.5"]
+SHORT = ["Ray 128", "Voxel 100", "Sliced", "Scatter", "Painted", "Mesh .5"]
 COLOURS = {
     "RayTraced": "#168c9e",
     "RayVoxel": "#4776c5",
     "Sliced": "#d99125",
     "Scattered": "#d65757",
-    "Painter": "#8b62c6",
-    "Mesh q=0.25": "#24764a",
+    "Painted": "#8b62c6",
+    "Mesh q=0.5": "#24764a",
     "Mesh q=0.0": "#69a879",
+    "Mesh q=0.25": "#69a879",
     "Mesh q=0.75": "#155d38",
 }
 
@@ -312,27 +313,65 @@ def figure_encoding(out):
 
 
 def figure_teaser(out):
-    names = ["RayTraced", "RayVoxel", "Sliced", "Scattered", "Painter", "Mesh q=0.0", "Mesh q=0.75"]
-    files = [f"teaser-{index}.png" for index in range(7)]
+    names = METHODS
+    files = [f"teaser-{index}.png" for index in range(len(names))]
     if not all(os.path.exists(os.path.join(os.path.dirname(out), file)) for file in files):
         return False
-    svg = Svg(1240, 650, "The seven measured terrain configurations at the hangar horizon scene")
-    svg.text(34, 38, "One horizon scene exposes seven different tradeoffs", "title")
+    svg = Svg(1240, 560, "The six measured terrain methods at the hangar horizon scene")
+    svg.text(34, 38, "One horizon scene exposes six different tradeoffs", "title")
     svg.text(34, 61, "Hangar · pitch 0° · identical camera, lighting, fog, and shadow pass", "subtitle")
-    positions = [(25 + col * 302, 105) for col in range(4)] + [(176 + col * 302, 365) for col in range(3)]
-    for index, ((x, y), name, file) in enumerate(zip(positions, names, files)):
+    positions = [(25 + col * 403, 105) for col in range(3)] + [(25 + col * 403, 345) for col in range(3)]
+    kinds = ["image-order", "image-order", "forward samples",
+             "forward samples", "forward samples", "fitted triangles"]
+    for (x, y), name, file, kind in zip(positions, names, files, kinds):
         colour = COLOURS[name]
-        svg.add(f'<rect x="{x - 5}" y="{y - 30}" width="290" height="245" rx="8" '
+        svg.add(f'<rect x="{x - 5}" y="{y - 30}" width="390" height="225" rx="8" '
                 f'fill="white" stroke="{colour}" stroke-width="2"/>')
-        svg.text(x + 140, y - 10, name, "panel-title", "middle")
+        svg.text(x + 190, y - 10, name, "panel-title", "middle")
         with open(os.path.join(os.path.dirname(out), file), "rb") as source:
             encoded = base64.b64encode(source.read()).decode("ascii")
-        svg.add(f'<image href="data:image/png;base64,{encoded}" x="{x}" y="{y}" width="280" height="175" '
+        svg.add(f'<image href="data:image/png;base64,{encoded}" x="{x}" y="{y}" width="380" height="168" '
                 f'preserveAspectRatio="xMidYMid slice"/>')
-        row = "image-order" if index < 2 else "forward samples" if index < 5 else "fitted triangles"
-        svg.text(x + 140, y + 202, row, "axis", "middle")
-    svg.text(620, 630, "Scattered loses coverage; coarse mesh misses the wall; the finer mesh preserves it.",
+        svg.text(x + 190, y + 185, kind, "axis", "middle")
+    svg.text(620, 540, "Scattered loses coverage; slicing bands; the selected mesh keeps the hangar wall.",
              "subtitle", "middle")
+    svg.save(out)
+    return True
+
+
+def figure_edit(out, edit_dir):
+    """Before/after crater for the three update classes."""
+    pairs = [
+        ("RayTraced", "RayTraced-before.png", "RayTraced-after.png"),
+        ("RayVoxel", "RayVoxel-before.png", "RayVoxel-after.png"),
+        ("Mesh q=0.5", "Mesh_q_0_5-before.png", "Mesh_q_0_5-after.png"),
+    ]
+    paths = []
+    for name, before, after in pairs:
+        before_path = os.path.join(edit_dir, before)
+        after_path = os.path.join(edit_dir, after)
+        if not (os.path.exists(before_path) and os.path.exists(after_path)):
+            return False
+        paths.append((name, before_path, after_path))
+    svg = Svg(1240, 620, "A local crater becomes visible without reloading the level")
+    svg.text(34, 38, "The same dirty rectangle reaches every method", "title")
+    svg.text(34, 61, "Same radius-48 crater as the timing fixture · closer/higher view · before (top) and first updated frame (bottom)",
+             "subtitle")
+    kinds = ["direct texture read", "incremental occupancy rebuild", "local chunk refit"]
+    for index, ((name, before_path, after_path), kind) in enumerate(zip(paths, kinds)):
+        x = 30 + index * 403
+        colour = COLOURS[name]
+        svg.add(f'<rect x="{x}" y="84" width="390" height="500" rx="8" fill="white" '
+                f'stroke="{colour}" stroke-width="2"/>')
+        svg.text(x + 195, 108, name, "panel-title", "middle")
+        for row, (label, path) in enumerate((("before", before_path), ("after", after_path))):
+            y = 122 + row * 215
+            with open(path, "rb") as source:
+                encoded = base64.b64encode(source.read()).decode("ascii")
+            svg.add(f'<image href="data:image/png;base64,{encoded}" x="{x + 10}" y="{y}" '
+                    f'width="370" height="190" preserveAspectRatio="xMidYMid slice"/>')
+            svg.text(x + 22, y + 18, label, "value", fill="white")
+        svg.text(x + 195, 560, kind, "axis", "middle")
     svg.save(out)
     return True
 
@@ -344,6 +383,8 @@ def main():
                         help="upgraded protocol-v3 accuracy-only JSON")
     parser.add_argument("--survey", default="paper/survey.json")
     parser.add_argument("--out", default="paper/figures")
+    parser.add_argument("--edit-dir", default="work/edit-figure",
+                        help="directory of before/after crater PNGs")
     args = parser.parse_args()
     runs = load_runs(args.results)
     with open(args.accuracy_results) as source:
@@ -366,6 +407,9 @@ def main():
     teaser = os.path.join(args.out, "teaser.svg")
     if figure_teaser(teaser):
         print(f"wrote {teaser}")
+    edit = os.path.join(args.out, "edit.svg")
+    if figure_edit(edit, args.edit_dir):
+        print(f"wrote {edit}")
 
 
 if __name__ == "__main__":

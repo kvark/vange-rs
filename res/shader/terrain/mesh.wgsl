@@ -3,12 +3,11 @@
 // Triangulated irregular network. The mesh is fitted to the height map on
 // the CPU (see `level::tin`), so the vertex stage is just a transform.
 //
-// Everything about the *shading* still comes from the terrain texture --
-// the terrain type below, and the surface gradient inside `evaluate_color`.
-// That matters: the triangles are deliberately coarse, but terrain type
-// boundaries stay at full texel resolution, so this mode keeps the ray
-// traced colouring instead of flat-shading each triangle from whichever
-// vertex happened to be provoking.
+// Terrain type still comes from the height texture, so material boundaries
+// stay at full texel resolution on coarse triangles. Lighting does not:
+// the fragment stage uses the triangle's geometric normal
+// (`evaluate_color_normal`) because vertical walls and cave ceilings have
+// no meaningful height-field gradient.
 
 struct Varyings {
     @builtin(position) position: vec4<f32>,

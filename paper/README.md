@@ -22,9 +22,9 @@ tools/compare-terrain.py
 # Verify the checkout and exact camera plan without starting a render.
 tools/compare-terrain.py --list-scenes
 
-# Upgrade one of the frozen seven-configuration runs. This renders only the
-# retuned RayTraced 128, RayVoxel 100, and Mesh q=0.25 cells (36 rather than
-# 72 steady rows), then runs edit/memory for all six selected methods.
+# Recollect the three configurations that changed after the frozen batch
+# (RayTraced 128, RayVoxel 100, Mesh q=0.5) and the edit/memory protocol.
+# Preferred: a full run of the six selected methods on each device.
 tools/compare-terrain.py --supplement-only
 
 # After collecting the matching base and supplement JSONs:
@@ -39,15 +39,16 @@ tools/merge-bench.py --accuracy-results work/accuracy-results-selected.json \
 # this one-frame run are intentionally discarded.
 tools/compare-terrain.py --accuracy-only
 
-# Extract the hangar row from one final 9000x9911 grid without loading it
-# repeatedly, then generate every data-driven SVG.
-cargo run --release --example paper-teaser -- \
-  remote/cmp-k6.png paper/figures 1
+# Hangar stills for the six-method teaser live in paper/figures/teaser-N.png.
+# The crater figure reads work/edit-figure/{RayTraced,RayVoxel,Mesh_q_0_5}-{before,after}.png.
+# Generate every data-driven SVG, including teaser.svg and edit.svg:
 tools/plot-paper.py --results 'work/final/results-*.json' \
-  --accuracy-results work/accuracy-results-selected.json
+  --accuracy-results work/accuracy-results-selected.json \
+  --edit-dir work/edit-figure
 
 # Generate the synchronized six-method supplemental flythrough. It starts
-# at the river spot, pitches down 30 degrees, and flies forward at fixed Z.
+# at the -30° portal scene (1176, 11567), raised to eye height 110, and
+# flies 250 units horizontally along yaw 293° at fixed Z.
 # The derived video remains under work/ until the data grant is executed.
 tools/render-paper-video.py
 
@@ -61,10 +62,12 @@ also requires `ffmpeg`; the Rust renderer itself is built by Cargo.
 
 The merge and upgrade tools reject different cameras, devices, renderer
 arguments, shadow modes, or other protocol fields instead of silently
-combining unlike batches. The frozen batch remains an auditable measurement
-of RayTraced 64, RayVoxel 40, and the q=0/q=0.75 mesh bracket; the short
-supplement supplies the three selected replacements without recollecting
-unchanged Sliced, Scattered, or Painter rows.
+combining unlike batches. The publication comparison is six methods:
+RayTraced 128, RayVoxel 100, Sliced 512, Scattered 4,4,4, Painted, and
+Mesh q=0.5. The frozen batch remains an auditable measurement of the
+retired Ray 64 / Voxel 40 / Mesh q=0.0–0.75 fixture. Sliced, Scattered,
+and Painted rows can still be reused; the other three columns need a
+new collection.
 Vulkan rows use GPU timestamps; Apple Metal uses the retained CPU
 submit-and-wait average because encoder timestamps did not reliably bracket
 the multipass frame. wgpu does not promise strict ordering for arbitrary
@@ -127,11 +130,12 @@ Tracked here rather than in the draft so the gaps stay visible:
       renderer to ray-height-field, voxel, slicing, splatting and terrain-LOD
       literature. The contribution is explicitly the controlled comparison,
       not priority for the underlying method families.
-- [x] Dynamic terrain edits. The §4.4 protocol now measures five repeated
-      first-post-edit frames, frames to consistency, and color/depth agreement
-      against a fresh edited build. One Radeon 890M result is integrated; run
-      `tools/compare-terrain.py --supplement-only` on the remaining final-batch
-      machines for cross-device update latency and the three retuned rows.
+- [x] Dynamic terrain edits. The §4.4 protocol measures five repeated
+      first-post-edit frames (CPU submit-and-wait and GPU timestamps),
+      frames to consistency, and color/depth agreement against a fresh
+      edited build. A before/after figure shows the same crater on
+      RayTraced, RayVoxel, and Mesh. RTX 5080 numbers are in §5.4;
+      cross-device update latency is part of the aligned recollection.
 - [x] A control isolating what drives fit cost. Done: all ten stock
       worlds, `tools/level-survey.py`. The result reversed the original
       framing - floor relief does not predict the reduction (r = -0.17
@@ -145,10 +149,10 @@ Tracked here rather than in the draft so the gaps stay visible:
       7900 XT, Intel RPL-U, GeForce RTX 5070, and Apple M3 across Vulkan and
       Metal. The five grids agree geometrically outside a small spread within
       the already failing Scattered hangar row.
-- [~] Selected-configuration timing. The Radeon 890M protocol-v3 supplement
-      completed cleanly. Run `tools/compare-terrain.py --supplement-only` on
-      the five retained machines, collect the 36-row JSONs, and compose them
-      with `tools/upgrade-paper-results.py`; the 84-row batch is not repeated.
+- [~] Selected-configuration timing. §5.1 and §5.2 now share one six-method
+      set (Ray 128, Voxel 100, Sliced, Scattered, Painted, Mesh q=0.5).
+      Recollect the five devices at these settings. Sliced / Scattered /
+      Painted rows can be reused; Ray, Voxel, and Mesh q=0.5 cannot.
 - [x] Timing-source validation. Vulkan uses GPU timestamps. Implausibly short,
       method-invariant Metal intervals exposed that encoder-level timestamps
       did not bracket the multipass frame. The API does not guarantee that
@@ -163,8 +167,9 @@ Tracked here rather than in the draft so the gaps stay visible:
       The first slicer sweep also measured a knob artifact (bottom
       truncation rather than coarser spacing) — fixed and re-swept, and
       recorded in §5.6 as a finding of its own. The corrected sweep selects
-      RayTraced 128 and RayVoxel 100. A separate 1280×800 mesh sweep selects
-      q=0.25 under the same one-point rule.
+      RayTraced 128 and RayVoxel 100. The 1280×800 mesh sweep's error floor
+      is 0.3% from q=0.5 up; the paper publishes that single mesh quality
+      so the comparison, teaser, and video share one operating point.
 - [x] Auditable method-memory accounting. The collector reports explicit
       persistent GPU buffers and CPU acceleration/fitting state for every
       method. §5.4 includes both mesh settings and the tuned RayVoxel grid and
@@ -181,8 +186,8 @@ Tracked here rather than in the draft so the gaps stay visible:
       informal permission during artifact packaging.
 - [x] Core figures. §3 uses six consistent vector algorithm schematics;
       `tools/plot-paper.py` generates the encoding, pitch/quality, Vulkan
-      performance, preparation, and fit-survey SVGs; the Rust crop example
-      extracts a readable teaser from a final full-resolution grid.
+      performance, preparation, fit-survey, six-method teaser, and crater
+      before/after SVGs.
 - [x] Author block. Dzmitry Malyshau, Independent Researcher,
       `kvark@fastmail.com`.
 - [x] Reference-floor diagnosis. The CPU screen-X basis was mirrored and its
@@ -205,7 +210,9 @@ Tracked here rather than in the draft so the gaps stay visible:
       stable URLs, and DOIs for the references discussed in the draft.
       Original-game screenshot provenance remains part of the data-license gate.
 - [~] Supplemental video. `tools/render-paper-video.py` produces the local
-      synchronized six-configuration, eight-second H.264 mosaic and poster at
-      fixed world Z, moving horizontally along the camera yaw.
-      Keep both under `work/` until the terrain grant covers derived imagery;
-      then add the licensed files and publication URL to the submission.
+      synchronized six-configuration, eight-second H.264 mosaic and poster from
+      the -30° portal camera, raised to eye height 110, moving horizontally
+      along yaw 293°. Keep both under `work/` until the terrain grant covers
+      derived imagery; then add the licensed files and publication URL to
+      the submission. The flythrough does not include a crater; that
+      evidence is the §5.4 figure and table.

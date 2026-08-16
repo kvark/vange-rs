@@ -60,7 +60,7 @@ SWEEPS = [
         (f"{n} steps", ["--ray-steps", str(n)], 3)
         for n in (16, 32, 64, 128, 256)
     ]),
-    ("Painter", "Painted", [("(none)", [], 3)]),
+    ("Painted", "Painted", [("(none)", [], 3)]),
     ("Sliced", "Sliced", [
         (f"{n} layers", ["--slice-layers", str(n)], 3)
         for n in (32, 64, 128, 256, 512)

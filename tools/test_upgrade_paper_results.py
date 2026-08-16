@@ -36,12 +36,12 @@ def fixture(purpose, labels, rows, supplement=False):
         "rows": [{"method": label, "view": "one", "pitch": 0,
                   "marker": marker} for label, marker in rows],
         "edit_protocol": {"fixture": 1} if supplement else None,
-        "edit_rows": [{"method": "Painter"}] if supplement else [],
+        "edit_rows": [{"method": "Painted"}] if supplement else [],
     }
     if supplement:
         value["publication_methods"] = [
             method(label) for label in
-            ("RayTraced", "RayVoxel", "Sliced", "Scattered", "Painter", "Mesh q=0.25")
+            ("RayTraced", "RayVoxel", "Sliced", "Scattered", "Painted", "Mesh q=0.5")
         ]
     return value
 
@@ -61,11 +61,11 @@ class UpgradeTests(unittest.TestCase):
         return result, paths[2]
 
     def test_reuses_only_unchanged_rows(self):
-        base_labels = ["RayTraced", "RayVoxel", "Sliced", "Scattered", "Painter",
+        base_labels = ["RayTraced", "RayVoxel", "Sliced", "Scattered", "Painted",
                        "Mesh q=0.0", "Mesh q=0.75"]
         base = fixture("publication", base_labels,
                        [(label, "old") for label in base_labels])
-        changed = ["RayTraced", "RayVoxel", "Mesh q=0.25"]
+        changed = ["RayTraced", "RayVoxel", "Mesh q=0.5"]
         supplement = fixture("publication", changed,
                              [(label, "new") for label in changed], True)
         result, output = self.run_upgrade(base, supplement)
@@ -74,15 +74,15 @@ class UpgradeTests(unittest.TestCase):
         markers = {row["method"]: row["marker"] for row in upgraded["rows"]}
         self.assertEqual(markers, {
             "RayTraced": "new", "RayVoxel": "new", "Sliced": "old",
-            "Scattered": "old", "Painter": "old", "Mesh q=0.25": "new",
+            "Scattered": "old", "Painted": "old", "Mesh q=0.5": "new",
         })
         self.assertFalse(upgraded["accuracy_valid"])
-        self.assertEqual(upgraded["edit_rows"], [{"method": "Painter"}])
+        self.assertEqual(upgraded["edit_rows"], [{"method": "Painted"}])
 
     def test_rejects_different_device(self):
-        labels = ["Sliced", "Scattered", "Painter"]
+        labels = ["Sliced", "Scattered", "Painted"]
         base = fixture("publication", labels, [(label, "old") for label in labels])
-        changed = ["RayTraced", "RayVoxel", "Mesh q=0.25"]
+        changed = ["RayTraced", "RayVoxel", "Mesh q=0.5"]
         supplement = fixture("publication", changed,
                              [(label, "new") for label in changed], True)
         supplement["device"]["adapter"] = "another GPU"

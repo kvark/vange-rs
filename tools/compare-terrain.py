@@ -87,16 +87,16 @@ METHODS = [
     # Density 4 is the best this method reaches and it is still last by a
     # wide margin; lower densities are cheaper and worse in every column.
     ("Scattered", "Scattered", ["--scatter-density", "4,4,4"], 8),
-    ("Painter", "Painted", [], 3),
-    # Publication-resolution tuning selects q=0.25. The prior q=0.0/q=0.75
-    # pair remains useful as a quality bracket, but it is not the fair single
-    # operating point used in the six-method comparison.
-    ("Mesh q=0.25", "Mesh", ["--mesh-quality", "0.25"], 3),
+    ("Painted", "Painted", [], 3),
+    # One mesh operating point for the comparison, teaser, and video.
+    # At 1280×800 the error floor is 0.3% from q=0.5 upward; q=0.5 is the
+    # coarsest setting that reaches it.
+    ("Mesh q=0.5", "Mesh", ["--mesh-quality", "0.5"], 3),
 ]
 
-# The final five-machine batch predates the corrected reference. These are
-# the three selected configurations whose settings changed after retuning;
-# Sliced, Scattered, and Painter rows can be reused byte-for-byte.
+# The previous five-machine batch predates the corrected reference and the
+# single mesh setting. These three configurations must be recollected;
+# Sliced, Scattered, and Painted rows can be reused byte-for-byte.
 SUPPLEMENT_METHODS = [METHODS[0], METHODS[1], METHODS[-1]]
 
 # Fostral viewpoints, three per pitch. Each view runs at its own pitch -
@@ -521,11 +521,27 @@ def render(args, view, method, out_dir, pitch=0.0):
     return png, depth, meta
 
 
-def render_edit_case(args, method, out_dir, frames, fresh):
-    label, terrain, extra, warmup = method
-    tag = re.sub(r"[^A-Za-z0-9]+", "_", label)
-    kind = "fresh" if fresh else f"incremental-{frames}"
-    stem = os.path.join(out_dir, f"{tag}-{kind}")
+def _gpu_first_ms(meta):
+    """First timed GPU sample, or None when timestamps are unusable."""
+    if (meta.get("backend") == "Metal" or not meta.get("gpu_timing")
+            or not meta.get("gpu_ms")):
+        return None
+    value = meta["gpu_ms"][0]
+    return None if value != value else float(value)
+
+
+def _gpu_median_ms(meta):
+    if (meta.get("backend") == "Metal" or not meta.get("gpu_timing")
+            or not meta.get("gpu_ms")):
+        return None
+    values = [v for v in meta["gpu_ms"] if v == v]
+    return float(np.median(values)) if values else None
+
+
+def render_edit_camera(args, method, out_dir, stem_name, frames, warmup,
+                       dig=False, fresh=False):
+    label, terrain, extra, _ = method
+    stem = os.path.join(out_dir, stem_name)
     cmd = [
         args.binary, "--snapshot", stem + ".png",
         "--depth-out", stem + ".f32", "--bench-out", stem + ".json",
@@ -536,10 +552,13 @@ def render_edit_case(args, method, out_dir, frames, fresh):
         "--near", "1", "--far", str(args.far),
         "--width", str(args.width), "--height", str(args.height),
         "--frames", str(frames), "--warmup", str(warmup),
-        "--dig", "--dig-frame", str(0 if fresh else warmup),
-        "--dig-center", f"{EDIT_CENTER[0]},{EDIT_CENTER[1]}",
-        "--dig-radius", str(EDIT_RADIUS),
     ]
+    if dig:
+        cmd += [
+            "--dig", "--dig-frame", str(0 if fresh else warmup),
+            "--dig-center", f"{EDIT_CENTER[0]},{EDIT_CENTER[1]}",
+            "--dig-radius", str(EDIT_RADIUS),
+        ]
     if not args.no_shadows:
         cmd.append("--shadow-ray")
     if args.level_zip:
@@ -550,10 +569,19 @@ def render_edit_case(args, method, out_dir, frames, fresh):
                             env=dict(os.environ, RUST_LOG="info"))
     if result.returncode:
         print(result.stderr[-3000:], file=sys.stderr)
-        raise SystemExit(f"edit render failed: {label} / {kind}")
+        raise SystemExit(f"edit render failed: {label} / {stem_name}")
     with open(stem + ".json") as source:
         meta = json.load(source)
     return stem + ".png", stem + ".f32", meta
+
+
+def render_edit_case(args, method, out_dir, frames, fresh):
+    label = method[0]
+    tag = re.sub(r"[^A-Za-z0-9]+", "_", label)
+    kind = "fresh" if fresh else f"incremental-{frames}"
+    return render_edit_camera(
+        args, method, out_dir, f"{tag}-{kind}", frames, method[3],
+        dig=True, fresh=fresh)
 
 
 def edit_agreement(reference_png, reference_depth, candidate_png,
@@ -600,12 +628,16 @@ def run_edit_protocol(args, layers, methods=METHODS):
         device = device or {key: fresh_meta[key] for key in
                             ("adapter", "backend", "device_type", "driver", "driver_info")}
         first_cpu_samples = []
+        first_gpu_samples = []
         final = None
         consistent_after = None
         for frames in EDIT_FRAME_COUNTS:
             png, depth, meta = render_edit_case(args, method, out_dir, frames, False)
-            if not first_cpu_samples:
+            if frames == 1:
                 first_cpu_samples.append(meta["frame_ms"][0])
+                gpu = _gpu_first_ms(meta)
+                if gpu is not None:
+                    first_gpu_samples.append(gpu)
             final = edit_agreement(fresh_png, fresh_depth, png, depth, dirs,
                                    args.width, args.height, args.far)
             if final["consistent"]:
@@ -614,10 +646,15 @@ def run_edit_protocol(args, layers, methods=METHODS):
         while len(first_cpu_samples) < EDIT_TIMING_REPEATS:
             _, _, meta = render_edit_case(args, method, out_dir, 1, False)
             first_cpu_samples.append(meta["frame_ms"][0])
+            gpu = _gpu_first_ms(meta)
+            if gpu is not None:
+                first_gpu_samples.append(gpu)
         first_cpu_ms = float(np.median(first_cpu_samples))
         first_cpu_p25, first_cpu_p75 = (
             float(value) for value in np.percentile(first_cpu_samples, [25, 75]))
         steady_cpu_ms = float(np.median(fresh_meta["frame_ms"]))
+        first_gpu = float(np.median(first_gpu_samples)) if first_gpu_samples else None
+        steady_gpu = _gpu_median_ms(fresh_meta)
         row = {
             "method": label,
             "steady_edited_cpu_ms": steady_cpu_ms,
@@ -626,6 +663,12 @@ def run_edit_protocol(args, layers, methods=METHODS):
             "first_post_edit_cpu_p25_ms": first_cpu_p25,
             "first_post_edit_cpu_p75_ms": first_cpu_p75,
             "edit_overhead_cpu_ms": first_cpu_ms - steady_cpu_ms,
+            "steady_edited_gpu_ms": steady_gpu,
+            "first_post_edit_gpu_ms": first_gpu,
+            "first_post_edit_gpu_samples_ms": first_gpu_samples,
+            "edit_overhead_gpu_ms": (
+                None if first_gpu is None or steady_gpu is None
+                else first_gpu - steady_gpu),
             "consistent_after_frames": consistent_after,
             **final,
             "method_gpu_bytes": fresh_meta.get("method_gpu_bytes"),
@@ -633,8 +676,10 @@ def run_edit_protocol(args, layers, methods=METHODS):
         }
         rows.append(row)
         state = str(consistent_after) if consistent_after is not None else ">16"
-        print(f"  {label:12s} first {first_cpu_ms:8.2f} ms CPU, "
-              f"overhead {row['edit_overhead_cpu_ms']:+7.2f} ms, "
+        gpu_txt = ("n/a" if first_gpu is None
+                   else f"{first_gpu:6.2f} ms GPU {row['edit_overhead_gpu_ms']:+.2f}")
+        print(f"  {label:12s} first {first_cpu_ms:8.2f} ms CPU "
+              f"{row['edit_overhead_cpu_ms']:+7.2f}, {gpu_txt}, "
               f"consistent after {state:>3s} frame(s), "
               f"class {final['class_mismatch_pct']:.4f}%, "
               f"depth p95 {final['depth_p95']:.3f}u", flush=True)
@@ -683,8 +728,8 @@ def main():
                          "publication measurements")
     ap.add_argument("--supplement-only", action="store_true",
                     help="collect only the retuned RayTraced, RayVoxel, and "
-                         "Mesh configurations needed to upgrade the frozen "
-                         "five-machine batch")
+                         "Mesh q=0.5 configurations needed to upgrade a "
+                         "frozen five-machine batch")
     ap.add_argument("--allow-dirty", action="store_true",
                     help="permit a non-reproducible run from a dirty checkout")
     ap.add_argument("--frames", type=int, default=40,
@@ -829,7 +874,7 @@ def main():
                 "center": EDIT_CENTER, "radius": EDIT_RADIUS,
                 "tested_frame_counts": EDIT_FRAME_COUNTS,
                 "timing_repeats": EDIT_TIMING_REPEATS,
-                "timing": "CPU submit-and-wait",
+                "timing": "CPU submit-and-wait and GPU timestamps when available",
             },
             "edit_rows": edit_rows,
         })
@@ -1003,7 +1048,7 @@ def main():
                 "center": EDIT_CENTER, "radius": EDIT_RADIUS,
                 "tested_frame_counts": EDIT_FRAME_COUNTS,
                 "timing_repeats": EDIT_TIMING_REPEATS,
-                "timing": "CPU submit-and-wait",
+                "timing": "CPU submit-and-wait and GPU timestamps when available",
             } if edit_rows else None),
             "edit_rows": edit_rows,
         })
