@@ -123,6 +123,18 @@ METHODS = [
 # global eight-unit default and no longer reproduces the framed shot.
 DEFAULT_PITCHES = [0.0, -30.0, -60.0, -90.0]
 
+# A bounded, visible edit fixture. The camera stands south of the crater and
+# looks toward it; keeping this separate from the twelve steady-state scenes
+# avoids hiding an update spike inside an ordinary frame average.
+EDIT_VIEW = {
+    "name": "edit-crater", "x": 1024, "y": 8350, "yaw": 180.0,
+    "eye_height": 40.0, "under": False,
+}
+EDIT_PITCH = -30.0
+EDIT_CENTER = (1024, 8192)
+EDIT_RADIUS = 48
+EDIT_FRAME_COUNTS = (1, 2, 4, 8, 16)
+
 DEFAULT_VIEWS = {
     0.0: [
         "river:837,3984:299:78",
@@ -496,6 +508,117 @@ def render(args, view, method, out_dir, pitch=0.0):
     return png, depth, meta
 
 
+def render_edit_case(args, method, out_dir, frames, fresh):
+    label, terrain, extra, warmup = method
+    tag = re.sub(r"[^A-Za-z0-9]+", "_", label)
+    kind = "fresh" if fresh else f"incremental-{frames}"
+    stem = os.path.join(out_dir, f"{tag}-{kind}")
+    cmd = [
+        args.binary, "--snapshot", stem + ".png",
+        "--depth-out", stem + ".f32", "--bench-out", stem + ".json",
+        "--terrain", terrain, *extra,
+        "--fp", f"{EDIT_VIEW['x']},{EDIT_VIEW['y']}",
+        "--fp-height", str(EDIT_VIEW["eye_height"]),
+        f"--fp-yaw={EDIT_VIEW['yaw']}", f"--fp-pitch={EDIT_PITCH}",
+        "--near", "1", "--far", str(args.far),
+        "--width", str(args.width), "--height", str(args.height),
+        "--frames", str(frames), "--warmup", str(warmup),
+        "--dig", "--dig-frame", str(0 if fresh else warmup),
+        "--dig-center", f"{EDIT_CENTER[0]},{EDIT_CENTER[1]}",
+        "--dig-radius", str(EDIT_RADIUS),
+    ]
+    if not args.no_shadows:
+        cmd.append("--shadow-ray")
+    if args.level_zip:
+        cmd += ["--level-zip", args.level_zip]
+    if args.common_zip:
+        cmd += ["--common-zip", args.common_zip]
+    result = subprocess.run(cmd, capture_output=True, text=True,
+                            env=dict(os.environ, RUST_LOG="info"))
+    if result.returncode:
+        print(result.stderr[-3000:], file=sys.stderr)
+        raise SystemExit(f"edit render failed: {label} / {kind}")
+    with open(stem + ".json") as source:
+        meta = json.load(source)
+    return stem + ".png", stem + ".f32", meta
+
+
+def edit_agreement(reference_png, reference_depth, candidate_png,
+                   candidate_depth, dirs, width, height, far):
+    ref = np.fromfile(reference_depth, dtype="<f4").reshape(height, width)
+    got = np.fromfile(candidate_depth, dtype="<f4").reshape(height, width)
+    ref_empty = ref >= 0.999999
+    got_empty = got >= 0.999999
+    class_mismatch = 100.0 * np.not_equal(ref_empty, got_empty).mean()
+    both = ~ref_empty & ~got_empty
+    if both.any():
+        delta = np.abs(ray_distance(ref, dirs, 1.0, far)[both] -
+                       ray_distance(got, dirs, 1.0, far)[both])
+        depth_p50, depth_p95 = (float(value) for value in
+                                np.percentile(delta, [50, 95]))
+    else:
+        depth_p50 = depth_p95 = float("nan")
+    ref_color = np.asarray(Image.open(reference_png).convert("RGB"), dtype=np.int16)
+    got_color = np.asarray(Image.open(candidate_png).convert("RGB"), dtype=np.int16)
+    color_mae = float(np.abs(ref_color - got_color).mean())
+    consistent = class_mismatch <= 0.01 and depth_p95 == depth_p95 and depth_p95 <= 0.1
+    return {
+        "class_mismatch_pct": class_mismatch,
+        "depth_p50": depth_p50,
+        "depth_p95": depth_p95,
+        "color_mae_8bit": color_mae,
+        "consistent": consistent,
+    }
+
+
+def run_edit_protocol(args, layers):
+    out_dir = os.path.join(args.work, "edit-protocol")
+    os.makedirs(out_dir, exist_ok=True)
+    _, _, dirs, _ = ground_truth(
+        layers, EDIT_VIEW, args.width, args.height,
+        EDIT_VIEW["eye_height"], args.far, EDIT_PITCH)
+    rows = []
+    device = None
+    print("\nDynamic-edit protocol:", flush=True)
+    for method in METHODS:
+        label = method[0]
+        fresh_png, fresh_depth, fresh_meta = render_edit_case(
+            args, method, out_dir, 10, True)
+        device = device or {key: fresh_meta[key] for key in
+                            ("adapter", "backend", "device_type", "driver", "driver_info")}
+        first_cpu_ms = None
+        final = None
+        consistent_after = None
+        for frames in EDIT_FRAME_COUNTS:
+            png, depth, meta = render_edit_case(args, method, out_dir, frames, False)
+            if first_cpu_ms is None:
+                first_cpu_ms = meta["frame_ms"][0]
+            final = edit_agreement(fresh_png, fresh_depth, png, depth, dirs,
+                                   args.width, args.height, args.far)
+            if final["consistent"]:
+                consistent_after = frames
+                break
+        steady_cpu_ms = float(np.median(fresh_meta["frame_ms"]))
+        row = {
+            "method": label,
+            "steady_edited_cpu_ms": steady_cpu_ms,
+            "first_post_edit_cpu_ms": first_cpu_ms,
+            "edit_overhead_cpu_ms": first_cpu_ms - steady_cpu_ms,
+            "consistent_after_frames": consistent_after,
+            **final,
+            "method_gpu_bytes": fresh_meta.get("method_gpu_bytes"),
+            "method_cpu_bytes": fresh_meta.get("method_cpu_bytes"),
+        }
+        rows.append(row)
+        state = str(consistent_after) if consistent_after is not None else ">16"
+        print(f"  {label:12s} first {first_cpu_ms:8.2f} ms CPU, "
+              f"overhead {row['edit_overhead_cpu_ms']:+7.2f} ms, "
+              f"consistent after {state:>3s} frame(s), "
+              f"class {final['class_mismatch_pct']:.4f}%, "
+              f"depth p95 {final['depth_p95']:.3f}u", flush=True)
+    return device, rows
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -554,11 +677,18 @@ def main():
     ap.add_argument("--list-scenes", action="store_true",
                     help="print source revision and exact camera plan, then "
                          "exit without building, fetching, or rendering")
+    ap.add_argument("--skip-edits", action="store_true",
+                    help="skip the publication dynamic-edit protocol")
+    ap.add_argument("--edits-only", action="store_true",
+                    help="run only the short dynamic-edit and memory protocol; "
+                         "use this to supplement an older complete batch")
     args = ap.parse_args()
     if args.quick:
         args.width, args.height, args.frames = 320, 200, 4
         args.view = args.view or ["quick:200,200:0"]
         args.pitch = args.pitch or [0.0]
+        if not args.edits_only:
+            args.skip_edits = True
 
     # A "scene" is a view at the pitch it was framed at. DEFAULT_VIEWS
     # already pairs each view with its pitch; --view/--pitch overrides fall
@@ -619,8 +749,12 @@ def main():
     }
     # A full run takes about an hour. Invalidate the previous aggregate before
     # builds, downloads, or rendering begin, then publish its replacement only
-    # after every cell succeeds.
-    manifest_path, grid, grid_tmp = start_run(args.out, manifest)
+    # after every cell succeeds. An edit-only supplement must not invalidate
+    # an already complete comparison grid.
+    if args.edits_only:
+        manifest_path = grid = grid_tmp = None
+    else:
+        manifest_path, grid, grid_tmp = start_run(args.out, manifest)
 
     load_dependencies()
 
@@ -628,6 +762,30 @@ def main():
     ensure_assets(args)
 
     layers = load_layers(args.layers)
+
+    if args.edits_only:
+        device, edit_rows = run_edit_protocol(args, layers)
+        json_out = args.json_out or os.path.join(
+            args.work, f"edit-results-{slug(device['adapter'])}.json")
+        write_json_atomic(json_out, {
+            "label": args.label or device["adapter"],
+            "source": source,
+            "level": args.level,
+            "device": device,
+            "width": args.width, "height": args.height,
+            "far": args.far,
+            "shadows": ("disabled" if args.no_shadows else
+                        "ray-traced 1024x1024"),
+            "edit_protocol": {
+                "view": EDIT_VIEW, "pitch": EDIT_PITCH,
+                "center": EDIT_CENTER, "radius": EDIT_RADIUS,
+                "tested_frame_counts": EDIT_FRAME_COUNTS,
+                "timing": "CPU submit-and-wait",
+            },
+            "edit_rows": edit_rows,
+        })
+        print(f"\nwrote {json_out}")
+        return
 
     cells, stats, rows = {}, {}, []
     device = None
@@ -710,6 +868,8 @@ def main():
                 "prep_setup_ms": meta.get("prep_setup_ms"),
                 "prep_first_frame_ms": meta.get("prep_first_frame_ms"),
                 "prep_warmup_ms": meta.get("prep_warmup_ms"),
+                "method_gpu_bytes": meta.get("method_gpu_bytes"),
+                "method_cpu_bytes": meta.get("method_cpu_bytes"),
                 "see_through": see_through, "covers_sky": covers_sky,
                 "depth_p50": p50, "depth_p95": p95, "speckle": excess,
             })
@@ -726,6 +886,12 @@ def main():
                   f"see-through {see_through:5.1f}%   covers-sky {covers_sky:5.1f}%   "
                   f"depth {dep}   speckle {excess:5.1f}%"
                   f"   [{done}/{total}, {eta / 60:.0f} min left]", flush=True)
+
+    edit_rows = []
+    if not args.skip_edits:
+        edit_device, edit_rows = run_edit_protocol(args, layers)
+        if edit_device != device:
+            raise SystemExit("edit protocol selected a different adapter")
 
     # Named from the adapter wgpu actually chose, not from anything the
     # caller had to know in advance.
@@ -746,6 +912,13 @@ def main():
             "scenes": scene_records,
             "methods": method_records,
             "rows": rows,
+            "edit_protocol": ({
+                "view": EDIT_VIEW, "pitch": EDIT_PITCH,
+                "center": EDIT_CENTER, "radius": EDIT_RADIUS,
+                "tested_frame_counts": EDIT_FRAME_COUNTS,
+                "timing": "CPU submit-and-wait",
+            } if edit_rows else None),
+            "edit_rows": edit_rows,
         })
         print(f"\nwrote {json_out}")
 

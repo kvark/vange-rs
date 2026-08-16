@@ -22,6 +22,10 @@ tools/compare-terrain.py
 # Verify the checkout and exact camera plan without starting a render.
 tools/compare-terrain.py --list-scenes
 
+# Supplement an already completed hardware batch with the edit-equivalence
+# and explicit method-memory protocol; this does not rerun the 84 main rows.
+tools/compare-terrain.py --edits-only
+
 # Collect the work/results-*.json files from every machine, then
 tools/merge-bench.py work/results-*.json > paper/results.md
 
@@ -34,7 +38,15 @@ tools/merge-bench.py remote/results-*.json > paper/results.md
 cargo run --release --example paper-teaser -- \
   remote/cmp-k6.png paper/figures 1
 tools/plot-paper.py
+
+# Generate the synchronized seven-method supplemental flythrough. It starts
+# at the river spot, pitches down 30 degrees, and moves linearly along +Y.
+# The derived video remains under work/ until the data grant is executed.
+tools/render-paper-video.py
 ```
+
+The comparison tools require Python with NumPy and Pillow. Video generation
+also requires `ffmpeg`; the Rust renderer itself is built by Cargo.
 
 The merge tool rejects different cameras, renderer arguments, shadow modes,
 or other protocol fields instead of silently combining unlike batches. The
@@ -142,8 +154,8 @@ Tracked here rather than in the draft so the gaps stay visible:
       `tools/plot-paper.py` generates the encoding, pitch/quality, Vulkan
       performance, preparation, and fit-survey SVGs; the Rust crop example
       extracts a readable teaser from a final full-resolution grid.
-- [ ] Author block. JCGT review is single-blind — names and affiliation
-      go on the submission.
+- [x] Author block. Dzmitry Malyshau, Independent Researcher,
+      `kvark@fastmail.com`.
 - [ ] Reference-floor diagnosis. Resolve the common top-down CPU/GPU offset
       described in §6.1, or narrow the final depth-quality claims so they do
       not depend on absolute reference accuracy.

@@ -30,13 +30,21 @@ use log::info;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-/// Carve a round pit into the middle of the level and return the rect that
-/// changed. Used by `--dig` to exercise incremental terrain updates.
-fn dig_crater(level: &mut level::Level) -> vangers::render::Rect {
-    let (cx, cy) = (level.size.0 / 2, level.size.1 / 2);
-    let r = (level.size.0.min(level.size.1) / 5).max(8);
-    for y in (cy - r)..(cy + r) {
-        for x in (cx - r)..(cx + r) {
+/// Carve a round pit into the level and return the rect that changed. Used by
+/// `--dig` to exercise incremental terrain updates.
+fn dig_crater(
+    level: &mut level::Level,
+    center: Option<(i32, i32)>,
+    radius: Option<i32>,
+) -> vangers::render::Rect {
+    let (cx, cy) = center.unwrap_or((level.size.0 / 2, level.size.1 / 2));
+    let r = radius
+        .unwrap_or_else(|| (level.size.0.min(level.size.1) / 5).max(8))
+        .max(1);
+    let (x0, x1) = ((cx - r).max(0), (cx + r).min(level.size.0));
+    let (y0, y1) = ((cy - r).max(0), (cy + r).min(level.size.1));
+    for y in y0..y1 {
+        for x in x0..x1 {
             let (dx, dy) = ((x - cx) as f32, (y - cy) as f32);
             let d2 = dx * dx + dy * dy;
             if d2 > (r * r) as f32 {
@@ -50,10 +58,10 @@ fn dig_crater(level: &mut level::Level) -> vangers::render::Rect {
         }
     }
     vangers::render::Rect {
-        x: (cx - r) as u16,
-        y: (cy - r) as u16,
-        w: (2 * r) as u16,
-        h: (2 * r) as u16,
+        x: x0 as u16,
+        y: y0 as u16,
+        w: (x1 - x0) as u16,
+        h: (y1 - y0) as u16,
     }
 }
 
@@ -86,8 +94,15 @@ pub struct SnapshotOptions {
     /// Frame to dig on. 0 means before the mesh is ever built, which
     /// gives a from-scratch reference to compare the incremental path to.
     pub dig_frame: u32,
+    /// Optional crater center in level texels.
+    pub dig_center: Option<(i32, i32)>,
+    /// Optional crater radius in level texels.
+    pub dig_radius: Option<i32>,
     /// First-person camera: stand at this XY instead of orbiting a target.
     pub fp: Option<(f32, f32)>,
+    /// End Y coordinate for a linear first-person camera move across timed
+    /// frames. Warmup frames stay at the starting position.
+    pub fp_y_end: Option<f32>,
     /// Eye height above the local ground surface.
     pub fp_height: f32,
     /// Heading in degrees; 0 looks along +Y.
@@ -114,6 +129,8 @@ pub struct SnapshotOptions {
     /// Lets a comparison score geometry against a reference by distance
     /// rather than by classifying colours.
     pub depth_out: Option<String>,
+    /// Save every timed color frame as a numbered PNG for video generation.
+    pub frame_dir: Option<String>,
     pub cull_dump: Option<String>,
     /// Print the raw packed data and the decoded surface for one texel
     /// pair, to compare the CPU query against the shader's decoding.
@@ -136,7 +153,10 @@ impl Default for SnapshotOptions {
             mesh_lod_distance: None,
             dig: false,
             dig_frame: 1,
+            dig_center: None,
+            dig_radius: None,
             fp: None,
+            fp_y_end: None,
             fp_height: 8.0,
             fp_yaw: 0.0,
             fp_pitch: 0.0,
@@ -146,6 +166,7 @@ impl Default for SnapshotOptions {
             voxel_debug_lod: None,
             voxel_probe: None,
             depth_out: None,
+            frame_dir: None,
             cull_dump: None,
             dump_texel: None,
             width: 800,
@@ -160,6 +181,76 @@ impl Default for SnapshotOptions {
             shadow_ray: false,
         }
     }
+}
+
+fn read_color_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    extent: wgpu::Extent3d,
+) -> Vec<u8> {
+    let bytes_per_pixel = 4u32;
+    let unpadded_bytes_per_row = bytes_per_pixel * extent.width;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) & !(align - 1);
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("snapshot-staging"),
+        size: (padded_bytes_per_row * extent.height) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("snapshot-readback"),
+    });
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &staging,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                rows_per_image: None,
+            },
+        },
+        extent,
+    );
+    queue.submit(Some(encoder.finish()));
+    let slice = staging.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        tx.send(result).unwrap();
+    });
+    device
+        .poll(wgpu::PollType::Wait {
+            timeout: Some(Duration::from_secs(5)),
+            submission_index: Default::default(),
+        })
+        .unwrap();
+    rx.recv().unwrap().expect("Failed to map staging buffer");
+    let data = slice.get_mapped_range();
+    let mut pixels = Vec::with_capacity((unpadded_bytes_per_row * extent.height) as usize);
+    for row in 0..extent.height as usize {
+        let start = row * padded_bytes_per_row as usize;
+        pixels.extend_from_slice(&data[start..start + unpadded_bytes_per_row as usize]);
+    }
+    drop(data);
+    staging.unmap();
+    pixels
+}
+
+fn write_png(path: &Path, width: u32, height: u32, pixels: &[u8]) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let file = std::fs::File::create(path).expect("Failed to create output PNG file");
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_source_srgb(png::SrgbRenderingIntent::RelativeColorimetric);
+    let mut writer = encoder.write_header().expect("Failed to write PNG header");
+    writer
+        .write_image_data(pixels)
+        .expect("Failed to write PNG data");
 }
 
 fn make_camera(opts: &SnapshotOptions, lvl: &level::Level) -> space::Camera {
@@ -368,7 +459,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         None => (0..256).map(|_| [255u8, 255, 255, 255]).collect(),
     };
 
-    let cam = make_camera(&opts, &lvl);
+    let mut cam = make_camera(&opts, &lvl);
 
     // One-time setup cost, separately from per-frame cost. For the mesh
     // this is where pipelines and the terrain texture are built; the
@@ -476,11 +567,24 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     }
     let mut prep_first_frame = Duration::ZERO;
     let mut prep_warmup = Duration::ZERO;
+    let mut last_sequence_pixels = None;
 
     for frame_index in 0..total_frames {
         let is_timed = frame_index >= opts.warmup;
+        if let (Some((x, start_y)), Some(end_y)) = (opts.fp, opts.fp_y_end) {
+            let timed_index = frame_index.saturating_sub(opts.warmup);
+            let denominator = opts.frames.saturating_sub(1).max(1);
+            let progress = if is_timed {
+                timed_index.min(denominator) as f32 / denominator as f32
+            } else {
+                0.0
+            };
+            let mut frame_opts = opts.clone();
+            frame_opts.fp = Some((x, start_y + (end_y - start_y) * progress));
+            cam = make_camera(&frame_opts, &lvl);
+        }
         if opts.dig && frame_index == opts.dig_frame {
-            let rect = dig_crater(&mut lvl);
+            let rect = dig_crater(&mut lvl, opts.dig_center, opts.dig_radius);
             info!(
                 "Dug a crater at {},{} size {}x{}",
                 rect.x, rect.y, rect.w, rect.h
@@ -541,6 +645,12 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             prep_warmup += wall;
         } else {
             frame_times.push(wall);
+            if let Some(ref dir) = opts.frame_dir {
+                let pixels = read_color_texture(&gfx.device, &gfx.queue, &color_tex, extent);
+                let path = Path::new(dir).join(format!("{:06}.png", frame_index - opts.warmup));
+                write_png(&path, opts.width, opts.height, &pixels);
+                last_sequence_pixels = Some(pixels);
+            }
         }
     }
 
@@ -598,6 +708,12 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         prep_first_frame.as_secs_f64() * 1e3,
         prep_warmup.as_secs_f64() * 1e3,
     );
+    let memory = render.terrain.memory_stats();
+    info!(
+        "Method memory: GPU data {:.2} MiB, CPU data {:.2} MiB",
+        memory.method_gpu_bytes as f64 / (1 << 20) as f64,
+        memory.method_cpu_bytes as f64 / (1 << 20) as f64,
+    );
 
     if !frame_times.is_empty() {
         let total: Duration = frame_times.iter().sum();
@@ -649,6 +765,8 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                     "  \"gpu_avg_ms\": {:.4},\n",
                     "  \"gpu_min_ms\": {:.4},\n",
                     "  \"gpu_ms\": [{}],\n",
+                    "  \"method_gpu_bytes\": {},\n",
+                    "  \"method_cpu_bytes\": {},\n",
                     "  \"prep_setup_ms\": {:.3},\n",
                     "  \"prep_first_frame_ms\": {:.3},\n",
                     "  \"prep_warmup_ms\": {:.3}\n",
@@ -686,6 +804,8 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                     .map(|v| format!("{:.4}", v))
                     .collect::<Vec<_>>()
                     .join(", "),
+                memory.method_gpu_bytes,
+                memory.method_cpu_bytes,
                 prep_setup.as_secs_f64() * 1e3,
                 prep_first_frame.as_secs_f64() * 1e3,
                 prep_warmup.as_secs_f64() * 1e3,
@@ -698,60 +818,8 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         }
     }
 
-    // Pull the last frame back to CPU.
-    let bytes_per_pixel = 4u32;
-    let unpadded_bytes_per_row = bytes_per_pixel * opts.width;
-    let align = 256u32;
-    let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) & !(align - 1);
-
-    let staging_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("snapshot-staging"),
-        size: (padded_bytes_per_row * opts.height) as u64,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-
-    let mut readback_encoder = gfx
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("snapshot-readback"),
-        });
-    readback_encoder.copy_texture_to_buffer(
-        color_tex.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &staging_buf,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded_bytes_per_row),
-                rows_per_image: None,
-            },
-        },
-        extent,
-    );
-    gfx.queue.submit(Some(readback_encoder.finish()));
-
-    let slice = staging_buf.slice(..);
-    let (tx, rx) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |result| {
-        tx.send(result).unwrap();
-    });
-    gfx.device
-        .poll(wgpu::PollType::Wait {
-            timeout: Some(Duration::from_secs(5)),
-            submission_index: Default::default(),
-        })
-        .unwrap();
-    rx.recv().unwrap().expect("Failed to map staging buffer");
-
-    let data = slice.get_mapped_range();
-    let mut pixels = Vec::with_capacity((unpadded_bytes_per_row * opts.height) as usize);
-    for row in 0..opts.height as usize {
-        let start = row * padded_bytes_per_row as usize;
-        let end = start + unpadded_bytes_per_row as usize;
-        pixels.extend_from_slice(&data[start..end]);
-    }
-    drop(data);
-    staging_buf.unmap();
+    let pixels = last_sequence_pixels
+        .unwrap_or_else(|| read_color_texture(&gfx.device, &gfx.queue, &color_tex, extent));
 
     if let Some((px, py)) = opts.dump_texel {
         use vangers::level::{DOUBLE_LEVEL, Texel};
@@ -974,19 +1042,12 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     }
 
     info!("Saving snapshot to {}", opts.output_path);
-    if let Some(parent) = std::path::Path::new(&opts.output_path).parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    let file = std::fs::File::create(&opts.output_path).expect("Failed to create output PNG file");
-    let w = std::io::BufWriter::new(file);
-    let mut encoder = png::Encoder::new(w, opts.width, opts.height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder.set_source_srgb(png::SrgbRenderingIntent::RelativeColorimetric);
-    let mut writer = encoder.write_header().expect("Failed to write PNG header");
-    writer
-        .write_image_data(&pixels)
-        .expect("Failed to write PNG data");
+    write_png(
+        Path::new(&opts.output_path),
+        opts.width,
+        opts.height,
+        &pixels,
+    );
 
     info!("Snapshot saved successfully");
 }
