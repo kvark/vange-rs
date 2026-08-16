@@ -134,6 +134,7 @@ EDIT_PITCH = -30.0
 EDIT_CENTER = (1024, 8192)
 EDIT_RADIUS = 48
 EDIT_FRAME_COUNTS = (1, 2, 4, 8, 16)
+EDIT_TIMING_REPEATS = 5
 
 DEFAULT_VIEWS = {
     0.0: [
@@ -586,23 +587,32 @@ def run_edit_protocol(args, layers):
             args, method, out_dir, 10, True)
         device = device or {key: fresh_meta[key] for key in
                             ("adapter", "backend", "device_type", "driver", "driver_info")}
-        first_cpu_ms = None
+        first_cpu_samples = []
         final = None
         consistent_after = None
         for frames in EDIT_FRAME_COUNTS:
             png, depth, meta = render_edit_case(args, method, out_dir, frames, False)
-            if first_cpu_ms is None:
-                first_cpu_ms = meta["frame_ms"][0]
+            if not first_cpu_samples:
+                first_cpu_samples.append(meta["frame_ms"][0])
             final = edit_agreement(fresh_png, fresh_depth, png, depth, dirs,
                                    args.width, args.height, args.far)
             if final["consistent"]:
                 consistent_after = frames
                 break
+        while len(first_cpu_samples) < EDIT_TIMING_REPEATS:
+            _, _, meta = render_edit_case(args, method, out_dir, 1, False)
+            first_cpu_samples.append(meta["frame_ms"][0])
+        first_cpu_ms = float(np.median(first_cpu_samples))
+        first_cpu_p25, first_cpu_p75 = (
+            float(value) for value in np.percentile(first_cpu_samples, [25, 75]))
         steady_cpu_ms = float(np.median(fresh_meta["frame_ms"]))
         row = {
             "method": label,
             "steady_edited_cpu_ms": steady_cpu_ms,
             "first_post_edit_cpu_ms": first_cpu_ms,
+            "first_post_edit_cpu_samples_ms": first_cpu_samples,
+            "first_post_edit_cpu_p25_ms": first_cpu_p25,
+            "first_post_edit_cpu_p75_ms": first_cpu_p75,
             "edit_overhead_cpu_ms": first_cpu_ms - steady_cpu_ms,
             "consistent_after_frames": consistent_after,
             **final,
@@ -780,6 +790,7 @@ def main():
                 "view": EDIT_VIEW, "pitch": EDIT_PITCH,
                 "center": EDIT_CENTER, "radius": EDIT_RADIUS,
                 "tested_frame_counts": EDIT_FRAME_COUNTS,
+                "timing_repeats": EDIT_TIMING_REPEATS,
                 "timing": "CPU submit-and-wait",
             },
             "edit_rows": edit_rows,
@@ -916,6 +927,7 @@ def main():
                 "view": EDIT_VIEW, "pitch": EDIT_PITCH,
                 "center": EDIT_CENTER, "radius": EDIT_RADIUS,
                 "tested_frame_counts": EDIT_FRAME_COUNTS,
+                "timing_repeats": EDIT_TIMING_REPEATS,
                 "timing": "CPU submit-and-wait",
             } if edit_rows else None),
             "edit_rows": edit_rows,
