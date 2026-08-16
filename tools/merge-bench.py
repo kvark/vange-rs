@@ -170,10 +170,8 @@ def main():
     print("Each cell is the fixed-fixture mean over twelve scenes ± an "
           "approximate 95% interval propagated from the 40 within-scene "
           "frame samples. It measures frame-to-frame noise in this session, "
-          "not driver-to-driver or session-to-session variation. The original "
-          "Metal collector retained CPU row means but replaced its raw CPU "
-          "samples with invalid encoder timestamps, so no honest interval can "
-          "be reconstructed for that run.\n")
+          "not driver-to-driver or session-to-session variation. Metal rows "
+          "use retained CPU submit-and-wait samples.\n")
 
     def timing_samples(run, row):
         if (run.get("device") or {}).get("backend") == "Metal":

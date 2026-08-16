@@ -45,7 +45,7 @@ def main():
     # (83) so the camera clears nearby occluders.
     parser.add_argument("--start", default="1176,11567",
                         help="starting first-person X,Y")
-    parser.add_argument("--distance", type=float, default=250.0,
+    parser.add_argument("--distance", type=float, default=650.0,
                         help="horizontal travel distance in terrain units")
     parser.add_argument("--yaw", type=float, default=293.0)
     parser.add_argument("--pitch", type=float, default=-30.0)
