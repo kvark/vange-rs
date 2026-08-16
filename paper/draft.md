@@ -6,9 +6,10 @@ Independent Researcher<br>
 
 **Status: submission draft after the final hardware batch.** Five-device
 results from the final scenes, 64-step full-screen dual-solid ray marcher,
-and common shadow protocol are integrated below. The dynamic-edit experiment,
-reference-floor disposition, final mesh selection and memory accounting,
-submission package, and terrain-data license remain before submission.
+common shadow protocol, and a dynamic-edit and memory probe are integrated
+below. Reference-floor disposition, final mesh selection, timing uncertainty,
+browser validation, the submission package, and the terrain-data license
+remain before submission.
 
 ---
 
@@ -27,7 +28,7 @@ sample, render at interactive rates, and reflect local terrain destruction
 without reloading the level. These constraints rule out treating caves as
 decoration or amortising a static preprocessing step over an immutable map.
 
-We report three results. First, the cost of fitting a triangulated
+We report four results. First, the cost of fitting a triangulated
 irregular network to this terrain varies by more than an order of
 magnitude across the ten shipped worlds, and what predicts the variation
 is not the terrain's relief but the fraction of it carrying a second
@@ -44,6 +45,11 @@ over-drawing; ours concealed a real geometric defect through several
 rounds of apparently passing measurement, and we give the decomposition
 that exposes it, along with the conditions under which a ground-truth
 comparison stops being able to resolve a method's own quality setting.
+Fourth, five methods reproduce a fresh edited build on their first updated
+frame and the fine mesh meets the geometric threshold immediately, while the
+coarse insertion-only mesh remains slightly history-dependent. Making the
+mesh editable also exposes its full retained cost at the finer setting: 526
+MiB of GPU geometry and 913 MiB of CPU triangulation for this level.
 
 All six implementations use the same WebGPU-compatible wgpu and canonical
 WGSL path, including its validation, limits, and robust-access requirements.
@@ -195,9 +201,11 @@ special-cased. Agreement of the five result grids across four Vulkan adapters
 and Apple Metal is the direct portability result; timing remains backend- and
 device-specific, and §5.2 keeps unlike timing mechanisms separate.
 
-**Data availability.** The engine and evaluation tools are Apache-2.0 and the
-measurement implementation is frozen at
-[`terrain-paper-v1`](https://github.com/kvark/vange-rs/tree/terrain-paper-v1).
+**Data availability.** The engine and evaluation tools are Apache-2.0. The
+five-device steady-state implementation is frozen at
+[`terrain-paper-v1`](https://github.com/kvark/vange-rs/tree/terrain-paper-v1),
+and the additive edit/memory protocol at
+[`terrain-paper-v2`](https://github.com/kvark/vange-rs/tree/terrain-paper-v2).
 The terrain is original-game content and is not covered by that license. The
 rights holder has indicated that a license for Fostral is forthcoming; the
 paper and artifact will identify the grant, rights holder, permitted uses,
@@ -382,9 +390,12 @@ The level is partitioned into 128×128 chunks with three fitted detail levels.
 Chunks are frustum culled and selected by camera distance. Boundaries use a
 stable finest-level vertex sequence so neighbouring LODs do not crack. The
 tradeoff moves out of the frame loop: fitting is a blocking CPU cost, the
-full-level resident mesh can reach roughly 300 MB, and edits require local
-refinement. Once present, the geometry uses the conventional raster pipeline
-and supplies derivatives for smooth lighting.
+full-level renderer retains all three GPU LODs plus the editable CPU
+triangulation, and edits require local refinement. At q=0.75 those explicit
+method-specific allocations are 526 MiB on the GPU and 913 MiB on the CPU
+(§5.4), substantially more than the roughly 300 MiB finest-LOD estimate.
+Once present, the geometry uses the conventional raster pipeline and supplies
+derivatives for smooth lighting.
 
 The explicit representation also has two system-level advantages that a frame
 time table does not price. First, the finest render LOD can be handed directly
@@ -492,15 +503,23 @@ that disagrees about geometry is a finding, not noise.
 ### 4.4 Dynamic-edit protocol
 
 The headless runner's `--dig` path removes altitude and upper-layer metadata
-inside a bounded crater and submits the same dirty rectangle used by the
-interactive game. For each method the final artifact will report (1) the
-first post-edit frame latency, (2) subsequent latency until derived data are
-consistent, and (3) image/depth agreement with a fresh renderer constructed
-from the already-edited level. Direct-texture methods should converge in one
-frame. RayVoxel may take several frames because its work is deliberately
-budgeted; Mesh currently performs its local refit synchronously. This test is
-separate from the steady-state protocol because averaging the edit frame into
-40 ordinary frames would hide the cost that the constraint exists to expose.
+inside a radius-48 crater centred at (1024, 8192) and submits the same dirty
+rectangle used by the interactive game. The camera is at (1024, 8350), 40
+units above the original surface, yaw 180°, pitch −30°. For each method the
+protocol records (1) the median of five independently constructed first
+post-edit CPU submit-and-wait frames, (2) consistency after 1, 2, 4, 8, or 16
+frames, and (3) colour and depth agreement with a fresh renderer constructed
+from the already-edited level. Consistency means at most 0.01% hit/miss
+disagreement and p95 depth difference at most 0.1 world unit.
+
+The same run reports explicit persistent method data: renderer-owned GPU
+buffers and retained CPU acceleration or fitting structures. Shared terrain,
+palette, color/depth and shadow textures, pipelines, staging allocations, and
+opaque driver memory are excluded. This narrower measure is portable and
+auditable through wgpu; whole-process RSS or backend heap telemetry is not.
+The edit test remains separate from the steady-state protocol because
+averaging an update into 40 ordinary frames would hide the cost that the
+constraint exists to expose.
 
 ## 5. Results
 
@@ -638,7 +657,60 @@ through terrain the bake has not reached yet.
 Neither is visible in a steady-state frame time, and for a level-loading
 budget the difference between them matters more than the per-frame gap.
 
-### 5.4 Fit cost
+### 5.4 Editing and retained method data
+
+The supplemental edit run used revision `d76661b` on an AMD Radeon 890M with
+RADV/Mesa 26.1.4 at the publication resolution and shadow configuration.
+Times below are CPU submit-and-wait medians; `first edit` has five independent
+samples, while `steady` is the median of ten frames from a fresh build of the
+edited level.
+
+| method | steady (ms) | first edit (ms) | delta (ms) | fresh-build equivalence |
+|---|---:|---:|---:|---|
+| RayTraced | 4.85 | 4.85 | 0.00 | exact after 1 frame |
+| RayVoxel | 7.63 | 7.31 | −0.32 | exact after 1 frame |
+| Sliced | 9.12 | 13.89 | +4.77 | exact after 1 frame |
+| Scattered | 11.26 | 11.45 | +0.19 | exact after 1 frame |
+| Painter | 20.47 | 24.10 | +3.63 | exact after 1 frame |
+| Mesh q=0.0 | 6.23 | 12.20 | +5.98 | not equivalent by 16 frames |
+| Mesh q=0.75 | 8.09 | 16.11 | +8.02 | within threshold after 1 frame |
+
+The small negative RayVoxel delta is run-to-run noise, not an edit speedup;
+its first-edit interquartile range is 6.78–7.92 ms. All direct paths and the
+voxel hierarchy reproduce the fresh build exactly on the first updated frame.
+The fine mesh also passes immediately (0% hit/miss disagreement and 0.040 u
+p95 depth difference). The coarse mesh remains history-dependent: its live
+TIN only inserts vertices, whereas a fresh fit may choose a different coarse
+topology. At 16 frames it still differs from the fresh fit by 0.0098% hit/miss
+classification, 1.044 u p95 depth, and 1.24 levels of
+8-bit color MAE. This is not asynchronous lag, and it remains well inside the
+q=0.0 fit tolerance; exact rebuild equivalence is nevertheless a stronger
+property than this implementation provides.
+
+At 1280×800 the same run reports the following explicit, persistent,
+method-specific allocation. Zero means that the method adds no persistent
+data beyond the shared renderer resources excluded in §4.4.
+
+| method | GPU data (MiB) | CPU data (MiB) |
+|---|---:|---:|
+| RayTraced | 0 | 0 |
+| RayVoxel (4,8,2) | 18.29 | <0.01 |
+| Sliced | 0 | 0 |
+| Scattered | 3.91 | 0 |
+| Painter | <0.01 | 0 |
+| Mesh q=0.0 | 140.11 | 222.69 |
+| Mesh q=0.75 | 526.15 | 912.95 |
+
+The mesh numbers change the engineering conclusion. The earlier ~300 MiB
+estimate counted only q=0.75's finest GPU geometry. The renderer actually
+retains three LODs, while dynamic refinement also keeps every chunk's live
+triangulation on the CPU. RayVoxel's tuned coarse grid is only 18.29 MiB; its
+153 MiB production grid remains a distinct, disclosed configuration (§5.6).
+Scattered's 3.91 MiB is one 32-bit value per output pixel and therefore scales
+with resolution. These figures are explicit payload sizes, not peak process
+or driver memory.
+
+### 5.5 Fit cost
 
 Fostral, triangles against a full grid mesh:
 
@@ -658,7 +730,7 @@ would be: they vary only content, holding encoding, quantisation, texel
 scale and authoring pipeline fixed, so the comparison isolates one
 variable rather than four.
 
-### 5.5 Tuning
+### 5.6 Tuning
 
 Each method was swept over its own quality knob and given the cheapest
 setting within one percentage point of its own best error, so no method
@@ -742,7 +814,7 @@ tuned coarse configuration, not the renderer's shipping configuration;
 the memory requirement is part of the configuration disclosure rather than
 an unreported advantage.
 
-### 5.6 Fastest is not best
+### 5.7 Fastest is not best
 
 The 64-step RayTraced configuration records the lowest mean GPU time on more
 devices, but that is not a general recommendation over Mesh. Its fixed
@@ -879,7 +951,7 @@ a renderer must be able to fail in both directions.
 The same shape recurred twice more during this work, each time as a
 measurement that held something true while the thing that mattered was
 wrong: a sweep parameter whose implementation did not do what its name
-said (§5.5, the slicer's "count" that truncated), and a camera test
+said (§5.6, the slicer's "count" that truncated), and a camera test
 asserting a direction that survives a flipped basis. The common failure
 is asserting a property the defect preserves. The practical defence we
 ended with is to require every metric, knob and fixture to demonstrate
@@ -907,17 +979,19 @@ measurement moves.
   they do not make them a frame rate. Metal uses CPU submit-and-wait because
   its encoder timestamps failed the bracketing sanity check; those values are
   useful within the M3 rows but cannot be compared directly with Vulkan.
-- Residual tuning uncertainty remains after the uniform pass of §5.5. The
+- Residual tuning uncertainty remains after the uniform pass of §5.6. The
   selected 64 height-field steps are now measured everywhere, but mesh quality
   still needs selection at publication resolution because the small tuning
-  image misses the hangar difference (§5.5).
-- The dynamic edit path is implemented and exercised by `--dig`, but its
-  cross-method latency and fresh-build image comparison are not yet part of
-  final hardware batch. Until §4.4 is measured, edit support is a verified
-  capability rather than a comparative performance result.
-- The mesh needs ~300 MB resident at q=0.75 on a full level. Chunk
-  streaming is not implemented, and until it is, "runs on low-end
-  devices" is a claim about the pipeline, not the memory budget.
+  image misses the hangar difference (§5.6).
+- The edit experiment covers one crater shape, one location, and one Vulkan
+  adapter. It establishes first-frame correctness and exposes the coarse
+  mesh's history dependence, but cross-device update latency still requires
+  the short `--edits-only` supplement on the five final-batch machines.
+- Explicit method payloads are accounted for, but portable wgpu does not
+  expose opaque driver allocations or a backend-independent peak heap. The
+  q=0.75 mesh already retains 526 MiB of GPU buffers and 913 MiB of CPU TIN
+  state before those hidden costs. Chunk streaming is not implemented, so
+  "runs on low-end devices" describes the pipeline, not its memory budget.
 
 ## 8. Conclusion
 
@@ -938,7 +1012,12 @@ embeddings, at the cost of substantial memory, fitting, and edit maintenance.
 The larger result is about the data and the measurement. Single-layer
 worlds fit by 45–182×, while the structural second layer, not floor relief,
 predicts the collapse in reduction; nearly a quarter of Fostral's vertex
-insertions serve one layer-boundary discontinuity. Coverage alone hid an
+insertions serve one layer-boundary discontinuity. Five methods reproduce a
+fresh edited build on their first updated frame and the fine mesh meets the
+geometric threshold immediately, but the insertion-only coarse mesh retains a
+small history-dependent difference. The memory audit likewise turns a hidden
+tradeoff into a result: q=0.75 retains 526 MiB of explicit GPU geometry and
+913 MiB of editable CPU triangulation. Coverage alone hid an
 over-drawing defect, and absolute depth against one CPU reference hid
 common-mode disagreement between that reference and every renderer. A
 credible comparison needs bidirectional coverage, coherence, inter-method
@@ -961,7 +1040,11 @@ directly and the survey plot reads `paper/survey.json`, replaceable by
 from a full final comparison grid with `examples/paper-teaser.rs` before the
 same plotting command lays it out and labels it. Full five-device grids and
 per-view tables remain supplemental evidence rather than being shrunk into
-unreadable paper pages.
+unreadable paper pages. `tools/render-paper-video.py` renders a synchronized
+seven-configuration mosaic from the river camera at (837, 3984), moving to
+Y=5184 at yaw 299°, pitch −30°, and eye height 78 over eight seconds at 30
+frames/s. The local H.264 video and poster remain unpublished until the data
+grant covers derived imagery.
 
 ## References
 

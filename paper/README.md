@@ -95,6 +95,13 @@ done
 This checks that every update path executes; it is not the §4.4 latency or
 fresh-build equivalence experiment.
 
+That smoke test was the limit of the original five-machine collector: the edit
+normally occurred during warmup, only the last frame survived, no fresh edited
+renderer was constructed, and memory appeared only in informal allocation
+logs. The frozen 84-row batches therefore cannot answer either question. The
+default collector now appends the full protocol, while `--edits-only` adds it
+to an existing batch without rerunning the steady-state grid.
+
 ## What is still missing
 
 Tracked here rather than in the draft so the gaps stay visible:
@@ -105,10 +112,11 @@ Tracked here rather than in the draft so the gaps stay visible:
       renderer to ray-height-field, voxel, slicing, splatting and terrain-LOD
       literature. The contribution is explicitly the controlled comparison,
       not priority for the underlying method families.
-- [~] Dynamic terrain edits. All six paths consume dirty rectangles and the
-      headless `--dig` probe exercises them. The final batch still needs the §4.4
-      measurement: first post-edit frame, frames to consistency, and a
-      snapshot/depth comparison against a fresh build of the edited level.
+- [~] Dynamic terrain edits. The §4.4 protocol now measures five repeated
+      first-post-edit frames, frames to consistency, and color/depth agreement
+      against a fresh edited build. One Radeon 890M result is integrated; run
+      `tools/compare-terrain.py --edits-only` on the five final-batch machines
+      for cross-device update latency without repeating their 84 main rows.
 - [x] A control isolating what drives fit cost. Done: all ten stock
       worlds, `tools/level-survey.py`. The result reversed the original
       framing - floor relief does not predict the reduction (r = -0.17
@@ -135,13 +143,15 @@ Tracked here rather than in the draft so the gaps stay visible:
       a full-resolution or self-referential selection.
       The first slicer sweep also measured a knob artifact (bottom
       truncation rather than coarser spacing) — fixed and re-swept, and
-      recorded in §5.5 as a finding of its own. The corrected RayTraced sweep
+      recorded in §5.6 as a finding of its own. The corrected RayTraced sweep
       selects 64 steps and the final batch uses it on all five devices. Mesh
       quality still needs a publication-resolution selection.
-- [ ] Complete memory accounting. Report peak resident GPU and CPU memory for
-      every method/configuration, not only the ~300 MB mesh and 153 MB
-      RayVoxel examples. This is required to make the portability comparison
-      actionable.
+- [x] Auditable method-memory accounting. The collector reports explicit
+      persistent GPU buffers and CPU acceleration/fitting state for every
+      method. §5.4 includes both mesh settings and the tuned RayVoxel grid and
+      states the exclusions: shared resources, transient staging, opaque
+      driver allocations, and whole-process overhead are not portable wgpu
+      metrics.
 - [~] Data license. A Fostral license is expected. Before release, record
       the executed grant, rights holder, permitted uses, redistribution
       terms, and whether derived images/measurements are covered. The
@@ -176,7 +186,7 @@ Tracked here rather than in the draft so the gaps stay visible:
 - [ ] Bibliography pass. Convert references to complete BibTeX entries with
       stable URLs/DOIs, remove citations that are not discussed directly, and
       verify the original-game screenshot attribution.
-- [ ] Supplemental video. JCGT explicitly prefers "shorter articles with
-      supplemental code, data, and video"; a single flythrough rendered
-      once per method (same path, same seed) would carry §5.1 better
-      than any table.
+- [~] Supplemental video. `tools/render-paper-video.py` produced the local
+      synchronized seven-configuration, eight-second H.264 mosaic and poster.
+      Keep both under `work/` until the terrain grant covers derived imagery;
+      then add the licensed files and publication URL to the submission.
