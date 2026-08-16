@@ -44,6 +44,7 @@ def main():
         "pandoc", "draft.md", "--from=gfm", "--standalone",
         "--embed-resources", "--resource-path=.:..",
         "--css=review.css", "--metadata", "lang=en",
+        "--metadata", "pagetitle=Six Ways to Draw Vangers with WebGPU",
         "--output", html,
     ], ROOT / "paper")
     run(["weasyprint", html, pdf])
