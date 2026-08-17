@@ -769,7 +769,13 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
 /// tolerance makes the shared edge identical no matter which levels meet
 /// there. It costs little: a chunk's border is `4 * CHUNK_SIZE` samples
 /// against `CHUNK_SIZE^2` in the interior.
-fn refine(chunk: &mut Chunk, grid: &Grid, max_error: f32, border_error: f32) {
+fn refine(
+    chunk: &mut Chunk,
+    grid: &Grid,
+    max_error: f32,
+    border_error: f32,
+    dirty: Option<&[GridRect]>,
+) {
     use std::collections::{BinaryHeap, HashSet};
 
     let existing: HashSet<u32> = chunk.verts.iter().copied().collect();
@@ -810,15 +816,46 @@ fn refine(chunk: &mut Chunk, grid: &Grid, max_error: f32, border_error: f32) {
             continue;
         }
         let seed = chunk.locate(grid, grid.coord(gi), 0);
-        chunk.insert(grid, gi, seed);
+        // A border insertion rewrites triangles, so their candidates have to
+        // be recomputed whether or not an edit reached them.
+        for slot in chunk.insert(grid, gi, seed) {
+            chunk.compute_candidate(grid, slot);
+        }
     }
 
     // Every triangle remembers its own worst sample, so popping the global
     // worst needs no point location - we already know which triangle
-    // contains it. After an edit the cached candidates are stale, so they
-    // all get recomputed; that is one pass over the chunk's samples.
+    // contains it.
+    //
+    // Those candidates stay valid wherever the samples did not move, so a
+    // refit only recomputes the triangles standing over an edit. `dirty` is
+    // `None` on the initial build, where nothing is cached yet and every
+    // triangle has to be measured. Recomputing all of them on every refit
+    // was by far the most expensive thing an edit did: it is a pass over
+    // the chunk's whole sample grid, and a frame of moving land refits
+    // dozens of chunks.
     for t in 0..chunk.tris.len() as u32 {
-        if chunk.tris[t as usize].alive {
+        if !chunk.tris[t as usize].alive {
+            continue;
+        }
+        let stale = match dirty {
+            None => true,
+            Some(rects) => {
+                let tri = &chunk.tris[t as usize];
+                let (mut lo, mut hi) = ([i32::MAX; 2], [i32::MIN; 2]);
+                for &v in tri.v.iter() {
+                    let c = chunk.pos(grid, v);
+                    lo[0] = lo[0].min(c[0]);
+                    hi[0] = hi[0].max(c[0]);
+                    lo[1] = lo[1].min(c[1]);
+                    hi[1] = hi[1].max(c[1]);
+                }
+                rects
+                    .iter()
+                    .any(|r| lo[0] <= r.x1 && r.x0 <= hi[0] && lo[1] <= r.y1 && r.y0 <= hi[1])
+            }
+        };
+        if stale {
             chunk.compute_candidate(grid, t);
         }
     }
@@ -916,6 +953,7 @@ impl ChunkBuffers {
     }
 }
 
+#[cfg_attr(test, derive(Clone))]
 struct ChunkState {
     x0: i32,
     y0: i32,
@@ -926,6 +964,7 @@ struct ChunkState {
     lods: Vec<LodState>,
 }
 
+#[cfg_attr(test, derive(Clone))]
 struct LodState {
     tri: Chunk,
 }
@@ -941,6 +980,31 @@ impl ChunkState {
             && self.y0 <= y + h
             && y <= self.y0 + self.h as i32
     }
+
+    fn overlaps_any(&self, rects: &[Rect]) -> bool {
+        rects
+            .iter()
+            .any(|r| self.overlaps(r.x, r.y, r.w as i32, r.h as i32))
+    }
+}
+
+/// An edited rectangle in one chunk's grid-local coordinates, inclusive at
+/// both ends.
+#[derive(Clone, Copy)]
+struct GridRect {
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+}
+
+/// An edited region of the level, in texels.
+#[derive(Clone, Copy, Debug)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
 }
 
 /// Chunks whose geometry changed, by index, with their new buffers.
@@ -953,6 +1017,7 @@ pub type Update = Vec<(usize, ChunkBuffers)>;
 /// dwarf everything else on a full level - so they are re-derived from the
 /// `Level` for whichever chunks an edit touches. The triangulations
 /// themselves are small (grid indices plus adjacency).
+#[cfg_attr(test, derive(Clone))]
 pub struct Tin {
     max_error: f32,
     quality: f32,
@@ -1015,7 +1080,13 @@ impl Tin {
             let mut meshes = Vec::with_capacity(LOD_COUNT);
             for k in 0..LOD_COUNT {
                 let mut chunk = Chunk::new(&grid);
-                refine(&mut chunk, &grid, max_error * (1 << k) as f32, max_error);
+                refine(
+                    &mut chunk,
+                    &grid,
+                    max_error * (1 << k) as f32,
+                    max_error,
+                    None,
+                );
                 meshes.push(emit_chunk(&chunk, &grid));
                 lods.push(LodState { tri: chunk });
             }
@@ -1076,25 +1147,51 @@ impl Tin {
     /// lowers the surface re-emits with no topology change at all. New
     /// vertices appear only where the edit introduced detail the existing
     /// triangles cannot represent.
-    pub fn update(&mut self, level: &Level, x: i32, y: i32, w: i32, h: i32) -> Update {
+    /// Refits every chunk that any of `rects` touches.
+    ///
+    /// Takes the whole batch rather than one rectangle at a time. A frame of
+    /// moving land dirties dozens of rectangles, many of them landing in the
+    /// same chunk; refitting per rectangle rebuilt those chunks - and their
+    /// GPU buffers - once per rectangle, and rescanned every chunk in the
+    /// level for overlap each time. Fostral has 2048 chunks.
+    ///
+    /// The refit itself runs in parallel. Chunks are independent, and so are
+    /// the LODs within a chunk, so the whole thing is one flat set of tasks:
+    /// a wide edit parallelises across chunks, and a single-chunk edit still
+    /// gets its LODs done at once.
+    pub fn update(&mut self, level: &Level, rects: &[Rect]) -> Update {
         profiling::scope!("Update Terrain TIN");
+        use rayon::prelude::*;
 
-        let max_error = self.max_error;
-        let mut changed = Vec::new();
-        for (index, state) in self.chunks.iter_mut().enumerate() {
-            if !state.overlaps(x, y, w, h) {
-                continue;
-            }
-            let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
-            state.alt = grid.altitude_range();
-            let mut per_lod = Vec::with_capacity(state.lods.len());
-            for (k, lod) in state.lods.iter_mut().enumerate() {
-                refine(&mut lod.tri, &grid, max_error * (1 << k) as f32, max_error);
-                per_lod.push(emit_chunk(&lod.tri, &grid));
-            }
-            changed.push((index, ChunkBuffers::new(state, per_lod)));
+        if rects.is_empty() {
+            return Vec::new();
         }
-        changed
+        let max_error = self.max_error;
+        self.chunks
+            .par_iter_mut()
+            .enumerate()
+            .filter(|entry| entry.1.overlaps_any(rects))
+            .map(|(index, state)| {
+                let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
+                state.alt = grid.altitude_range();
+                let per_lod = state
+                    .lods
+                    .par_iter_mut()
+                    .enumerate()
+                    .map(|(k, lod)| {
+                        refine(
+                            &mut lod.tri,
+                            &grid,
+                            max_error * (1 << k) as f32,
+                            max_error,
+                            None,
+                        );
+                        emit_chunk(&lod.tri, &grid)
+                    })
+                    .collect::<Vec<_>>();
+                (index, ChunkBuffers::new(state, per_lod))
+            })
+            .collect()
     }
 }
 
@@ -1132,6 +1229,58 @@ fn assemble(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refit that only remeasures the triangles standing over the edit
+    /// has to land on exactly the mesh a full remeasure would. Fitting the
+    /// same TIN both ways and comparing is the check on that: passing a
+    /// rectangle covering the whole level makes every triangle count as
+    /// dirty, which is what the code did before it took the edit into
+    /// account.
+    #[test]
+    fn a_narrow_refit_matches_a_full_one() {
+        let mut level = make_level(192);
+        let (tin, _) = Tin::build(&level, &Config::default());
+        let (cx, cy, r) = (96, 96, 24);
+        dig(&mut level, cx, cy, r);
+
+        let mut narrow = tin.clone();
+        let mut full = tin;
+        let edit = rect(cx - r, cy - r, 2 * r, 2 * r);
+        let a = narrow.update(&level, &[edit]);
+        let b = full.update(&level, &[rect(0, 0, level.size.0, level.size.1)]);
+
+        // The full-level rectangle naturally refits every chunk, so compare
+        // the ones the narrow edit did touch.
+        assert!(!a.is_empty(), "the edit refitted nothing");
+        for entry in a.iter() {
+            let (ia, ba) = (entry.0, &entry.1);
+            let bb = &b
+                .iter()
+                .find(|other| other.0 == ia)
+                .unwrap_or_else(|| panic!("chunk {ia} missing from the full refit"))
+                .1;
+            assert_eq!(ba.indices, bb.indices, "chunk {ia} indices differ");
+            assert_eq!(ba.lods, bb.lods, "chunk {ia} lod ranges differ");
+            assert_eq!(
+                ba.vertices.len(),
+                bb.vertices.len(),
+                "chunk {ia} vertex count differs"
+            );
+            for (va, vb) in ba.vertices.iter().zip(&bb.vertices) {
+                assert_eq!(va.pos, vb.pos, "chunk {ia} vertex moved");
+            }
+        }
+    }
+
+    /// Shorthand for the one-rectangle edits the tests make.
+    fn rect(x: i32, y: i32, w: i32, h: i32) -> Rect {
+        Rect {
+            x,
+            y,
+            w: w as u32,
+            h: h as u32,
+        }
+    }
 
     fn flat_grid(nx: u32, ny: u32) -> Grid {
         Grid {
@@ -1368,10 +1517,10 @@ mod tests {
         // The finest chunk on the left, the coarsest on the right.
         for k in 0..LOD_COUNT {
             let mut fine = Chunk::new(&left);
-            refine(&mut fine, &left, base_error, base_error);
+            refine(&mut fine, &left, base_error, base_error, None);
             let mut coarse = Chunk::new(&right);
             let coarse_error = base_error * (1 << k) as f32;
-            refine(&mut coarse, &right, coarse_error, base_error);
+            refine(&mut coarse, &right, coarse_error, base_error, None);
 
             assert_eq!(
                 border_of(&left, size),
@@ -1478,7 +1627,7 @@ mod tests {
         let before = vertex_sets(&tin);
 
         let (x, y, w, h) = dig(&mut level, 70, 70, 12);
-        tin.update(&level, x, y, w, h);
+        tin.update(&level, &[rect(x, y, w, h)]);
         let after = vertex_sets(&tin);
 
         for (i, (old, new)) in before.iter().zip(&after).enumerate() {
@@ -1508,7 +1657,7 @@ mod tests {
         // Without the update the mesh is now badly wrong ...
         assert!(worst_error(&tin, &level) > tolerance * 4.0);
         // ... and refitting brings it back inside tolerance.
-        tin.update(&level, x, y, w, h);
+        tin.update(&level, &[rect(x, y, w, h)]);
         let worst = worst_error(&tin, &level);
         assert!(worst <= tolerance, "residual error {} after update", worst);
     }
@@ -1525,7 +1674,7 @@ mod tests {
         for h in level.height.iter_mut() {
             *h = h.saturating_sub(3);
         }
-        let changed = tin.update(&level, 0, 0, level.size.0, level.size.1);
+        let changed = tin.update(&level, &[rect(0, 0, level.size.0, level.size.1)]);
         assert!(!changed.is_empty());
         assert_eq!(tin.stats.triangles, before);
     }
@@ -1540,7 +1689,7 @@ mod tests {
 
         let seam = CHUNK_SIZE as i32;
         let (x, y, w, h) = dig(&mut level, seam, 60, 14);
-        tin.update(&level, x, y, w, h);
+        tin.update(&level, &[rect(x, y, w, h)]);
 
         // Compare only chunks that actually abut: same row, and the left
         // one's right border is the right one's left border. The seam is
@@ -1586,7 +1735,7 @@ mod tests {
                 level.height[i] = if (x + y) % 2 == 0 { 40 } else { 200 };
             }
         }
-        let changed = tin.update(&level, 20, 20, 60, 60);
+        let changed = tin.update(&level, &[rect(20, 20, 60, 60)]);
         assert!(!changed.is_empty(), "the edit should have refitted a chunk");
 
         // Refitted buffers have to be self-consistent: every index in
@@ -1601,7 +1750,7 @@ mod tests {
 
         // And a further edit must still leave the surface fitted.
         let (x, y, w, h) = dig(&mut level, 85, 85, 6);
-        tin.update(&level, x, y, w, h);
+        tin.update(&level, &[rect(x, y, w, h)]);
         let worst = worst_error(&tin, &level);
         assert!(
             worst <= tin.max_error,
@@ -1619,7 +1768,7 @@ mod tests {
 
         // Well inside the first chunk, far from any border.
         let (x, y, w, h) = dig(&mut level, 40, 40, 10);
-        let touched = tin.update(&level, x, y, w, h).len();
+        let touched = tin.update(&level, &[rect(x, y, w, h)]).len();
         assert!(
             touched < tin.chunks.len(),
             "a local edit touched every one of {} chunks",
@@ -1789,6 +1938,100 @@ mod tests {
             chunk.verts.len() < 200,
             "used {} vertices",
             chunk.verts.len()
+        );
+    }
+}
+
+#[cfg(test)]
+/// Where a refit's time actually goes, on a real level.
+///
+/// Ignored by default because it needs game data. Run it as
+///
+/// ```text
+/// PROBE_INI=path/to/world.ini cargo test --release --lib \
+///     perf_probe -- --ignored --nocapture
+/// ```
+///
+/// It reports the parallel cost of a batch of edits and then the same work
+/// single threaded, split into sampling the grid, refitting the
+/// triangulation and emitting the buffers - which is what says whether a
+/// slow refit is worth attacking, and where.
+mod perf_probe {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    #[ignore]
+    fn breakdown() {
+        let path = std::path::PathBuf::from(
+            std::env::var("PROBE_INI").expect("set PROBE_INI to a world.ini"),
+        );
+        let config = crate::level::LevelConfig::load(&path);
+        let level = crate::level::load(&config, &crate::config::settings::Geometry::default());
+        let t = Instant::now();
+        let (mut tin, _mesh) = Tin::build(&level, &Config::default());
+        println!("build: {:?}, {} chunks", t.elapsed(), tin.chunks.len());
+
+        // Eight scattered edits, like a frame of moving land.
+        let rects = (0..8)
+            .map(|i| Rect {
+                x: 200 + i * 180,
+                y: 300 + i * 150,
+                w: 120,
+                h: 120,
+            })
+            .collect::<Vec<_>>();
+
+        let hit = tin.chunks.iter().filter(|c| c.overlaps_any(&rects)).count();
+        println!("{hit} chunks overlap");
+
+        let t = Instant::now();
+        for _ in 0..10 {
+            let _ = tin.update(&level, &rects);
+        }
+        println!("update x10: {:?}", t.elapsed());
+
+        // Phase split, single threaded, over the same chunks.
+        let max_error = tin.max_error;
+        let (mut grid_t, mut refine_t, mut emit_t) = (0.0f64, 0.0f64, 0.0f64);
+        for _ in 0..10 {
+            for state in tin.chunks.iter_mut().filter(|c| c.overlaps_any(&rects)) {
+                let t = Instant::now();
+                let grid = Grid::new(&level, state.x0, state.y0, state.w, state.h);
+                grid_t += t.elapsed().as_secs_f64();
+                let local = rects
+                    .iter()
+                    .filter_map(|r| {
+                        let g = GridRect {
+                            x0: (r.x - state.x0).max(0),
+                            y0: (r.y - state.y0).max(0),
+                            x1: (r.x + r.w as i32 - state.x0).min(state.w as i32),
+                            y1: (r.y + r.h as i32 - state.y0).min(state.h as i32),
+                        };
+                        (g.x0 <= g.x1 && g.y0 <= g.y1).then_some(g)
+                    })
+                    .collect::<Vec<_>>();
+                for (k, lod) in state.lods.iter_mut().enumerate() {
+                    let t = Instant::now();
+                    refine(
+                        &mut lod.tri,
+                        &grid,
+                        max_error * (1 << k) as f32,
+                        max_error,
+                        Some(&local),
+                    );
+                    refine_t += t.elapsed().as_secs_f64();
+                    let t = Instant::now();
+                    let _ = emit_chunk(&lod.tri, &grid);
+                    emit_t += t.elapsed().as_secs_f64();
+                }
+            }
+        }
+        println!(
+            "per update (1 thread): grid {:.2}ms  refine {:.2}ms  emit {:.2}ms",
+            grid_t * 100.0,
+            refine_t * 100.0,
+            emit_t * 100.0
         );
     }
 }
