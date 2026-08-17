@@ -4,8 +4,8 @@
 The level binary renders one numbered PNG sequence per method while moving a
 first-person camera horizontally in its viewing direction at constant world
 altitude. ffmpeg labels and assembles the six sequences into a single H.264
-mosaic. Output stays under ``work/`` until the terrain-image license permits
-publication.
+mosaic. The derived video uses Fostral and carries the CC BY-SA 4.0
+attribution; it is a JCGT supplement, not a re-host of the world data.
 """
 
 import argparse
@@ -39,17 +39,15 @@ def run(command, description, env=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", default="work/paper-video/terrain-methods.mp4")
-    # Default path is the publication -30° portal scene, not the 0° river
-    # camera. The river flythrough stays over water; the portal approaches a
-    # landmark along the look direction. Eye height is raised from the still
-    # (83) so the camera clears nearby occluders.
+    # Default path is the publication -30° portal scene. Eye height 180
+    # and yaw 308 keep the fixed-Z travel above the nearby pillars.
     parser.add_argument("--start", default="1176,11567",
                         help="starting first-person X,Y")
-    parser.add_argument("--distance", type=float, default=650.0,
+    parser.add_argument("--distance", type=float, default=520.0,
                         help="horizontal travel distance in terrain units")
-    parser.add_argument("--yaw", type=float, default=293.0)
+    parser.add_argument("--yaw", type=float, default=308.0)
     parser.add_argument("--pitch", type=float, default=-30.0)
-    parser.add_argument("--eye-height", type=float, default=110.0)
+    parser.add_argument("--eye-height", type=float, default=180.0)
     parser.add_argument("--duration", type=float, default=8.0)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--width", type=int, default=640)
@@ -100,8 +98,9 @@ def main():
             "--frames", str(frame_count), "--warmup", str(warmup),
             "--shadow-ray",
             "--level-zip", assets.level_zip,
-            "--common-zip", assets.common_zip,
         ]
+        if assets.common_zip:
+            command += ["--common-zip", assets.common_zip]
         run(command, f"rendering {label}", env)
         inputs += ["-framerate", str(args.fps), "-i", str(frame_dir / "%06d.png")]
         labels.append(label)
