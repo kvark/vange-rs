@@ -37,13 +37,13 @@ tools/plot-paper.py --results 'remote/results-*.json' \
   --edit-dir work/edit-figure
 
 # Generate the synchronized six-method supplemental flythrough. It starts
-# at the -30° portal scene (1176, 11567), raised to eye height 110, and
-# flies 650 units horizontally along yaw 293° at fixed Z.
-# The derived video remains under work/ until the data grant is executed.
+# at the -30° portal scene (1176, 11567), raised to eye height 180, and
+# flies 520 units horizontally along yaw 308° at fixed Z. The H.264 mosaic
+# is a JCGT supplement, not a journal-hosted data archive.
 tools/render-paper-video.py
 
-# From a clean checkout, build the internal review PDF and revision-pinned
-# source archive. Both stay under work/ until the data checklist is complete.
+# From a clean checkout, build the review PDF and revision-pinned source
+# archive under work/. JCGT LaTeX conversion follows acceptance.
 nix-shell -p pandoc python3Packages.weasyprint --run tools/build-paper-package.py
 ```
 
@@ -159,14 +159,11 @@ Tracked here rather than in the draft so the gaps stay visible:
       states the exclusions: shared resources, transient staging, opaque
       driver allocations, and whole-process overhead are not portable wgpu
       metrics.
-- [~] Data license. A Fostral license is expected. Before release, record
-      the executed grant, rights holder, permitted uses, redistribution
-      terms, and whether derived images/measurements are covered. The
-      ten-world survey needs the other nine levels named in the same grant
-      or must be reduced to cleared data. Publish no archive or derived data
-      bundle before execution.
-      Use `DATA-LICENSE.md` as the release gate rather than interpreting
-      informal permission during artifact packaging.
+- [x] Data license. Fostral is CC BY-SA 4.0 from Association K-D Lab,
+      `KranX/Vangers` commit `f1ad7d7`. The harness fetches that tree.
+      Do not re-host `fostral.zip` as a JCGT supplement (ShareAlike vs
+      JCGT's non-restrictive-data rule). The other nine survey worlds
+      remain user-supplied.
 - [x] Core figures. §3 uses six consistent vector algorithm schematics;
       `tools/plot-paper.py` generates the encoding, pitch/quality, Vulkan
       performance, preparation, fit-survey, six-method teaser, and crater
@@ -187,14 +184,14 @@ Tracked here rather than in the draft so the gaps stay visible:
       scopes browser evidence to execution/visual parity, not timing.
 - [x] Submission PDF and archive tooling. `tools/build-paper-package.py` builds
       a styled review PDF and verifies a revision-pinned `git archive` contains
-      the draft, BibTeX, figures, and harness. Keep the artifacts internal until
-      `DATA-LICENSE.md` is complete; JCGT template conversion follows acceptance.
+      the draft, BibTeX, figures, and harness. JCGT template conversion follows
+      acceptance.
 - [x] Bibliography pass. `references.bib` contains complete publication data,
       stable URLs, and DOIs for the references discussed in the draft.
       Original-game screenshot provenance remains part of the data-license gate.
-- [~] Supplemental video. `tools/render-paper-video.py` produces the local
+- [x] Supplemental video. `tools/render-paper-video.py` produces the
       synchronized six-configuration, eight-second H.264 mosaic and poster from
-      the -30° portal camera, raised to eye height 110, moving 650 units
-      horizontally along yaw 293°. Keep both under `work/` until the terrain
-      grant covers derived imagery. The flythrough does not include a crater;
-      that evidence is the §5.4 figure and table.
+      the -30° portal camera, raised to eye height 180, moving 520 units
+      horizontally along yaw 308°. Derived Fostral imagery uses the CC BY-SA
+      4.0 attribution. The flythrough does not include a crater; that
+      evidence is the §5.4 figure and table.

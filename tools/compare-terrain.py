@@ -62,6 +62,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.request
 import zipfile
@@ -151,6 +152,14 @@ DEFAULT_VIEWS = {
 
 
 RELEASE = "https://github.com/kvark/vange-rs/releases/download/data-0"
+
+# Canonical Fostral world data. Association K-D Lab, CC BY-SA 4.0.
+# https://github.com/KranX/Vangers/tree/master/data/thechain/fostral
+FOSTRAL_COMMIT = "f1ad7d797b219eeae815a7f2b35b15787759040c"
+FOSTRAL_ARCHIVE = (
+    f"https://github.com/KranX/Vangers/archive/{FOSTRAL_COMMIT}.tar.gz"
+)
+FOSTRAL_PREFIX = f"Vangers-{FOSTRAL_COMMIT}/data/thechain/fostral/"
 
 
 def load_dependencies():
@@ -244,6 +253,29 @@ def fetch(url, dest):
     os.replace(tmp, dest)
 
 
+def ensure_fostral_upstream(dest_zip):
+    """Pack the pinned KranX/Vangers Fostral tree into dest_zip if missing."""
+    if os.path.exists(dest_zip) and os.path.getsize(dest_zip) > 0:
+        return
+    archive = dest_zip + ".upstream.tar.gz"
+    fetch(FOSTRAL_ARCHIVE, archive)
+    print("  extracting Fostral from KranX/Vangers...", flush=True)
+    tmp_zip = dest_zip + ".part"
+    with tarfile.open(archive, "r:gz") as tar, zipfile.ZipFile(
+            tmp_zip, "w", zipfile.ZIP_DEFLATED) as out:
+        for member in tar.getmembers():
+            if not member.isfile() or not member.name.startswith(FOSTRAL_PREFIX):
+                continue
+            relative = member.name[len(FOSTRAL_PREFIX):]
+            if relative.startswith("sound/"):
+                continue
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                continue
+            out.writestr(relative, extracted.read())
+    os.replace(tmp_zip, dest_zip)
+
+
 def ensure_assets(args):
     """Fetch, unpack and convert whatever is not already there.
 
@@ -258,10 +290,19 @@ def ensure_assets(args):
 
     if not args.level_zip:
         args.level_zip = os.path.join(work, f"{lvl}.zip")
-        fetch(f"{RELEASE}/{lvl}.zip", args.level_zip)
+        if lvl == "fostral":
+            ensure_fostral_upstream(args.level_zip)
+        elif not os.path.exists(args.level_zip):
+            fetch(f"{RELEASE}/{lvl}.zip", args.level_zip)
     if not args.common_zip:
-        args.common_zip = os.path.join(work, "common.zip")
-        fetch(f"{RELEASE}/common.zip", args.common_zip)
+        common = os.path.join(work, "common.zip")
+        if os.path.exists(common):
+            args.common_zip = common
+        elif lvl != "fostral":
+            args.common_zip = common
+            fetch(f"{RELEASE}/common.zip", args.common_zip)
+        else:
+            args.common_zip = None
 
     if not args.layers:
         src = os.path.join(work, lvl, "src")
@@ -272,8 +313,10 @@ def ensure_assets(args):
             ini = os.path.join(src, "world.ini")
             if not os.path.exists(ini):
                 print(f"  unpacking {lvl}.zip...", flush=True)
-                for z in (args.level_zip, args.common_zip):
-                    with zipfile.ZipFile(z) as zf:
+                with zipfile.ZipFile(args.level_zip) as zf:
+                    zf.extractall(src)
+                if args.common_zip:
+                    with zipfile.ZipFile(args.common_zip) as zf:
                         zf.extractall(src)
             run(["./target/release/convert", ini, args.layers],
                 f"converting {lvl} height layers")

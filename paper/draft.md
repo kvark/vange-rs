@@ -4,11 +4,11 @@
 Independent Researcher<br>
 <kvark@fastmail.com>
 
-**Status: submission-candidate draft.** The six selected configurations are
+**Status: JCGT submission draft.** The six selected configurations are
 RayTraced 128, RayVoxel 100, Sliced 512, Scattered 4,4,4, Painted, and
 Mesh q=0.5. Quality, timing, preparation, and edit numbers are from one
-five-device batch at those settings. The terrain-data license remains a
-release gate.
+five-device batch at those settings. Fostral world data is CC BY-SA 4.0
+from Association K-D Lab.
 
 ---
 
@@ -27,35 +27,15 @@ sample, render at interactive rates, and reflect local terrain destruction
 without reloading the level. These constraints rule out treating caves as
 decoration or amortising a static preprocessing step over an immutable map.
 
-We report four results. First, the cost of fitting a triangulated
-irregular network to this terrain varies by more than an order of
-magnitude across the ten shipped worlds, and what predicts the variation
-is not the terrain's relief but the fraction of it carrying a second
-layer. Worlds with a single layer compress by 45–182×; heavily double-level
-worlds are several times worse, and a large share of the fit's vertex
-budget is spent resolving one discontinuity — at a cost that does not fall
-as the tolerance tightens, which is the signature of a geometric feature
-rather than a fit converging. Second, the six methods are nearly
-indistinguishable when the camera looks down and separate sharply as they
-approach the horizon — the viewpoint the original engine never used, and a
-modern first- or third-person camera cannot avoid.
-Third, a correctness metric based on coverage alone cannot detect
-over-drawing; ours concealed a real geometric defect through several
-rounds of apparently passing measurement, and we give the decomposition
-that exposes it, along with the conditions under which a ground-truth
-comparison stops being able to resolve a method's own quality setting.
-Fourth, the five direct or regularly rebuilt methods reproduce a fresh edited
-build on their first updated frame, while the selected insertion-only mesh
-remains slightly history-dependent after 16 frames. Making that mesh editable
-also exposes its retained cost: the selected mesh keeps 319 MiB of GPU
-geometry and 535 MiB of CPU triangulation for this level (§5.4).
-
-All six implementations use the same native wgpu / WebGPU API and
-canonical WGSL path, including its validation, limits, and robust-access
-requirements. A browser build of one route is only a path-to-the-web
-check, not a second comparison. We release the engine, the evaluation
-harness, and a per-device measurement protocol that reduces a full run to
-a single command.
+From the original game's top-down camera the six methods look interchangeable.
+At eye-level horizons they do not: point scattering loses coverage, slicing
+bands, and an over-simplified mesh can miss a wall. At the selected quality
+settings a greedy triangulated irregular network (TIN) has the lowest mean
+frame time on every device we measured, but the fit cost is set by the second
+layer rather than by floor relief, and making that mesh editable retains
+319 MiB of GPU geometry and 535 MiB of CPU triangulation. All six
+implementations use the same native wgpu / WebGPU API and canonical WGSL.
+We release the engine, the harness, and a one-command measurement protocol.
 
 ![The six selected methods at the hangar horizon scene. Scattered loses coverage; slicing shows grazing bands; the selected mesh keeps the wall.](figures/teaser.svg)
 
@@ -72,16 +52,16 @@ predictors until they are measured on the actual data.
 The historical baseline deserves emphasis. Almost three decades ago,
 *Vangers* rendered this destructible, multi-layer world in software on consumer
 CPUs while fitting the game and its streamed terrain into a 16 MB-era memory
-budget [K-D Lab / KranX; Malyshau 2019]. It succeeded by co-designing the
+budget [K-D Lab / KranX]. It succeeded by co-designing the
 encoding, renderer, and modestly angled oblique top-down views. Its software
 renderer used a painter's algorithm, traversing terrain line by line from back
-to front; that object-order projection later inspired the Scattered method in
-this study. The distance since then is simultaneously large and small: modern
+to front; that object-order projection later inspired the Scattered method
+(§3.5). The distance since then is simultaneously large and small: modern
 GPUs make arbitrary cameras, common shadowing, and portable programmable
 shading practical, yet the horizon and cave cases below still punish a
 representation that is not matched to the data.
 
-![The original Vangers software renderer presents volumetric, destructible terrain through a deliberately constrained oblique top-down view.](../docs/assets/original.jpg)
+![The original Vangers software renderer presents volumetric, destructible terrain through a deliberately constrained oblique top-down view. Screenshot of *Vangers* by Association K-D Lab.](../docs/assets/original.jpg)
 
 This study has three non-negotiable system constraints. First, the renderer
 must preserve multiple vertical solid intervals, including the underside of
@@ -142,9 +122,10 @@ explains its holes and temporal speckle. A multi-pixel splat is promising,
 but it also multiplies contended atomic writes and is left as a measured
 follow-up rather than folded into this comparison without tuning.
 
-Finally, TIN fitting and terrain LOD provide the mesh lineage [Fowler and
-Little 1979; Garland and Heckbert 1995; Duchaineau et al. 1997; Losasso and
-Hoppe 2004]. Those systems approximate a single-valued surface. Our mesh
+Finally, triangulated irregular network (TIN) fitting and terrain LOD
+provide the mesh lineage [Fowler and Little 1979; Garland and Heckbert 1995;
+Duchaineau et al. 1997; Losasso and Hoppe 2004]. Those systems approximate a
+single-valued surface. Our mesh
 shares one topology across three discontinuous altitude fields and locally
 refits dirty chunks after edits, which is the source of both its unusual fit
 cost and its update burden.
@@ -213,15 +194,15 @@ Commands, versions, and artifact hashes are in `paper/browser-smoke.md`.
 **Data availability.** The engine and evaluation tools are Apache-2.0. The
 five-device publication batch is pinned at
 [`terrain-paper`](https://github.com/kvark/vange-rs/tree/terrain-paper).
-The terrain is original-game content and is not covered by that license. The
-rights holder has indicated that a license for Fostral is forthcoming; the
-paper and artifact will identify the grant, rights holder, permitted uses,
-and redistribution terms once it is executed. Until then, Fostral archives
-and derived image/data bundles remain internal. The ten-world fit survey
-also derives statistics from nine other shipped levels, so those levels
-must be included explicitly in the grant or replaced by cleared data. The
-fallback artifact contains the converter and harness only and requires users
-to supply lawfully obtained archives.
+Fostral world data is published by Association K-D Lab under
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); the
+canonical tree is
+[`KranX/Vangers` `data/thechain/fostral`](https://github.com/KranX/Vangers/tree/master/data/thechain/fostral)
+at commit `f1ad7d7`. The harness fetches that commit; we do not redistribute
+a second archive. The ten-world fit survey also uses nine other shipped
+levels that are not in that grant — those rows require a lawfully obtained
+game copy. Derived figures and the supplemental video use Fostral and carry
+the same attribution.
 
 ## 2. The Data
 
@@ -261,12 +242,9 @@ way visible surface samples reach the framebuffer. The mesh alone supplies
 a geometric normal; the other five estimate a height-field gradient in the
 shared shading function.
 
-The common shading path is enforced rather than assumed. An early scatter
-implementation stored a shaded palette index in its intermediate buffer,
-while the other paths stored a terrain type and shaded later. That made the
-entire scatter column darker. It now stores 24 bits of depth and 8 bits of
-terrain type, then reconstructs world position and applies the same diffuse
-and shadow evaluation in its resolve pass.
+Scattered stores 24 bits of depth and 8 bits of terrain type in its
+intermediate buffer, then reconstructs world position and applies the same
+diffuse and shadow evaluation in its resolve pass as the other five methods.
 
 The methods fall into three groups. The two image-order methods cast one ray
 per pixel. Sliced, Painted, and Scattered enumerate samples of the encoded
@@ -371,10 +349,11 @@ software renderer.
 
 ![A warped footprint spends point samples near the camera; projected samples contend through an atomic depth write.](figures/scatter.svg)
 
-Scattered is the direct conceptual descendant of the original renderer's
-back-to-front, line-by-line painter. A compute grid instead samples a
-camera-aligned ground footprint whose longitudinal coordinate is warped to
-spend more samples nearby. Each invocation walks both encoded vertical
+Scattered is the method that inherits the original engine's object-order,
+line-by-line painter (§1) and recasts it as a parallel atomic scatter. A
+compute grid samples a camera-aligned ground footprint whose longitudinal
+coordinate is warped to spend more samples nearby. Each invocation walks
+both encoded vertical
 intervals and projects point samples into a screen buffer. Parallel GPU work
 cannot rely on painter ordering, so a 32-bit `atomicMin` selects the nearest
 result while retaining 24 bits of depth and 8 bits of terrain type. A
@@ -456,15 +435,10 @@ discontinuities (§6.1).
 **Coherence.** The fraction of pixels whose distance disagrees with their
 own 3×3 neighbourhood, in excess of the reference doing the same.
 
-That last metric exists because of a failure. Our first correctness
-measure scored coverage only. It is structurally unable to detect
-over-drawing: a renderer that draws *too much* geometry scores perfectly,
-because every pixel that should be covered is. The mesh scored 0.0%
-see-through for weeks *because* it was interpolating the slab layers
-across region boundaries and building a roof over everything. Comparing
-depth rather than classifying pixels found it; comparing coherence finds
-the class of artifact — striping, speckle, cracks — that correct-on-average
-depth still misses.
+Coverage alone cannot detect over-drawing: a renderer that interpolates a
+slab across region boundaries covers every pixel that should be covered.
+Comparing depth found that class of defect; coherence finds striping,
+speckle, and cracks that correct-on-average depth still misses.
 
 ### 4.3 Protocol
 
@@ -489,9 +463,8 @@ timestamps, and its Metal backend may defer such a write to the next native
 pass. We treated the pair as a guaranteed enclosing interval, which the API
 does not promise. A future GPU-only measurement must timestamp each render and
 compute pass and sum those intervals; the present Apple run conservatively
-uses the retained CPU submit-and-wait average instead. The collector now
-disables the invalid pair on Metal. Each row records its timing source because
-the two mechanisms are not directly comparable (§5.2).
+uses the retained CPU submit-and-wait average instead. Each row records its
+timing source because the two mechanisms are not directly comparable (§5.2).
 The publication configuration renders the same 1024² height-field shadow
 map for every method. This deliberately measures a complete, visually
 comparable terrain frame rather than an isolated discovery pass. The JSON
@@ -557,13 +530,12 @@ configuration (§6.1).
 | −60° | 0.1 / 0.7 | 0.0 / 0.3 | 0.0 / 0.2 | 0.3 / **5.7** | 2.7 / 0.1 | 0.0 / 0.1 |
 | −90° | 0.1 / 0.5 | 0.0 / 0.3 | 0.0 / 0.2 | 0.1 / **3.7** | 0.8 / 0.2 | 0.0 / 0.1 |
 
-The corrected full-screen ray marcher joins the coherent group instead of
-losing the upper half of horizon frames. Scattering is the actual horizon
-outlier: its three scenes leave 19.1–73.2% of reference terrain uncovered,
-while the other methods' pitch means lie between 0.0% and 0.9%. Looking down
-removes its coverage deficit but not its point-scale incoherence. Slicing
-shows the complementary signature: good coverage but visible horizontal
-bands, measured as 2.7% coherence error at 0°.
+The image-order methods join the coherent group. Scattering is the
+horizon outlier: its three scenes leave 19.1–73.2% of reference terrain
+uncovered, while the other methods' pitch means lie between 0.0% and 0.9%.
+Looking down removes its coverage deficit but not its point-scale
+incoherence. Slicing shows the complementary signature: good coverage but
+visible horizontal bands, measured as 2.7% coherence error at 0°.
 
 The selected mesh sits with the coherent group. At the hangar view q=0.0
 left 11.0% uncovered; q=0.5 leaves 0.5% and recovers the wall. The five
@@ -571,12 +543,11 @@ image grids agree on that geometry: hangar Mesh see-through is 0.519% on
 every adapter. The only material cross-device spread is inside the already
 failing Scattered hangar row (73.2% on the 780M versus 74.0% on the M3).
 
-The central observation is narrower and stronger than the preliminary one:
-**methods developed from top-down screenshots can conceal failure modes that
-become dominant at eye level.** Point scattering loses coverage, slicing
-bands, and an aggressively simplified mesh can miss a scene-specific wall;
-the image-order methods, Painted, and the selected mesh remain mutually
-coherent.
+**Methods developed from top-down screenshots can conceal failure modes
+that become dominant at eye level.** Point scattering loses coverage,
+slicing bands, and an aggressively simplified mesh can miss a
+scene-specific wall; the image-order methods, Painted, and the selected
+mesh remain mutually coherent.
 
 ### 5.2 Frame time
 
@@ -778,19 +749,9 @@ The complete sweeps are recorded in `paper/tuning.md`.
 | RayVoxel | grid, steps | 2 grids × 40–400 | **4,8,2, 100 steps** | 0.3% |
 | Mesh | fit tolerance | q 0.0–1.0 | **q=0.5** | 0.3% at 1280×800 |
 
-Five of the results are worth stating.
+Four of the results are worth stating.
 
-**The first slicer sweep measured the knob, not the method.** The slice
-count was exposed for this comparison, and its first implementation kept
-unit spacing and truncated slices off the *bottom* of the height range —
-so "128 slices" silently deleted all terrain below half height, which
-the sweep read as a collapse: 61.2% see-through and surfaces moved by
-259 u. With the count honestly spreading slices over the whole range,
-128 slices leave 6.8% see-through in the corrected current sweep. A tuning sweep validates the knob's
-implementation as much as the method behind it, and a result this
-discontinuous is a reason to suspect the former.
-
-**The corrected slicer knob changes the error's kind.** From 32 to 512 slices,
+**The slicer knob changes the error's kind.** From 32 to 512 slices,
 cost rises 0.31 → 1.54 ms while see-through falls 15.5% → 3.0%. Speckle is
 non-monotonic because additional slices convert missing spans into isolated
 wrong pixels before coverage becomes dense enough; the combined error falls
@@ -812,12 +773,12 @@ the coarsest setting that matches the full-resolution error floor, and it
 lets the comparison, teaser, and video share one mesh. The hangar wall
 that q=0.0 drops is recovered at this setting.
 
-**The corrected ray marcher selects 128 steps.** Across the final horizon
+**The ray marcher selects 128 steps.** Across the final horizon
 scenes, 16 → 256 steps costs 0.24 → 1.29 ms while total error falls 6.9% →
 0.6%. The 128-step setting is the cheapest within one point of the best
 (1.2%). A cheaper 64-step setting is not substituted for the selected one.
 
-A sixth result is about configuration rather than the method: the voxel
+A fifth result is about configuration rather than the method: the voxel
 tracer's production grid (2,4,1) needs 153 MB of storage buffer and did not
 fit the software rasterizer used for tuning. The selected comparison runs the
 (4,8,2) grid even though all five hardware devices can accommodate the
@@ -851,32 +812,21 @@ have to be bought with a slower frame.
 
 ## 6. Findings
 
-### 6.1 Plausible reference results can still be wrong
+### 6.1 The remaining depth offset
 
-The common coverage offset had two concrete causes. First, the CPU camera used
-the positive screen-right basis while the renderer's view matrix stores its
-negative; the centre ray agreed, so tests that asserted only forward direction
-could not detect the horizontal reflection. Second, the CPU march stopped at a
-spherical distance of 600 while the GPU clips at a plane 600 units along the
-view axis. Off-axis rays therefore ended early. Regression tests now assert
-the screen-right ray, yaw direction, and view-axis far-plane semantics.
+After the reference corrections in §4.1, `covers-sky` at all three −90°
+scenes is exactly 0.0% for every method, and the pitch means remain at or
+below 0.2%. The selected coherent methods leave at most 0.9% uncovered at
+the horizon.
 
-After correction, `covers-sky` at all three −90° scenes is exactly 0.0% for
-every method, and the pitch means remain at or below 0.2%. At the horizon the
-selected coherent methods leave at most 0.9% uncovered, rather than the former
-shared 3–7% offset. The correction also changes the tuning decision: it selects
-128 rather than 64 RayTraced steps and 100 rather than 40 RayVoxel steps.
-
-One limitation remains deliberately visible. In extremely wide off-axis
-top-down pixels, otherwise agreeing methods share median absolute offsets of
-roughly 8–14 world units against the CPU point marcher. Halving its step did
-not remove the offset, indicating a point-sampling/cell-boundary convention
-rather than insufficient convergence. We therefore use absolute depth only as
-a diagnostic, not as evidence for sub-unit ranking. The final quality claims
-rest on bidirectional coverage, coherence, visual agreement, and relative
-agreement between independent renderers. The general lesson is methodological:
-a reference needs fixtures that break each symmetry its implementation could
-accidentally preserve.
+One limitation stays visible in the numbers. In extremely wide off-axis
+top-down pixels, otherwise agreeing methods share median absolute offsets
+of roughly 8–14 world units against the CPU point marcher. Halving its
+step did not remove the offset, so this is a point-sampling or cell-boundary
+convention rather than insufficient convergence. Absolute depth is therefore
+a diagnostic, not evidence for sub-unit ranking. Quality claims rest on
+bidirectional coverage, coherence, visual agreement, and relative agreement
+between independent renderers.
 
 ### 6.2 The multi-layer encoding, not the terrain, sets the fit cost
 
@@ -957,18 +907,12 @@ is the same change that would stop straddling triangles dropping the slab.
 
 ### 6.4 Coverage metrics cannot see over-drawing
 
-§4.2. Worth stating as a methodological result: a correctness measure for
-a renderer must be able to fail in both directions.
-
-The same shape recurred twice more during this work, each time as a
-measurement that held something true while the thing that mattered was
-wrong: a sweep parameter whose implementation did not do what its name
-said (§5.6, the slicer's "count" that truncated), and a camera test
-asserting a direction that survives a flipped basis. The common failure
-is asserting a property the defect preserves. The practical defence we
-ended with is to require every metric, knob and fixture to demonstrate
-that it *can* fail: reproduce a known-bad configuration and check the
-measurement moves.
+Coverage alone cannot fail a renderer that draws too much. A mesh that
+interpolates a slab across region boundaries covers every pixel that should
+be covered, and a see-through score treats that invented roof as correct.
+That is why §4.2 splits coverage into see-through and covers-sky and adds a
+depth-coherence score: the hangar wall dropped at q=0.0 is recovered by
+comparing depth and by looking at the image, not by counting covered pixels.
 
 ## 7. Limitations
 
@@ -977,10 +921,9 @@ measurement moves.
   every one of them is Vangers data. Whether the mechanism in §6.3
   generalises to other discontinuous auxiliary fields is argued, not
   measured.
-- All rendering comparisons use Fostral. A license is expected but is not
-  executed at the time of writing; the nine additional survey worlds must
-  be included explicitly or removed. No archive or derived data bundle can
-  be released before the applicable grant is recorded.
+- All rendering comparisons use Fostral, published under CC BY-SA 4.0
+  by Association K-D Lab. The nine additional survey worlds are not in
+  that grant; those rows require a lawfully obtained game copy.
 - The hardware batch covers four Vulkan devices and one Metal device, but
   not D3D12, WebGL2, mobile-class adapters, or multiple driver versions
   per adapter. It establishes native WebGPU execution and image agreement
@@ -1011,13 +954,11 @@ measurement moves.
 Six terrain renderers that look interchangeable from the original game's
 top-down camera behave differently once the same authored data is viewed
 at eye level. Horizontal slices expose bands and point scattering exposes
-incoherent pixels. The audit also showed that a projected proxy envelope can
-be mistaken for a ray-marching limitation; the corrected marcher now casts
-the full screen and tests the dual-layer solid in both directions. Corrected tuning selects 128 ray steps and a single mesh quality. At
-that operating point the mesh has the lowest mean frame time on every
-measured adapter, and it stays in the coherent group at the horizon.
-Close detail remains blocky on the marchers. The mesh's remaining cost
-is memory, a 2.5 s fit, and a history-dependent refit — not the frame.
+incoherent pixels. At the selected quality point the mesh has the lowest
+mean frame time on every measured adapter, and it stays in the coherent
+group at the horizon. Close detail remains blocky on the marchers. The
+mesh's remaining cost is memory, a 2.5 s fit, and a history-dependent
+refit — not the frame.
 
 The larger result is about the data and the measurement. Single-layer
 worlds fit by 45–182×, while the structural second layer, not floor relief,
@@ -1027,17 +968,14 @@ regularly rebuilt methods reproduce a fresh edited build on their first
 updated frame, but the selected insertion-only mesh retains a small
 history-dependent difference. Making that mesh editable also exposes its
 retained cost: 319 MiB of explicit GPU geometry and 535 MiB of CPU
-triangulation. Coverage alone hid an over-drawing
-defect, while a mirrored camera basis and wrong far-plane convention produced
-plausible common-mode reference error. A
-credible comparison needs bidirectional coverage, coherence, inter-method
-agreement, equal tuning, explicit preparation costs, and visual parity
-checks in addition to a timing table. It also needs to treat post-edit
-maintenance as a first-class result: a static hierarchy can win a frame and
-still fail the workload if terrain destruction forces a reload. Conversely, a
-method can win the timing table and still lose the application if its quality
-budget is view-dependent or its representation cannot be reused by the rest
-of the engine.
+triangulation. A credible comparison needs bidirectional coverage, coherence,
+inter-method agreement, equal tuning, explicit preparation costs, and
+visual parity checks in addition to a timing table. It also needs to
+treat post-edit maintenance as a first-class result: a static hierarchy
+can win a frame and still fail the workload if terrain destruction
+forces a reload. Conversely, a method can win the timing table and still
+lose the application if its quality budget is view-dependent or its
+representation cannot be reused by the rest of the engine.
 
 ## Figure provenance
 
@@ -1052,11 +990,11 @@ first updated frame for RayTraced, RayVoxel, and Mesh. Full five-device
 grids and per-view tables remain supplemental evidence rather than being
 shrunk into unreadable paper pages. `tools/render-paper-video.py` renders a synchronized
 six-configuration mosaic from the −30° portal camera at (1176, 11567),
-raised to eye height 110, moving 650 world units horizontally along yaw 293°
-at fixed altitude, pitch −30°, over eight seconds at 30 frames/s. The local
-H.264 video and poster remain unpublished until the data grant covers
-derived imagery. The flythrough does not include a terrain edit; edit
-evidence is the §4.4 / §5.4 protocol, not the video.
+raised to eye height 180, moving 520 world units horizontally along yaw 308°
+at fixed altitude, pitch −30°, over eight seconds at 30 frames/s. The video
+uses Fostral and is covered by the same CC BY-SA 4.0 attribution. The
+flythrough does not include a terrain edit; edit evidence is the §4.4 /
+§5.4 protocol, not the video.
 
 ## References
 
@@ -1110,8 +1048,11 @@ evidence is the §4.4 / §5.4 protocol, not the video.
 - Zwicker, M., Pfister, H., van Baar, J. and Gross, M. 2001. *Surface
   Splatting.* SIGGRAPH. [MERL publication record](https://www.merl.com/publications/TR2001-20).
 - K-D Lab / KranX. *Vangers* source release, `KranX/Vangers`, GPL-3.0,
-  [GitHub](https://github.com/KranX/Vangers). (Primary source for the original
-  renderer; game resources are explicitly obtained separately.)
+  [GitHub](https://github.com/KranX/Vangers). (Primary record of the original
+  renderer.)
+- Association K-D Lab. *Vangers — Fostral world data*, CC BY-SA 4.0,
+  commit `f1ad7d7`,
+  [`data/thechain/fostral`](https://github.com/KranX/Vangers/tree/master/data/thechain/fostral).
 - Malyshau, D. 2020. *A Taste of WebGPU in Firefox.* Mozilla Hacks.
   [Mozilla](https://hacks.mozilla.org/2020/04/experimental-webgpu-in-firefox/).
 - gfx-rs contributors. *wgpu: Safe and portable graphics for Rust.*
