@@ -489,37 +489,59 @@ impl Chunk {
         let min_y = a[1].min(b[1]).min(c[1]).max(0);
         let max_y = a[1].max(b[1]).max(c[1]).min(grid.ny as i32 - 1);
 
+        // The three edge functions are affine in the sample position, so
+        // stepping one texel adds a constant. That turns the inside test
+        // from three cross products per sample into three adds - and since
+        // `orient2d` is exact integer arithmetic, the values are bit for bit
+        // the ones the direct form produces.
+        //
+        // This is the hot loop of the whole TIN: a refit measures it once
+        // per triangle over the triangle's bounding box.
+        let step_x = [
+            -((c[1] - b[1]) as i64),
+            -((a[1] - c[1]) as i64),
+            -((b[1] - a[1]) as i64),
+        ];
+        let step_y = [
+            (c[0] - b[0]) as i64,
+            (a[0] - c[0]) as i64,
+            (b[0] - a[0]) as i64,
+        ];
+        let corner = [min_x, min_y];
+        let mut row = [
+            orient2d(b, c, corner),
+            orient2d(c, a, corner),
+            orient2d(a, b, corner),
+        ];
+
         let mut best = NONE;
         let mut best_err = 0.0f32;
         for y in min_y..=max_y {
-            for x in min_x..=max_x {
-                let q = [x, y];
-                let w0 = orient2d(b, c, q);
-                if w0 < 0 {
-                    continue;
+            let mut w = row;
+            let mut gi = grid.index(min_x as u32, y as u32);
+            for _x in min_x..=max_x {
+                if w[0] >= 0 && w[1] >= 0 && w[2] >= 0 {
+                    let (f0, f1, f2) = (w[0] as f64 * inv, w[1] as f64 * inv, w[2] as f64 * inv);
+                    let lerp = |pa: f32, pb: f32, pc: f32| {
+                        (f0 * pa as f64 + f1 * pb as f64 + f2 * pc as f64) as f32
+                    };
+                    let err = grid.sample(gi).deviation(
+                        lerp(sa.low, sb.low, sc.low),
+                        lerp(sa.mid, sb.mid, sc.mid),
+                        lerp(sa.high, sb.high, sc.high),
+                    );
+                    if err > best_err {
+                        best_err = err;
+                        best = gi;
+                    }
                 }
-                let w1 = orient2d(c, a, q);
-                if w1 < 0 {
-                    continue;
+                for i in 0..3 {
+                    w[i] += step_x[i];
                 }
-                let w2 = orient2d(a, b, q);
-                if w2 < 0 {
-                    continue;
-                }
-                let (f0, f1, f2) = (w0 as f64 * inv, w1 as f64 * inv, w2 as f64 * inv);
-                let lerp = |pa: f32, pb: f32, pc: f32| {
-                    (f0 * pa as f64 + f1 * pb as f64 + f2 * pc as f64) as f32
-                };
-                let gi = grid.index(x as u32, y as u32);
-                let err = grid.sample(gi).deviation(
-                    lerp(sa.low, sb.low, sc.low),
-                    lerp(sa.mid, sb.mid, sc.mid),
-                    lerp(sa.high, sb.high, sc.high),
-                );
-                if err > best_err {
-                    best_err = err;
-                    best = gi;
-                }
+                gi += 1;
+            }
+            for i in 0..3 {
+                row[i] += step_y[i];
             }
         }
 
@@ -769,15 +791,22 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
 /// tolerance makes the shared edge identical no matter which levels meet
 /// there. It costs little: a chunk's border is `4 * CHUNK_SIZE` samples
 /// against `CHUNK_SIZE^2` in the interior.
+///
+/// `measure` drives the interior pass. The border is always re-derived -
+/// it is cheap, and both sides of a seam have to agree on it every time -
+/// but the interior fit can be skipped for a chunk that has stopped
+/// gaining vertices. Returns whether any vertex was added.
 fn refine(
     chunk: &mut Chunk,
     grid: &Grid,
     max_error: f32,
     border_error: f32,
     dirty: Option<&[GridRect]>,
-) {
+    measure: bool,
+) -> bool {
     use std::collections::{BinaryHeap, HashSet};
 
+    let mut added = false;
     let existing: HashSet<u32> = chunk.verts.iter().copied().collect();
 
     // Border vertices first. Both chunks sharing a border derive the same
@@ -818,9 +847,14 @@ fn refine(
         let seed = chunk.locate(grid, grid.coord(gi), 0);
         // A border insertion rewrites triangles, so their candidates have to
         // be recomputed whether or not an edit reached them.
+        added = true;
         for slot in chunk.insert(grid, gi, seed) {
             chunk.compute_candidate(grid, slot);
         }
+    }
+
+    if !measure {
+        return added;
     }
 
     // Every triangle remembers its own worst sample, so popping the global
@@ -885,6 +919,7 @@ fn refine(
             }
         }
         let cand = chunk.tris[t as usize].cand;
+        added = true;
         for slot in chunk.insert(grid, cand, t) {
             chunk.compute_candidate(grid, slot);
             let tri = &chunk.tris[slot as usize];
@@ -893,6 +928,7 @@ fn refine(
             }
         }
     }
+    added
 }
 
 /// One chunk's geometry, in its own pair of buffers.
@@ -967,7 +1003,26 @@ struct ChunkState {
 #[cfg_attr(test, derive(Clone))]
 struct LodState {
     tri: Chunk,
+    /// Refits left to skip before measuring the interior again.
+    settle: u32,
+    /// How many to skip next time the interior comes back converged.
+    backoff: u32,
 }
+
+/// Most refits a converged chunk may skip measuring for.
+///
+/// A moving land cycles: after one full cycle the triangulation already
+/// holds every vertex any phase of it needs, because refining only ever
+/// adds. From then on measuring the interior every frame only re-derives
+/// the answer "nothing to add" - which is the single most expensive thing
+/// a refit does. So a chunk that gains nothing backs off, and one that
+/// gains something starts measuring every frame again.
+///
+/// The cap bounds how stale a *new* deformation can leave the tessellation.
+/// The surface itself never lags: vertices are re-emitted from the current
+/// heights every refit either way. Only the density of them waits, and at
+/// the game's 20 refits a second this is under half a second.
+const MAX_SETTLE: u32 = 8;
 
 impl ChunkState {
     /// Chunks own the texels `[x0 ..= x0 + w]`, i.e. they share their border
@@ -1076,7 +1131,7 @@ impl Tin {
             // levels converge in a fraction of the insertions) and keeps
             // every level a genuine Delaunay triangulation.
             let alt = grid.altitude_range();
-            let mut lods = Vec::with_capacity(LOD_COUNT);
+            let mut lods: Vec<LodState> = Vec::with_capacity(LOD_COUNT);
             let mut meshes = Vec::with_capacity(LOD_COUNT);
             for k in 0..LOD_COUNT {
                 let mut chunk = Chunk::new(&grid);
@@ -1086,9 +1141,14 @@ impl Tin {
                     max_error * (1 << k) as f32,
                     max_error,
                     None,
+                    true,
                 );
                 meshes.push(emit_chunk(&chunk, &grid));
-                lods.push(LodState { tri: chunk });
+                lods.push(LodState {
+                    tri: chunk,
+                    settle: 0,
+                    backoff: 0,
+                });
             }
             (
                 ChunkState {
@@ -1174,18 +1234,46 @@ impl Tin {
             .map(|(index, state)| {
                 let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
                 state.alt = grid.altitude_range();
+                // The edits that reach this chunk, in its own grid
+                // coordinates and clipped to it.
+                let local = rects
+                    .iter()
+                    .filter_map(|r| {
+                        let g = GridRect {
+                            x0: (r.x - state.x0).max(0),
+                            y0: (r.y - state.y0).max(0),
+                            x1: (r.x + r.w as i32 - state.x0).min(state.w as i32),
+                            y1: (r.y + r.h as i32 - state.y0).min(state.h as i32),
+                        };
+                        (g.x0 <= g.x1 && g.y0 <= g.y1).then_some(g)
+                    })
+                    .collect::<Vec<_>>();
                 let per_lod = state
                     .lods
                     .par_iter_mut()
                     .enumerate()
                     .map(|(k, lod)| {
-                        refine(
+                        // Skip measuring a chunk that has stopped gaining
+                        // vertices, but always re-emit: the geometry has to
+                        // follow the new heights either way.
+                        let measure = lod.settle == 0;
+                        let added = refine(
                             &mut lod.tri,
                             &grid,
                             max_error * (1 << k) as f32,
                             max_error,
-                            None,
+                            Some(&local),
+                            measure,
                         );
+                        if added {
+                            lod.backoff = 0;
+                            lod.settle = 0;
+                        } else if measure {
+                            lod.backoff = (lod.backoff + 1).min(MAX_SETTLE);
+                            lod.settle = lod.backoff;
+                        } else {
+                            lod.settle -= 1;
+                        }
                         emit_chunk(&lod.tri, &grid)
                     })
                     .collect::<Vec<_>>();
@@ -1517,10 +1605,10 @@ mod tests {
         // The finest chunk on the left, the coarsest on the right.
         for k in 0..LOD_COUNT {
             let mut fine = Chunk::new(&left);
-            refine(&mut fine, &left, base_error, base_error, None);
+            refine(&mut fine, &left, base_error, base_error, None, true);
             let mut coarse = Chunk::new(&right);
             let coarse_error = base_error * (1 << k) as f32;
-            refine(&mut coarse, &right, coarse_error, base_error, None);
+            refine(&mut coarse, &right, coarse_error, base_error, None, true);
 
             assert_eq!(
                 border_of(&left, size),
@@ -1642,6 +1730,46 @@ mod tests {
             after.iter().map(|s| s.len()).sum::<usize>()
                 > before.iter().map(|s| s.len()).sum::<usize>(),
             "the pit should have needed new vertices"
+        );
+    }
+
+    /// A chunk that has stopped gaining vertices stops measuring, so a new
+    /// deformation is allowed to lag - but only up to `MAX_SETTLE` refits,
+    /// after which the fit has to be back inside tolerance.
+    #[test]
+    fn a_settled_chunk_still_catches_a_new_edit() {
+        let mut level = make_level(96);
+        let config = Config { quality: 0.5 };
+        let (mut tin, _) = Tin::build(&level, &config);
+        let tolerance = tin.max_error;
+        let all = rect(0, 0, level.size.0, level.size.1);
+
+        // Refit with nothing changing until every chunk has backed off as
+        // far as it can.
+        for _ in 0..2 * MAX_SETTLE {
+            tin.update(&level, &[all]);
+        }
+
+        let (x, y, w, h) = dig(&mut level, 70, 70, 12);
+        assert!(worst_error(&tin, &level) > tolerance * 4.0);
+
+        // The first refit does not measure - that is the whole point of the
+        // back-off - so the fit is still wrong here. If this ever stops
+        // holding the test below has stopped proving anything.
+        let edit = rect(x, y, w, h);
+        tin.update(&level, &[edit]);
+        assert!(
+            worst_error(&tin, &level) > tolerance,
+            "the chunk never settled, so the catch-up below is vacuous"
+        );
+
+        for _ in 0..MAX_SETTLE {
+            tin.update(&level, &[edit]);
+        }
+        let worst = worst_error(&tin, &level);
+        assert!(
+            worst <= tolerance,
+            "a settled chunk never caught up: residual {worst} against {tolerance}"
         );
     }
 
@@ -2019,6 +2147,7 @@ mod perf_probe {
                         max_error * (1 << k) as f32,
                         max_error,
                         Some(&local),
+                        true,
                     );
                     refine_t += t.elapsed().as_secs_f64();
                     let t = Instant::now();
