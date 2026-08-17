@@ -20,9 +20,14 @@ use vangers::level::{
     trigger::{Kind, Triggers},
 };
 
-/// Never run more than this many quants in one frame, so dragging the rate
-/// slider up or returning from a stall does not lock the viewer up.
-const MAX_QUANTS_PER_FRAME: u32 = 8;
+/// Never run more than this many quants in one frame.
+///
+/// Deliberately small. Catching up after a slow frame means running several
+/// quants, each of which walks every animating patch, which makes the next
+/// frame slower still - a spiral that shows up as the viewer juddering
+/// instead of merely animating below the nominal rate. A viewer would much
+/// rather play the animation slowly than stall, so the backlog is dropped.
+const MAX_QUANTS_PER_FRAME: u32 = 2;
 
 pub struct MovingLandUi {
     land: MovingLand,
@@ -50,6 +55,15 @@ pub struct MovingLandUi {
     pub focus: Option<(glam::Vec3, f32)>,
     /// Rectangles the last update touched, for the caller to upload.
     regions: Vec<Region>,
+    /// Order the list by distance from what the camera is looking at, so the
+    /// patch you are staring at is the one at the top.
+    sort_by_distance: bool,
+    /// Scratch for the sorted order, rebuilt each frame it is needed.
+    order: Vec<usize>,
+    /// Rolling cost of the last update, so it is obvious from the panel
+    /// whether the moving land is what is costing the frame.
+    last_cost_ms: f32,
+    last_quants: u32,
 }
 
 impl MovingLandUi {
@@ -77,6 +91,10 @@ impl MovingLandUi {
             filter: String::new(),
             focus: None,
             regions: Vec::new(),
+            sort_by_distance: true,
+            order: Vec::new(),
+            last_cost_ms: 0.0,
+            last_quants: 0,
         })
     }
 
@@ -95,7 +113,11 @@ impl MovingLandUi {
             quants = quants.max(1);
         }
 
-        for _ in 0..quants.min(MAX_QUANTS_PER_FRAME) {
+        let quants = quants.min(MAX_QUANTS_PER_FRAME);
+        self.last_quants = quants;
+        let started = std::time::Instant::now();
+
+        for _ in 0..quants {
             if self.run_engines {
                 for (index, &held) in self.held.iter().enumerate() {
                     if held {
@@ -111,7 +133,50 @@ impl MovingLandUi {
         // same region comes back once per quant.
         self.regions.sort_unstable();
         self.regions.dedup();
+
+        // Smoothed, because most frames run no quants at all and the raw
+        // number would flicker between zero and the cost of one quant.
+        let cost = started.elapsed().as_secs_f32() * 1000.0;
+        self.last_cost_ms += (cost - self.last_cost_ms) * 0.1;
         &self.regions
+    }
+
+    /// Where a location sits, in level texels, wrapped into the map.
+    fn location_pos(&self, index: usize, level: &Level) -> (i32, i32) {
+        let location = &self.land.locations[index];
+        let frame = &location.source.frames[0];
+        let (w, h) = location.source.max_frame_size();
+        (
+            (frame.pos.0 + location.offset.0 + w / 2).rem_euclid(level.size.0),
+            (frame.pos.1 + location.offset.1 + h / 2).rem_euclid(level.size.1),
+        )
+    }
+
+    /// Squared distance from `focus` to a location, across the level seams.
+    fn distance2(&self, index: usize, level: &Level, focus: glam::Vec2) -> i64 {
+        let (x, y) = self.location_pos(index, level);
+        let wrap = |d: i32, size: i32| -> i64 {
+            let d = d.rem_euclid(size);
+            if d * 2 > size { d - size } else { d }.into()
+        };
+        let dx = wrap(x - focus.x as i32, level.size.0);
+        let dy = wrap(y - focus.y as i32, level.size.1);
+        dx * dx + dy * dy
+    }
+
+    /// The order to list locations in: nearest to the camera first, or the
+    /// order they loaded in.
+    fn listing_order(&mut self, level: &Level, focus: glam::Vec2) {
+        self.order.clear();
+        self.order.extend(0..self.land.locations.len());
+        if self.sort_by_distance {
+            // Keyed by location index, so the lookup stays right as the
+            // order is permuted.
+            let keys = (0..self.land.locations.len())
+                .map(|i| self.distance2(i, level, focus))
+                .collect::<Vec<_>>();
+            self.order.sort_by_key(|&i| keys[i]);
+        }
     }
 
     /// Centre of a location, for the camera to fly to.
@@ -130,7 +195,8 @@ impl MovingLandUi {
         )
     }
 
-    pub fn draw_ui(&mut self, ui: &mut egui::Ui, level: &Level) {
+    pub fn draw_ui(&mut self, ui: &mut egui::Ui, level: &Level, focus: glam::Vec2) {
+        self.listing_order(level, focus);
         ui.horizontal(|ui| {
             let label = if self.playing { "⏸" } else { "▶" };
             if ui.button(label).on_hover_text("Play / pause").clicked() {
@@ -192,17 +258,28 @@ impl MovingLandUi {
             ui.weak("Nothing is running - pick a location and send it to a key phase.");
         }
 
+        if self.last_quants != 0 || self.last_cost_ms > 0.01 {
+            ui.weak(format!(
+                "stepping {:.2} ms/frame, {} quant(s), {} region(s)",
+                self.last_cost_ms,
+                self.last_quants,
+                self.regions.len()
+            ));
+        }
+
         ui.horizontal(|ui| {
             ui.label("Filter:");
             ui.text_edit_singleline(&mut self.filter);
         });
+        ui.checkbox(&mut self.sort_by_distance, "Nearest first")
+            .on_hover_text("Order the list by distance from what the camera is looking at");
 
-        self.draw_locations(ui, level);
+        self.draw_locations(ui, level, focus);
         self.draw_engines(ui);
         self.draw_sensors(ui);
     }
 
-    fn draw_locations(&mut self, ui: &mut egui::Ui, level: &Level) {
+    fn draw_locations(&mut self, ui: &mut egui::Ui, level: &Level, focus: glam::Vec2) {
         egui::CollapsingHeader::new("Locations")
             .default_open(true)
             .show(ui, |ui| {
@@ -210,29 +287,43 @@ impl MovingLandUi {
                     .max_height(260.0)
                     .id_salt("ml-locations")
                     .show(ui, |ui| {
-                        for index in 0..self.land.locations.len() {
+                        let filter = self.filter.to_lowercase();
+                        let order = std::mem::take(&mut self.order);
+                        for &index in order.iter() {
                             let name = self.land.locations[index].source.name.clone();
-                            if !self.filter.is_empty()
-                                && !name.to_lowercase().contains(&self.filter.to_lowercase())
-                            {
+                            if !filter.is_empty() && !name.to_lowercase().contains(&filter) {
                                 continue;
                             }
-                            self.draw_location(ui, index, &name, level);
+                            self.draw_location(ui, index, &name, level, focus);
                         }
+                        self.order = order;
                     });
             });
     }
 
-    fn draw_location(&mut self, ui: &mut egui::Ui, index: usize, name: &str, level: &Level) {
+    fn draw_location(
+        &mut self,
+        ui: &mut egui::Ui,
+        index: usize,
+        name: &str,
+        level: &Level,
+        focus: glam::Vec2,
+    ) {
         let (summary, status, moving) = {
             let location = &self.land.locations[index];
             let go = location.go_phase();
+            let away = (self.distance2(index, level, focus) as f64).sqrt();
             let summary = format!(
-                "{name}  frame {}/{}  phase {}/{}",
+                "{name}  frame {}/{}  phase {}/{}  {}",
                 location.current_frame(),
                 location.source.frames.len(),
                 location.current_phase(),
                 location.source.max_stage(),
+                if away < 1000.0 {
+                    format!("{away:.0} away")
+                } else {
+                    format!("{:.1}k away", away / 1000.0)
+                },
             );
             let status = if go == FREE_RUNNING {
                 "looping".to_string()

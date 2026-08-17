@@ -251,23 +251,56 @@ impl Terrain {
     }
 }
 
-/// Iterates the texels of `frame`, yielding `(local index, level index,
-/// wrapped x)` for each. The x parity drives the double-level rules, so it
-/// has to be the wrapped, level-space column.
-fn texels(
-    frame: &Frame,
-    offset: (i32, i32),
-    size: (i32, i32),
-) -> impl Iterator<Item = (usize, usize, i32)> + '_ {
+/// A stretch of one frame row that does not cross the level seam. Within a
+/// run the frame-local index, the level index and the level column all
+/// advance together by one.
+#[derive(Clone, Copy)]
+struct Run {
+    local: usize,
+    index: usize,
+    /// Level column of the first texel. The parity drives the double-level
+    /// rules, so it has to be the wrapped, level-space column.
+    x: i32,
+    len: usize,
+}
+
+/// Splits `frame` into runs, row by row.
+///
+/// The obvious way to write this wraps each column with `rem_euclid`, which
+/// is an integer division per texel. A frame runs to tens of thousands of
+/// texels and a level can be animating dozens of them at once, so that
+/// division was costing more than everything else in the update put
+/// together. A row crosses the seam at most once, so two runs cover it and
+/// the inner loop is left with plain increments.
+fn runs(frame: &Frame, offset: (i32, i32), size: (i32, i32)) -> impl Iterator<Item = Run> + '_ {
     let (x0, y0) = (frame.pos.0 + offset.0, frame.pos.1 + offset.1);
+    // A frame wider than the level would wrap onto itself. Nothing shipped
+    // comes close, and covering each column once is the sane reading.
+    let width = frame.size.0.min(size.0);
+    let start_x = x0.rem_euclid(size.0);
+    let first = (size.0 - start_x).min(width);
+    let second = width - first;
+
     (0..frame.size.1).flat_map(move |j| {
         let y = (y0 + j).rem_euclid(size.1);
         let row = (y * size.0) as usize;
         let local_row = (j * frame.size.0) as usize;
-        (0..frame.size.0).map(move |i| {
-            let x = (x0 + i).rem_euclid(size.0);
-            (local_row + i as usize, row + x as usize, x)
-        })
+        [
+            Run {
+                local: local_row,
+                index: row + start_x as usize,
+                x: start_x,
+                len: first as usize,
+            },
+            Run {
+                local: local_row + first as usize,
+                index: row,
+                x: 0,
+                len: second as usize,
+            },
+        ]
+        .into_iter()
+        .filter(|run| run.len != 0)
     })
 }
 
@@ -314,8 +347,12 @@ fn terrain_mask(level: &Level) -> u8 {
 /// `MLFrame::start` - seeds the accumulator with the current altitudes,
 /// rounded to the middle of the texel so the interpolation doesn't drift.
 fn snapshot(frame: &Frame, offset: (i32, i32), level: &Level, alt: &mut [i32]) {
-    for (local, index, _) in texels(frame, offset, level.size) {
-        alt[local] = ((level.height[index] as i32) << PRECISION) + (1 << (PRECISION - 1));
+    for run in runs(frame, offset, level.size) {
+        let heights = &level.height[run.index..run.index + run.len];
+        let slots = &mut alt[run.local..run.local + run.len];
+        for (slot, &h) in slots.iter_mut().zip(heights) {
+            *slot = ((h as i32) << PRECISION) + (1 << (PRECISION - 1));
+        }
     }
 }
 
@@ -330,43 +367,55 @@ fn apply_interpolated(
 ) {
     let period = frame.period;
     let mask = terrain_mask(level);
-    for (local, index, x) in texels(frame, offset, level.size) {
-        let mut delta = frame.delta[local] as i32;
-        if delta == 0 {
-            continue;
+    for run in runs(frame, offset, level.size) {
+        for k in 0..run.len {
+            let local = run.local + k;
+            let mut delta = frame.delta[local] as i32;
+            // Most of a frame's rectangle is untouched, so this is the hot
+            // path and everything else stays behind it.
+            if delta == 0 {
+                continue;
+            }
+            let index = run.index + k;
+            let x = run.x + k as i32;
+            if frame.is_negative(local) {
+                delta = -delta;
+            }
+            // Undo the part of the offset already applied, then re-apply
+            // the accumulated total - this keeps other terrain edits in the
+            // same rectangle from being clobbered.
+            let mut value = level.height[index] as i32 - (alt[local] >> PRECISION);
+            alt[local] += (delta << PRECISION) / period;
+            value += alt[local] >> PRECISION;
+            if value < 1 {
+                value = 0;
+                alt[local] = 0;
+            }
+            set_up_alt(level, index, x, value as u8);
+            write_terrain(frame, level, &terrain, mask, local, index, x);
         }
-        if frame.is_negative(local) {
-            delta = -delta;
-        }
-        // Undo the part of the offset already applied, then re-apply the
-        // accumulated total - this keeps other terrain edits in the same
-        // rectangle from being clobbered.
-        let mut value = level.height[index] as i32 - (alt[local] >> PRECISION);
-        alt[local] += (delta << PRECISION) / period;
-        value += alt[local] >> PRECISION;
-        if value < 1 {
-            value = 0;
-            alt[local] = 0;
-        }
-        set_up_alt(level, index, x, value as u8);
-        write_terrain(frame, level, &terrain, mask, local, index, x);
     }
 }
 
 /// The `period == 1` path: a plain signed offset, applied in one go.
 fn apply_relative(frame: &Frame, offset: (i32, i32), level: &mut Level, terrain: Terrain) {
     let mask = terrain_mask(level);
-    for (local, index, x) in texels(frame, offset, level.size) {
-        let mut delta = frame.delta[local] as i32;
-        if delta == 0 {
-            continue;
+    for run in runs(frame, offset, level.size) {
+        for k in 0..run.len {
+            let local = run.local + k;
+            let mut delta = frame.delta[local] as i32;
+            if delta == 0 {
+                continue;
+            }
+            let index = run.index + k;
+            let x = run.x + k as i32;
+            if frame.is_negative(local) {
+                delta = -delta;
+            }
+            let value = (level.height[index] as i32 + delta).max(0);
+            set_up_alt(level, index, x, value as u8);
+            write_terrain(frame, level, &terrain, mask, local, index, x);
         }
-        if frame.is_negative(local) {
-            delta = -delta;
-        }
-        let value = (level.height[index] as i32 + delta).max(0);
-        set_up_alt(level, index, x, value as u8);
-        write_terrain(frame, level, &terrain, mask, local, index, x);
     }
 }
 
@@ -375,18 +424,22 @@ fn apply_relative(frame: &Frame, offset: (i32, i32), level: &mut Level, terrain:
 /// the double-level rules, matching the original.
 fn apply_absolute(frame: &Frame, offset: (i32, i32), level: &mut Level, terrain: Terrain) {
     let mask = terrain_mask(level);
-    for (local, index, _) in texels(frame, offset, level.size) {
-        let value = frame.delta[local];
-        if value == 0 {
-            continue;
-        }
-        level.height[index] = value;
-        match terrain {
-            Terrain::Keep => {}
-            Terrain::Uniform(t) => level.meta[index] = (level.meta[index] & !mask) | t,
-            Terrain::PerTexel => {
-                let t = frame.terrain[local] & mask;
-                level.meta[index] = (level.meta[index] & !mask) | t;
+    for run in runs(frame, offset, level.size) {
+        for k in 0..run.len {
+            let local = run.local + k;
+            let value = frame.delta[local];
+            if value == 0 {
+                continue;
+            }
+            let index = run.index + k;
+            level.height[index] = value;
+            match terrain {
+                Terrain::Keep => {}
+                Terrain::Uniform(t) => level.meta[index] = (level.meta[index] & !mask) | t,
+                Terrain::PerTexel => {
+                    let t = frame.terrain[local] & mask;
+                    level.meta[index] = (level.meta[index] & !mask) | t;
+                }
             }
         }
     }

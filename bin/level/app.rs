@@ -494,6 +494,20 @@ impl Application for LevelView {
             return;
         }
 
+        // Where the camera is pointed at the ground, which is what the
+        // moving-land list sorts by. Falls back to straight below the camera
+        // when the view is level and the ray never meets the plane.
+        let ground_focus = {
+            let hit = self
+                .cam
+                .intersect_height(self.level.geometry.height as f32 * 0.3);
+            if hit.is_finite() {
+                glam::Vec2::new(hit.x, hit.y)
+            } else {
+                glam::Vec2::new(self.cam.loc.x, self.cam.loc.y)
+            }
+        };
+
         #[allow(deprecated)]
         egui::SidePanel::right("Tweaks").show(context, |ui| {
             ui.horizontal(|ui| {
@@ -523,7 +537,7 @@ impl Application for LevelView {
             if let Some(ref mut moving) = self.moving_land {
                 ui.group(|ui| {
                     ui.label("Moving land:");
-                    moving.draw_ui(ui, &self.level);
+                    moving.draw_ui(ui, &self.level, ground_focus);
                 });
             }
             ui.group(|ui| {
