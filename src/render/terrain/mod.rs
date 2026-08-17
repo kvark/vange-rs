@@ -1967,17 +1967,25 @@ impl Context {
                     *geo = Some(MeshGeometry::new(tin, &mesh, device));
                 }
                 Some(ref mut geo) => {
-                    for dr in self.dirty_rects.iter() {
-                        if !dr.need_upload {
-                            continue;
-                        }
-                        let (x, y) = (dr.rect.x as i32, dr.rect.y as i32);
-                        let (w, h) = (dr.rect.w as i32, dr.rect.h as i32);
-                        // Each refitted chunk just gets fresh buffers -- they
-                        // are small enough that rebuilding beats patching.
-                        for (index, buffers) in geo.tin.update(level, x, y, w, h) {
-                            geo.chunks[index] = ChunkBufs::new(&buffers, device);
-                        }
+                    // One batched refit for the whole frame's edits. Several
+                    // dirty rectangles routinely land in the same chunk, and
+                    // refitting per rectangle rebuilt that chunk - and its
+                    // GPU buffers - once for each of them.
+                    let rects = self
+                        .dirty_rects
+                        .iter()
+                        .filter(|dr| dr.need_upload)
+                        .map(|dr| level::tin::Rect {
+                            x: dr.rect.x as i32,
+                            y: dr.rect.y as i32,
+                            w: dr.rect.w as u32,
+                            h: dr.rect.h as u32,
+                        })
+                        .collect::<Vec<_>>();
+                    // Each refitted chunk just gets fresh buffers -- they
+                    // are small enough that rebuilding beats patching.
+                    for (index, buffers) in geo.tin.update(level, &rects) {
+                        geo.chunks[index] = ChunkBufs::new(&buffers, device);
                     }
                 }
             }
