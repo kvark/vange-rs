@@ -405,13 +405,11 @@ enum Kind {
         /// changing shape as you drive. At 256 that falls to 0.02-0.27%.
         /// The frame time is the same either way here (12.9 vs 13.7 ms),
         /// so the low value was buying nothing.
+        ///
+        /// It also sets how often a chunk is refitted after a terrain edit:
+        /// one that has dropped to half detail refits half as often. See
+        /// `level::tin::detail_steps`.
         lod_distance: f32,
-        /// Distance within which terrain edits are refitted on the tick
-        /// they land. Past it a chunk's geometry may lag by a tick or two,
-        /// doubling with every doubling of the distance; nothing else does,
-        /// since collision reads the level rather than the mesh. Zero
-        /// refits everything immediately. See `level::tin::Focus`.
-        refit_distance: f32,
         /// Pin every chunk to one detail level, ignoring distance. For
         /// inspecting what a level actually looks like.
         lod_force: Option<usize>,
@@ -1712,7 +1710,6 @@ impl Context {
                     wireframe: false,
                     draws: Vec::new(),
                     lod_distance: 256.0,
-                    refit_distance: 256.0,
                     lod_force: None,
                     cull: true,
                 }
@@ -1969,7 +1966,7 @@ impl Context {
         if let Kind::Mesh {
             ref config,
             ref mut geo,
-            refit_distance,
+            lod_distance,
             ..
         } = self.kind
         {
@@ -1996,10 +1993,7 @@ impl Context {
                         .collect::<Vec<_>>();
                     // Each refitted chunk just gets fresh buffers -- they
                     // are small enough that rebuilding beats patching.
-                    let focus = focus.map(|at| level::tin::Focus {
-                        at,
-                        full_rate: refit_distance,
-                    });
+                    let focus = focus.map(|at| level::tin::Focus { at, lod_distance });
                     for (index, buffers) in geo.tin.update(level, &rects, focus) {
                         geo.chunks[index] = ChunkBufs::new(&buffers, device);
                     }
@@ -2405,13 +2399,10 @@ impl Context {
                                 chunk.center[1] + offset.y,
                             );
                             let dist = (center - sc.origin).length();
-                            let level = if let Some(forced) = lod_force {
-                                forced.min(chunk.lods.len() - 1)
-                            } else if lod_distance > 0.0 {
-                                ((dist / lod_distance).max(1.0).log2().floor() as usize)
-                                    .min(chunk.lods.len() - 1)
-                            } else {
-                                0
+                            let level = match lod_force {
+                                Some(forced) => forced.min(chunk.lods.len() - 1),
+                                None => (level::tin::detail_steps(dist, lod_distance) as usize)
+                                    .min(chunk.lods.len() - 1),
                             };
                             let (base, count) = chunk.lods[level];
                             if count != 0 {
@@ -2903,7 +2894,6 @@ impl Context {
                 geo: Some(ref geo),
                 ref mut wireframe,
                 ref mut lod_distance,
-                ref mut refit_distance,
                 ref mut lod_force,
                 ref mut cull,
                 ref draws,
@@ -2934,15 +2924,12 @@ impl Context {
                     egui::Slider::new(lod_distance, 16.0..=512.0)
                         .logarithmic(true)
                         .text("LOD distance"),
-                );
-                ui.add(
-                    egui::Slider::new(refit_distance, 0.0..=1024.0)
-                        .text("Refit distance (0 = never defer)"),
                 )
                 .on_hover_text(
-                    "Terrain further than this refits less often, doubling \
-                     the wait with every doubling of the distance. Only the \
-                     geometry waits - collision reads the level.",
+                    "Terrain further than this drops a detail level for \
+                     every doubling of the distance, and refits after an \
+                     edit that much less often with it. Only the geometry \
+                     waits - collision reads the level.",
                 );
                 let mut forced = lod_force.is_some();
                 ui.checkbox(&mut forced, "Force one LOD");

@@ -1138,20 +1138,37 @@ struct ChunkState {
     banked: u32,
 }
 
-/// Where the viewer is standing, and how far away geometry may start
-/// lagging behind the level.
+/// How many detail steps a chunk that far from the viewer has dropped:
+/// zero within `lod_distance`, and one more for every doubling past it.
+/// Zero or less for `lod_distance` means full detail everywhere.
+///
+/// This is the one distance ladder the terrain has. It picks the LOD a
+/// chunk is drawn at - clamped, there being only `LOD_COUNT` of them - and
+/// it picks how often the chunk is refitted: a chunk drawn at half detail
+/// refits half as often, one at a quarter a quarter as often. Tying the
+/// two together is what makes the lag invisible. A chunk is only allowed
+/// to fall behind once the renderer has already stopped drawing the detail
+/// that would show it.
+///
+/// The refit ladder keeps going past the last LOD, where the renderer's
+/// clamp stops it. Two chunks both drawn at the coarsest level are not
+/// equally worth refitting if one of them is four times further away.
+pub fn detail_steps(distance: f32, lod_distance: f32) -> u32 {
+    if lod_distance <= 0.0 {
+        return 0;
+    }
+    (distance / lod_distance).max(1.0).log2().floor() as u32
+}
+
+/// Where the viewer is standing, and the distance ladder to measure from
+/// it - see `detail_steps`.
 #[derive(Clone, Copy, Debug)]
 pub struct Focus {
     /// The viewer's position, in level texels.
     pub at: [f32; 2],
-    /// Distance in texels within which a chunk refits on every update.
-    /// Beyond it the period doubles with every doubling of the distance.
-    /// Zero or less refits everything every update.
-    ///
-    /// The renderer's LOD distance is the natural value: past that the
-    /// terrain is already drawn with fewer triangles than it was fitted
-    /// with, so it is past caring about a few ticks of lag as well.
-    pub full_rate: f32,
+    /// Distance within which a chunk keeps full detail, and refits on
+    /// every update. Zero or less refits everything every update.
+    pub lod_distance: f32,
 }
 
 /// Longest a distant chunk's geometry may lag the level under it. Must be
@@ -1170,17 +1187,16 @@ impl ChunkState {
     /// The level wraps, so the distance does too: the far edge of the map
     /// is next door.
     fn refit_period(&self, focus: &Focus, size: (f32, f32)) -> u32 {
-        if focus.full_rate <= 0.0 {
-            return 1;
-        }
+        // The nearest wrap copy is the one the viewer sees, and it is the
+        // one the renderer picks a LOD for, so it is the one that decides.
         let axis = |a: f32, b: f32, wrap: f32| {
             let d = (a - b).abs();
             d.min(wrap - d)
         };
         let dx = axis(self.x0 as f32 + self.w as f32 * 0.5, focus.at[0], size.0);
         let dy = axis(self.y0 as f32 + self.h as f32 * 0.5, focus.at[1], size.1);
-        let steps = (dx.hypot(dy) / focus.full_rate).max(1.0).log2().floor();
-        (1u32 << (steps as u32).min(MAX_REFIT_PERIOD.trailing_zeros())).min(MAX_REFIT_PERIOD)
+        let steps = detail_steps(dx.hypot(dy), focus.lod_distance);
+        1u32 << steps.min(MAX_REFIT_PERIOD.trailing_zeros())
     }
 
     /// Which tick of its period a chunk refits on, counted from the one it
@@ -1991,7 +2007,7 @@ mod tests {
         let (tin, _) = Tin::build(&level, &Config::default());
         let focus = Focus {
             at: [64.0, 64.0],
-            full_rate: 256.0,
+            lod_distance: 256.0,
         };
         let edits = (0..8)
             .map(|i| {
@@ -2044,6 +2060,61 @@ mod tests {
             assert_eq!(entry.1.indices, other.indices, "chunk {} differs", entry.0);
             assert_eq!(entry.1.lods, other.lods, "chunk {} lods differ", entry.0);
         }
+    }
+
+    /// The refit period is the LOD ladder: a chunk drawn at half detail
+    /// refits half as often. Should these ever drift apart, terrain would
+    /// start lagging at a distance where the renderer is still drawing the
+    /// detail that shows it.
+    #[test]
+    fn the_refit_period_follows_the_detail_level() {
+        let lod_distance = 256.0;
+        // Far larger than any distance below, so nothing wraps around into
+        // being near again.
+        let size = (1.0e6, 1.0e6);
+        let focus = Focus {
+            at: [0.0, 0.0],
+            lod_distance,
+        };
+        let at = |distance: f32| ChunkState {
+            x0: (distance - CHUNK_SIZE as f32 * 0.5) as i32,
+            y0: -(CHUNK_SIZE as i32) / 2,
+            w: CHUNK_SIZE,
+            h: CHUNK_SIZE,
+            alt: (0.0, 0.0),
+            lods: Vec::new(),
+            pending: Vec::new(),
+            banked: 0,
+        };
+
+        for lod in 0..LOD_COUNT as u32 {
+            // Squarely inside the band the renderer draws at this level.
+            let distance = lod_distance * (1 << lod) as f32 * 1.5;
+            assert_eq!(
+                detail_steps(distance, lod_distance),
+                lod,
+                "{distance} should be drawn at LOD {lod}"
+            );
+            assert_eq!(
+                at(distance).refit_period(&focus, size),
+                1 << lod,
+                "a chunk drawn at LOD {lod} should refit every {} updates",
+                1 << lod
+            );
+        }
+
+        // Past the last LOD the ladder keeps going, up to the cap on how
+        // stale any chunk may get.
+        let far = lod_distance * MAX_REFIT_PERIOD as f32 * 4.0;
+        assert!(detail_steps(far, lod_distance) > MAX_REFIT_PERIOD.trailing_zeros());
+        assert_eq!(at(far).refit_period(&focus, size), MAX_REFIT_PERIOD);
+
+        // Zero means full detail, which means refitting everything.
+        let none = Focus {
+            at: [0.0, 0.0],
+            lod_distance: 0.0,
+        };
+        assert_eq!(at(far).refit_period(&none, size), 1);
     }
 
     /// Chunks the same distance away must not all come due on the same
@@ -2475,7 +2546,7 @@ mod perf_probe {
         // of real play.
         let focus = Focus {
             at: [rects[0].x as f32, rects[0].y as f32],
-            full_rate: 256.0,
+            lod_distance: 256.0,
         };
         ticks(
             &mut tin,
