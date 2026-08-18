@@ -32,8 +32,7 @@ pub struct LevelView {
     last_mouse_pos: glam::Vec2,
     alt_button_pressed: bool,
     shift_button_pressed: bool,
-    /// Whether the tweaks panel is showing. Collapsed it is one button, so
-    /// a framed shot is not half controls.
+    /// Whether the tweaks panel is showing. See `boilerplate::tweaks`.
     ui_expanded: bool,
     mouse_button_pressed: bool,
 }
@@ -479,18 +478,7 @@ impl Application for LevelView {
         if !self.ui.enabled {
             return;
         }
-        // Collapsed, the panel is a single button, so a view can be framed
-        // and captured without the controls covering the thing being
-        // looked at. The state lives on the app rather than in egui's
-        // memory so it survives a UI rebuild.
-        if !self.ui_expanded {
-            egui::Area::new("Tweaks toggle".into())
-                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
-                .show(context, |ui| {
-                    if ui.button("<").on_hover_text("Show controls").clicked() {
-                        self.ui_expanded = true;
-                    }
-                });
+        if !crate::boilerplate::tweaks::expanded(context, &mut self.ui_expanded) {
             return;
         }
 
@@ -511,9 +499,7 @@ impl Application for LevelView {
         #[allow(deprecated)]
         egui::SidePanel::right("Tweaks").show(context, |ui| {
             ui.horizontal(|ui| {
-                if ui.button(">").on_hover_text("Hide controls").clicked() {
-                    self.ui_expanded = false;
-                }
+                crate::boilerplate::tweaks::collapse_button(ui, &mut self.ui_expanded);
                 ui.label("Tweaks");
             });
             ui.group(|ui| {
