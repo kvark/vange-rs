@@ -2,13 +2,10 @@
 
 Draft, figures and the exact commands that produce them.
 
-`draft.md` is the paper. JCGT review is single-blind **PDF**, in any
-reasonable article format ([write.html](https://jcgt.org/write.html)).
-Their LaTeX/BibTeX template is required only after acceptance, as a
-condition of publication. The submission artifact is the review PDF from
-`tools/build-paper-package.py` (pandoc + weasyprint). Nothing here is a
-substitute for the harness — every number in the draft is reproduced by a
-command recorded next to it, and a number without one is marked `TODO`.
+`paper.tex` is the paper, in the JCGT class. `draft.md` is a frozen
+snapshot and is no longer edited. Compile with `tools/build-paper-tex.py`.
+Nothing here is a substitute for the harness — every number in the paper
+is reproduced by a command recorded next to it.
 
 ## Reproducing every figure
 
@@ -44,10 +41,11 @@ tools/plot-paper.py --results 'remote/results-*.json' \
 # is a JCGT supplement, not a journal-hosted data archive.
 tools/render-paper-video.py
 
-# From a clean checkout, build the review PDF and revision-pinned source
-# archive under work/. That PDF is the JCGT submission; the journal's
-# LaTeX template is a publication step after acceptance.
-nix-shell -p pandoc python3Packages.weasyprint --run tools/build-paper-package.py
+# Compile the JCGT LaTeX source. Figure PDFs live next to the SVGs;
+# regenerate an SVG-derived PDF after editing a plot with:
+#   PATH=work/paper-venv/bin:$PATH weasyprint paper/figures/NAME.svg \
+#        /tmp/n.pdf  # then re-export at native size if the page is A4
+tools/build-paper-tex.py
 ```
 
 The comparison tools require Python with NumPy and Pillow. Video generation
@@ -62,22 +60,21 @@ it *after* the JCGT upload so the journal sees the manuscript first.
 - Category: `cs.GR`. This is an original systems comparison, not an
   arXiv "review/position" paper, so the 2025 CS survey-paper rule does
   not apply.
-- Artifact: the same review PDF, marked submitted to JCGT. arXiv
-  rejects ancillary files on a bare PDF upload, so the package is a
-  thin `graphicx` wrapper around that PDF plus
-  `anc/terrain-methods.mp4`. Do not upload Fostral.
-- Comments: `22 pages. Submitted to the Journal of Computer Graphics
+- Artifact: the JCGT LaTeX tree (`paper.tex`, `references.bib`,
+  `paper.bbl`, `jcgt.cls`, figure PDFs) plus `anc/terrain-methods.mp4`.
+  arXiv compiles the PDF. Do not upload Fostral.
+- Comments: `30 pages. Submitted to the Journal of Computer Graphics
   Techniques. Supplemental video as ancillary.`
 - Abstract: paste `paper/abstract.txt` (ASCII, 1536 characters). Metadata
   checklist is `paper/arxiv-metadata.txt`.
 - License: arXiv's perpetual non-exclusive distribution license. That
   does not collide with JCGT's later CC BY-ND journal version.
-- After acceptance: replace the PDF with the JCGT-template version and
-  add the journal reference / DOI.
+- After acceptance: fill in `\accepted{...}` and add the journal
+  reference / DOI.
 
 ```bash
-PATH=work/paper-venv/bin:$PATH python3 tools/build-paper-package.py
-PATH=work/paper-venv/bin:$PATH python3 tools/pack-arxiv.py
+tools/build-paper-tex.py
+python3 tools/pack-arxiv.py
 # Upload work/arxiv/arxiv-source.zip at https://arxiv.org/user
 ```
 

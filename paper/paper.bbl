@@ -1,0 +1,147 @@
+\begin{thebibliography}{21}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Alonso and Joan-Arinyo(2008)]{alonso2008grounded}
+{\sc Alonso, J. and Joan-Arinyo, R.}
+\newblock The grounded heightmap tree: A new data structure for terrain
+  representation.
+\newblock In \emph{Proceedings of GRAPP 2008}, pages 80--85, 2008.
+\newblock URL: \url{https://doi.org/10.5220/0001094300800085}.
+
+\bibitem[Benes and Forsbach(2001)]{benes2001layered}
+{\sc Benes, B. and Forsbach, R.}
+\newblock Layered data representation for visual simulation of terrain erosion.
+\newblock In \emph{Proceedings of SCCG 2001}, pages 80--86, 2001.
+\newblock URL: \url{https://doi.org/10.1109/SCCG.2001.945341}.
+
+\bibitem[Cabral et~al.(1994)Cabral, Cam, and Foran]{cabral1994volume}
+{\sc Cabral, B., Cam, N., and Foran, J.}
+\newblock Accelerated volume rendering and tomographic reconstruction using
+  texture mapping hardware.
+\newblock In \emph{Proceedings of the 1994 Symposium on Volume Visualization},
+  pages 91--98, 1994.
+\newblock URL: \url{https://doi.org/10.1145/197938.197972}.
+
+\bibitem[Duchaineau et~al.(1997)Duchaineau, Wolinsky, Sigeti, Miller, Aldrich,
+  and Mineev-Weinstein]{duchaineau1997roam}
+{\sc Duchaineau, M., Wolinsky, M., Sigeti, D.~E., Miller, M.~C., Aldrich, C.,
+  and Mineev-Weinstein, M.~B.}
+\newblock {ROAM}ing terrain: Real-time optimally adapting meshes.
+\newblock In \emph{Proceedings of IEEE Visualization 1997}, pages 81--88, 1997.
+\newblock URL: \url{https://doi.org/10.1109/VISUAL.1997.663860}.
+
+\bibitem[Fowler and Little(1979)]{fowler1979tin}
+{\sc Fowler, R.~J. and Little, J.~J.}
+\newblock Automatic extraction of irregular network digital terrain models.
+\newblock In \emph{Proceedings of SIGGRAPH 1979}, volume~13, pages 199--207,
+  1979.
+\newblock URL: \url{https://doi.org/10.1145/965103.807444}.
+
+\bibitem[Garland and Heckbert(1995)]{garland1995terrain}
+{\sc Garland, M. and Heckbert, P.~S.}
+\newblock Fast polygonal approximation of terrains and height fields.
+\newblock Technical Report CMU-CS-95-181, Carnegie Mellon University, September
+  1995.
+\newblock URL:
+  \url{https://www.cs.cmu.edu/afs/cs/Web/People/garland/scape/scape.pdf}.
+
+\bibitem[Graciano et~al.(2021)Graciano, Rueda, Pospisil, Bittner, and
+  Benes]{graciano2021quadstack}
+{\sc Graciano, A., Rueda, A.~J., Pospisil, A., Bittner, J., and Benes, B.}
+\newblock Quadstack: An efficient representation and direct rendering of
+  layered datasets.
+\newblock \emph{IEEE Transactions on Visualization and Computer Graphics},
+  27\penalty0 (9):\penalty0 3733--3744, 2021.
+\newblock URL: \url{https://doi.org/10.1109/TVCG.2020.2981565}.
+
+\bibitem[{K-D Lab and KranX}(2016)]{vangerssource}
+{\sc {K-D Lab and KranX}}.
+\newblock Vangers source release, 2016.
+\newblock URL: \url{https://github.com/KranX/Vangers}.
+
+\bibitem[Laine and Karras(2010)]{laine2010svo}
+{\sc Laine, S. and Karras, T.}
+\newblock Efficient sparse voxel octrees.
+\newblock In \emph{Proceedings of the 2010 Symposium on Interactive 3D Graphics
+  and Games}, pages 55--63, 2010.
+\newblock URL: \url{https://doi.org/10.1145/1730804.1730814}.
+
+\bibitem[Losasso and Hoppe(2004)]{losasso2004clipmaps}
+{\sc Losasso, F. and Hoppe, H.}
+\newblock Geometry clipmaps: Terrain rendering using nested regular grids.
+\newblock \emph{ACM Transactions on Graphics}, 23\penalty0 (3):\penalty0
+  769--776, 2004.
+\newblock URL: \url{https://doi.org/10.1145/1015706.1015799}.
+
+\bibitem[Malyshau(2020)]{malyshau2020webgpu}
+{\sc Malyshau, D.}
+\newblock A taste of webgpu in firefox, 2020.
+\newblock URL:
+  \url{https://hacks.mozilla.org/2020/04/experimental-webgpu-in-firefox/}.
+
+\bibitem[Malyshau(2021)]{malyshau2021rust}
+{\sc Malyshau, D.}
+\newblock Pure rust, 2021.
+\newblock URL: \url{https://vange.rs/2021/08/25/pure-rust.html}.
+
+\bibitem[Mantler and Jeschke(2006)]{mantler2006landscape}
+{\sc Mantler, S. and Jeschke, S.}
+\newblock Interactive landscape visualization using gpu ray casting.
+\newblock In \emph{Proceedings of GRAPHITE 2006}, pages 117--126, 2006.
+\newblock URL: \url{https://doi.org/10.1145/1174429.1174448}.
+
+\bibitem[Policarpo et~al.(2005)Policarpo, Oliveira, and
+  Comba]{policarpo2005relief}
+{\sc Policarpo, F., Oliveira, M.~M., and Comba, J. L.~D.}
+\newblock Real-time relief mapping on arbitrary polygonal surfaces.
+\newblock In \emph{Proceedings of the 2005 Symposium on Interactive 3D Graphics
+  and Games}, pages 155--162, 2005.
+\newblock URL: \url{https://doi.org/10.1145/1053427.1053453}.
+
+\bibitem[Shade et~al.(1998)Shade, Gortler, wei He, and Szeliski]{shade1998ldi}
+{\sc Shade, J., Gortler, S., wei He, L., and Szeliski, R.}
+\newblock Layered depth images.
+\newblock In \emph{Proceedings of SIGGRAPH 1998}, pages 231--242, 1998.
+\newblock URL: \url{https://doi.org/10.1145/280814.280882}.
+
+\bibitem[Tevs et~al.(2008)Tevs, Ihrke, and Seidel]{tevs2008maximum}
+{\sc Tevs, A., Ihrke, I., and Seidel, H.-P.}
+\newblock Maximum mipmaps for fast, accurate, and scalable dynamic height field
+  rendering.
+\newblock In \emph{Proceedings of the 2008 Symposium on Interactive 3D Graphics
+  and Games}, pages 183--190, 2008.
+\newblock URL: \url{https://doi.org/10.1145/1342250.1342279}.
+
+\bibitem[{W3C GPU for the Web Working Group}(2026{\natexlab{a}})]{w3cwebgpu}
+{\sc {W3C GPU for the Web Working Group}}.
+\newblock {WebGPU} specification, 2026{\natexlab{a}}.
+\newblock URL: \url{https://www.w3.org/TR/webgpu/}.
+
+\bibitem[{W3C GPU for the Web Working Group}(2026{\natexlab{b}})]{w3cwgsl}
+{\sc {W3C GPU for the Web Working Group}}.
+\newblock {WebGPU Shading Language}, 2026{\natexlab{b}}.
+\newblock URL: \url{https://www.w3.org/TR/WGSL/}.
+
+\bibitem[Westover(1990)]{westover1990footprint}
+{\sc Westover, L.}
+\newblock Footprint evaluation for volume rendering.
+\newblock In \emph{Proceedings of SIGGRAPH 1990}, pages 367--376, 1990.
+\newblock URL: \url{https://doi.org/10.1145/97879.97919}.
+
+\bibitem[{wgpu contributors}(2026)]{wgpu}
+{\sc {wgpu contributors}}.
+\newblock wgpu: Safe and portable graphics for rust, 2026.
+\newblock URL: \url{https://github.com/gfx-rs/wgpu}.
+
+\bibitem[Zwicker et~al.(2001)Zwicker, Pfister, van Baar, and
+  Gross]{zwicker2001splatting}
+{\sc Zwicker, M., Pfister, H., van Baar, J., and Gross, M.}
+\newblock Surface splatting.
+\newblock In \emph{Proceedings of SIGGRAPH 2001}, pages 371--378, 2001.
+\newblock URL: \url{https://doi.org/10.1145/383259.383300}.
+
+\end{thebibliography}

@@ -18,3 +18,11 @@ __pycache__/
 /*.zip
 /remote/
 /paper/figures/teaser-*.png
+/paper/paper.aux
+/paper/paper.log
+/paper/paper.out
+/paper/paper.blg
+/paper/paper.pdf
+/paper/paper.brf
+/paper/missfont.log
+/*.deb

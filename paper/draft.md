@@ -1,3 +1,6 @@
+> **Frozen snapshot.** The source of the paper is now `paper/paper.tex`
+> (JCGT LaTeX class). Do not edit this Markdown file.
+
 # Six Ways to Draw Vangers with WebGPU: Real-Time Rendering of Editable Multi-Layer Height Fields
 
 **Dzmitry Malyshau**<br>

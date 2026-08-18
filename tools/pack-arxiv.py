@@ -1,47 +1,29 @@
 #!/usr/bin/env python3
-"""Assemble the arXiv source zip: pdfpages wrapper + paper PDF + video."""
+"""Assemble the arXiv source zip from the JCGT LaTeX tree plus the video."""
 
 import argparse
 import pathlib
 import shutil
-import subprocess
 import zipfile
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+PAPER = ROOT / "paper"
 
-
-def pdf_pages(path):
-    info = subprocess.check_output(["pdfinfo", str(path)], text=True)
-    for line in info.splitlines():
-        if line.startswith("Pages:"):
-            return int(line.split(":", 1)[1])
-    raise SystemExit(f"could not read page count from {path}")
-
-
-def wrapper_tex(pages):
-    ships = "\n".join(
-        "\\shipout\\hbox{%\n"
-        f"  \\includegraphics[width=8.5in,height=11in,page={n}]{{paper-body.pdf}}"
-        "}%"
-        for n in range(1, pages + 1)
-    )
-    return (
-        "\\pdfoutput=1\n"
-        "\\documentclass{minimal}\n"
-        "\\usepackage{graphicx}\n"
-        "\\pdfpagewidth=8.5in\n"
-        "\\pdfpageheight=11in\n"
-        "\\begin{document}\n"
-        f"{ships}\n"
-        "\\end{document}\n"
-    )
+INCLUDE = [
+    "paper.tex",
+    "references.bib",
+    "paper.bbl",
+    "jcgt.cls",
+    "jcgt.bst",
+    "ORCIDlogo.pdf",
+    "CC-BY-ND.png",
+]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="work/arxiv")
-    parser.add_argument("--pdf", default="work/submission/vange-rs-paper.pdf")
     parser.add_argument("--video", default="work/paper-video/terrain-methods.mp4")
     args = parser.parse_args()
 
@@ -50,19 +32,29 @@ def main():
     if source.exists():
         shutil.rmtree(source)
     (source / "anc").mkdir(parents=True)
+    (source / "figures").mkdir()
 
-    pdf = ROOT / args.pdf
+    for name in INCLUDE:
+        path = PAPER / name
+        if not path.is_file():
+            raise SystemExit(f"missing {path}; compile paper/paper.tex first")
+        shutil.copy2(path, source / name)
+
+    for pdf in sorted((PAPER / "figures").glob("*.pdf")):
+        shutil.copy2(pdf, source / "figures" / pdf.name)
+    original = PAPER / "figures" / "original.jpg"
+    if not original.is_file():
+        raise SystemExit("missing paper/figures/original.jpg")
+    shutil.copy2(original, source / "figures" / "original.jpg")
+
     video = ROOT / args.video
-    if not pdf.is_file():
-        raise SystemExit(f"missing paper PDF: {pdf}")
     if not video.is_file():
         raise SystemExit(f"missing supplemental video: {video}")
-
-    shutil.copy2(pdf, source / "paper-body.pdf")
     shutil.copy2(video, source / "anc" / "terrain-methods.mp4")
-    (source / "ms.tex").write_text(wrapper_tex(pdf_pages(pdf)))
-    metadata = (ROOT / "paper" / "arxiv-metadata.txt").read_text()
-    (destination / "metadata.txt").write_text(metadata)
+
+    metadata = PAPER / "arxiv-metadata.txt"
+    if metadata.is_file():
+        shutil.copy2(metadata, destination / "metadata.txt")
 
     archive = destination / "arxiv-source.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -70,19 +62,11 @@ def main():
             if path.is_file():
                 zf.write(path, path.relative_to(source).as_posix())
 
-    check = destination / "compile-check"
-    if check.exists():
-        shutil.rmtree(check)
-    shutil.copytree(source, check)
-    subprocess.run(
-        ["pdflatex", "-interaction=nonstopmode", "ms.tex"],
-        cwd=check, check=True, stdout=subprocess.DEVNULL,
-    )
-    pages = subprocess.check_output(
-        ["pdfinfo", str(check / "ms.pdf")], text=True)
     print(f"wrote {archive} ({archive.stat().st_size} bytes)")
-    print(f"wrote {destination / 'metadata.txt'}")
-    print(pages.strip())
+    print("contents:")
+    with zipfile.ZipFile(archive) as zf:
+        for info in zf.infolist():
+            print(f"  {info.file_size:10d}  {info.filename}")
 
 
 if __name__ == "__main__":
