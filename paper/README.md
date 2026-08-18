@@ -2,11 +2,13 @@
 
 Draft, figures and the exact commands that produce them.
 
-`draft.md` is the paper. It is written in Markdown to keep revision cheap;
-JCGT wants LaTeX, and the conversion is mechanical once the content and
-the numbers settle. Nothing here is a substitute for the harness — every
-number in the draft is reproduced by a command recorded next to it, and a
-number without one is marked `TODO`.
+`draft.md` is the paper. JCGT review is single-blind **PDF**, in any
+reasonable article format ([write.html](https://jcgt.org/write.html)).
+Their LaTeX/BibTeX template is required only after acceptance, as a
+condition of publication. The submission artifact is the review PDF from
+`tools/build-paper-package.py` (pandoc + weasyprint). Nothing here is a
+substitute for the harness — every number in the draft is reproduced by a
+command recorded next to it, and a number without one is marked `TODO`.
 
 ## Reproducing every figure
 
@@ -43,7 +45,8 @@ tools/plot-paper.py --results 'remote/results-*.json' \
 tools/render-paper-video.py
 
 # From a clean checkout, build the review PDF and revision-pinned source
-# archive under work/. JCGT LaTeX conversion follows acceptance.
+# archive under work/. That PDF is the JCGT submission; the journal's
+# LaTeX template is a publication step after acceptance.
 nix-shell -p pandoc python3Packages.weasyprint --run tools/build-paper-package.py
 ```
 
@@ -184,8 +187,8 @@ Tracked here rather than in the draft so the gaps stay visible:
       scopes browser evidence to execution/visual parity, not timing.
 - [x] Submission PDF and archive tooling. `tools/build-paper-package.py` builds
       a styled review PDF and verifies a revision-pinned `git archive` contains
-      the draft, BibTeX, figures, and harness. JCGT template conversion follows
-      acceptance.
+      the draft, BibTeX, figures, and harness. That PDF is the submission
+      artifact. JCGT's LaTeX template is required only after acceptance.
 - [x] Bibliography pass. `references.bib` contains complete publication data,
       stable URLs, and DOIs for the references discussed in the draft.
       Original-game screenshot provenance remains part of the data-license gate.
