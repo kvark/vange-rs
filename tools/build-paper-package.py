@@ -58,7 +58,7 @@ def main():
     with tarfile.open(archive, "r:gz") as source:
         names = source.getnames()
     expected = [
-        f"vange-rs-paper-{revision}/paper/draft.md",
+        f"vange-rs-paper-{revision}/paper/paper.tex",
         f"vange-rs-paper-{revision}/paper/references.bib",
         f"vange-rs-paper-{revision}/tools/compare-terrain.py",
     ]
