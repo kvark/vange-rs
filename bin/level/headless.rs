@@ -527,9 +527,9 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         cam.front_face(),
     );
     render.resize(extent, &gfx.device);
-    // A snapshot renders a handful of frames, so an edit that a distant
-    // chunk is entitled to sit on for a few ticks would simply never appear.
-    render.defer_distant_refits = false;
+    // A snapshot renders a handful of frames, so an edit that a chunk is
+    // entitled to sit on would simply never appear.
+    render.terrain.set_deferred_refits(false);
     render.terrain.set_mesh_wireframe(opts.mesh_wireframe);
     render.terrain.set_mesh_culling(!opts.no_cull);
     if let Some(n) = opts.slice_layers {
