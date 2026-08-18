@@ -11,7 +11,7 @@ ORCID:
   https://arxiv.org/user/confirm_orcid_id
 
 Comments:
-  30 pages. Submitted to the Journal of Computer Graphics Techniques. Supplemental video as ancillary.
+  29 pages. Submitted to the Journal of Computer Graphics Techniques. Supplemental video as ancillary.
 
 Report no:
   (leave blank)
