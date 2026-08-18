@@ -977,6 +977,17 @@ forces a reload. Conversely, a method can win the timing table and still
 lose the application if its quality budget is view-dependent or its
 representation cannot be reused by the rest of the engine.
 
+## Acknowledgements
+
+I thank Association K-D Lab for *Vangers* and for publishing the Fostral
+world data that this comparison uses, and the players and maintainers who
+have kept the game and its source alive for nearly three decades.
+
+Large language models — OpenAI Codex, Anthropic Claude, and xAI Grok —
+assisted with drafting, editing, literature search, and work on the
+evaluation harness. I reviewed every claim, number, and citation; the
+remaining errors are mine.
+
 ## Figure provenance
 
 The paper now uses figures rather than treating them as a future pass. The six
