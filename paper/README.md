@@ -2,8 +2,8 @@
 
 Draft, figures and the exact commands that produce them.
 
-`paper.tex` is the paper, in the JCGT class. `draft.md` is a frozen
-snapshot and is no longer edited. Compile with `tools/build-paper-tex.py`.
+`paper.tex` is the paper, in the JCGT class. Compile with
+`tools/build-paper-tex.py` (writes `work/submission/vange-rs-paper.pdf`).
 Nothing here is a substitute for the harness — every number in the paper
 is reproduced by a command recorded next to it.
 
