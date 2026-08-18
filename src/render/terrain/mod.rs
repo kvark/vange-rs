@@ -406,6 +406,12 @@ enum Kind {
         /// The frame time is the same either way here (12.9 vs 13.7 ms),
         /// so the low value was buying nothing.
         lod_distance: f32,
+        /// Distance within which terrain edits are refitted on the tick
+        /// they land. Past it a chunk's geometry may lag by a tick or two,
+        /// doubling with every doubling of the distance; nothing else does,
+        /// since collision reads the level rather than the mesh. Zero
+        /// refits everything immediately. See `level::tin::Focus`.
+        refit_distance: f32,
         /// Pin every chunk to one detail level, ignoring distance. For
         /// inspecting what a level actually looks like.
         lod_force: Option<usize>,
@@ -1706,6 +1712,7 @@ impl Context {
                     wireframe: false,
                     draws: Vec::new(),
                     lod_distance: 256.0,
+                    refit_distance: 256.0,
                     lod_force: None,
                     cull: true,
                 }
@@ -1901,10 +1908,14 @@ impl Context {
         }
     }
 
+    /// `focus` is where the viewer is standing, in level texels. Chunks far
+    /// from it refit less often; `None` refits everything the edits reach.
+    /// See `tin::Tin::update`.
     pub fn update_dirty(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         level: &level::Level,
+        focus: Option<[f32; 2]>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) {
@@ -1958,6 +1969,7 @@ impl Context {
         if let Kind::Mesh {
             ref config,
             ref mut geo,
+            refit_distance,
             ..
         } = self.kind
         {
@@ -1984,7 +1996,11 @@ impl Context {
                         .collect::<Vec<_>>();
                     // Each refitted chunk just gets fresh buffers -- they
                     // are small enough that rebuilding beats patching.
-                    for (index, buffers) in geo.tin.update(level, &rects) {
+                    let focus = focus.map(|at| level::tin::Focus {
+                        at,
+                        full_rate: refit_distance,
+                    });
+                    for (index, buffers) in geo.tin.update(level, &rects, focus) {
                         geo.chunks[index] = ChunkBufs::new(&buffers, device);
                     }
                 }
@@ -2887,6 +2903,7 @@ impl Context {
                 geo: Some(ref geo),
                 ref mut wireframe,
                 ref mut lod_distance,
+                ref mut refit_distance,
                 ref mut lod_force,
                 ref mut cull,
                 ref draws,
@@ -2917,6 +2934,15 @@ impl Context {
                     egui::Slider::new(lod_distance, 16.0..=512.0)
                         .logarithmic(true)
                         .text("LOD distance"),
+                );
+                ui.add(
+                    egui::Slider::new(refit_distance, 0.0..=1024.0)
+                        .text("Refit distance (0 = never defer)"),
+                )
+                .on_hover_text(
+                    "Terrain further than this refits less often, doubling \
+                     the wait with every doubling of the distance. Only the \
+                     geometry waits - collision reads the level.",
                 );
                 let mut forced = lod_force.is_some();
                 ui.checkbox(&mut forced, "Force one LOD");

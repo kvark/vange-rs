@@ -415,6 +415,11 @@ pub struct Render {
     pub shadow: Option<shadow::Shadow>,
     pub light_config: settings::Light,
     pub fog_config: settings::Fog,
+    /// Whether terrain far from the camera may let its geometry lag the
+    /// level by a few ticks, to keep an interactive frame cheap. Offline
+    /// renders want every edit on the frame it lands, so they turn it off.
+    /// See `level::tin::Tin::update`.
+    pub defer_distant_refits: bool,
     screen_size: wgpu::Extent3d,
 }
 
@@ -486,6 +491,7 @@ impl Render {
             shadow,
             light_config: settings.light,
             fog_config: settings.fog,
+            defer_distant_refits: true,
             screen_size: gfx.screen_size,
         }
     }
@@ -526,7 +532,9 @@ impl Render {
     ) {
         profiling::scope!("draw_world");
         batcher.prepare(device);
-        self.terrain.update_dirty(encoder, level, device, queue);
+        let focus = self.defer_distant_refits.then_some([cam.loc.x, cam.loc.y]);
+        self.terrain
+            .update_dirty(encoder, level, focus, device, queue);
 
         //TODO: common routine for draw passes
         //TODO: use `write_buffer`

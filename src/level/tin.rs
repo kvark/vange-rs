@@ -1130,6 +1130,69 @@ struct ChunkState {
     /// Altitude span over the chunk, for the culling bounding box.
     alt: (f32, f32),
     lods: Vec<LodState>,
+    /// Edits banked since this chunk was last refitted. Empty for a chunk
+    /// that is up to date with the level.
+    pending: Vec<Rect>,
+    /// Updates this chunk has banked without refitting, against the period
+    /// its distance from the viewer earns it.
+    banked: u32,
+}
+
+/// Where the viewer is standing, and how far away geometry may start
+/// lagging behind the level.
+#[derive(Clone, Copy, Debug)]
+pub struct Focus {
+    /// The viewer's position, in level texels.
+    pub at: [f32; 2],
+    /// Distance in texels within which a chunk refits on every update.
+    /// Beyond it the period doubles with every doubling of the distance.
+    /// Zero or less refits everything every update.
+    ///
+    /// The renderer's LOD distance is the natural value: past that the
+    /// terrain is already drawn with fewer triangles than it was fitted
+    /// with, so it is past caring about a few ticks of lag as well.
+    pub full_rate: f32,
+}
+
+/// Longest a distant chunk's geometry may lag the level under it. Must be
+/// a power of two.
+const MAX_REFIT_PERIOD: u32 = 8;
+
+impl ChunkState {
+    /// How many updates this chunk may bank before it has to refit.
+    ///
+    /// Only the *geometry* waits. Collision and the moving land itself read
+    /// the level, not the mesh, so nothing that can be driven into or stood
+    /// on behaves differently - a deferred chunk is a picture a few ticks
+    /// old, at a distance where the renderer is already dropping detail for
+    /// the same reason.
+    ///
+    /// The level wraps, so the distance does too: the far edge of the map
+    /// is next door.
+    fn refit_period(&self, focus: &Focus, size: (f32, f32)) -> u32 {
+        if focus.full_rate <= 0.0 {
+            return 1;
+        }
+        let axis = |a: f32, b: f32, wrap: f32| {
+            let d = (a - b).abs();
+            d.min(wrap - d)
+        };
+        let dx = axis(self.x0 as f32 + self.w as f32 * 0.5, focus.at[0], size.0);
+        let dy = axis(self.y0 as f32 + self.h as f32 * 0.5, focus.at[1], size.1);
+        let steps = (dx.hypot(dy) / focus.full_rate).max(1.0).log2().floor();
+        (1u32 << (steps as u32).min(MAX_REFIT_PERIOD.trailing_zeros())).min(MAX_REFIT_PERIOD)
+    }
+
+    /// Which tick of its period a chunk refits on, counted from the one it
+    /// starts banking edits.
+    ///
+    /// Without this, chunks the same distance away that begin animating on
+    /// the same tick also come due on the same tick, and the work that was
+    /// spread out arrives all at once every `period` frames - the periodic
+    /// hitch the deferral exists to remove.
+    fn refit_slot(index: usize, period: u32) -> u32 {
+        index as u32 % period
+    }
 }
 
 #[cfg_attr(test, derive(Clone))]
@@ -1168,6 +1231,9 @@ impl ChunkState {
             && y <= self.y0 + self.h as i32
     }
 
+    /// Only the perf probe asks this now: `update` needs to know *which*
+    /// rectangles reach a chunk, not merely whether any does.
+    #[cfg(test)]
     fn overlaps_any(&self, rects: &[Rect]) -> bool {
         rects
             .iter()
@@ -1186,7 +1252,7 @@ struct GridRect {
 }
 
 /// An edited region of the level, in texels.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -1290,6 +1356,8 @@ impl Tin {
                     h,
                     alt,
                     lods,
+                    pending: Vec::new(),
+                    banked: 0,
                 },
                 meshes,
             )
@@ -1351,24 +1419,65 @@ impl Tin {
     /// the LODs within a chunk, so the whole thing is one flat set of tasks:
     /// a wide edit parallelises across chunks, and a single-chunk edit still
     /// gets its LODs done at once.
-    pub fn update(&mut self, level: &Level, rects: &[Rect]) -> Update {
+    /// Refit the chunks the given edits reach.
+    ///
+    /// Chunks far from `focus` refit less often, banking their edits until
+    /// they come due. `None` refits every reached chunk on every call.
+    pub fn update(&mut self, level: &Level, rects: &[Rect], focus: Option<Focus>) -> Update {
         profiling::scope!("Update Terrain TIN");
         use rayon::prelude::*;
 
-        if rects.is_empty() {
+        // Banked work still has to come due, so an idle call is only idle
+        // when nothing is waiting - otherwise an animation that stops would
+        // leave the last of its edits banked forever.
+        if rects.is_empty() && self.chunks.iter().all(|st| st.pending.is_empty()) {
             return Vec::new();
         }
+
+        // Bank this call's edits and decide who is due, sequentially: it is
+        // a few hundred chunks of arithmetic against a refit apiece, and the
+        // decision has to be made before the parallel pass can filter on it.
+        let size = (level.size.0 as f32, level.size.1 as f32);
+        for (index, state) in self.chunks.iter_mut().enumerate() {
+            let was_idle = state.pending.is_empty();
+            for rect in rects.iter() {
+                // A moving land re-emits the same region every quant, so the
+                // banked list stays short without any merging.
+                if state.overlaps(rect.x, rect.y, rect.w as i32, rect.h as i32)
+                    && !state.pending.contains(rect)
+                {
+                    state.pending.push(*rect);
+                }
+            }
+            if state.pending.is_empty() {
+                state.banked = 0;
+                continue;
+            }
+            let period = match focus {
+                Some(ref focus) => state.refit_period(focus, size),
+                None => 1,
+            };
+            if was_idle {
+                state.banked = ChunkState::refit_slot(index, period);
+            }
+            state.banked += 1;
+            if state.banked >= period {
+                state.banked = 0;
+            }
+        }
+
         let max_error = self.max_error;
         self.chunks
             .par_iter_mut()
             .enumerate()
-            .filter(|entry| entry.1.overlaps_any(rects))
+            .filter(|entry| !entry.1.pending.is_empty() && entry.1.banked == 0)
             .map(|(index, state)| {
                 let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
                 state.alt = grid.alt;
                 // The edits that reach this chunk, in its own grid
                 // coordinates and clipped to it.
-                let local = rects
+                let local = state
+                    .pending
                     .iter()
                     .filter_map(|r| {
                         let g = GridRect {
@@ -1380,6 +1489,7 @@ impl Tin {
                         (g.x0 <= g.x1 && g.y0 <= g.y1).then_some(g)
                     })
                     .collect::<Vec<_>>();
+                state.pending.clear();
                 let per_lod = state
                     .lods
                     .par_iter_mut()
@@ -1466,8 +1576,8 @@ mod tests {
         let mut narrow = tin.clone();
         let mut full = tin;
         let edit = rect(cx - r, cy - r, 2 * r, 2 * r);
-        let a = narrow.update(&level, &[edit]);
-        let b = full.update(&level, &[rect(0, 0, level.size.0, level.size.1)]);
+        let a = narrow.update(&level, &[edit], None);
+        let b = full.update(&level, &[rect(0, 0, level.size.0, level.size.1)], None);
 
         // The full-level rectangle naturally refits every chunk, so compare
         // the ones the narrow edit did touch.
@@ -1848,7 +1958,7 @@ mod tests {
         let before = vertex_sets(&tin);
 
         let (x, y, w, h) = dig(&mut level, 70, 70, 12);
-        tin.update(&level, &[rect(x, y, w, h)]);
+        tin.update(&level, &[rect(x, y, w, h)], None);
         let after = vertex_sets(&tin);
 
         for (i, (old, new)) in before.iter().zip(&after).enumerate() {
@@ -1866,6 +1976,94 @@ mod tests {
         );
     }
 
+    /// Edits far from the viewer wait their turn, they do not all wait for
+    /// the same tick, and when a chunk's turn comes it lands on exactly the
+    /// geometry an immediate refit would have produced - nothing banked is
+    /// lost, and the surface is re-read from the level as it stands then.
+    #[test]
+    fn distant_edits_wait_their_turn_and_lose_nothing() {
+        // Long and thin, so the chunks span several distance bands without
+        // costing a square level's worth of chunks to build. The level
+        // wraps, so distance is measured the short way round: the far end
+        // of a 2048-wide level is next door, and the middle is what is
+        // actually far away.
+        let mut level = make_level_wh(16 * CHUNK_SIZE as i32, 2 * CHUNK_SIZE as i32);
+        let (tin, _) = Tin::build(&level, &Config::default());
+        let focus = Focus {
+            at: [64.0, 64.0],
+            full_rate: 256.0,
+        };
+        let edits = (0..8)
+            .map(|i| {
+                let (x, y, w, h) = dig(&mut level, 512 + i * 128, 64, 24);
+                rect(x, y, w, h)
+            })
+            .collect::<Vec<_>>();
+
+        let size = (level.size.0 as f32, level.size.1 as f32);
+        let reached = || tin.chunks.iter().filter(|st| st.overlaps_any(&edits));
+        let count = reached().count();
+        let period = reached()
+            .map(|st| st.refit_period(&focus, size))
+            .max()
+            .expect("the edits reached no chunk");
+        assert!(period > 1, "the edits were not far enough to be deferred");
+
+        let mut deferred = tin.clone();
+        let mut immediate = tin;
+        let now = immediate.update(&level, &edits, None);
+        assert_eq!(now.len(), count);
+
+        // Spread out: the first tick refits only some of them, and by the
+        // end of one period every one has gone exactly once.
+        let first = deferred.update(&level, &edits, Some(focus));
+        assert!(
+            first.len() < count,
+            "all {count} reached chunks refitted at once, so nothing was deferred"
+        );
+        let mut refitted = first;
+        for _ in 1..period {
+            refitted.extend(deferred.update(&level, &[], Some(focus)));
+        }
+        assert_eq!(
+            refitted.len(),
+            count,
+            "chunks refitted more or less than once each over a period"
+        );
+        assert!(
+            deferred.update(&level, &[], Some(focus)).is_empty(),
+            "a chunk kept refitting after its banked edits were spent"
+        );
+
+        for entry in refitted.iter() {
+            let other = &now
+                .iter()
+                .find(|e| e.0 == entry.0)
+                .unwrap_or_else(|| panic!("chunk {} missing from the immediate refit", entry.0))
+                .1;
+            assert_eq!(entry.1.indices, other.indices, "chunk {} differs", entry.0);
+            assert_eq!(entry.1.lods, other.lods, "chunk {} lods differ", entry.0);
+        }
+    }
+
+    /// Chunks the same distance away must not all come due on the same
+    /// tick, or the work the deferral spread out arrives as a periodic
+    /// hitch instead.
+    #[test]
+    fn refit_slots_spread_across_the_period() {
+        for period in [2u32, 4, 8] {
+            let slots = (0..4 * period as usize)
+                .map(|i| ChunkState::refit_slot(i, period))
+                .collect::<Vec<_>>();
+            for slot in 0..period {
+                assert!(
+                    slots.contains(&slot),
+                    "period {period} never lands a chunk on slot {slot}"
+                );
+            }
+        }
+    }
+
     /// A chunk that has stopped gaining vertices stops measuring, so a new
     /// deformation is allowed to lag - but only up to `MAX_SETTLE` refits,
     /// after which the fit has to be back inside tolerance.
@@ -1880,7 +2078,7 @@ mod tests {
         // Refit with nothing changing until every chunk has backed off as
         // far as it can.
         for _ in 0..2 * MAX_SETTLE {
-            tin.update(&level, &[all]);
+            tin.update(&level, &[all], None);
         }
 
         let (x, y, w, h) = dig(&mut level, 70, 70, 12);
@@ -1890,14 +2088,14 @@ mod tests {
         // back-off - so the fit is still wrong here. If this ever stops
         // holding the test below has stopped proving anything.
         let edit = rect(x, y, w, h);
-        tin.update(&level, &[edit]);
+        tin.update(&level, &[edit], None);
         assert!(
             worst_error(&tin, &level) > tolerance,
             "the chunk never settled, so the catch-up below is vacuous"
         );
 
         for _ in 0..MAX_SETTLE {
-            tin.update(&level, &[edit]);
+            tin.update(&level, &[edit], None);
         }
         let worst = worst_error(&tin, &level);
         assert!(
@@ -1918,7 +2116,7 @@ mod tests {
         // Without the update the mesh is now badly wrong ...
         assert!(worst_error(&tin, &level) > tolerance * 4.0);
         // ... and refitting brings it back inside tolerance.
-        tin.update(&level, &[rect(x, y, w, h)]);
+        tin.update(&level, &[rect(x, y, w, h)], None);
         let worst = worst_error(&tin, &level);
         assert!(worst <= tolerance, "residual error {} after update", worst);
     }
@@ -1935,7 +2133,7 @@ mod tests {
         for h in level.height.iter_mut() {
             *h = h.saturating_sub(3);
         }
-        let changed = tin.update(&level, &[rect(0, 0, level.size.0, level.size.1)]);
+        let changed = tin.update(&level, &[rect(0, 0, level.size.0, level.size.1)], None);
         assert!(!changed.is_empty());
         assert_eq!(tin.stats.triangles, before);
     }
@@ -1950,7 +2148,7 @@ mod tests {
 
         let seam = CHUNK_SIZE as i32;
         let (x, y, w, h) = dig(&mut level, seam, 60, 14);
-        tin.update(&level, &[rect(x, y, w, h)]);
+        tin.update(&level, &[rect(x, y, w, h)], None);
 
         // Compare only chunks that actually abut: same row, and the left
         // one's right border is the right one's left border. The seam is
@@ -1996,7 +2194,7 @@ mod tests {
                 level.height[i] = if (x + y) % 2 == 0 { 40 } else { 200 };
             }
         }
-        let changed = tin.update(&level, &[rect(20, 20, 60, 60)]);
+        let changed = tin.update(&level, &[rect(20, 20, 60, 60)], None);
         assert!(!changed.is_empty(), "the edit should have refitted a chunk");
 
         // Refitted buffers have to be self-consistent: every index in
@@ -2011,7 +2209,7 @@ mod tests {
 
         // And a further edit must still leave the surface fitted.
         let (x, y, w, h) = dig(&mut level, 85, 85, 6);
-        tin.update(&level, &[rect(x, y, w, h)]);
+        tin.update(&level, &[rect(x, y, w, h)], None);
         let worst = worst_error(&tin, &level);
         assert!(
             worst <= tin.max_error,
@@ -2029,7 +2227,7 @@ mod tests {
 
         // Well inside the first chunk, far from any border.
         let (x, y, w, h) = dig(&mut level, 40, 40, 10);
-        let touched = tin.update(&level, &[rect(x, y, w, h)]).len();
+        let touched = tin.update(&level, &[rect(x, y, w, h)], None).len();
         assert!(
             touched < tin.chunks.len(),
             "a local edit touched every one of {} chunks",
@@ -2255,11 +2453,35 @@ mod perf_probe {
         let hit = tin.chunks.iter().filter(|c| c.overlaps_any(&rects)).count();
         println!("{hit} chunks overlap");
 
-        let t = Instant::now();
-        for _ in 0..10 {
-            let _ = tin.update(&level, &rects);
-        }
-        println!("update x10: {:?}", t.elapsed());
+        // Per tick rather than in total: the complaint about a refit is
+        // never the average, it is the tick that misses its frame.
+        let ticks = |tin: &mut Tin, focus: Option<Focus>, label: &str| {
+            let mut each = Vec::new();
+            for _ in 0..40 {
+                let t = Instant::now();
+                let _ = tin.update(&level, &rects, focus);
+                each.push(t.elapsed().as_secs_f64() * 1e3);
+            }
+            let total = each.iter().sum::<f64>();
+            let worst = each.iter().cloned().fold(0.0f64, f64::max);
+            println!(
+                "{label}: {:.2}ms a tick, worst {worst:.2}ms",
+                total / each.len() as f64
+            );
+        };
+        ticks(&mut tin, None, "every reached chunk, every tick");
+        // A viewer standing at the first edit: one animation underfoot and
+        // the rest scattered across the map, which is the shape of a frame
+        // of real play.
+        let focus = Focus {
+            at: [rects[0].x as f32, rects[0].y as f32],
+            full_rate: 256.0,
+        };
+        ticks(
+            &mut tin,
+            Some(focus),
+            "deferring by distance from the viewer",
+        );
 
         // Phase split, single threaded, over the same chunks.
         let max_error = tin.max_error;
