@@ -63,7 +63,7 @@ it *after* the JCGT upload so the journal sees the manuscript first.
 - Artifact: the JCGT LaTeX tree (`paper.tex`, `references.bib`,
   `paper.bbl`, `jcgt.cls`, figure PDFs) plus `anc/terrain-methods.mp4`.
   arXiv compiles the PDF. Do not upload Fostral.
-- Comments: `30 pages. Submitted to the Journal of Computer Graphics
+- Comments: `29 pages. Submitted to the Journal of Computer Graphics
   Techniques. Supplemental video as ancillary.`
 - Abstract: paste `paper/abstract.txt` (ASCII, 1536 characters). Metadata
   checklist is `paper/arxiv-metadata.txt`.
