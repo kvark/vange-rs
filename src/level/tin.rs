@@ -542,10 +542,10 @@ impl Chunk {
         let mut best_err = 0.0f32;
         for y in min_y..=max_y {
             let mut w = row;
-            let mut gi = grid.index(min_x as u32, y as u32);
             let mut plane = [0.0f32; 3];
             let mut inside = false;
-            for _x in min_x..=max_x {
+            let start = grid.index(min_x as u32, y as u32);
+            for gi in start..=start + (max_x - min_x) as u32 {
                 if w[0] >= 0 && w[1] >= 0 && w[2] >= 0 {
                     if inside {
                         for i in 0..3 {
@@ -568,7 +568,6 @@ impl Chunk {
                 for i in 0..3 {
                     w[i] += step_x[i];
                 }
-                gi += 1;
             }
             for i in 0..3 {
                 row[i] += step_y[i];

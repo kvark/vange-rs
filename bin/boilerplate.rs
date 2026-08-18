@@ -32,6 +32,38 @@ pub trait Application {
     ) -> wgpu::CommandBuffer;
 }
 
+/// Show/hide toggle for an app's tweaks panel. Collapsed, the whole panel
+/// is a single button in the top right corner, leaving the view clear: a
+/// shot can be framed, or the game played, without the controls covering
+/// the thing being looked at.
+///
+/// The model viewer has no tweaks panel, so its copy of this goes unused.
+#[allow(dead_code)]
+pub mod tweaks {
+    /// Draws the collapsed form, and returns whether the panel itself
+    /// should be drawn. The state lives on the app rather than in egui's
+    /// memory so it survives a UI rebuild.
+    pub fn expanded(context: &egui::Context, expanded: &mut bool) -> bool {
+        if !*expanded {
+            egui::Area::new("Tweaks toggle".into())
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
+                .show(context, |ui| {
+                    if ui.button("<").on_hover_text("Show controls").clicked() {
+                        *expanded = true;
+                    }
+                });
+        }
+        *expanded
+    }
+
+    /// The button inside an expanded panel that collapses it again.
+    pub fn collapse_button(ui: &mut egui::Ui, expanded: &mut bool) {
+        if ui.button(">").on_hover_text("Hide controls").clicked() {
+            *expanded = false;
+        }
+    }
+}
+
 struct WindowContext {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,

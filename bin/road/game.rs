@@ -355,6 +355,8 @@ pub struct Game {
     /// server's spawn point, so we need to hard-snap the camera.
     server_synced: bool,
     ui: config::settings::Ui,
+    /// Whether the tweaks panel is showing. See `boilerplate::tweaks`.
+    ui_expanded: bool,
     cam: space::Camera,
     cam_style: CameraStyle,
     max_quant: f32,
@@ -567,6 +569,7 @@ impl Game {
             input_seq: 0,
             server_synced: false,
             ui: settings.ui,
+            ui_expanded: true,
             cam,
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
@@ -1069,6 +1072,9 @@ impl Application for Game {
         if !self.ui.enabled {
             return;
         }
+        if !crate::boilerplate::tweaks::expanded(context, &mut self.ui_expanded) {
+            return;
+        }
 
         let player = self
             .agents
@@ -1079,6 +1085,10 @@ impl Application for Game {
 
         #[allow(deprecated)]
         egui::SidePanel::right("Tweaks").show(context, |ui| {
+            ui.horizontal(|ui| {
+                crate::boilerplate::tweaks::collapse_button(ui, &mut self.ui_expanded);
+                ui.label("Tweaks");
+            });
             ui.group(|ui| {
                 ui.label("Player:");
                 egui::ComboBox::from_label("Mechous")
