@@ -62,12 +62,12 @@ it *after* the JCGT upload so the journal sees the manuscript first.
 - Category: `cs.GR`. This is an original systems comparison, not an
   arXiv "review/position" paper, so the 2025 CS survey-paper rule does
   not apply.
-- Artifact: the same review PDF. Change the status line to
-  "Submitted to the Journal of Computer Graphics Techniques" before
-  building. Attach `work/paper-video/terrain-methods.mp4` as an
-  ancillary file. Do not upload Fostral.
-- Comments: `20 pages. Submitted to JCGT. Supplemental video as
-  ancillary.`
+- Artifact: the same review PDF, marked submitted to JCGT. arXiv
+  rejects ancillary files on a bare PDF upload, so the package is a
+  thin `graphicx` wrapper around that PDF plus
+  `anc/terrain-methods.mp4`. Do not upload Fostral.
+- Comments: `22 pages. Submitted to the Journal of Computer Graphics
+  Techniques. Supplemental video as ancillary.`
 - License: arXiv's perpetual non-exclusive distribution license. That
   does not collide with JCGT's later CC BY-ND journal version.
 - After acceptance: replace the PDF with the JCGT-template version and
@@ -75,6 +75,8 @@ it *after* the JCGT upload so the journal sees the manuscript first.
 
 ```bash
 PATH=work/paper-venv/bin:$PATH python3 tools/build-paper-package.py
+PATH=work/paper-venv/bin:$PATH python3 tools/pack-arxiv.py
+# Upload work/arxiv/arxiv-source.zip at https://arxiv.org/user
 ```
 
 The merge tool rejects different cameras, devices, renderer arguments,
