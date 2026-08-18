@@ -9,44 +9,6 @@ import zipfile
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-METADATA = """Title:
-  Six Ways to Draw Vangers with WebGPU: Real-Time Rendering of Editable Multi-Layer Height Fields
-
-Authors:
-  Dzmitry Malyshau
-
-Comments:
-  22 pages. Submitted to the Journal of Computer Graphics Techniques. Supplemental video as ancillary.
-
-Report no:
-  (leave blank)
-
-MSC class:
-  (leave blank)
-
-ACM class:
-  I.3.7
-
-Journal-ref:
-  (leave blank until JCGT publishes)
-
-DOI:
-  (leave blank until JCGT publishes)
-
-License:
-  arXiv.org perpetual, non-exclusive license to distribute (nonexclusive-distrib 1.0)
-
-Primary category:
-  cs.GR
-
-Cross-lists:
-  (none)
-
-Abstract:
-Terrain level-of-detail is measured almost exclusively on digital elevation models: single-valued, smooth at the sampling scale, sampled from real topography. Game terrain is often none of these. We compare six rendering methods -- height-field ray marching, voxel-accelerated ray marching, sliced proxy geometry, per-sample bar rasterization, compute scattering, and a fitted triangle mesh -- implemented in a single engine over a single data path, on the hand-authored multi-layer terrain of Vangers (1998), scored against a CPU ray cast of the same source data. Every method must preserve the two solid intervals available at a ground sample, render at interactive rates, and reflect local terrain destruction without reloading the level. These constraints rule out treating caves as decoration or amortising a static preprocessing step over an immutable map.
-
-From the original game's top-down camera the six methods look interchangeable. At eye-level horizons they do not: point scattering loses coverage, slicing bands, and an over-simplified mesh can miss a wall. At the selected quality settings a greedy triangulated irregular network (TIN) has the lowest mean frame time on every device we measured, but the fit cost is set by the second layer rather than by floor relief, and making that mesh editable retains 319 MiB of GPU geometry and 535 MiB of CPU triangulation. All six implementations use the same native wgpu / WebGPU API and canonical WGSL. We release the engine, the harness, and a one-command measurement protocol.
-"""
 
 
 def pdf_pages(path):
@@ -99,7 +61,8 @@ def main():
     shutil.copy2(pdf, source / "paper-body.pdf")
     shutil.copy2(video, source / "anc" / "terrain-methods.mp4")
     (source / "ms.tex").write_text(wrapper_tex(pdf_pages(pdf)))
-    (destination / "metadata.txt").write_text(METADATA)
+    metadata = (ROOT / "paper" / "arxiv-metadata.txt").read_text()
+    (destination / "metadata.txt").write_text(metadata)
 
     archive = destination / "arxiv-source.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
