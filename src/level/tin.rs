@@ -482,7 +482,10 @@ impl Chunk {
             self.sample(grid, vb),
             self.sample(grid, vc),
         );
-        let inv = 1.0 / area2 as f64;
+        // A grid is at most a chunk plus its borders, so `orient2d` stays
+        // far inside the 24 bits that `f32` represents exactly: every edge
+        // value below, and `area2` itself, converts without loss.
+        let inv = 1.0 / area2 as f32;
 
         let min_x = a[0].min(b[0]).min(c[0]).max(0);
         let max_x = a[0].max(b[0]).max(c[0]).min(grid.nx as i32 - 1);
@@ -514,26 +517,53 @@ impl Chunk {
             orient2d(a, b, corner),
         ];
 
+        // Barycentric blend of the three vertex samples, for weights that
+        // need not be normalized. Fed the exact edge values it interpolates
+        // the plane at that sample; fed an edge step it gives what the plane
+        // itself steps by, which is constant because the plane is affine.
+        // That turns the interpolation into three adds a sample rather than
+        // twelve multiplies.
+        //
+        // A row only accumulates across the run of samples inside the
+        // triangle, seeded from the exact weights at its start: starting from
+        // the bounding box corner instead would carry the rounding of a
+        // sliver triangle's plane there, which can be enormous, into the
+        // small values along the sliver itself.
+        let blend = |w: [i64; 3]| {
+            [
+                (w[0] as f32 * sa.low + w[1] as f32 * sb.low + w[2] as f32 * sc.low) * inv,
+                (w[0] as f32 * sa.mid + w[1] as f32 * sb.mid + w[2] as f32 * sc.mid) * inv,
+                (w[0] as f32 * sa.high + w[1] as f32 * sb.high + w[2] as f32 * sc.high) * inv,
+            ]
+        };
+        let plane_x = blend(step_x);
+
         let mut best = NONE;
         let mut best_err = 0.0f32;
         for y in min_y..=max_y {
             let mut w = row;
             let mut gi = grid.index(min_x as u32, y as u32);
+            let mut plane = [0.0f32; 3];
+            let mut inside = false;
             for _x in min_x..=max_x {
                 if w[0] >= 0 && w[1] >= 0 && w[2] >= 0 {
-                    let (f0, f1, f2) = (w[0] as f64 * inv, w[1] as f64 * inv, w[2] as f64 * inv);
-                    let lerp = |pa: f32, pb: f32, pc: f32| {
-                        (f0 * pa as f64 + f1 * pb as f64 + f2 * pc as f64) as f32
-                    };
-                    let err = grid.sample(gi).deviation(
-                        lerp(sa.low, sb.low, sc.low),
-                        lerp(sa.mid, sb.mid, sc.mid),
-                        lerp(sa.high, sb.high, sc.high),
-                    );
+                    if inside {
+                        for i in 0..3 {
+                            plane[i] += plane_x[i];
+                        }
+                    } else {
+                        plane = blend(w);
+                        inside = true;
+                    }
+                    let err = grid.sample(gi).deviation(plane[0], plane[1], plane[2]);
                     if err > best_err {
                         best_err = err;
                         best = gi;
                     }
+                } else if inside {
+                    // A row meets a triangle in a single interval, so once it
+                    // is behind us the rest of the row is outside.
+                    break;
                 }
                 for i in 0..3 {
                     w[i] += step_x[i];
@@ -2098,7 +2128,16 @@ mod perf_probe {
         let level = crate::level::load(&config, &crate::config::settings::Geometry::default());
         let t = Instant::now();
         let (mut tin, _mesh) = Tin::build(&level, &Config::default());
-        println!("build: {:?}, {} chunks", t.elapsed(), tin.chunks.len());
+        let tris = tin
+            .chunks
+            .iter()
+            .map(|c| c.lods[0].tri.tris.len())
+            .sum::<usize>();
+        println!(
+            "build: {:?}, {} chunks, {tris} lod0 triangles",
+            t.elapsed(),
+            tin.chunks.len()
+        );
 
         // Eight scattered edits, like a frame of moving land.
         let rects = (0..8)
