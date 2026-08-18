@@ -332,6 +332,11 @@ struct MeshGeometry {
     /// The live triangulation, kept so terrain edits refine the mesh in
     /// place instead of rebuilding it.
     tin: level::tin::Tin,
+    /// What the last `prepare` decided to draw each chunk at, which is
+    /// what a refit follows. See `level::tin::Drawn`. Starts as "all of
+    /// them, at full detail" so the first frame, which has no decision
+    /// behind it yet, refits everything.
+    drawn: Vec<Option<u8>>,
     gpu_bytes: u64,
 }
 
@@ -349,10 +354,12 @@ impl MeshGeometry {
             .chunks
             .iter()
             .map(|c| ChunkBufs::new(c, device))
-            .collect();
+            .collect::<Vec<_>>();
+        let drawn = vec![Some(0); chunks.len()];
         MeshGeometry {
             chunks,
             tin,
+            drawn,
             gpu_bytes,
         }
     }
@@ -418,6 +425,12 @@ enum Kind {
         /// toggling it is how you tell a culling bug apart from anything
         /// else that makes geometry come and go.
         cull: bool,
+        /// Let a terrain edit wait for the chunk it lands in to be worth
+        /// refitting - see `level::tin::Drawn`. Off refits everything on
+        /// the tick the edit lands, which is what an offline render needs:
+        /// a snapshot draws a handful of frames, so an edit a chunk is
+        /// entitled to sit on would simply never appear.
+        defer_refits: bool,
     },
 }
 
@@ -1711,6 +1724,7 @@ impl Context {
                     draws: Vec::new(),
                     lod_distance: 256.0,
                     lod_force: None,
+                    defer_refits: true,
                     cull: true,
                 }
             }
@@ -1905,14 +1919,10 @@ impl Context {
         }
     }
 
-    /// `focus` is where the viewer is standing, in level texels. Chunks far
-    /// from it refit less often; `None` refits everything the edits reach.
-    /// See `tin::Tin::update`.
     pub fn update_dirty(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         level: &level::Level,
-        focus: Option<[f32; 2]>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) {
@@ -1966,7 +1976,7 @@ impl Context {
         if let Kind::Mesh {
             ref config,
             ref mut geo,
-            lod_distance,
+            defer_refits,
             ..
         } = self.kind
         {
@@ -1993,9 +2003,15 @@ impl Context {
                         .collect::<Vec<_>>();
                     // Each refitted chunk just gets fresh buffers -- they
                     // are small enough that rebuilding beats patching.
-                    let focus = focus.map(|at| level::tin::Focus { at, lod_distance });
-                    for (index, buffers) in geo.tin.update(level, &rects, focus) {
-                        geo.chunks[index] = ChunkBufs::new(&buffers, device);
+                    let MeshGeometry {
+                        ref mut tin,
+                        ref mut chunks,
+                        ref drawn,
+                        ..
+                    } = *geo;
+                    let drawn = defer_refits.then_some(drawn.as_slice());
+                    for (index, buffers) in tin.update(level, &rects, drawn) {
+                        chunks[index] = ChunkBufs::new(&buffers, device);
                     }
                 }
             }
@@ -2345,7 +2361,7 @@ impl Context {
             }
             Kind::Mesh {
                 ref mut draws,
-                ref geo,
+                ref mut geo,
                 lod_distance,
                 lod_force,
                 cull,
@@ -2357,7 +2373,24 @@ impl Context {
                 // `u_Locals.sample_range` so the two cannot disagree.
                 let size = self.active_surface_constants.texture_scale;
                 draws.clear();
-                if let Some(geo) = geo.as_ref() {
+                if let Some(geo) = geo.as_mut() {
+                    let MeshGeometry {
+                        ref chunks,
+                        ref mut drawn,
+                        ..
+                    } = *geo;
+                    // A refit reads this a frame later, by which time the
+                    // camera has moved on, so a chunk counts as drawn from
+                    // a chunk's width outside the frustum. That is far more
+                    // than a frame of turning, and it means terrain is
+                    // already being kept current by the time it rotates
+                    // into view rather than snapping to it afterwards.
+                    let margin = glam::Vec3::new(
+                        level::tin::CHUNK_SIZE as f32,
+                        level::tin::CHUNK_SIZE as f32,
+                        0.0,
+                    );
+                    drawn.iter_mut().for_each(|slot| *slot = None);
                     let cam_tile = glam::Vec2::new(
                         (sc.origin.x / size[0]).floor(),
                         (sc.origin.y / size[1]).floor(),
@@ -2380,7 +2413,7 @@ impl Context {
                             (cam_tile.x + (copy % 3) as f32 - 1.0) * size[0],
                             (cam_tile.y + (copy / 3) as f32 - 1.0) * size[1],
                         );
-                        for (ci, chunk) in geo.chunks.iter().enumerate() {
+                        for (ci, chunk) in chunks.iter().enumerate() {
                             let min = glam::Vec3::new(
                                 chunk.min[0] + offset.x,
                                 chunk.min[1] + offset.y,
@@ -2391,9 +2424,7 @@ impl Context {
                                 chunk.max[1] + offset.y,
                                 chunk.max[2],
                             );
-                            if cull && box_outside(&planes, min, max) {
-                                continue;
-                            }
+                            let hidden = cull && box_outside(&planes, min, max);
                             let center = glam::Vec2::new(
                                 chunk.center[0] + offset.x,
                                 chunk.center[1] + offset.y,
@@ -2404,6 +2435,16 @@ impl Context {
                                 None => (level::tin::detail_steps(dist, lod_distance) as usize)
                                     .min(chunk.lods.len() - 1),
                             };
+                            // The finest level any copy of this chunk is
+                            // drawn at is the one a refit has to keep up
+                            // with.
+                            if !hidden || !box_outside(&planes, min - margin, max + margin) {
+                                let slot = &mut drawn[ci];
+                                *slot = Some(slot.map_or(level as u8, |l| l.min(level as u8)));
+                            }
+                            if hidden {
+                                continue;
+                            }
                             let (base, count) = chunk.lods[level];
                             if count != 0 {
                                 draws.push((ci as u32, base, count, copy, dist));
@@ -2812,6 +2853,17 @@ impl Context {
     /// Turn frustum culling off, so every chunk of every wrap copy is
     /// drawn. Slow, but definitionally correct - the reference to check
     /// the culled render against.
+    /// See `Kind::Mesh::defer_refits`.
+    pub fn set_deferred_refits(&mut self, enabled: bool) {
+        if let Kind::Mesh {
+            ref mut defer_refits,
+            ..
+        } = self.kind
+        {
+            *defer_refits = enabled;
+        }
+    }
+
     pub fn set_mesh_culling(&mut self, enabled: bool) {
         if let Kind::Mesh { ref mut cull, .. } = self.kind {
             *cull = enabled;

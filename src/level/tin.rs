@@ -54,7 +54,7 @@ unsafe impl Zeroable for MeshVertex {}
 /// Large enough that the border simplification stays a small fraction of
 /// the vertex budget, small enough to keep the greedy rasterisation cheap
 /// and give rayon plenty of independent work.
-const CHUNK_SIZE: u32 = 128;
+pub const CHUNK_SIZE: u32 = 128;
 
 /// How far `mid` or `high` may vary across one slab triangle, in altitude
 /// units, before the slab is dropped rather than ramped across the step.
@@ -1133,26 +1133,21 @@ struct ChunkState {
     /// Edits banked since this chunk was last refitted. Empty for a chunk
     /// that is up to date with the level.
     pending: Vec<Rect>,
-    /// Updates this chunk has banked without refitting, against the period
-    /// its distance from the viewer earns it.
-    banked: u32,
+    /// Whether this update is the one that refits the chunk.
+    due: bool,
+    /// Set while the renderer is not drawing this chunk anywhere. Coming
+    /// back into view makes it due at once, so the first frame that shows
+    /// it again shows it current.
+    hidden: bool,
 }
 
 /// How many detail steps a chunk that far from the viewer has dropped:
 /// zero within `lod_distance`, and one more for every doubling past it.
 /// Zero or less for `lod_distance` means full detail everywhere.
 ///
-/// This is the one distance ladder the terrain has. It picks the LOD a
-/// chunk is drawn at - clamped, there being only `LOD_COUNT` of them - and
-/// it picks how often the chunk is refitted: a chunk drawn at half detail
-/// refits half as often, one at a quarter a quarter as often. Tying the
-/// two together is what makes the lag invisible. A chunk is only allowed
-/// to fall behind once the renderer has already stopped drawing the detail
-/// that would show it.
-///
-/// The refit ladder keeps going past the last LOD, where the renderer's
-/// clamp stops it. Two chunks both drawn at the coarsest level are not
-/// equally worth refitting if one of them is four times further away.
+/// The renderer clamps this to the levels that exist and draws the chunk
+/// at that LOD. `Tin::update` then follows the decision rather than making
+/// its own - see `Drawn`.
 pub fn detail_steps(distance: f32, lod_distance: f32) -> u32 {
     if lod_distance <= 0.0 {
         return 0;
@@ -1160,20 +1155,21 @@ pub fn detail_steps(distance: f32, lod_distance: f32) -> u32 {
     (distance / lod_distance).max(1.0).log2().floor() as u32
 }
 
-/// Where the viewer is standing, and the distance ladder to measure from
-/// it - see `detail_steps`.
-#[derive(Clone, Copy, Debug)]
-pub struct Focus {
-    /// The viewer's position, in level texels.
-    pub at: [f32; 2],
-    /// Distance within which a chunk keeps full detail, and refits on
-    /// every update. Zero or less refits everything every update.
-    pub lod_distance: f32,
-}
-
-/// Longest a distant chunk's geometry may lag the level under it. Must be
-/// a power of two.
-const MAX_REFIT_PERIOD: u32 = 8;
+/// What the renderer last decided to do with each chunk, by chunk index:
+/// the finest LOD it was drawn at, or `None` if it was not drawn at all.
+///
+/// A refit follows that decision exactly. A chunk drawn at half detail
+/// refits every second update, one at a quarter every fourth, and one
+/// that is not on screen does not refit until it is - it banks its edits
+/// instead. Tying the two together is what makes the lag invisible: a
+/// chunk only falls behind once the renderer has already stopped drawing
+/// the detail that would show it, and one that is not drawn shows
+/// nothing at all.
+///
+/// The decision is a frame old by the time a refit reads it, so the
+/// renderer records it with a margin around the frustum - see
+/// `terrain::Context::prepare`.
+pub type Drawn<'a> = &'a [Option<u8>];
 
 impl ChunkState {
     /// How many updates this chunk may bank before it has to refit.
@@ -1186,28 +1182,17 @@ impl ChunkState {
     ///
     /// The level wraps, so the distance does too: the far edge of the map
     /// is next door.
-    fn refit_period(&self, focus: &Focus, size: (f32, f32)) -> u32 {
-        // The nearest wrap copy is the one the viewer sees, and it is the
-        // one the renderer picks a LOD for, so it is the one that decides.
-        let axis = |a: f32, b: f32, wrap: f32| {
-            let d = (a - b).abs();
-            d.min(wrap - d)
-        };
-        let dx = axis(self.x0 as f32 + self.w as f32 * 0.5, focus.at[0], size.0);
-        let dy = axis(self.y0 as f32 + self.h as f32 * 0.5, focus.at[1], size.1);
-        let steps = detail_steps(dx.hypot(dy), focus.lod_distance);
-        1u32 << steps.min(MAX_REFIT_PERIOD.trailing_zeros())
-    }
-
-    /// Which tick of its period a chunk refits on, counted from the one it
-    /// starts banking edits.
+    /// Whether the chunk at `index` refits on update `tick`, given the
+    /// period its detail level earns it.
     ///
-    /// Without this, chunks the same distance away that begin animating on
-    /// the same tick also come due on the same tick, and the work that was
-    /// spread out arrives all at once every `period` frames - the periodic
-    /// hitch the deferral exists to remove.
-    fn refit_slot(index: usize, period: u32) -> u32 {
-        index as u32 % period
+    /// The index offsets the phase, so chunks at the same level do not all
+    /// come due on the same tick. Without that, the work the deferral
+    /// spread out arrives all at once every `period` updates - the
+    /// periodic hitch it exists to remove. The phase runs free rather than
+    /// counting from each chunk's first banked edit, which would put every
+    /// chunk that refits and is edited again straight back on slot zero.
+    fn due_on(tick: u32, index: usize, period: u32) -> bool {
+        tick.wrapping_add(index as u32).is_multiple_of(period)
     }
 }
 
@@ -1291,6 +1276,9 @@ pub struct Tin {
     max_error: f32,
     quality: f32,
     chunks: Vec<ChunkState>,
+    /// Free-running update counter, for spreading refits across the ticks
+    /// of a period - see `ChunkState::due_on`.
+    tick: u32,
     pub stats: Stats,
 }
 
@@ -1373,7 +1361,8 @@ impl Tin {
                     alt,
                     lods,
                     pending: Vec::new(),
-                    banked: 0,
+                    due: false,
+                    hidden: false,
                 },
                 meshes,
             )
@@ -1391,6 +1380,7 @@ impl Tin {
         let mesh = assemble(&chunks, meshes, level, max_error);
 
         let tin = Tin {
+            tick: 0,
             max_error,
             quality: config.quality,
             chunks,
@@ -1437,9 +1427,10 @@ impl Tin {
     /// gets its LODs done at once.
     /// Refit the chunks the given edits reach.
     ///
-    /// Chunks far from `focus` refit less often, banking their edits until
-    /// they come due. `None` refits every reached chunk on every call.
-    pub fn update(&mut self, level: &Level, rects: &[Rect], focus: Option<Focus>) -> Update {
+    /// Chunks follow what the renderer last drew them at, banking their
+    /// edits until they come due - see `Drawn`. `None` refits every reached
+    /// chunk on every call, which is what an offline render wants.
+    pub fn update(&mut self, level: &Level, rects: &[Rect], drawn: Option<Drawn<'_>>) -> Update {
         profiling::scope!("Update Terrain TIN");
         use rayon::prelude::*;
 
@@ -1453,9 +1444,9 @@ impl Tin {
         // Bank this call's edits and decide who is due, sequentially: it is
         // a few hundred chunks of arithmetic against a refit apiece, and the
         // decision has to be made before the parallel pass can filter on it.
-        let size = (level.size.0 as f32, level.size.1 as f32);
+        self.tick = self.tick.wrapping_add(1);
+        let tick = self.tick;
         for (index, state) in self.chunks.iter_mut().enumerate() {
-            let was_idle = state.pending.is_empty();
             for rect in rects.iter() {
                 // A moving land re-emits the same region every quant, so the
                 // banked list stays short without any merging.
@@ -1465,28 +1456,35 @@ impl Tin {
                     state.pending.push(*rect);
                 }
             }
+            state.due = false;
             if state.pending.is_empty() {
-                state.banked = 0;
                 continue;
             }
-            let period = match focus {
-                Some(ref focus) => state.refit_period(focus, size),
-                None => 1,
+            let lod = match drawn {
+                None => 0,
+                Some(list) => match list.get(index).copied().flatten() {
+                    Some(lod) => lod,
+                    // Off screen: bank and wait. Nothing is showing this
+                    // chunk, so nothing can show that it is behind.
+                    None => {
+                        state.hidden = true;
+                        continue;
+                    }
+                },
             };
-            if was_idle {
-                state.banked = ChunkState::refit_slot(index, period);
-            }
-            state.banked += 1;
-            if state.banked >= period {
-                state.banked = 0;
-            }
+            state.due = if state.hidden {
+                state.hidden = false;
+                true
+            } else {
+                ChunkState::due_on(tick, index, 1u32 << lod)
+            };
         }
 
         let max_error = self.max_error;
         self.chunks
             .par_iter_mut()
             .enumerate()
-            .filter(|entry| !entry.1.pending.is_empty() && entry.1.banked == 0)
+            .filter(|entry| entry.1.due)
             .map(|(index, state)| {
                 let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
                 state.alt = grid.alt;
@@ -1992,38 +1990,30 @@ mod tests {
         );
     }
 
-    /// Edits far from the viewer wait their turn, they do not all wait for
-    /// the same tick, and when a chunk's turn comes it lands on exactly the
-    /// geometry an immediate refit would have produced - nothing banked is
-    /// lost, and the surface is re-read from the level as it stands then.
+    /// Edits under terrain the renderer is drawing coarsely wait their
+    /// turn, they do not all wait for the same tick, and when a chunk's
+    /// turn comes it lands on exactly the geometry an immediate refit
+    /// would have produced - nothing banked is lost, and the surface is
+    /// re-read from the level as it stands then.
     #[test]
-    fn distant_edits_wait_their_turn_and_lose_nothing() {
-        // Long and thin, so the chunks span several distance bands without
-        // costing a square level's worth of chunks to build. The level
-        // wraps, so distance is measured the short way round: the far end
-        // of a 2048-wide level is next door, and the middle is what is
-        // actually far away.
-        let mut level = make_level_wh(16 * CHUNK_SIZE as i32, 2 * CHUNK_SIZE as i32);
+    fn coarse_chunks_wait_their_turn_and_lose_nothing() {
+        let mut level = make_level_wh(8 * CHUNK_SIZE as i32, 2 * CHUNK_SIZE as i32);
         let (tin, _) = Tin::build(&level, &Config::default());
-        let focus = Focus {
-            at: [64.0, 64.0],
-            lod_distance: 256.0,
-        };
         let edits = (0..8)
             .map(|i| {
-                let (x, y, w, h) = dig(&mut level, 512 + i * 128, 64, 24);
+                let (x, y, w, h) = dig(&mut level, 128 + i * 128, 64, 24);
                 rect(x, y, w, h)
             })
             .collect::<Vec<_>>();
 
-        let size = (level.size.0 as f32, level.size.1 as f32);
-        let reached = || tin.chunks.iter().filter(|st| st.overlaps_any(&edits));
-        let count = reached().count();
-        let period = reached()
-            .map(|st| st.refit_period(&focus, size))
-            .max()
-            .expect("the edits reached no chunk");
-        assert!(period > 1, "the edits were not far enough to be deferred");
+        // All on screen, but at the coarsest level the mesh has.
+        let coarse = vec![Some(LOD_COUNT as u8 - 1); tin.chunks.len()];
+        let period = 1u32 << (LOD_COUNT - 1);
+        let count = tin
+            .chunks
+            .iter()
+            .filter(|st| st.overlaps_any(&edits))
+            .count();
 
         let mut deferred = tin.clone();
         let mut immediate = tin;
@@ -2032,14 +2022,14 @@ mod tests {
 
         // Spread out: the first tick refits only some of them, and by the
         // end of one period every one has gone exactly once.
-        let first = deferred.update(&level, &edits, Some(focus));
+        let first = deferred.update(&level, &edits, Some(&coarse));
         assert!(
             first.len() < count,
             "all {count} reached chunks refitted at once, so nothing was deferred"
         );
         let mut refitted = first;
         for _ in 1..period {
-            refitted.extend(deferred.update(&level, &[], Some(focus)));
+            refitted.extend(deferred.update(&level, &[], Some(&coarse)));
         }
         assert_eq!(
             refitted.len(),
@@ -2047,7 +2037,7 @@ mod tests {
             "chunks refitted more or less than once each over a period"
         );
         assert!(
-            deferred.update(&level, &[], Some(focus)).is_empty(),
+            deferred.update(&level, &[], Some(&coarse)).is_empty(),
             "a chunk kept refitting after its banked edits were spent"
         );
 
@@ -2062,74 +2052,110 @@ mod tests {
         }
     }
 
-    /// The refit period is the LOD ladder: a chunk drawn at half detail
-    /// refits half as often. Should these ever drift apart, terrain would
-    /// start lagging at a distance where the renderer is still drawing the
-    /// detail that shows it.
+    /// A chunk nobody is drawing does not refit at all - and the frame that
+    /// starts drawing it again gets it current, not a period later.
     #[test]
-    fn the_refit_period_follows_the_detail_level() {
-        let lod_distance = 256.0;
-        // Far larger than any distance below, so nothing wraps around into
-        // being near again.
-        let size = (1.0e6, 1.0e6);
-        let focus = Focus {
-            at: [0.0, 0.0],
-            lod_distance,
-        };
-        let at = |distance: f32| ChunkState {
-            x0: (distance - CHUNK_SIZE as f32 * 0.5) as i32,
-            y0: -(CHUNK_SIZE as i32) / 2,
-            w: CHUNK_SIZE,
-            h: CHUNK_SIZE,
-            alt: (0.0, 0.0),
-            lods: Vec::new(),
-            pending: Vec::new(),
-            banked: 0,
-        };
+    fn an_undrawn_chunk_waits_until_it_is_drawn_again() {
+        let mut level = make_level_wh(4 * CHUNK_SIZE as i32, 2 * CHUNK_SIZE as i32);
+        let (tin, _) = Tin::build(&level, &Config::default());
+        let (x, y, w, h) = dig(&mut level, 2 * CHUNK_SIZE as i32, 64, 24);
+        let edit = rect(x, y, w, h);
 
-        for lod in 0..LOD_COUNT as u32 {
-            // Squarely inside the band the renderer draws at this level.
-            let distance = lod_distance * (1 << lod) as f32 * 1.5;
-            assert_eq!(
-                detail_steps(distance, lod_distance),
-                lod,
-                "{distance} should be drawn at LOD {lod}"
-            );
-            assert_eq!(
-                at(distance).refit_period(&focus, size),
-                1 << lod,
-                "a chunk drawn at LOD {lod} should refit every {} updates",
-                1 << lod
+        let hidden = vec![None; tin.chunks.len()];
+        // Back at the coarsest level, so returning to view is the only
+        // thing that could make it refit this promptly.
+        let shown = vec![Some(LOD_COUNT as u8 - 1); tin.chunks.len()];
+
+        let mut deferred = tin.clone();
+        let mut immediate = tin;
+        for _ in 0..4 {
+            assert!(
+                deferred.update(&level, &[edit], Some(&hidden)).is_empty(),
+                "an off-screen chunk refitted"
             );
         }
-
-        // Past the last LOD the ladder keeps going, up to the cap on how
-        // stale any chunk may get.
-        let far = lod_distance * MAX_REFIT_PERIOD as f32 * 4.0;
-        assert!(detail_steps(far, lod_distance) > MAX_REFIT_PERIOD.trailing_zeros());
-        assert_eq!(at(far).refit_period(&focus, size), MAX_REFIT_PERIOD);
-
-        // Zero means full detail, which means refitting everything.
-        let none = Focus {
-            at: [0.0, 0.0],
-            lod_distance: 0.0,
-        };
-        assert_eq!(at(far).refit_period(&none, size), 1);
+        let back = deferred.update(&level, &[], Some(&shown));
+        let now = immediate.update(&level, &[edit], None);
+        assert!(!back.is_empty(), "coming back into view refitted nothing");
+        assert_eq!(back.len(), now.len());
+        for entry in back.iter() {
+            let other = &now
+                .iter()
+                .find(|e| e.0 == entry.0)
+                .unwrap_or_else(|| panic!("chunk {} missing", entry.0))
+                .1;
+            assert_eq!(entry.1.indices, other.indices, "chunk {} differs", entry.0);
+        }
     }
 
-    /// Chunks the same distance away must not all come due on the same
-    /// tick, or the work the deferral spread out arrives as a periodic
-    /// hitch instead.
+    /// A chunk refits once for every update its detail level earns it:
+    /// LOD 0 every tick, LOD 1 every second, LOD 2 every fourth.
     #[test]
-    fn refit_slots_spread_across_the_period() {
-        for period in [2u32, 4, 8] {
-            let slots = (0..4 * period as usize)
-                .map(|i| ChunkState::refit_slot(i, period))
-                .collect::<Vec<_>>();
-            for slot in 0..period {
-                assert!(
-                    slots.contains(&slot),
-                    "period {period} never lands a chunk on slot {slot}"
+    fn the_refit_period_follows_the_detail_level() {
+        let mut level = make_level_wh(4 * CHUNK_SIZE as i32, 2 * CHUNK_SIZE as i32);
+        let (tin, _) = Tin::build(&level, &Config::default());
+        let (x, y, w, h) = dig(&mut level, 2 * CHUNK_SIZE as i32, 64, 24);
+        let edit = rect(x, y, w, h);
+        let reached = tin
+            .chunks
+            .iter()
+            .filter(|st| st.overlaps_any(&[edit]))
+            .count();
+
+        for lod in 0..LOD_COUNT as u8 {
+            let drawn = vec![Some(lod); tin.chunks.len()];
+            let mut tin = tin.clone();
+            // Several periods, with the edit re-offered every tick the way
+            // a running animation offers it.
+            let ticks = 8u32 << lod;
+            let mut refits = 0;
+            for _ in 0..ticks {
+                refits += tin.update(&level, &[edit], Some(&drawn)).len();
+            }
+            assert_eq!(
+                refits,
+                reached * (ticks >> lod) as usize,
+                "a chunk drawn at LOD {lod} should refit every {} ticks",
+                1u32 << lod
+            );
+        }
+    }
+
+    /// `detail_steps` is the ladder the renderer picks a LOD from, and the
+    /// refit period is that LOD - so this is what ties the two together.
+    #[test]
+    fn detail_steps_drop_a_level_per_doubling() {
+        let lod_distance = 256.0;
+        for steps in 0..5u32 {
+            let inside = lod_distance * (1 << steps) as f32 * 1.5;
+            assert_eq!(detail_steps(inside, lod_distance), steps);
+        }
+        assert_eq!(detail_steps(0.0, lod_distance), 0);
+        // Zero means full detail everywhere, which means refitting all of it.
+        assert_eq!(detail_steps(1.0e6, 0.0), 0);
+    }
+
+    /// Every chunk comes due exactly once per period, and chunks at the
+    /// same detail level are spread across the ticks of it rather than all
+    /// arriving on one.
+    #[test]
+    fn refits_spread_across_the_ticks_of_a_period() {
+        for period in [1u32, 2, 4] {
+            let chunks = 4 * period as usize;
+            for index in 0..chunks {
+                let hits = (0..period)
+                    .filter(|tick| ChunkState::due_on(*tick, index, period))
+                    .count();
+                assert_eq!(hits, 1, "chunk {index} came due {hits} times in {period}");
+            }
+            for tick in 0..period {
+                let due = (0..chunks)
+                    .filter(|index| ChunkState::due_on(tick, *index, period))
+                    .count();
+                assert_eq!(
+                    due,
+                    chunks / period as usize,
+                    "period {period} bunches {due} chunks onto tick {tick}"
                 );
             }
         }
@@ -2526,11 +2552,11 @@ mod perf_probe {
 
         // Per tick rather than in total: the complaint about a refit is
         // never the average, it is the tick that misses its frame.
-        let ticks = |tin: &mut Tin, focus: Option<Focus>, label: &str| {
+        let ticks = |tin: &mut Tin, drawn: Option<Drawn<'_>>, label: &str| {
             let mut each = Vec::new();
             for _ in 0..40 {
                 let t = Instant::now();
-                let _ = tin.update(&level, &rects, focus);
+                let _ = tin.update(&level, &rects, drawn);
                 each.push(t.elapsed().as_secs_f64() * 1e3);
             }
             let total = each.iter().sum::<f64>();
@@ -2541,18 +2567,35 @@ mod perf_probe {
             );
         };
         ticks(&mut tin, None, "every reached chunk, every tick");
-        // A viewer standing at the first edit: one animation underfoot and
-        // the rest scattered across the map, which is the shape of a frame
-        // of real play.
-        let focus = Focus {
-            at: [rects[0].x as f32, rects[0].y as f32],
-            lod_distance: 256.0,
-        };
-        ticks(
-            &mut tin,
-            Some(focus),
-            "deferring by distance from the viewer",
-        );
+
+        // What the renderer would decide with the viewer standing at the
+        // first edit: one animation underfoot, the rest scattered across
+        // the map, and whatever falls outside the frustum not drawn at
+        // all. That is the shape of a frame of real play.
+        let eye = glam::Vec2::new(rects[0].x as f32, rects[0].y as f32);
+        let facing = glam::Vec2::new(1.0, 1.0).normalize();
+        let size = glam::Vec2::new(level.size.0 as f32, level.size.1 as f32);
+        let drawn = tin
+            .chunks
+            .iter()
+            .map(|st| {
+                let centre = glam::Vec2::new(
+                    st.x0 as f32 + st.w as f32 * 0.5,
+                    st.y0 as f32 + st.h as f32 * 0.5,
+                );
+                // Nearest wrap copy, then a 90-degree cone in front of the
+                // viewer standing in for the frustum.
+                let mut to = centre - eye;
+                to.x -= (to.x / size.x).round() * size.x;
+                to.y -= (to.y / size.y).round() * size.y;
+                let distance = to.length();
+                let ahead = distance < 1.0 || to.normalize().dot(facing) > 0.7;
+                ahead.then(|| detail_steps(distance, 256.0).min(LOD_COUNT as u32 - 1) as u8)
+            })
+            .collect::<Vec<_>>();
+        let seen = drawn.iter().filter(|d| d.is_some()).count();
+        println!("{seen} of {} chunks drawn", drawn.len());
+        ticks(&mut tin, Some(&drawn), "following what the renderer drew");
 
         // Phase split, single threaded, over the same chunks.
         let max_error = tin.max_error;
