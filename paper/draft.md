@@ -4,11 +4,11 @@
 Independent Researcher<br>
 <kvark@fastmail.com>
 
-**Status: JCGT submission draft.** The six selected configurations are
-RayTraced 128, RayVoxel 100, Sliced 512, Scattered 4,4,4, Painted, and
-Mesh q=0.5. Quality, timing, preparation, and edit numbers are from one
-five-device batch at those settings. Fostral world data is CC BY-SA 4.0
-from Association K-D Lab.
+**Submitted to the Journal of Computer Graphics Techniques.** The six
+selected configurations are RayTraced 128, RayVoxel 100, Sliced 512,
+Scattered 4,4,4, Painted, and Mesh q=0.5. Quality, timing, preparation,
+and edit numbers are from one five-device batch at those settings.
+Fostral world data is CC BY-SA 4.0 from Association K-D Lab.
 
 ---
 
