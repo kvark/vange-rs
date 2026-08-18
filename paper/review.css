@@ -58,6 +58,14 @@ th { background: #eef2f4; }
 tr:nth-child(even) td { background: #f8f9fa; }
 
 code { font-family: "DejaVu Sans Mono", monospace; font-size: 0.9em; }
-pre { background: #f4f6f7; padding: 0.55em; white-space: pre-wrap; }
+pre {
+  background: #f4f6f7;
+  padding: 0.5em 0.7em;
+  white-space: pre-wrap;
+  font-size: 8pt;
+  line-height: 1.28;
+  break-inside: avoid;
+}
+pre code { font-size: inherit; }
 blockquote { border-left: 2pt solid #9fb8c7; margin-left: 0; padding-left: 0.8em; }
 hr { border: 0; border-top: 0.5pt solid #aeb6be; }

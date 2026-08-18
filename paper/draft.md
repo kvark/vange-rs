@@ -277,6 +277,21 @@ texel, `z <= low` and `mid <= z <= high` are solid. Testing this predicate
 directly is important: it detects floors, slab tops, and cave ceilings for
 rays travelling in either vertical direction.
 
+```
+function RAYMARCH(o, d, steps):
+    a, b ← o, clip(o, d)                 // far plane or z = 0
+    for i ← 1 to steps:
+        c ← a + (b − a) / (steps + 1)
+        if SOLID(c): b ← c; break
+        else a ← c
+    for i ← 1 to 4:                      // bisection
+        c ← (a + b) / 2
+        if SOLID(c): b ← c else a ← c
+    return b if hit else MISS
+
+SOLID(p) := p.z ≤ low(p.xy)  ∨  mid(p.xy) ≤ p.z ≤ high(p.xy)
+```
+
 The publication setting uses 128 forward samples over the clipped ray
 segment. The budget is exposed as `--ray-steps` and is included in the
 uniform tuning sweep. A sample interval can still skip a thinner feature;
@@ -297,6 +312,19 @@ uses a hierarchical DDA: an empty cell advances directly to its exit plane,
 while an occupied cell descends until the leaf level, where fixed sampling
 tests the original height data. The structure skips only known-empty space;
 it does not replace the source surface with cubes.
+
+```
+function RAYVOXEL(o, d):
+    lod ← coarsest
+    while outer steps remain:
+        if occupied(cell, lod) and lod > 0:
+            lod ← lod − 1; continue      // descend into a child
+        advance o to the cell exit
+        if occupied and lod = 0:
+            if a linear sample in the cell is SOLID: return hit
+        else if the exit allows it: lod ← lod + 1
+    return MISS
+```
 
 The publication comparison uses the coarse `(4,8,2)` occupancy grid
 (18.29 MiB). The renderer's shipping `(2,4,1)` grid needs 153 MiB and did
@@ -319,6 +347,15 @@ inside the floor column or upper slab and discards it in empty space. The
 slices are spread over the full altitude range; reducing `N` therefore
 coarsens the representation rather than deleting the lowest part of it.
 
+```
+for k ← 1 to N:
+    z ← z_max − k · (z_max / N)
+    draw a horizontal quad at z over the camera footprint
+    for each fragment p:
+        if p.z ≤ low(p.xy) or mid ≤ p.z ≤ high: shade(p)
+        else discard
+```
+
 At the 256 quantized altitude levels, one slice per unit samples every
 representable height. The tuned setting uses 512 slices. At grazing angles,
 however, discrete planes remain visible as coherent horizontal bands and
@@ -335,6 +372,13 @@ extends from zero to the floor; a dual-level sample adds a bar from cave
 ceiling to slab top. The vertex shader emits only the three faces oriented
 toward the camera. It derives every position from the instance index, so no
 per-column vertex stream is uploaded.
+
+```
+for each ground sample (x, y) in the camera footprint, front to back:
+    emit a bar [0, low] with the three camera-facing faces
+    if dual: emit a bar [mid, high]
+rasterize with the ordinary depth test
+```
 
 The instance range is an axis-aligned bound of the camera footprint on the
 terrain. Ordering the generated samples front-to-back lets early depth tests
@@ -360,6 +404,15 @@ result while retaining 24 bits of depth and 8 bits of terrain type. A
 full-screen resolve reconstructs world position and performs material,
 diffuse, fog, cave-ambient, and shadow evaluation.
 
+```
+clear the screen buffer to ∞
+for each warped footprint sample (x, y), in parallel:
+    scatter (x, y, mix(low, 0, t)) for t ∈ [0, 1]
+    if dual: scatter (x, y, mix(high, mid, t))
+scatter(p): atomicMin(buf[project(p)], pack(depth(p), type))
+resolve: reconstruct world position from the packed depth and shade
+```
+
 The density vector controls the compute grid. Unlike rasterization, point
 projection does not guarantee pixel coverage; undersampling appears as
 isolated gaps and unstable pixels, especially near the horizon. The
@@ -379,6 +432,15 @@ One planar triangulation is shared by `low`, `mid`, and `high`. A sample is
 inserted when any of the three fields exceeds tolerance, and boundary walls
 close the upper slab where dual-level encoding begins or ends. This coupling
 is the source of the fit-cost result in §6.
+
+```
+for each 128×128 chunk:
+    T ← Delaunay of the four corners
+    while max vertical error of T over {low, mid, high} > τ:
+        insert the worst sample and restore Delaunay
+    emit floor triangles; emit slab + walls on dual-region edges
+draw the selected LOD with ordinary rasterization
+```
 
 The level is partitioned into 128×128 chunks with three fitted detail levels.
 Chunks are frustum culled and selected by camera distance. Boundaries use a
