@@ -128,9 +128,9 @@ struct Sample {
     is_dual: bool,
 }
 
-impl Sample {
-    fn at(level: &Level, x: i32, y: i32) -> Self {
-        match level.get((x, y)) {
+impl From<Texel> for Sample {
+    fn from(texel: Texel) -> Self {
+        match texel {
             Texel::Single(p) => Sample {
                 low: p.0,
                 mid: p.0,
@@ -145,7 +145,9 @@ impl Sample {
             },
         }
     }
+}
 
+impl Sample {
     /// Largest deviation of any layer from the given interpolated values.
     /// This is the "insert if *any* layer needs it" criterion.
     ///
@@ -164,6 +166,7 @@ impl Sample {
     /// Constraining the triangulation to the `DOUBLE_LEVEL` outline would
     /// remove it, and is the same change that would stop `is_slab` from
     /// dropping the slab on straddling triangles.
+    #[inline(always)]
     fn deviation(&self, low: f32, mid: f32, high: f32) -> f32 {
         (self.low - low)
             .abs()
@@ -176,6 +179,7 @@ impl Sample {
 ///
 /// Exact: chunk-local coordinates are bounded by `chunk_size`, so the
 /// products stay far inside `i64` for any sane chunk.
+#[inline(always)]
 fn orient2d(a: [i32; 2], b: [i32; 2], c: [i32; 2]) -> i64 {
     let (ax, ay) = (a[0] as i64, a[1] as i64);
     let (bx, by) = (b[0] as i64, b[1] as i64);
@@ -201,6 +205,61 @@ fn in_circle(a: [i32; 2], b: [i32; 2], c: [i32; 2], d: [i32; 2]) -> i64 {
         + alift * (bdx * cdy - cdx * bdy)
 }
 
+/// Incremental edge functions for the triangle `abc`.
+///
+/// `at` is the three `orient2d` values at some starting sample, and
+/// `step_x`/`step_y` are what they change by when the sample moves one
+/// texel. A sample lies inside the triangle exactly when all three are
+/// non-negative, so scanning a bounding box costs three adds a sample
+/// rather than three cross products - and because `orient2d` is exact
+/// integer arithmetic, the stepped values are bit for bit the ones the
+/// direct form produces.
+///
+/// Both bounding-box scans in this module - the fit's error search and the
+/// emitter's slab test - are hot enough to want this.
+struct Edges {
+    at: [i64; 3],
+    step_x: [i64; 3],
+    step_y: [i64; 3],
+}
+
+impl Edges {
+    fn new(a: [i32; 2], b: [i32; 2], c: [i32; 2], start: [i32; 2]) -> Self {
+        Edges {
+            at: [
+                orient2d(b, c, start),
+                orient2d(c, a, start),
+                orient2d(a, b, start),
+            ],
+            step_x: [
+                -((c[1] - b[1]) as i64),
+                -((a[1] - c[1]) as i64),
+                -((b[1] - a[1]) as i64),
+            ],
+            step_y: [
+                (c[0] - b[0]) as i64,
+                (a[0] - c[0]) as i64,
+                (b[0] - a[0]) as i64,
+            ],
+        }
+    }
+
+    /// A row meets a triangle in a single interval, so a scan that has
+    /// been inside and is now out can stop rather than walk the rest of
+    /// the bounding box.
+    #[inline(always)]
+    fn inside(w: [i64; 3]) -> bool {
+        w[0] >= 0 && w[1] >= 0 && w[2] >= 0
+    }
+
+    #[inline(always)]
+    fn advance(w: &mut [i64; 3], step: [i64; 3]) {
+        for i in 0..3 {
+            w[i] += step[i];
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Tri {
     v: [u32; 3],
@@ -217,6 +276,9 @@ struct Tri {
 /// by exactly one row/column so their boundary vertices coincide.
 struct Grid {
     samples: Vec<Sample>,
+    /// Lowest floor and highest slab top over the whole chunk, folded in
+    /// while the samples were read.
+    alt: (f32, f32),
     nx: u32,
     ny: u32,
     x0: i32,
@@ -227,14 +289,27 @@ impl Grid {
     fn new(level: &Level, x0: i32, y0: i32, w: u32, h: u32) -> Self {
         let nx = w + 1;
         let ny = h + 1;
+        // Reading the rectangle a texel at a time re-derives the level's
+        // constants and wraps both coordinates every time. The columns wrap
+        // the same way on every row, so resolve them once.
+        let bits = level.terrain_bits();
+        let altitude_scale = level.altitude_scale();
+        let columns = (0..nx)
+            .map(|lx| (x0 + lx as i32).rem_euclid(level.size.0) as usize)
+            .collect::<Vec<_>>();
         let mut samples = Vec::with_capacity((nx * ny) as usize);
+        let mut alt = (f32::MAX, f32::MIN);
         for ly in 0..ny {
-            for lx in 0..nx {
-                samples.push(Sample::at(level, x0 + lx as i32, y0 + ly as i32));
+            let row = (y0 + ly as i32).rem_euclid(level.size.1) as usize * level.size.0 as usize;
+            for &column in columns.iter() {
+                let sample = Sample::from(level.get_wrapped(row + column, bits, altitude_scale));
+                alt = (alt.0.min(sample.low), alt.1.max(sample.high));
+                samples.push(sample);
             }
         }
         Grid {
             samples,
+            alt,
             nx,
             ny,
             x0,
@@ -242,25 +317,19 @@ impl Grid {
         }
     }
 
+    #[inline(always)]
     fn index(&self, lx: u32, ly: u32) -> u32 {
         ly * self.nx + lx
     }
 
+    #[inline(always)]
     fn coord(&self, index: u32) -> [i32; 2] {
         [(index % self.nx) as i32, (index / self.nx) as i32]
     }
 
+    #[inline(always)]
     fn sample(&self, index: u32) -> &Sample {
         &self.samples[index as usize]
-    }
-
-    /// Lowest floor and highest slab top over the whole chunk.
-    fn altitude_range(&self) -> (f32, f32) {
-        self.samples
-            .iter()
-            .fold((f32::MAX, f32::MIN), |(lo, hi), s| {
-                (lo.min(s.low), hi.max(s.high))
-            })
     }
 }
 
@@ -275,10 +344,12 @@ struct Chunk {
 }
 
 impl Chunk {
+    #[inline(always)]
     fn pos(&self, grid: &Grid, v: u32) -> [i32; 2] {
         grid.coord(self.verts[v as usize])
     }
 
+    #[inline(always)]
     fn sample<'g>(&self, grid: &'g Grid, v: u32) -> &'g Sample {
         grid.sample(self.verts[v as usize])
     }
@@ -492,30 +563,10 @@ impl Chunk {
         let min_y = a[1].min(b[1]).min(c[1]).max(0);
         let max_y = a[1].max(b[1]).max(c[1]).min(grid.ny as i32 - 1);
 
-        // The three edge functions are affine in the sample position, so
-        // stepping one texel adds a constant. That turns the inside test
-        // from three cross products per sample into three adds - and since
-        // `orient2d` is exact integer arithmetic, the values are bit for bit
-        // the ones the direct form produces.
-        //
         // This is the hot loop of the whole TIN: a refit measures it once
         // per triangle over the triangle's bounding box.
-        let step_x = [
-            -((c[1] - b[1]) as i64),
-            -((a[1] - c[1]) as i64),
-            -((b[1] - a[1]) as i64),
-        ];
-        let step_y = [
-            (c[0] - b[0]) as i64,
-            (a[0] - c[0]) as i64,
-            (b[0] - a[0]) as i64,
-        ];
-        let corner = [min_x, min_y];
-        let mut row = [
-            orient2d(b, c, corner),
-            orient2d(c, a, corner),
-            orient2d(a, b, corner),
-        ];
+        let edges = Edges::new(a, b, c, [min_x, min_y]);
+        let mut row = edges.at;
 
         // Barycentric blend of the three vertex samples, for weights that
         // need not be normalized. Fed the exact edge values it interpolates
@@ -536,7 +587,7 @@ impl Chunk {
                 (w[0] as f32 * sa.high + w[1] as f32 * sb.high + w[2] as f32 * sc.high) * inv,
             ]
         };
-        let plane_x = blend(step_x);
+        let plane_x = blend(edges.step_x);
 
         let mut best = NONE;
         let mut best_err = 0.0f32;
@@ -546,7 +597,7 @@ impl Chunk {
             let mut inside = false;
             let start = grid.index(min_x as u32, y as u32);
             for gi in start..=start + (max_x - min_x) as u32 {
-                if w[0] >= 0 && w[1] >= 0 && w[2] >= 0 {
+                if Edges::inside(w) {
                     if inside {
                         for i in 0..3 {
                             plane[i] += plane_x[i];
@@ -561,17 +612,11 @@ impl Chunk {
                         best = gi;
                     }
                 } else if inside {
-                    // A row meets a triangle in a single interval, so once it
-                    // is behind us the rest of the row is outside.
                     break;
                 }
-                for i in 0..3 {
-                    w[i] += step_x[i];
-                }
+                Edges::advance(&mut w, edges.step_x);
             }
-            for i in 0..3 {
-                row[i] += step_y[i];
-            }
+            Edges::advance(&mut row, edges.step_y);
         }
 
         let tri = &mut self.tris[t as usize];
@@ -714,6 +759,30 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
     // horizon. Properly fixing it means constraining the triangulation to
     // the `DOUBLE_LEVEL` outline so no triangle straddles it at all.
     let is_slab = |tri: &Tri| -> bool {
+        // Cheapest rejections first. Rasterising the triangle to find a
+        // non-dual sample inside it is far more work than noticing that a
+        // corner is already non-dual, and on a level that is a tenth
+        // double-level almost every triangle ends here.
+        let (va, vb, vc) = (
+            chunk.sample(grid, tri.v[0]),
+            chunk.sample(grid, tri.v[1]),
+            chunk.sample(grid, tri.v[2]),
+        );
+        if !va.is_dual || !vb.is_dual || !vc.is_dual {
+            return false;
+        }
+        // `mid` and `high` are structural, not smooth: a cave ceiling can
+        // jump tens of units between neighbouring texels. Interpolating
+        // across such a step builds a sloped roof that exists nowhere in
+        // the data, and a near-vertical one where the step is sharp. The
+        // low surface has no such problem, which is why only the slab is
+        // gated here.
+        let spread = |x: f32, y: f32, z: f32| x.max(y).max(z) - x.min(y).min(z);
+        if spread(va.mid, vb.mid, vc.mid) > SLAB_STEP
+            || spread(va.high, vb.high, vc.high) > SLAB_STEP
+        {
+            return false;
+        }
         let (a, b, c) = (
             chunk.pos(grid, tri.v[0]),
             chunk.pos(grid, tri.v[1]),
@@ -726,41 +795,41 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
         let max_x = a[0].max(b[0]).max(c[0]).min(grid.nx as i32 - 1);
         let min_y = a[1].min(b[1]).min(c[1]).max(0);
         let max_y = a[1].max(b[1]).max(c[1]).min(grid.ny as i32 - 1);
-        // `mid` and `high` are structural, not smooth: a cave ceiling can
-        // jump tens of units between neighbouring texels. Interpolating
-        // across such a step builds a sloped roof that exists nowhere in
-        // the data, and a near-vertical one where the step is sharp. The
-        // low surface has no such problem, which is why only the slab is
-        // gated here.
-        let (va, vb, vc) = (
-            chunk.sample(grid, tri.v[0]),
-            chunk.sample(grid, tri.v[1]),
-            chunk.sample(grid, tri.v[2]),
-        );
-        let spread = |f: fn(&Sample) -> f32| {
-            let (x, y, z) = (f(va), f(vb), f(vc));
-            x.max(y).max(z) - x.min(y).min(z)
-        };
-        if spread(|s| s.mid) > SLAB_STEP || spread(|s| s.high) > SLAB_STEP {
-            return false;
-        }
+        let edges = Edges::new(a, b, c, [min_x, min_y]);
+        let mut row = edges.at;
         let mut has_thickness = false;
         for y in min_y..=max_y {
-            for x in min_x..=max_x {
-                let q = [x, y];
-                if orient2d(b, c, q) < 0 || orient2d(c, a, q) < 0 || orient2d(a, b, q) < 0 {
-                    continue;
+            let mut w = row;
+            let start = grid.index(min_x as u32, y as u32);
+            let mut inside = false;
+            for gi in start..=start + (max_x - min_x) as u32 {
+                if Edges::inside(w) {
+                    inside = true;
+                    let s = grid.sample(gi);
+                    if !s.is_dual {
+                        return false;
+                    }
+                    has_thickness |= s.high > s.low;
+                } else if inside {
+                    break;
                 }
-                let s = grid.sample(grid.index(x as u32, y as u32));
-                if !s.is_dual {
-                    return false;
-                }
-                has_thickness |= s.high > s.low;
+                Edges::advance(&mut w, edges.step_x);
             }
+            Edges::advance(&mut row, edges.step_y);
         }
         // A zero-thickness slab has nothing to show.
         has_thickness
     };
+
+    // Every slab triangle also asks about its three neighbours, to decide
+    // where the slab needs closing off with a wall. Answering that on
+    // demand rasterises most triangles four times over, so answer it once.
+    let slab = (0..chunk.tris.len())
+        .map(|t| {
+            let tri = &chunk.tris[t];
+            tri.alive && is_slab(tri)
+        })
+        .collect::<Vec<_>>();
 
     let mut emitter = Emitter {
         chunk,
@@ -768,6 +837,11 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
         out: ChunkMesh::default(),
         cache: vec![[NONE; 3]; chunk.verts.len()],
     };
+    // Every live triangle emits at least its floor, and every vertex at
+    // least the low layer, so growing from empty means re-copying the
+    // whole buffer several times over on the way there.
+    emitter.out.vertices.reserve(chunk.verts.len());
+    emitter.out.indices.reserve(chunk.tris.len() * 3);
 
     for t in 0..chunk.tris.len() {
         let tri = &chunk.tris[t];
@@ -777,7 +851,7 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
         let [a, b, c] = tri.v;
         emitter.tri((a, Layer::Low), (b, Layer::Low), (c, Layer::Low));
 
-        if !is_slab(tri) {
+        if !slab[t] {
             continue;
         }
         let before = emitter.out.indices.len();
@@ -787,7 +861,7 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
 
         for i in 0..3 {
             let nb = tri.n[i];
-            if nb != NONE && chunk.tris[nb as usize].alive && is_slab(&chunk.tris[nb as usize]) {
+            if nb != NONE && slab[nb as usize] {
                 continue;
             }
             let (e0, e1) = (tri.v[i], tri.v[(i + 1) % 3]);
@@ -833,19 +907,35 @@ fn refine(
     dirty: Option<&[GridRect]>,
     measure: bool,
 ) -> bool {
-    use std::collections::{BinaryHeap, HashSet};
+    use std::collections::BinaryHeap;
 
     let mut added = false;
-    let existing: HashSet<u32> = chunk.verts.iter().copied().collect();
 
     // Border vertices first. Both chunks sharing a border derive the same
     // set from the same samples, so the seam matches exactly - and because
     // we only add, re-deriving after an edit keeps them in step: both sides
     // end up with the union of their old picks and the identical new ones.
     let (mx, my) = (grid.nx - 1, grid.ny - 1);
+    // Only the borders an edit actually reached can have changed. The
+    // samples decide the picks, so a side no edit touched re-derives the
+    // set it already holds - and both chunks sharing that seam skip it on
+    // the same grounds, so they stay in step.
     let mut border = Vec::new();
     let mut line = Vec::with_capacity(grid.nx.max(grid.ny) as usize);
     for (fixed, horizontal) in [(0, true), (my, true), (0, false), (mx, false)] {
+        if let Some(rects) = dirty {
+            let f = fixed as i32;
+            let touched = rects.iter().any(|r| {
+                if horizontal {
+                    r.y0 <= f && f <= r.y1
+                } else {
+                    r.x0 <= f && f <= r.x1
+                }
+            });
+            if !touched {
+                continue;
+            }
+        }
         line.clear();
         let count = if horizontal { grid.nx } else { grid.ny };
         for i in 0..count {
@@ -869,8 +959,18 @@ fn refine(
     // Deterministic order keeps the whole build reproducible.
     border.sort_unstable();
     border.dedup();
-    for gi in border {
-        if existing.contains(&gi) {
+    // Which of those the triangulation already holds. Asking the other way
+    // round - hashing every vertex of the chunk into a set - costs a pass
+    // over thousands of vertices on every refit to answer a question about
+    // a few hundred border samples.
+    let mut present = vec![false; border.len()];
+    for v in chunk.verts.iter() {
+        if let Ok(i) = border.binary_search(v) {
+            present[i] = true;
+        }
+    }
+    for (i, gi) in border.iter().copied().enumerate() {
+        if present[i] {
             continue;
         }
         let seed = chunk.locate(grid, grid.coord(gi), 0);
@@ -985,9 +1085,12 @@ pub struct ChunkBuffers {
 
 impl ChunkBuffers {
     fn new(state: &ChunkState, per_lod: Vec<ChunkMesh>) -> Self {
+        let (verts, indices) = per_lod.iter().fold((0, 0), |(v, i), m| {
+            (v + m.vertices.len(), i + m.indices.len())
+        });
         let mut buffers = ChunkBuffers {
-            vertices: Vec::new(),
-            indices: Vec::new(),
+            vertices: Vec::with_capacity(verts),
+            indices: Vec::with_capacity(indices),
             lods: Vec::with_capacity(per_lod.len()),
             center: [
                 state.x0 as f32 + state.w as f32 * 0.5,
@@ -1159,7 +1262,7 @@ impl Tin {
             // fine one - but refitting from scratch is cheap (the coarse
             // levels converge in a fraction of the insertions) and keeps
             // every level a genuine Delaunay triangulation.
-            let alt = grid.altitude_range();
+            let alt = grid.alt;
             let mut lods: Vec<LodState> = Vec::with_capacity(LOD_COUNT);
             let mut meshes = Vec::with_capacity(LOD_COUNT);
             for k in 0..LOD_COUNT {
@@ -1262,7 +1365,7 @@ impl Tin {
             .filter(|entry| entry.1.overlaps_any(rects))
             .map(|(index, state)| {
                 let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
-                state.alt = grid.altitude_range();
+                state.alt = grid.alt;
                 // The edits that reach this chunk, in its own grid
                 // coordinates and clipped to it.
                 let local = rects
@@ -1402,6 +1505,7 @@ mod tests {
     fn flat_grid(nx: u32, ny: u32) -> Grid {
         Grid {
             samples: vec![Sample::default(); (nx * ny) as usize],
+            alt: (0.0, 0.0),
             nx,
             ny,
             x0: 0,

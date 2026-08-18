@@ -98,12 +98,26 @@ impl Level {
         low.saturating_add(delta << power).min(high)
     }
 
+    /// Altitude in world units per unit of the stored 0..=255 height.
+    pub fn altitude_scale(&self) -> f32 {
+        self.geometry.height as f32 / 256.0
+    }
+
+    /// Wrap a level coordinate into a flat index into `meta`/`height`.
+    pub fn wrap(&self, coord: (i32, i32)) -> usize {
+        (coord.1.rem_euclid(self.size.1) * self.size.0 + coord.0.rem_euclid(self.size.0)) as usize
+    }
+
     pub fn get(&self, coord: (i32, i32)) -> Texel {
-        let bits = self.terrain_bits();
-        let i = (coord.1.rem_euclid(self.size.1) * self.size.0 + coord.0.rem_euclid(self.size.0))
-            as usize;
+        self.get_wrapped(self.wrap(coord), self.terrain_bits(), self.altitude_scale())
+    }
+
+    /// `get` for a caller that already resolved the flat index and hoisted
+    /// the two level-wide constants out of its loop - reading a whole
+    /// rectangle otherwise re-derives them, and wraps both coordinates,
+    /// once per texel.
+    pub fn get_wrapped(&self, i: usize, bits: TerrainBits, altitude_scale: f32) -> Texel {
         let meta = self.meta[i];
-        let altitude_scale = self.geometry.height as f32 / 256.0;
         if meta & DOUBLE_LEVEL != 0 {
             let meta0 = self.meta[i & !1];
             let meta1 = self.meta[i | 1];
