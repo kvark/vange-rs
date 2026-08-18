@@ -2,10 +2,12 @@
 
 **Dzmitry Malyshau**<br>
 Independent Researcher<br>
-<kvark@fastmail.com>
+<kvark@fastmail.com><br>
+ORCID [0009-0005-6410-4276](https://orcid.org/0009-0005-6410-4276)
 
-**Submitted to the Journal of Computer Graphics Techniques.** The six
-selected configurations are RayTraced 128, RayVoxel 100, Sliced 512,
+**Submitted to the Journal of Computer Graphics Techniques.**
+
+The six selected configurations are RayTraced 128, RayVoxel 100, Sliced 512,
 Scattered 4,4,4, Painted, and Mesh q=0.5. Quality, timing, preparation,
 and edit numbers are from one five-device batch at those settings.
 Fostral world data is CC BY-SA 4.0 from Association K-D Lab.
@@ -1042,8 +1044,9 @@ representation cannot be reused by the rest of the engine.
 ## Acknowledgements
 
 I thank Association K-D Lab for *Vangers* and for publishing the Fostral
-world data that this comparison uses, and the players and maintainers who
-have kept the game and its source alive for nearly three decades.
+world data that this comparison uses; Yury Zhuravlev for maintaining the
+open-source Vangers tree; and the players and other maintainers who have
+kept the game alive for nearly three decades.
 
 Large language models — OpenAI Codex, Anthropic Claude, and xAI Grok —
 assisted with drafting, editing, literature search, and work on the

@@ -68,6 +68,8 @@ it *after* the JCGT upload so the journal sees the manuscript first.
   `anc/terrain-methods.mp4`. Do not upload Fostral.
 - Comments: `22 pages. Submitted to the Journal of Computer Graphics
   Techniques. Supplemental video as ancillary.`
+- Abstract: paste `paper/abstract.txt` (ASCII, 1536 characters). Metadata
+  checklist is `paper/arxiv-metadata.txt`.
 - License: arXiv's perpetual non-exclusive distribution license. That
   does not collide with JCGT's later CC BY-ND journal version.
 - After acceptance: replace the PDF with the JCGT-template version and
