@@ -8,6 +8,8 @@
 \usepackage{longtable}
 \usepackage{booktabs}
 \usepackage{array}
+\usepackage{tabularx}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
 \providecommand{\pandocbounded}[1]{#1}
 \providecommand{\passthrough}[1]{#1}
@@ -106,20 +108,20 @@ Scattered stores 24 bits of depth and 8 bits of terrain type in its intermediate
 
 The methods fall into three groups. The two image-order methods cast one ray per pixel. Sliced, Painted, and Scattered enumerate samples of the encoded volume and project them forward. Mesh performs an offline fit and rasterizes the resulting explicit surface.
 
-\begin{longtable}[]{@{}llll@{}}
-\toprule\noalign{}
+{\small
+\begin{tabularx}{\columnwidth}{@{}l l Y Y@{}}
+\toprule
 method & order & primitive & edit response \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
+\midrule
 Height-field ray march & image & per-pixel ray & direct texture read \\
 Voxel-accelerated ray march & image & per-pixel ray & incremental occupancy rebuild \\
 Sliced & object & horizontal proxy quads & direct texture read \\
 Painted & object & bars per ground sample & direct texture read \\
 Scattered & object & compute-scattered points & direct texture read \\
 \textbf{Mesh (TIN)} & object & fitted triangles & local chunk refit \\
-\end{longtable}
+\bottomrule
+\end{tabularx}
+}
 
 Every row evaluates both encoded solid intervals. "Direct" means the next draw after the dirty texture upload sees the edit; it does not mean the CPU upload itself is free. Derived rows can remain interactive only if the dirty work is bounded or spread across frames.
 
@@ -283,18 +285,18 @@ Values below are arithmetic means over the three views at each pitch, reported a
 
 \pandocbounded{\includegraphics[width=\columnwidth]{figures/quality-pitch.pdf}}
 
-\begin{longtable}[]{@{}lllllll@{}}
-\toprule\noalign{}
-pitch & RayTraced 128 & RayVoxel 100 & Sliced & Scattered & Painted & Mesh q=0.5 \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
+{\footnotesize\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+pitch & Ray 128 & Voxel 100 & Sliced & Scattered & Painted & Mesh .5 \\
+\midrule
 0° & 0.6 / 0.4 & 0.0 / 0.2 & 0.9 / 2.7 & \textbf{40.4 / 1.8} & 0.0 / 0.1 & 0.3 / 0.1 \\
 --30° & 0.6 / 0.9 & 0.0 / 0.2 & 2.3 / 1.4 & \textbf{15.4 / 3.5} & 0.3 / 0.1 & 0.4 / 0.1 \\
 --60° & 0.1 / 0.7 & 0.0 / 0.3 & 0.0 / 0.2 & 0.3 / \textbf{5.7} & 2.7 / 0.1 & 0.0 / 0.1 \\
 --90° & 0.1 / 0.5 & 0.0 / 0.3 & 0.0 / 0.2 & 0.1 / \textbf{3.7} & 0.8 / 0.2 & 0.0 / 0.1 \\
-\end{longtable}
+\bottomrule
+\end{tabular}
+}
 
 The image-order methods join the coherent group. Scattering is the horizon outlier: its three scenes leave 19.1--73.2\% of reference terrain uncovered, while the other methods\textquotesingle{} pitch means lie between 0.0\% and 0.9\%. Looking down removes its coverage deficit but not its point-scale incoherence. Slicing shows the complementary signature: good coverage but visible horizontal bands, measured as 2.7\% coherence error at 0°.
 
@@ -308,13 +310,11 @@ The timing table uses the same six configurations as Section~\ref{sec:pitch}. Vu
 
 \pandocbounded{\includegraphics[width=\columnwidth]{figures/performance.pdf}}
 
-\begin{longtable}[]{@{}lllllll@{}}
-\toprule\noalign{}
-device / pitch & RayTraced 128 & RayVoxel 100 & Sliced & Scattered$^\dagger$ & Painted & Mesh q=0.5 \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
+{\footnotesize\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+device / pitch & Ray 128 & Voxel & Sliced & Scat.$^\dagger$ & Painted & Mesh .5 \\
+\midrule
 780M / 0° & 4.562 & 8.143 & 10.437 & 14.179 & 8.441 & \textbf{4.072} \\
 780M / --30° & 4.871 & 9.123 & 7.809 & 8.658 & 12.853 & \textbf{4.152} \\
 780M / --60° & 4.838 & 8.254 & 8.974 & 6.970 & 20.058 & \textbf{3.974} \\
@@ -323,19 +323,21 @@ device / pitch & RayTraced 128 & RayVoxel 100 & Sliced & Scattered$^\dagger$ & P
 7900 XT / --30° & 0.660 & 1.522 & 1.343 & 1.315 & 4.658 & \textbf{0.395} \\
 7900 XT / --60° & 0.658 & 1.415 & 1.604 & 0.991 & 6.837 & \textbf{0.385} \\
 7900 XT / --90° & 0.693 & 1.308 & 1.790 & 0.974 & 6.332 & \textbf{0.383} \\
-Intel RPL-U / 0° & 15.751 & 34.681 & 54.498 & 104.370 & 45.628 & \textbf{11.745} \\
-Intel RPL-U / --30° & 18.106 & 39.596 & 34.730 & 89.523 & 62.300 & \textbf{11.426} \\
-Intel RPL-U / --60° & 17.591 & 34.433 & 34.862 & 87.927 & 86.566 & \textbf{11.256} \\
-Intel RPL-U / --90° & 21.227 & 33.561 & 42.657 & 70.993 & 124.020 & \textbf{11.388} \\
+Intel / 0° & 15.751 & 34.681 & 54.498 & 104.370 & 45.628 & \textbf{11.745} \\
+Intel / --30° & 18.106 & 39.596 & 34.730 & 89.523 & 62.300 & \textbf{11.426} \\
+Intel / --60° & 17.591 & 34.433 & 34.862 & 87.927 & 86.566 & \textbf{11.256} \\
+Intel / --90° & 21.227 & 33.561 & 42.657 & 70.993 & 124.020 & \textbf{11.388} \\
 RTX 5070 / 0° & 0.722 & 1.251 & 2.259 & 1.721 & 3.258 & \textbf{0.503} \\
 RTX 5070 / --30° & 0.809 & 1.419 & 1.544 & 1.532 & 4.155 & \textbf{0.501} \\
 RTX 5070 / --60° & 0.782 & 1.226 & 1.774 & 1.327 & 5.676 & \textbf{0.493} \\
 RTX 5070 / --90° & 0.845 & 1.146 & 2.018 & 1.304 & 5.679 & \textbf{0.496} \\
-Apple M3* / 0° & 8.219 & 12.378 & 12.284 & 40.524 & 16.944 & \textbf{5.307} \\
-Apple M3* / --30° & 8.057 & 13.551 & 11.017 & 11.443 & 32.664 & \textbf{5.936} \\
-Apple M3* / --60° & 8.172 & 12.173 & 12.110 & 10.681 & 49.750 & \textbf{6.302} \\
-Apple M3* / --90° & 8.915 & 11.862 & 13.124 & 11.161 & 31.530 & \textbf{6.135} \\
-\end{longtable}
+M3* / 0° & 8.219 & 12.378 & 12.284 & 40.524 & 16.944 & \textbf{5.307} \\
+M3* / --30° & 8.057 & 13.551 & 11.017 & 11.443 & 32.664 & \textbf{5.936} \\
+M3* / --60° & 8.172 & 12.173 & 12.110 & 10.681 & 49.750 & \textbf{6.302} \\
+M3* / --90° & 8.915 & 11.862 & 13.124 & 11.161 & 31.530 & \textbf{6.135} \\
+\bottomrule
+\end{tabular}
+}
 
 \textbf{* Apple M3 values are CPU submit-and-wait means.} They include command submission and the completion round trip, so they support comparisons among methods on that device but not absolute comparisons with the Vulkan GPU rows.
 
@@ -345,19 +347,19 @@ Painted has the clearest orientation dependence on every adapter, becoming progr
 
 Within-session 95\% intervals from the 40 frame samples, over the twelve-scene mean:
 
-\begin{longtable}[]{@{}lrrrrrr@{}}
-\toprule\noalign{}
-device & Ray 128 & Voxel 100 & Sliced & Scattered & Painted & Mesh .5 \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
-Radeon 780M & 4.829±0.116 & 8.320±0.008 & 9.341±0.120 & 9.220±0.042 & 15.839±0.085 & 4.070±0.050 \\
-Radeon 7900 XT & 0.646±0.007 & 1.403±0.001 & 1.629±0.010 & 2.794±0.003 & 5.216±0.002 & 0.387±0.003 \\
-Intel RPL-U & 18.169±0.103 & 35.568±0.063 & 41.687±0.424 & 88.203±0.159 & 79.629±0.444 & 11.454±0.041 \\
-RTX 5070 & 0.790±0.000 & 1.260±0.001 & 1.899±0.000 & 1.471±0.000 & 4.692±0.001 & 0.498±0.001 \\
-Apple M3* & 8.341±0.032 & 12.491±0.014 & 12.134±0.016 & 18.452±0.022 & 32.722±0.036 & 5.920±0.068 \\
-\end{longtable}
+{\footnotesize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+device & Ray 128 & Voxel & Sliced & Scat. & Paint & Mesh \\
+\midrule
+780M & 4.83$\pm$0.12 & 8.32$\pm$0.01 & 9.34$\pm$0.12 & 9.22$\pm$0.04 & 15.84$\pm$0.09 & 4.07$\pm$0.05 \\
+7900 XT & 0.65$\pm$0.01 & 1.40$\pm$0.00 & 1.63$\pm$0.01 & 2.79$\pm$0.00 & 5.22$\pm$0.00 & 0.39$\pm$0.00 \\
+Intel & 18.17$\pm$0.10 & 35.57$\pm$0.06 & 41.69$\pm$0.42 & 88.20$\pm$0.16 & 79.63$\pm$0.44 & 11.45$\pm$0.04 \\
+RTX 5070 & 0.79$\pm$0.00 & 1.26$\pm$0.00 & 1.90$\pm$0.00 & 1.47$\pm$0.00 & 4.69$\pm$0.00 & 0.50$\pm$0.00 \\
+M3* & 8.34$\pm$0.03 & 12.49$\pm$0.01 & 12.13$\pm$0.02 & 18.45$\pm$0.02 & 32.72$\pm$0.04 & 5.92$\pm$0.07 \\
+\bottomrule
+\end{tabular}
+}
 
 The mesh--ray intervals do not overlap on any device. The M3 interval is now honest: this collector kept the CPU sample arrays.
 
@@ -394,20 +396,20 @@ The headless \passthrough{\lstinline!--dig!} path removes altitude and upper-lay
 
 Times below are medians on the Radeon 780M. \passthrough{\lstinline!first edit!} has five independent samples of the first post-edit frame. CPU is submit-and-wait (upload + any refine + GPU work + round trip): that is the latency a player waits. GPU is the timestamped draw of that same frame. \passthrough{\lstinline!steady!} is the median of ten frames from a fresh build of the already-edited level.
 
-\begin{longtable}[]{@{}lrrrrrrl@{}}
-\toprule\noalign{}
-method & CPU steady & CPU first & CPU $\Delta$ & GPU steady & GPU first & GPU $\Delta$ & fresh-build equivalence \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
-RayTraced 128 & 6.51 & 8.70 & +2.19 & 5.59 & 7.45 & +1.86 & exact after 1 frame \\
-RayVoxel 100 & 7.54 & 9.00 & +1.46 & 6.60 & 6.97 & +0.37 & exact after 1 frame \\
-Sliced & 7.79 & 10.97 & +3.18 & 6.91 & 9.60 & +2.69 & exact after 1 frame \\
-Scattered & 8.41 & 10.16 & +1.75 & 7.37 & 8.65 & +1.28 & exact after 1 frame \\
-Painted & 17.89 & 22.72 & +4.83 & 16.87 & 21.04 & +4.17 & exact after 1 frame \\
-Mesh q=0.5 & 6.07 & 15.94 & +9.88 & 4.77 & 6.07 & +1.30 & not equivalent by 16 frames \\
-\end{longtable}
+{\footnotesize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrrrrrrl@{}}
+\toprule
+method & CPU$_0$ & CPU$_1$ & $\Delta$C & GPU$_0$ & GPU$_1$ & $\Delta$G & match \\
+\midrule
+Ray 128 & 6.51 & 8.70 & +2.19 & 5.59 & 7.45 & +1.86 & 1 frame \\
+Voxel 100 & 7.54 & 9.00 & +1.46 & 6.60 & 6.97 & +0.37 & 1 frame \\
+Sliced & 7.79 & 10.97 & +3.18 & 6.91 & 9.60 & +2.69 & 1 frame \\
+Scattered & 8.41 & 10.16 & +1.75 & 7.37 & 8.65 & +1.28 & 1 frame \\
+Painted & 17.89 & 22.72 & +4.83 & 16.87 & 21.04 & +4.17 & 1 frame \\
+Mesh .5 & 6.07 & 15.94 & +9.88 & 4.77 & 6.07 & +1.30 & not by 16 \\
+\bottomrule
+\end{tabular}
+}
 
 On this integrated GPU the first updated frame also costs extra GPU time for the methods that upload or rebuild, because the dirty work is not hidden behind a fast discrete queue. The mesh is still the outlier: its CPU $\Delta$ is 9.88 ms while its extra GPU time is only 1.30 ms. Across the five devices Mesh CPU $\Delta$ is 5.0--9.9 ms (7900 XT 5.03, M3 5.98, RTX 5070 7.31, Intel 9.83, 780M 9.88). The five direct or regularly rebuilt methods match a fresh edited build on the first updated frame on every adapter. The mesh does not: at 16 frames it still differs by 0.0016\% hit/miss classification, 0.22 u p95 depth, and 0.78--0.80 levels of 8-bit color MAE, identically on all five devices. That remainder sits inside the q=0.5 tolerance; exact rebuild equivalence is nevertheless a stronger property than this implementation provides.
 
@@ -456,20 +458,20 @@ Against roughly 80$\times$ for a smooth synthetic surface at comparable toleranc
 
 Each method was swept over its own quality knob and given the cheapest setting within one percentage point of its own best error, so no method is charged for a setting that buys nothing or credited with speed it reaches only by being wrong. Fostral, three viewpoints at the horizon, 400x260, view distance 600. The CPU reference was re-swept after correcting its screen-X basis and far-plane convention. The mesh received an additional 1280$\times$800 pass because its wall coverage was not resolved at tuning resolution. The complete sweeps are recorded in \passthrough{\lstinline!paper/tuning.md!}.
 
-\begin{longtable}[]{@{}lllll@{}}
-\toprule\noalign{}
-method & knob & swept & chosen & error at choice \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
-RayTraced & forward steps & 16--256 & \textbf{128} & 1.2\% \\
-Painted & --- & none beyond view distance & --- & 0.1\% \\
+{\small\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+method & knob & swept & chosen & error \\
+\midrule
+RayTraced & steps & 16--256 & \textbf{128} & 1.2\% \\
+Painted & --- & --- & --- & 0.1\% \\
 Sliced & slices & 32--512 & \textbf{512} & 6.5\% \\
 Scattered & density & 1--4 & \textbf{4,4,4} & 39.2\% \\
-RayVoxel & grid, steps & 2 grids $\times$ 40--400 & \textbf{4,8,2, 100 steps} & 0.3\% \\
-Mesh & fit tolerance & q 0.0--1.0 & \textbf{q=0.5} & 0.3\% at 1280$\times$800 \\
-\end{longtable}
+RayVoxel & grid, steps & 2 grids $\times$ 40--400 & \textbf{4,8,2 / 100} & 0.3\% \\
+Mesh & tolerance & q 0.0--1.0 & \textbf{q=0.5} & 0.3\% at 1280$\times$800 \\
+\bottomrule
+\end{tabular}
+}
 
 Four of the results are worth stating.
 
@@ -505,24 +507,26 @@ The obvious reading of a 14.9$\times$ reduction where a smooth surface gives \te
 
 \pandocbounded{\includegraphics[width=\columnwidth]{figures/fit-survey.pdf}}
 
-\begin{longtable}[]{@{}llllllll@{}}
-\toprule\noalign{}
-level & texels & triangles & reduction & slab tris & dual texels & rough(floor) & rough(surface) \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
-weexow & 4.2 M & 0.05 M & 182.0$\times$ & 0.0\% & 0.0\% & 1.84 & 1.84 \\
-ark-a-znoy & 4.2 M & 0.05 M & 154.8$\times$ & 0.0\% & 0.0\% & 5.52 & 5.52 \\
-threall & 4.2 M & 0.19 M & 45.3$\times$ & 0.0\% & 0.0\% & 2.85 & 2.85 \\
-xplo & 8.4 M & 0.87 M & 19.4$\times$ & 17.0\% & 1.4\% & 7.54 & 8.80 \\
-khox & 4.2 M & 0.52 M & 16.1$\times$ & 9.3\% & 4.8\% & 6.94 & 7.71 \\
-fostral & 33.6 M & 4.50 M & 14.9$\times$ & 35.6\% & 10.9\% & 3.44 & 6.54 \\
-necross & 33.6 M & 8.41 M & 8.0$\times$ & 42.5\% & 17.0\% & 4.41 & 14.43 \\
-glorx & 33.6 M & 10.97 M & 6.1$\times$ & 37.2\% & 30.0\% & 6.53 & 14.66 \\
-boozeena & 4.2 M & 1.46 M & 5.7$\times$ & 41.5\% & 13.3\% & 3.44 & 25.15 \\
-hmok & 4.2 M & 1.61 M & 5.2$\times$ & 47.2\% & 38.0\% & 2.71 & 18.77 \\
-\end{longtable}
+{\footnotesize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+level & texels & tris & red. & slab & dual & $r_f$ & $r_s$ \\
+\midrule
+weexow & 4.2\,M & 0.05\,M & 182.0$\times$ & 0.0\% & 0.0\% & 1.84 & 1.84 \\
+ark-a-znoy & 4.2\,M & 0.05\,M & 154.8$\times$ & 0.0\% & 0.0\% & 5.52 & 5.52 \\
+threall & 4.2\,M & 0.19\,M & 45.3$\times$ & 0.0\% & 0.0\% & 2.85 & 2.85 \\
+xplo & 8.4\,M & 0.87\,M & 19.4$\times$ & 17.0\% & 1.4\% & 7.54 & 8.80 \\
+khox & 4.2\,M & 0.52\,M & 16.1$\times$ & 9.3\% & 4.8\% & 6.94 & 7.71 \\
+fostral & 33.6\,M & 4.50\,M & 14.9$\times$ & 35.6\% & 10.9\% & 3.44 & 6.54 \\
+necross & 33.6\,M & 8.41\,M & 8.0$\times$ & 42.5\% & 17.0\% & 4.41 & 14.43 \\
+glorx & 33.6\,M & 10.97\,M & 6.1$\times$ & 37.2\% & 30.0\% & 6.53 & 14.66 \\
+boozeena & 4.2\,M & 1.46\,M & 5.7$\times$ & 41.5\% & 13.3\% & 3.44 & 25.15 \\
+hmok & 4.2\,M & 1.61\,M & 5.2$\times$ & 47.2\% & 38.0\% & 2.71 & 18.77 \\
+\bottomrule
+\end{tabular}
+}
+
+{\footnotesize $r_f$ is \texttt{rough(floor)}; $r_s$ is \texttt{rough(surface)}.}
 
 \passthrough{\lstinline!rough(floor)!} is the mean absolute discrete Laplacian of the \passthrough{\lstinline!low!} layer alone --- the terrain\textquotesingle s own curvature, blind to the second layer. \passthrough{\lstinline!rough(surface)!} is the same measure on the composite surface the fitter sees.
 
