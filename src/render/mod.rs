@@ -421,6 +421,20 @@ pub struct Render {
 impl Render {
     /// Mark the rectangles a moving-land quant rewrote so the next draw
     /// re-uploads them (and refits the mesh / rebakes voxels).
+    /// Marks a run of palette entries for re-upload, merging with anything
+    /// already pending.
+    pub fn dirty_palette(&mut self, range: std::ops::Range<u32>) {
+        if range.start == range.end {
+            return;
+        }
+        let pending = &mut self.terrain.dirty_palette;
+        *pending = if pending.start == pending.end {
+            range
+        } else {
+            pending.start.min(range.start)..pending.end.max(range.end)
+        };
+    }
+
     /// Marks every texel of `regions` for re-upload. Both the moving land
     /// and the deformation the cars leave behind report what they touched
     /// this way.

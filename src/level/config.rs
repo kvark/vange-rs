@@ -19,6 +19,30 @@ impl Power {
     }
 }
 
+/// One entry of a world's `[Dynamic Palette]`: a terrain whose colours
+/// breathe in and out on a sine.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaletteWave {
+    /// Which terrain's colour ramp to modulate.
+    pub terrain: u8,
+    /// Phase advance per quant, out of the original's 4096-step turn.
+    pub speed: i32,
+    /// Peak swing, in the palette's own 0..=63 units.
+    pub amplitude: i32,
+    /// Which of red, green and blue take the swing.
+    pub channels: [bool; 3],
+}
+
+/// The `[Dynamic Palette]` section of a world INI.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DynamicPalette {
+    /// `Wave Terrain` - the ramp a glint travels along, if any. Every
+    /// shipped world points this at terrain 0, the water.
+    pub wave_terrain: Option<u8>,
+    /// `Terrain Number` entries' worth of sinusoidal modulation.
+    pub waves: Vec<PaletteWave>,
+}
+
 #[derive(Clone, Default)]
 pub struct TerrainConfig {
     pub shadow_offset: u8,
@@ -36,6 +60,7 @@ pub struct LevelConfig {
     pub section: Power,
     pub min_square: Power,
     pub terrains: Box<[TerrainConfig]>,
+    pub dynamic_palette: DynamicPalette,
 }
 
 impl LevelConfig {
@@ -58,6 +83,7 @@ impl LevelConfig {
             section: Power(8),
             min_square: Power(0),
             terrains: terrains.into_boxed_slice(),
+            dynamic_palette: DynamicPalette::default(),
         }
     }
 
@@ -144,6 +170,64 @@ impl LevelConfig {
             section: Power(global["Section Size Power"].parse().unwrap()),
             min_square: Power(global["Minimal Square Power"].parse().unwrap()),
             terrains,
+            dynamic_palette: parse_dynamic_palette(ini),
         }
+    }
+}
+
+/// Reads the `[Dynamic Palette]` section, which every shipped world has and
+/// fills in identically. A world without one simply does not animate.
+fn parse_dynamic_palette(ini: &Ini) -> DynamicPalette {
+    let section = match ini.section(Some("Dynamic Palette")) {
+        Some(section) => section,
+        None => return DynamicPalette::default(),
+    };
+    let numbers = |key: &str| -> Vec<i32> {
+        section
+            .get(key)
+            .map(|v| {
+                v.split_whitespace()
+                    .filter_map(|t| t.parse().ok())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    // `-1` is how the original spells "no wave".
+    let wave_terrain = section
+        .get("Wave Terrain")
+        .and_then(|v| v.trim().parse::<i32>().ok())
+        .filter(|&t| t >= 0)
+        .map(|t| t as u8);
+
+    let count = section
+        .get("Terrain Number")
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    let (terrains, speeds, amplitudes) = (
+        numbers("Terrains"),
+        numbers("Speeds"),
+        numbers("Amplitudes"),
+    );
+    let (red, green, blue) = (numbers("Red"), numbers("Green"), numbers("Blue"));
+
+    let waves = (0..count)
+        .filter_map(|i| {
+            Some(PaletteWave {
+                terrain: *terrains.get(i)? as u8,
+                speed: *speeds.get(i)?,
+                amplitude: *amplitudes.get(i)?,
+                channels: [
+                    red.get(i).copied().unwrap_or(0) != 0,
+                    green.get(i).copied().unwrap_or(0) != 0,
+                    blue.get(i).copied().unwrap_or(0) != 0,
+                ],
+            })
+        })
+        .collect();
+
+    DynamicPalette {
+        wave_terrain,
+        waves,
     }
 }

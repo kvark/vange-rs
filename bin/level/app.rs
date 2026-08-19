@@ -25,6 +25,7 @@ pub struct LevelView {
     level: level::Level,
     /// `None` when the level has no `data.vot` to animate.
     moving_land: Option<MovingLandUi>,
+    palette: level::palette::Animation,
     cam: space::Camera,
     input: Input,
     ui: config::settings::Ui,
@@ -215,10 +216,13 @@ impl LevelView {
             info!("This level has no moving land");
         }
 
+        let palette = level::palette::Animation::new(&level, &level_config.dynamic_palette);
+
         LevelView {
             render,
             level,
             moving_land,
+            palette,
             cam,
             input: Input::Empty,
             ui: settings.ui,
@@ -360,6 +364,9 @@ impl Application for LevelView {
     }
 
     fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
+        let range = self.palette.step(&mut self.level, delta);
+        self.render.dirty_palette(range);
+
         if let Some(ref mut moving) = self.moving_land {
             let z_range = 0..self.level.geometry.height as u16;
             for r in moving.update(&mut self.level, delta) {
@@ -520,6 +527,12 @@ impl Application for LevelView {
                 ui.label("Level:");
                 self.level.draw_ui(ui);
             });
+            if !self.palette.is_empty() {
+                ui.group(|ui| {
+                    ui.label("Palette:");
+                    ui.checkbox(&mut self.palette.enabled, "Animate");
+                });
+            }
             if let Some(ref mut moving) = self.moving_land {
                 ui.group(|ui| {
                     ui.label("Moving land:");

@@ -8,12 +8,13 @@ use std::{
 
 mod config;
 pub mod moving;
+pub mod palette;
 pub mod terraform;
 pub mod tin;
 pub mod trigger;
 pub mod vlc;
 
-pub use self::config::{LevelConfig, Power, TerrainConfig};
+pub use self::config::{DynamicPalette, LevelConfig, PaletteWave, Power, TerrainConfig};
 use crate::config::settings;
 use crate::vfs::Vfs;
 

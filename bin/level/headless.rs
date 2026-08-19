@@ -184,6 +184,8 @@ pub struct SnapshotOptions {
     pub dig_center: Option<(i32, i32)>,
     /// Optional crater radius in level texels.
     pub dig_radius: Option<i32>,
+    /// Quants of dynamic palette to run before the snapshot.
+    pub palette_quants: u32,
     /// Drive a wheel across the level, so the tread it presses into the
     /// ground can be looked at.
     pub tracks: bool,
@@ -272,6 +274,7 @@ impl Default for SnapshotOptions {
             dig_frame: 1,
             dig_center: None,
             dig_radius: None,
+            palette_quants: 0,
             tracks: false,
             tracks_line: None,
             tracks_passes: 1,
@@ -748,6 +751,25 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 z_range: 0..0x100,
                 need_upload: true,
             });
+        }
+        if opts.palette_quants > 0 && frame_index == opts.dig_frame {
+            let mut anim = level::palette::Animation::new(&lvl, &level_config.dynamic_palette);
+            let mut range = 0..0;
+            for _ in 0..opts.palette_quants {
+                let step = anim.tick(&mut lvl);
+                if step.start != step.end {
+                    range = if range.start == range.end {
+                        step
+                    } else {
+                        range.start.min(step.start)..range.end.max(step.end)
+                    };
+                }
+            }
+            info!(
+                "Ran {} palette quants, touching entries {:?}",
+                opts.palette_quants, range
+            );
+            render.dirty_palette(range);
         }
         if opts.grader && frame_index == opts.dig_frame {
             let regions = drag_blade(
