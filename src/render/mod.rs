@@ -419,6 +419,24 @@ pub struct Render {
 }
 
 impl Render {
+    /// Mark the rectangles a moving-land quant rewrote so the next draw
+    /// re-uploads them (and refits the mesh / rebakes voxels).
+    pub fn dirty_moving_land(&mut self, regions: &[level::moving::Region], height: u16) {
+        let z_range = 0..height;
+        self.terrain
+            .dirty_rects
+            .extend(regions.iter().map(|r| DirtyRect {
+                rect: Rect {
+                    x: r.x as u16,
+                    y: r.y as u16,
+                    w: r.w as u16,
+                    h: r.h as u16,
+                },
+                z_range: z_range.clone(),
+                need_upload: true,
+            }));
+    }
+
     pub fn new(
         gfx: &GraphicsContext,
         level: &level::LevelConfig,

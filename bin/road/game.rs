@@ -5,8 +5,7 @@ use vangers::{
     config, level, model,
     physics::{self, CarPhysicsData},
     render::{
-        Batcher, DirtyRect, GraphicsContext, Rect, Render, ScreenTargets, debug::LineBuffer,
-        object::BodyColor,
+        Batcher, GraphicsContext, Render, ScreenTargets, debug::LineBuffer, object::BodyColor,
     },
     space,
 };
@@ -339,13 +338,7 @@ pub struct Game {
     batcher: Batcher,
     line_buffer: LineBuffer,
     level: level::Level,
-    moving_land: level::moving::MovingLand,
-    /// Sensors and location engines that steer the moving land.
-    triggers: level::trigger::Triggers,
-    /// Time carried over towards the next moving-land quant.
-    moving_land_time: f32,
-    /// Scratch buffer for the rectangles a moving-land quant touched.
-    moving_land_regions: Vec<level::moving::Region>,
+    moving: level::moving::MovingWorld,
     agents: Vec<Agent>,
     remote_agents: HashMap<PlayerId, RemoteAgent>,
     net: Option<NetworkClient>,
@@ -461,20 +454,7 @@ impl Game {
         log::info!("Loading the level");
         let level = level::load(&level_config, &settings.game.geometry);
 
-        let (moving_land, triggers) = match level_config.path_moving_land() {
-            Some(path) => {
-                log::info!("Loading the moving land from {:?}", path);
-                let mut land =
-                    level::moving::MovingLand::load_dir(&path, level_config.terrains.len() as i32);
-                let world_dir = path.parent().unwrap_or(&path).to_path_buf();
-                let triggers = level::trigger::Triggers::load(&world_dir, &path, &land);
-                // Engines park their location at the closed phase; anything
-                // no engine drives keeps looping on its own.
-                triggers.reset_locations(&mut land);
-                (land, triggers)
-            }
-            None => Default::default(),
-        };
+        let moving = level::moving::MovingWorld::load(&level_config, None);
 
         log::info!("Spawning agents");
         let car_names = db.cars.keys().cloned().collect::<Vec<_>>();
@@ -550,10 +530,7 @@ impl Game {
             batcher: Batcher::new(),
             line_buffer: LineBuffer::new(),
             level,
-            moving_land,
-            triggers,
-            moving_land_time: 0.0,
-            moving_land_regions: Vec::new(),
+            moving,
             agents,
             remote_agents: HashMap::new(),
             net,
@@ -579,60 +556,18 @@ impl Game {
     }
 
     /// Advances the moving land and hands the touched rectangles to the
-    /// renderer. The original ticks it once per main loop iteration, so the
-    /// animation speed is tied to `MAIN_LOOP_TIME` rather than the frame rate.
+    /// renderer. Same [`level::moving::MovingWorld::step`] the web build uses.
     fn step_moving_land(&mut self, delta: f32) {
-        if self.moving_land.is_empty() {
-            return;
-        }
-
-        self.moving_land_time += delta;
-        let quants = (self.moving_land_time / config::common::MAIN_LOOP_TIME) as u32;
-        if quants == 0 {
-            return;
-        }
-        self.moving_land_time -= quants as f32 * config::common::MAIN_LOOP_TIME;
-        // After a long stall, drop the backlog instead of animating through it.
-        const MAX_CATCH_UP: u32 = 4;
-
-        self.moving_land_regions.clear();
-        for _ in 0..quants.min(MAX_CATCH_UP) {
-            // Sensors first, so an engine sees this quant's touches before
-            // it decides where to send its location.
-            if !self.triggers.is_empty() {
-                let size = (self.level.size.0, self.level.size.1);
-                for agent in self.agents.iter() {
-                    let pos = agent.position();
-                    self.triggers.touch(
-                        (pos.x as i32, pos.y as i32, pos.z as i32),
-                        agent.touch_radius(),
-                        size,
-                    );
-                }
-                self.triggers.update(&mut self.moving_land);
+        let height = self.level.geometry.height as u16;
+        let touches = self.agents.iter().map(|a| {
+            let pos = a.position();
+            level::moving::Touch {
+                pos: (pos.x as i32, pos.y as i32, pos.z as i32),
+                radius: a.touch_radius(),
             }
-            self.moving_land
-                .update(&mut self.level, &mut self.moving_land_regions);
-        }
-
-        // A frame keeps redrawing the same rectangle for its whole period, so
-        // the same region shows up once per quant.
-        self.moving_land_regions.sort_unstable();
-        self.moving_land_regions.dedup();
-
-        let z_range = 0..self.level.geometry.height as u16;
-        for r in self.moving_land_regions.drain(..) {
-            self.render.terrain.dirty_rects.push(DirtyRect {
-                rect: Rect {
-                    x: r.x as u16,
-                    y: r.y as u16,
-                    w: r.w as u16,
-                    h: r.h as u16,
-                },
-                z_range: z_range.clone(),
-                need_upload: true,
-            });
-        }
+        });
+        let regions = self.moving.step(&mut self.level, delta, touches);
+        self.render.dirty_moving_land(regions, height);
     }
 
     /// Lists each location with its playback state, and each engine with the
@@ -1168,10 +1103,10 @@ impl Application for Game {
                 ui.label("Level:");
                 self.level.draw_ui(ui);
             });
-            if !self.moving_land.is_empty() {
+            if !self.moving.is_empty() {
                 ui.group(|ui| {
                     ui.label("Moving land:");
-                    Self::draw_moving_land_ui(&self.moving_land, &self.triggers, ui);
+                    Self::draw_moving_land_ui(&self.moving.land, &self.moving.triggers, ui);
                 });
             }
             ui.group(|ui| {

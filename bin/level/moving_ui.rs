@@ -16,7 +16,7 @@
 
 use vangers::level::{
     Level, LevelConfig,
-    moving::{FREE_RUNNING, MovingLand, Region},
+    moving::{FREE_RUNNING, MovingLand, MovingWorld, Region},
     trigger::{Kind, Triggers},
 };
 
@@ -69,14 +69,11 @@ pub struct MovingLandUi {
 impl MovingLandUi {
     /// Returns `None` for a level with no moving land at all.
     pub fn load(config: &LevelConfig) -> Option<Self> {
-        let data_vot = config.path_moving_land()?;
-        let world_dir = data_vot.parent()?.to_path_buf();
-        let mut land = MovingLand::load_dir(&data_vot, config.terrains.len() as i32);
-        if land.is_empty() {
+        let world = MovingWorld::load(config, None);
+        if world.is_empty() {
             return None;
         }
-        let triggers = Triggers::load(&world_dir, &data_vot, &land);
-        triggers.reset_locations(&mut land);
+        let MovingWorld { land, triggers, .. } = world;
         Some(MovingLandUi {
             held: vec![false; triggers.sensors.len()],
             land,

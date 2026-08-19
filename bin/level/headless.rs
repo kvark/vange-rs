@@ -481,32 +481,19 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         None => (0..256).map(|_| [255u8, 255, 255, 255]).collect(),
     };
 
-    // Moving land, loaded from the same folder as the world INI. The
-    // web path loads it from the VFS (`MovingLand::load_from_vfs`); this
-    // headless snapshot tool still reads the native `data.vot` folder.
     let mut moving_land = if opts.moving_land {
-        let world_dir = opts
-            .level_path
-            .as_ref()
-            .map(|p| std::path::Path::new(p).parent().unwrap().to_path_buf())
-            .expect("--moving-land needs a native level path");
-        let data_vot = world_dir.join("data.vot");
-        let mut land =
-            level::moving::MovingLand::load_dir(&data_vot, level_config.terrains.len() as i32);
-        let triggers = level::trigger::Triggers::load(&world_dir, &data_vot, &land);
-        triggers.reset_locations(&mut land);
-        if opts.ml_free_run {
-            for location in land.locations.iter_mut() {
-                location.set_go_phase(level::moving::FREE_RUNNING);
+        let mut world = level::moving::MovingWorld::load(&level_config, vfs.as_ref());
+        if world.is_empty() {
+            info!("No moving land on this level");
+            None
+        } else {
+            if opts.ml_free_run {
+                for location in world.land.locations.iter_mut() {
+                    location.set_go_phase(level::moving::FREE_RUNNING);
+                }
             }
+            Some(world)
         }
-        info!(
-            "Moving land: {} locations, {} engines, {} sensors",
-            land.locations.len(),
-            triggers.engines.len(),
-            triggers.sensors.len()
-        );
-        Some((land, triggers))
     } else {
         None
     };
@@ -654,37 +641,21 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 need_upload: true,
             });
         }
-        if let Some((ref mut land, ref mut triggers)) = moving_land
+        if let Some(ref mut world) = moving_land
             && (opts.ml_continuous || frame_index == opts.ml_frame)
             && opts.ml_quants > 0
         {
-            let mut regions = Vec::new();
-            for _ in 0..opts.ml_quants {
-                if let Some(pos) = opts.ml_touch {
-                    triggers.touch(pos, 3, (lvl.size.0, lvl.size.1));
-                }
-                triggers.update(land);
-                land.update(&mut lvl, &mut regions);
-            }
-            regions.sort_unstable();
-            regions.dedup();
+            let touches = opts
+                .ml_touch
+                .map(|pos| level::moving::Touch { pos, radius: 3 });
+            let regions = world.run_quants(&mut lvl, opts.ml_quants, touches);
             info!(
                 "Moving land: {} quants touched {} distinct regions",
                 opts.ml_quants,
                 regions.len()
             );
-            for r in regions {
-                render.terrain.dirty_rects.push(vangers::render::DirtyRect {
-                    rect: vangers::render::Rect {
-                        x: r.x as u16,
-                        y: r.y as u16,
-                        w: r.w as u16,
-                        h: r.h as u16,
-                    },
-                    z_range: 0..0x100,
-                    need_upload: true,
-                });
-            }
+            let height = lvl.geometry.height as u16;
+            render.dirty_moving_land(regions, height);
         }
         let started = Instant::now();
 
