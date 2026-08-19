@@ -113,11 +113,44 @@ pub fn load_sensors(dir: &Path) -> Vec<Sensor> {
     load_table(dir, "snstable.vlc", b"VLS1", read_sensor)
 }
 
+/// Same table as [`load_sensors`], from bytes already in memory (the web
+/// VFS). `label` is only for log messages.
+pub fn load_sensors_from_bytes(bytes: &[u8], label: &str) -> Vec<Sensor> {
+    read_table(std::io::Cursor::new(bytes), label, b"VLS1", read_sensor)
+}
+
 /// Loads `mlctable.vlc`. Note that the original game reads this file's header
 /// and then skips the entries - only the map editor ever looks at them - so
 /// nothing instantiates these markers automatically.
 pub fn load_clone_markers(dir: &Path) -> Vec<CloneMarker> {
     load_table(dir, "mlctable.vlc", b"VLM1", read_clone_marker)
+}
+
+fn read_table<T, I, F>(mut input: I, label: &str, signature: &[u8; 4], read: F) -> Vec<T>
+where
+    I: Read,
+    F: Fn(&mut I) -> Result<T, Error>,
+{
+    let count = match open_table(&mut input, signature) {
+        Ok(count) => count,
+        Err(e) => {
+            log::error!("Unable to read {}: {}", label, e);
+            return Vec::new();
+        }
+    };
+
+    let mut entries = Vec::with_capacity(count as usize);
+    for index in 0..count {
+        match read(&mut input) {
+            Ok(entry) => entries.push(entry),
+            Err(e) => {
+                log::error!("Unable to read entry {} of {}: {}", index, label, e);
+                break;
+            }
+        }
+    }
+    log::info!("Loaded {} entries from {}", entries.len(), label);
+    entries
 }
 
 fn load_table<T, F>(dir: &Path, name: &str, signature: &[u8; 4], read: F) -> Vec<T>
@@ -135,27 +168,12 @@ where
         }
     };
 
-    let mut input = BufReader::new(file);
-    let count = match open_table(&mut input, signature) {
-        Ok(count) => count,
-        Err(e) => {
-            log::error!("Unable to read {:?}: {}", path, e);
-            return Vec::new();
-        }
-    };
-
-    let mut entries = Vec::with_capacity(count as usize);
-    for index in 0..count {
-        match read(&mut input) {
-            Ok(entry) => entries.push(entry),
-            Err(e) => {
-                log::error!("Unable to read entry {} of {:?}: {}", index, path, e);
-                break;
-            }
-        }
-    }
-    log::info!("Loaded {} entries from {:?}", entries.len(), path);
-    entries
+    read_table(
+        BufReader::new(file),
+        &format!("{:?}", path),
+        signature,
+        read,
+    )
 }
 
 fn read_sensor<I: Read>(input: &mut I) -> Result<Sensor, Error> {

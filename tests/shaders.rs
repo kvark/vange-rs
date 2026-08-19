@@ -40,12 +40,9 @@ fn inter_stage_structs(module: &naga::Module) -> Vec<String> {
     let mut names = Vec::new();
     for ep in &module.entry_points {
         match ep.stage {
-            ShaderStage::Vertex => names.extend(
-                ep.function
-                    .result
-                    .as_ref()
-                    .and_then(|r| name_of(r.ty)),
-            ),
+            ShaderStage::Vertex => {
+                names.extend(ep.function.result.as_ref().and_then(|r| name_of(r.ty)))
+            }
             ShaderStage::Fragment => {
                 names.extend(ep.function.arguments.iter().filter_map(|a| name_of(a.ty)))
             }

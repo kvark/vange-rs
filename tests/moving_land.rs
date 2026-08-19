@@ -3,6 +3,7 @@
 
 use vangers::config::settings;
 use vangers::level::{Level, LevelConfig, moving::MovingLand, trigger::Triggers};
+use vangers::vfs::Vfs;
 
 use std::path::{Path, PathBuf};
 
@@ -243,4 +244,31 @@ fn a_level_without_moving_land_is_fine() {
     let triggers = Triggers::load(dir, dir, &land);
     assert!(land.is_empty());
     assert!(triggers.is_empty());
+}
+
+#[test]
+fn vfs_load_matches_disk() {
+    let world = World::new("vfs");
+    let mut vfs = Vfs::new();
+    vfs.insert(
+        "data.vot/bridge.vot",
+        std::fs::read(world.data_vot().join("bridge.vot")).unwrap(),
+    );
+    vfs.insert(
+        "data.vot/snstable.vlc",
+        std::fs::read(world.data_vot().join("snstable.vlc")).unwrap(),
+    );
+    vfs.insert(
+        "location.lst",
+        std::fs::read(world.dir.join("location.lst")).unwrap(),
+    );
+
+    let mut land = MovingLand::load_from_vfs(&vfs, "data.vot", 8);
+    let triggers = Triggers::load_from_vfs(&vfs, "data.vot", &land);
+    triggers.reset_locations(&mut land);
+
+    let (disk_land, disk_triggers) = world.load();
+    assert_eq!(land.locations.len(), disk_land.locations.len());
+    assert_eq!(triggers.engines.len(), disk_triggers.engines.len());
+    assert_eq!(triggers.sensors.len(), disk_triggers.sensors.len());
 }

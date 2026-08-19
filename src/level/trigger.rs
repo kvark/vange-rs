@@ -21,6 +21,7 @@
 
 use crate::level::moving::MovingLand;
 use crate::level::vlc::{self, Sensor};
+use crate::vfs::Vfs;
 
 use std::path::Path;
 
@@ -250,6 +251,34 @@ impl Triggers {
     /// `world_dir`, resolving every name against `land`.
     pub fn load(world_dir: &Path, data_vot: &Path, land: &MovingLand) -> Self {
         let sensors = vlc::load_sensors(data_vot);
+        let text = match std::fs::read(world_dir.join("location.lst")) {
+            Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!("Unable to read {:?}: {}", world_dir.join("location.lst"), e);
+                }
+                None
+            }
+        };
+        Self::from_sensors_and_list(sensors, text.as_deref(), land)
+    }
+
+    /// Same as [`load`], from a VFS that already has the level zip mounted.
+    /// `data_vot` is the archive folder (`"data.vot"`); `location.lst` is
+    /// read from the VFS root, next to `world.ini`.
+    pub fn load_from_vfs(vfs: &Vfs, data_vot: &str, land: &MovingLand) -> Self {
+        let sensor_key = format!("{}/snstable.vlc", data_vot.trim_end_matches('/'));
+        let sensors = vfs
+            .read(&sensor_key)
+            .map(|bytes| vlc::load_sensors_from_bytes(&bytes, &sensor_key))
+            .unwrap_or_default();
+        let text = vfs
+            .read("location.lst")
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+        Self::from_sensors_and_list(sensors, text.as_deref(), land)
+    }
+
+    fn from_sensors_and_list(sensors: Vec<Sensor>, text: Option<&str>, land: &MovingLand) -> Self {
         let mut triggers = Triggers {
             owners: vec![None; sensors.len()],
             enabled: vec![true; sensors.len()],
@@ -257,19 +286,9 @@ impl Triggers {
             engines: Vec::new(),
             enables: Vec::new(),
         };
-
-        let path = world_dir.join("location.lst");
-        let text = match std::fs::read(&path) {
-            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-            Err(e) => {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    log::warn!("Unable to read {:?}: {}", path, e);
-                }
-                return triggers;
-            }
-        };
-
-        triggers.parse(&text, land);
+        if let Some(text) = text {
+            triggers.parse(text, land);
+        }
         log::info!(
             "Loaded {} location engines and {} sensors",
             triggers.engines.len(),

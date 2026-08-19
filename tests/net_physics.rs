@@ -35,6 +35,7 @@ fn make_follow() -> space::Follow {
         angle_x: (60.0f32).to_radians() - std::f32::consts::FRAC_PI_2,
         offset: Vec3::new(0.0, -100.0, 60.0),
         speed: 4.0,
+        look_ahead: 0.0,
     }
 }
 

@@ -279,6 +279,7 @@ impl CameraStyle {
                     angle_x: angle,
                     offset: Vec3::new(0.0, config.offset, config.height),
                     speed: config.speed,
+                    look_ahead: config.look_ahead,
                 },
                 ground_anchor: angle > 15.0f32.to_radians(),
             }
