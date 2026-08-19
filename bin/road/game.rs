@@ -353,6 +353,8 @@ pub struct Game {
     line_buffer: LineBuffer,
     level: level::Level,
     moving: level::moving::MovingWorld,
+    /// The breathing of the terrain colour ramps.
+    palette: level::palette::Animation,
     /// How deep a tread the wheels cut into the ground.
     terraform: level::terraform::Config,
     /// Scratch buffer for the rectangles this frame's tracks touched.
@@ -473,6 +475,7 @@ impl Game {
         let level = level::load(&level_config, &settings.game.geometry);
 
         let moving = level::moving::MovingWorld::load(&level_config, None);
+        let palette = level::palette::Animation::new(&level, &level_config.dynamic_palette);
 
         log::info!("Spawning agents");
         let car_names = db.cars.keys().cloned().collect::<Vec<_>>();
@@ -549,6 +552,7 @@ impl Game {
             line_buffer: LineBuffer::new(),
             level,
             moving,
+            palette,
             terraform: level::terraform::Config::default(),
             track_regions: Vec::new(),
             agents,
@@ -851,6 +855,9 @@ impl Application for Game {
         }
 
         self.step_moving_land(delta);
+
+        let range = self.palette.step(&mut self.level, delta);
+        self.render.dirty_palette(range);
 
         const TIME_HACK: f32 = 1.0;
         // Note: the equations below make the game absolutely match the original
@@ -1210,6 +1217,12 @@ impl Application for Game {
                 ui.label("Terrain:");
                 Self::draw_terraform_ui(&mut self.terraform, ui);
             });
+            if !self.palette.is_empty() {
+                ui.group(|ui| {
+                    ui.label("Palette:");
+                    ui.checkbox(&mut self.palette.enabled, "Animate");
+                });
+            }
             ui.group(|ui| {
                 ui.label("Renderer:");
                 self.render.draw_ui(ui);

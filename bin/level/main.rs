@@ -84,6 +84,10 @@ struct Cli {
     /// Width of the blade in texels, across the line it travels.
     #[arg(long, default_value_t = 40.0)]
     grader_width: f32,
+    /// Run the world's dynamic palette this many quants before the
+    /// snapshot, so the animation can be looked at a frame at a time.
+    #[arg(long, default_value_t = 0)]
+    palette_quants: u32,
     /// Load the world's moving land (`data.vot`) and location engines
     /// (`location.lst`).
     #[arg(long, default_value_t = false)]
@@ -318,6 +322,7 @@ fn main() {
             }),
             dig_radius: cli.dig_radius,
             moving_land: cli.moving_land,
+            palette_quants: cli.palette_quants,
             tracks: cli.tracks,
             grader: cli.grader,
             grader_depth: cli.grader_depth,
