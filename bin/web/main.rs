@@ -310,6 +310,7 @@ impl Agent {
             self.control.jump.take(),
             self.control.roll,
             None, // line_buffer
+            None, // tracks
         );
     }
 }
@@ -662,7 +663,7 @@ impl WebApp {
             }
         });
         let regions = self.moving.step(&mut self.level, delta, touches);
-        self.render.dirty_moving_land(regions, height);
+        self.render.dirty_terrain(regions, height);
     }
 
     fn draw(

@@ -253,6 +253,7 @@ pub fn step(
     jump: Option<f32>,
     roll: f32,
     mut line_buffer: Option<&mut LineBuffer>,
+    mut tracks: Option<&mut level::terraform::Tracks>,
 ) {
     let speed_correction_factor = dt / common.nature.time_delta0;
     let acc_global = AccelerationVectors {
@@ -453,6 +454,11 @@ pub fn step(
 
     let _ = (float_count, water_immersion, terrain_immersion); //TODO
     let is_after_collision = false;
+    if let Some(ref mut tracks) = tracks
+        && (wheels_touch == 0 || !stand_on_wheels)
+    {
+        tracks.lift_all();
+    }
     if wheels_touch != 0 && stand_on_wheels {
         let f_traction_per_wheel =
             car.physics.mobility_factor * common.global.mobility_factor * f_turbo * dynamo.traction
@@ -461,8 +467,27 @@ pub fn step(
             let (sin, cos) = dynamo.rudder.sin_cos();
             Vec3::new(cos, -sin, 0.0)
         };
-        for wheel in car.wheels.iter() {
+        // `track_nx`/`track_ny` of the original: the car's lateral axis
+        // flattened onto the level, so that pitching the nose down narrows
+        // the bar a wheel lays across its own track.
+        let across = {
+            let lateral = transform.rot * Vec3::X;
+            (lateral.x, lateral.y)
+        };
+        for (index, wheel) in car.wheels.iter().enumerate() {
             let pw = transform.transform_point(Vec3::from(wheel.pos));
+            if let Some(ref mut tracks) = tracks {
+                let coord = (pw.x.round() as i32, pw.y.round() as i32);
+                // `get_upper_height(..) < round(rg.z) + 15`: a wheel that is
+                // merely passing overhead leaves nothing behind.
+                if level::terraform::surface_height(level, coord)
+                    < pw.z + level::terraform::MAX_CONTACT_HEIGHT
+                {
+                    tracks.touch(index, coord, across);
+                } else {
+                    tracks.lift(index);
+                }
+            }
             let detect_wheel_hits = false;
             if detect_wheel_hits {
                 let dist = terrain::get_distance_to_terrain(level, pw);

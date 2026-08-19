@@ -312,6 +312,7 @@ async fn main() {
                             None,
                             0.0,
                             None,
+                            None,
                         );
                         remaining -= max_quant;
                     }
@@ -326,6 +327,10 @@ async fn main() {
                         f_brake,
                         jump,
                         agent.control.roll,
+                        None,
+                        // The server does not deform the terrain: the edits
+                        // would have to be replicated for clients to agree
+                        // on the ground they are driving over.
                         None,
                     );
 

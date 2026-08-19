@@ -65,6 +65,42 @@ fn dig_crater(
     }
 }
 
+/// Roll a wheel along a straight line, pressing its tread into the ground.
+/// Used by `--tracks` to see what driving somewhere actually leaves behind.
+fn drive_wheel(
+    level: &mut level::Level,
+    line: Option<(i32, i32, i32, i32)>,
+    passes: u32,
+    depth: i32,
+) -> Vec<level::Region> {
+    let (x0, y0, x1, y1) = line.unwrap_or((
+        level.size.0 / 2 - level.size.0 / 8,
+        level.size.1 / 2,
+        level.size.0 / 2 + level.size.0 / 8,
+        level.size.1 / 2,
+    ));
+    // Across the direction of travel, which is what a wheel's tread lies on.
+    let (dx, dy) = ((x1 - x0) as f32, (y1 - y0) as f32);
+    let len = (dx * dx + dy * dy).sqrt().max(1.0);
+    let config = level::terraform::Config {
+        depth,
+        ..level::terraform::Config::default()
+    };
+    let track = level::terraform::Track {
+        from: (x0, y0),
+        to: (x1, y1),
+        across: (-dy / len, dx / len),
+    };
+
+    let mut regions = Vec::new();
+    for _ in 0..passes.max(1) {
+        level::terraform::apply(level, &config, &track, &mut regions);
+    }
+    regions.sort_unstable();
+    regions.dedup();
+    regions
+}
+
 #[derive(Clone)]
 pub struct SnapshotOptions {
     pub output_path: String,
@@ -98,6 +134,15 @@ pub struct SnapshotOptions {
     pub dig_center: Option<(i32, i32)>,
     /// Optional crater radius in level texels.
     pub dig_radius: Option<i32>,
+    /// Drive a wheel across the level, so the tread it presses into the
+    /// ground can be looked at.
+    pub tracks: bool,
+    /// Start and end of the wheel's path, in level texels.
+    pub tracks_line: Option<(i32, i32, i32, i32)>,
+    /// Passes along that path.
+    pub tracks_passes: u32,
+    /// Altitude units one stamp moves the ground.
+    pub tracks_depth: i32,
     /// First-person camera: stand at this XY instead of orbiting a target.
     pub fp: Option<(f32, f32)>,
     /// Distance to move horizontally in the viewing direction across timed
@@ -171,6 +216,10 @@ impl Default for SnapshotOptions {
             dig_frame: 1,
             dig_center: None,
             dig_radius: None,
+            tracks: false,
+            tracks_line: None,
+            tracks_passes: 1,
+            tracks_depth: 8,
             fp: None,
             fp_travel: None,
             fp_height: 8.0,
@@ -641,6 +690,31 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 need_upload: true,
             });
         }
+        if opts.tracks && frame_index == opts.dig_frame {
+            let regions = drive_wheel(
+                &mut lvl,
+                opts.tracks_line,
+                opts.tracks_passes,
+                opts.tracks_depth,
+            );
+            info!(
+                "Drove {} pass(es) over {} distinct regions",
+                opts.tracks_passes.max(1),
+                regions.len()
+            );
+            for r in regions {
+                render.terrain.dirty_rects.push(vangers::render::DirtyRect {
+                    rect: vangers::render::Rect {
+                        x: r.x as u16,
+                        y: r.y as u16,
+                        w: r.w as u16,
+                        h: r.h as u16,
+                    },
+                    z_range: 0..0x100,
+                    need_upload: true,
+                });
+            }
+        }
         if let Some(ref mut world) = moving_land
             && (opts.ml_continuous || frame_index == opts.ml_frame)
             && opts.ml_quants > 0
@@ -655,7 +729,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 regions.len()
             );
             let height = lvl.geometry.height as u16;
-            render.dirty_moving_land(regions, height);
+            render.dirty_terrain(regions, height);
         }
         let started = Instant::now();
 
