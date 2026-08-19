@@ -12,6 +12,27 @@ pub mod terrain;
 
 const MAX_TRACTION: config::common::Traction = 4.0;
 
+/// How deep the car has to be before the mole stops pushing it down, and
+/// how shallow before it counts as having surfaced. Both are
+/// `terrain_immersion` thresholds straight out of `analyse_dynamics`.
+const MOLE_SUBMERGED: f32 = 900.0;
+const MOLE_SURFACED: f32 = 50.0;
+
+/// Where a car is in a burrow.
+///
+/// The original spells this `mole_on`, an int that is `256` while the car
+/// is under and counts down once the player lets go - though nothing ever
+/// counts it, so it is really these three states.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Mole {
+    #[default]
+    Off,
+    /// Burrowing, and being pulled further down until it is deep enough.
+    Under,
+    /// On the way back up. Ends the moment the car is clear of the ground.
+    Surfacing,
+}
+
 #[derive(Debug)]
 struct AccelerationVectors {
     f: Vec3, // linear
@@ -23,6 +44,8 @@ pub struct Dynamo {
     pub rudder: f32,
     pub linear_velocity: Vec3,
     pub angular_velocity: Vec3,
+    /// Whether the car is burrowing, and which way it is heading.
+    pub mole: Mole,
 }
 
 impl Default for Dynamo {
@@ -32,6 +55,7 @@ impl Default for Dynamo {
             rudder: 0.0,
             linear_velocity: Vec3::ZERO,
             angular_velocity: Vec3::ZERO,
+            mole: Mole::Off,
         }
     }
 }
@@ -291,7 +315,12 @@ pub fn step(
     let mut float_count = 0;
     let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
     let stand_on_wheels = z_axis.z > 0.0 && (transform.rot * Vec3::X).z.abs() < 0.7;
-    let modulation = 1.0;
+    // `k_elastic_modulation` of the original: under the ground the car is
+    // held far more softly, which is what lets it sink in at all.
+    let modulation = match dynamo.mole {
+        Mole::Under => common.mole.k_elastic_mole,
+        _ => 1.0,
+    };
     let mut acc_cur = AccelerationVectors {
         f: rot_inv * acc_global.f,
         k: rot_inv * acc_global.k,
@@ -595,6 +624,56 @@ pub fn step(
             Vec3::new(0.0, 0.0, df),
             Vec3::new(0.0, df * x_edge * transform.scale, 0.0),
         );
+    }
+
+    // The mounds a burrow throws up along the line across the car.
+    if let Some(ref mut tracks) = tracks {
+        if dynamo.mole == Mole::Off {
+            tracks.surface();
+        } else {
+            let reach = car.bbox.max[0].abs().max(car.bbox.min[0].abs()) * transform.scale;
+            let end = |x: f32| transform.rot * Vec3::new(x, 0.0, 0.0) + transform.disp;
+            tracks.burrow(end(-reach), end(reach));
+        }
+    }
+
+    // The burrow. `analyse_dynamics` runs this in place of the ordinary
+    // ground handling: the car drives on `underground_speed_factor`
+    // instead of its wheels, steers with its whole body, and is pulled
+    // down until it is deep enough or pushed up until it is out.
+    if dynamo.mole != Mole::Off {
+        let mole = &common.mole;
+        match dynamo.mole {
+            Mole::Under => {
+                if terrain_immersion < MOLE_SUBMERGED {
+                    acc_cur.f -= rot_inv * Vec3::new(0.0, 0.0, mole.mole_submerging_fz);
+                }
+            }
+            Mole::Surfacing => {
+                if terrain_immersion < MOLE_SURFACED {
+                    dynamo.mole = Mole::Off;
+                    rigid.halt();
+                } else {
+                    acc_cur.f += rot_inv * Vec3::new(0.0, 0.0, mole.mole_emerging_fz);
+                }
+            }
+            Mole::Off => unreachable!(),
+        }
+        if dynamo.mole != Mole::Off {
+            v_drag *= common.drag.mole;
+            w_drag *= common.drag.mole;
+            acc_cur.f.y += car.physics.underground_speed_factor
+                * common.global.k_traction_turbo.min(1.0)
+                * dynamo.traction;
+            // Steering underground turns the whole hull, and a torque keeps
+            // it the right way up while it has no wheels to stand on.
+            acc_cur.k.z += dynamo.rudder
+                * car.bbox.radius
+                * mole.k_mole_rudder
+                * car.physics.underground_speed_factor;
+            acc_cur.k.x -= z_axis.y * car.bbox.radius * mole.k_mole;
+            acc_cur.k.y += z_axis.x * car.bbox.radius * mole.k_mole;
+        }
     }
 
     log::debug!("\tcur acc {:?}", acc_cur);

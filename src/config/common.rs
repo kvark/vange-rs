@@ -232,19 +232,22 @@ impl Common {
                 abs_stop: VelocityPair { v: 0.01, w: 0.01 },
                 stuff: 0.95,
                 swamp: 0.9,
-                mole: 0.95,
+                mole: 0.8,
                 abs_min: VelocityPair { v: 1.0, w: 0.5 },
             },
             terrain: Terrain {
                 dz_max: 50.0,
                 min_wall_delta: 10.0,
             },
+            // The values `common.prm` actually ships, so a test car
+            // burrows the way a real one does. Both `fz` are positive
+            // there; which way they push is in the physics, not the sign.
             mole: Mole {
-                k_elastic_mole: 1.0,
-                k_mole: 1.0,
-                k_mole_rudder: 0.5,
-                mole_emerging_fz: 5.0,
-                mole_submerging_fz: -5.0,
+                k_elastic_mole: 1.39298e-2,
+                k_mole: 2.5e-2,
+                k_mole_rudder: 0.1,
+                mole_emerging_fz: 6.38547,
+                mole_submerging_fz: 3.0,
             },
             contact: Contact {
                 k_elastic_wheel: 1.0,
