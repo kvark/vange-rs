@@ -34,6 +34,8 @@ struct Control {
     roll: f32,
     brake: bool,
     turbo: bool,
+    /// Whether the player is asking to be underground.
+    mole: bool,
 }
 
 enum Physics {
@@ -130,6 +132,15 @@ impl Agent {
     fn cpu_apply_control(&mut self, dt: f32, common: &config::common::Common) {
         let dynamo = match self.physics {
             Physics::Cpu { ref mut dynamo, .. } => dynamo,
+        };
+        // `CONTROLS::MOLE_DOWN` / `MOLE_UP`: asking to go under starts the
+        // burrow, and letting go starts it climbing back out. It ends
+        // itself once the car is clear of the ground.
+        dynamo.mole = match (self.control.mole, dynamo.mole) {
+            (true, physics::Mole::Off | physics::Mole::Under) => physics::Mole::Under,
+            (true, other) => other,
+            (false, physics::Mole::Under) => physics::Mole::Surfacing,
+            (false, other) => other,
         };
         if self.control.rudder != 0.0 {
             let angle = dynamo.rudder + common.car.rudder_step * 2.0 * dt * self.control.rudder;
@@ -344,6 +355,8 @@ struct Input {
     spin_hor: f32,
     spin_ver: f32,
     turbo: bool,
+    /// Held while the player wants to be underground.
+    mole: bool,
     jump: Option<f32>,
     roll: Option<Roll>,
     tick: Option<f32>,
@@ -674,6 +687,7 @@ impl Game {
         if !self.terraform.tread.enabled
             && !self.terraform.grader.enabled
             && !self.terraform.press.enabled
+            && !self.terraform.molehills.enabled
         {
             // Keep the wheels and the blade from stitching a track across
             // everything driven while the switch was off.
@@ -687,6 +701,14 @@ impl Game {
         for agent in self.agents.iter_mut() {
             // The hull goes first, then the blade, then the wheels: each
             // works on the ground the one before it left.
+            for burrow in agent.tracks.drain_burrows() {
+                level::terraform::apply_burrow(
+                    &mut self.level,
+                    &self.terraform.molehills,
+                    &burrow,
+                    &mut self.track_regions,
+                );
+            }
             if let Some(hull) = agent.tracks.take_hull() {
                 level::terraform::apply_press(
                     &mut self.level,
@@ -769,6 +791,13 @@ impl Game {
         ui.checkbox(&mut press.enabled, "Hull pressing");
         ui.add_enabled_ui(press.enabled, |ui| {
             ui.add(egui::Slider::new(&mut press.clearance, 0..=32).text("Clearance"));
+        });
+        ui.separator();
+        let molehills = &mut config.molehills;
+        ui.checkbox(&mut molehills.enabled, "Mole mounds");
+        ui.add_enabled_ui(molehills.enabled, |ui| {
+            ui.add(egui::Slider::new(&mut molehills.radius, 1..=20).text("Mound radius"));
+            ui.add(egui::Slider::new(&mut molehills.height, 1..=40).text("Mound height"));
         });
         ui.separator();
         let grader = &mut config.grader;
@@ -854,6 +883,7 @@ impl Application for Game {
                 KeyCode::Comma => self.input.tick = Some(-1.0),
                 KeyCode::Period => self.input.tick = Some(1.0),
                 KeyCode::ShiftLeft => self.input.turbo = true,
+                KeyCode::KeyM => self.input.mole = true,
                 KeyCode::AltLeft => self.input.jump = Some(0.0),
                 KeyCode::KeyW => self.input.spin_ver = self.cam.scale.x,
                 KeyCode::KeyS => self.input.spin_ver = -self.cam.scale.x,
@@ -890,6 +920,7 @@ impl Application for Game {
                 KeyCode::KeyA | KeyCode::KeyD => self.input.spin_hor = 0.0,
                 KeyCode::KeyQ | KeyCode::KeyE => self.input.roll = None,
                 KeyCode::ShiftLeft => self.input.turbo = false,
+                KeyCode::KeyM => self.input.mole = false,
                 KeyCode::AltLeft => player.jump = self.input.jump.take(),
                 _ => (),
             },
@@ -951,6 +982,7 @@ impl Application for Game {
             player.control.rudder = self.input.spin_hor;
             player.control.motor = 1.0 * self.input.spin_ver;
             player.control.turbo = self.input.turbo;
+            player.control.mole = self.input.mole;
             player.control.roll = match self.input.roll {
                 Some(ref mut roll) => {
                     let roll_count = (roll.time * self.db.common.speed.standard_frame_rate as f32)

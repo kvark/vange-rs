@@ -391,3 +391,129 @@ fn a_car_in_the_air_presses_nothing() {
     assert_eq!(changed(&before, &altitudes(&level)), 0);
     assert!(regions.is_empty());
 }
+
+/// How deep the car sits relative to the ground it is over.
+fn depth(car: &Car, level: &level::Level) -> f32 {
+    let coord = (car.transform.disp.x as i32, car.transform.disp.y as i32);
+    terraform::surface_height(level, coord) - car.transform.disp.z
+}
+
+#[test]
+fn the_mole_pulls_a_car_under_and_lets_it_back_out() {
+    let mut level = drivable_level();
+    let mut car = spawn(&level);
+    let common = config::common::Common::test_default();
+    let tread = terraform::Tread {
+        enabled: false,
+        ..terraform::Tread::default()
+    };
+
+    let step = |car: &mut Car, level: &mut level::Level, frames: usize| {
+        for _ in 0..frames {
+            car.dynamo.change_traction(0.5);
+            physics::step(
+                &mut car.dynamo,
+                &mut car.transform,
+                0.02,
+                &car.data,
+                level,
+                &common,
+                1.0,
+                0.0,
+                None,
+                0.0,
+                None,
+                Some(&mut car.tracks),
+            );
+            let _ = car.tracks.drain_burrows().count();
+            let _ = car.tracks.take_hull();
+            let _ = car.tracks.drain_sweeps().count();
+            let _ = car.tracks.drain().count();
+        }
+    };
+
+    // Settle on the surface first.
+    step(&mut car, &mut level, 40);
+    let resting = depth(&car, &level);
+
+    car.dynamo.mole = physics::Mole::Under;
+    step(&mut car, &mut level, 120);
+    let buried = depth(&car, &level);
+    assert_eq!(
+        car.dynamo.mole,
+        physics::Mole::Under,
+        "it surfaced by itself"
+    );
+    assert!(
+        buried > resting + 1.0,
+        "the mole did not pull the car under: {} -> {}",
+        resting,
+        buried
+    );
+
+    car.dynamo.mole = physics::Mole::Surfacing;
+    step(&mut car, &mut level, 400);
+    assert_eq!(
+        car.dynamo.mole,
+        physics::Mole::Off,
+        "the mole never finished surfacing, still {:?} deep",
+        depth(&car, &level)
+    );
+    assert!(
+        depth(&car, &level) < buried,
+        "and it came back up no higher than it went"
+    );
+    let _ = tread;
+}
+
+#[test]
+fn a_burrowing_car_leaves_mounds_and_a_settled_one_does_not() {
+    let mut level = drivable_level();
+    // Low ground, so the mounds come through at full height.
+    level.height.iter_mut().for_each(|h| *h = 20);
+    let mut car = spawn(&level);
+    car.transform.disp.z = 25.0;
+    let common = config::common::Common::test_default();
+
+    let run = |car: &mut Car, level: &mut level::Level, frames: usize| {
+        let mut regions = Vec::new();
+        for _ in 0..frames {
+            car.dynamo.change_traction(1.0);
+            physics::step(
+                &mut car.dynamo,
+                &mut car.transform,
+                0.02,
+                &car.data,
+                level,
+                &common,
+                1.0,
+                0.0,
+                None,
+                0.0,
+                None,
+                Some(&mut car.tracks),
+            );
+            for b in car.tracks.drain_burrows() {
+                terraform::apply_burrow(level, &terraform::Molehills::default(), &b, &mut regions);
+            }
+            let _ = car.tracks.take_hull();
+            let _ = car.tracks.drain_sweeps().count();
+            let _ = car.tracks.drain().count();
+        }
+        regions
+    };
+
+    let before = altitudes(&level);
+    let idle = run(&mut car, &mut level, 60);
+    assert!(idle.is_empty(), "a car on the surface threw up mounds");
+    assert_eq!(changed(&before, &altitudes(&level)), 0);
+
+    car.dynamo.mole = physics::Mole::Under;
+    let dug = run(&mut car, &mut level, 200);
+    assert!(!dug.is_empty(), "a burrowing car threw up nothing");
+    let after = altitudes(&level);
+    assert!(
+        before.iter().zip(&after).all(|(a, b)| b >= a),
+        "a burrow lowered the surface somewhere"
+    );
+}

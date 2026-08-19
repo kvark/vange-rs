@@ -71,6 +71,15 @@ impl RigidBody {
         self.wel_orig
     }
 
+    /// Brings the body to a dead stop, discarding the impulses gathered so
+    /// far. The mole does this when it surfaces, so a car does not come out
+    /// of the ground carrying the speed it had underneath.
+    pub fn halt(&mut self) {
+        self.vel = Vec3::ZERO;
+        self.wel_orig = Vec3::ZERO;
+        self.wel_raw = Vec3::ZERO;
+    }
+
     pub fn finish(self) -> (Vec3, Vec3) {
         (self.vel, self.wel_orig + self.j_inv * self.wel_raw)
     }

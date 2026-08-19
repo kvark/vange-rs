@@ -45,6 +45,7 @@ pub struct Config {
     pub tread: Tread,
     pub grader: Grader,
     pub press: Press,
+    pub molehills: Molehills,
 }
 
 /// Tunables of the tread pattern.
@@ -108,6 +109,8 @@ pub struct Spot {
     pub terrain: Option<u8>,
     /// Terrains this is allowed to move.
     pub mask: u16,
+    /// Which side of a slab it works on.
+    pub surface: Surface,
 }
 
 impl Default for Spot {
@@ -118,6 +121,7 @@ impl Default for Spot {
             ragged: 1,
             terrain: None,
             mask: DESTRUCTIBLE,
+            surface: Surface::Upper,
         }
     }
 }
@@ -176,7 +180,7 @@ pub fn apply_spot(level: &mut Level, at: (i32, i32), spot: &Spot, regions: &mut 
             continue;
         }
         let (x, y) = (at.0 + dx, at.1 + dy);
-        let i = match movable(level, x, y) {
+        let i = match movable_on(level, x, y, spot.surface) {
             Some(i) => i,
             None => continue,
         };
@@ -225,6 +229,99 @@ impl Rng {
         self.0 ^= self.0 >> 17;
         self.0 ^= self.0 << 5;
         if bound == 0 { 0 } else { self.0 % bound }
+    }
+}
+
+/// Tunables of the mounds a burrowing car throws up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Molehills {
+    pub enabled: bool,
+    /// Texels across one mound.
+    pub radius: i32,
+    /// How high a mound stands on low ground, before the altitude taper.
+    pub height: i32,
+}
+
+impl Default for Molehills {
+    fn default() -> Self {
+        Molehills {
+            enabled: true,
+            radius: 6,
+            height: 12,
+        }
+    }
+}
+
+/// A stretch of burrow, as the line across the car that is under it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Burrow {
+    pub left: glam::Vec3,
+    pub right: glam::Vec3,
+}
+
+/// Throws up the mounds a burrowing car leaves behind it.
+///
+/// `dastPoly3D::make_mole`. Mounds go up along the line across the car,
+/// two or so of eight places along it, and only where the ground is low
+/// enough to be pushed aside - high ground swallows the burrow whole.
+///
+/// The original stamps one of a handful of authored height sprites from
+/// `resource/bml/mole.bml`. That file is in no data set this can reach, so
+/// the mound is raised with the same cone the blasts use, which is the
+/// shape those sprites hold anyway.
+pub fn apply_burrow(
+    level: &mut Level,
+    config: &Molehills,
+    burrow: &Burrow,
+    regions: &mut Vec<Region>,
+) {
+    if !config.enabled || config.radius <= 0 || config.height <= 0 {
+        return;
+    }
+    let right = (burrow.right.x.round() as i32, burrow.right.y.round() as i32);
+    // `dz` of the original: how high the ground already is where the car
+    // went under, which decides how much of a mound gets through.
+    let ground = match movable_on(level, right.0, right.1, Surface::Lower) {
+        Some(i) => level.height[i] as i32,
+        None => return,
+    };
+    let height = match ground {
+        d if d < 50 => config.height,
+        d if d < 120 => config.height / 2,
+        d if d < 200 => config.height / 4,
+        _ => return,
+    };
+    if height <= 0 {
+        return;
+    }
+
+    let mut rng = Rng::seeded(right, ground as u32);
+    let mut i = 1;
+    while i < 8 {
+        if rng.below(5) == 0 {
+            // Eighths along the line from the right end to the left.
+            let t = i as f32 / 8.0;
+            let p = burrow.right + (burrow.left - burrow.right) * t;
+            let spot = Spot {
+                radius: config.radius,
+                // A cone `height` tall at its middle: the delta is per
+                // texel in from the rim, in 8.8.
+                delta: (height << 8) / config.radius,
+                ragged: 2,
+                terrain: None,
+                mask: DESTRUCTIBLE,
+                surface: Surface::Lower,
+            };
+            apply_spot(
+                level,
+                (p.x.round() as i32, p.y.round() as i32),
+                &spot,
+                regions,
+            );
+            // The original skips the next place after every mound it makes.
+            i += 1;
+        }
+        i += 1;
     }
 }
 
@@ -342,6 +439,9 @@ pub struct Tracks {
     sweeps: Vec<Sweep>,
     /// Where the car's hull is resting, if it is resting on anything.
     hull: Option<Hull>,
+    /// Where the car last went under, for the burrow it is digging.
+    last_burrow: Option<(i32, i32)>,
+    burrows: Vec<Burrow>,
 }
 
 impl Tracks {
@@ -410,6 +510,39 @@ impl Tracks {
         self.hull.take()
     }
 
+    /// Records the line across a car that is burrowing.
+    ///
+    /// `MoleProcessQuant` only throws a mound when the car has moved a
+    /// couple of texels since the last one, so a mole sitting still does
+    /// not pile the ground up on top of itself.
+    pub fn burrow(&mut self, left: glam::Vec3, right: glam::Vec3) {
+        let at = (
+            ((left.x + right.x) * 0.5).round() as i32,
+            ((left.y + right.y) * 0.5).round() as i32,
+        );
+        let moved = match self.last_burrow {
+            None => true,
+            Some(from) => {
+                let (dx, dy) = (at.0 - from.0, at.1 - from.1);
+                dx * dx + dy * dy > 4
+            }
+        };
+        if moved {
+            self.last_burrow = Some(at);
+            self.burrows.push(Burrow { left, right });
+        }
+    }
+
+    /// Records that the car is no longer underground.
+    pub fn surface(&mut self) {
+        self.last_burrow = None;
+    }
+
+    /// Hands over the burrow stretches recorded since the last drain.
+    pub fn drain_burrows(&mut self) -> std::vec::Drain<'_, Burrow> {
+        self.burrows.drain(..)
+    }
+
     /// Forgets every wheel's contact and any track not yet drawn, so that
     /// the next contact starts fresh. Needed whenever the car is moved
     /// rather than driven.
@@ -419,10 +552,15 @@ impl Tracks {
         self.pending.clear();
         self.sweeps.clear();
         self.hull = None;
+        self.last_burrow = None;
+        self.burrows.clear();
     }
 
     pub fn is_empty(&self) -> bool {
-        self.pending.is_empty() && self.sweeps.is_empty() && self.hull.is_none()
+        self.pending.is_empty()
+            && self.sweeps.is_empty()
+            && self.hull.is_none()
+            && self.burrows.is_empty()
     }
 
     /// Hands over the stretches recorded since the last drain.
@@ -746,10 +884,37 @@ fn wrap_delta_f(d: f32, total: i32) -> f32 {
 /// odd half, which is why the even one is left alone rather than written
 /// twice - the same rule `pixSetR` opens with.
 fn movable(level: &Level, x: i32, y: i32) -> Option<usize> {
+    movable_on(level, x, y, Surface::Upper)
+}
+
+/// Which surface of a double-level pair an edit works on.
+///
+/// `get_up_ground` and `get_down_ground` of the original. Everything a car
+/// does on top of the world moves the upper one; a mole burrowing under a
+/// slab moves the floor it is tunnelling through.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Surface {
+    #[default]
+    Upper,
+    Lower,
+}
+
+fn movable_on(level: &Level, x: i32, y: i32, surface: Surface) -> Option<usize> {
     let i = level.wrap((x, y));
-    if level.meta[i] & DOUBLE_LEVEL != 0 && x & 1 == 0 {
-        return None;
-    }
+    let i = if level.meta[i] & DOUBLE_LEVEL != 0 {
+        // A pair is addressed by one of its halves: the odd one carries
+        // the altitude above the slab, the even one the floor below it.
+        // Either way the other half is the same surface seen twice, so it
+        // is skipped rather than written again.
+        match surface {
+            Surface::Upper if x & 1 == 0 => return None,
+            Surface::Lower if x & 1 != 0 => return None,
+            Surface::Upper => i,
+            Surface::Lower => i & !1,
+        }
+    } else {
+        i
+    };
     if level.terrain_bits().read(level.meta[i]) != MAIN_TERRAIN {
         return None;
     }
@@ -2027,5 +2192,179 @@ mod tests {
         assert!(level.height[level.wrap((SIZE - 3, 30))] < 100);
         assert!(level.height[level.wrap((3, 30))] < 100);
         assert_eq!(regions.len(), 2);
+    }
+
+    // -- the burrow -----------------------------------------------------
+
+    fn burrow(x0: f32, x1: f32, y: f32) -> Burrow {
+        use glam::Vec3;
+        Burrow {
+            left: Vec3::new(x0, y, 0.0),
+            right: Vec3::new(x1, y, 0.0),
+        }
+    }
+
+    #[test]
+    fn a_burrow_throws_mounds_up_along_the_car() {
+        let mut level = test_level();
+        level.height.iter_mut().for_each(|h| *h = 20);
+        let mut regions = Vec::new();
+        apply_burrow(
+            &mut level,
+            &Molehills::default(),
+            &burrow(20.0, 40.0, 30.0),
+            &mut regions,
+        );
+
+        let raised = (15..45)
+            .filter(|&x| level.height[level.wrap((x, 30))] > 20)
+            .collect::<Vec<_>>();
+        assert!(!raised.is_empty(), "the burrow threw nothing up");
+        assert!(
+            raised.iter().all(|&x| (14..46).contains(&x)),
+            "and nothing far off the line: {:?}",
+            raised
+        );
+        assert!(!regions.is_empty());
+    }
+
+    #[test]
+    fn a_mound_only_ever_goes_up() {
+        let mut level = test_level();
+        level.height.iter_mut().for_each(|h| *h = 20);
+        let before = level.height.to_vec();
+        let mut regions = Vec::new();
+        apply_burrow(
+            &mut level,
+            &Molehills::default(),
+            &burrow(20.0, 40.0, 30.0),
+            &mut regions,
+        );
+        assert!(
+            before.iter().zip(level.height.iter()).all(|(a, b)| b >= a),
+            "a burrow must not dig the surface down"
+        );
+    }
+
+    #[test]
+    fn high_ground_swallows_the_burrow() {
+        // `dz >= 200` in `make_mole`: nothing gets through.
+        let mut level = test_level();
+        level.height.iter_mut().for_each(|h| *h = 220);
+        let before = level.height.to_vec();
+        let mut regions = Vec::new();
+        apply_burrow(
+            &mut level,
+            &Molehills::default(),
+            &burrow(20.0, 40.0, 30.0),
+            &mut regions,
+        );
+        assert_eq!(level.height.to_vec(), before);
+        assert!(regions.is_empty());
+    }
+
+    #[test]
+    fn deeper_ground_lets_less_of_the_mound_through() {
+        let peak = |ground: u8| {
+            let mut level = test_level();
+            level.height.iter_mut().for_each(|h| *h = ground);
+            let mut regions = Vec::new();
+            apply_burrow(
+                &mut level,
+                &Molehills::default(),
+                &burrow(20.0, 40.0, 30.0),
+                &mut regions,
+            );
+            level
+                .height
+                .iter()
+                .map(|&h| h as i32 - ground as i32)
+                .max()
+                .unwrap()
+        };
+        let (low, mid, high) = (peak(20), peak(100), peak(150));
+        assert!(low > mid, "low ground should give the tallest mound");
+        assert!(
+            mid > high,
+            "and it should keep tapering: {} {} {}",
+            low,
+            mid,
+            high
+        );
+    }
+
+    #[test]
+    fn a_mole_sitting_still_does_not_bury_itself() {
+        use glam::Vec3;
+        let mut tracks = Tracks::default();
+        tracks.burrow(Vec3::new(20.0, 30.0, 0.0), Vec3::new(40.0, 30.0, 0.0));
+        assert_eq!(
+            tracks.drain_burrows().count(),
+            1,
+            "the first one always counts"
+        );
+
+        // Shuffling about within a couple of texels earns nothing.
+        for _ in 0..10 {
+            tracks.burrow(Vec3::new(21.0, 30.0, 0.0), Vec3::new(41.0, 30.0, 0.0));
+        }
+        assert_eq!(tracks.drain_burrows().count(), 0);
+
+        tracks.burrow(Vec3::new(26.0, 30.0, 0.0), Vec3::new(46.0, 30.0, 0.0));
+        assert_eq!(tracks.drain_burrows().count(), 1, "but moving on does");
+    }
+
+    #[test]
+    fn surfacing_starts_the_next_burrow_fresh() {
+        use glam::Vec3;
+        let mut tracks = Tracks::default();
+        tracks.burrow(Vec3::new(20.0, 30.0, 0.0), Vec3::new(40.0, 30.0, 0.0));
+        let _ = tracks.drain_burrows().count();
+        tracks.surface();
+        // Same spot, but a new burrow, so it counts again.
+        tracks.burrow(Vec3::new(20.0, 30.0, 0.0), Vec3::new(40.0, 30.0, 0.0));
+        assert_eq!(tracks.drain_burrows().count(), 1);
+    }
+
+    #[test]
+    fn a_burrow_under_a_slab_raises_the_floor_not_the_roof() {
+        let mut level = test_level();
+        level.height.iter_mut().for_each(|h| *h = 20);
+        // A cave over the whole line, floor at 20 and roof up at 200.
+        for x in (14..48).step_by(2) {
+            dual_level(&mut level, x, 30, 20, 200, 1);
+        }
+        let mut regions = Vec::new();
+        apply_burrow(
+            &mut level,
+            &Molehills::default(),
+            &burrow(20.0, 40.0, 30.0),
+            &mut regions,
+        );
+
+        let mut floors = 0;
+        for x in (14..48).step_by(2) {
+            let i = level.wrap((x, 30));
+            assert_eq!(level.height[i | 1], 200, "the roof at {} moved", x);
+            if level.height[i & !1] > 20 {
+                floors += 1;
+            }
+        }
+        assert!(floors > 0, "and the floor never rose");
+    }
+
+    #[test]
+    fn switching_the_mounds_off_leaves_the_ground_alone() {
+        let mut level = test_level();
+        level.height.iter_mut().for_each(|h| *h = 20);
+        let before = level.height.to_vec();
+        let mut regions = Vec::new();
+        let config = Molehills {
+            enabled: false,
+            ..Molehills::default()
+        };
+        apply_burrow(&mut level, &config, &burrow(20.0, 40.0, 30.0), &mut regions);
+        assert_eq!(level.height.to_vec(), before);
+        assert!(regions.is_empty());
     }
 }
