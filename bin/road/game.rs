@@ -597,9 +597,9 @@ impl Game {
     /// is over an immutable level and in parallel across the agents. Doing
     /// the cutting here, afterwards, is what lets both of those stand.
     fn step_tracks(&mut self) {
-        if !self.terraform.enabled {
-            // Keep the wheels from stitching a track across everything
-            // driven while the switch was off.
+        if !self.terraform.tread.enabled && !self.terraform.grader.enabled {
+            // Keep the wheels and the blade from stitching a track across
+            // everything driven while the switch was off.
             for agent in self.agents.iter_mut() {
                 agent.tracks.reset();
             }
@@ -608,10 +608,20 @@ impl Game {
 
         self.track_regions.clear();
         for agent in self.agents.iter_mut() {
-            for track in agent.tracks.drain() {
-                level::terraform::apply(
+            // The blade goes first: it reshapes the ground the wheels of
+            // the same step then run over.
+            for sweep in agent.tracks.drain_sweeps() {
+                level::terraform::apply_grader(
                     &mut self.level,
-                    &self.terraform,
+                    &self.terraform.grader,
+                    &sweep,
+                    &mut self.track_regions,
+                );
+            }
+            for track in agent.tracks.drain() {
+                level::terraform::apply_tread(
+                    &mut self.level,
+                    &self.terraform.tread,
                     &track,
                     &mut self.track_regions,
                 );
@@ -633,12 +643,21 @@ impl Game {
     /// enough to see the ground give way, which is otherwise a slow effect
     /// to watch.
     fn draw_terraform_ui(config: &mut level::terraform::Config, ui: &mut egui::Ui) {
-        ui.checkbox(&mut config.enabled, "Enabled");
-        ui.add_enabled_ui(config.enabled, |ui| {
-            ui.add(egui::Slider::new(&mut config.depth, 0..=8).text("Depth"));
-            ui.add(egui::Slider::new(&mut config.tread, 1..=8).text("Tread period"));
-            ui.add(egui::Slider::new(&mut config.bar, 1..=8).text("Bar stamps"));
-            ui.add(egui::Slider::new(&mut config.spacing, 0.5..=4.0).text("Bar spacing"));
+        let tread = &mut config.tread;
+        ui.checkbox(&mut tread.enabled, "Tyre tracks");
+        ui.add_enabled_ui(tread.enabled, |ui| {
+            ui.add(egui::Slider::new(&mut tread.depth, 0..=8).text("Depth"));
+            ui.add(egui::Slider::new(&mut tread.period, 1..=8).text("Tread period"));
+            ui.add(egui::Slider::new(&mut tread.bar, 1..=8).text("Bar stamps"));
+            ui.add(egui::Slider::new(&mut tread.spacing, 0.5..=4.0).text("Bar spacing"));
+        });
+        ui.separator();
+        let grader = &mut config.grader;
+        ui.checkbox(&mut grader.enabled, "Grader blade");
+        ui.add_enabled_ui(grader.enabled, |ui| {
+            ui.add(egui::Slider::new(&mut grader.lift, 1..=60).text("Drop rate"));
+            ui.add(egui::Slider::new(&mut grader.spread, 1..=24).text("Spread"));
+            ui.add(egui::Slider::new(&mut grader.reach, 1..=24).text("Berm reach"));
         });
     }
 
@@ -1188,7 +1207,7 @@ impl Application for Game {
                 });
             }
             ui.group(|ui| {
-                ui.label("Wheel tracks:");
+                ui.label("Terrain:");
                 Self::draw_terraform_ui(&mut self.terraform, ui);
             });
             ui.group(|ui| {

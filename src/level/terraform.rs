@@ -1,16 +1,25 @@
-//! What the wheels leave behind them.
+//! What the cars leave behind them.
 //!
-//! This is a port of `pixSetR` (`src/terra/land.cpp`) and
-//! `DrawMechosWheelUp` (`src/units/hobj.cpp`) of the original game, which
-//! together are its tyre tracks. Every wheel that is rolling over soft
-//! ground stamps a tread pattern into the altitude plane along the stretch
-//! it covered since the last quant: a short bar across the track, raised
-//! once every [`Config::tread`] texels and cut everywhere else.
+//! Two mechanics of the original, both of which reshape the altitude plane
+//! under a car that is being driven.
 //!
-//! The pattern is deliberately lopsided - two texels are cut for each one
-//! raised - so the net effect of driving somewhere is that the ground sinks.
-//! Circling the same patch digs a bowl out of it, which is the original's
-//! whole terrain-deformation mechanic and not a side effect.
+//! [`Tread`] is a port of `pixSetR` (`src/terra/land.cpp`) and
+//! `DrawMechosWheelUp` (`src/units/hobj.cpp`): every wheel rolling over
+//! soft ground stamps a tread pattern along the stretch it covered since
+//! the last quant - a short bar across the track, raised once every
+//! [`Tread::period`] texels and cut everywhere else. The pattern is
+//! deliberately lopsided, two texels cut for each one raised, so driving
+//! somewhere lowers it and circling the same patch digs a bowl out of it.
+//!
+//! [`Grader`] is a port of `dastPoly3D::make_dast` (`src/dast/poly3d.cpp`),
+//! the "TerraMover" the mechos `.prm` files still carry parameters for. A
+//! blade across the car's leading edge scrapes off everything standing
+//! above it, carries the spoil along, drops it back as it goes and heaps
+//! what is left into a berm ahead. That code never shipped - the call site
+//! in `Object::analyse_dynamics` is commented out, and so are `make_dast`
+//! itself and the `sqr3` and `max_len_mech` it needs, so it would not even
+//! compile. What is ported here is its mechanism, not its arithmetic;
+//! where the dead code contradicted itself the choice is noted.
 //!
 //! Like the moving land, everything here mutates [`Level`] in place and
 //! reports the touched rectangles so the renderer can re-upload them.
@@ -30,19 +39,26 @@ pub const MAIN_TERRAIN: u8 = 1;
 /// `get_upper_height(...) < round(rg.z) + 15` of `Object::analyse_dynamics`.
 pub const MAX_CONTACT_HEIGHT: f32 = 15.0;
 
+/// Everything a car may do to the ground.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Config {
+    pub tread: Tread,
+    pub grader: Grader,
+}
+
 /// Tunables of the tread pattern.
 ///
 /// The defaults are the constants the original passes to
 /// `DrawMechosWheelUp(x0, y0, x1, y1, 8, 3, -1, nx, ny, 3)`.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Config {
+pub struct Tread {
     /// Master switch. Off restores terrain that only the moving land edits.
     pub enabled: bool,
     /// Altitude units one stamp moves the surface.
     pub depth: i32,
     /// Texels along the track between two raised bars. The other
-    /// `tread - 1` texels of each period are cut.
-    pub tread: u8,
+    /// `period - 1` texels of each period are cut.
+    pub period: u8,
     /// Stamps in one bar, laid out across the track.
     pub bar: u8,
     /// Texels between those stamps. `8/3` spreads a three-stamp bar over
@@ -50,12 +66,12 @@ pub struct Config {
     pub spacing: f32,
 }
 
-impl Default for Config {
+impl Default for Tread {
     fn default() -> Self {
-        Config {
+        Tread {
             enabled: true,
             depth: 1,
-            tread: 3,
+            period: 3,
             bar: 3,
             spacing: 8.0 / 3.0,
         }
@@ -87,6 +103,9 @@ pub struct Tracks {
     /// so that a jump does not draw a track across everything it flew over.
     last: Vec<Option<(i32, i32)>>,
     pending: Vec<Track>,
+    /// Where the grader blade was at the end of the previous step.
+    last_blade: Option<(glam::Vec3, glam::Vec3)>,
+    sweeps: Vec<Sweep>,
 }
 
 impl Tracks {
@@ -122,6 +141,27 @@ impl Tracks {
     /// lying on its side and no longer rolling.
     pub fn lift_all(&mut self) {
         self.last.iter_mut().for_each(|slot| *slot = None);
+        self.raise_blade();
+    }
+
+    /// Records where the grader blade is now.
+    ///
+    /// Like a wheel, the blade needs a previous position before it can
+    /// sweep anything, so the first call after a lift only arms it.
+    pub fn blade(&mut self, left: glam::Vec3, right: glam::Vec3) {
+        if let Some(from) = self.last_blade {
+            self.sweeps.push(Sweep {
+                from,
+                to: (left, right),
+            });
+        }
+        self.last_blade = Some((left, right));
+    }
+
+    /// Records that the blade is not cutting - the car is airborne, or
+    /// coasting with the motor off.
+    pub fn raise_blade(&mut self) {
+        self.last_blade = None;
     }
 
     /// Forgets every wheel's contact and any track not yet drawn, so that
@@ -129,22 +169,29 @@ impl Tracks {
     /// rather than driven.
     pub fn reset(&mut self) {
         self.lift_all();
+        self.raise_blade();
         self.pending.clear();
+        self.sweeps.clear();
     }
 
     pub fn is_empty(&self) -> bool {
-        self.pending.is_empty()
+        self.pending.is_empty() && self.sweeps.is_empty()
     }
 
     /// Hands over the stretches recorded since the last drain.
     pub fn drain(&mut self) -> std::vec::Drain<'_, Track> {
         self.pending.drain(..)
     }
+
+    /// Hands over the blade sweeps recorded since the last drain.
+    pub fn drain_sweeps(&mut self) -> std::vec::Drain<'_, Sweep> {
+        self.sweeps.drain(..)
+    }
 }
 
 /// Cuts `track` into the level, pushing what it touched onto `regions`.
-pub fn apply(level: &mut Level, config: &Config, track: &Track, regions: &mut Vec<Region>) {
-    if !config.enabled || config.depth == 0 || config.tread == 0 || config.bar == 0 {
+pub fn apply_tread(level: &mut Level, config: &Tread, track: &Track, regions: &mut Vec<Region>) {
+    if !config.enabled || config.depth == 0 || config.period == 0 || config.bar == 0 {
         return;
     }
 
@@ -167,12 +214,12 @@ pub fn apply(level: &mut Level, config: &Config, track: &Track, regions: &mut Ve
     // `mask` counts down from `step`, and the bar is raised only on the
     // wrap-around. Starting it at `tread` puts the first raised bar one
     // full period in, exactly as the original's `mask = step` does.
-    let mut mask = config.tread;
+    let mut mask = config.period;
     for i in 0..steps {
         let x = track.from.0 + (fx * i as f32).round() as i32;
         let y = track.from.1 + (fy * i as f32).round() as i32;
         let delta = if mask == 0 {
-            mask = config.tread;
+            mask = config.period;
             config.depth
         } else {
             -config.depth
@@ -192,40 +239,363 @@ pub fn apply(level: &mut Level, config: &Config, track: &Track, regions: &mut Ve
     bounds.push(regions, level.size);
 }
 
+/// Tunables of the grader blade.
+///
+/// Off by default. The original ships with `make_dast` commented out, so a
+/// stock game does not bulldoze itself, and turning every car into a
+/// digger is a large enough change to gameplay to be asked for rather than
+/// assumed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Grader {
+    /// Master switch.
+    pub enabled: bool,
+    /// How far along the blade spoil creeps each step, in slots. `_boder_`
+    /// of the original is 8, and it spreads over twice that either way.
+    pub spread: u8,
+    /// Altitude units one slot of the blade may drop in one step. Spoil
+    /// above this stays banked, which is what makes the blade carry a load
+    /// instead of putting it straight back down.
+    pub lift: i32,
+    /// Texels the leftover berm reaches ahead of the blade, per unit of
+    /// its height. The original ramps down over `8 * height` steps of half
+    /// a texel each.
+    pub reach: u8,
+}
+
+impl Default for Grader {
+    fn default() -> Self {
+        Grader {
+            enabled: false,
+            spread: 8,
+            lift: 20,
+            reach: 4,
+        }
+    }
+}
+
+/// One step of the blade: where it was, and where it is now.
+///
+/// The two lines bound the quad the blade swept, which is `p_array` of the
+/// original. Taking the previous line rather than `velocity * dt` costs one
+/// `Vec3` of state and gets the corners right when the car is turning, and
+/// leaves no gap between one step and the next.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sweep {
+    /// Left and right ends of the blade at the end of the previous step.
+    pub from: (glam::Vec3, glam::Vec3),
+    /// Left and right ends of it now.
+    pub to: (glam::Vec3, glam::Vec3),
+}
+
+/// Sub-steps per texel along the blade and along the sweep. The original
+/// walks both at `2`, so that a blade lying at 45 degrees still touches
+/// every texel it crosses.
+const SUB: f32 = 2.0;
+
+/// Ceilings on that sub-stepping, so that an enormous car or a bad sweep
+/// cannot turn one quant into an unbounded amount of work.
+const MAX_BLADE_STEPS: usize = 512;
+const MAX_SWEEP_STEPS: usize = 64;
+
+/// Drives the blade through `sweep`, pushing what it touched onto
+/// `regions`.
+///
+/// `make_dast` of the original. Each step across the swept quad does three
+/// things in turn: spread the spoil the blade is already carrying along its
+/// length, drop as much of it as [`Grader::lift`] allows, then scrape off
+/// whatever ground still stands above the blade and add it to the load.
+/// What is left when the blade stops becomes a berm in front of it.
+pub fn apply_grader(level: &mut Level, config: &Grader, sweep: &Sweep, regions: &mut Vec<Region>) {
+    if !config.enabled || config.lift <= 0 {
+        return;
+    }
+
+    // Everything is measured from one corner, so the level seam is crossed
+    // once here rather than at every texel.
+    let origin = sweep.from.1;
+    let size = level.size;
+    let rel = |p: glam::Vec3| {
+        glam::Vec3::new(
+            wrap_delta_f(p.x - origin.x, size.0),
+            wrap_delta_f(p.y - origin.y, size.1),
+            p.z,
+        )
+    };
+    let (r0, l0) = (rel(sweep.from.1), rel(sweep.from.0));
+    let (r1, l1) = (rel(sweep.to.1), rel(sweep.to.0));
+
+    let span = |a: glam::Vec3, b: glam::Vec3| (b - a).truncate().length();
+    let blade = (span(r0, l0).max(span(r1, l1)) * SUB).ceil() as usize;
+    let travel = (span(r0, r1).max(span(l0, l1)) * SUB).ceil() as usize;
+    if blade == 0 || blade > MAX_BLADE_STEPS || travel > MAX_SWEEP_STEPS {
+        return;
+    }
+
+    // Spoil creeps sideways as the blade carries it, so the slots it can
+    // reach run past both ends of the blade itself.
+    let fringe = 2 * config.spread as usize;
+    let slots = blade + 1 + 2 * fringe;
+    let mut load = vec![0.0f32; slots];
+    let mut next = vec![0.0f32; slots];
+    // Slot `fringe` is the blade's right end, slot `fringe + blade` its left.
+    let at = |a: glam::Vec3, b: glam::Vec3, slot: usize| {
+        let t = (slot as f32 - fringe as f32) / blade as f32;
+        a + (b - a) * t
+    };
+
+    // The interpolation runs in the frame `rel` set up; only the level is
+    // addressed in absolute texels.
+    let texel = |p: glam::Vec3| {
+        (
+            (p.x + origin.x).round() as i32,
+            (p.y + origin.y).round() as i32,
+        )
+    };
+
+    let mut bounds = Bounds::default();
+    let put = |level: &mut Level, p: glam::Vec3, amount: f32, bounds: &mut Bounds| {
+        let (x, y) = texel(p);
+        let stuck = heap(level, x, y, amount, p.z);
+        if stuck > 0.0 {
+            bounds.add(x, y);
+        }
+        stuck
+    };
+
+    for step in 0..=travel {
+        let t = if travel == 0 {
+            1.0
+        } else {
+            step as f32 / travel as f32
+        };
+        let (a, b) = (r0 + (r1 - r0) * t, l0 + (l1 - l0) * t);
+
+        spread(&load, &mut next, config.spread as usize);
+        std::mem::swap(&mut load, &mut next);
+
+        for (slot, carried) in load.iter_mut().enumerate() {
+            let want = carried.min(config.lift as f32);
+            if want < 1.0 {
+                continue;
+            }
+            *carried -= put(level, at(a, b, slot), want, &mut bounds);
+        }
+
+        for (slot, carried) in load.iter_mut().enumerate().skip(fringe).take(blade + 1) {
+            let p = at(a, b, slot);
+            let (x, y) = texel(p);
+            let spoil = scrape(level, x, y, p.z);
+            if spoil > 0.0 {
+                bounds.add(x, y);
+                *carried += spoil;
+            }
+        }
+    }
+
+    berm(
+        level,
+        config,
+        &load,
+        &(r1, l1),
+        origin,
+        fringe,
+        blade,
+        &mut bounds,
+    );
+    bounds.push(regions, level.size);
+}
+
+/// Heaps whatever the blade is still carrying into a ridge in front of it.
+///
+/// The original takes the cube root of each slot's load for the height of
+/// the pile, which keeps a big load from turning into a spike, and ramps it
+/// down over `8 * height` steps ahead. Both are kept; what is dropped is
+/// its habit of adding to the same texel several times over, which made the
+/// berm's height depend on the angle the blade happened to be travelling.
+#[allow(clippy::too_many_arguments)]
+fn berm(
+    level: &mut Level,
+    config: &Grader,
+    load: &[f32],
+    blade_line: &(glam::Vec3, glam::Vec3),
+    origin: glam::Vec3,
+    fringe: usize,
+    blade: usize,
+    bounds: &mut Bounds,
+) {
+    let (a, b) = *blade_line;
+    let ahead = {
+        let dir = glam::Vec2::new(b.y - a.y, a.x - b.x);
+        dir.normalize_or_zero()
+    };
+    if ahead == glam::Vec2::ZERO {
+        return;
+    }
+
+    for (slot, &amount) in load.iter().enumerate() {
+        let height = amount.cbrt().floor();
+        if height < 1.0 {
+            continue;
+        }
+        let t = (slot as f32 - fringe as f32) / blade as f32;
+        let line = a + (b - a) * t;
+        let base = line.truncate() + origin.truncate();
+        let base_z = line.z;
+        // One texel per step, tapering to nothing over `reach * height`.
+        let steps = (config.reach as f32 * height) as i32;
+        let (mut last_x, mut last_y) = (i32::MIN, i32::MIN);
+        for k in 0..=steps {
+            let p = base + ahead * k as f32;
+            let (x, y) = (p.x.round() as i32, p.y.round() as i32);
+            if (x, y) == (last_x, last_y) {
+                continue;
+            }
+            last_x = x;
+            last_y = y;
+            let taper = height * (1.0 - k as f32 / (steps + 1) as f32);
+            if heap(level, x, y, taper, base_z) > 0.0 {
+                bounds.add(x, y);
+            }
+        }
+    }
+}
+
+/// Smears each slot's load along the blade: a quarter stays put and the
+/// rest goes evenly to the `2 * width` slots either side, which is the
+/// kernel `make_dast` applies between its steps.
+///
+/// Written as a sliding window rather than the original's `2 * width + 1`
+/// taps per slot, because the blade of a large car is hundreds of slots
+/// long and this runs every step of every sweep of every car.
+fn spread(load: &[f32], out: &mut [f32], width: usize) {
+    let reach = 2 * width;
+    let share = 0.75 / (2 * reach) as f32;
+    let mut window: f32 = load.iter().take(reach.min(load.len())).sum();
+    for i in 0..load.len() {
+        // `window` holds `load[i - reach ..= i + reach]`.
+        if let Some(&v) = load.get(i + reach) {
+            window += v;
+        }
+        out[i] = 0.25 * load[i] + share * (window - load[i]);
+        if i >= reach {
+            window -= load[i - reach];
+        }
+    }
+}
+
+/// Shortest signed distance across a level that wraps, for a position
+/// rather than a texel.
+fn wrap_delta_f(d: f32, total: i32) -> f32 {
+    let total = total as f32;
+    let d = d.rem_euclid(total);
+    if d * 2.0 > total { d - total } else { d }
+}
+
+/// The index whose altitude a wheel or a blade is allowed to move at
+/// `(x, y)`, if there is one.
+///
+/// Only the top surface is drivable, so that is the only one either of them
+/// can reshape. On a double-level pair the altitude that moves lives in the
+/// odd half, which is why the even one is left alone rather than written
+/// twice - the same rule `pixSetR` opens with.
+fn movable(level: &Level, x: i32, y: i32) -> Option<usize> {
+    let i = level.wrap((x, y));
+    if level.meta[i] & DOUBLE_LEVEL != 0 && x & 1 == 0 {
+        return None;
+    }
+    if level.terrain_bits().read(level.meta[i]) != MAIN_TERRAIN {
+        return None;
+    }
+    Some(i)
+}
+
 /// `pixSetR` of the original: moves the upper surface of one texel by
 /// `delta`, and returns whether it wrote anything.
-///
-/// Only the top surface is drivable, so that is the only one a wheel can
-/// mark. On a double-level pair the altitude that moves lives in the odd
-/// half, which is why the even one is left alone rather than written twice.
 fn press(level: &mut Level, x: i32, y: i32, delta: i32) -> bool {
-    let i = level.wrap((x, y));
-    let bits = level.terrain_bits();
+    let i = match movable(level, x, y) {
+        Some(i) => i,
+        None => return false,
+    };
 
-    if level.meta[i] & DOUBLE_LEVEL != 0 {
-        // The pair is addressed by its odd half; the even one is the same
-        // surface seen from the other side.
-        if x & 1 == 0 {
-            return false;
-        }
-        if bits.read(level.meta[i]) != MAIN_TERRAIN {
-            return false;
-        }
-        let height = (level.height[i] as i32 + delta).clamp(0, 255);
-        if collapses(level, i, height) {
-            collapse(level, i, x, y);
-            return true;
-        }
-        level.height[i] = height as u8;
-    } else {
-        if bits.read(level.meta[i]) != MAIN_TERRAIN {
-            return false;
-        }
-        level.height[i] = (level.height[i] as i32 + delta).clamp(0, 255) as u8;
+    let height = (level.height[i] as i32 + delta).clamp(0, 255);
+    if level.meta[i] & DOUBLE_LEVEL != 0 && collapses(level, i, height) {
+        collapse(level, i, x, y);
+        return true;
     }
+    level.height[i] = height as u8;
 
     reflood(level, i, x, y);
     true
+}
+
+/// Scrapes one texel down to `floor`, and returns the spoil that came off.
+///
+/// The blade only reaches what stands proud of it, so a texel already at or
+/// below `floor` gives nothing back. A roof cut too thin comes down, and
+/// then the spoil is whatever the collapse settled away.
+fn scrape(level: &mut Level, x: i32, y: i32, floor: f32) -> f32 {
+    let i = match movable(level, x, y) {
+        Some(i) => i,
+        None => return 0.0,
+    };
+    let dual = level.meta[i] & DOUBLE_LEVEL != 0;
+    if dual {
+        // Under the slab rather than on top of it: the blade is inside the
+        // cave, and its roof is not the surface being graded.
+        let ceiling = ceiling_of(level, i) as f32;
+        if floor < ceiling {
+            return 0.0;
+        }
+    }
+
+    let was = level.height[i] as i32;
+    let cut = floor.floor().clamp(0.0, 255.0) as i32;
+    if cut >= was {
+        return 0.0;
+    }
+    if dual && collapses(level, i, cut) {
+        collapse(level, i, x, y);
+        return (was - level.height[i] as i32).max(0) as f32;
+    }
+    level.height[i] = cut as u8;
+    reflood(level, i, x, y);
+    (was - cut) as f32
+}
+
+/// Heaps `amount` of spoil onto one texel, and returns how much of it
+/// stuck. A texel that has reached the top of the level takes no more, and
+/// the rest stays banked rather than vanishing.
+///
+/// `at` is the height of the blade dropping it, which decides whether the
+/// slab overhead is something to pile against or something to pile on top
+/// of - spoil dropped inside a cave must not land on its roof.
+fn heap(level: &mut Level, x: i32, y: i32, amount: f32, at: f32) -> f32 {
+    if amount < 1.0 {
+        return 0.0;
+    }
+    let i = match movable(level, x, y) {
+        Some(i) => i,
+        None => return 0.0,
+    };
+    if level.meta[i] & DOUBLE_LEVEL != 0 && at < ceiling_of(level, i) as f32 {
+        return 0.0;
+    }
+    let was = level.height[i] as i32;
+    let put = (amount as i32).min(255 - was);
+    if put <= 0 {
+        return 0.0;
+    }
+    level.height[i] = (was + put) as u8;
+    reflood(level, i, x, y);
+    put as f32
+}
+
+/// The altitude of a cave's ceiling, from the delta bits of both halves of
+/// the pair.
+fn ceiling_of(level: &Level, i: usize) -> i32 {
+    let (lo, hi) = (i & !1, i | 1);
+    let delta = ((level.meta[lo] & DELTA_MASK) << DELTA_BITS) | (level.meta[hi] & DELTA_MASK);
+    level.height[lo] as i32 + ((delta as i32) << level.geometry.delta_power as u32)
 }
 
 /// Whether cutting the roof of a cave down to `height` breaks through it.
@@ -235,11 +605,7 @@ fn press(level: &mut Level, x: i32, y: i32, delta: i32) -> bool {
 /// before it gives up on the slab, so a roof does not thin out to nothing
 /// first.
 fn collapses(level: &Level, i: usize, height: i32) -> bool {
-    let (lo, hi) = (i & !1, i | 1);
-    let delta = ((level.meta[lo] & DELTA_MASK) << DELTA_BITS) | (level.meta[hi] & DELTA_MASK);
-    let ceiling =
-        level.height[lo] as i32 + (((delta + 1) as i32) << level.geometry.delta_power as u32);
-    ceiling >= height
+    ceiling_of(level, i) + (1 << level.geometry.delta_power as u32) >= height
 }
 
 /// Drops a cave roof that has been driven through, leaving flat ground.
@@ -352,11 +718,15 @@ mod tests {
     const SIZE: i32 = 64;
 
     fn test_level() -> Level {
-        let total = (SIZE * SIZE) as usize;
+        test_level_of(SIZE)
+    }
+
+    fn test_level_of(size: i32) -> Level {
+        let total = (size * size) as usize;
         let bits = TerrainBits::new(8);
         Level {
-            size: (SIZE, SIZE),
-            flood_map: vec![0; SIZE as usize].into_boxed_slice(),
+            size: (size, size),
+            flood_map: vec![0; size as usize].into_boxed_slice(),
             height: vec![100u8; total].into_boxed_slice(),
             meta: vec![bits.write(MAIN_TERRAIN); total].into_boxed_slice(),
             palette: [[0; 4]; 0x100],
@@ -367,9 +737,9 @@ mod tests {
 
     /// A straight track along +X with no across-track spread, so that each
     /// step marks exactly one texel and the pattern is easy to read off.
-    fn straight(level: &mut Level, len: i32, config: &Config) -> Vec<Region> {
+    fn straight(level: &mut Level, len: i32, config: &Tread) -> Vec<Region> {
         let mut regions = Vec::new();
-        apply(
+        apply_tread(
             level,
             config,
             &Track {
@@ -386,18 +756,18 @@ mod tests {
         (0..len).map(|x| level.height[x as usize]).collect()
     }
 
-    fn bar_only() -> Config {
-        Config {
+    fn bar_only() -> Tread {
+        Tread {
             bar: 1,
-            ..Config::default()
+            ..Tread::default()
         }
     }
 
     /// One texel per stamp, so a bar's extent is easy to read off.
-    fn tight() -> Config {
-        Config {
+    fn tight() -> Tread {
+        Tread {
             spacing: 1.0,
-            ..Config::default()
+            ..Tread::default()
         }
     }
 
@@ -458,7 +828,7 @@ mod tests {
     fn the_bar_lies_across_the_track() {
         let mut level = test_level();
         let mut regions = Vec::new();
-        apply(
+        apply_tread(
             &mut level,
             &tight(),
             &Track {
@@ -479,7 +849,7 @@ mod tests {
     fn a_track_reports_what_it_touched() {
         let mut level = test_level();
         let mut regions = Vec::new();
-        apply(
+        apply_tread(
             &mut level,
             &tight(),
             &Track {
@@ -504,7 +874,7 @@ mod tests {
     fn a_track_across_the_seam_is_split_rather_than_stretched() {
         let mut level = test_level();
         let mut regions = Vec::new();
-        apply(
+        apply_tread(
             &mut level,
             &bar_only(),
             &Track {
@@ -539,9 +909,9 @@ mod tests {
     fn a_teleport_leaves_no_track() {
         let mut level = test_level();
         let mut regions = Vec::new();
-        apply(
+        apply_tread(
             &mut level,
-            &Config::default(),
+            &Tread::default(),
             &Track {
                 from: (0, 0),
                 to: (SIZE / 2, SIZE / 2),
@@ -604,7 +974,7 @@ mod tests {
         let mut level = test_level();
         dual_level(&mut level, 10, 5, 40, 200, 1);
         let mut regions = Vec::new();
-        apply(
+        apply_tread(
             &mut level,
             &bar_only(),
             &Track {
@@ -625,7 +995,7 @@ mod tests {
         // A roof one unit above the ceiling: the next cut goes through it.
         dual_level(&mut level, 10, 5, 40, 49, 1);
         let mut regions = Vec::new();
-        apply(
+        apply_tread(
             &mut level,
             &bar_only(),
             &Track {
@@ -657,7 +1027,7 @@ mod tests {
             }
         }
         let mut regions = Vec::new();
-        apply(
+        apply_tread(
             &mut level,
             &bar_only(),
             &Track {
@@ -686,7 +1056,7 @@ mod tests {
         let bits = level.terrain_bits();
         level.flood_map.iter_mut().for_each(|f| *f = 100);
         let mut regions = Vec::new();
-        apply(
+        apply_tread(
             &mut level,
             &bar_only(),
             &Track {
@@ -714,7 +1084,7 @@ mod tests {
         level.height[i] = 100;
         let mut regions = Vec::new();
         // The fourth texel of a track is the one the tread raises.
-        apply(
+        apply_tread(
             &mut level,
             &bar_only(),
             &Track {
@@ -731,12 +1101,291 @@ mod tests {
     #[test]
     fn switching_it_off_leaves_the_ground_alone() {
         let mut level = test_level();
-        let config = Config {
+        let config = Tread {
             enabled: false,
-            ..Config::default()
+            ..Tread::default()
         };
         let regions = straight(&mut level, 9, &config);
         assert!(regions.is_empty());
         assert!(level.height.iter().all(|&h| h == 100));
+    }
+
+    // -- the grader ------------------------------------------------------
+
+    fn grader() -> Grader {
+        Grader {
+            enabled: true,
+            ..Grader::default()
+        }
+    }
+
+    /// A blade lying across x, swept along +y from `y0` to `y1` at height
+    /// `z`, spanning `x0..=x1`.
+    fn blade(x0: f32, x1: f32, y0: f32, y1: f32, z: f32) -> Sweep {
+        use glam::Vec3;
+        Sweep {
+            from: (Vec3::new(x0, y0, z), Vec3::new(x1, y0, z)),
+            to: (Vec3::new(x0, y1, z), Vec3::new(x1, y1, z)),
+        }
+    }
+
+    fn total_altitude(level: &Level) -> i64 {
+        level.height.iter().map(|&h| h as i64).sum()
+    }
+
+    #[test]
+    fn the_blade_leaves_a_flat_floor_at_its_own_height() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        apply_grader(
+            &mut level,
+            &grader(),
+            &blade(20.0, 40.0, 20.0, 30.0, 60.0),
+            &mut regions,
+        );
+        // Every row the blade crossed, bar the last, which carries the berm.
+        for y in 20..30 {
+            for x in 20..=40 {
+                assert_eq!(
+                    level.height[level.wrap((x, y))],
+                    60,
+                    "({}, {}) is not level with the blade",
+                    x,
+                    y
+                );
+            }
+        }
+        assert!(!regions.is_empty());
+    }
+
+    #[test]
+    fn the_spoil_is_thrown_into_windrows_along_the_cut() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        apply_grader(
+            &mut level,
+            &grader(),
+            &blade(20.0, 40.0, 20.0, 30.0, 60.0),
+            &mut regions,
+        );
+        let at = |x: i32, y: i32| level.height[level.wrap((x, y))] as i32;
+        for side in [19, 41] {
+            assert!(
+                at(side, 25) > 100,
+                "no windrow beside the cut at x = {}: {}",
+                side,
+                at(side, 25)
+            );
+        }
+        // The blade keeps sweeping spoil outwards, so the windrow is taller
+        // where the blade had been carrying a load for longer.
+        assert!(
+            at(19, 29) > at(19, 21),
+            "the windrow should build up along the sweep"
+        );
+    }
+
+    #[test]
+    fn the_blade_leaves_ground_that_is_already_below_it_alone() {
+        let mut level = test_level();
+        let before = level.height.to_vec();
+        let mut regions = Vec::new();
+        apply_grader(
+            &mut level,
+            &grader(),
+            &blade(20.0, 30.0, 20.0, 26.0, 200.0),
+            &mut regions,
+        );
+        assert_eq!(level.height.to_vec(), before);
+        assert!(regions.is_empty());
+    }
+
+    #[test]
+    fn the_spoil_goes_somewhere_rather_than_nowhere() {
+        let mut level = test_level();
+        let before = total_altitude(&level);
+        let mut regions = Vec::new();
+        apply_grader(
+            &mut level,
+            &grader(),
+            &blade(20.0, 40.0, 20.0, 30.0, 60.0),
+            &mut regions,
+        );
+        let after = total_altitude(&level);
+        let cut = (40 - 20 + 1) as i64 * (30 - 20 + 1) as i64 * (100 - 60);
+        assert!(after < before, "the blade has to remove ground");
+        assert!(
+            before - after < cut,
+            "and put most of it back: cut {}, lost {}",
+            cut,
+            before - after
+        );
+    }
+
+    #[test]
+    fn the_spoil_is_heaped_ahead_of_the_blade() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        apply_grader(
+            &mut level,
+            &grader(),
+            &blade(20.0, 40.0, 20.0, 30.0, 60.0),
+            &mut regions,
+        );
+        let raised = (0..SIZE)
+            .flat_map(|y| (0..SIZE).map(move |x| (x, y)))
+            .filter(|&(x, y)| level.height[level.wrap((x, y))] > 100)
+            .collect::<Vec<_>>();
+        assert!(!raised.is_empty(), "nothing was heaped up at all");
+        // The blade started at y = 20 and stopped at y = 30. It drops spoil
+        // all along the way, but never behind where it set off, and what it
+        // is still carrying at the end goes out in front.
+        for &(x, y) in raised.iter() {
+            assert!(y >= 20, "({}, {}) was raised behind the start", x, y);
+        }
+        assert!(
+            raised.iter().any(|&(_, y)| y > 30),
+            "nothing was left ahead of the blade"
+        );
+    }
+
+    #[test]
+    fn a_blade_that_never_moved_still_cuts_its_own_line() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        apply_grader(
+            &mut level,
+            &grader(),
+            &blade(20.0, 30.0, 20.0, 20.0, 80.0),
+            &mut regions,
+        );
+        // Cut to the blade, with the berm it was left holding on top.
+        assert!(level.height[level.wrap((25, 20))] < 100);
+        assert!(!regions.is_empty());
+    }
+
+    #[test]
+    fn only_the_main_terrain_is_graded() {
+        let mut level = test_level();
+        let bits = level.terrain_bits();
+        for x in 25..=30 {
+            for y in 20..=26 {
+                level.meta[level.wrap((x, y))] = bits.write(4);
+            }
+        }
+        let mut regions = Vec::new();
+        apply_grader(
+            &mut level,
+            &grader(),
+            &blade(20.0, 30.0, 20.0, 26.0, 80.0),
+            &mut regions,
+        );
+        assert_eq!(level.height[level.wrap((22, 22))], 80, "the soft half");
+        assert_eq!(level.height[level.wrap((27, 22))], 100, "and the hard one");
+    }
+
+    #[test]
+    fn the_blade_does_not_reach_the_roof_of_a_cave_it_is_driving_through() {
+        let mut level = test_level();
+        // A tall slab with a cave under it, and the blade down in the cave.
+        dual_level(&mut level, 24, 22, 40, 200, 3);
+        let i = level.wrap((25, 22));
+        let mut regions = Vec::new();
+        apply_grader(
+            &mut level,
+            &grader(),
+            &blade(20.0, 30.0, 20.0, 26.0, 60.0),
+            &mut regions,
+        );
+        assert_eq!(level.height[i], 200, "the roof is not the blade's to cut");
+        assert_ne!(level.meta[i] & DOUBLE_LEVEL, 0);
+    }
+
+    #[test]
+    fn an_absurdly_long_blade_is_refused() {
+        let mut level = test_level_of(1024);
+        let before = level.height.to_vec();
+        let mut regions = Vec::new();
+        apply_grader(
+            &mut level,
+            &grader(),
+            &blade(20.0, 420.0, 20.0, 26.0, 60.0),
+            &mut regions,
+        );
+        assert_eq!(level.height.to_vec(), before);
+        assert!(regions.is_empty());
+    }
+
+    #[test]
+    fn a_teleport_is_not_a_sweep() {
+        let mut level = test_level_of(1024);
+        let before = level.height.to_vec();
+        let mut regions = Vec::new();
+        apply_grader(
+            &mut level,
+            &grader(),
+            &blade(20.0, 30.0, 20.0, 300.0, 60.0),
+            &mut regions,
+        );
+        assert_eq!(level.height.to_vec(), before);
+        assert!(regions.is_empty());
+    }
+
+    #[test]
+    fn the_grader_is_off_unless_it_is_asked_for() {
+        let mut level = test_level();
+        let before = level.height.to_vec();
+        let mut regions = Vec::new();
+        apply_grader(
+            &mut level,
+            &Grader::default(),
+            &blade(20.0, 30.0, 20.0, 26.0, 60.0),
+            &mut regions,
+        );
+        assert!(!Grader::default().enabled);
+        assert_eq!(level.height.to_vec(), before);
+        assert!(regions.is_empty());
+    }
+
+    #[test]
+    fn spreading_a_load_neither_creates_nor_destroys_it() {
+        let mut load = vec![0.0f32; 80];
+        load[40] = 1000.0;
+        let mut out = vec![0.0f32; 80];
+        spread(&load, &mut out, 8);
+        let total: f32 = out.iter().sum();
+        assert!(
+            (total - 1000.0).abs() < 1.0,
+            "the kernel has to conserve: {}",
+            total
+        );
+        assert!(out[40] > out[45], "and keep most of it near where it was");
+        assert_eq!(out[10], 0.0, "without reaching past its width");
+    }
+
+    #[test]
+    fn spreading_matches_the_kernel_it_replaces() {
+        // The sliding window has to agree with the original's per-slot taps.
+        let width = 3usize;
+        let reach = 2 * width;
+        let load = (0..40).map(|i| (i * 7 % 13) as f32).collect::<Vec<_>>();
+        let mut plain = vec![0.0f32; load.len()];
+        let share = 0.75 / (2 * reach) as f32;
+        for (i, &v) in load.iter().enumerate() {
+            plain[i] += 0.25 * v;
+            for k in 1..=reach {
+                if i + k < load.len() {
+                    plain[i + k] += share * v;
+                }
+                if i >= k {
+                    plain[i - k] += share * v;
+                }
+            }
+        }
+        let mut fast = vec![0.0f32; load.len()];
+        spread(&load, &mut fast, width);
+        for (a, b) in plain.iter().zip(&fast) {
+            assert!((a - b).abs() < 1e-3, "{} vs {}", a, b);
+        }
     }
 }
