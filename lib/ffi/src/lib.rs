@@ -205,7 +205,6 @@ fn crate_main_views(
     (color_view, depth_view)
 }
 
-
 #[no_mangle]
 pub extern "C" fn rv_api_version() -> i32 {
     rv_api_3

@@ -10,6 +10,7 @@
 //! rectangles so the renderer can re-upload them.
 
 use crate::level::{DOUBLE_LEVEL, Level};
+use crate::vfs::Vfs;
 
 use std::{io, path::Path, sync::Arc};
 
@@ -510,20 +511,41 @@ impl MovingLand {
         let mut locations = Vec::new();
         for path in paths {
             match Self::load_file(&path, terrain_count) {
-                Ok(ml) => {
-                    log::info!(
-                        "Loaded moving land '{}' ({} frames, {:?})",
-                        ml.name,
-                        ml.frames.len(),
-                        ml.mode
-                    );
-                    locations.push(Location::new(Arc::new(ml), (0, 0)));
-                }
+                Ok(ml) => locations.push(Self::push_loaded(ml)),
                 Err(e) => log::error!("Unable to load {:?}: {}", path, e),
             }
         }
 
         MovingLand { locations }
+    }
+
+    /// Same as [`load_dir`], from a VFS that already has the level zip
+    /// mounted. `dir` is the archive folder (`"data.vot"`).
+    pub fn load_from_vfs(vfs: &Vfs, dir: &str, terrain_count: i32) -> Self {
+        let mut names = vfs.files_in(dir);
+        names.retain(|p| p.rsplit('/').next().is_some_and(|n| n.ends_with(".vot")));
+
+        let mut locations = Vec::new();
+        for name in names {
+            let Some(bytes) = vfs.read(&name) else {
+                continue;
+            };
+            match MobileLocation::load(&mut io::Cursor::new(&bytes[..]), terrain_count) {
+                Ok(ml) => locations.push(Self::push_loaded(ml)),
+                Err(e) => log::error!("Unable to load {}: {}", name, e),
+            }
+        }
+        MovingLand { locations }
+    }
+
+    fn push_loaded(ml: MobileLocation) -> Location {
+        log::info!(
+            "Loaded moving land '{}' ({} frames, {:?})",
+            ml.name,
+            ml.frames.len(),
+            ml.mode
+        );
+        Location::new(Arc::new(ml), (0, 0))
     }
 
     fn load_file(path: &Path, terrain_count: i32) -> Result<MobileLocation, vot::Error> {
@@ -912,6 +934,20 @@ mod tests {
         land.update(&mut level, &mut regions);
         // Both locations write the same texel, in order.
         assert_eq!(level.height[0], 103);
+    }
+
+    #[test]
+    fn load_from_vfs_reads_every_vot() {
+        let mut vfs = crate::vfs::Vfs::new();
+        vfs.insert("data.vot/b.vot", one_frame_file("second", [2, 0]));
+        vfs.insert("data.vot/a.vot", one_frame_file("first", [1, 0]));
+        vfs.insert("data.vot/notes.txt", b"ignore me".to_vec());
+        vfs.insert("other/c.vot", one_frame_file("nope", [9, 0]));
+
+        let land = MovingLand::load_from_vfs(&vfs, "data.vot", 8);
+        assert_eq!(land.locations.len(), 2);
+        assert_eq!(land.locations[0].source.name, "first");
+        assert_eq!(land.locations[1].source.name, "second");
     }
 
     #[test]

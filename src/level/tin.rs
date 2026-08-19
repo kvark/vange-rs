@@ -1432,6 +1432,7 @@ impl Tin {
     /// chunk on every call, which is what an offline render wants.
     pub fn update(&mut self, level: &Level, rects: &[Rect], drawn: Option<Drawn<'_>>) -> Update {
         profiling::scope!("Update Terrain TIN");
+        #[cfg(not(target_arch = "wasm32"))]
         use rayon::prelude::*;
 
         // Banked work still has to come due, so an idle call is only idle
@@ -1481,61 +1482,90 @@ impl Tin {
         }
 
         let max_error = self.max_error;
-        self.chunks
-            .par_iter_mut()
-            .enumerate()
-            .filter(|entry| entry.1.due)
-            .map(|(index, state)| {
-                let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
-                state.alt = grid.alt;
-                // The edits that reach this chunk, in its own grid
-                // coordinates and clipped to it.
-                let local = state
-                    .pending
-                    .iter()
-                    .filter_map(|r| {
-                        let g = GridRect {
-                            x0: (r.x - state.x0).max(0),
-                            y0: (r.y - state.y0).max(0),
-                            x1: (r.x + r.w as i32 - state.x0).min(state.w as i32),
-                            y1: (r.y + r.h as i32 - state.y0).min(state.h as i32),
-                        };
-                        (g.x0 <= g.x1 && g.y0 <= g.y1).then_some(g)
-                    })
-                    .collect::<Vec<_>>();
-                state.pending.clear();
-                let per_lod = state
-                    .lods
-                    .par_iter_mut()
-                    .enumerate()
-                    .map(|(k, lod)| {
-                        // Skip measuring a chunk that has stopped gaining
-                        // vertices, but always re-emit: the geometry has to
-                        // follow the new heights either way.
-                        let measure = lod.settle == 0;
-                        let added = refine(
-                            &mut lod.tri,
-                            &grid,
-                            max_error * (1 << k) as f32,
-                            max_error,
-                            Some(&local),
-                            measure,
-                        );
-                        if added {
-                            lod.backoff = 0;
-                            lod.settle = 0;
-                        } else if measure {
-                            lod.backoff = (lod.backoff + 1).min(MAX_SETTLE);
-                            lod.settle = lod.backoff;
-                        } else {
-                            lod.settle -= 1;
-                        }
-                        emit_chunk(&lod.tri, &grid)
-                    })
-                    .collect::<Vec<_>>();
-                (index, ChunkBuffers::new(state, per_lod))
-            })
-            .collect()
+        let refit = |index: usize, state: &mut ChunkState| {
+            let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
+            state.alt = grid.alt;
+            // The edits that reach this chunk, in its own grid
+            // coordinates and clipped to it.
+            let local = state
+                .pending
+                .iter()
+                .filter_map(|r| {
+                    let g = GridRect {
+                        x0: (r.x - state.x0).max(0),
+                        y0: (r.y - state.y0).max(0),
+                        x1: (r.x + r.w as i32 - state.x0).min(state.w as i32),
+                        y1: (r.y + r.h as i32 - state.y0).min(state.h as i32),
+                    };
+                    (g.x0 <= g.x1 && g.y0 <= g.y1).then_some(g)
+                })
+                .collect::<Vec<_>>();
+            state.pending.clear();
+            let per_lod = {
+                let emit_lod = |k: usize, lod: &mut LodState| {
+                    // Skip measuring a chunk that has stopped gaining
+                    // vertices, but always re-emit: the geometry has to
+                    // follow the new heights either way.
+                    let measure = lod.settle == 0;
+                    let added = refine(
+                        &mut lod.tri,
+                        &grid,
+                        max_error * (1 << k) as f32,
+                        max_error,
+                        Some(&local),
+                        measure,
+                    );
+                    if added {
+                        lod.backoff = 0;
+                        lod.settle = 0;
+                    } else if measure {
+                        lod.backoff = (lod.backoff + 1).min(MAX_SETTLE);
+                        lod.settle = lod.backoff;
+                    } else {
+                        lod.settle -= 1;
+                    }
+                    emit_chunk(&lod.tri, &grid)
+                };
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    state
+                        .lods
+                        .par_iter_mut()
+                        .enumerate()
+                        .map(|(k, lod)| emit_lod(k, lod))
+                        .collect::<Vec<_>>()
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    state
+                        .lods
+                        .iter_mut()
+                        .enumerate()
+                        .map(|(k, lod)| emit_lod(k, lod))
+                        .collect::<Vec<_>>()
+                }
+            };
+            (index, ChunkBuffers::new(state, per_lod))
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.chunks
+                .par_iter_mut()
+                .enumerate()
+                .filter(|entry| entry.1.due)
+                .map(|(index, state)| refit(index, state))
+                .collect()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.chunks
+                .iter_mut()
+                .enumerate()
+                .filter(|entry| entry.1.due)
+                .map(|(index, state)| refit(index, state))
+                .collect()
+        }
     }
 }
 

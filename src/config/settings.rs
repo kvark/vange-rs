@@ -25,6 +25,12 @@ pub struct Camera {
     pub speed: f32,
     pub depth_range: (f32, f32),
     pub projection: Projection,
+    /// World units ahead of the vehicle the chase camera looks at.
+    /// Zero keeps the authored pitch (`angle`); a positive value is the
+    /// GTA-style look-ahead that holds the car in the lower part of the
+    /// frame instead of letting it run toward the horizon.
+    #[serde(default)]
+    pub look_ahead: f32,
 }
 
 #[derive(Copy, Clone, Deserialize)]

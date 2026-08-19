@@ -189,6 +189,11 @@ pub struct Follow {
     pub angle_x: f32,
     pub offset: Vec3,
     pub speed: f32,
+    /// World units ahead of the target the camera looks at. Zero keeps
+    /// the authored pitch in `angle_x`; a positive value points the
+    /// view at a point in front of the vehicle so the body sits lower
+    /// in the frame (GTA-style chase cam).
+    pub look_ahead: f32,
 }
 
 #[derive(Copy, Clone)]
@@ -310,16 +315,32 @@ impl Camera {
         let swing = Quat::from_rotation_x(follow.angle_x);
         let mut front = target.rot * Vec3::Y;
         front.z = 0.0;
-        let twist = Quat::from_rotation_arc(Vec3::Y, front);
+        let twist = if front.length_squared() > 1e-8 {
+            Quat::from_rotation_arc(Vec3::Y, front.normalize())
+        } else {
+            Quat::IDENTITY
+        };
 
         let patch = Quat::from_rotation_z(std::f32::consts::PI);
-        let rotation = patch * twist * swing;
-
+        let heading = patch * twist;
+        let location = target.disp + heading * follow.offset;
         let k = (dt * -follow.speed).exp();
-        self.rot = rotation.slerp(self.rot, k);
 
-        let location = target.disp + (patch * twist) * follow.offset;
-        self.loc = location * (1.0 - k) + self.loc * k;
+        if follow.look_ahead.abs() > 1e-4 {
+            // Move first, then look from the actual (possibly lagged)
+            // position at a point ahead of the car. Position lag then
+            // cannot lift the car toward the top of the frame: the
+            // body stays below the look-at no matter how far behind
+            // the camera is still catching up.
+            self.loc = location * (1.0 - k) + self.loc * k;
+            let look_at = target.disp + twist * Vec3::new(0.0, follow.look_ahead, 0.0);
+            let rotation = Self::look_rotation(look_at - self.loc);
+            self.rot = rotation.slerp(self.rot, k);
+        } else {
+            let rotation = heading * swing;
+            self.rot = rotation.slerp(self.rot, k);
+            self.loc = location * (1.0 - k) + self.loc * k;
+        }
     }
 
     /// Push the camera up out of the ground.
@@ -539,7 +560,10 @@ mod ground_tests {
     use crate::{config::settings, level};
 
     fn test_level() -> level::Level {
-        level::load(&level::LevelConfig::new_test(), &settings::Geometry::default())
+        level::load(
+            &level::LevelConfig::new_test(),
+            &settings::Geometry::default(),
+        )
     }
 
     fn cam_at(loc: Vec3) -> Camera {
@@ -731,5 +755,45 @@ mod ground_tests {
         cam.keep_above_ground(&level, 4.0);
         assert!((cam.loc.z - (low + 4.0)).abs() < 1e-3);
         assert!(cam.loc.z < mid, "should not be pushed through the ceiling");
+    }
+
+    /// A look-ahead chase camera sits behind the car and looks at a
+    /// point in front of it, so the body is below the centre of the
+    /// frame rather than filling it.
+    #[test]
+    fn look_ahead_points_past_the_car() {
+        let target = Transform {
+            scale: 1.0,
+            rot: Quat::IDENTITY,
+            disp: Vec3::ZERO,
+        };
+        let follow = Follow {
+            angle_x: -std::f32::consts::FRAC_PI_2,
+            offset: Vec3::new(0.0, 50.0, 20.0),
+            speed: 20.0,
+            look_ahead: 40.0,
+        };
+        let mut cam = cam_at(Vec3::new(0.0, 0.0, 200.0));
+        for _ in 0..120 {
+            cam.follow(&target, 1.0 / 60.0, &follow);
+        }
+        assert!(
+            (cam.loc - Vec3::new(0.0, -50.0, 20.0)).length() < 0.1,
+            "settled at {:?}, expected behind the car",
+            cam.loc
+        );
+        let want = Vec3::new(0.0, 90.0, -20.0).normalize();
+        let got = cam.dir();
+        assert!(
+            (got - want).length() < 0.05,
+            "view {got:?} should look at the point ahead of the car ({want:?})"
+        );
+        // The car itself is below that look-at: the view ray's pitch is
+        // shallower than the pitch down to the car's centre.
+        let to_car = (target.disp - cam.loc).normalize();
+        assert!(
+            got.z > to_car.z,
+            "looking at the car {to_car:?} would pitch down more than {got:?}"
+        );
     }
 }

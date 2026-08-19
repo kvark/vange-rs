@@ -10,7 +10,9 @@ use wasm_bindgen::prelude::*;
 use vangers::{
     config::{self, settings},
     data, level, model, physics,
-    render::{self, Batcher, DEPTH_FORMAT, GraphicsContext, Render, ScreenTargets},
+    render::{
+        self, Batcher, DEPTH_FORMAT, DirtyRect, GraphicsContext, Rect, Render, ScreenTargets,
+    },
     space,
     vfs::Vfs,
 };
@@ -219,7 +221,7 @@ use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
     event::{self, WindowEvent},
-    event_loop::{ActiveEventLoop, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::Window,
 };
@@ -403,6 +405,13 @@ struct WebApp {
     max_quant: f32,
     /// True when running on WebGPU (vs WebGL2 fallback).
     is_webgpu: bool,
+    moving_land: level::moving::MovingLand,
+    /// Sensors and location engines that steer the moving land.
+    triggers: level::trigger::Triggers,
+    /// Time carried over towards the next moving-land quant.
+    moving_land_time: f32,
+    /// Scratch buffer for the rectangles a moving-land quant touched.
+    moving_land_regions: Vec<level::moving::Region>,
 }
 
 impl WebApp {
@@ -431,19 +440,19 @@ impl WebApp {
         s.game.camera.depth_range = (10.0, 6000.0);
 
         {
-            // A chase camera sitting just behind and above the car,
-            // rather than the old view from 240 units straight overhead.
-            // `angle` is measured so that 90 looks straight down and 0
-            // looks along the horizon, so 16 is a shallow downward
-            // pitch; `offset` is distance behind the car and `height` is
-            // above it. Shared by every route, so switching between them
-            // compares the renderers and nothing else.
-            s.game.camera.angle = 16;
-            s.game.camera.offset = 26.0;
-            s.game.camera.height = 8.7;
+            // GTA-style chase cam: far enough behind that the ~30-unit
+            // mechos does not fill the frame (offset 26 sat on the tail),
+            // high enough to see over the body, looking at a point ahead
+            // of the nose so the car sits in the lower third. `angle` is
+            // unused once `look_ahead` is set (90 looks straight down,
+            // 0 along the horizon) and is kept as a fallback pitch.
+            s.game.camera.angle = 12;
+            s.game.camera.offset = 56.0;
+            s.game.camera.height = 18.0;
+            s.game.camera.look_ahead = 40.0;
             // Snappier than the default so the camera stays behind the
             // car through turns instead of trailing wide.
-            s.game.camera.speed = 4.0;
+            s.game.camera.speed = 8.0;
             // At this height the ground is a few units from the eye, and
             // the 10-unit near plane would clip it away - rasterized
             // terrain then shows its own underside through the gap.
@@ -576,6 +585,33 @@ impl WebApp {
             angle_x: (cam_config.angle as f32).to_radians() - std::f32::consts::FRAC_PI_2,
             offset: glam::vec3(0.0, cam_config.offset, cam_config.height),
             speed: cam_config.speed,
+            look_ahead: cam_config.look_ahead,
+        };
+
+        let (moving_land, triggers) = match vfs {
+            Some(v) => {
+                let dir = level_config
+                    .path_moving_land()
+                    .and_then(|p| p.to_str().map(str::to_string))
+                    .unwrap_or_else(|| "data.vot".into());
+                let mut land = level::moving::MovingLand::load_from_vfs(
+                    v,
+                    &dir,
+                    level_config.terrains.len() as i32,
+                );
+                let triggers = level::trigger::Triggers::load_from_vfs(v, &dir, &land);
+                triggers.reset_locations(&mut land);
+                if !land.is_empty() {
+                    log::info!(
+                        "Loaded moving land: {} locations, {} engines, {} sensors",
+                        land.locations.len(),
+                        triggers.engines.len(),
+                        triggers.sensors.len()
+                    );
+                }
+                (land, triggers)
+            }
+            None => Default::default(),
         };
 
         // Settle the follow camera at the agent's spawn pose. Without
@@ -601,6 +637,10 @@ impl WebApp {
             follow,
             max_quant: settings.game.physics.max_quant,
             is_webgpu,
+            moving_land,
+            triggers,
+            moving_land_time: 0.0,
+            moving_land_regions: Vec::new(),
         }
     }
 
@@ -623,6 +663,14 @@ impl WebApp {
                     agent.dynamo.linear_velocity.length()
                 ));
             }
+            if !self.moving_land.is_empty() {
+                ui.separator();
+                ui.label(format!(
+                    "Moving land: {} locations, {} engines",
+                    self.moving_land.locations.len(),
+                    self.triggers.engines.len()
+                ));
+            }
             ui.separator();
             ui.label("Camera");
             ui.label(format!(
@@ -636,6 +684,59 @@ impl WebApp {
         self.render.resize(extent, device);
         if let space::Projection::Perspective(ref mut p) = self.cam.proj {
             p.aspect = extent.width as f32 / extent.height.max(1) as f32;
+        }
+    }
+
+    /// Advances the moving land and hands the touched rectangles to the
+    /// renderer. Same quantisation as the native game: animation speed is
+    /// tied to `MAIN_LOOP_TIME`, not the frame rate.
+    fn step_moving_land(&mut self, delta: f32) {
+        if self.moving_land.is_empty() {
+            return;
+        }
+
+        self.moving_land_time += delta;
+        let quants = (self.moving_land_time / config::common::MAIN_LOOP_TIME) as u32;
+        if quants == 0 {
+            return;
+        }
+        self.moving_land_time -= quants as f32 * config::common::MAIN_LOOP_TIME;
+        // After a long stall, drop the backlog instead of animating through it.
+        const MAX_CATCH_UP: u32 = 4;
+
+        self.moving_land_regions.clear();
+        for _ in 0..quants.min(MAX_CATCH_UP) {
+            if !self.triggers.is_empty() {
+                let size = (self.level.size.0, self.level.size.1);
+                if let Some(ref agent) = self.agent {
+                    let pos = agent.transform.disp;
+                    self.triggers.touch(
+                        (pos.x as i32, pos.y as i32, pos.z as i32),
+                        (agent.phys_data.bbox.radius * agent.car.scale) as i32,
+                        size,
+                    );
+                }
+                self.triggers.update(&mut self.moving_land);
+            }
+            self.moving_land
+                .update(&mut self.level, &mut self.moving_land_regions);
+        }
+
+        self.moving_land_regions.sort_unstable();
+        self.moving_land_regions.dedup();
+
+        let z_range = 0..self.level.geometry.height as u16;
+        for r in self.moving_land_regions.drain(..) {
+            self.render.terrain.dirty_rects.push(DirtyRect {
+                rect: Rect {
+                    x: r.x as u16,
+                    y: r.y as u16,
+                    w: r.w as u16,
+                    h: r.h as u16,
+                },
+                z_range: z_range.clone(),
+                need_upload: true,
+            });
         }
     }
 
@@ -785,6 +886,58 @@ mod net_ws {
 
 use web_time::Instant;
 
+/// Pointer events collected from the document, so egui still works when
+/// the canvas is not the event target (itch.io iframe, HTML overlays).
+struct UiPointer {
+    pos: [f32; 2],
+    /// `None` = move, `Some(true)` = press, `Some(false)` = release.
+    press: Option<bool>,
+}
+
+/// Closures registered on `document`. Kept alive for the page lifetime.
+struct DomInputHooks {
+    _keydown: Closure<dyn FnMut(web_sys::KeyboardEvent)>,
+    _keyup: Closure<dyn FnMut(web_sys::KeyboardEvent)>,
+    _pointerdown: Closure<dyn FnMut(web_sys::PointerEvent)>,
+    _pointerup: Closure<dyn FnMut(web_sys::PointerEvent)>,
+    _pointermove: Closure<dyn FnMut(web_sys::PointerEvent)>,
+}
+
+fn key_from_code(code: &str) -> Option<KeyCode> {
+    Some(match code {
+        "KeyW" => KeyCode::KeyW,
+        "KeyA" => KeyCode::KeyA,
+        "KeyS" => KeyCode::KeyS,
+        "KeyD" => KeyCode::KeyD,
+        "KeyQ" => KeyCode::KeyQ,
+        "KeyE" => KeyCode::KeyE,
+        "KeyZ" => KeyCode::KeyZ,
+        "KeyX" => KeyCode::KeyX,
+        "Space" => KeyCode::Space,
+        "ShiftLeft" | "ShiftRight" => KeyCode::ShiftLeft,
+        "AltLeft" | "AltRight" => KeyCode::AltLeft,
+        _ => return None,
+    })
+}
+
+fn pointer_pos(canvas: &web_sys::HtmlCanvasElement, event: &web_sys::PointerEvent) -> [f32; 2] {
+    let rect = canvas.get_bounding_client_rect();
+    [
+        (event.client_x() as f64 - rect.left()) as f32,
+        (event.client_y() as f64 - rect.top()) as f32,
+    ]
+}
+
+fn in_level_picker(event: &web_sys::PointerEvent) -> bool {
+    let Some(target) = event.target() else {
+        return false;
+    };
+    let Ok(el) = target.dyn_into::<web_sys::Element>() else {
+        return false;
+    };
+    el.closest("#level-picker").ok().flatten().is_some()
+}
+
 /// GPU resources initialized asynchronously on WASM.
 struct GpuState {
     _instance: wgpu::Instance,
@@ -805,7 +958,12 @@ struct WebHandler {
     /// Shared slot for async WASM GPU init to deliver results.
     gpu_pending: std::rc::Rc<std::cell::RefCell<Option<GpuState>>>,
     screen_size: wgpu::Extent3d,
-    keys_pressed: std::collections::HashSet<KeyCode>,
+    keys_pressed: std::rc::Rc<std::cell::RefCell<std::collections::HashSet<KeyCode>>>,
+    ui_pointer: std::rc::Rc<std::cell::RefCell<Vec<UiPointer>>>,
+    /// Document-level input listeners. itch.io hosts us in an iframe and
+    /// winit only hears keys/clicks on the canvas, so we take them from
+    /// `document` instead.
+    _dom_input: Option<DomInputHooks>,
     last_frame: Option<Instant>,
     ws_client: Option<net_ws::WsClient>,
     /// Status text overlay (used in multiplayer logging)
@@ -853,16 +1011,124 @@ impl WebHandler {
                 height: 1,
                 depth_or_array_layers: 1,
             },
-            keys_pressed: std::collections::HashSet::new(),
+            keys_pressed: std::rc::Rc::new(std::cell::RefCell::new(
+                std::collections::HashSet::new(),
+            )),
+            ui_pointer: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            _dom_input: None,
             last_frame: None,
             ws_client,
             mp_status,
         }
     }
+
+    /// Listen on `document` in the capture phase. winit binds key/pointer
+    /// handlers to the canvas, which never sees them while an HTML overlay
+    /// is on top or while the itch.io iframe has focused `<body>` instead
+    /// of the canvas.
+    fn install_dom_input(&mut self, canvas: web_sys::HtmlCanvasElement) {
+        let document = web_sys::window()
+            .and_then(|w| w.document())
+            .expect("no document");
+
+        let keys = self.keys_pressed.clone();
+        let on_keydown = Closure::wrap(Box::new(move |event: web_sys::KeyboardEvent| {
+            if let Some(key) = key_from_code(&event.code()) {
+                keys.borrow_mut().insert(key);
+            }
+            let code = event.code();
+            if code == "Space" || code.starts_with("Arrow") {
+                event.prevent_default();
+            }
+        }) as Box<dyn FnMut(web_sys::KeyboardEvent)>);
+
+        let keys = self.keys_pressed.clone();
+        let on_keyup = Closure::wrap(Box::new(move |event: web_sys::KeyboardEvent| {
+            if let Some(key) = key_from_code(&event.code()) {
+                keys.borrow_mut().remove(&key);
+            }
+        }) as Box<dyn FnMut(web_sys::KeyboardEvent)>);
+
+        let pointer = self.ui_pointer.clone();
+        let canvas_ptr = canvas.clone();
+        let push_pointer =
+            std::rc::Rc::new(move |event: web_sys::PointerEvent, press: Option<bool>| {
+                if in_level_picker(&event) {
+                    return;
+                }
+                pointer.borrow_mut().push(UiPointer {
+                    pos: pointer_pos(&canvas_ptr, &event),
+                    press,
+                });
+            });
+
+        let down = push_pointer.clone();
+        let canvas_focus = canvas.clone();
+        let on_pointerdown = Closure::wrap(Box::new(move |event: web_sys::PointerEvent| {
+            let _ = canvas_focus.focus();
+            if event.button() == 0 {
+                down(event, Some(true));
+            }
+        }) as Box<dyn FnMut(web_sys::PointerEvent)>);
+
+        let up = push_pointer.clone();
+        let on_pointerup = Closure::wrap(Box::new(move |event: web_sys::PointerEvent| {
+            if event.button() == 0 {
+                up(event, Some(false));
+            }
+        }) as Box<dyn FnMut(web_sys::PointerEvent)>);
+
+        let mv = push_pointer;
+        let on_pointermove = Closure::wrap(Box::new(move |event: web_sys::PointerEvent| {
+            mv(event, None);
+        }) as Box<dyn FnMut(web_sys::PointerEvent)>);
+
+        let capture = true;
+        let _ = document.add_event_listener_with_callback_and_bool(
+            "keydown",
+            on_keydown.as_ref().unchecked_ref(),
+            capture,
+        );
+        let _ = document.add_event_listener_with_callback_and_bool(
+            "keyup",
+            on_keyup.as_ref().unchecked_ref(),
+            capture,
+        );
+        let _ = document.add_event_listener_with_callback_and_bool(
+            "pointerdown",
+            on_pointerdown.as_ref().unchecked_ref(),
+            capture,
+        );
+        let _ = document.add_event_listener_with_callback_and_bool(
+            "pointerup",
+            on_pointerup.as_ref().unchecked_ref(),
+            capture,
+        );
+        let _ = document.add_event_listener_with_callback_and_bool(
+            "pointermove",
+            on_pointermove.as_ref().unchecked_ref(),
+            capture,
+        );
+
+        self._dom_input = Some(DomInputHooks {
+            _keydown: on_keydown,
+            _keyup: on_keyup,
+            _pointerdown: on_pointerdown,
+            _pointerup: on_pointerup,
+            _pointermove: on_pointermove,
+        });
+    }
 }
 
 impl ApplicationHandler for WebHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // Wait + canvas rAF only fires while the document is considered
+        // visible and focused. itch.io hosts us in a cross-origin iframe
+        // that often gets a single animation frame and then goes idle,
+        // which looks like a frozen first present. Poll keeps the loop
+        // alive with setTimeout / scheduler.postTask.
+        event_loop.set_control_flow(ControlFlow::Poll);
+
         if self.window.is_some() {
             return;
         }
@@ -872,31 +1138,58 @@ impl ApplicationHandler for WebHandler {
 
         let attrs = Window::default_attributes().with_title("Vangers Web");
 
+        let canvas = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id("canvas")
+            .expect("missing <canvas id='canvas'>")
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap();
+
         let attrs = {
             use winit::platform::web::WindowAttributesExtWebSys;
-            let document = web_sys::window().unwrap().document().unwrap();
-            let canvas = document
-                .get_element_by_id("canvas")
-                .expect("missing <canvas id='canvas'>")
-                .dyn_into::<web_sys::HtmlCanvasElement>()
-                .unwrap();
 
             // Read the CSS layout size and set canvas resolution to match.
-            // Cap at 4096 to stay within WebGPU texture limits.
-            let dpr = web_sys::window().unwrap().device_pixel_ratio();
+            // Cap at 4096 to stay within WebGPU texture limits. An itch.io
+            // iframe can report 0x0 on the first layout pass; fall back to
+            // the window so we do not configure a 1x1 swapchain.
+            let win = web_sys::window().unwrap();
+            let dpr = win.device_pixel_ratio();
             let max_dim = 4096u32;
-            let cw = ((canvas.client_width() as f64 * dpr) as u32).min(max_dim);
-            let ch = ((canvas.client_height() as f64 * dpr) as u32).min(max_dim);
-            if cw > 0 && ch > 0 {
-                canvas.set_width(cw);
-                canvas.set_height(ch);
-                _init_width = cw;
-                _init_height = ch;
-                log::info!("Canvas size: {}x{} (dpr={:.1})", cw, ch, dpr);
+            let mut css_w = canvas.client_width();
+            let mut css_h = canvas.client_height();
+            if css_w <= 0 || css_h <= 0 {
+                css_w = win
+                    .inner_width()
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(800.0) as i32;
+                css_h = win
+                    .inner_height()
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(600.0) as i32;
             }
+            let cw = ((css_w as f64 * dpr) as u32).clamp(1, max_dim);
+            let ch = ((css_h as f64 * dpr) as u32).clamp(1, max_dim);
+            canvas.set_width(cw);
+            canvas.set_height(ch);
+            _init_width = cw;
+            _init_height = ch;
+            log::info!(
+                "Canvas size: {}x{} css={}x{} (dpr={:.1})",
+                cw,
+                ch,
+                css_w,
+                css_h,
+                dpr
+            );
 
-            attrs.with_canvas(Some(canvas))
+            attrs.with_canvas(Some(canvas.clone())).with_focusable(true)
         };
+
+        self.install_dom_input(canvas);
 
         self.screen_size = wgpu::Extent3d {
             width: _init_width,
@@ -956,43 +1249,42 @@ impl ApplicationHandler for WebHandler {
                 };
                 let is_webgpu = webgpu_adapter.is_some();
 
-                let (instance, surface, adapter) = if let Some((webgpu_probe, adapter)) =
-                    webgpu_adapter
-                {
-                    log::info!("Using WebGPU backend");
-                    let surface = webgpu_probe
-                        .create_surface(window_clone.clone())
-                        .expect("Failed to create the canvas surface (WebGPU)");
-                    (webgpu_probe, surface, adapter)
-                } else {
-                    log::info!("Using WebGL2 backend");
-                    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                        backends: wgpu::Backends::GL,
-                        ..wgpu::InstanceDescriptor::new_without_display_handle()
-                    });
-                    // WebGL2 requires `compatible_surface` for adapter
-                    // enumeration, so the canvas surface has to come
-                    // first.
-                    let surface = instance
-                        .create_surface(window_clone.clone())
-                        .expect("Failed to create the canvas surface (WebGL2)");
-                    let adapter = match instance
-                        .request_adapter(&wgpu::RequestAdapterOptions {
-                            power_preference: wgpu::PowerPreference::HighPerformance,
-                            compatible_surface: Some(&surface),
-                            force_fallback_adapter: false,
-                        })
-                        .await
-                    {
-                        Ok(a) => a,
-                        Err(e) => {
-                            let msg = format!("No GPU adapter available ({:?})", e);
-                            let _ = js_progress_error(&msg);
-                            panic!("{}", msg);
-                        }
+                let (instance, surface, adapter) =
+                    if let Some((webgpu_probe, adapter)) = webgpu_adapter {
+                        log::info!("Using WebGPU backend");
+                        let surface = webgpu_probe
+                            .create_surface(window_clone.clone())
+                            .expect("Failed to create the canvas surface (WebGPU)");
+                        (webgpu_probe, surface, adapter)
+                    } else {
+                        log::info!("Using WebGL2 backend");
+                        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                            backends: wgpu::Backends::GL,
+                            ..wgpu::InstanceDescriptor::new_without_display_handle()
+                        });
+                        // WebGL2 requires `compatible_surface` for adapter
+                        // enumeration, so the canvas surface has to come
+                        // first.
+                        let surface = instance
+                            .create_surface(window_clone.clone())
+                            .expect("Failed to create the canvas surface (WebGL2)");
+                        let adapter = match instance
+                            .request_adapter(&wgpu::RequestAdapterOptions {
+                                power_preference: wgpu::PowerPreference::HighPerformance,
+                                compatible_surface: Some(&surface),
+                                force_fallback_adapter: false,
+                            })
+                            .await
+                        {
+                            Ok(a) => a,
+                            Err(e) => {
+                                let msg = format!("No GPU adapter available ({:?})", e);
+                                let _ = js_progress_error(&msg);
+                                panic!("{}", msg);
+                            }
+                        };
+                        (instance, surface, adapter)
                     };
-                    (instance, surface, adapter)
-                };
 
                 let adapter_limits = adapter.limits();
                 let required_limits = if is_webgpu {
@@ -1194,10 +1486,23 @@ impl ApplicationHandler for WebHandler {
         event: WindowEvent,
     ) {
         // Forward events to egui; skip game input if egui consumed them.
+        // Pointer events are fed from the document (see `install_dom_input`)
+        // because winit only hears them on the canvas, which HTML overlays
+        // and an unfocused itch.io iframe both steal.
         if let Some(ref mut gpu) = self.gpu {
-            let response = gpu.egui_state.on_window_event(&gpu.window, &event);
-            if response.consumed {
-                return;
+            let pointer = matches!(
+                event,
+                WindowEvent::CursorMoved { .. }
+                    | WindowEvent::CursorEntered { .. }
+                    | WindowEvent::CursorLeft { .. }
+                    | WindowEvent::MouseInput { .. }
+                    | WindowEvent::MouseWheel { .. }
+            );
+            if !pointer {
+                let response = gpu.egui_state.on_window_event(&gpu.window, &event);
+                if response.consumed {
+                    return;
+                }
             }
         }
 
@@ -1213,10 +1518,10 @@ impl ApplicationHandler for WebHandler {
                 ..
             } => match state {
                 event::ElementState::Pressed => {
-                    self.keys_pressed.insert(key);
+                    self.keys_pressed.borrow_mut().insert(key);
                 }
                 event::ElementState::Released => {
-                    self.keys_pressed.remove(&key);
+                    self.keys_pressed.borrow_mut().remove(&key);
                 }
             },
             WindowEvent::Resized(size) if size.width > 0 && size.height > 0 => {
@@ -1276,9 +1581,8 @@ impl ApplicationHandler for WebHandler {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // On native, ControlFlow::Poll drives this continuously.
-        // Trigger a redraw each iteration so RedrawRequested fires.
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(ControlFlow::Poll);
         if let Some(ref window) = self.window {
             window.request_redraw();
         }
@@ -1328,31 +1632,38 @@ impl WebHandler {
         // Derive motor/rudder from the currently pressed keys. Same
         // axis mapping in both "driving a vehicle" and "server input"
         // modes, so the multiplayer branch below can use them too.
+        let keys = self.keys_pressed.borrow();
         let mut motor = 0.0f32;
         let mut rudder = 0.0f32;
-        if self.keys_pressed.contains(&KeyCode::KeyW) {
+        if keys.contains(&KeyCode::KeyW) {
             motor = 1.0;
         }
-        if self.keys_pressed.contains(&KeyCode::KeyS) {
+        if keys.contains(&KeyCode::KeyS) {
             motor = -1.0;
         }
-        if self.keys_pressed.contains(&KeyCode::KeyA) {
+        if keys.contains(&KeyCode::KeyA) {
             rudder = 1.0;
         }
-        if self.keys_pressed.contains(&KeyCode::KeyD) {
+        if keys.contains(&KeyCode::KeyD) {
             rudder = -1.0;
         }
-        let brake = self.keys_pressed.contains(&KeyCode::Space);
-        let turbo = self.keys_pressed.contains(&KeyCode::ShiftLeft);
+        let brake = keys.contains(&KeyCode::Space);
+        let turbo = keys.contains(&KeyCode::ShiftLeft);
         // Roll direction matches native: Q/E are scaled by cam.scale.y
         // (which is -1) so Q → +1, E → -1.
         let mut roll = 0.0f32;
-        if self.keys_pressed.contains(&KeyCode::KeyQ) {
+        if keys.contains(&KeyCode::KeyQ) {
             roll = -gpu.app.cam.scale.y;
         }
-        if self.keys_pressed.contains(&KeyCode::KeyE) {
+        if keys.contains(&KeyCode::KeyE) {
             roll = gpu.app.cam.scale.y;
         }
+        let jump_held = keys.contains(&KeyCode::AltLeft);
+        let free_z_up = keys.contains(&KeyCode::KeyZ);
+        let free_z_down = keys.contains(&KeyCode::KeyX);
+        let free_q = keys.contains(&KeyCode::KeyQ);
+        let free_e = keys.contains(&KeyCode::KeyE);
+        drop(keys);
 
         // Direct camera control is active whenever we aren't actually
         // synced with a multiplayer server. `ws_client` is `Some` from
@@ -1362,6 +1673,10 @@ impl WebHandler {
         // dropped connection would leave the camera locked.
         let connected = self.ws_client.as_ref().is_some_and(|c| c.is_connected());
 
+        // Moving land first, so the car drives on this quant's surface
+        // (same order as the native game).
+        gpu.app.step_moving_land(dt);
+
         if gpu.app.agent.is_some() {
             // Drive the player vehicle. Keyboard feeds control; physics
             // integrates the dynamo; the camera chases the transform.
@@ -1369,7 +1684,7 @@ impl WebHandler {
             // update below can read from gpu.app too.
             let common = gpu.app.common.clone();
             let level_ref = &gpu.app.level;
-            let follow = gpu.app.follow;
+            let mut follow = gpu.app.follow;
             let max_quant = gpu.app.max_quant;
             if let Some(ref mut agent) = gpu.app.agent {
                 agent.control.motor = motor;
@@ -1378,7 +1693,7 @@ impl WebHandler {
                 agent.control.turbo = turbo;
                 agent.control.roll = roll;
                 // Jump: charge while Alt is held, fire on release
-                if self.keys_pressed.contains(&KeyCode::AltLeft) {
+                if jump_held {
                     let power = dt * common.speed.standard_frame_rate as f32;
                     let charge = agent.control.jump_charge.get_or_insert(0.0);
                     *charge = (*charge + power).min(common.force.max_jump_power);
@@ -1411,6 +1726,15 @@ impl WebHandler {
                     left -= max_quant;
                 }
                 agent.physics_step(left, level_ref, &common);
+                // Pull back and look further as speed rises so the car
+                // stays in the lower third instead of running toward
+                // the top of the frame.
+                let speed_xy = {
+                    let v = agent.dynamo.linear_velocity;
+                    (v.x * v.x + v.y * v.y).sqrt()
+                };
+                follow.offset.y += (speed_xy * 0.18).min(22.0);
+                follow.look_ahead += (speed_xy * 0.28).min(28.0);
                 gpu.app.cam.follow(&agent.transform, dt, &follow);
                 gpu.app.cam.keep_above_ground(level_ref, CAMERA_CLEARANCE);
             }
@@ -1434,17 +1758,17 @@ impl WebHandler {
                     gpu.app.cam.loc -= move_speed * dt * rudder * dir.normalize();
                 }
             }
-            if self.keys_pressed.contains(&KeyCode::KeyZ) {
+            if free_z_up {
                 gpu.app.cam.loc.z += move_speed * dt;
             }
-            if self.keys_pressed.contains(&KeyCode::KeyX) {
+            if free_z_down {
                 gpu.app.cam.loc.z -= move_speed * dt;
             }
-            if self.keys_pressed.contains(&KeyCode::KeyQ) {
+            if free_q {
                 let rotation = glam::Quat::from_rotation_z(rotation_speed * dt);
                 gpu.app.cam.rot = rotation * gpu.app.cam.rot;
             }
-            if self.keys_pressed.contains(&KeyCode::KeyE) {
+            if free_e {
                 let rotation = glam::Quat::from_rotation_z(-rotation_speed * dt);
                 gpu.app.cam.rot = rotation * gpu.app.cam.rot;
             }
@@ -1494,8 +1818,22 @@ impl WebHandler {
         }
 
         let frame = match gpu.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
-            _ => return,
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            other => {
+                log::warn!(
+                    "surface texture not ready ({other:?}), size {}x{}",
+                    self.screen_size.width,
+                    self.screen_size.height
+                );
+                if matches!(
+                    other,
+                    wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost
+                ) {
+                    gpu.surface.configure(&gpu.device, &gpu.config);
+                }
+                return;
+            }
         };
 
         let view = frame
@@ -1509,7 +1847,23 @@ impl WebHandler {
         let command_buffer = gpu.app.draw(&gpu.device, &gpu.queue, targets);
 
         // --- egui UI pass ---
-        let raw_input = gpu.egui_state.take_egui_input(&gpu.window);
+        let mut raw_input = gpu.egui_state.take_egui_input(&gpu.window);
+        // Canvas focus is unreliable inside itch.io's iframe. Treat the
+        // game as focused whenever we are drawing, and apply pointer
+        // events captured on the document.
+        raw_input.focused = true;
+        for ev in self.ui_pointer.borrow_mut().drain(..) {
+            let pos = egui::pos2(ev.pos[0], ev.pos[1]);
+            raw_input.events.push(egui::Event::PointerMoved(pos));
+            if let Some(pressed) = ev.press {
+                raw_input.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                });
+            }
+        }
         let full_output = gpu.egui_state.egui_ctx().run_ui(raw_input, |ctx| {
             gpu.app.draw_ui(ctx);
         });

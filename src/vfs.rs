@@ -88,6 +88,28 @@ impl Vfs {
     pub fn paths(&self) -> impl Iterator<Item = &str> {
         self.entries.keys().map(String::as_str)
     }
+
+    /// Files whose parent is `dir`, sorted. Does not recurse: `"data.vot"`
+    /// yields `data.vot/0000.vot` but not `data.vot/nested/x.vot`.
+    pub fn files_in(&self, dir: &str) -> Vec<String> {
+        let prefix = {
+            let d = normalize(dir);
+            let d = d.trim_end_matches('/');
+            if d.is_empty() {
+                String::new()
+            } else {
+                format!("{d}/")
+            }
+        };
+        let mut out: Vec<String> = self
+            .entries
+            .keys()
+            .filter(|p| p.starts_with(&prefix) && !p[prefix.len()..].contains('/'))
+            .cloned()
+            .collect();
+        out.sort();
+        out
+    }
 }
 
 fn normalize(p: &str) -> String {
@@ -115,5 +137,20 @@ mod tests {
         vfs.insert("Foo/Bar.txt", b"hello".to_vec());
         assert_eq!(vfs.read("foo/bar.txt").unwrap().as_ref(), b"hello");
         assert!(vfs.contains("FOO/BAR.TXT"));
+    }
+
+    #[test]
+    fn files_in_lists_one_directory() {
+        let mut vfs = Vfs::new();
+        vfs.insert("data.vot/b.vot", b"b".to_vec());
+        vfs.insert("data.vot/a.vot", b"a".to_vec());
+        vfs.insert("data.vot/nested/c.vot", b"c".to_vec());
+        vfs.insert("location.lst", b"lst".to_vec());
+        assert_eq!(
+            vfs.files_in("data.vot"),
+            vec!["data.vot/a.vot".to_string(), "data.vot/b.vot".to_string()]
+        );
+        assert_eq!(vfs.files_in("data.vot/"), vfs.files_in("DATA.VOT"));
+        assert_eq!(vfs.files_in(""), vec!["location.lst".to_string()]);
     }
 }

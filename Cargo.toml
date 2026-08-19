@@ -24,6 +24,7 @@ members = [
 default = []
 profile = ["profiling/profile-with-tracy"]
 web = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "console_log", "console_error_panic_hook", "getrandom", "getrandom_02", "dep:web-time", "wgpu/webgl"]
+wasm-bindgen = ["dep:wasm-bindgen"]
 
 [profile.release]
 panic = "abort"
@@ -84,7 +85,7 @@ egui = "0.34"
 # web
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
-web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "Element", "HtmlCanvasElement", "Location", "Navigator", "WebSocket", "BinaryType", "MessageEvent", "ErrorEvent", "CloseEvent", "Blob", "FileReader", "Request", "RequestInit", "RequestMode", "Response", "Headers", "ReadableStream", "ReadableStreamDefaultReader"] }
+web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "Element", "HtmlCanvasElement", "HtmlElement", "Location", "Navigator", "WebSocket", "BinaryType", "MessageEvent", "ErrorEvent", "CloseEvent", "Blob", "FileReader", "Request", "RequestInit", "RequestMode", "Response", "Headers", "ReadableStream", "ReadableStreamDefaultReader", "KeyboardEvent", "PointerEvent", "DomRect", "EventTarget"] }
 console_log = { version = "1", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 getrandom_02 = { package = "getrandom", version = "0.2", optional = true, features = ["js"] }

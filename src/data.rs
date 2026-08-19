@@ -13,7 +13,7 @@
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{ReadableStreamDefaultReader, Request, RequestInit, RequestMode, Response};
+use web_sys::{ReadableStreamDefaultReader, Request, RequestInit, Response};
 
 use crate::vfs::{Vfs, VfsError};
 
@@ -97,10 +97,8 @@ async fn fetch_bytes_streaming(
 ) -> Result<Vec<u8>, FetchError> {
     let opts = RequestInit::new();
     opts.set_method("GET");
-    // `same-origin` is the default, but we set it explicitly so that
-    // the browser rejects the fetch quickly (rather than silently
-    // opaque) if `data_base()` is mis-configured to a cross-origin URL.
-    opts.set_mode(RequestMode::SameOrigin);
+    // Default CORS mode: same-origin URLs work, and itch.io's CDN
+    // redirects are followed. `same-origin` rejected those redirects.
 
     let request = Request::new_with_str_and_init(url, &opts).map_err(js_err)?;
     let window = web_sys::window().ok_or_else(|| FetchError::Network("no window".into()))?;

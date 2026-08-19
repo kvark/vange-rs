@@ -481,8 +481,9 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         None => (0..256).map(|_| [255u8, 255, 255, 255]).collect(),
     };
 
-    // Moving land, loaded from the same folder as the world INI. Only the
-    // native path has one; the VFS mount does not carry `data.vot`.
+    // Moving land, loaded from the same folder as the world INI. The
+    // web path loads it from the VFS (`MovingLand::load_from_vfs`); this
+    // headless snapshot tool still reads the native `data.vot` folder.
     let mut moving_land = if opts.moving_land {
         let world_dir = opts
             .level_path
