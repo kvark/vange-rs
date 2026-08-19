@@ -671,7 +671,10 @@ impl Game {
     /// is over an immutable level and in parallel across the agents. Doing
     /// the cutting here, afterwards, is what lets both of those stand.
     fn step_tracks(&mut self) {
-        if !self.terraform.tread.enabled && !self.terraform.grader.enabled {
+        if !self.terraform.tread.enabled
+            && !self.terraform.grader.enabled
+            && !self.terraform.press.enabled
+        {
             // Keep the wheels and the blade from stitching a track across
             // everything driven while the switch was off.
             for agent in self.agents.iter_mut() {
@@ -682,8 +685,16 @@ impl Game {
 
         self.track_regions.clear();
         for agent in self.agents.iter_mut() {
-            // The blade goes first: it reshapes the ground the wheels of
-            // the same step then run over.
+            // The hull goes first, then the blade, then the wheels: each
+            // works on the ground the one before it left.
+            if let Some(hull) = agent.tracks.take_hull() {
+                level::terraform::apply_press(
+                    &mut self.level,
+                    &self.terraform.press,
+                    &hull,
+                    &mut self.track_regions,
+                );
+            }
             for sweep in agent.tracks.drain_sweeps() {
                 level::terraform::apply_grader(
                     &mut self.level,
@@ -752,6 +763,12 @@ impl Game {
             ui.add(egui::Slider::new(&mut tread.period, 1..=8).text("Tread period"));
             ui.add(egui::Slider::new(&mut tread.bar, 1..=8).text("Bar stamps"));
             ui.add(egui::Slider::new(&mut tread.spacing, 0.5..=4.0).text("Bar spacing"));
+        });
+        ui.separator();
+        let press = &mut config.press;
+        ui.checkbox(&mut press.enabled, "Hull pressing");
+        ui.add_enabled_ui(press.enabled, |ui| {
+            ui.add(egui::Slider::new(&mut press.clearance, 0..=32).text("Clearance"));
         });
         ui.separator();
         let grader = &mut config.grader;

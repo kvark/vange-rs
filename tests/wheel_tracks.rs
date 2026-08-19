@@ -71,6 +71,24 @@ fn drive_with(
     grader: &terraform::Grader,
     frames: usize,
 ) -> Vec<level::Region> {
+    drive_full(car, level, tread, grader, &press_off(), frames)
+}
+
+fn press_off() -> terraform::Press {
+    terraform::Press {
+        enabled: false,
+        ..terraform::Press::default()
+    }
+}
+
+fn drive_full(
+    car: &mut Car,
+    level: &mut level::Level,
+    tread: &terraform::Tread,
+    grader: &terraform::Grader,
+    press: &terraform::Press,
+    frames: usize,
+) -> Vec<level::Region> {
     let common = config::common::Common::test_default();
     let mut regions = Vec::new();
     for _ in 0..frames {
@@ -89,6 +107,9 @@ fn drive_with(
             None,
             Some(&mut car.tracks),
         );
+        if let Some(hull) = car.tracks.take_hull() {
+            terraform::apply_press(level, press, &hull, &mut regions);
+        }
         for sweep in car.tracks.drain_sweeps() {
             terraform::apply_grader(level, grader, &sweep, &mut regions);
         }
@@ -303,6 +324,70 @@ fn a_car_off_the_ground_grades_nothing() {
     };
     let regions = drive_with(&mut car, &mut level, &tread, &grader, 20);
 
+    assert_eq!(changed(&before, &altitudes(&level)), 0);
+    assert!(regions.is_empty());
+}
+
+#[test]
+fn a_car_presses_its_own_hollow_into_soft_ground() {
+    let mut level = drivable_level();
+    let mut car = spawn(&level);
+    // Park it on a mound, so there is something standing proud of the hull.
+    let (cx, cy) = (car.transform.disp.x as i32, car.transform.disp.y as i32);
+    for dy in -12..12 {
+        for dx in -12..12 {
+            let i = level.wrap((cx + dx, cy + dy));
+            level.height[i] = level.height[i].saturating_add(60);
+        }
+    }
+    let before = altitudes(&level);
+
+    let off = terraform::Tread {
+        enabled: false,
+        ..terraform::Tread::default()
+    };
+    let grader = terraform::Grader::default();
+    let regions = drive_full(
+        &mut car,
+        &mut level,
+        &off,
+        &grader,
+        &terraform::Press::default(),
+        60,
+    );
+    let after = altitudes(&level);
+
+    assert!(!regions.is_empty(), "the hull pressed nothing");
+    // A hull only ever pushes down; nothing it touches may come out higher.
+    assert!(
+        before.iter().zip(&after).all(|(a, b)| b <= a),
+        "the hull raised ground somewhere"
+    );
+    assert!(
+        before.iter().zip(&after).any(|(a, b)| b < a),
+        "and it lowered none"
+    );
+}
+
+#[test]
+fn a_car_in_the_air_presses_nothing() {
+    let mut level = drivable_level();
+    let mut car = spawn(&level);
+    car.transform.disp.z += 400.0;
+    let before = altitudes(&level);
+
+    let off = terraform::Tread {
+        enabled: false,
+        ..terraform::Tread::default()
+    };
+    let regions = drive_full(
+        &mut car,
+        &mut level,
+        &off,
+        &terraform::Grader::default(),
+        &terraform::Press::default(),
+        15,
+    );
     assert_eq!(changed(&before, &altitudes(&level)), 0);
     assert!(regions.is_empty());
 }

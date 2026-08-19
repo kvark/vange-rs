@@ -44,6 +44,7 @@ pub const MAX_CONTACT_HEIGHT: f32 = 15.0;
 pub struct Config {
     pub tread: Tread,
     pub grader: Grader,
+    pub press: Press,
 }
 
 /// Tunables of the tread pattern.
@@ -78,6 +79,90 @@ impl Default for Tread {
     }
 }
 
+/// Tunables of a car's own weight on the ground.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Press {
+    /// Master switch. `aciGroundPressingEnabled` of the original, which is
+    /// a setting there too.
+    pub enabled: bool,
+    /// `ground_pressing_z_offset` - how far above the hull's underside the
+    /// ground is allowed to stand before it is pushed down. Slack here
+    /// keeps a car from scouring perfectly flat ground it is merely
+    /// resting on.
+    pub clearance: i32,
+}
+
+impl Default for Press {
+    fn default() -> Self {
+        Press {
+            enabled: true,
+            // `ground_pressing_z_offset` in `common.prm`.
+            clearance: 5,
+        }
+    }
+}
+
+/// The underside of a car, as the four corners of the box it sits in.
+///
+/// The original renders the car's model into a small height buffer from
+/// above and presses the ground down to that silhouette, wheels included.
+/// Here the hull is taken as its bounding box instead: the same footprint
+/// and the same height, but square at the corners where the model would
+/// be rounded. Getting the true outline back means rasterising the
+/// collision mesh, which is a lot of machinery for the difference between
+/// a car-shaped hollow and a car-sized one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hull {
+    /// Front-left, front-right, back-right, back-left. Anticlockwise or
+    /// clockwise, as long as they go round.
+    pub corners: [glam::Vec3; 4],
+}
+
+/// Presses a car's underside into whatever is standing proud of it.
+///
+/// `Object::ground_pressing`. Unlike the blade this banks nothing: the
+/// ground it pushes down simply goes, which is what the original does.
+pub fn apply_press(level: &mut Level, config: &Press, hull: &Hull, regions: &mut Vec<Region>) {
+    if !config.enabled {
+        return;
+    }
+    let origin = hull.corners[0];
+    let size = level.size;
+    let rel = |p: glam::Vec3| {
+        glam::Vec3::new(
+            wrap_delta_f(p.x - origin.x, size.0),
+            wrap_delta_f(p.y - origin.y, size.1),
+            p.z + config.clearance as f32,
+        )
+    };
+    let c = hull.corners.map(rel);
+
+    // Steps along each edge, at the same half-texel pitch the blade uses.
+    let span = |a: glam::Vec3, b: glam::Vec3| (b - a).truncate().length();
+    let across = (span(c[0], c[1]).max(span(c[3], c[2])) * SUB).ceil() as usize;
+    let along = (span(c[0], c[3]).max(span(c[1], c[2])) * SUB).ceil() as usize;
+    if across == 0 || along == 0 || across > MAX_BLADE_STEPS || along > MAX_BLADE_STEPS {
+        return;
+    }
+
+    let mut bounds = Bounds::default();
+    for i in 0..=along {
+        let t = i as f32 / along as f32;
+        let (a, b) = (c[0] + (c[3] - c[0]) * t, c[1] + (c[2] - c[1]) * t);
+        for j in 0..=across {
+            let p = a + (b - a) * (j as f32 / across as f32);
+            let (x, y) = (
+                (p.x + origin.x).round() as i32,
+                (p.y + origin.y).round() as i32,
+            );
+            if scrape(level, x, y, p.z) > 0.0 {
+                bounds.add(x, y);
+            }
+        }
+    }
+    bounds.push(regions, level.size);
+}
+
 /// One stretch of ground a single wheel rolled over during a step.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Track {
@@ -106,6 +191,8 @@ pub struct Tracks {
     /// Where the grader blade was at the end of the previous step.
     last_blade: Option<(glam::Vec3, glam::Vec3)>,
     sweeps: Vec<Sweep>,
+    /// Where the car's hull is resting, if it is resting on anything.
+    hull: Option<Hull>,
 }
 
 impl Tracks {
@@ -164,6 +251,16 @@ impl Tracks {
         self.last_blade = None;
     }
 
+    /// Records where the car's hull is bearing on the ground.
+    pub fn press(&mut self, hull: Hull) {
+        self.hull = Some(hull);
+    }
+
+    /// Hands over the hull, if it was on the ground this step.
+    pub fn take_hull(&mut self) -> Option<Hull> {
+        self.hull.take()
+    }
+
     /// Forgets every wheel's contact and any track not yet drawn, so that
     /// the next contact starts fresh. Needed whenever the car is moved
     /// rather than driven.
@@ -172,10 +269,11 @@ impl Tracks {
         self.raise_blade();
         self.pending.clear();
         self.sweeps.clear();
+        self.hull = None;
     }
 
     pub fn is_empty(&self) -> bool {
-        self.pending.is_empty() && self.sweeps.is_empty()
+        self.pending.is_empty() && self.sweeps.is_empty() && self.hull.is_none()
     }
 
     /// Hands over the stretches recorded since the last drain.
@@ -1387,5 +1485,193 @@ mod tests {
         for (a, b) in plain.iter().zip(&fast) {
             assert!((a - b).abs() < 1e-3, "{} vs {}", a, b);
         }
+    }
+
+    // -- the hull -------------------------------------------------------
+
+    fn press() -> Press {
+        Press {
+            enabled: true,
+            clearance: 0,
+        }
+    }
+
+    /// A hull covering `x0..=x1` by `y0..=y1`, with its underside at `z`.
+    fn hull(x0: f32, x1: f32, y0: f32, y1: f32, z: f32) -> Hull {
+        use glam::Vec3;
+        Hull {
+            corners: [
+                Vec3::new(x0, y0, z),
+                Vec3::new(x1, y0, z),
+                Vec3::new(x1, y1, z),
+                Vec3::new(x0, y1, z),
+            ],
+        }
+    }
+
+    #[test]
+    fn the_hull_flattens_what_stands_proud_of_it() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        apply_press(
+            &mut level,
+            &press(),
+            &hull(20.0, 30.0, 20.0, 26.0, 80.0),
+            &mut regions,
+        );
+        for y in 20..=26 {
+            for x in 20..=30 {
+                assert_eq!(
+                    level.height[level.wrap((x, y))],
+                    80,
+                    "({}, {}) still stands above the hull",
+                    x,
+                    y
+                );
+            }
+        }
+        assert!(!regions.is_empty());
+    }
+
+    #[test]
+    fn the_hull_does_not_touch_ground_it_is_resting_on() {
+        let mut level = test_level();
+        let before = level.height.to_vec();
+        let mut regions = Vec::new();
+        // Sitting exactly on the plain, and then above it.
+        apply_press(
+            &mut level,
+            &press(),
+            &hull(20.0, 30.0, 20.0, 26.0, 100.0),
+            &mut regions,
+        );
+        apply_press(
+            &mut level,
+            &press(),
+            &hull(20.0, 30.0, 20.0, 26.0, 140.0),
+            &mut regions,
+        );
+        assert_eq!(level.height.to_vec(), before);
+        assert!(regions.is_empty());
+    }
+
+    #[test]
+    fn clearance_is_slack_the_ground_is_allowed() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        let config = Press {
+            enabled: true,
+            clearance: 10,
+        };
+        apply_press(
+            &mut level,
+            &config,
+            &hull(20.0, 30.0, 20.0, 26.0, 80.0),
+            &mut regions,
+        );
+        assert_eq!(
+            level.height[level.wrap((25, 23))],
+            90,
+            "pressed to the hull plus its clearance, not through it"
+        );
+    }
+
+    #[test]
+    fn the_hull_leaves_the_ground_beside_it_alone() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        apply_press(
+            &mut level,
+            &press(),
+            &hull(20.0, 30.0, 20.0, 26.0, 80.0),
+            &mut regions,
+        );
+        assert_eq!(level.height[level.wrap((18, 23))], 100);
+        assert_eq!(level.height[level.wrap((32, 23))], 100);
+        assert_eq!(level.height[level.wrap((25, 18))], 100);
+        assert_eq!(level.height[level.wrap((25, 28))], 100);
+    }
+
+    #[test]
+    fn a_tilted_hull_leaves_a_tilted_hollow() {
+        use glam::Vec3;
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        // Nose down: the far edge digs in, the near edge barely does.
+        let tilted = Hull {
+            corners: [
+                Vec3::new(20.0, 20.0, 60.0),
+                Vec3::new(30.0, 20.0, 60.0),
+                Vec3::new(30.0, 30.0, 98.0),
+                Vec3::new(20.0, 30.0, 98.0),
+            ],
+        };
+        apply_press(&mut level, &press(), &tilted, &mut regions);
+        let at = |x: i32, y: i32| level.height[level.wrap((x, y))] as i32;
+        assert_eq!(at(25, 20), 60, "the buried edge");
+        assert!(at(25, 25) > 60 && at(25, 25) < 98, "and a ramp between");
+        assert!(at(25, 29) > at(25, 25), "rising towards the raised edge");
+    }
+
+    #[test]
+    fn only_the_main_terrain_takes_a_hull_print() {
+        let mut level = test_level();
+        let bits = level.terrain_bits();
+        for x in 25..=30 {
+            for y in 20..=26 {
+                level.meta[level.wrap((x, y))] = bits.write(4);
+            }
+        }
+        let mut regions = Vec::new();
+        apply_press(
+            &mut level,
+            &press(),
+            &hull(20.0, 30.0, 20.0, 26.0, 80.0),
+            &mut regions,
+        );
+        assert_eq!(level.height[level.wrap((22, 22))], 80);
+        assert_eq!(
+            level.height[level.wrap((27, 22))],
+            100,
+            "the hard half holds"
+        );
+    }
+
+    #[test]
+    fn switching_the_press_off_leaves_the_ground_alone() {
+        let mut level = test_level();
+        let before = level.height.to_vec();
+        let mut regions = Vec::new();
+        let config = Press {
+            enabled: false,
+            ..press()
+        };
+        apply_press(
+            &mut level,
+            &config,
+            &hull(20.0, 30.0, 20.0, 26.0, 60.0),
+            &mut regions,
+        );
+        assert_eq!(level.height.to_vec(), before);
+        assert!(regions.is_empty());
+    }
+
+    #[test]
+    fn a_hull_across_the_seam_still_prints() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        apply_press(
+            &mut level,
+            &press(),
+            &hull(SIZE as f32 - 4.0, SIZE as f32 + 4.0, 20.0, 24.0, 80.0),
+            &mut regions,
+        );
+        assert_eq!(level.height[level.wrap((SIZE - 2, 22))], 80);
+        assert_eq!(level.height[level.wrap((2, 22))], 80, "and past the seam");
+        assert_eq!(
+            regions.len(),
+            2,
+            "reported as two rectangles, not one wide one"
+        );
     }
 }
