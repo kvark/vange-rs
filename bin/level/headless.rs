@@ -184,6 +184,8 @@ pub struct SnapshotOptions {
     pub dig_center: Option<(i32, i32)>,
     /// Optional crater radius in level texels.
     pub dig_radius: Option<i32>,
+    /// Story cycle to paint the world in, by index.
+    pub cycle: Option<usize>,
     /// Quants of dynamic palette to run before the snapshot.
     pub palette_quants: u32,
     /// Drive a wheel across the level, so the tread it presses into the
@@ -274,6 +276,7 @@ impl Default for SnapshotOptions {
             dig_frame: 1,
             dig_center: None,
             dig_radius: None,
+            cycle: None,
             palette_quants: 0,
             tracks: false,
             tracks_line: None,
@@ -609,6 +612,26 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         None
     };
 
+    // The world's story cycles, for `--cycle`. They live in the shared
+    // `common/` folder next to the world, so only a native level path can
+    // reach them.
+    let mut cycle = opts.cycle.and(opts.level_path.as_ref()).and_then(|path| {
+        let world_dir = Path::new(path).parent()?;
+        let common = world_dir.parent()?.join("common");
+        let name = world_dir.file_name()?.to_str()?;
+        let bunches = level::cycle::load_bunches(&common.join("bunches.prm"))?;
+        let escaves = level::cycle::load_escaves(&common.join("escaves.prm"))?;
+        // The cycle palettes are named relative to the data root, which
+        // for a native checkout is inside `common/`.
+        let bunch = level::cycle::Bunch::load(name, &lvl, &bunches, &escaves, |rel| {
+            std::fs::read(common.join(rel)).ok()
+        });
+        if bunch.is_none() {
+            info!("This world runs no story cycles");
+        }
+        bunch
+    });
+
     let mut cam = make_camera(&opts, &lvl);
     let animation_start = cam.loc;
 
@@ -751,6 +774,19 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 z_range: 0..0x100,
                 need_upload: true,
             });
+        }
+        if let Some(index) = opts.cycle
+            && frame_index == opts.dig_frame
+            && let Some(ref mut bunch) = cycle
+        {
+            let range = bunch.set_cycle(index, &mut lvl);
+            info!(
+                "Painted the world in cycle {}: {}",
+                index,
+                bunch.stage().name
+            );
+            render.dirty_palette(range);
+            render.set_light_modulation(bunch.light());
         }
         if opts.palette_quants > 0 && frame_index == opts.dig_frame {
             let mut anim = level::palette::Animation::new(&lvl, &level_config.dynamic_palette);

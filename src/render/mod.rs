@@ -414,6 +414,10 @@ pub struct Render {
     pub debug: debug::Context,
     pub shadow: Option<shadow::Shadow>,
     pub light_config: settings::Light,
+    /// Scale the world's current story cycle puts on that light.
+    /// `WorldLightParam` of the original, which dims Fostral's third
+    /// cycle well below its first.
+    light_modulation: f32,
     pub fog_config: settings::Fog,
     screen_size: wgpu::Extent3d,
 }
@@ -421,6 +425,18 @@ pub struct Render {
 impl Render {
     /// Mark the rectangles a moving-land quant rewrote so the next draw
     /// re-uploads them (and refits the mesh / rebakes voxels).
+    /// Sets how much of the authored light this world's cycle lets through.
+    pub fn set_light_modulation(&mut self, scale: f32) {
+        self.light_modulation = scale;
+    }
+
+    /// The light as the current cycle leaves it.
+    fn lit(&self) -> settings::Light {
+        let mut light = self.light_config;
+        light.color = light.color.map(|c| c * self.light_modulation);
+        light
+    }
+
     /// Marks a run of palette entries for re-upload, merging with anything
     /// already pending.
     pub fn dirty_palette(&mut self, range: std::ops::Range<u32>) {
@@ -520,6 +536,7 @@ impl Render {
             debug,
             shadow,
             light_config: settings.light,
+            light_modulation: 1.0,
             fog_config: settings.fog,
             screen_size: gfx.screen_size,
         }
@@ -566,11 +583,12 @@ impl Render {
         //TODO: common routine for draw passes
         //TODO: use `write_buffer`
 
+        let lit = self.lit();
         if let Some(ref mut shadow) = self.shadow {
             profiling::scope!("Shadow Pass");
             shadow.update_view(&self.light_config.pos, cam, level.geometry.height as f32);
 
-            let constants = global::Constants::new(&shadow.cam, &self.light_config, None);
+            let constants = global::Constants::new(&shadow.cam, &lit, None);
             queue.write_buffer(
                 &self.global.shadow_uniform_buf,
                 0,
@@ -617,11 +635,8 @@ impl Render {
         // main pass
         {
             profiling::scope!("Main Pass");
-            let constants = global::Constants::new(
-                cam,
-                &self.light_config,
-                self.shadow.as_ref().map(|shadow| &shadow.cam),
-            );
+            let constants =
+                global::Constants::new(cam, &lit, self.shadow.as_ref().map(|shadow| &shadow.cam));
             queue.write_buffer(&self.global.uniform_buf, 0, bytemuck::bytes_of(&constants));
 
             self.terrain.prepare(

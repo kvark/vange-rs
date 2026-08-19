@@ -84,6 +84,11 @@ struct Cli {
     /// Width of the blade in texels, across the line it travels.
     #[arg(long, default_value_t = 40.0)]
     grader_width: f32,
+    /// Render the world in one of its story cycles, by index. The cycles
+    /// and their palettes come from `bunches.prm`; a world whose escave
+    /// runs none simply ignores this.
+    #[arg(long)]
+    cycle: Option<usize>,
     /// Run the world's dynamic palette this many quants before the
     /// snapshot, so the animation can be looked at a frame at a time.
     #[arg(long, default_value_t = 0)]
@@ -322,6 +327,7 @@ fn main() {
             }),
             dig_radius: cli.dig_radius,
             moving_land: cli.moving_land,
+            cycle: cli.cycle,
             palette_quants: cli.palette_quants,
             tracks: cli.tracks,
             grader: cli.grader,
