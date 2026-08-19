@@ -112,7 +112,9 @@ impl CarPhysicsData {
                 k_archimedean: 0.5,
                 k_water_traction: 0.5,
                 k_water_rudder: 0.5,
-                terra_mover_sx: [0.0; 3],
+                // The values every mechos `.prm` carries, so that a test
+                // car has a grader blade like a real one does.
+                terra_mover_sx: [1.0, 0.907029, 0.556837],
                 defence: [100; config::car::NUM_SIDES],
                 ram_power: [50; config::car::NUM_SIDES],
             },
@@ -474,6 +476,30 @@ pub fn step(
             let lateral = transform.rot * Vec3::X;
             (lateral.x, lateral.y)
         };
+
+        // The grader blade, from the `TerraMoverS*` the mechos `.prm` files
+        // carry: a line across the leading edge of the car, at the bottom
+        // of it. Reversing swings it round to the other end, so the blade
+        // always faces the way the car is being driven.
+        if let Some(ref mut tracks) = tracks
+            && dynamo.traction == 0.0
+        {
+            // `WHEELS_TOUCH && traction` of the commented-out call site: a
+            // car rolling to a stop is not grading anything.
+            tracks.raise_blade();
+        } else if let Some(ref mut tracks) = tracks {
+            let s = car.physics.terra_mover_sx;
+            let half = |axis: usize| {
+                car.bbox.max[axis].abs().max(car.bbox.min[axis].abs()) * transform.scale
+            };
+            let (sx, sy, sz) = (
+                s[0] * half(0),
+                s[1] * half(1) * dynamo.traction.signum(),
+                s[2] * half(2),
+            );
+            let corner = |x: f32| transform.rot * Vec3::new(x, sy, -sz) + transform.disp;
+            tracks.blade(corner(-sx), corner(sx));
+        }
         for (index, wheel) in car.wheels.iter().enumerate() {
             let pw = transform.transform_point(Vec3::from(wheel.pos));
             if let Some(ref mut tracks) = tracks {

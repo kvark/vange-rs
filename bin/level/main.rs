@@ -74,6 +74,16 @@ struct Cli {
     /// uses 1; a snapshot wants it exaggerated to be legible.
     #[arg(long, default_value_t = 8)]
     tracks_depth: i32,
+    /// Drive the grader blade along the `--tracks-line` instead of a
+    /// wheel, so the trench and the windrows it leaves can be looked at.
+    #[arg(long, default_value_t = false)]
+    grader: bool,
+    /// How far below the surface the blade rides, in altitude units.
+    #[arg(long, default_value_t = 30)]
+    grader_depth: i32,
+    /// Width of the blade in texels, across the line it travels.
+    #[arg(long, default_value_t = 40.0)]
+    grader_width: f32,
     /// Load the world's moving land (`data.vot`) and location engines
     /// (`location.lst`).
     #[arg(long, default_value_t = false)]
@@ -309,6 +319,9 @@ fn main() {
             dig_radius: cli.dig_radius,
             moving_land: cli.moving_land,
             tracks: cli.tracks,
+            grader: cli.grader,
+            grader_depth: cli.grader_depth,
+            grader_width: cli.grader_width,
             tracks_line: cli.tracks_line.as_deref().map(|s| {
                 let v = s
                     .split(',')

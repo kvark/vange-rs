@@ -82,9 +82,9 @@ fn drive_wheel(
     // Across the direction of travel, which is what a wheel's tread lies on.
     let (dx, dy) = ((x1 - x0) as f32, (y1 - y0) as f32);
     let len = (dx * dx + dy * dy).sqrt().max(1.0);
-    let config = level::terraform::Config {
+    let config = level::terraform::Tread {
         depth,
-        ..level::terraform::Config::default()
+        ..level::terraform::Tread::default()
     };
     let track = level::terraform::Track {
         from: (x0, y0),
@@ -94,7 +94,57 @@ fn drive_wheel(
 
     let mut regions = Vec::new();
     for _ in 0..passes.max(1) {
-        level::terraform::apply(level, &config, &track, &mut regions);
+        level::terraform::apply_tread(level, &config, &track, &mut regions);
+    }
+    regions.sort_unstable();
+    regions.dedup();
+    regions
+}
+
+/// Drag a grader blade along a straight line, riding `depth` below the
+/// surface it starts from. Used by `--grader` to see what the blade leaves.
+fn drag_blade(
+    level: &mut level::Level,
+    line: Option<(i32, i32, i32, i32)>,
+    passes: u32,
+    depth: i32,
+    width: f32,
+) -> Vec<level::Region> {
+    let (x0, y0, x1, y1) = line.unwrap_or((
+        level.size.0 / 2 - level.size.0 / 8,
+        level.size.1 / 2,
+        level.size.0 / 2 + level.size.0 / 8,
+        level.size.1 / 2,
+    ));
+    let (dx, dy) = ((x1 - x0) as f32, (y1 - y0) as f32);
+    let len = (dx * dx + dy * dy).sqrt().max(1.0);
+    // The blade lies across the direction of travel.
+    let (ax, ay) = (-dy / len * width * 0.5, dx / len * width * 0.5);
+    let z = level::terraform::surface_height(level, (x0, y0)) - depth as f32;
+
+    let config = level::terraform::Grader {
+        enabled: true,
+        ..level::terraform::Grader::default()
+    };
+    let mut regions = Vec::new();
+    // One sweep per texel of travel, which is what a car driving it would
+    // produce over the same ground.
+    let steps = len.ceil() as i32;
+    for _ in 0..passes.max(1) {
+        let mut prev = None;
+        for i in 0..=steps {
+            let t = i as f32 / steps as f32;
+            let (cx, cy) = (x0 as f32 + dx * t, y0 as f32 + dy * t);
+            let here = (
+                Vec3::new(cx - ax, cy - ay, z),
+                Vec3::new(cx + ax, cy + ay, z),
+            );
+            if let Some(from) = prev {
+                let sweep = level::terraform::Sweep { from, to: here };
+                level::terraform::apply_grader(level, &config, &sweep, &mut regions);
+            }
+            prev = Some(here);
+        }
     }
     regions.sort_unstable();
     regions.dedup();
@@ -143,6 +193,12 @@ pub struct SnapshotOptions {
     pub tracks_passes: u32,
     /// Altitude units one stamp moves the ground.
     pub tracks_depth: i32,
+    /// Drive the grader blade along `tracks_line` rather than a wheel.
+    pub grader: bool,
+    /// How far below the surface the blade rides.
+    pub grader_depth: i32,
+    /// Width of the blade, across the line it travels.
+    pub grader_width: f32,
     /// First-person camera: stand at this XY instead of orbiting a target.
     pub fp: Option<(f32, f32)>,
     /// Distance to move horizontally in the viewing direction across timed
@@ -220,6 +276,9 @@ impl Default for SnapshotOptions {
             tracks_line: None,
             tracks_passes: 1,
             tracks_depth: 8,
+            grader: false,
+            grader_depth: 30,
+            grader_width: 40.0,
             fp: None,
             fp_travel: None,
             fp_height: 8.0,
@@ -689,6 +748,28 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 z_range: 0..0x100,
                 need_upload: true,
             });
+        }
+        if opts.grader && frame_index == opts.dig_frame {
+            let regions = drag_blade(
+                &mut lvl,
+                opts.tracks_line,
+                opts.tracks_passes,
+                opts.grader_depth,
+                opts.grader_width,
+            );
+            info!("The blade touched {} distinct regions", regions.len());
+            for r in regions {
+                render.terrain.dirty_rects.push(vangers::render::DirtyRect {
+                    rect: vangers::render::Rect {
+                        x: r.x as u16,
+                        y: r.y as u16,
+                        w: r.w as u16,
+                        h: r.h as u16,
+                    },
+                    z_range: 0..0x100,
+                    need_upload: true,
+                });
+            }
         }
         if opts.tracks && frame_index == opts.dig_frame {
             let regions = drive_wheel(

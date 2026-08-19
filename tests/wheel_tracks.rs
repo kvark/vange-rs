@@ -1,10 +1,10 @@
 //! Headless integration test: drive the real physics over a real level and
-//! check that the wheels leave the ground the way they should.
+//! check that the car reshapes the ground the way it should.
 //!
-//! The unit tests in `level::terraform` pin the tread pattern down given a
-//! track; this one is about the other half - that driving produces tracks at
-//! all, that they follow the car, and that they stop when it leaves the
-//! ground.
+//! The unit tests in `level::terraform` pin the tread pattern and the
+//! blade down given a track or a sweep; this one is about the other half -
+//! that driving produces them at all, that they follow the car, and that
+//! they stop when it leaves the ground.
 
 use glam::{Quat, Vec3};
 use vangers::{
@@ -58,7 +58,17 @@ fn spawn(level: &level::Level) -> Car {
 fn drive(
     car: &mut Car,
     level: &mut level::Level,
-    config: &terraform::Config,
+    config: &terraform::Tread,
+    frames: usize,
+) -> Vec<level::Region> {
+    drive_with(car, level, config, &terraform::Grader::default(), frames)
+}
+
+fn drive_with(
+    car: &mut Car,
+    level: &mut level::Level,
+    tread: &terraform::Tread,
+    grader: &terraform::Grader,
     frames: usize,
 ) -> Vec<level::Region> {
     let common = config::common::Common::test_default();
@@ -79,8 +89,11 @@ fn drive(
             None,
             Some(&mut car.tracks),
         );
+        for sweep in car.tracks.drain_sweeps() {
+            terraform::apply_grader(level, grader, &sweep, &mut regions);
+        }
         for track in car.tracks.drain() {
-            terraform::apply(level, config, &track, &mut regions);
+            terraform::apply_tread(level, tread, &track, &mut regions);
         }
     }
     regions
@@ -100,7 +113,7 @@ fn driving_marks_the_ground_it_covers() {
     let mut car = spawn(&level);
     let before = altitudes(&level);
 
-    let regions = drive(&mut car, &mut level, &terraform::Config::default(), 200);
+    let regions = drive(&mut car, &mut level, &terraform::Tread::default(), 200);
     let after = altitudes(&level);
 
     assert!(
@@ -148,7 +161,7 @@ fn the_marks_follow_the_car() {
     let before = altitudes(&level);
     let start = car.transform.disp;
 
-    drive(&mut car, &mut level, &terraform::Config::default(), 200);
+    drive(&mut car, &mut level, &terraform::Tread::default(), 200);
     let after = altitudes(&level);
 
     let size = glam::Vec2::new(level.size.0 as f32, level.size.1 as f32);
@@ -191,7 +204,7 @@ fn a_car_off_the_ground_marks_nothing() {
     car.dynamo.linear_velocity = Vec3::new(0.0, 40.0, 0.0);
     let before = altitudes(&level);
 
-    let regions = drive(&mut car, &mut level, &terraform::Config::default(), 20);
+    let regions = drive(&mut car, &mut level, &terraform::Tread::default(), 20);
 
     assert_eq!(changed(&before, &altitudes(&level)), 0);
     assert!(regions.is_empty());
@@ -203,11 +216,92 @@ fn turning_it_off_leaves_the_level_untouched() {
     let mut car = spawn(&level);
     let before = altitudes(&level);
 
-    let config = terraform::Config {
+    let config = terraform::Tread {
         enabled: false,
-        ..terraform::Config::default()
+        ..terraform::Tread::default()
     };
     let regions = drive(&mut car, &mut level, &config, 200);
+
+    assert_eq!(changed(&before, &altitudes(&level)), 0);
+    assert!(regions.is_empty());
+}
+
+#[test]
+fn the_blade_carves_where_the_car_drives() {
+    let mut level = drivable_level();
+    let mut car = spawn(&level);
+    let start = car.transform.disp;
+    let before = altitudes(&level);
+
+    let grader = terraform::Grader {
+        enabled: true,
+        ..terraform::Grader::default()
+    };
+    // Tread off, so anything that moves is the blade's doing.
+    let tread = terraform::Tread {
+        enabled: false,
+        ..terraform::Tread::default()
+    };
+    let regions = drive_with(&mut car, &mut level, &tread, &grader, 200);
+    let after = altitudes(&level);
+
+    assert!(changed(&before, &after) > 0, "the blade cut nothing");
+    assert!(!regions.is_empty());
+
+    // The blade rides under the car, so it has to have lowered ground as
+    // well as raised it - a pure heap would mean it never bit.
+    assert!(
+        before.iter().zip(&after).any(|(a, b)| b < a),
+        "the blade only piled soil up, it never cut any"
+    );
+    assert!(
+        before.iter().zip(&after).any(|(a, b)| b > a),
+        "the blade cut soil but never put any back"
+    );
+
+    let size = glam::Vec2::new(level.size.0 as f32, level.size.1 as f32);
+    let span = |a: glam::Vec2, b: glam::Vec2| {
+        let d = (a - b).abs();
+        glam::Vec2::new(d.x.min(size.x - d.x), d.y.min(size.y - d.y)).length()
+    };
+    let travelled = span(car.transform.disp.truncate(), start.truncate());
+    let reach = car.data.bbox.max[1].abs().max(car.data.bbox.min[1].abs()) + 64.0;
+    for (i, (a, b)) in before.iter().zip(&after).enumerate() {
+        if a == b {
+            continue;
+        }
+        let pos = glam::Vec2::new(
+            (i as i32 % level.size.0) as f32,
+            (i as i32 / level.size.0) as f32,
+        );
+        let from_start = span(pos, start.truncate());
+        let from_end = span(pos, car.transform.disp.truncate());
+        assert!(
+            from_start.min(from_end) < travelled + reach,
+            "the blade reshaped {:?}, nowhere near the {:?} the car drove",
+            pos,
+            travelled
+        );
+    }
+}
+
+#[test]
+fn a_car_off_the_ground_grades_nothing() {
+    let mut level = drivable_level();
+    let mut car = spawn(&level);
+    car.transform.disp.z += 400.0;
+    car.dynamo.linear_velocity = Vec3::new(0.0, 40.0, 0.0);
+    let before = altitudes(&level);
+
+    let grader = terraform::Grader {
+        enabled: true,
+        ..terraform::Grader::default()
+    };
+    let tread = terraform::Tread {
+        enabled: false,
+        ..terraform::Tread::default()
+    };
+    let regions = drive_with(&mut car, &mut level, &tread, &grader, 20);
 
     assert_eq!(changed(&before, &altitudes(&level)), 0);
     assert!(regions.is_empty());
