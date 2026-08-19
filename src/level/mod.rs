@@ -8,6 +8,7 @@ use std::{
 
 mod config;
 pub mod moving;
+pub mod terraform;
 pub mod tin;
 pub mod trigger;
 pub mod vlc;
@@ -34,6 +35,48 @@ pub struct Level {
 
 #[derive(Copy, Clone)]
 pub struct Point(pub f32, pub TerrainType);
+
+/// A rectangle of level texels, guaranteed not to wrap around the level.
+///
+/// Everything that edits the terrain reports what it touched this way, and
+/// the renderer re-uploads exactly those texels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Region {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl Region {
+    /// Pushes `[x, x + w) x [y, y + h)` as regions, cutting it at the level
+    /// seam so that none of them wrap. An edit near a corner needs all four.
+    pub fn push_wrapped(out: &mut Vec<Region>, x: i32, y: i32, w: i32, h: i32, size: (i32, i32)) {
+        let spans_x = split_span(x.rem_euclid(size.0), w, size.0);
+        let spans_y = split_span(y.rem_euclid(size.1), h, size.1);
+        for &(y, h) in spans_y.iter().flatten() {
+            for &(x, w) in spans_x.iter().flatten() {
+                out.push(Region { x, y, w, h });
+            }
+        }
+    }
+}
+
+/// Cuts `[start, start + length)` into at most two non-wrapping spans.
+fn split_span(start: i32, length: i32, total: i32) -> [Option<(i32, i32)>; 2] {
+    let length = length.min(total);
+    if length <= 0 {
+        return [None, None];
+    }
+    if start + length <= total {
+        [Some((start, length)), None]
+    } else {
+        [
+            Some((start, total - start)),
+            Some((0, start + length - total)),
+        ]
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct TerrainBits {

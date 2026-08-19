@@ -16,6 +16,7 @@ use crate::vfs::Vfs;
 
 use std::{io, path::Path, sync::Arc};
 
+pub use super::Region;
 pub use vot::{Frame, MAX_KEY_PHASE, MobileLocation, Mode};
 
 /// `MLPREC` of the original: the fractional bits of the interpolation
@@ -25,15 +26,6 @@ const PRECISION: u32 = 16;
 /// `goPh == -1` of the original: the location loops forever instead of
 /// stopping at a phase.
 pub const FREE_RUNNING: i32 = -1;
-
-/// A rectangle of level texels, guaranteed not to wrap around the level.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Region {
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
-}
 
 /// A single moving-land instance: the shared frame data plus the playback
 /// state (`cFrame`/`cStage`/`steps`/`alt` of the original).
@@ -451,31 +443,14 @@ fn apply_absolute(frame: &Frame, offset: (i32, i32), level: &mut Level, terrain:
 /// Splits the frame's rectangle at the level seams, so every emitted region
 /// is a plain in-bounds rectangle.
 fn push_regions(frame: &Frame, offset: (i32, i32), level: &Level, regions: &mut Vec<Region>) {
-    let x0 = (frame.pos.0 + offset.0).rem_euclid(level.size.0);
-    let y0 = (frame.pos.1 + offset.1).rem_euclid(level.size.1);
-    let spans_x = split_span(x0, frame.size.0, level.size.0);
-    let spans_y = split_span(y0, frame.size.1, level.size.1);
-    for &(y, h) in spans_y.iter().flatten() {
-        for &(x, w) in spans_x.iter().flatten() {
-            regions.push(Region { x, y, w, h });
-        }
-    }
-}
-
-/// Cuts `[start, start + length)` into at most two non-wrapping spans.
-fn split_span(start: i32, length: i32, total: i32) -> [Option<(i32, i32)>; 2] {
-    let length = length.min(total);
-    if length <= 0 {
-        return [None, None];
-    }
-    if start + length <= total {
-        [Some((start, length)), None]
-    } else {
-        [
-            Some((start, total - start)),
-            Some((0, start + length - total)),
-        ]
-    }
+    Region::push_wrapped(
+        regions,
+        frame.pos.0 + offset.0,
+        frame.pos.1 + offset.1,
+        frame.size.0,
+        frame.size.1,
+        level.size,
+    );
 }
 
 /// All the moving land of one level.

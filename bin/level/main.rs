@@ -59,6 +59,21 @@ struct Cli {
     /// Crater radius in terrain texels.
     #[arg(long)]
     dig_radius: Option<i32>,
+    /// Drive a wheel across the level after the first frame, so the tread
+    /// it presses into the ground can be looked at.
+    #[arg(long, default_value_t = false)]
+    tracks: bool,
+    /// Where the wheel starts and ends, as "x0,y0,x1,y1". Defaults to a
+    /// line through the middle of the level.
+    #[arg(long)]
+    tracks_line: Option<String>,
+    /// Passes to drive along that line. Each one cuts deeper.
+    #[arg(long, default_value_t = 1)]
+    tracks_passes: u32,
+    /// Altitude units one stamp of the tread moves the ground. The game
+    /// uses 1; a snapshot wants it exaggerated to be legible.
+    #[arg(long, default_value_t = 8)]
+    tracks_depth: i32,
     /// Load the world's moving land (`data.vot`) and location engines
     /// (`location.lst`).
     #[arg(long, default_value_t = false)]
@@ -293,6 +308,21 @@ fn main() {
             }),
             dig_radius: cli.dig_radius,
             moving_land: cli.moving_land,
+            tracks: cli.tracks,
+            tracks_line: cli.tracks_line.as_deref().map(|s| {
+                let v = s
+                    .split(',')
+                    .map(|t| {
+                        t.trim()
+                            .parse::<i32>()
+                            .expect("--tracks-line wants x0,y0,x1,y1")
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(v.len(), 4, "--tracks-line wants x0,y0,x1,y1");
+                (v[0], v[1], v[2], v[3])
+            }),
+            tracks_passes: cli.tracks_passes,
+            tracks_depth: cli.tracks_depth,
             ml_quants: cli.ml_quants,
             ml_frame: cli.ml_frame,
             ml_touch: cli.ml_touch.as_deref().map(|s| {

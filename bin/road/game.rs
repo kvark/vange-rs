@@ -51,6 +51,14 @@ enum SimulationStep<'a> {
     },
 }
 
+impl SimulationStep<'_> {
+    /// The original only marks the ground on the last sub-step of a frame,
+    /// so a fast car lays one track per frame rather than one per sub-step.
+    fn is_final(&self) -> bool {
+        matches!(*self, SimulationStep::Final { .. })
+    }
+}
+
 pub struct Agent {
     _name: String,
     spirit: Spirit,
@@ -61,6 +69,8 @@ pub struct Agent {
     control: Control,
     jump: Option<f32>,
     physics: Physics,
+    /// Where this car's wheels have been, for the tracks they leave.
+    tracks: level::terraform::Tracks,
 }
 
 impl Agent {
@@ -96,6 +106,7 @@ impl Agent {
                 transform,
                 dynamo: physics::Dynamo::default(),
             },
+            tracks: level::terraform::Tracks::default(),
         }
     }
 
@@ -142,6 +153,7 @@ impl Agent {
                 ref mut dynamo,
             } => (dynamo, transform),
         };
+        let last = sim_step.is_final();
         let (jump, roll, focus_point, line_buffer) = match sim_step {
             SimulationStep::Intermediate => (None, 0.0, None, None),
             SimulationStep::Final {
@@ -154,6 +166,7 @@ impl Agent {
                 line_buffer,
             ),
         };
+        let tracks = last.then_some(&mut self.tracks);
         physics::step(
             dynamo,
             transform,
@@ -174,6 +187,7 @@ impl Agent {
             jump,
             roll,
             line_buffer,
+            tracks,
         );
 
         if let Some(focus) = focus_point {
@@ -339,6 +353,10 @@ pub struct Game {
     line_buffer: LineBuffer,
     level: level::Level,
     moving: level::moving::MovingWorld,
+    /// How deep a tread the wheels cut into the ground.
+    terraform: level::terraform::Config,
+    /// Scratch buffer for the rectangles this frame's tracks touched.
+    track_regions: Vec<level::Region>,
     agents: Vec<Agent>,
     remote_agents: HashMap<PlayerId, RemoteAgent>,
     net: Option<NetworkClient>,
@@ -531,6 +549,8 @@ impl Game {
             line_buffer: LineBuffer::new(),
             level,
             moving,
+            terraform: level::terraform::Config::default(),
+            track_regions: Vec::new(),
             agents,
             remote_agents: HashMap::new(),
             net,
@@ -567,7 +587,59 @@ impl Game {
             }
         });
         let regions = self.moving.step(&mut self.level, delta, touches);
-        self.render.dirty_moving_land(regions, height);
+        self.render.dirty_terrain(regions, height);
+    }
+
+    /// Cuts the stretches the wheels have covered since the last frame into
+    /// the level, and hands the touched rectangles to the renderer.
+    ///
+    /// The wheels record where they have been while the physics runs, which
+    /// is over an immutable level and in parallel across the agents. Doing
+    /// the cutting here, afterwards, is what lets both of those stand.
+    fn step_tracks(&mut self) {
+        if !self.terraform.enabled {
+            // Keep the wheels from stitching a track across everything
+            // driven while the switch was off.
+            for agent in self.agents.iter_mut() {
+                agent.tracks.reset();
+            }
+            return;
+        }
+
+        self.track_regions.clear();
+        for agent in self.agents.iter_mut() {
+            for track in agent.tracks.drain() {
+                level::terraform::apply(
+                    &mut self.level,
+                    &self.terraform,
+                    &track,
+                    &mut self.track_regions,
+                );
+            }
+        }
+        if self.track_regions.is_empty() {
+            return;
+        }
+
+        // Four wheels of the same car overlap heavily at low speed.
+        self.track_regions.sort_unstable();
+        self.track_regions.dedup();
+
+        let height = self.level.geometry.height as u16;
+        self.render.dirty_terrain(&self.track_regions, height);
+    }
+
+    /// The tread the wheels cut. Turning the depth up makes a few laps
+    /// enough to see the ground give way, which is otherwise a slow effect
+    /// to watch.
+    fn draw_terraform_ui(config: &mut level::terraform::Config, ui: &mut egui::Ui) {
+        ui.checkbox(&mut config.enabled, "Enabled");
+        ui.add_enabled_ui(config.enabled, |ui| {
+            ui.add(egui::Slider::new(&mut config.depth, 0..=8).text("Depth"));
+            ui.add(egui::Slider::new(&mut config.tread, 1..=8).text("Tread period"));
+            ui.add(egui::Slider::new(&mut config.bar, 1..=8).text("Bar stamps"));
+            ui.add(egui::Slider::new(&mut config.spacing, 0.5..=4.0).text("Bar spacing"));
+        });
     }
 
     /// Lists each location with its playback state, and each engine with the
@@ -657,6 +729,7 @@ impl Application for Game {
                         dynamo.linear_velocity = Vec3::ZERO;
                         dynamo.angular_velocity = Vec3::ZERO;
                     }
+                    player.tracks.reset();
                 }
                 KeyCode::KeyA => self.input.spin_hor = -self.cam.scale.y,
                 KeyCode::KeyD => self.input.spin_hor = self.cam.scale.y,
@@ -731,6 +804,9 @@ impl Application for Game {
                     delta * self.input.spin_ver,
                 );
 
+                // Stepping frame by frame still lays the track down, which
+                // is the only way to watch the tread take shape.
+                self.step_tracks();
                 return;
             }
 
@@ -802,6 +878,8 @@ impl Application for Game {
                 a.ai_behavior(delta);
             });
         }
+
+        self.step_tracks();
 
         // Networking: send input and process server events
         if let Some(ref mut net) = self.net {
@@ -1109,6 +1187,10 @@ impl Application for Game {
                     Self::draw_moving_land_ui(&self.moving.land, &self.moving.triggers, ui);
                 });
             }
+            ui.group(|ui| {
+                ui.label("Wheel tracks:");
+                Self::draw_terraform_ui(&mut self.terraform, ui);
+            });
             ui.group(|ui| {
                 ui.label("Renderer:");
                 self.render.draw_ui(ui);

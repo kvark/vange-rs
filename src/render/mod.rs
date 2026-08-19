@@ -421,7 +421,10 @@ pub struct Render {
 impl Render {
     /// Mark the rectangles a moving-land quant rewrote so the next draw
     /// re-uploads them (and refits the mesh / rebakes voxels).
-    pub fn dirty_moving_land(&mut self, regions: &[level::moving::Region], height: u16) {
+    /// Marks every texel of `regions` for re-upload. Both the moving land
+    /// and the deformation the cars leave behind report what they touched
+    /// this way.
+    pub fn dirty_terrain(&mut self, regions: &[level::Region], height: u16) {
         let z_range = 0..height;
         self.terrain
             .dirty_rects
