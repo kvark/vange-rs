@@ -461,6 +461,27 @@ pub fn step(
     {
         tracks.lift_all();
     }
+    // `ground_pressing`: whatever is bearing on the ground pushes it down
+    // to the hull, whether the car is rolling or has come to rest on its
+    // belly. The blade and the tread both need it to be driving; this does
+    // not.
+    if let Some(ref mut tracks) = tracks
+        && (wheels_touch != 0 || spring_touch != 0)
+    {
+        let half =
+            |axis: usize| car.bbox.max[axis].abs().max(car.bbox.min[axis].abs()) * transform.scale;
+        let (hx, hy) = (half(0), half(1));
+        let floor = car.bbox.min[2] * transform.scale;
+        let corner = |x: f32, y: f32| transform.rot * Vec3::new(x, y, floor) + transform.disp;
+        tracks.press(level::terraform::Hull {
+            corners: [
+                corner(-hx, hy),
+                corner(hx, hy),
+                corner(hx, -hy),
+                corner(-hx, -hy),
+            ],
+        });
+    }
     if wheels_touch != 0 && stand_on_wheels {
         let f_traction_per_wheel =
             car.physics.mobility_factor * common.global.mobility_factor * f_turbo * dynamo.traction
