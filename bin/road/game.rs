@@ -71,6 +71,8 @@ pub struct Agent {
     physics: Physics,
     /// Where this car's wheels have been, for the tracks they leave.
     tracks: level::terraform::Tracks,
+    /// The cirt it has gathered and not yet handed in.
+    cirtainer: level::cycle::Cirtainer,
 }
 
 impl Agent {
@@ -107,6 +109,7 @@ impl Agent {
                 dynamo: physics::Dynamo::default(),
             },
             tracks: level::terraform::Tracks::default(),
+            cirtainer: level::cycle::Cirtainer::default(),
         }
     }
 
@@ -266,10 +269,10 @@ struct MultiplayerState {
 }
 
 struct DataBase {
-    _bunches: Vec<config::bunches::Bunch>,
+    bunches: Vec<config::bunches::Bunch>,
     cars: HashMap<String, config::car::CarInfo>,
     common: config::common::Common,
-    _escaves: Vec<config::escaves::Escave>,
+    escaves: Vec<config::escaves::Escave>,
     game: config::game::Registry,
 }
 
@@ -355,6 +358,10 @@ pub struct Game {
     moving: level::moving::MovingWorld,
     /// The breathing of the terrain colour ramps.
     palette: level::palette::Animation,
+    /// The world's story cycles, and the colours they paint it in.
+    cycle: Option<level::cycle::Bunch>,
+    /// Time carried over towards the next cycle quant.
+    cycle_time: f32,
     /// How deep a tread the wheels cut into the ground.
     terraform: level::terraform::Config,
     /// Scratch buffer for the rectangles this frame's tracks touched.
@@ -463,10 +470,10 @@ impl Game {
         let db = {
             let game = config::game::Registry::load(settings);
             DataBase {
-                _bunches: config::bunches::load(settings.open_relative("bunches.prm")),
+                bunches: config::bunches::load(settings.open_relative("bunches.prm")),
                 cars: config::car::load_registry(settings, &game, &gfx.device, &render.object),
                 common: config::common::load(settings.open_relative("common.prm")),
-                _escaves: escaves,
+                escaves,
                 game,
             }
         };
@@ -476,6 +483,26 @@ impl Game {
 
         let moving = level::moving::MovingWorld::load(&level_config, None);
         let palette = level::palette::Animation::new(&level, &level_config.dynamic_palette);
+        // The world's story cycles, if it has an escave that runs any.
+        let mut level = level;
+        let cycle = level::cycle::Bunch::load(
+            &settings.game.level,
+            &level,
+            &db.bunches,
+            &db.escaves,
+            |path| {
+                settings
+                    .check_path(path)
+                    .then(|| std::fs::read(settings.data_path.join(path)).ok())
+                    .flatten()
+            },
+        );
+        let mut palette = palette;
+        if let Some(ref bunch) = cycle {
+            // A world opens in the colours of the cycle it is on.
+            level.palette = *bunch.settled_palette();
+            palette.rebase(&level.palette);
+        }
 
         log::info!("Spawning agents");
         let car_names = db.cars.keys().cloned().collect::<Vec<_>>();
@@ -553,6 +580,8 @@ impl Game {
             level,
             moving,
             palette,
+            cycle,
+            cycle_time: 0.0,
             terraform: level::terraform::Config::default(),
             track_regions: Vec::new(),
             agents,
@@ -592,6 +621,47 @@ impl Game {
         });
         let regions = self.moving.step(&mut self.level, delta, touches);
         self.render.dirty_terrain(regions, height);
+    }
+
+    /// Runs the world's story cycles: every car gathers cirt from whichever
+    /// dolly it is near, hands it over on reaching the escave, and once a
+    /// stage has had its fill the whole world fades to the next one's
+    /// colours.
+    fn step_cycle(&mut self, delta: f32) {
+        let bunch = match self.cycle {
+            Some(ref mut bunch) => bunch,
+            None => return,
+        };
+        self.cycle_time += delta;
+        let quants = (self.cycle_time / config::common::MAIN_LOOP_TIME) as u32;
+        if quants == 0 {
+            return;
+        }
+        self.cycle_time -= quants as f32 * config::common::MAIN_LOOP_TIME;
+
+        let mut range = 0..0;
+        for _ in 0..quants.min(4) {
+            for agent in self.agents.iter_mut() {
+                let pos = agent.position();
+                let coord = (pos.x as i32, pos.y as i32);
+                bunch.gather(coord, &mut agent.cirtainer);
+                bunch.deliver(coord, &mut agent.cirtainer);
+            }
+            let step = bunch.quant(&mut self.level);
+            if step.start != step.end {
+                range = step;
+            }
+        }
+
+        if range.start != range.end {
+            self.render.dirty_palette(range);
+            self.render.set_light_modulation(bunch.light());
+            // A fade rewrites the palette wholesale, so the animation has
+            // to start again from the colours it left behind.
+            if !bunch.is_fading() {
+                self.palette.rebase(&self.level.palette);
+            }
+        }
     }
 
     /// Cuts the stretches the wheels have covered since the last frame into
@@ -641,6 +711,34 @@ impl Game {
 
         let height = self.level.geometry.height as u16;
         self.render.dirty_terrain(&self.track_regions, height);
+    }
+
+    /// Which cycle the world is on, how much cirt each stage has towards
+    /// its turn, and where the dollies that cirt comes from are. Returns a
+    /// cycle to jump straight to, if one was clicked.
+    fn draw_cycle_ui(bunch: &level::cycle::Bunch, ui: &mut egui::Ui) -> Option<usize> {
+        let mut jump = None;
+        ui.label(format!("{} at {:?}", bunch.escave, bunch.escave_pos));
+        for (i, stage) in bunch.stages.iter().enumerate() {
+            let banked = bunch.banked()[i];
+            let mark = if i == bunch.current() { "*" } else { " " };
+            ui.horizontal(|ui| {
+                if ui
+                    .button(format!(
+                        "{}{} {}/{}",
+                        mark, stage.name, banked, stage.cirt_max
+                    ))
+                    .on_hover_text(format!("cirt from {:?}", stage.dolly))
+                    .clicked()
+                {
+                    jump = Some(i);
+                }
+            });
+        }
+        if bunch.is_fading() {
+            ui.label("changing...");
+        }
+        jump
     }
 
     /// The tread the wheels cut. Turning the depth up makes a few laps
@@ -856,8 +954,11 @@ impl Application for Game {
 
         self.step_moving_land(delta);
 
-        let range = self.palette.step(&mut self.level, delta);
-        self.render.dirty_palette(range);
+        self.step_cycle(delta);
+        if !self.cycle.as_ref().is_some_and(|b| b.is_fading()) {
+            let range = self.palette.step(&mut self.level, delta);
+            self.render.dirty_palette(range);
+        }
 
         const TIME_HACK: f32 = 1.0;
         // Note: the equations below make the game absolutely match the original
@@ -1221,6 +1322,18 @@ impl Application for Game {
                 ui.group(|ui| {
                     ui.label("Palette:");
                     ui.checkbox(&mut self.palette.enabled, "Animate");
+                });
+            }
+            if self.cycle.is_some() {
+                ui.group(|ui| {
+                    ui.label("Cycle:");
+                    if let Some(jump) = Self::draw_cycle_ui(self.cycle.as_ref().unwrap(), ui) {
+                        let bunch = self.cycle.as_mut().unwrap();
+                        let range = bunch.set_cycle(jump, &mut self.level);
+                        self.render.dirty_palette(range);
+                        self.render.set_light_modulation(bunch.light());
+                        self.palette.rebase(&self.level.palette);
+                    }
                 });
             }
             ui.group(|ui| {
