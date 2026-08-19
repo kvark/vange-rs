@@ -184,6 +184,10 @@ pub struct SnapshotOptions {
     pub dig_center: Option<(i32, i32)>,
     /// Optional crater radius in level texels.
     pub dig_radius: Option<i32>,
+    /// Blow a crater here.
+    pub crater: Option<(i32, i32)>,
+    /// Radius of that crater.
+    pub crater_radius: i32,
     /// Story cycle to paint the world in, by index.
     pub cycle: Option<usize>,
     /// Quants of dynamic palette to run before the snapshot.
@@ -276,6 +280,8 @@ impl Default for SnapshotOptions {
             dig_frame: 1,
             dig_center: None,
             dig_radius: None,
+            crater: None,
+            crater_radius: 20,
             cycle: None,
             palette_quants: 0,
             tracks: false,
@@ -828,6 +834,19 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                     need_upload: true,
                 });
             }
+        }
+        if let Some(at) = opts.crater
+            && frame_index == opts.dig_frame
+        {
+            let mut regions = Vec::new();
+            level::terraform::crater(&mut lvl, at, opts.crater_radius, &mut regions);
+            info!(
+                "Blew a crater of radius {} at {:?}, touching {} regions",
+                opts.crater_radius,
+                at,
+                regions.len()
+            );
+            render.dirty_terrain(&regions, 0x100);
         }
         if opts.tracks && frame_index == opts.dig_frame {
             let regions = drive_wheel(

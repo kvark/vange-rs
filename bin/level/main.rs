@@ -84,6 +84,13 @@ struct Cli {
     /// Width of the blade in texels, across the line it travels.
     #[arg(long, default_value_t = 40.0)]
     grader_width: f32,
+    /// Blow a crater at "x,y" - a rim thrown up around a bowl dug out,
+    /// the shape the original's explosions leave.
+    #[arg(long)]
+    crater: Option<String>,
+    /// Radius of that crater in texels.
+    #[arg(long, default_value_t = 20)]
+    crater_radius: i32,
     /// Render the world in one of its story cycles, by index. The cycles
     /// and their palettes come from `bunches.prm`; a world whose escave
     /// runs none simply ignores this.
@@ -327,6 +334,15 @@ fn main() {
             }),
             dig_radius: cli.dig_radius,
             moving_land: cli.moving_land,
+            crater: cli.crater.as_deref().map(|s| {
+                let v = s
+                    .split(',')
+                    .map(|t| t.trim().parse::<i32>().expect("--crater wants x,y"))
+                    .collect::<Vec<_>>();
+                assert_eq!(v.len(), 2, "--crater wants x,y");
+                (v[0], v[1])
+            }),
+            crater_radius: cli.crater_radius,
             cycle: cli.cycle,
             palette_quants: cli.palette_quants,
             tracks: cli.tracks,

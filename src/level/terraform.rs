@@ -79,6 +79,155 @@ impl Default for Tread {
     }
 }
 
+/// Terrains a blast is allowed to move, as a bit per type.
+///
+/// `SmoothTerrainMask` of the original, which every crater call site sets
+/// before firing: the plain ground, the sand and the rock give way, while
+/// the special surfaces do not.
+pub const DESTRUCTIBLE: u16 = 0b0100_1111;
+
+/// One cone of `DestroySpot`: the shape a blast leaves.
+///
+/// Craters in the original are two of these together - a shallow wide one
+/// that throws a rim up, and a deep narrow one that digs the bowl out
+/// inside it. [`crater`] pairs them the way the game does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spot {
+    /// Texels from the centre to the edge.
+    pub radius: i32,
+    /// Altitude moved per texel in from the edge, in 8.8 fixed point, so
+    /// `512` is two units and `-(1 << 11)` is eight down. The cone is
+    /// deepest at the centre and comes to nothing at the rim.
+    pub delta: i32,
+    /// How frayed the edge is. `rfactor` of the original: `0` is a clean
+    /// circle, and each step up doubles the reach of the dice roll that
+    /// decides whether a texel is touched at all.
+    pub ragged: u8,
+    /// Terrain to leave behind, or `None` to keep what was there. The
+    /// original spells the second one `83`, a type that does not exist.
+    pub terrain: Option<u8>,
+    /// Terrains this is allowed to move.
+    pub mask: u16,
+}
+
+impl Default for Spot {
+    fn default() -> Self {
+        Spot {
+            radius: 10,
+            delta: -(1 << 11),
+            ragged: 1,
+            terrain: None,
+            mask: DESTRUCTIBLE,
+        }
+    }
+}
+
+/// Blows a crater at `at`: a rim thrown up, and a bowl dug out inside it.
+///
+/// The two spots are `MAP_POINT_CRATER01` of the original, scaled to
+/// `radius`. Returns the entries it touched through `regions`.
+pub fn crater(level: &mut Level, at: (i32, i32), radius: i32, regions: &mut Vec<Region>) {
+    let rim = Spot {
+        radius,
+        delta: 512,
+        ragged: 1,
+        ..Spot::default()
+    };
+    let bowl = Spot {
+        radius: (radius * 4 / 5).max(1),
+        delta: -(1 << 11),
+        ragged: 1,
+        ..Spot::default()
+    };
+    apply_spot(level, at, &rim, regions);
+    apply_spot(level, at, &bowl, regions);
+}
+
+/// `DestroySpot`: moves the ground inside a circle by a cone, fraying the
+/// edge as it goes.
+pub fn apply_spot(level: &mut Level, at: (i32, i32), spot: &Spot, regions: &mut Vec<Region>) {
+    if spot.radius <= 0 || spot.delta == 0 {
+        return;
+    }
+    // `rfactor` picks how wide the dice are rolled; wider dice mean more
+    // texels near the rim are skipped.
+    // `rfactor` 4 rolls the dice over the whole radius; each step either
+    // side halves or doubles that.
+    let dice = match spot.ragged {
+        0 => 0,
+        n if n < 4 => spot.radius >> (4 - n as i32),
+        n => spot.radius << (n as i32 - 4),
+    };
+    // The original rolls `RND`, so no two blasts in the same spot match.
+    // Seeding from the centre instead keeps a level reproducible, which
+    // matters more here than it did there.
+    let mut rng = Rng::seeded(at, spot.radius as u32);
+
+    let bits = level.terrain_bits();
+    let terrain = spot.terrain.map(|t| bits.write(t & bits.mask));
+    let mut bounds = Bounds::default();
+
+    for (dx, dy, ring) in rings(spot.radius) {
+        let step = ((spot.radius - ring) * spot.delta) >> 8;
+        if step == 0 {
+            continue;
+        }
+        if dice > 0 && rng.below(dice as u32) >= (spot.radius - ring) as u32 {
+            continue;
+        }
+        let (x, y) = (at.0 + dx, at.1 + dy);
+        let i = match movable(level, x, y) {
+            Some(i) => i,
+            None => continue,
+        };
+        if spot.mask & (1 << bits.read(level.meta[i])) == 0 {
+            continue;
+        }
+        level.height[i] = (level.height[i] as i32 + step).clamp(0, 255) as u8;
+        if let Some(t) = terrain {
+            level.meta[i] = (level.meta[i] & !bits.write(bits.mask)) | t;
+        }
+        reflood(level, i, x, y);
+        bounds.add(x, y);
+    }
+
+    bounds.push(regions, level.size);
+}
+
+/// Every offset within `radius`, with the ring it falls in.
+///
+/// `RadiusDestroyX`/`RadiusDestroyY` of the original are this list bucketed
+/// by ring and built once at startup. A crater is small enough that walking
+/// the square and taking the distance costs less than the tables did.
+fn rings(radius: i32) -> impl Iterator<Item = (i32, i32, i32)> {
+    (-radius..=radius).flat_map(move |dy| {
+        (-radius..=radius).filter_map(move |dx| {
+            let ring = ((dx * dx + dy * dy) as f64).sqrt() as i32;
+            (ring < radius).then_some((dx, dy, ring))
+        })
+    })
+}
+
+/// A tiny xorshift, so a blast frays the same way every time it is run.
+struct Rng(u32);
+
+impl Rng {
+    fn seeded(at: (i32, i32), salt: u32) -> Self {
+        let mixed = (at.0 as u32)
+            .wrapping_mul(0x9E37_79B9)
+            .wrapping_add((at.1 as u32).wrapping_mul(0x85EB_CA6B))
+            .wrapping_add(salt.wrapping_mul(0xC2B2_AE35));
+        Rng(mixed | 1)
+    }
+
+    fn below(&mut self, bound: u32) -> u32 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 17;
+        self.0 ^= self.0 << 5;
+        if bound == 0 { 0 } else { self.0 % bound }
+    }
+}
+
 /// Tunables of a car's own weight on the ground.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Press {
@@ -1673,5 +1822,210 @@ mod tests {
             2,
             "reported as two rectangles, not one wide one"
         );
+    }
+
+    // -- craters --------------------------------------------------------
+
+    #[test]
+    fn a_crater_is_a_bowl_inside_a_rim() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        crater(&mut level, (30, 30), 12, &mut regions);
+        let at = |x: i32, y: i32| level.height[level.wrap((x, y))] as i32;
+
+        assert!(
+            at(30, 30) < 100 - 40,
+            "the middle is dug right out: {}",
+            at(30, 30)
+        );
+        // Somewhere between the bowl's edge and the rim's, the ground has
+        // been thrown up rather than taken away.
+        let raised = (10..=12).any(|r| at(30 + r, 30) > 100);
+        assert!(raised, "no rim was thrown up");
+        assert_eq!(at(30, 30 + 13), 100, "and nothing outside the radius");
+        assert!(!regions.is_empty());
+    }
+
+    #[test]
+    fn a_spot_is_deepest_in_the_middle_and_nothing_at_the_edge() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        let spot = Spot {
+            radius: 16,
+            delta: -(1 << 8),
+            ragged: 0,
+            ..Spot::default()
+        };
+        apply_spot(&mut level, (30, 30), &spot, &mut regions);
+        let at = |d: i32| level.height[level.wrap((30 + d, 30))] as i32;
+        assert_eq!(at(0), 100 - 16, "a unit per texel in, sixteen deep");
+        assert_eq!(at(8), 100 - 8);
+        assert_eq!(at(15), 100 - 1);
+        assert_eq!(at(16), 100, "the rim itself is untouched");
+    }
+
+    #[test]
+    fn a_clean_spot_touches_every_texel_inside_it() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        let spot = Spot {
+            radius: 10,
+            delta: -(1 << 8),
+            ragged: 0,
+            ..Spot::default()
+        };
+        apply_spot(&mut level, (30, 30), &spot, &mut regions);
+        for dy in -9..=9i32 {
+            for dx in -9..=9i32 {
+                if ((dx * dx + dy * dy) as f64).sqrt() as i32 >= 10 {
+                    continue;
+                }
+                assert!(
+                    level.height[level.wrap((30 + dx, 30 + dy))] < 100,
+                    "({}, {}) was skipped by a clean spot",
+                    dx,
+                    dy
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_ragged_spot_frays_at_the_edge_but_not_at_the_middle() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        let spot = Spot {
+            radius: 20,
+            delta: -(1 << 8),
+            ragged: 4,
+            ..Spot::default()
+        };
+        apply_spot(&mut level, (40, 40), &spot, &mut regions);
+        let touched = |lo: i32, hi: i32| {
+            let mut hit = 0;
+            let mut total = 0;
+            for dy in -20..=20i32 {
+                for dx in -20..=20i32 {
+                    let r = ((dx * dx + dy * dy) as f64).sqrt() as i32;
+                    if r < lo || r >= hi {
+                        continue;
+                    }
+                    total += 1;
+                    if level.height[level.wrap((40 + dx, 40 + dy))] != 100 {
+                        hit += 1;
+                    }
+                }
+            }
+            hit as f32 / total as f32
+        };
+        // The dice are rolled over the whole radius, so a texel `r` rings
+        // out is skipped with probability `r / radius`: certain at the
+        // centre, thinning steadily, mostly gone by the rim.
+        assert_eq!(touched(0, 1), 1.0, "the centre is never skipped");
+        assert!(touched(0, 5) > 0.8, "and the middle is nearly solid");
+        assert!(touched(16, 20) < 0.3, "while the edge is mostly gone");
+    }
+
+    #[test]
+    fn a_blast_frays_the_same_way_every_time() {
+        let shape = |seed: (i32, i32)| {
+            let mut level = test_level();
+            let mut regions = Vec::new();
+            let spot = Spot {
+                radius: 14,
+                delta: -(1 << 8),
+                ragged: 4,
+                ..Spot::default()
+            };
+            apply_spot(&mut level, seed, &spot, &mut regions);
+            level.height.to_vec()
+        };
+        assert_eq!(shape((30, 30)), shape((30, 30)), "same spot, same crater");
+        assert_ne!(
+            shape((30, 30)),
+            shape((31, 30)),
+            "but a different spot frays differently"
+        );
+    }
+
+    #[test]
+    fn a_blast_leaves_the_terrains_it_cannot_move_alone() {
+        let mut level = test_level();
+        let bits = level.terrain_bits();
+        // Terrain 5 is not in the destructible set.
+        for x in 30..50 {
+            for y in 20..50 {
+                level.meta[level.wrap((x, y))] = bits.write(5);
+            }
+        }
+        let mut regions = Vec::new();
+        let spot = Spot {
+            radius: 12,
+            delta: -(1 << 8),
+            ragged: 0,
+            ..Spot::default()
+        };
+        apply_spot(&mut level, (30, 30), &spot, &mut regions);
+        assert!(
+            level.height[level.wrap((25, 30))] < 100,
+            "the soft side went"
+        );
+        assert_eq!(
+            level.height[level.wrap((35, 30))],
+            100,
+            "the hard side held"
+        );
+    }
+
+    #[test]
+    fn a_blast_can_scorch_the_ground_it_moves() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        let spot = Spot {
+            radius: 8,
+            delta: -(1 << 8),
+            ragged: 0,
+            terrain: Some(3),
+            ..Spot::default()
+        };
+        apply_spot(&mut level, (30, 30), &spot, &mut regions);
+        let bits = level.terrain_bits();
+        assert_eq!(bits.read(level.meta[level.wrap((30, 30))]), 3);
+        assert_eq!(
+            bits.read(level.meta[level.wrap((30, 40))]),
+            MAIN_TERRAIN,
+            "and only inside itself"
+        );
+    }
+
+    #[test]
+    fn a_blast_never_digs_through_the_floor() {
+        let mut level = test_level();
+        level.height.iter_mut().for_each(|h| *h = 3);
+        let mut regions = Vec::new();
+        let spot = Spot {
+            radius: 10,
+            delta: -(1 << 11),
+            ragged: 0,
+            ..Spot::default()
+        };
+        apply_spot(&mut level, (30, 30), &spot, &mut regions);
+        assert_eq!(level.height[level.wrap((30, 30))], 0);
+    }
+
+    #[test]
+    fn a_blast_across_the_seam_is_reported_in_pieces() {
+        let mut level = test_level();
+        let mut regions = Vec::new();
+        let spot = Spot {
+            radius: 6,
+            delta: -(1 << 8),
+            ragged: 0,
+            ..Spot::default()
+        };
+        apply_spot(&mut level, (0, 30), &spot, &mut regions);
+        assert!(level.height[level.wrap((SIZE - 3, 30))] < 100);
+        assert!(level.height[level.wrap((3, 30))] < 100);
+        assert_eq!(regions.len(), 2);
     }
 }
