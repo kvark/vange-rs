@@ -9,7 +9,9 @@
 //! Everything here mutates [`Level`] in place, and reports the touched
 //! rectangles so the renderer can re-upload them.
 
-use crate::level::{DOUBLE_LEVEL, Level};
+use crate::config::common::MAIN_LOOP_TIME;
+use crate::level::trigger::Triggers;
+use crate::level::{DOUBLE_LEVEL, Level, LevelConfig};
 use crate::vfs::Vfs;
 
 use std::{io, path::Path, sync::Arc};
@@ -578,6 +580,122 @@ impl MovingLand {
         for location in self.locations.iter_mut() {
             location.update(level, regions);
         }
+    }
+}
+
+/// A vehicle (or tool) standing on the land this quant.
+#[derive(Clone, Copy)]
+pub struct Touch {
+    pub pos: (i32, i32, i32),
+    pub radius: i32,
+}
+
+/// The moving land of one world: locations, the engines that drive them,
+/// and the leftover time toward the next quant.
+///
+/// Game, web, and the headless viewer all load and step this the same way.
+/// The interactive level viewer keeps its own clock on top.
+#[derive(Default)]
+pub struct MovingWorld {
+    pub land: MovingLand,
+    pub triggers: Triggers,
+    time: f32,
+    regions: Vec<Region>,
+}
+
+impl MovingWorld {
+    /// After a long stall, drop the backlog instead of animating through it.
+    const MAX_CATCH_UP: u32 = 4;
+
+    /// Load from the world's `data.vot` and `location.lst`.
+    ///
+    /// `vfs` is the zip the web (and zip-based headless) already mounted;
+    /// `None` reads the files next to the world INI. A missing folder is
+    /// fine — the land is empty and [`Self::step`] is a no-op.
+    pub fn load(config: &LevelConfig, vfs: Option<&Vfs>) -> Self {
+        let Some(path) = config.path_moving_land() else {
+            return Self::default();
+        };
+        let terrain_count = config.terrains.len() as i32;
+        let (mut land, triggers) = if let Some(vfs) = vfs {
+            let dir = path.to_str().unwrap_or("data.vot");
+            let land = MovingLand::load_from_vfs(vfs, dir, terrain_count);
+            let triggers = Triggers::load_from_vfs(vfs, dir, &land);
+            (land, triggers)
+        } else {
+            let land = MovingLand::load_dir(&path, terrain_count);
+            let world_dir = path.parent().unwrap_or(&path);
+            let triggers = Triggers::load(world_dir, &path, &land);
+            (land, triggers)
+        };
+        triggers.reset_locations(&mut land);
+        if !land.is_empty() {
+            log::info!(
+                "Loaded moving land: {} locations, {} engines, {} sensors",
+                land.locations.len(),
+                triggers.engines.len(),
+                triggers.sensors.len()
+            );
+        }
+        MovingWorld {
+            land,
+            triggers,
+            time: 0.0,
+            regions: Vec::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.land.is_empty()
+    }
+
+    /// Run `quants` simulation steps. Sensors see `touches` every quant.
+    pub fn run_quants(
+        &mut self,
+        level: &mut Level,
+        quants: u32,
+        touches: impl IntoIterator<Item = Touch>,
+    ) -> &[Region] {
+        self.regions.clear();
+        if self.land.is_empty() || quants == 0 {
+            return &self.regions;
+        }
+        let touches: Vec<Touch> = touches.into_iter().collect();
+        let size = (level.size.0, level.size.1);
+        for _ in 0..quants {
+            if !self.triggers.is_empty() {
+                for t in &touches {
+                    self.triggers.touch(t.pos, t.radius, size);
+                }
+                self.triggers.update(&mut self.land);
+            }
+            self.land.update(level, &mut self.regions);
+        }
+        self.regions.sort_unstable();
+        self.regions.dedup();
+        &self.regions
+    }
+
+    /// One rendered frame. Animation speed is tied to [`MAIN_LOOP_TIME`],
+    /// matching the original's once-per-main-loop tick.
+    pub fn step(
+        &mut self,
+        level: &mut Level,
+        delta: f32,
+        touches: impl IntoIterator<Item = Touch>,
+    ) -> &[Region] {
+        if self.land.is_empty() {
+            self.regions.clear();
+            return &self.regions;
+        }
+        self.time += delta;
+        let quants = (self.time / MAIN_LOOP_TIME) as u32;
+        if quants == 0 {
+            self.regions.clear();
+            return &self.regions;
+        }
+        self.time -= quants as f32 * MAIN_LOOP_TIME;
+        self.run_quants(level, quants.min(Self::MAX_CATCH_UP), touches)
     }
 }
 

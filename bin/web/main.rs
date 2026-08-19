@@ -10,9 +10,7 @@ use wasm_bindgen::prelude::*;
 use vangers::{
     config::{self, settings},
     data, level, model, physics,
-    render::{
-        self, Batcher, DEPTH_FORMAT, DirtyRect, GraphicsContext, Rect, Render, ScreenTargets,
-    },
+    render::{self, Batcher, DEPTH_FORMAT, GraphicsContext, Render, ScreenTargets},
     space,
     vfs::Vfs,
 };
@@ -405,13 +403,7 @@ struct WebApp {
     max_quant: f32,
     /// True when running on WebGPU (vs WebGL2 fallback).
     is_webgpu: bool,
-    moving_land: level::moving::MovingLand,
-    /// Sensors and location engines that steer the moving land.
-    triggers: level::trigger::Triggers,
-    /// Time carried over towards the next moving-land quant.
-    moving_land_time: f32,
-    /// Scratch buffer for the rectangles a moving-land quant touched.
-    moving_land_regions: Vec<level::moving::Region>,
+    moving: level::moving::MovingWorld,
 }
 
 impl WebApp {
@@ -588,31 +580,7 @@ impl WebApp {
             look_ahead: cam_config.look_ahead,
         };
 
-        let (moving_land, triggers) = match vfs {
-            Some(v) => {
-                let dir = level_config
-                    .path_moving_land()
-                    .and_then(|p| p.to_str().map(str::to_string))
-                    .unwrap_or_else(|| "data.vot".into());
-                let mut land = level::moving::MovingLand::load_from_vfs(
-                    v,
-                    &dir,
-                    level_config.terrains.len() as i32,
-                );
-                let triggers = level::trigger::Triggers::load_from_vfs(v, &dir, &land);
-                triggers.reset_locations(&mut land);
-                if !land.is_empty() {
-                    log::info!(
-                        "Loaded moving land: {} locations, {} engines, {} sensors",
-                        land.locations.len(),
-                        triggers.engines.len(),
-                        triggers.sensors.len()
-                    );
-                }
-                (land, triggers)
-            }
-            None => Default::default(),
-        };
+        let moving = level::moving::MovingWorld::load(&level_config, vfs);
 
         // Settle the follow camera at the agent's spawn pose. Without
         // this, the camera starts at the placeholder above and the slow
@@ -637,10 +605,7 @@ impl WebApp {
             follow,
             max_quant: settings.game.physics.max_quant,
             is_webgpu,
-            moving_land,
-            triggers,
-            moving_land_time: 0.0,
-            moving_land_regions: Vec::new(),
+            moving,
         }
     }
 
@@ -663,12 +628,12 @@ impl WebApp {
                     agent.dynamo.linear_velocity.length()
                 ));
             }
-            if !self.moving_land.is_empty() {
+            if !self.moving.is_empty() {
                 ui.separator();
                 ui.label(format!(
                     "Moving land: {} locations, {} engines",
-                    self.moving_land.locations.len(),
-                    self.triggers.engines.len()
+                    self.moving.land.locations.len(),
+                    self.moving.triggers.engines.len()
                 ));
             }
             ui.separator();
@@ -687,57 +652,17 @@ impl WebApp {
         }
     }
 
-    /// Advances the moving land and hands the touched rectangles to the
-    /// renderer. Same quantisation as the native game: animation speed is
-    /// tied to `MAIN_LOOP_TIME`, not the frame rate.
     fn step_moving_land(&mut self, delta: f32) {
-        if self.moving_land.is_empty() {
-            return;
-        }
-
-        self.moving_land_time += delta;
-        let quants = (self.moving_land_time / config::common::MAIN_LOOP_TIME) as u32;
-        if quants == 0 {
-            return;
-        }
-        self.moving_land_time -= quants as f32 * config::common::MAIN_LOOP_TIME;
-        // After a long stall, drop the backlog instead of animating through it.
-        const MAX_CATCH_UP: u32 = 4;
-
-        self.moving_land_regions.clear();
-        for _ in 0..quants.min(MAX_CATCH_UP) {
-            if !self.triggers.is_empty() {
-                let size = (self.level.size.0, self.level.size.1);
-                if let Some(ref agent) = self.agent {
-                    let pos = agent.transform.disp;
-                    self.triggers.touch(
-                        (pos.x as i32, pos.y as i32, pos.z as i32),
-                        (agent.phys_data.bbox.radius * agent.car.scale) as i32,
-                        size,
-                    );
-                }
-                self.triggers.update(&mut self.moving_land);
+        let height = self.level.geometry.height as u16;
+        let touches = self.agent.as_ref().map(|a| {
+            let pos = a.transform.disp;
+            level::moving::Touch {
+                pos: (pos.x as i32, pos.y as i32, pos.z as i32),
+                radius: (a.phys_data.bbox.radius * a.car.scale) as i32,
             }
-            self.moving_land
-                .update(&mut self.level, &mut self.moving_land_regions);
-        }
-
-        self.moving_land_regions.sort_unstable();
-        self.moving_land_regions.dedup();
-
-        let z_range = 0..self.level.geometry.height as u16;
-        for r in self.moving_land_regions.drain(..) {
-            self.render.terrain.dirty_rects.push(DirtyRect {
-                rect: Rect {
-                    x: r.x as u16,
-                    y: r.y as u16,
-                    w: r.w as u16,
-                    h: r.h as u16,
-                },
-                z_range: z_range.clone(),
-                need_upload: true,
-            });
-        }
+        });
+        let regions = self.moving.step(&mut self.level, delta, touches);
+        self.render.dirty_moving_land(regions, height);
     }
 
     fn draw(

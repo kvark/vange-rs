@@ -1559,12 +1559,29 @@ impl Tin {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            self.chunks
-                .iter_mut()
-                .enumerate()
-                .filter(|entry| entry.1.due)
-                .map(|(index, state)| refit(index, state))
-                .collect()
+            // One 128² refine plus a WebGL buffer upload is several
+            // milliseconds in the browser. A cyclic set on Fostral can
+            // put tens of chunks due at once; doing them all in one
+            // frame is the one-second hitch. Skip the rest: pending
+            // stays, and the start index walks so they all get a turn.
+            const MAX_REFITS: usize = 4;
+            let n = self.chunks.len();
+            if n == 0 {
+                return Vec::new();
+            }
+            let start = (self.tick as usize) % n;
+            let mut out = Vec::new();
+            for k in 0..n {
+                if out.len() >= MAX_REFITS {
+                    break;
+                }
+                let index = (start + k) % n;
+                if self.chunks[index].due {
+                    let state = &mut self.chunks[index];
+                    out.push(refit(index, state));
+                }
+            }
+            out
         }
     }
 }
