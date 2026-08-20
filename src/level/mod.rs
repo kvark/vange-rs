@@ -8,6 +8,7 @@ use std::{
 
 mod config;
 pub mod cycle;
+pub mod flood;
 pub mod moving;
 pub mod palette;
 pub mod terraform;

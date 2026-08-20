@@ -184,6 +184,8 @@ pub struct SnapshotOptions {
     pub dig_center: Option<(i32, i32)>,
     /// Optional crater radius in level texels.
     pub dig_radius: Option<i32>,
+    /// Days into the world's tide cycle to set the water at.
+    pub tide_day: Option<f64>,
     /// Blow a crater here.
     pub crater: Option<(i32, i32)>,
     /// Radius of that crater.
@@ -280,6 +282,7 @@ impl Default for SnapshotOptions {
             dig_frame: 1,
             dig_center: None,
             dig_radius: None,
+            tide_day: None,
             crater: None,
             crater_radius: 20,
             cycle: None,
@@ -637,6 +640,26 @@ pub fn render_snapshot(opts: SnapshotOptions) {
         }
         bunch
     });
+
+    if let Some(day) = opts.tide_day {
+        let world = opts
+            .level_path
+            .as_ref()
+            .and_then(|p| Path::new(p).parent())
+            .and_then(|d| d.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let mut tide = level::flood::Flood::new(&lvl, world);
+        tide.set_days(day);
+        tide.apply(&mut lvl);
+        info!(
+            "Tide on day {} of {}: level {} ({:+.0}%)",
+            day,
+            world,
+            lvl.flood_map[0],
+            (tide.scale() - 1.0) * 100.0
+        );
+    }
 
     let mut cam = make_camera(&opts, &lvl);
     let animation_start = cam.loc;
