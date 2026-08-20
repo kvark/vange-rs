@@ -378,6 +378,8 @@ pub extern "C" fn rv_map_init(ctx: &mut Context, desc: MapDescription) {
                 tc
             })
             .collect(),
+        // No world INI here, so nothing tells the terrain to breathe.
+        dynamic_palette: Default::default(),
     };
 
     let render = vangers::render::Render::new(
