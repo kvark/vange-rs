@@ -84,6 +84,16 @@ struct Cli {
     /// Width of the blade in texels, across the line it travels.
     #[arg(long, default_value_t = 40.0)]
     grader_width: f32,
+    /// Swell a lava spot at "x,y" and render it this many quants in, so
+    /// the dome can be caught part-way out of the ground.
+    #[arg(long)]
+    lava: Option<String>,
+    /// Quants of the lava spot to run before the snapshot.
+    #[arg(long, default_value_t = 4)]
+    lava_quants: u32,
+    /// Bring the caves inside "x0,y0,x1,y1" down.
+    #[arg(long)]
+    landslide: Option<String>,
     /// Set the tide to this many days into the world's own cycle, so the
     /// water can be rendered at any point of its swing.
     #[arg(long)]
@@ -345,6 +355,27 @@ fn main() {
                     .collect::<Vec<_>>();
                 assert_eq!(v.len(), 2, "--crater wants x,y");
                 (v[0], v[1])
+            }),
+            lava: cli.lava.as_deref().map(|s| {
+                let v = s
+                    .split(',')
+                    .map(|t| t.trim().parse::<i32>().expect("--lava wants x,y"))
+                    .collect::<Vec<_>>();
+                assert_eq!(v.len(), 2, "--lava wants x,y");
+                (v[0], v[1])
+            }),
+            lava_quants: cli.lava_quants,
+            landslide: cli.landslide.as_deref().map(|s| {
+                let v = s
+                    .split(',')
+                    .map(|t| {
+                        t.trim()
+                            .parse::<i32>()
+                            .expect("--landslide wants x0,y0,x1,y1")
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(v.len(), 4, "--landslide wants x0,y0,x1,y1");
+                (v[0], v[1], v[2], v[3])
             }),
             tide_day: cli.tide_day,
             crater_radius: cli.crater_radius,

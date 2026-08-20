@@ -184,6 +184,12 @@ pub struct SnapshotOptions {
     pub dig_center: Option<(i32, i32)>,
     /// Optional crater radius in level texels.
     pub dig_radius: Option<i32>,
+    /// Swell a lava spot here.
+    pub lava: Option<(i32, i32)>,
+    /// Quants of it to run before the snapshot.
+    pub lava_quants: u32,
+    /// Bring the caves inside this box down.
+    pub landslide: Option<(i32, i32, i32, i32)>,
     /// Days into the world's tide cycle to set the water at.
     pub tide_day: Option<f64>,
     /// Blow a crater here.
@@ -282,6 +288,9 @@ impl Default for SnapshotOptions {
             dig_frame: 1,
             dig_center: None,
             dig_radius: None,
+            lava: None,
+            lava_quants: 4,
+            landslide: None,
             tide_day: None,
             crater: None,
             crater_radius: 20,
@@ -857,6 +866,33 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                     need_upload: true,
                 });
             }
+        }
+        if let Some(at) = opts.lava
+            && frame_index == opts.dig_frame
+        {
+            let mut regions = Vec::new();
+            let mut spot = level::effect::LavaSpot::new(at, &level::effect::Swell::default());
+            for _ in 0..opts.lava_quants {
+                if !spot.quant(&mut lvl, &mut regions) {
+                    break;
+                }
+            }
+            info!(
+                "Swelled a lava spot at {:?} for {} quants, touching {} regions",
+                at,
+                opts.lava_quants,
+                regions.len()
+            );
+            render.dirty_terrain(&regions, 0x100);
+        }
+        if let Some((x0, y0, x1, y1)) = opts.landslide
+            && frame_index == opts.dig_frame
+        {
+            let mut regions = Vec::new();
+            let quad = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+            let down = level::effect::landslide(&mut lvl, &quad, 250, 4, &mut regions);
+            info!("A slide brought {} caves down inside {:?}", down, quad);
+            render.dirty_terrain(&regions, 0x100);
         }
         if let Some(at) = opts.crater
             && frame_index == opts.dig_frame

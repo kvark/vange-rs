@@ -87,6 +87,17 @@ impl Default for Tread {
 /// the special surfaces do not.
 pub const DESTRUCTIBLE: u16 = 0b0100_1111;
 
+/// The shape a spot's altitude change takes from its centre to its rim.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Profile {
+    /// `DestroySpot`: straight sides, coming to a point at the middle.
+    #[default]
+    Cone,
+    /// `xDestroySpot`: a quarter turn of a sine, so the middle is flat and
+    /// the sides ease off into the rim. What the lava spots swell with.
+    Dome,
+}
+
 /// One cone of `DestroySpot`: the shape a blast leaves.
 ///
 /// Craters in the original are two of these together - a shallow wide one
@@ -96,10 +107,14 @@ pub const DESTRUCTIBLE: u16 = 0b0100_1111;
 pub struct Spot {
     /// Texels from the centre to the edge.
     pub radius: i32,
-    /// Altitude moved per texel in from the edge, in 8.8 fixed point, so
-    /// `512` is two units and `-(1 << 11)` is eight down. The cone is
-    /// deepest at the centre and comes to nothing at the rim.
+    /// How far the ground moves, in 8.8 fixed point. A [`Profile::Cone`]
+    /// reads it per texel in from the rim, so `512` over a radius of ten
+    /// digs twenty; a [`Profile::Dome`] reads it as the depth at the middle
+    /// outright. The original draws the same distinction between its two
+    /// spot routines.
     pub delta: i32,
+    /// Which way the sides fall away.
+    pub profile: Profile,
     /// How frayed the edge is. `rfactor` of the original: `0` is a clean
     /// circle, and each step up doubles the reach of the dice roll that
     /// decides whether a texel is touched at all.
@@ -118,6 +133,7 @@ impl Default for Spot {
         Spot {
             radius: 10,
             delta: -(1 << 11),
+            profile: Profile::Cone,
             ragged: 1,
             terrain: None,
             mask: DESTRUCTIBLE,
@@ -172,7 +188,21 @@ pub fn apply_spot(level: &mut Level, at: (i32, i32), spot: &Spot, regions: &mut 
     let mut bounds = Bounds::default();
 
     for (dx, dy, ring) in rings(spot.radius) {
-        let step = ((spot.radius - ring) * spot.delta) >> 8;
+        // The original shifts the 8.8 down by eight, which rounds towards
+        // the floor and so gives a negative delta one more unit than the
+        // matching positive one. Dividing keeps the two the same size,
+        // which is what lets a lava spot sink back into the ground it came
+        // out of without leaving a dent.
+        let step = match spot.profile {
+            Profile::Cone => (spot.radius - ring) * spot.delta / 256,
+            Profile::Dome => {
+                // A quarter turn from the middle out, so the sides ease
+                // into the rim instead of meeting it at an angle.
+                let turn =
+                    std::f32::consts::FRAC_PI_2 * (spot.radius - ring) as f32 / spot.radius as f32;
+                (spot.delta as f32 * turn.sin()) as i32 / 256
+            }
+        };
         if step == 0 {
             continue;
         }
@@ -304,9 +334,10 @@ pub fn apply_burrow(
             let p = burrow.right + (burrow.left - burrow.right) * t;
             let spot = Spot {
                 radius: config.radius,
-                // A cone `height` tall at its middle: the delta is per
-                // texel in from the rim, in 8.8.
-                delta: (height << 8) / config.radius,
+                // A dome `height` tall, which is the shape the sprites the
+                // original stamps here hold.
+                delta: height << 8,
+                profile: Profile::Dome,
                 ragged: 2,
                 terrain: None,
                 mask: DESTRUCTIBLE,
