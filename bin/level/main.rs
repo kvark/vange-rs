@@ -84,6 +84,10 @@ struct Cli {
     /// Width of the blade in texels, across the line it travels.
     #[arg(long, default_value_t = 40.0)]
     grader_width: f32,
+    /// Set the tide to this many days into the world's own cycle, so the
+    /// water can be rendered at any point of its swing.
+    #[arg(long)]
+    tide_day: Option<f64>,
     /// Blow a crater at "x,y" - a rim thrown up around a bowl dug out,
     /// the shape the original's explosions leave.
     #[arg(long)]
@@ -342,6 +346,7 @@ fn main() {
                 assert_eq!(v.len(), 2, "--crater wants x,y");
                 (v[0], v[1])
             }),
+            tide_day: cli.tide_day,
             crater_radius: cli.crater_radius,
             cycle: cli.cycle,
             palette_quants: cli.palette_quants,

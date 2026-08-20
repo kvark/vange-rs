@@ -371,6 +371,8 @@ pub struct Game {
     moving: level::moving::MovingWorld,
     /// The breathing of the terrain colour ramps.
     palette: level::palette::Animation,
+    /// The tide, and where it has taken the water.
+    flood: level::flood::Flood,
     /// The world's story cycles, and the colours they paint it in.
     cycle: Option<level::cycle::Bunch>,
     /// Time carried over towards the next cycle quant.
@@ -496,6 +498,7 @@ impl Game {
 
         let moving = level::moving::MovingWorld::load(&level_config, None);
         let palette = level::palette::Animation::new(&level, &level_config.dynamic_palette);
+        let flood = level::flood::Flood::new(&level, &settings.game.level);
         // The world's story cycles, if it has an escave that runs any.
         let mut level = level;
         let cycle = level::cycle::Bunch::load(
@@ -593,6 +596,7 @@ impl Game {
             level,
             moving,
             palette,
+            flood,
             cycle,
             cycle_time: 0.0,
             terraform: level::terraform::Config::default(),
@@ -1003,6 +1007,10 @@ impl Application for Game {
 
         self.step_moving_land(delta);
 
+        if self.flood.step(&mut self.level, delta) {
+            self.render.terrain.dirty_flood = true;
+        }
+
         self.step_cycle(delta);
         if !self.cycle.as_ref().is_some_and(|b| b.is_fading()) {
             let range = self.palette.step(&mut self.level, delta);
@@ -1371,6 +1379,25 @@ impl Application for Game {
                 ui.group(|ui| {
                     ui.label("Palette:");
                     ui.checkbox(&mut self.palette.enabled, "Animate");
+                });
+            }
+            if self.flood.is_dynamic() {
+                ui.group(|ui| {
+                    ui.label("Tide:");
+                    let moved = ui.checkbox(&mut self.flood.enabled, "Drift").changed();
+                    ui.add(
+                        egui::Slider::new(&mut self.flood.seconds_per_day, 5.0..=600.0)
+                            .text("Seconds per day"),
+                    );
+                    ui.label(format!(
+                        "level {} ({:+.0}%)",
+                        self.level.flood_map[0],
+                        (self.flood.scale() - 1.0) * 100.0
+                    ));
+                    if moved {
+                        self.flood.apply(&mut self.level);
+                        self.render.terrain.dirty_flood = true;
+                    }
                 });
             }
             if self.cycle.is_some() {
