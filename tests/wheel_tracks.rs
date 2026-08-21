@@ -352,7 +352,10 @@ fn a_car_presses_its_own_hollow_into_soft_ground() {
         &mut level,
         &off,
         &grader,
-        &terraform::Press::default(),
+        &terraform::Press {
+            enabled: true,
+            ..terraform::Press::default()
+        },
         60,
     );
     let after = altitudes(&level);
@@ -385,7 +388,10 @@ fn a_car_in_the_air_presses_nothing() {
         &mut level,
         &off,
         &terraform::Grader::default(),
-        &terraform::Press::default(),
+        &terraform::Press {
+            enabled: true,
+            ..terraform::Press::default()
+        },
         15,
     );
     assert_eq!(changed(&before, &altitudes(&level)), 0);
@@ -494,7 +500,15 @@ fn a_burrowing_car_leaves_mounds_and_a_settled_one_does_not() {
                 Some(&mut car.tracks),
             );
             for b in car.tracks.drain_burrows() {
-                terraform::apply_burrow(level, &terraform::Molehills::default(), &b, &mut regions);
+                terraform::apply_burrow(
+                    level,
+                    &terraform::Molehills {
+                        enabled: true,
+                        ..terraform::Molehills::default()
+                    },
+                    &b,
+                    &mut regions,
+                );
             }
             let _ = car.tracks.take_hull();
             let _ = car.tracks.drain_sweeps().count();
