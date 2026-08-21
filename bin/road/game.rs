@@ -1287,135 +1287,144 @@ impl Application for Game {
                 crate::boilerplate::tweaks::collapse_button(ui, &mut self.ui_expanded);
                 ui.label("Tweaks");
             });
-            ui.group(|ui| {
-                ui.label("Player:");
-                egui::ComboBox::from_label("Mechous")
-                    .selected_text(&player.car_name)
-                    .show_ui(ui, |ui| {
-                        for car_name in self.db.cars.keys() {
-                            ui.selectable_value(&mut selected_car, car_name, car_name);
-                        }
-                    });
-                egui::ComboBox::from_label("Color")
-                    .selected_text(player.color.name())
-                    .show_ui(ui, |ui| {
-                        for &color in &[
-                            BodyColor::Green,
-                            BodyColor::Red,
-                            BodyColor::Blue,
-                            BodyColor::Yellow,
-                            BodyColor::Gray,
-                        ] {
-                            ui.selectable_value(&mut player.color, color, color.name());
-                        }
-                    });
-                if let Physics::Cpu {
-                    ref mut transform,
-                    dynamo: _,
-                } = player.physics
-                {
-                    ui.horizontal(|ui| {
-                        ui.label("Position");
-                        ui.add(
-                            egui::DragValue::new(&mut transform.disp.x)
-                                .speed(1.0)
-                                .prefix("x:"),
-                        );
-                        ui.add(
-                            egui::DragValue::new(&mut transform.disp.y)
-                                .speed(1.0)
-                                .prefix("y:"),
-                        );
-                    });
-                }
-            });
-            ui.group(|ui| {
-                ui.label("Camera:");
-                self.cam.draw_ui(ui);
-                if let CameraStyle::Follow {
-                    ref mut follow,
-                    ref mut ground_anchor,
-                } = self.cam_style
-                {
-                    let mut angle_deg = follow.angle_x.to_degrees();
-                    ui.add(egui::Slider::new(&mut angle_deg, -105.0..=0.0).text("Angle"));
-                    follow.angle_x = angle_deg.to_radians();
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut follow.offset.x)
-                                .speed(1.0)
-                                .prefix("x:"),
-                        );
-                        ui.add(
-                            egui::DragValue::new(&mut follow.offset.y)
-                                .speed(1.0)
-                                .prefix("y:"),
-                        );
-                        ui.add(
-                            egui::DragValue::new(&mut follow.offset.z)
-                                .speed(1.0)
-                                .prefix("z:"),
-                        );
-                    });
-                    ui.add(egui::Slider::new(&mut follow.speed, 0.1..=10.0).text("Speed"));
-                    ui.checkbox(ground_anchor, "Ground anchor");
-                }
-            });
-            ui.group(|ui| {
-                ui.label("Level:");
-                self.level.draw_ui(ui);
-            });
+            egui::CollapsingHeader::new("Player")
+                .default_open(true)
+                .show(ui, |ui| {
+                    egui::ComboBox::from_label("Mechous")
+                        .selected_text(&player.car_name)
+                        .show_ui(ui, |ui| {
+                            for car_name in self.db.cars.keys() {
+                                ui.selectable_value(&mut selected_car, car_name, car_name);
+                            }
+                        });
+                    egui::ComboBox::from_label("Color")
+                        .selected_text(player.color.name())
+                        .show_ui(ui, |ui| {
+                            for &color in &[
+                                BodyColor::Green,
+                                BodyColor::Red,
+                                BodyColor::Blue,
+                                BodyColor::Yellow,
+                                BodyColor::Gray,
+                            ] {
+                                ui.selectable_value(&mut player.color, color, color.name());
+                            }
+                        });
+                    if let Physics::Cpu {
+                        ref mut transform,
+                        dynamo: _,
+                    } = player.physics
+                    {
+                        ui.horizontal(|ui| {
+                            ui.label("Position");
+                            ui.add(
+                                egui::DragValue::new(&mut transform.disp.x)
+                                    .speed(1.0)
+                                    .prefix("x:"),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut transform.disp.y)
+                                    .speed(1.0)
+                                    .prefix("y:"),
+                            );
+                        });
+                    }
+                });
+            egui::CollapsingHeader::new("Camera")
+                .default_open(false)
+                .show(ui, |ui| {
+                    self.cam.draw_ui(ui);
+                    if let CameraStyle::Follow {
+                        ref mut follow,
+                        ref mut ground_anchor,
+                    } = self.cam_style
+                    {
+                        let mut angle_deg = follow.angle_x.to_degrees();
+                        ui.add(egui::Slider::new(&mut angle_deg, -105.0..=0.0).text("Angle"));
+                        follow.angle_x = angle_deg.to_radians();
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut follow.offset.x)
+                                    .speed(1.0)
+                                    .prefix("x:"),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut follow.offset.y)
+                                    .speed(1.0)
+                                    .prefix("y:"),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut follow.offset.z)
+                                    .speed(1.0)
+                                    .prefix("z:"),
+                            );
+                        });
+                        ui.add(egui::Slider::new(&mut follow.speed, 0.1..=10.0).text("Speed"));
+                        ui.checkbox(ground_anchor, "Ground anchor");
+                    }
+                });
+            egui::CollapsingHeader::new("Level")
+                .default_open(false)
+                .show(ui, |ui| {
+                    self.level.draw_ui(ui);
+                });
             if !self.moving.is_empty() {
-                ui.group(|ui| {
-                    ui.label("Moving land:");
-                    Self::draw_moving_land_ui(&self.moving.land, &self.moving.triggers, ui);
-                });
+                egui::CollapsingHeader::new("Moving land")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        Self::draw_moving_land_ui(&self.moving.land, &self.moving.triggers, ui);
+                    });
             }
-            ui.group(|ui| {
-                ui.label("Terrain:");
-                Self::draw_terraform_ui(&mut self.terraform, ui);
-            });
-            if !self.palette.is_empty() {
-                ui.group(|ui| {
-                    ui.label("Palette:");
-                    ui.checkbox(&mut self.palette.enabled, "Animate");
+            egui::CollapsingHeader::new("Terrain")
+                .default_open(false)
+                .show(ui, |ui| {
+                    Self::draw_terraform_ui(&mut self.terraform, ui);
                 });
+            if !self.palette.is_empty() {
+                egui::CollapsingHeader::new("Palette")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.checkbox(&mut self.palette.enabled, "Animate");
+                    });
             }
             if self.flood.is_dynamic() {
-                ui.group(|ui| {
-                    ui.label("Tide:");
-                    let moved = ui.checkbox(&mut self.flood.enabled, "Drift").changed();
-                    ui.add(
-                        egui::Slider::new(&mut self.flood.seconds_per_day, 5.0..=600.0)
-                            .text("Seconds per day"),
-                    );
-                    ui.label(format!(
-                        "level {} ({:+.0}%)",
-                        self.level.flood_map[0],
-                        (self.flood.scale() - 1.0) * 100.0
-                    ));
-                    if moved {
-                        self.flood.apply(&mut self.level);
-                        self.render.terrain.dirty_flood = true;
-                    }
-                });
+                egui::CollapsingHeader::new("Tide")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        let moved = ui.checkbox(&mut self.flood.enabled, "Drift").changed();
+                        ui.add(
+                            egui::Slider::new(&mut self.flood.seconds_per_day, 5.0..=600.0)
+                                .text("Seconds per day"),
+                        );
+                        ui.label(format!(
+                            "level {} ({:+.0}%)",
+                            self.level.flood_map[0],
+                            (self.flood.scale() - 1.0) * 100.0
+                        ));
+                        if moved {
+                            self.flood.apply(&mut self.level);
+                            self.render.terrain.dirty_flood = true;
+                        }
+                    });
             }
             if self.cycle.is_some() {
-                ui.group(|ui| {
-                    ui.label("Cycle:");
-                    if let Some(jump) = Self::draw_cycle_ui(self.cycle.as_ref().unwrap(), ui) {
-                        let bunch = self.cycle.as_mut().unwrap();
-                        let range = bunch.set_cycle(jump, &mut self.level);
-                        self.render.dirty_palette(range);
-                        self.render.set_light_modulation(bunch.light());
-                        self.palette.rebase(&self.level.palette);
-                    }
-                });
+                egui::CollapsingHeader::new("Cycle")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        if let Some(jump) = Self::draw_cycle_ui(self.cycle.as_ref().unwrap(), ui) {
+                            let bunch = self.cycle.as_mut().unwrap();
+                            let range = bunch.set_cycle(jump, &mut self.level);
+                            self.render.dirty_palette(range);
+                            self.render.set_light_modulation(bunch.light());
+                            self.palette.rebase(&self.level.palette);
+                        }
+                    });
             }
-            ui.group(|ui| {
-                ui.label("Renderer:");
-                self.render.draw_ui(ui);
-            });
+            egui::CollapsingHeader::new("Renderer")
+                .default_open(false)
+                .show(ui, |ui| {
+                    self.render.draw_ui(ui);
+                });
         });
 
         if selected_car != &player.car_name {
