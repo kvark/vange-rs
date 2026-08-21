@@ -275,7 +275,9 @@ pub struct Molehills {
 impl Default for Molehills {
     fn default() -> Self {
         Molehills {
-            enabled: true,
+            // `aciMoleMounds` style switch in the original, off unless asked
+            // for: burrowing carves the ground, which is not wanted by default.
+            enabled: false,
             radius: 6,
             height: 12,
         }
@@ -372,7 +374,9 @@ pub struct Press {
 impl Default for Press {
     fn default() -> Self {
         Press {
-            enabled: true,
+            // `aciGroundPressingEnabled` in `moveland.cpp` ships as 0: the
+            // original only presses the ground under a car when asked to.
+            enabled: false,
             // `ground_pressing_z_offset` in `common.prm`.
             clearance: 5,
         }
@@ -1841,6 +1845,13 @@ mod tests {
         }
     }
 
+    fn molehills() -> Molehills {
+        Molehills {
+            enabled: true,
+            ..Molehills::default()
+        }
+    }
+
     /// A hull covering `x0..=x1` by `y0..=y1`, with its underside at `z`.
     fn hull(x0: f32, x1: f32, y0: f32, y1: f32, z: f32) -> Hull {
         use glam::Vec3;
@@ -2242,7 +2253,7 @@ mod tests {
         let mut regions = Vec::new();
         apply_burrow(
             &mut level,
-            &Molehills::default(),
+            &molehills(),
             &burrow(20.0, 40.0, 30.0),
             &mut regions,
         );
@@ -2267,7 +2278,7 @@ mod tests {
         let mut regions = Vec::new();
         apply_burrow(
             &mut level,
-            &Molehills::default(),
+            &molehills(),
             &burrow(20.0, 40.0, 30.0),
             &mut regions,
         );
@@ -2286,7 +2297,7 @@ mod tests {
         let mut regions = Vec::new();
         apply_burrow(
             &mut level,
-            &Molehills::default(),
+            &molehills(),
             &burrow(20.0, 40.0, 30.0),
             &mut regions,
         );
@@ -2302,7 +2313,7 @@ mod tests {
             let mut regions = Vec::new();
             apply_burrow(
                 &mut level,
-                &Molehills::default(),
+                &molehills(),
                 &burrow(20.0, 40.0, 30.0),
                 &mut regions,
             );
@@ -2368,7 +2379,7 @@ mod tests {
         let mut regions = Vec::new();
         apply_burrow(
             &mut level,
-            &Molehills::default(),
+            &molehills(),
             &burrow(20.0, 40.0, 30.0),
             &mut regions,
         );
