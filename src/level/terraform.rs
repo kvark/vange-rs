@@ -63,8 +63,9 @@ pub struct Tread {
     pub period: u8,
     /// Stamps in one bar, laid out across the track.
     pub bar: u8,
-    /// Texels between those stamps. `8/3` spreads a three-stamp bar over
-    /// eight texels, about the width of a wheel.
+    /// Texels between those stamps. The original's `8/3` spread a
+    /// three-stamp bar over eight texels, about the width of a wheel;
+    /// here it is halved so the track reads about half as wide.
     pub spacing: f32,
 }
 
@@ -75,7 +76,9 @@ impl Default for Tread {
             depth: 1,
             period: 3,
             bar: 3,
-            spacing: 8.0 / 3.0,
+            // `DrawMechosWheelUp`'s `8/3`, halved: a bar that reads about
+            // half the stock width, centred on the wheel.
+            spacing: 4.0 / 3.0,
         }
     }
 }
@@ -646,8 +649,11 @@ pub fn apply_tread(level: &mut Level, config: &Tread, track: &Track, regions: &m
         };
         mask -= 1;
 
+        // The bar is centred on the wheel, so the track sits under the tyre
+        // rather than off its trailing side.
+        let mid = (config.bar as f32 - 1.0) * 0.5;
         for k in 0..config.bar as i32 {
-            let reach = config.spacing * k as f32;
+            let reach = config.spacing * (k as f32 - mid);
             let bx = x + (track.across.0 * reach).round() as i32;
             let by = y + (track.across.1 * reach).round() as i32;
             if press(level, bx, by, delta) {
@@ -1286,10 +1292,11 @@ mod tests {
             &mut regions,
         );
         let at = |x: i32, y: i32| level.height[(y * SIZE + x) as usize];
-        for k in 0..3 {
+        for k in -1..=1 {
             assert_eq!(at(10, 10 + k), 99, "the whole bar is stamped");
         }
-        assert_eq!(at(10, 13), 100, "and no further");
+        assert_eq!(at(10, 13), 100, "and no further to the +y side");
+        assert_eq!(at(10, 8), 100, "nor to the -y side of the wheel");
     }
 
     #[test]
@@ -1310,7 +1317,7 @@ mod tests {
             regions,
             vec![Region {
                 x: 10,
-                y: 10,
+                y: 9,
                 w: 4,
                 h: 3
             }]

@@ -56,14 +56,28 @@ fn fragment(in: Varyings) -> @location(0) vec4<f32> {
 
     // The polygon's own normal, from screen-space derivatives of the world
     // position. A ray marcher has to rebuild this from height map taps;
-    // here it is exact and free, and it is the only thing that gives a
-    // sensible normal on the vertical walls and cave ceilings, where the
-    // height gradient is undefined.
-    var normal = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+    // here it is exact but facets within each triangle. Smoothing it with
+    // the height-field gradient (below) keeps gentle slopes continuous
+    // while the geometric normal stays authoritative where the mesh
+    // stops following the height field - on vertical walls and cave
+    // ceilings, where the gradient is undefined.
+    var geo = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
     let to_eye = u_Globals.camera_pos.xyz - in.world_pos;
-    if (dot(normal, to_eye) < 0.0) {
-        normal = -normal;
+    if (dot(geo, to_eye) < 0.0) {
+        geo = -geo;
     }
+
+    // Smooth surface normal from the height gradient, the same way the ray
+    // marcher's `evaluate_color` builds one. Costs four height taps.
+    let gradient = get_surface_gradient(in.world_pos);
+    let grad_normal = normalize(vec3<f32>(-0.5 * gradient.x, -0.5 * gradient.y, 1.0));
+
+    // How vertical the polygon is: 0 on level ground, 1 on a wall or a
+    // ceiling. Blend to the geometric normal as it turns, so the smooth
+    // gradient never lights a cliff face like a ramp.
+    let slant = 1.0 - abs(geo.z);
+    // `u_Locals.lighting_flags[1]`: 1 = smooth normals on, 0 = flat.
+    let normal = normalize(mix(geo, mix(grad_normal, geo, smoothstep(0.55, 0.8, slant)), f32(u_Locals.lighting_flags[1u])));
 
     let terrain_color = evaluate_color_normal(ty, in.world_pos, visibility, normal);
     return apply_fog(terrain_color, in.world_pos.xy);
