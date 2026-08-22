@@ -519,14 +519,6 @@ pub fn step(
             let (sin, cos) = dynamo.rudder.sin_cos();
             Vec3::new(cos, -sin, 0.0)
         };
-        // `track_nx`/`track_ny` of the original: the car's lateral axis
-        // flattened onto the level, so that pitching the nose down narrows
-        // the bar a wheel lays across its own track.
-        let across = {
-            let lateral = transform.rot * Vec3::X;
-            (lateral.x, lateral.y)
-        };
-
         // The grader blade, from the `TerraMoverS*` the mechos `.prm` files
         // carry: a line across the leading edge of the car, at the bottom
         // of it. Reversing swings it round to the other end, so the blade
@@ -550,20 +542,8 @@ pub fn step(
             let corner = |x: f32| transform.rot * Vec3::new(x, sy, -sz) + transform.disp;
             tracks.blade(corner(-sx), corner(sx));
         }
-        for (index, wheel) in car.wheels.iter().enumerate() {
+        for wheel in car.wheels.iter() {
             let pw = transform.transform_point(Vec3::from(wheel.pos));
-            if let Some(ref mut tracks) = tracks {
-                let coord = (pw.x.round() as i32, pw.y.round() as i32);
-                // `get_upper_height(..) < round(rg.z) + 15`: a wheel that is
-                // merely passing overhead leaves nothing behind.
-                if level::terraform::surface_height(level, coord)
-                    < pw.z + level::terraform::MAX_CONTACT_HEIGHT
-                {
-                    tracks.touch(index, coord, across);
-                } else {
-                    tracks.lift(index);
-                }
-            }
             let detect_wheel_hits = false;
             if detect_wheel_hits {
                 let dist = terrain::get_distance_to_terrain(level, pw);
@@ -715,6 +695,29 @@ pub fn step(
     }
     v_vel *= v_drag.powf(speed_correction_factor);
     w_vel *= w_drag.powf(speed_correction_factor);
+
+    // Record tread endpoints from the transform that will actually be
+    // rendered. Doing this in the traction loop above sampled the pre-step
+    // transform, leaving every trail one integration step behind the tyre.
+    if wheels_touch != 0 && stand_on_wheels {
+        if let Some(ref mut tracks) = tracks {
+            let lateral = transform.rot * Vec3::X;
+            let across = (lateral.x, lateral.y);
+            for (index, wheel) in car.wheels.iter().enumerate() {
+                let pw = transform.transform_point(Vec3::from(wheel.pos));
+                let coord = (pw.x.round() as i32, pw.y.round() as i32);
+                let gap = level::terraform::surface_height(level, coord) - pw.z;
+                // The old one-sided test accepted a wheel arbitrarily high
+                // above the surface whenever another wheel touched. Require
+                // this wheel's own contact point to be close to the ground.
+                if gap.abs() <= level::terraform::MAX_CONTACT_HEIGHT {
+                    tracks.touch(index, coord, across);
+                } else {
+                    tracks.lift(index);
+                }
+            }
+        }
+    }
 
     if let Some(ref mut lbuf) = line_buffer {
         let rot = transform.rot;

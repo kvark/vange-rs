@@ -129,6 +129,101 @@ fn changed(before: &[u8], after: &[u8]) -> usize {
 }
 
 #[test]
+fn tread_endpoints_use_the_post_step_wheel_positions() {
+    let mut level = drivable_level();
+    let mut car = spawn(&level);
+    // Settle and get rolling through the same path as the game first.
+    drive(&mut car, &mut level, &terraform::Tread::default(), 80);
+    car.tracks.reset();
+
+    let common = config::common::Common::test_default();
+    let step = |car: &mut Car| {
+        car.dynamo.change_traction(0.5);
+        physics::step(
+            &mut car.dynamo,
+            &mut car.transform,
+            0.02,
+            &car.data,
+            &level,
+            &common,
+            1.0,
+            0.0,
+            None,
+            0.0,
+            None,
+            Some(&mut car.tracks),
+        );
+    };
+    for _ in 0..100 {
+        step(&mut car);
+        let tracks = car.tracks.drain().collect::<Vec<_>>();
+        if tracks.is_empty() {
+            continue;
+        }
+        let expected = car
+            .data
+            .wheels
+            .iter()
+            .map(|wheel| {
+                let p = car.transform.transform_point(Vec3::from(wheel.pos));
+                (p.x.round() as i32, p.y.round() as i32)
+            })
+            .collect::<Vec<_>>();
+        for track in tracks {
+            assert!(
+                expected.contains(&track.to),
+                "endpoint {:?} is not under any post-step wheel {:?}",
+                track.to,
+                expected
+            );
+        }
+        return;
+    }
+    panic!("the rolling wheels produced no stretches");
+}
+
+#[test]
+fn one_suspended_wheel_does_not_leave_a_track() {
+    let mut level = drivable_level();
+    let mut car = spawn(&level);
+    drive(&mut car, &mut level, &terraform::Tread::default(), 80);
+    car.tracks.reset();
+    car.data.wheels[0].pos[2] += 100.0;
+
+    let common = config::common::Common::test_default();
+    for _ in 0..100 {
+        car.dynamo.change_traction(0.5);
+        physics::step(
+            &mut car.dynamo,
+            &mut car.transform,
+            0.02,
+            &car.data,
+            &level,
+            &common,
+            1.0,
+            0.0,
+            None,
+            0.0,
+            None,
+            Some(&mut car.tracks),
+        );
+        let tracks = car.tracks.drain().collect::<Vec<_>>();
+        if !tracks.is_empty() {
+            let wheel = car
+                .transform
+                .transform_point(Vec3::from(car.data.wheels[0].pos));
+            let suspended = (wheel.x.round() as i32, wheel.y.round() as i32);
+            assert!(
+                tracks.iter().all(|track| track.to != suspended),
+                "the suspended wheel left a track at {suspended:?}: {tracks:?}"
+            );
+            return;
+        }
+    }
+    panic!("the grounded wheels produced no tracks");
+}
+
+#[test]
 fn driving_marks_the_ground_it_covers() {
     let mut level = drivable_level();
     let mut car = spawn(&level);
