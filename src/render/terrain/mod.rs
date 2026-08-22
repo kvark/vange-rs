@@ -337,6 +337,11 @@ struct MeshGeometry {
     /// them, at full detail" so the first frame, which has no decision
     /// behind it yet, refits everything.
     drawn: Vec<Option<u8>>,
+    /// Chunks the web build scaffolded but has not fitted yet; filled in a
+    /// few per tick, nearest the camera first. Empty on native, where
+    /// `Tin::build` fits everything up front.
+    #[cfg(target_arch = "wasm32")]
+    unbuilt: Vec<usize>,
     gpu_bytes: u64,
 }
 
@@ -360,8 +365,42 @@ impl MeshGeometry {
             chunks,
             tin,
             drawn,
+            #[cfg(target_arch = "wasm32")]
+            unbuilt: Vec::new(),
             gpu_bytes,
         }
+    }
+
+    /// Fits the `budget` unbuilt chunks nearest `origin`, replacing their
+    /// empty buffers with real ones. Re-sorts the remaining queue by
+    /// distance so the next call keeps the state right around the camera
+    /// even after it moves.
+    #[cfg(target_arch = "wasm32")]
+    fn build_pending(
+        &mut self,
+        level: &level::Level,
+        device: &wgpu::Device,
+        origin: glam::Vec2,
+        budget: usize,
+    ) {
+        if self.unbuilt.is_empty() {
+            return;
+        }
+        self.unbuilt.sort_by_key(|&ci| {
+            let c = self.chunks[ci].center;
+            let d = origin - glam::Vec2::new(c[0], c[1]);
+            (d.x * d.x + d.y * d.y) as u32
+        });
+        let mut built = 0;
+        self.unbuilt.retain(|&ci| {
+            if built >= budget {
+                return true;
+            }
+            let buffers = self.tin.build_chunk(level, ci);
+            self.chunks[ci] = ChunkBufs::new(&buffers, device);
+            built += 1;
+            false
+        });
     }
 }
 
@@ -1930,6 +1969,8 @@ impl Context {
         level: &level::Level,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        // Only the web build's incremental first fit reads this.
+        #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))] origin: glam::Vec2,
     ) {
         let surface_constants = {
             let bits = level.terrain_bits();
@@ -1987,8 +2028,27 @@ impl Context {
         {
             match *geo {
                 None => {
-                    let (tin, mesh) = level::tin::Tin::build(level, config);
-                    *geo = Some(MeshGeometry::new(tin, &mesh, device));
+                    // Build the whole TIN at once on native, where rayon
+                    // spreads the chunks over everything cores. On wasm the
+                    // single-threaded fit is the seconds-long startup hitch,
+                    // so scaffold empty chunks and fill them in a few per
+                    // tick, nearest the camera first (`build_pending`).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let (tin, mesh) = level::tin::Tin::build(level, config);
+                        *geo = Some(MeshGeometry::new(tin, &mesh, device));
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let (tin, mesh) = level::tin::Tin::scaffold(level, config);
+                        let geo = &mut *geo;
+                        *geo = Some(MeshGeometry::new(tin, &mesh, device));
+                        let loaded = geo.as_mut().unwrap();
+                        loaded.unbuilt = (0..loaded.chunks.len()).collect();
+                        // The frame that scaffolds also builds the first
+                        // few chunks, so the camera seat is not blank.
+                        loaded.build_pending(level, device, origin, 4);
+                    }
                 }
                 Some(ref mut geo) => {
                     // One batched refit for the whole frame's edits. Several
@@ -2018,6 +2078,12 @@ impl Context {
                     for (index, buffers) in tin.update(level, &rects, drawn) {
                         chunks[index] = ChunkBufs::new(&buffers, device);
                     }
+                    // The scaffolded chunks still awaiting their first fit:
+                    // one a tick, nearest the camera, so the visible area
+                    // fills over the opening frames and distant terrain
+                    // catches up as the level is driven across.
+                    #[cfg(target_arch = "wasm32")]
+                    geo.build_pending(level, device, origin, 1);
                 }
             }
         }
@@ -2424,6 +2490,11 @@ impl Context {
                             (cam_tile.y + (copy / 3) as f32 - 1.0) * size[1],
                         );
                         for (ci, chunk) in chunks.iter().enumerate() {
+                            // Not fitted yet (web build): nothing to cull
+                            // or draw, and nothing for a refit to keep up.
+                            if chunk.lods.is_empty() {
+                                continue;
+                            }
                             let min = glam::Vec3::new(
                                 chunk.min[0] + offset.x,
                                 chunk.min[1] + offset.y,

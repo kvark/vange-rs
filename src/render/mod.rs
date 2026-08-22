@@ -578,7 +578,8 @@ impl Render {
     ) {
         profiling::scope!("draw_world");
         batcher.prepare(device);
-        self.terrain.update_dirty(encoder, level, device, queue);
+        self.terrain
+            .update_dirty(encoder, level, device, queue, cam.loc.truncate());
 
         //TODO: common routine for draw passes
         //TODO: use `write_buffer`
