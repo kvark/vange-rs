@@ -699,22 +699,23 @@ pub fn step(
     // Record tread endpoints from the transform that will actually be
     // rendered. Doing this in the traction loop above sampled the pre-step
     // transform, leaving every trail one integration step behind the tyre.
-    if wheels_touch != 0 && stand_on_wheels {
-        if let Some(ref mut tracks) = tracks {
-            let lateral = transform.rot * Vec3::X;
-            let across = (lateral.x, lateral.y);
-            for (index, wheel) in car.wheels.iter().enumerate() {
-                let pw = transform.transform_point(Vec3::from(wheel.pos));
-                let coord = (pw.x.round() as i32, pw.y.round() as i32);
-                let gap = level::terraform::surface_height(level, coord) - pw.z;
-                // The old one-sided test accepted a wheel arbitrarily high
-                // above the surface whenever another wheel touched. Require
-                // this wheel's own contact point to be close to the ground.
-                if gap.abs() <= level::terraform::MAX_CONTACT_HEIGHT {
-                    tracks.touch(index, coord, across);
-                } else {
-                    tracks.lift(index);
-                }
+    if wheels_touch != 0
+        && stand_on_wheels
+        && let Some(ref mut tracks) = tracks
+    {
+        let lateral = transform.rot * Vec3::X;
+        let across = (lateral.x, lateral.y);
+        for (index, wheel) in car.wheels.iter().enumerate() {
+            let pw = transform.transform_point(Vec3::from(wheel.pos));
+            let coord = (pw.x.round() as i32, pw.y.round() as i32);
+            let gap = level::terraform::surface_height(level, coord) - pw.z;
+            // The old one-sided test accepted a wheel arbitrarily high
+            // above the surface whenever another wheel touched. Require
+            // this wheel's own contact point to be close to the ground.
+            if gap.abs() <= level::terraform::MAX_CONTACT_HEIGHT {
+                tracks.touch(index, coord, across);
+            } else {
+                tracks.lift(index);
             }
         }
     }

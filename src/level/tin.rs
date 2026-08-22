@@ -1244,9 +1244,9 @@ impl ChunkState {
     fn overlaps(&self, x: i32, y: i32, w: i32, h: i32) -> bool {
         w > 0
             && h > 0
-            && self.x0 <= x + w - 1
+            && self.x0 < x + w
             && x <= self.x0 + self.w as i32
-            && self.y0 <= y + h - 1
+            && self.y0 < y + h
             && y <= self.y0 + self.h as i32
     }
 
