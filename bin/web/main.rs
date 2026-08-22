@@ -264,6 +264,9 @@ struct Agent {
     dynamo: physics::Dynamo,
     control: Control,
     color: render::object::BodyColor,
+    /// Stretches each wheel covered since the last frame, cut into the
+    /// ground afterwards - see `WebApp::step_tracks`.
+    tracks: level::terraform::Tracks,
 }
 
 impl Agent {
@@ -310,7 +313,7 @@ impl Agent {
             self.control.jump.take(),
             self.control.roll,
             None, // line_buffer
-            None, // tracks
+            Some(&mut self.tracks),
         );
     }
 }
@@ -382,6 +385,7 @@ fn spawn_default_agent(
         dynamo: physics::Dynamo::default(),
         control: Control::default(),
         color: PLAYER_COLOR,
+        tracks: level::terraform::Tracks::default(),
     })
 }
 
@@ -405,6 +409,9 @@ struct WebApp {
     /// True when running on WebGPU (vs WebGL2 fallback).
     is_webgpu: bool,
     moving: level::moving::MovingWorld,
+    /// Terrain-editing effects the car is allowed to leave behind. Same
+    /// defaults as the native game: tread on, hull-press and mole mounds off.
+    terraform: level::terraform::Config,
 }
 
 impl WebApp {
@@ -466,9 +473,21 @@ impl WebApp {
     /// VFS key of the world INI (e.g. `"fostral/world.ini"`).
     fn new_from_vfs(gfx: &GraphicsContext, vfs: &Vfs, ini_path: &str, is_webgpu: bool) -> Self {
         let settings = Self::load_settings();
+        let t = Instant::now();
         let level_config = level::LevelConfig::load_from_vfs(vfs, ini_path);
         let level = level::load_from_vfs(vfs, &level_config, &settings.game.geometry);
-        Self::build(gfx, level_config, level, Some(vfs), is_webgpu, &settings)
+        log::info!(
+            "[startup] level '{ini_path}' loaded in {:.0} ms ({} texels)",
+            t.elapsed().as_secs_f32() * 1e3,
+            level.size.0 as u64 * level.size.1 as u64 / 1024 * 1024
+        );
+        let t = Instant::now();
+        let app = Self::build(gfx, level_config, level, Some(vfs), is_webgpu, &settings);
+        log::info!(
+            "[startup] app built in {:.0} ms",
+            t.elapsed().as_secs_f32() * 1e3
+        );
+        app
     }
 
     fn build(
@@ -550,6 +569,7 @@ impl WebApp {
             render_settings.light.shadow.terrain = settings::ShadowTerrain::RayTraced;
         }
         let geometry = settings.game.geometry;
+        let t = Instant::now();
         let render = Render::new(
             gfx,
             &level_config,
@@ -557,6 +577,10 @@ impl WebApp {
             &render_settings,
             &geometry,
             cam.front_face(),
+        );
+        log::info!(
+            "[startup] renderer built in {:.0} ms",
+            t.elapsed().as_secs_f32() * 1e3
         );
 
         // If the VFS has `common.prm` and a vehicle registry, spawn a
@@ -567,8 +591,14 @@ impl WebApp {
             .and_then(|v| v.read("common.prm"))
             .map(|b| config::common::load_reader(std::io::Cursor::new(&*b)))
             .unwrap_or_else(config::common::Common::test_default);
+        let t = Instant::now();
         let agent = vfs.and_then(|v| spawn_default_agent(v, &level, &gfx.device, &render.object));
-        if agent.is_none() {
+        if agent.is_some() {
+            log::info!(
+                "[startup] player vehicle built in {:.0} ms",
+                t.elapsed().as_secs_f32() * 1e3
+            );
+        } else {
             log::info!("No player agent — running in free-camera mode");
         }
 
@@ -581,7 +611,12 @@ impl WebApp {
             look_ahead: cam_config.look_ahead,
         };
 
+        let moving_t = Instant::now();
         let moving = level::moving::MovingWorld::load(&level_config, vfs);
+        log::info!(
+            "[startup] moving world loaded in {:.0} ms",
+            moving_t.elapsed().as_secs_f32() * 1e3
+        );
 
         // Settle the follow camera at the agent's spawn pose. Without
         // this, the camera starts at the placeholder above and the slow
@@ -607,6 +642,7 @@ impl WebApp {
             max_quant: settings.game.physics.max_quant,
             is_webgpu,
             moving,
+            terraform: level::terraform::Config::default(),
         }
     }
 
@@ -664,6 +700,66 @@ impl WebApp {
         });
         let regions = self.moving.step(&mut self.level, delta, touches);
         self.render.dirty_terrain(regions, height);
+    }
+
+    /// Cuts the stretches the wheels covered since the last frame into the
+    /// level, and hands the touched rectangles to the renderer. Port of the
+    /// native game's `step_tracks` (bin/road/game.rs); the physics records
+    /// the wheels' stretches over an immutable level, and the cutting here
+    /// runs where the level can be borrowed mutably.
+    fn step_tracks(&mut self) {
+        let Some(agent) = self.agent.as_mut() else {
+            return;
+        };
+        if !self.terraform.tread.enabled
+            && !self.terraform.grader.enabled
+            && !self.terraform.press.enabled
+            && !self.terraform.molehills.enabled
+        {
+            agent.tracks.reset();
+            return;
+        }
+
+        let mut regions = Vec::new();
+        for burrow in agent.tracks.drain_burrows() {
+            level::terraform::apply_burrow(
+                &mut self.level,
+                &self.terraform.molehills,
+                &burrow,
+                &mut regions,
+            );
+        }
+        if let Some(hull) = agent.tracks.take_hull() {
+            level::terraform::apply_press(
+                &mut self.level,
+                &self.terraform.press,
+                &hull,
+                &mut regions,
+            );
+        }
+        for sweep in agent.tracks.drain_sweeps() {
+            level::terraform::apply_grader(
+                &mut self.level,
+                &self.terraform.grader,
+                &sweep,
+                &mut regions,
+            );
+        }
+        for track in agent.tracks.drain() {
+            level::terraform::apply_tread(
+                &mut self.level,
+                &self.terraform.tread,
+                &track,
+                &mut regions,
+            );
+        }
+        if regions.is_empty() {
+            return;
+        }
+        regions.sort_unstable();
+        regions.dedup();
+        let height = self.level.geometry.height as u16;
+        self.render.dirty_terrain(&regions, height);
     }
 
     fn draw(
@@ -892,6 +988,9 @@ struct WebHandler {
     _dom_input: Option<DomInputHooks>,
     last_frame: Option<Instant>,
     ws_client: Option<net_ws::WsClient>,
+    /// The first frame builds the whole terrain TIN and uploads it; time
+    /// it once so the console shows where startup actually goes.
+    first_draw_measured: bool,
     /// Status text overlay (used in multiplayer logging)
     #[allow(dead_code)]
     mp_status: String,
@@ -943,6 +1042,7 @@ impl WebHandler {
             ui_pointer: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             _dom_input: None,
             last_frame: None,
+            first_draw_measured: false,
             ws_client,
             mp_status,
         }
@@ -1700,6 +1800,9 @@ impl WebHandler {
             }
         }
 
+        // Cut the wheels' tracks into the level after the physics ran.
+        gpu.app.step_tracks();
+
         // Process multiplayer messages
         if let Some(ref mut ws) = self.ws_client {
             // Send input
@@ -1770,7 +1873,17 @@ impl WebHandler {
             color: &view,
             depth: &gpu.depth_view,
         };
+        let t = Instant::now();
         let command_buffer = gpu.app.draw(&gpu.device, &gpu.queue, targets);
+        if !self.first_draw_measured {
+            self.first_draw_measured = true;
+            // The mesh renderer builds the TIN lazily on the first update,
+            // so the first frame pays for the whole level's fit + upload.
+            log::info!(
+                "[startup] first frame (terrain TIN build + upload) took {:.0} ms",
+                t.elapsed().as_secs_f32() * 1e3
+            );
+        }
 
         // --- egui UI pass ---
         let mut raw_input = gpu.egui_state.take_egui_input(&gpu.window);

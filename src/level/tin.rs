@@ -1461,6 +1461,14 @@ impl Tin {
             if state.pending.is_empty() {
                 continue;
             }
+            // Not built yet - the web build scaffolds every chunk and fills
+            // them in over the first ticks (`build_chunk`). Until one is
+            // built its LODs are empty, and a refit has no triangulation to
+            // refine. `build_chunk` reads the current level, so the edit
+            // banked here is picked up then.
+            if state.lods.is_empty() {
+                continue;
+            }
             let lod = match drawn {
                 None => 0,
                 Some(list) => match list.get(index).copied().flatten() {
@@ -1562,9 +1570,13 @@ impl Tin {
             // One 128² refine plus a WebGL buffer upload is several
             // milliseconds in the browser. A cyclic set on Fostral can
             // put tens of chunks due at once; doing them all in one
-            // frame is the one-second hitch. Skip the rest: pending
-            // stays, and the start index walks so they all get a turn.
-            const MAX_REFITS: usize = 4;
+            // frame is the one-second hitch. One per tick - the start
+            // index walks so every chunk still gets a turn - keeps a
+            // single chunk's refit from ever taxing one frame, at the
+            // cost of a longer catch-up when the whole world edits at
+            // once (the moving land on Fostral cycles 24 locations, so
+            // the catch-up trails over a couple of seconds of frames).
+            const MAX_REFITS: usize = 1;
             let n = self.chunks.len();
             if n == 0 {
                 return Vec::new();
@@ -1576,13 +1588,122 @@ impl Tin {
                     break;
                 }
                 let index = (start + k) % n;
-                if self.chunks[index].due {
+                if self.chunks[index].due && !self.chunks[index].lods.is_empty() {
                     let state = &mut self.chunks[index];
                     out.push(refit(index, state));
                 }
             }
             out
         }
+    }
+
+    /// Chunk scaffolding with nothing triangulated, for the web build.
+    ///
+    /// `build` triangulates the whole level up front; on a single-threaded
+    /// wasm that is the seconds-long hitch the loading screen sits on.
+    /// `scaffold` creates every `ChunkState` so chunk indices, the render
+    /// wrapper's per-chunk arrays and the draw walk are all stable, but
+    /// leaves every LOD empty. [`Tin::build_chunk`] then fills them in a
+    /// few at a time, nearest the camera first, over the first frames.
+    #[cfg(target_arch = "wasm32")]
+    pub fn scaffold(level: &Level, config: &Config) -> (Self, Mesh) {
+        profiling::scope!("Scaffold Terrain TIN");
+
+        let max_error = config.max_error(level);
+        let step = CHUNK_SIZE as i32;
+        let spans_of = |total: i32| {
+            let mut spans = Vec::new();
+            let mut at = 0;
+            while at < total {
+                spans.push((at, (total - at).min(step) as u32));
+                at += step;
+            }
+            spans
+        };
+        let origins = {
+            let mut v = Vec::new();
+            for &(y, h) in &spans_of(level.size.1) {
+                for &(x, w) in &spans_of(level.size.0) {
+                    v.push((x, y, w, h));
+                }
+            }
+            v
+        };
+
+        let chunks = origins
+            .iter()
+            .map(|&(x, y, w, h)| ChunkState {
+                x0: x,
+                y0: y,
+                w,
+                h,
+                // Filled by `build_chunk`, which also refreshes the bbox.
+                alt: (0.0, 0.0),
+                lods: Vec::new(),
+                pending: Vec::new(),
+                due: false,
+                hidden: false,
+            })
+            .collect::<Vec<_>>();
+        let meshes = origins
+            .iter()
+            .map(|_| Vec::<ChunkMesh>::new())
+            .collect::<Vec<_>>();
+        let mesh = assemble(&chunks, meshes, level, max_error);
+
+        let tin = Tin {
+            tick: 0,
+            max_error,
+            quality: config.quality,
+            chunks,
+            stats: mesh.stats,
+        };
+        tin.log("scaffolded");
+        (tin, mesh)
+    }
+
+    /// Builds (first time) the chunk at `index` from its grid, leaving the
+    /// chunk triangulated so later edits refine it in place - the same
+    /// work `build` does for one chunk, run on demand.
+    #[cfg(target_arch = "wasm32")]
+    pub fn build_chunk(&mut self, level: &Level, index: usize) -> ChunkBuffers {
+        let grid = {
+            let st = &self.chunks[index];
+            Grid::new(level, st.x0, st.y0, st.w, st.h)
+        };
+        let max_error = self.max_error;
+        let per_lod = {
+            let state = &mut self.chunks[index];
+            state.alt = grid.alt;
+            // The grid was read after any banked edit was applied, so the
+            // edits are baked in and the bank can be dropped.
+            state.pending.clear();
+            state.lods.clear();
+            state.lods = (0..LOD_COUNT)
+                .map(|k| {
+                    let mut tri = Chunk::new(&grid);
+                    refine(
+                        &mut tri,
+                        &grid,
+                        max_error * (1 << k) as f32,
+                        max_error,
+                        None,
+                        true,
+                    );
+                    LodState {
+                        tri,
+                        settle: 0,
+                        backoff: 0,
+                    }
+                })
+                .collect();
+            state
+                .lods
+                .iter()
+                .map(|lod| emit_chunk(&lod.tri, &grid))
+                .collect()
+        };
+        ChunkBuffers::new(&self.chunks[index], per_lod)
     }
 }
 
