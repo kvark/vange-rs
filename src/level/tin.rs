@@ -1132,7 +1132,14 @@ struct ChunkState {
     lods: Vec<LodState>,
     /// Edits banked since this chunk was last refitted. Empty for a chunk
     /// that is up to date with the level.
-    pending: Vec<Rect>,
+    pending: Option<Rect>,
+    /// Update on which the first still-pending edit arrived. The web
+    /// scheduler uses this to keep a continuously animated chunk from
+    /// starving its neighbours.
+    pending_since: u32,
+    /// LOD triangulations which have not yet measured all accumulated edits.
+    /// Their vertices are still re-emitted at current heights.
+    stale_lods: u8,
     /// Whether this update is the one that refits the chunk.
     due: bool,
     /// Set while the renderer is not drawing this chunk anywhere. Coming
@@ -1169,7 +1176,16 @@ pub fn detail_steps(distance: f32, lod_distance: f32) -> u32 {
 /// The decision is a frame old by the time a refit reads it, so the
 /// renderer records it with a margin around the frustum - see
 /// `terrain::Context::prepare`.
-pub type Drawn<'a> = &'a [Option<u8>];
+pub type Drawn<'a> = &'a [Option<DrawInfo>];
+
+/// The renderer's most important visible copy of a chunk.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawInfo {
+    pub lod: u8,
+    pub distance: f32,
+    /// Every LOD used by any visible wrapped copy of this chunk.
+    pub lod_mask: u8,
+}
 
 impl ChunkState {
     /// How many updates this chunk may bank before it has to refit.
@@ -1226,9 +1242,11 @@ impl ChunkState {
     /// a border line dirty *both* chunks, which is exactly what keeps the
     /// seam consistent.
     fn overlaps(&self, x: i32, y: i32, w: i32, h: i32) -> bool {
-        self.x0 <= x + w
+        w > 0
+            && h > 0
+            && self.x0 < x + w
             && x <= self.x0 + self.w as i32
-            && self.y0 <= y + h
+            && self.y0 < y + h
             && y <= self.y0 + self.h as i32
     }
 
@@ -1261,6 +1279,21 @@ pub struct Rect {
     pub h: u32,
 }
 
+impl Rect {
+    fn union(self, other: Self) -> Self {
+        let x0 = self.x.min(other.x);
+        let y0 = self.y.min(other.y);
+        let x1 = (self.x + self.w as i32).max(other.x + other.w as i32);
+        let y1 = (self.y + self.h as i32).max(other.y + other.h as i32);
+        Rect {
+            x: x0,
+            y: y0,
+            w: (x1 - x0) as u32,
+            h: (y1 - y0) as u32,
+        }
+    }
+}
+
 /// Chunks whose geometry changed, by index, with their new buffers.
 pub type Update = Vec<(usize, ChunkBuffers)>;
 
@@ -1276,6 +1309,7 @@ pub struct Tin {
     max_error: f32,
     quality: f32,
     chunks: Vec<ChunkState>,
+    chunk_columns: usize,
     /// Free-running update counter, for spreading refits across the ticks
     /// of a period - see `ChunkState::due_on`.
     tick: u32,
@@ -1283,6 +1317,15 @@ pub struct Tin {
 }
 
 impl Tin {
+    /// Whether a chunk has level edits which its render geometry has not
+    /// incorporated yet. The renderer uses a conservative vertical bound
+    /// for such chunks so an animation can move terrain into the frustum.
+    pub fn has_pending(&self, index: usize) -> bool {
+        self.chunks
+            .get(index)
+            .is_some_and(|state| state.pending.is_some())
+    }
+
     /// Heap memory retained by the editable triangulation, excluding the
     /// render-ready vertex/index buffers owned by the renderer.
     pub fn allocated_bytes(&self) -> usize {
@@ -1360,7 +1403,9 @@ impl Tin {
                     h,
                     alt,
                     lods,
-                    pending: Vec::new(),
+                    pending: None,
+                    pending_since: 0,
+                    stale_lods: 0,
                     due: false,
                     hidden: false,
                 },
@@ -1384,6 +1429,7 @@ impl Tin {
             max_error,
             quality: config.quality,
             chunks,
+            chunk_columns: spans_of(level.size.0).len(),
             stats: mesh.stats,
         };
         tin.log("built");
@@ -1438,7 +1484,21 @@ impl Tin {
         // Banked work still has to come due, so an idle call is only idle
         // when nothing is waiting - otherwise an animation that stops would
         // leave the last of its edits banked forever.
-        if rects.is_empty() && self.chunks.iter().all(|st| st.pending.is_empty()) {
+        #[cfg(target_arch = "wasm32")]
+        let visible_lod_is_stale = drawn.is_some_and(|list| {
+            self.chunks.iter().enumerate().any(|(index, state)| {
+                list.get(index)
+                    .copied()
+                    .flatten()
+                    .is_some_and(|info| state.stale_lods & info.lod_mask != 0)
+            })
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        let visible_lod_is_stale = false;
+        if rects.is_empty()
+            && !visible_lod_is_stale
+            && self.chunks.iter().all(|st| st.pending.is_none())
+        {
             return Vec::new();
         }
 
@@ -1447,18 +1507,61 @@ impl Tin {
         // decision has to be made before the parallel pass can filter on it.
         self.tick = self.tick.wrapping_add(1);
         let tick = self.tick;
-        for (index, state) in self.chunks.iter_mut().enumerate() {
-            for rect in rects.iter() {
-                // A moving land re-emits the same region every quant, so the
-                // banked list stays short without any merging.
-                if state.overlaps(rect.x, rect.y, rect.w as i32, rect.h as i32)
-                    && !state.pending.contains(rect)
-                {
-                    state.pending.push(*rect);
+        // Chunks form a regular row-major grid. Route each edit straight to
+        // the handful of chunks it reaches instead of testing every edit
+        // against every chunk in the level. A chunk owns its far border, so
+        // an edit exactly on a chunk boundary reaches both neighbours.
+        for &rect in rects {
+            if rect.w == 0 || rect.h == 0 {
+                continue;
+            }
+            let axis = |start: i32, len: u32, count: usize| {
+                let first = if start > 0 && start % CHUNK_SIZE as i32 == 0 {
+                    start / CHUNK_SIZE as i32 - 1
+                } else {
+                    start / CHUNK_SIZE as i32
+                };
+                let last = (start + len as i32 - 1) / CHUNK_SIZE as i32;
+                first.max(0) as usize..=last.max(0).min(count as i32 - 1) as usize
+            };
+            let rows = self.chunks.len().div_ceil(self.chunk_columns);
+            for cy in axis(rect.y, rect.h, rows) {
+                for cx in axis(rect.x, rect.w, self.chunk_columns) {
+                    let index = cy * self.chunk_columns + cx;
+                    let Some(state) = self.chunks.get_mut(index) else {
+                        continue;
+                    };
+                    if !state.overlaps(rect.x, rect.y, rect.w as i32, rect.h as i32) {
+                        continue;
+                    }
+                    state.pending = Some(match state.pending {
+                        None => {
+                            state.pending_since = tick;
+                            rect
+                        }
+                        Some(old) => old.union(rect),
+                    });
+                    state.stale_lods |= (1u8 << LOD_COUNT) - 1;
                 }
             }
+        }
+
+        for (index, state) in self.chunks.iter_mut().enumerate() {
             state.due = false;
-            if state.pending.is_empty() {
+            #[cfg(target_arch = "wasm32")]
+            if state.pending.is_none()
+                && let Some(info) = drawn.and_then(|list| list.get(index).copied().flatten())
+                && state.stale_lods & info.lod_mask != 0
+            {
+                state.pending_since = tick;
+                state.pending = Some(Rect {
+                    x: state.x0,
+                    y: state.y0,
+                    w: state.w + 1,
+                    h: state.h + 1,
+                });
+            }
+            if state.pending.is_none() {
                 continue;
             }
             // Not built yet - the web build scaffolds every chunk and fills
@@ -1469,10 +1572,14 @@ impl Tin {
             if state.lods.is_empty() {
                 continue;
             }
-            let lod = match drawn {
-                None => 0,
+            let info = match drawn {
+                None => DrawInfo {
+                    lod: 0,
+                    distance: 0.0,
+                    lod_mask: (1u8 << LOD_COUNT) - 1,
+                },
                 Some(list) => match list.get(index).copied().flatten() {
-                    Some(lod) => lod,
+                    Some(info) => info,
                     // Off screen: bank and wait. Nothing is showing this
                     // chunk, so nothing can show that it is behind.
                     None => {
@@ -1485,7 +1592,7 @@ impl Tin {
                 state.hidden = false;
                 true
             } else {
-                ChunkState::due_on(tick, index, 1u32 << lod)
+                ChunkState::due_on(tick, index, 1u32 << info.lod)
             };
         }
 
@@ -1493,6 +1600,10 @@ impl Tin {
         let refit = |index: usize, state: &mut ChunkState| {
             let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
             state.alt = grid.alt;
+            #[cfg(target_arch = "wasm32")]
+            let visible_lods = drawn
+                .and_then(|list| list.get(index).copied().flatten())
+                .map(|info| info.lod_mask);
             // The edits that reach this chunk, in its own grid
             // coordinates and clipped to it.
             let local = state
@@ -1508,9 +1619,28 @@ impl Tin {
                     (g.x0 <= g.x1 && g.y0 <= g.y1).then_some(g)
                 })
                 .collect::<Vec<_>>();
-            state.pending.clear();
+            state.pending = None;
+            #[cfg(target_arch = "wasm32")]
+            match visible_lods {
+                Some(mask) => state.stale_lods &= !mask,
+                None => state.stale_lods = 0,
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                state.stale_lods = 0;
+            }
             let per_lod = {
                 let emit_lod = |k: usize, lod: &mut LodState| {
+                    #[cfg(target_arch = "wasm32")]
+                    if visible_lods.is_some_and(|mask| mask & (1u8 << k) == 0) {
+                        // Keep every LOD's vertex heights current so a later
+                        // distance transition cannot reveal stale terrain,
+                        // but spend the expensive error search only on the
+                        // LODs the renderer is using for this chunk now. When
+                        // another LOD becomes visible its next edit/refit
+                        // measures it normally.
+                        return emit_chunk(&lod.tri, &grid);
+                    }
                     // Skip measuring a chunk that has stopped gaining
                     // vertices, but always re-emit: the geometry has to
                     // follow the new heights either way.
@@ -1570,28 +1700,44 @@ impl Tin {
             // One 128² refine plus a WebGL buffer upload is several
             // milliseconds in the browser. A cyclic set on Fostral can
             // put tens of chunks due at once; doing them all in one
-            // frame is the one-second hitch. One per tick - the start
-            // index walks so every chunk still gets a turn - keeps a
-            // single chunk's refit from ever taxing one frame, at the
-            // cost of a longer catch-up when the whole world edits at
-            // once (the moving land on Fostral cycles 24 locations, so
-            // the catch-up trails over a couple of seconds of frames).
+            // frame is the one-second hitch. Keep the one-refit ceiling, but
+            // choose the oldest visible edit first; LOD and distance break
+            // equal-age ties. That bounds frame cost without letting map
+            // index order hide a nearby animation for thousands of frames.
             const MAX_REFITS: usize = 1;
             let n = self.chunks.len();
             if n == 0 {
                 return Vec::new();
             }
-            let start = (self.tick as usize) % n;
+            let drawn = drawn.unwrap_or(&[]);
+            let mut due = (0..n)
+                .filter(|&index| self.chunks[index].due && !self.chunks[index].lods.is_empty())
+                .collect::<Vec<_>>();
+            due.sort_by(|&a, &b| {
+                let sa = &self.chunks[a];
+                let sb = &self.chunks[b];
+                let ia = drawn.get(a).copied().flatten().unwrap_or(DrawInfo {
+                    lod: u8::MAX,
+                    distance: f32::INFINITY,
+                    lod_mask: 0,
+                });
+                let ib = drawn.get(b).copied().flatten().unwrap_or(DrawInfo {
+                    lod: u8::MAX,
+                    distance: f32::INFINITY,
+                    lod_mask: 0,
+                });
+                // Old work wins first, preventing a location edited every
+                // tick from monopolising the single-threaded budget. LOD and
+                // distance break ties in favour of what is easiest to see.
+                sa.pending_since
+                    .cmp(&sb.pending_since)
+                    .then_with(|| ia.lod.cmp(&ib.lod))
+                    .then_with(|| ia.distance.total_cmp(&ib.distance))
+            });
             let mut out = Vec::new();
-            for k in 0..n {
-                if out.len() >= MAX_REFITS {
-                    break;
-                }
-                let index = (start + k) % n;
-                if self.chunks[index].due && !self.chunks[index].lods.is_empty() {
-                    let state = &mut self.chunks[index];
-                    out.push(refit(index, state));
-                }
+            for index in due.into_iter().take(MAX_REFITS) {
+                let state = &mut self.chunks[index];
+                out.push(refit(index, state));
             }
             out
         }
@@ -1640,7 +1786,9 @@ impl Tin {
                 // Filled by `build_chunk`, which also refreshes the bbox.
                 alt: (0.0, 0.0),
                 lods: Vec::new(),
-                pending: Vec::new(),
+                pending: None,
+                pending_since: 0,
+                stale_lods: 0,
                 due: false,
                 hidden: false,
             })
@@ -1656,6 +1804,7 @@ impl Tin {
             max_error,
             quality: config.quality,
             chunks,
+            chunk_columns: spans_of(level.size.0).len(),
             stats: mesh.stats,
         };
         tin.log("scaffolded");
@@ -1677,7 +1826,8 @@ impl Tin {
             state.alt = grid.alt;
             // The grid was read after any banked edit was applied, so the
             // edits are baked in and the bank can be dropped.
-            state.pending.clear();
+            state.pending = None;
+            state.stale_lods = 0;
             state.lods.clear();
             state.lods = (0..LOD_COUNT)
                 .map(|k| {
@@ -2175,7 +2325,14 @@ mod tests {
             .collect::<Vec<_>>();
 
         // All on screen, but at the coarsest level the mesh has.
-        let coarse = vec![Some(LOD_COUNT as u8 - 1); tin.chunks.len()];
+        let coarse = vec![
+            Some(DrawInfo {
+                lod: LOD_COUNT as u8 - 1,
+                distance: 1024.0,
+                lod_mask: 1u8 << (LOD_COUNT - 1),
+            });
+            tin.chunks.len()
+        ];
         let period = 1u32 << (LOD_COUNT - 1);
         let count = tin
             .chunks
@@ -2232,7 +2389,14 @@ mod tests {
         let hidden = vec![None; tin.chunks.len()];
         // Back at the coarsest level, so returning to view is the only
         // thing that could make it refit this promptly.
-        let shown = vec![Some(LOD_COUNT as u8 - 1); tin.chunks.len()];
+        let shown = vec![
+            Some(DrawInfo {
+                lod: LOD_COUNT as u8 - 1,
+                distance: 1024.0,
+                lod_mask: 1u8 << (LOD_COUNT - 1),
+            });
+            tin.chunks.len()
+        ];
 
         let mut deferred = tin.clone();
         let mut immediate = tin;
@@ -2271,7 +2435,14 @@ mod tests {
             .count();
 
         for lod in 0..LOD_COUNT as u8 {
-            let drawn = vec![Some(lod); tin.chunks.len()];
+            let drawn = vec![
+                Some(DrawInfo {
+                    lod,
+                    distance: 256.0 * (1 << lod) as f32,
+                    lod_mask: 1u8 << lod,
+                });
+                tin.chunks.len()
+            ];
             let mut tin = tin.clone();
             // Several periods, with the edit re-offered every tick the way
             // a running animation offers it.
@@ -2507,6 +2678,34 @@ mod tests {
             .count();
         assert!(changed >= 1, "the edit should have refined something");
         assert!(changed < tin.chunks.len(), "it should not have refined all");
+    }
+
+    #[test]
+    fn a_half_open_edit_does_not_dirty_the_next_chunk() {
+        let mut level = make_level_wh(3 * CHUNK_SIZE as i32, CHUNK_SIZE as i32);
+        let (mut tin, _) = Tin::build(&level, &Config::default());
+        // Ends at x=127. Chunk 1 begins at x=128 and shares that texel with
+        // chunk 0, but the edit itself never reaches it.
+        for y in 20..30 {
+            for x in 10..CHUNK_SIZE as i32 {
+                let i = level.wrap((x, y));
+                level.height[i] = level.height[i].saturating_sub(1);
+            }
+        }
+        let changed = tin.update(
+            &level,
+            &[Rect {
+                x: 10,
+                y: 20,
+                w: CHUNK_SIZE - 10,
+                h: 10,
+            }],
+            None,
+        );
+        assert_eq!(
+            changed.iter().map(|entry| entry.0).collect::<Vec<_>>(),
+            vec![0]
+        );
     }
 
     #[test]
@@ -2758,7 +2957,11 @@ mod perf_probe {
                 to.y -= (to.y / size.y).round() * size.y;
                 let distance = to.length();
                 let ahead = distance < 1.0 || to.normalize().dot(facing) > 0.7;
-                ahead.then(|| detail_steps(distance, 256.0).min(LOD_COUNT as u32 - 1) as u8)
+                ahead.then(|| DrawInfo {
+                    lod: detail_steps(distance, 256.0).min(LOD_COUNT as u32 - 1) as u8,
+                    distance,
+                    lod_mask: 1u8 << detail_steps(distance, 256.0).min(LOD_COUNT as u32 - 1),
+                })
             })
             .collect::<Vec<_>>();
         let seen = drawn.iter().filter(|d| d.is_some()).count();

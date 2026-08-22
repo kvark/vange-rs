@@ -456,18 +456,49 @@ impl Render {
     /// this way.
     pub fn dirty_terrain(&mut self, regions: &[level::Region], height: u16) {
         let z_range = 0..height;
-        self.terrain
-            .dirty_rects
-            .extend(regions.iter().map(|r| DirtyRect {
-                rect: Rect {
-                    x: r.x as u16,
-                    y: r.y as u16,
-                    w: r.w as u16,
-                    h: r.h as u16,
-                },
+        for r in regions {
+            let mut rect = Rect {
+                x: r.x as u16,
+                y: r.y as u16,
+                w: r.w as u16,
+                h: r.h as u16,
+            };
+            // Coalesce overlapping/touching uploads when doing so does not
+            // include more unchanged texels than the separate rectangles.
+            // Moving land and four tyres otherwise generate many duplicate
+            // staging allocations and texture writes for the same patch.
+            let mut i = 0;
+            while i < self.terrain.dirty_rects.len() {
+                let old = &self.terrain.dirty_rects[i];
+                if !old.need_upload || old.z_range != z_range {
+                    i += 1;
+                    continue;
+                }
+                let a = old.rect;
+                let x0 = a.x.min(rect.x);
+                let y0 = a.y.min(rect.y);
+                let x1 = (a.x as u32 + a.w as u32).max(rect.x as u32 + rect.w as u32);
+                let y1 = (a.y as u32 + a.h as u32).max(rect.y as u32 + rect.h as u32);
+                let union_area = (x1 - x0 as u32) * (y1 - y0 as u32);
+                let separate_area = a.w as u32 * a.h as u32 + rect.w as u32 * rect.h as u32;
+                if union_area <= separate_area {
+                    rect = Rect {
+                        x: x0,
+                        y: y0,
+                        w: (x1 - x0 as u32) as u16,
+                        h: (y1 - y0 as u32) as u16,
+                    };
+                    self.terrain.dirty_rects.swap_remove(i);
+                } else {
+                    i += 1;
+                }
+            }
+            self.terrain.dirty_rects.push(DirtyRect {
+                rect,
                 z_range: z_range.clone(),
                 need_upload: true,
-            }));
+            });
+        }
     }
 
     pub fn new(

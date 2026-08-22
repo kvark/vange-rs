@@ -299,6 +299,10 @@ struct ChunkBufs {
 }
 
 impl ChunkBufs {
+    fn gpu_bytes(&self) -> u64 {
+        self.vertex_buf.size() + self.index_buf.size()
+    }
+
     fn new(src: &level::tin::ChunkBuffers, device: &wgpu::Device) -> Self {
         ChunkBufs {
             vertex_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -315,6 +319,31 @@ impl ChunkBufs {
             center: src.center,
             min: src.min,
             max: src.max,
+        }
+    }
+
+    /// Rewrite existing allocations when the refined mesh still fits. Most
+    /// animation refits only change vertex heights, so reallocating two WebGL
+    /// buffers every tick is avoidable churn.
+    fn update(
+        &mut self,
+        src: &level::tin::ChunkBuffers,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) {
+        let vertex_bytes = bytemuck::cast_slice(&src.vertices);
+        let index_bytes = bytemuck::cast_slice(&src.indices);
+        if vertex_bytes.len() as u64 <= self.vertex_buf.size()
+            && index_bytes.len() as u64 <= self.index_buf.size()
+        {
+            queue.write_buffer(&self.vertex_buf, 0, vertex_bytes);
+            queue.write_buffer(&self.index_buf, 0, index_bytes);
+            self.lods.clone_from(&src.lods);
+            self.center = src.center;
+            self.min = src.min;
+            self.max = src.max;
+        } else {
+            *self = Self::new(src, device);
         }
     }
 }
@@ -336,7 +365,7 @@ struct MeshGeometry {
     /// what a refit follows. See `level::tin::Drawn`. Starts as "all of
     /// them, at full detail" so the first frame, which has no decision
     /// behind it yet, refits everything.
-    drawn: Vec<Option<u8>>,
+    drawn: Vec<Option<level::tin::DrawInfo>>,
     /// Chunks the web build scaffolded but has not fitted yet; filled in a
     /// few per tick, nearest the camera first. Empty on native, where
     /// `Tin::build` fits everything up front.
@@ -347,20 +376,20 @@ struct MeshGeometry {
 
 impl MeshGeometry {
     fn new(tin: level::tin::Tin, mesh: &level::tin::Mesh, device: &wgpu::Device) -> Self {
-        let gpu_bytes = mesh
-            .chunks
-            .iter()
-            .map(|chunk| {
-                (chunk.vertices.len() * mem::size_of::<level::tin::MeshVertex>()
-                    + chunk.indices.len() * mem::size_of::<u32>()) as u64
-            })
-            .sum();
         let chunks = mesh
             .chunks
             .iter()
             .map(|c| ChunkBufs::new(c, device))
             .collect::<Vec<_>>();
-        let drawn = vec![Some(0); chunks.len()];
+        let gpu_bytes = chunks.iter().map(ChunkBufs::gpu_bytes).sum();
+        let drawn = vec![
+            Some(level::tin::DrawInfo {
+                lod: 0,
+                distance: 0.0,
+                lod_mask: 1,
+            });
+            chunks.len()
+        ];
         MeshGeometry {
             chunks,
             tin,
@@ -372,9 +401,8 @@ impl MeshGeometry {
     }
 
     /// Fits the `budget` unbuilt chunks nearest `origin`, replacing their
-    /// empty buffers with real ones. Re-sorts the remaining queue by
-    /// distance so the next call keeps the state right around the camera
-    /// even after it moves.
+    /// empty buffers with real ones. Distance is measured through the level
+    /// seam, and only the few entries consumed this call are selected.
     #[cfg(target_arch = "wasm32")]
     fn build_pending(
         &mut self,
@@ -386,21 +414,35 @@ impl MeshGeometry {
         if self.unbuilt.is_empty() {
             return;
         }
-        self.unbuilt.sort_by_key(|&ci| {
-            let c = self.chunks[ci].center;
-            let d = origin - glam::Vec2::new(c[0], c[1]);
-            (d.x * d.x + d.y * d.y) as u32
-        });
-        let mut built = 0;
-        self.unbuilt.retain(|&ci| {
-            if built >= budget {
-                return true;
-            }
+        // Only a handful are consumed per frame. Repeatedly selecting the
+        // nearest is linear in the queue; sorting all ~2000 remaining chunks
+        // every frame was needless main-thread work in the browser.
+        for _ in 0..budget.min(self.unbuilt.len()) {
+            let nearest = {
+                let chunks = &self.chunks;
+                let size = glam::Vec2::new(level.size.0 as f32, level.size.1 as f32);
+                self.unbuilt
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, ci)| {
+                        let c = chunks[**ci].center;
+                        let mut d = origin - glam::Vec2::new(c[0], c[1]);
+                        d.x -= (d.x / size.x).round() * size.x;
+                        d.y -= (d.y / size.y).round() * size.y;
+                        (d.x * d.x + d.y * d.y) as u32
+                    })
+                    .map(|(position, _)| position)
+                    .unwrap()
+            };
+            let ci = self.unbuilt.swap_remove(nearest);
             let buffers = self.tin.build_chunk(level, ci);
+            let old_bytes = self.chunks[ci].gpu_bytes();
             self.chunks[ci] = ChunkBufs::new(&buffers, device);
-            built += 1;
-            false
-        });
+            self.gpu_bytes = self
+                .gpu_bytes
+                .saturating_sub(old_bytes)
+                .saturating_add(self.chunks[ci].gpu_bytes());
+        }
     }
 }
 
@@ -536,6 +578,8 @@ pub struct Context {
     palette_texture: wgpu::Texture,
     pub flood: Flood,
     pub dirty_rects: Vec<super::DirtyRect>,
+    /// Reused CPU packing space for partial terrain-texture uploads.
+    upload_scratch: Vec<u8>,
     pub dirty_flood: bool,
     pub dirty_palette: Range<u32>,
     active_surface_constants: SurfaceConstants,
@@ -1832,6 +1876,7 @@ impl Context {
                 z_range: 0..level_height as _,
                 need_upload: true,
             }],
+            upload_scratch: Vec::new(),
             dirty_flood: true,
             dirty_palette: 0..0x100,
             active_surface_constants: SurfaceConstants {
@@ -2072,11 +2117,16 @@ impl Context {
                         ref mut tin,
                         ref mut chunks,
                         ref drawn,
+                        ref mut gpu_bytes,
                         ..
                     } = *geo;
                     let drawn = defer_refits.then_some(drawn.as_slice());
                     for (index, buffers) in tin.update(level, &rects, drawn) {
-                        chunks[index] = ChunkBufs::new(&buffers, device);
+                        let old_bytes = chunks[index].gpu_bytes();
+                        chunks[index].update(&buffers, device, queue);
+                        *gpu_bytes = (*gpu_bytes)
+                            .saturating_sub(old_bytes)
+                            .saturating_add(chunks[index].gpu_bytes());
                     }
                     // The scaffolded chunks still awaiting their first fit:
                     // one a tick, nearest the camera, so the visible area
@@ -2110,8 +2160,9 @@ impl Context {
                     continue;
                 }
                 let row_bytes = (x1 - x0) * 2;
-                let mut staging_data = vec![0u8; dr.rect.h as usize * row_bytes];
-                for (y_off, line) in staging_data.chunks_mut(row_bytes).enumerate() {
+                self.upload_scratch
+                    .resize(dr.rect.h as usize * row_bytes, 0);
+                for (y_off, line) in self.upload_scratch.chunks_mut(row_bytes).enumerate() {
                     let base = (dr.rect.y as usize + y_off) * level.size.0 as usize;
                     let heights = &level.height[base + x0..base + x1];
                     let metas = &level.meta[base + x0..base + x1];
@@ -2132,7 +2183,7 @@ impl Context {
                         },
                         aspect: wgpu::TextureAspect::All,
                     },
-                    &staging_data,
+                    &self.upload_scratch,
                     wgpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(row_bytes as u32),
@@ -2452,6 +2503,7 @@ impl Context {
                 if let Some(geo) = geo.as_mut() {
                     let MeshGeometry {
                         ref chunks,
+                        ref tin,
                         ref mut drawn,
                         ..
                     } = *geo;
@@ -2495,16 +2547,25 @@ impl Context {
                             if chunk.lods.is_empty() {
                                 continue;
                             }
-                            let min = glam::Vec3::new(
+                            let mut min = glam::Vec3::new(
                                 chunk.min[0] + offset.x,
                                 chunk.min[1] + offset.y,
                                 chunk.min[2],
                             );
-                            let max = glam::Vec3::new(
+                            let mut max = glam::Vec3::new(
                                 chunk.max[0] + offset.x,
                                 chunk.max[1] + offset.y,
                                 chunk.max[2],
                             );
+                            // A pending edit can raise or lower the chunk
+                            // beyond its old mesh bounds. Cull it against the
+                            // full possible altitude span until the refit has
+                            // caught up, otherwise entering the frustum and
+                            // becoming eligible for a refit is circular.
+                            if tin.has_pending(ci) {
+                                min.z = 0.0;
+                                max.z = level_height as f32;
+                            }
                             let hidden = cull && box_outside(&planes, min, max);
                             let center = glam::Vec2::new(
                                 chunk.center[0] + offset.x,
@@ -2521,7 +2582,23 @@ impl Context {
                             // with.
                             if !hidden || !box_outside(&planes, min - margin, max + margin) {
                                 let slot = &mut drawn[ci];
-                                *slot = Some(slot.map_or(level as u8, |l| l.min(level as u8)));
+                                let candidate = level::tin::DrawInfo {
+                                    lod: level as u8,
+                                    distance: dist,
+                                    lod_mask: 1u8 << level,
+                                };
+                                *slot = Some(slot.map_or(candidate, |old| {
+                                    let mut primary = if candidate.lod < old.lod
+                                        || (candidate.lod == old.lod
+                                            && candidate.distance < old.distance)
+                                    {
+                                        candidate
+                                    } else {
+                                        old
+                                    };
+                                    primary.lod_mask = old.lod_mask | candidate.lod_mask;
+                                    primary
+                                }));
                             }
                             if hidden {
                                 continue;
