@@ -43,7 +43,7 @@ const NONE: u32 = u32::MAX;
 #[derive(Clone, Copy, Debug)]
 pub struct MeshVertex {
     pub pos: [f32; 3],
-    /// 0 for the `low` floor, 1 for the `mid`/`high` slab.
+    /// Which sampled surface supplies the height: 0 = low, 1 = mid, 2 = high.
     pub layer: u32,
 }
 unsafe impl Pod for MeshVertex {}
@@ -711,7 +711,7 @@ impl Emitter<'_> {
                 (grid.y0 + local[1]) as f32 + 0.5,
                 z,
             ],
-            layer: u32::from(layer != Layer::Low),
+            layer: layer as u32,
         });
         *slot = index;
         index
@@ -899,17 +899,25 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
 /// it is cheap, and both sides of a seam have to agree on it every time -
 /// but the interior fit can be skipped for a chunk that has stopped
 /// gaining vertices. Returns whether any vertex was added.
-fn refine(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RefineOutcome {
+    added: bool,
+    converged: bool,
+}
+
+fn refine_bounded(
     chunk: &mut Chunk,
     grid: &Grid,
     max_error: f32,
     border_error: f32,
     dirty: Option<&[GridRect]>,
     measure: bool,
-) -> bool {
+    insertion_budget: usize,
+) -> RefineOutcome {
     use std::collections::BinaryHeap;
 
     let mut added = false;
+    let mut insertions = 0;
 
     // Border vertices first. Both chunks sharing a border derive the same
     // set from the same samples, so the seam matches exactly - and because
@@ -973,17 +981,27 @@ fn refine(
         if present[i] {
             continue;
         }
+        if insertions == insertion_budget {
+            return RefineOutcome {
+                added,
+                converged: false,
+            };
+        }
         let seed = chunk.locate(grid, grid.coord(gi), 0);
         // A border insertion rewrites triangles, so their candidates have to
         // be recomputed whether or not an edit reached them.
         added = true;
+        insertions += 1;
         for slot in chunk.insert(grid, gi, seed) {
             chunk.compute_candidate(grid, slot);
         }
     }
 
     if !measure {
-        return added;
+        return RefineOutcome {
+            added,
+            converged: true,
+        };
     }
 
     // Every triangle remembers its own worst sample, so popping the global
@@ -1048,7 +1066,14 @@ fn refine(
             }
         }
         let cand = chunk.tris[t as usize].cand;
+        if insertions == insertion_budget {
+            return RefineOutcome {
+                added,
+                converged: false,
+            };
+        }
         added = true;
+        insertions += 1;
         for slot in chunk.insert(grid, cand, t) {
             chunk.compute_candidate(grid, slot);
             let tri = &chunk.tris[slot as usize];
@@ -1057,7 +1082,31 @@ fn refine(
             }
         }
     }
-    added
+    RefineOutcome {
+        added,
+        converged: true,
+    }
+}
+
+fn refine(
+    chunk: &mut Chunk,
+    grid: &Grid,
+    max_error: f32,
+    border_error: f32,
+    dirty: Option<&[GridRect]>,
+    measure: bool,
+) -> bool {
+    let outcome = refine_bounded(
+        chunk,
+        grid,
+        max_error,
+        border_error,
+        dirty,
+        measure,
+        usize::MAX,
+    );
+    debug_assert!(outcome.converged);
+    outcome.added
 }
 
 /// One chunk's geometry, in its own pair of buffers.
@@ -1138,7 +1187,8 @@ struct ChunkState {
     /// starving its neighbours.
     pending_since: u32,
     /// LOD triangulations which have not yet measured all accumulated edits.
-    /// Their vertices are still re-emitted at current heights.
+    /// The shader already reads current heights; these only track whether
+    /// the XY topology has caught up with the changed surface detail.
     stale_lods: u8,
     /// Whether this update is the one that refits the chunk.
     due: bool,
@@ -1146,6 +1196,21 @@ struct ChunkState {
     /// back into view makes it due at once, so the first frame that shows
     /// it again shows it current.
     hidden: bool,
+    /// LOD whose topology is being refined incrementally on the web. Once
+    /// started it is completed before another LOD is touched, so a buffer
+    /// upload never exposes a half-refined sibling LOD.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    active_lod: Option<u8>,
+    /// Whether the active incremental refinement added any topology and
+    /// therefore needs one GPU mesh upload when it converges.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    topology_changed: bool,
+    /// LODs whose initial web fit has converged and may be drawn/refined.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    built_lods: u8,
+    /// Initial LOD fit being resumed across web frames.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    building_lod: Option<u8>,
 }
 
 /// How many detail steps a chunk that far from the viewer has dropped:
@@ -1216,8 +1281,10 @@ impl ChunkState {
 struct LodState {
     tri: Chunk,
     /// Refits left to skip before measuring the interior again.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     settle: u32,
     /// How many to skip next time the interior comes back converged.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     backoff: u32,
 }
 
@@ -1234,6 +1301,7 @@ struct LodState {
 /// The surface itself never lags: vertices are re-emitted from the current
 /// heights every refit either way. Only the density of them waits, and at
 /// the game's 20 refits a second this is under half a second.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 const MAX_SETTLE: u32 = 8;
 
 impl ChunkState {
@@ -1294,7 +1362,7 @@ impl Rect {
     }
 }
 
-/// Chunks whose geometry changed, by index, with their new buffers.
+/// Chunks whose topology changed, by index, with their new buffers.
 pub type Update = Vec<(usize, ChunkBuffers)>;
 
 /// A live TIN: the triangulations stay resident so terrain edits can refine
@@ -1408,6 +1476,10 @@ impl Tin {
                     stale_lods: 0,
                     due: false,
                     hidden: false,
+                    active_lod: None,
+                    topology_changed: false,
+                    built_lods: (1u8 << LOD_COUNT) - 1,
+                    building_lod: None,
                 },
                 meshes,
             )
@@ -1565,9 +1637,9 @@ impl Tin {
                 continue;
             }
             // Not built yet - the web build scaffolds every chunk and fills
-            // them in over the first ticks (`build_chunk`). Until one is
+            // them in over later ticks (`build_chunk_step`). Until one is
             // built its LODs are empty, and a refit has no triangulation to
-            // refine. `build_chunk` reads the current level, so the edit
+            // refine. `build_chunk_step` reads the current level, so the edit
             // banked here is picked up then.
             if state.lods.is_empty() {
                 continue;
@@ -1588,6 +1660,12 @@ impl Tin {
                     }
                 },
             };
+            #[cfg(target_arch = "wasm32")]
+            if state.active_lod.is_none()
+                && state.stale_lods & info.lod_mask & state.built_lods == 0
+            {
+                continue;
+            }
             state.due = if state.hidden {
                 state.hidden = false;
                 true
@@ -1597,13 +1675,10 @@ impl Tin {
         }
 
         let max_error = self.max_error;
+        #[cfg(not(target_arch = "wasm32"))]
         let refit = |index: usize, state: &mut ChunkState| {
             let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
             state.alt = grid.alt;
-            #[cfg(target_arch = "wasm32")]
-            let visible_lods = drawn
-                .and_then(|list| list.get(index).copied().flatten())
-                .map(|info| info.lod_mask);
             // The edits that reach this chunk, in its own grid
             // coordinates and clipped to it.
             let local = state
@@ -1620,27 +1695,9 @@ impl Tin {
                 })
                 .collect::<Vec<_>>();
             state.pending = None;
-            #[cfg(target_arch = "wasm32")]
-            match visible_lods {
-                Some(mask) => state.stale_lods &= !mask,
-                None => state.stale_lods = 0,
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                state.stale_lods = 0;
-            }
+            state.stale_lods = 0;
             let per_lod = {
                 let emit_lod = |k: usize, lod: &mut LodState| {
-                    #[cfg(target_arch = "wasm32")]
-                    if visible_lods.is_some_and(|mask| mask & (1u8 << k) == 0) {
-                        // Keep every LOD's vertex heights current so a later
-                        // distance transition cannot reveal stale terrain,
-                        // but spend the expensive error search only on the
-                        // LODs the renderer is using for this chunk now. When
-                        // another LOD becomes visible its next edit/refit
-                        // measures it normally.
-                        return emit_chunk(&lod.tri, &grid);
-                    }
                     // Skip measuring a chunk that has stopped gaining
                     // vertices, but always re-emit: the geometry has to
                     // follow the new heights either way.
@@ -1664,24 +1721,12 @@ impl Tin {
                     }
                     emit_chunk(&lod.tri, &grid)
                 };
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    state
-                        .lods
-                        .par_iter_mut()
-                        .enumerate()
-                        .map(|(k, lod)| emit_lod(k, lod))
-                        .collect::<Vec<_>>()
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    state
-                        .lods
-                        .iter_mut()
-                        .enumerate()
-                        .map(|(k, lod)| emit_lod(k, lod))
-                        .collect::<Vec<_>>()
-                }
+                state
+                    .lods
+                    .par_iter_mut()
+                    .enumerate()
+                    .map(|(k, lod)| emit_lod(k, lod))
+                    .collect::<Vec<_>>()
             };
             (index, ChunkBuffers::new(state, per_lod))
         };
@@ -1697,47 +1742,96 @@ impl Tin {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            // One 128² refine plus a WebGL buffer upload is several
-            // milliseconds in the browser. A cyclic set on Fostral can
-            // put tens of chunks due at once; doing them all in one
-            // frame is the one-second hitch. Keep the one-refit ceiling, but
-            // choose the oldest visible edit first; LOD and distance break
-            // equal-age ties. That bounds frame cost without letting map
-            // index order hide a nearby animation for thousands of frames.
-            const MAX_REFITS: usize = 1;
+            // A chunk is not a useful web budget: its topology and all three
+            // emitted LOD buffers can differ by orders of magnitude. Work on
+            // one LOD and cap the actual Delaunay insertions instead. Vertex
+            // heights come straight from the terrain texture, so an
+            // unfinished topology refinement never delays the animation.
+            const INSERTION_BUDGET: usize = 4;
             let n = self.chunks.len();
             if n == 0 {
                 return Vec::new();
             }
             let drawn = drawn.unwrap_or(&[]);
-            let mut due = (0..n)
+            let next = (0..n)
                 .filter(|&index| self.chunks[index].due && !self.chunks[index].lods.is_empty())
-                .collect::<Vec<_>>();
-            due.sort_by(|&a, &b| {
-                let sa = &self.chunks[a];
-                let sb = &self.chunks[b];
-                let ia = drawn.get(a).copied().flatten().unwrap_or(DrawInfo {
-                    lod: u8::MAX,
-                    distance: f32::INFINITY,
-                    lod_mask: 0,
+                .min_by(|&a, &b| {
+                    let sa = &self.chunks[a];
+                    let sb = &self.chunks[b];
+                    let ia = drawn.get(a).copied().flatten().unwrap_or(DrawInfo {
+                        lod: u8::MAX,
+                        distance: f32::INFINITY,
+                        lod_mask: 0,
+                    });
+                    let ib = drawn.get(b).copied().flatten().unwrap_or(DrawInfo {
+                        lod: u8::MAX,
+                        distance: f32::INFINITY,
+                        lod_mask: 0,
+                    });
+                    // Old work wins first, preventing a location edited every
+                    // tick from monopolising the single-threaded budget. LOD and
+                    // distance break ties in favour of what is easiest to see.
+                    sa.pending_since
+                        .cmp(&sb.pending_since)
+                        .then_with(|| ia.lod.cmp(&ib.lod))
+                        .then_with(|| ia.distance.total_cmp(&ib.distance))
                 });
-                let ib = drawn.get(b).copied().flatten().unwrap_or(DrawInfo {
-                    lod: u8::MAX,
-                    distance: f32::INFINITY,
-                    lod_mask: 0,
-                });
-                // Old work wins first, preventing a location edited every
-                // tick from monopolising the single-threaded budget. LOD and
-                // distance break ties in favour of what is easiest to see.
-                sa.pending_since
-                    .cmp(&sb.pending_since)
-                    .then_with(|| ia.lod.cmp(&ib.lod))
-                    .then_with(|| ia.distance.total_cmp(&ib.distance))
-            });
             let mut out = Vec::new();
-            for index in due.into_iter().take(MAX_REFITS) {
+            if let Some(index) = next {
                 let state = &mut self.chunks[index];
-                out.push(refit(index, state));
+                let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
+                state.alt = grid.alt;
+                let info = drawn[index].unwrap();
+                let lod_index = state.active_lod.map_or_else(
+                    || {
+                        (state.stale_lods & info.lod_mask & state.built_lods).trailing_zeros()
+                            as usize
+                    },
+                    usize::from,
+                );
+                state.active_lod = Some(lod_index as u8);
+                let local = state
+                    .pending
+                    .iter()
+                    .filter_map(|r| {
+                        let g = GridRect {
+                            x0: (r.x - state.x0).max(0),
+                            y0: (r.y - state.y0).max(0),
+                            x1: (r.x + r.w as i32 - state.x0).min(state.w as i32),
+                            y1: (r.y + r.h as i32 - state.y0).min(state.h as i32),
+                        };
+                        (g.x0 <= g.x1 && g.y0 <= g.y1).then_some(g)
+                    })
+                    .collect::<Vec<_>>();
+                let outcome = refine_bounded(
+                    &mut state.lods[lod_index].tri,
+                    &grid,
+                    max_error * (1 << lod_index) as f32,
+                    max_error,
+                    Some(&local),
+                    true,
+                    INSERTION_BUDGET,
+                );
+                state.topology_changed |= outcome.added;
+                if outcome.converged {
+                    state.stale_lods &= !(1u8 << lod_index);
+                    state.active_lod = None;
+                    if state.stale_lods == 0 {
+                        state.pending = None;
+                    } else {
+                        // Give other pending chunks a turn before revisiting
+                        // another LOD of this one.
+                        state.pending_since = tick;
+                    }
+                    if std::mem::take(&mut state.topology_changed) {
+                        let per_lod = state
+                            .lods
+                            .iter()
+                            .map(|lod| emit_chunk(&lod.tri, &grid))
+                            .collect();
+                        out.push((index, ChunkBuffers::new(state, per_lod)));
+                    }
+                }
             }
             out
         }
@@ -1749,8 +1843,8 @@ impl Tin {
     /// wasm that is the seconds-long hitch the loading screen sits on.
     /// `scaffold` creates every `ChunkState` so chunk indices, the render
     /// wrapper's per-chunk arrays and the draw walk are all stable, but
-    /// leaves every LOD empty. [`Tin::build_chunk`] then fills them in a
-    /// few at a time, nearest the camera first, over the first frames.
+    /// leaves every LOD empty. [`Tin::build_chunk_step`] then fills visible
+    /// LODs incrementally over later frames.
     #[cfg(target_arch = "wasm32")]
     pub fn scaffold(level: &Level, config: &Config) -> (Self, Mesh) {
         profiling::scope!("Scaffold Terrain TIN");
@@ -1783,7 +1877,7 @@ impl Tin {
                 y0: y,
                 w,
                 h,
-                // Filled by `build_chunk`, which also refreshes the bbox.
+                // Filled by `build_chunk_step`, which also refreshes the bbox.
                 alt: (0.0, 0.0),
                 lods: Vec::new(),
                 pending: None,
@@ -1791,6 +1885,10 @@ impl Tin {
                 stale_lods: 0,
                 due: false,
                 hidden: false,
+                active_lod: None,
+                topology_changed: false,
+                built_lods: 0,
+                building_lod: None,
             })
             .collect::<Vec<_>>();
         let meshes = origins
@@ -1811,49 +1909,76 @@ impl Tin {
         (tin, mesh)
     }
 
-    /// Builds (first time) the chunk at `index` from its grid, leaving the
-    /// chunk triangulated so later edits refine it in place - the same
-    /// work `build` does for one chunk, run on demand.
+    /// Whether initial construction has work for this visible LOD mask.
     #[cfg(target_arch = "wasm32")]
-    pub fn build_chunk(&mut self, level: &Level, index: usize) -> ChunkBuffers {
+    pub fn needs_build(&self, index: usize, visible_lods: u8) -> bool {
+        let state = &self.chunks[index];
+        state.building_lod.is_some() || visible_lods & !state.built_lods != 0
+    }
+
+    /// Resume one initial LOD fit. Returns render buffers only on convergence;
+    /// until then the partially refined triangulation remains CPU-side and
+    /// the previous GPU mesh stays untouched.
+    #[cfg(target_arch = "wasm32")]
+    pub fn build_chunk_step(
+        &mut self,
+        level: &Level,
+        index: usize,
+        visible_lods: u8,
+        insertion_budget: usize,
+    ) -> Option<ChunkBuffers> {
         let grid = {
             let st = &self.chunks[index];
             Grid::new(level, st.x0, st.y0, st.w, st.h)
         };
         let max_error = self.max_error;
-        let per_lod = {
-            let state = &mut self.chunks[index];
-            state.alt = grid.alt;
-            // The grid was read after any banked edit was applied, so the
-            // edits are baked in and the bank can be dropped.
-            state.pending = None;
-            state.stale_lods = 0;
-            state.lods.clear();
+        let state = &mut self.chunks[index];
+        state.alt = grid.alt;
+        if state.lods.is_empty() {
             state.lods = (0..LOD_COUNT)
-                .map(|k| {
-                    let mut tri = Chunk::new(&grid);
-                    refine(
-                        &mut tri,
-                        &grid,
-                        max_error * (1 << k) as f32,
-                        max_error,
-                        None,
-                        true,
-                    );
-                    LodState {
-                        tri,
-                        settle: 0,
-                        backoff: 0,
-                    }
+                .map(|_| LodState {
+                    tri: Chunk::new(&grid),
+                    settle: 0,
+                    backoff: 0,
                 })
                 .collect();
-            state
-                .lods
-                .iter()
-                .map(|lod| emit_chunk(&lod.tri, &grid))
-                .collect()
-        };
-        ChunkBuffers::new(&self.chunks[index], per_lod)
+        }
+        let lod_index = state.building_lod.map_or_else(
+            || (visible_lods & !state.built_lods).trailing_zeros() as usize,
+            usize::from,
+        );
+        state.building_lod = Some(lod_index as u8);
+        let outcome = refine_bounded(
+            &mut state.lods[lod_index].tri,
+            &grid,
+            max_error * (1 << lod_index) as f32,
+            max_error,
+            None,
+            true,
+            insertion_budget,
+        );
+        if !outcome.converged {
+            return None;
+        }
+        state.built_lods |= 1u8 << lod_index;
+        state.stale_lods &= !(1u8 << lod_index);
+        state.building_lod = None;
+        if state.stale_lods == 0 {
+            state.pending = None;
+        }
+        let per_lod = state
+            .lods
+            .iter()
+            .enumerate()
+            .map(|(k, lod)| {
+                if state.built_lods & (1u8 << k) != 0 {
+                    emit_chunk(&lod.tri, &grid)
+                } else {
+                    ChunkMesh::default()
+                }
+            })
+            .collect();
+        Some(ChunkBuffers::new(state, per_lod))
     }
 }
 
@@ -2112,6 +2237,12 @@ mod tests {
         assert!(has_z(60.0), "missing the cave floor");
         assert!(has_z(132.0), "missing the slab ceiling");
         assert!(has_z(180.0), "missing the slab top");
+        assert!(
+            [0, 1, 2]
+                .into_iter()
+                .all(|layer| verts.iter().any(|v| v.layer == layer)),
+            "low, mid, and high vertices need distinct shader layer IDs"
+        );
 
         // A wall needs the same XY to appear at both `mid` and `high`.
         let wall = verts.iter().any(|a| {
@@ -2743,6 +2874,31 @@ mod tests {
         }
         check_delaunay(&chunk, &grid);
         assert_eq!(chunk.verts.len(), 4 + interior.len() + 4);
+    }
+
+    #[test]
+    fn bounded_refinement_never_exceeds_its_insertion_budget() {
+        let level = make_level(64);
+        let grid = Grid::new(&level, 0, 0, 63, 63);
+        let mut bounded = Chunk::new(&grid);
+        let mut calls = 0;
+        loop {
+            let before = bounded.verts.len();
+            let outcome = refine_bounded(&mut bounded, &grid, 1.0, 1.0, None, true, 1);
+            assert!(bounded.verts.len() - before <= 1);
+            calls += 1;
+            if outcome.converged {
+                break;
+            }
+            assert!(calls < grid.samples.len());
+        }
+
+        let mut immediate = Chunk::new(&grid);
+        refine(&mut immediate, &grid, 1.0, 1.0, None, true);
+        assert!(calls > 1, "the fixture did not exercise yielding");
+        assert_eq!(bounded.verts, immediate.verts);
+        assert_eq!(bounded.tris.len(), immediate.tris.len());
+        check_invariants(&bounded, &grid);
     }
 
     #[test]
