@@ -121,6 +121,13 @@ fn vec_i2f(v: [i32; 3]) -> [f32; 3] {
     [v[0] as f32, v[1] as f32, v[2] as f32]
 }
 
+#[cfg_attr(
+    target_arch = "wasm32",
+    allow(
+        clippy::arc_with_non_send_sync,
+        reason = "the web build is single-threaded and shares the native Arc-based model API"
+    )
+)]
 pub fn load_c3d(
     raw: m3d::Mesh<m3d::Geometry<m3d::DrawTriangle>>,
     device: &wgpu::Device,
@@ -158,6 +165,13 @@ pub fn load_c3d(
     })
 }
 
+#[cfg_attr(
+    target_arch = "wasm32",
+    allow(
+        clippy::arc_with_non_send_sync,
+        reason = "the web build is single-threaded and shares the native Arc-based model API"
+    )
+)]
 pub fn load_c3d_shape(
     raw: m3d::Mesh<m3d::Geometry<m3d::CollisionQuad>>,
     device: &wgpu::Device,

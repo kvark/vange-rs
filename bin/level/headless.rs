@@ -1222,8 +1222,8 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             use vangers::level::DOUBLE_LEVEL as DL;
             let (mut mismatch, mut dual_pairs) = (0usize, 0usize);
             for row in lvl.meta.chunks(w) {
-                for pair in row.chunks_exact(2) {
-                    let (e, o) = (pair[0] & DL != 0, pair[1] & DL != 0);
+                for &[even, odd] in row.as_chunks::<2>().0 {
+                    let (e, o) = (even & DL != 0, odd & DL != 0);
                     if e || o {
                         dual_pairs += 1;
                     }
