@@ -322,9 +322,43 @@ impl ChunkBufs {
         }
     }
 
-    /// Rewrite existing allocations when the refined mesh still fits. Most
-    /// animation refits only change vertex heights, so reallocating two WebGL
-    /// buffers every tick is avoidable churn.
+    /// Allocate geometric growth room after a topology update outgrows the
+    /// initial exact-size buffers. TIN refinement only adds vertices, so
+    /// reallocating to the next exact size would make every later insertion
+    /// allocate another pair of WebGL buffers.
+    fn new_reserved(
+        src: &level::tin::ChunkBuffers,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Self {
+        let vertex_bytes: &[u8] = bytemuck::cast_slice(&src.vertices);
+        let index_bytes: &[u8] = bytemuck::cast_slice(&src.indices);
+        let reserve = |len: usize| (len.max(4) as u64).next_power_of_two();
+        let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("terrain-mesh-chunk-vertex"),
+            size: reserve(vertex_bytes.len()),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let index_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("terrain-mesh-chunk-index"),
+            size: reserve(index_bytes.len()),
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vertex_buf, 0, vertex_bytes);
+        queue.write_buffer(&index_buf, 0, index_bytes);
+        Self {
+            vertex_buf,
+            index_buf,
+            lods: src.lods.clone(),
+            center: src.center,
+            min: src.min,
+            max: src.max,
+        }
+    }
+
+    /// Rewrite existing allocations when refined topology still fits.
     fn update(
         &mut self,
         src: &level::tin::ChunkBuffers,
@@ -343,7 +377,7 @@ impl ChunkBufs {
             self.min = src.min;
             self.max = src.max;
         } else {
-            *self = Self::new(src, device);
+            *self = Self::new_reserved(src, device, queue);
         }
     }
 }
@@ -366,11 +400,6 @@ struct MeshGeometry {
     /// them, at full detail" so the first frame, which has no decision
     /// behind it yet, refits everything.
     drawn: Vec<Option<level::tin::DrawInfo>>,
-    /// Chunks the web build scaffolded but has not fitted yet; filled in a
-    /// few per tick, nearest the camera first. Empty on native, where
-    /// `Tin::build` fits everything up front.
-    #[cfg(target_arch = "wasm32")]
-    unbuilt: Vec<usize>,
     gpu_bytes: u64,
 }
 
@@ -394,54 +423,50 @@ impl MeshGeometry {
             chunks,
             tin,
             drawn,
-            #[cfg(target_arch = "wasm32")]
-            unbuilt: Vec::new(),
             gpu_bytes,
         }
     }
 
-    /// Fits the `budget` unbuilt chunks nearest `origin`, replacing their
-    /// empty buffers with real ones. Distance is measured through the level
-    /// seam, and only the few entries consumed this call are selected.
+    /// Advances a bounded number of initial-fit steps for visible LODs,
+    /// nearest first. A step caps Delaunay insertions and may leave its LOD
+    /// CPU-side to resume next frame; GPU buffers change only on convergence.
     #[cfg(target_arch = "wasm32")]
     fn build_pending(
         &mut self,
         level: &level::Level,
         device: &wgpu::Device,
-        origin: glam::Vec2,
-        budget: usize,
+        queue: &wgpu::Queue,
+        step_budget: usize,
     ) {
-        if self.unbuilt.is_empty() {
-            return;
-        }
-        // Only a handful are consumed per frame. Repeatedly selecting the
-        // nearest is linear in the queue; sorting all ~2000 remaining chunks
-        // every frame was needless main-thread work in the browser.
-        for _ in 0..budget.min(self.unbuilt.len()) {
-            let nearest = {
-                let chunks = &self.chunks;
-                let size = glam::Vec2::new(level.size.0 as f32, level.size.1 as f32);
-                self.unbuilt
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, ci)| {
-                        let c = chunks[**ci].center;
-                        let mut d = origin - glam::Vec2::new(c[0], c[1]);
-                        d.x -= (d.x / size.x).round() * size.x;
-                        d.y -= (d.y / size.y).round() * size.y;
-                        (d.x * d.x + d.y * d.y) as u32
-                    })
-                    .map(|(position, _)| position)
-                    .unwrap()
+        const INSERTIONS_PER_STEP: usize = 8;
+        for _ in 0..step_budget {
+            let nearest = self
+                .drawn
+                .iter()
+                .enumerate()
+                .filter_map(|(ci, info)| {
+                    let info = (*info)?;
+                    self.tin
+                        .needs_build(ci, info.lod_mask)
+                        .then_some((ci, info.distance))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(ci, _)| ci);
+            let Some(ci) = nearest else {
+                break;
             };
-            let ci = self.unbuilt.swap_remove(nearest);
-            let buffers = self.tin.build_chunk(level, ci);
-            let old_bytes = self.chunks[ci].gpu_bytes();
-            self.chunks[ci] = ChunkBufs::new(&buffers, device);
-            self.gpu_bytes = self
-                .gpu_bytes
-                .saturating_sub(old_bytes)
-                .saturating_add(self.chunks[ci].gpu_bytes());
+            let lod_mask = self.drawn[ci].unwrap().lod_mask;
+            if let Some(buffers) =
+                self.tin
+                    .build_chunk_step(level, ci, lod_mask, INSERTIONS_PER_STEP)
+            {
+                let old_bytes = self.chunks[ci].gpu_bytes();
+                self.chunks[ci] = ChunkBufs::new_reserved(&buffers, device, queue);
+                self.gpu_bytes = self
+                    .gpu_bytes
+                    .saturating_sub(old_bytes)
+                    .saturating_add(self.chunks[ci].gpu_bytes());
+            }
         }
     }
 }
@@ -2014,8 +2039,6 @@ impl Context {
         level: &level::Level,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        // Only the web build's incremental first fit reads this.
-        #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))] origin: glam::Vec2,
     ) {
         let surface_constants = {
             let bits = level.terrain_bits();
@@ -2088,11 +2111,6 @@ impl Context {
                         let (tin, mesh) = level::tin::Tin::scaffold(level, config);
                         let geo = &mut *geo;
                         *geo = Some(MeshGeometry::new(tin, &mesh, device));
-                        let loaded = geo.as_mut().unwrap();
-                        loaded.unbuilt = (0..loaded.chunks.len()).collect();
-                        // The frame that scaffolds also builds the first
-                        // few chunks, so the camera seat is not blank.
-                        loaded.build_pending(level, device, origin, 4);
                     }
                 }
                 Some(ref mut geo) => {
@@ -2111,8 +2129,9 @@ impl Context {
                             h: dr.rect.h as u32,
                         })
                         .collect::<Vec<_>>();
-                    // Each refitted chunk just gets fresh buffers -- they
-                    // are small enough that rebuilding beats patching.
+                    // Height-only changes stay in the terrain texture. This
+                    // returns buffers only when incremental refinement added
+                    // XY topology and the affected LOD converged.
                     let MeshGeometry {
                         ref mut tin,
                         ref mut chunks,
@@ -2128,12 +2147,10 @@ impl Context {
                             .saturating_sub(old_bytes)
                             .saturating_add(chunks[index].gpu_bytes());
                     }
-                    // The scaffolded chunks still awaiting their first fit:
-                    // one a tick, nearest the camera, so the visible area
-                    // fills over the opening frames and distant terrain
-                    // catches up as the level is driven across.
+                    // Advance one bounded initial-fit step for the nearest
+                    // visible LOD. Unseen chunks consume no gameplay time.
                     #[cfg(target_arch = "wasm32")]
-                    geo.build_pending(level, device, origin, 1);
+                    geo.build_pending(level, device, queue, 1);
                 }
             }
         }
@@ -2542,11 +2559,6 @@ impl Context {
                             (cam_tile.y + (copy / 3) as f32 - 1.0) * size[1],
                         );
                         for (ci, chunk) in chunks.iter().enumerate() {
-                            // Not fitted yet (web build): nothing to cull
-                            // or draw, and nothing for a refit to keep up.
-                            if chunk.lods.is_empty() {
-                                continue;
-                            }
                             let mut min = glam::Vec3::new(
                                 chunk.min[0] + offset.x,
                                 chunk.min[1] + offset.y,
@@ -2562,7 +2574,7 @@ impl Context {
                             // full possible altitude span until the refit has
                             // caught up, otherwise entering the frustum and
                             // becoming eligible for a refit is circular.
-                            if tin.has_pending(ci) {
+                            if chunk.lods.is_empty() || tin.has_pending(ci) {
                                 min.z = 0.0;
                                 max.z = level_height as f32;
                             }
@@ -2572,10 +2584,11 @@ impl Context {
                                 chunk.center[1] + offset.y,
                             );
                             let dist = (center - sc.origin).length();
+                            let lod_count = chunk.lods.len().max(level::tin::LOD_COUNT);
                             let level = match lod_force {
-                                Some(forced) => forced.min(chunk.lods.len() - 1),
+                                Some(forced) => forced.min(lod_count - 1),
                                 None => (level::tin::detail_steps(dist, lod_distance) as usize)
-                                    .min(chunk.lods.len() - 1),
+                                    .min(lod_count - 1),
                             };
                             // The finest level any copy of this chunk is
                             // drawn at is the one a refit has to keep up
@@ -2601,6 +2614,12 @@ impl Context {
                                 }));
                             }
                             if hidden {
+                                continue;
+                            }
+                            // A scaffolded web chunk still participates in
+                            // visibility above so `build_pending` can demand
+                            // it next frame, but it has nothing to draw yet.
+                            if chunk.lods.is_empty() {
                                 continue;
                             }
                             let (base, count) = chunk.lods[level];

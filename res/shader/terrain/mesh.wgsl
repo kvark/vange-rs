@@ -1,7 +1,8 @@
 //!include globals.inc terrain/locals.inc surface.inc shadow.inc terrain/color.inc
 
-// Triangulated irregular network. The mesh is fitted to the height map on
-// the CPU (see `level::tin`), so the vertex stage is just a transform.
+// Triangulated irregular network. XY topology is fitted to the height map on
+// the CPU (see `level::tin`); current altitude comes from the terrain texture
+// so animation does not wait for CPU topology maintenance.
 //
 // Terrain type still comes from the height texture, so material boundaries
 // stay at full texel resolution on coarse triangles. Lighting does not:
@@ -12,7 +13,7 @@
 struct Varyings {
     @builtin(position) position: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
-    // 0 = the `low` floor, 1 = the `mid`/`high` slab.
+    // 0 = low floor, 1 = cave ceiling (`mid`), 2 = slab top (`high`).
     @location(1) @interpolate(flat) layer: u32,
 };
 
@@ -38,7 +39,17 @@ fn vertex(
     @location(0) pos: vec3<f32>,
     @location(1) layer: u32,
 ) -> Varyings {
-    let world = vec3<f32>(pos.xy + tile_offset(instance_index), pos.z);
+    // XY topology changes rarely; height changes every animation frame.
+    // Reading it from the texture keeps moving land and deformation current
+    // without waiting for the single-threaded CPU TIN to re-emit this chunk.
+    let surface = get_surface(pos.xy);
+    var height = surface.low_alt;
+    if (layer == 1u) {
+        height = surface.mid_alt;
+    } else if (layer == 2u) {
+        height = surface.high_alt;
+    }
+    let world = vec3<f32>(pos.xy + tile_offset(instance_index), height);
     return Varyings(
         u_Globals.view_proj * vec4<f32>(world, 1.0),
         world,
