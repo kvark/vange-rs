@@ -60,6 +60,15 @@ pub const CHUNK_SIZE: u32 = 128;
 /// units, before the slab is dropped rather than ramped across the step.
 const SLAB_STEP: f32 = 8.0;
 
+/// Spacing of the low-only mesh shown while a web chunk's TIN is built.
+///
+/// The vertex shader samples the live height texture, so this is useful
+/// terrain immediately rather than a flat placeholder. Keeping it regular
+/// also makes neighbouring chunks meet exactly while their independently
+/// refined TINs are still incomplete.
+#[cfg(target_arch = "wasm32")]
+const FALLBACK_STEP: u32 = 16;
+
 /// Discrete level-of-detail steps kept per chunk.
 ///
 /// Greedy insertion makes these nearly free to produce: LOD `k` is just the
@@ -903,6 +912,10 @@ fn emit_chunk(chunk: &Chunk, grid: &Grid) -> ChunkMesh {
 struct RefineOutcome {
     added: bool,
     converged: bool,
+    /// Whether the cached triangle errors now describe this refit's input.
+    /// A bounded step can exhaust its budget while inserting border points,
+    /// before it reaches the candidate refresh.
+    candidates_refreshed: bool,
 }
 
 fn refine_bounded(
@@ -913,11 +926,13 @@ fn refine_bounded(
     dirty: Option<&[GridRect]>,
     measure: bool,
     insertion_budget: usize,
+    refresh_candidates: bool,
 ) -> RefineOutcome {
     use std::collections::BinaryHeap;
 
     let mut added = false;
     let mut insertions = 0;
+    let mut candidates_refreshed = !refresh_candidates;
 
     // Border vertices first. Both chunks sharing a border derive the same
     // set from the same samples, so the seam matches exactly - and because
@@ -985,6 +1000,7 @@ fn refine_bounded(
             return RefineOutcome {
                 added,
                 converged: false,
+                candidates_refreshed,
             };
         }
         let seed = chunk.locate(grid, grid.coord(gi), 0);
@@ -1001,6 +1017,7 @@ fn refine_bounded(
         return RefineOutcome {
             added,
             converged: true,
+            candidates_refreshed: true,
         };
     }
 
@@ -1020,7 +1037,7 @@ fn refine_bounded(
             continue;
         }
         let stale = match dirty {
-            None => true,
+            None => refresh_candidates,
             Some(rects) => {
                 let tri = &chunk.tris[t as usize];
                 let (mut lo, mut hi) = ([i32::MAX; 2], [i32::MIN; 2]);
@@ -1040,6 +1057,7 @@ fn refine_bounded(
             chunk.compute_candidate(grid, t);
         }
     }
+    candidates_refreshed = true;
     let mut heap = BinaryHeap::new();
     for (t, tri) in chunk.tris.iter().enumerate() {
         if tri.alive && tri.cand != NONE {
@@ -1070,6 +1088,7 @@ fn refine_bounded(
             return RefineOutcome {
                 added,
                 converged: false,
+                candidates_refreshed,
             };
         }
         added = true;
@@ -1085,6 +1104,7 @@ fn refine_bounded(
     RefineOutcome {
         added,
         converged: true,
+        candidates_refreshed,
     }
 }
 
@@ -1104,6 +1124,7 @@ fn refine(
         dirty,
         measure,
         usize::MAX,
+        true,
     );
     debug_assert!(outcome.converged);
     outcome.added
@@ -1168,6 +1189,29 @@ impl ChunkBuffers {
         }
         buffers
     }
+
+    #[cfg(target_arch = "wasm32")]
+    fn fallback(state: &ChunkState) -> Self {
+        let mesh = fallback_mesh(state);
+        let count = mesh.indices.len() as u32;
+        ChunkBuffers {
+            vertices: mesh.vertices,
+            indices: mesh.indices,
+            // All detail levels share this range until each is replaced by
+            // its independently fitted TIN.
+            lods: vec![(0, count); LOD_COUNT],
+            center: [
+                state.x0 as f32 + state.w as f32 * 0.5,
+                state.y0 as f32 + state.h as f32 * 0.5,
+            ],
+            min: [state.x0 as f32, state.y0 as f32, state.alt.0],
+            max: [
+                (state.x0 + state.w as i32) as f32 + 1.0,
+                (state.y0 + state.h as i32) as f32 + 1.0,
+                state.alt.1,
+            ],
+        }
+    }
 }
 
 #[cfg_attr(test, derive(Clone))]
@@ -1201,6 +1245,9 @@ struct ChunkState {
     /// upload never exposes a half-refined sibling LOD.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     active_lod: Option<u8>,
+    /// Whether the active web refit's triangle-error cache has been seeded.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    active_candidates_refreshed: bool,
     /// Whether the active incremental refinement added any topology and
     /// therefore needs one GPU mesh upload when it converges.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -1211,6 +1258,50 @@ struct ChunkState {
     /// Initial LOD fit being resumed across web frames.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     building_lod: Option<u8>,
+}
+
+/// A cheap, crack-free low surface used until a web TIN LOD converges.
+/// Heights deliberately stay at zero here: the mesh shader replaces them
+/// from the terrain texture at draw time.
+#[cfg(target_arch = "wasm32")]
+fn fallback_mesh(state: &ChunkState) -> ChunkMesh {
+    let axis = |end: u32| {
+        let mut points = (0..end).step_by(FALLBACK_STEP as usize).collect::<Vec<_>>();
+        points.push(end);
+        points
+    };
+    let xs = axis(state.w);
+    let ys = axis(state.h);
+    let mut out = ChunkMesh {
+        vertices: Vec::with_capacity(xs.len() * ys.len()),
+        indices: Vec::with_capacity((xs.len() - 1) * (ys.len() - 1) * 6),
+        slab_indices: 0,
+    };
+    for &y in &ys {
+        for &x in &xs {
+            out.vertices.push(MeshVertex {
+                pos: [
+                    state.x0 as f32 + x as f32 + 0.5,
+                    state.y0 as f32 + y as f32 + 0.5,
+                    0.0,
+                ],
+                layer: Layer::Low as u32,
+            });
+        }
+    }
+    let columns = xs.len() as u32;
+    for y in 0..ys.len() as u32 - 1 {
+        for x in 0..columns - 1 {
+            let tl = y * columns + x;
+            let tr = tl + 1;
+            let bl = tl + columns;
+            let br = bl + 1;
+            // Match `Emitter::tri`: reversed from CCW in world XY because
+            // the camera's Y flip changes handedness before rasterisation.
+            out.indices.extend_from_slice(&[br, tr, tl, bl, br, tl]);
+        }
+    }
+    out
 }
 
 /// How many detail steps a chunk that far from the viewer has dropped:
@@ -1477,6 +1568,7 @@ impl Tin {
                     due: false,
                     hidden: false,
                     active_lod: None,
+                    active_candidates_refreshed: false,
                     topology_changed: false,
                     built_lods: (1u8 << LOD_COUNT) - 1,
                     building_lod: None,
@@ -1782,6 +1874,7 @@ impl Tin {
                 let grid = Grid::new(level, state.x0, state.y0, state.w, state.h);
                 state.alt = grid.alt;
                 let info = drawn[index].unwrap();
+                let starting_lod = state.active_lod.is_none();
                 let lod_index = state.active_lod.map_or_else(
                     || {
                         (state.stale_lods & info.lod_mask & state.built_lods).trailing_zeros()
@@ -1790,6 +1883,9 @@ impl Tin {
                     usize::from,
                 );
                 state.active_lod = Some(lod_index as u8);
+                if starting_lod {
+                    state.active_candidates_refreshed = false;
+                }
                 let local = state
                     .pending
                     .iter()
@@ -1811,11 +1907,14 @@ impl Tin {
                     Some(&local),
                     true,
                     INSERTION_BUDGET,
+                    !state.active_candidates_refreshed,
                 );
+                state.active_candidates_refreshed |= outcome.candidates_refreshed;
                 state.topology_changed |= outcome.added;
                 if outcome.converged {
                     state.stale_lods &= !(1u8 << lod_index);
                     state.active_lod = None;
+                    state.active_candidates_refreshed = false;
                     if state.stale_lods == 0 {
                         state.pending = None;
                     } else {
@@ -1877,8 +1976,9 @@ impl Tin {
                 y0: y,
                 w,
                 h,
-                // Filled by `build_chunk_step`, which also refreshes the bbox.
-                alt: (0.0, 0.0),
+                // The fallback has no CPU-sampled heights, so conservatively
+                // cover every altitude until `build_chunk_step` refreshes it.
+                alt: (0.0, level.geometry.height as f32),
                 lods: Vec::new(),
                 pending: None,
                 pending_since: 0,
@@ -1886,6 +1986,7 @@ impl Tin {
                 due: false,
                 hidden: false,
                 active_lod: None,
+                active_candidates_refreshed: false,
                 topology_changed: false,
                 built_lods: 0,
                 building_lod: None,
@@ -1916,9 +2017,15 @@ impl Tin {
         state.building_lod.is_some() || visible_lods & !state.built_lods != 0
     }
 
+    /// Renderable regular-grid terrain while this chunk's requested TIN is
+    /// still being fitted. This does not sample the level or begin a fit.
+    #[cfg(target_arch = "wasm32")]
+    pub fn fallback_chunk(&self, index: usize) -> ChunkBuffers {
+        ChunkBuffers::fallback(&self.chunks[index])
+    }
+
     /// Resume one initial LOD fit. Returns render buffers only on convergence;
-    /// until then the partially refined triangulation remains CPU-side and
-    /// the previous GPU mesh stays untouched.
+    /// until then the regular-grid fallback stays on the GPU.
     #[cfg(target_arch = "wasm32")]
     pub fn build_chunk_step(
         &mut self,
@@ -1943,11 +2050,20 @@ impl Tin {
                 })
                 .collect();
         }
+        let starting_lod = state.building_lod.is_none();
         let lod_index = state.building_lod.map_or_else(
             || (visible_lods & !state.built_lods).trailing_zeros() as usize,
             usize::from,
         );
         state.building_lod = Some(lod_index as u8);
+        if starting_lod {
+            // `refine_bounded` caches each triangle's worst sample. Seed the
+            // two base triangles once so resumed steps do not rescan every
+            // triangle accumulated so far merely to rebuild that cache.
+            for t in 0..state.lods[lod_index].tri.tris.len() as u32 {
+                state.lods[lod_index].tri.compute_candidate(&grid, t);
+            }
+        }
         let outcome = refine_bounded(
             &mut state.lods[lod_index].tri,
             &grid,
@@ -1956,6 +2072,7 @@ impl Tin {
             None,
             true,
             insertion_budget,
+            false,
         );
         if !outcome.converged {
             return None;
@@ -1974,7 +2091,7 @@ impl Tin {
                 if state.built_lods & (1u8 << k) != 0 {
                     emit_chunk(&lod.tri, &grid)
                 } else {
-                    ChunkMesh::default()
+                    fallback_mesh(state)
                 }
             })
             .collect();
@@ -2882,9 +2999,20 @@ mod tests {
         let grid = Grid::new(&level, 0, 0, 63, 63);
         let mut bounded = Chunk::new(&grid);
         let mut calls = 0;
+        let mut candidates_refreshed = false;
         loop {
             let before = bounded.verts.len();
-            let outcome = refine_bounded(&mut bounded, &grid, 1.0, 1.0, None, true, 1);
+            let outcome = refine_bounded(
+                &mut bounded,
+                &grid,
+                1.0,
+                1.0,
+                None,
+                true,
+                1,
+                !candidates_refreshed,
+            );
+            candidates_refreshed |= outcome.candidates_refreshed;
             assert!(bounded.verts.len() - before <= 1);
             calls += 1;
             if outcome.converged {
