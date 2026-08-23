@@ -308,12 +308,12 @@ impl ChunkBufs {
             vertex_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("terrain-mesh-chunk-vertex"),
                 contents: bytemuck::cast_slice(&src.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             }),
             index_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("terrain-mesh-chunk-index"),
                 contents: bytemuck::cast_slice(&src.indices),
-                usage: wgpu::BufferUsages::INDEX,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             }),
             lods: src.lods.clone(),
             center: src.center,
