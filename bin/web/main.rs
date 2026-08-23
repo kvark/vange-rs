@@ -1708,7 +1708,7 @@ impl WebHandler {
             // integrates the dynamo; the camera chases the transform.
             // We take a mutable reborrow scope so the follow-camera
             // update below can read from gpu.app too.
-            let common = gpu.app.common.clone();
+            let common = gpu.app.common;
             let level_ref = &gpu.app.level;
             let mut follow = gpu.app.follow;
             let max_quant = gpu.app.max_quant;

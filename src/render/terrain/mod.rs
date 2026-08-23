@@ -427,9 +427,9 @@ impl MeshGeometry {
         }
     }
 
-    /// Advances a bounded number of initial-fit steps for visible LODs,
-    /// nearest first. A step caps Delaunay insertions and may leave its LOD
-    /// CPU-side to resume next frame; GPU buffers change only on convergence.
+    /// Gives newly visible chunks cheap terrain immediately, then advances a
+    /// bounded number of initial TIN-fit steps, nearest first. The fallback
+    /// remains drawable until a requested LOD converges.
     #[cfg(target_arch = "wasm32")]
     fn build_pending(
         &mut self,
@@ -438,7 +438,38 @@ impl MeshGeometry {
         queue: &wgpu::Queue,
         step_budget: usize,
     ) {
-        const INSERTIONS_PER_STEP: usize = 8;
+        const FALLBACKS_PER_FRAME: usize = 16;
+        const INSERTIONS_PER_STEP: usize = 4;
+
+        // Publishing a regular grid does no level sampling or fitting. Do a
+        // small batch so turning the camera cannot expose blue holes for
+        // seconds, while keeping buffer creation bounded per frame.
+        for _ in 0..FALLBACKS_PER_FRAME {
+            let nearest = self
+                .drawn
+                .iter()
+                .enumerate()
+                .filter_map(|(ci, info)| {
+                    let info = (*info)?;
+                    let missing = self.chunks[ci]
+                        .lods
+                        .get(info.lod as usize)
+                        .is_none_or(|&(_, count)| count == 0);
+                    missing.then_some((ci, info.distance))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(ci, _)| ci);
+            let Some(ci) = nearest else {
+                break;
+            };
+            let buffers = self.tin.fallback_chunk(ci);
+            let old_bytes = self.chunks[ci].gpu_bytes();
+            self.chunks[ci].update(&buffers, device, queue);
+            self.gpu_bytes = self
+                .gpu_bytes
+                .saturating_sub(old_bytes)
+                .saturating_add(self.chunks[ci].gpu_bytes());
+        }
         for _ in 0..step_budget {
             let nearest = self
                 .drawn
@@ -461,7 +492,7 @@ impl MeshGeometry {
                     .build_chunk_step(level, ci, lod_mask, INSERTIONS_PER_STEP)
             {
                 let old_bytes = self.chunks[ci].gpu_bytes();
-                self.chunks[ci] = ChunkBufs::new_reserved(&buffers, device, queue);
+                self.chunks[ci].update(&buffers, device, queue);
                 self.gpu_bytes = self
                     .gpu_bytes
                     .saturating_sub(old_bytes)
