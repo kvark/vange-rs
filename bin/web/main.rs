@@ -440,16 +440,14 @@ impl WebApp {
         s.game.camera.depth_range = (10.0, 6000.0);
 
         {
-            // GTA-style chase cam: far enough behind that the ~30-unit
-            // mechos does not fill the frame (offset 26 sat on the tail),
-            // high enough to see over the body, looking at a point ahead
-            // of the nose so the car sits in the lower third. `angle` is
-            // unused once `look_ahead` is set (90 looks straight down,
-            // 0 along the horizon) and is kept as a fallback pitch.
+            // Close third-person chase cam. The mechos is roughly 30 world
+            // units long, so this sits a little over one body length behind
+            // its centre and looks just beyond the nose. `angle` is unused
+            // once `look_ahead` is set and remains a fallback pitch.
             s.game.camera.angle = 12;
-            s.game.camera.offset = 56.0;
-            s.game.camera.height = 18.0;
-            s.game.camera.look_ahead = 40.0;
+            s.game.camera.offset = 46.0;
+            s.game.camera.height = 15.0;
+            s.game.camera.look_ahead = 28.0;
             // Snappier than the default so the camera stays behind the
             // car through turns instead of trailing wide.
             s.game.camera.speed = 8.0;
@@ -647,7 +645,16 @@ impl WebApp {
     }
 
     fn draw_ui(&self, ctx: &egui::Context) {
-        egui::Window::new("Settings").show(ctx, |ui| {
+        const PANEL_WIDTH: f32 = 340.0;
+
+        let window = egui::Window::new("Settings")
+            // Coordinate strings change width as their digits and signs
+            // change. Letting the window auto-size to them makes the whole
+            // diagnostics panel visibly jitter while driving.
+            .min_width(PANEL_WIDTH)
+            .max_width(PANEL_WIDTH)
+            .resizable(false);
+        window.show(ctx, |ui| {
             ui.label(format!(
                 "Backend: {}",
                 if self.is_webgpu { "WebGPU" } else { "WebGL2" }
@@ -1752,15 +1759,14 @@ impl WebHandler {
                     left -= max_quant;
                 }
                 agent.physics_step(left, level_ref, &common);
-                // Pull back and look further as speed rises so the car
-                // stays in the lower third instead of running toward
-                // the top of the frame.
+                // A small speed-sensitive pullback gives a sense of speed
+                // without shrinking the vehicle into the distance.
                 let speed_xy = {
                     let v = agent.dynamo.linear_velocity;
                     (v.x * v.x + v.y * v.y).sqrt()
                 };
-                follow.offset.y += (speed_xy * 0.18).min(22.0);
-                follow.look_ahead += (speed_xy * 0.28).min(28.0);
+                follow.offset.y += (speed_xy * 0.08).min(8.0);
+                follow.look_ahead += (speed_xy * 0.12).min(12.0);
                 gpu.app.cam.follow(&agent.transform, dt, &follow);
                 gpu.app.cam.keep_above_ground(level_ref, CAMERA_CLEARANCE);
             }
