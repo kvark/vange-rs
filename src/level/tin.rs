@@ -60,15 +60,6 @@ pub const CHUNK_SIZE: u32 = 128;
 /// units, before the slab is dropped rather than ramped across the step.
 const SLAB_STEP: f32 = 8.0;
 
-/// Spacing of the low-only mesh shown while a web chunk's TIN is built.
-///
-/// The vertex shader samples the live height texture, so this is useful
-/// terrain immediately rather than a flat placeholder. Keeping it regular
-/// also makes neighbouring chunks meet exactly while their independently
-/// refined TINs are still incomplete.
-#[cfg(target_arch = "wasm32")]
-const FALLBACK_STEP: u32 = 16;
-
 /// Discrete level-of-detail steps kept per chunk.
 ///
 /// Greedy insertion makes these nearly free to produce: LOD `k` is just the
@@ -283,6 +274,7 @@ struct Tri {
 /// One chunk's sample grid. `nx * ny` samples covering texels
 /// `[x0 ..= x0 + w]` x `[y0 ..= y0 + h]`, i.e. neighbouring chunks overlap
 /// by exactly one row/column so their boundary vertices coincide.
+#[derive(Clone)]
 struct Grid {
     samples: Vec<Sample>,
     /// Lowest floor and highest slab top over the whole chunk, folded in
@@ -365,13 +357,12 @@ impl Chunk {
 
     /// Seed with the two triangles spanning the chunk rectangle.
     fn new(grid: &Grid) -> Self {
-        let (mx, my) = (grid.nx - 1, grid.ny - 1);
-        let corners = [
-            grid.index(0, 0),
-            grid.index(mx, 0),
-            grid.index(mx, my),
-            grid.index(0, my),
-        ];
+        Self::new_size(grid.nx, grid.ny)
+    }
+
+    fn new_size(nx: u32, ny: u32) -> Self {
+        let (mx, my) = (nx - 1, ny - 1);
+        let corners = [0, mx, my * nx + mx, my * nx];
         let tris = vec![
             Tri {
                 v: [0, 1, 2],
@@ -673,7 +664,7 @@ fn simplify_line(samples: &[Sample], max_error: f32, out: &mut Vec<u32>) {
 }
 
 /// Per-chunk output, later concatenated into the final mesh.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ChunkMesh {
     vertices: Vec<MeshVertex>,
     indices: Vec<u32>,
@@ -1190,15 +1181,19 @@ impl ChunkBuffers {
         buffers
     }
 
-    #[cfg(target_arch = "wasm32")]
-    fn fallback(state: &ChunkState) -> Self {
-        let mesh = fallback_mesh(state);
+    /// The actual TIN seed, shared by every LOD until a fitted LOD is ready.
+    ///
+    /// It is deliberately only two triangles. This makes scaffolding the
+    /// whole level cheap enough to avoid blue holes without introducing a
+    /// second, web-only terrain topology. The vertex shader supplies live
+    /// heights; completed LODs replace this seed coarse-to-fine.
+    fn seed(state: &ChunkState) -> Self {
+        let mesh = seed_mesh(state);
         let count = mesh.indices.len() as u32;
         ChunkBuffers {
             vertices: mesh.vertices,
             indices: mesh.indices,
-            // All detail levels share this range until each is replaced by
-            // its independently fitted TIN.
+            // All detail levels share the same initial TIN range.
             lods: vec![(0, count); LOD_COUNT],
             center: [
                 state.x0 as f32 + state.w as f32 * 0.5,
@@ -1211,6 +1206,42 @@ impl ChunkBuffers {
                 state.alt.1,
             ],
         }
+    }
+
+    /// Pack each completed initial-build LOD once, and point unfinished
+    /// detail levels at the nearest completed coarser TIN. Before the first
+    /// completion they all point at the two-triangle seed.
+    fn initial(state: &ChunkState, grid: &Grid) -> Self {
+        let mut out = Self::seed(state);
+        out.vertices.clear();
+        out.indices.clear();
+        out.lods.clear();
+        let mut ranges = [None; LOD_COUNT + 1];
+        for requested in 0..LOD_COUNT {
+            let source = (requested..LOD_COUNT)
+                .find(|&k| state.built_lods & (1u8 << k) != 0)
+                .unwrap_or(LOD_COUNT);
+            let range = match ranges[source] {
+                Some(range) => range,
+                None => {
+                    let mesh = if source == LOD_COUNT {
+                        seed_mesh(state)
+                    } else {
+                        emit_chunk(&state.lods[source].tri, grid)
+                    };
+                    let base = out.vertices.len() as u32;
+                    let first = out.indices.len() as u32;
+                    out.indices
+                        .extend(mesh.indices.into_iter().map(|index| index + base));
+                    out.vertices.extend(mesh.vertices);
+                    let range = (first, out.indices.len() as u32 - first);
+                    ranges[source] = Some(range);
+                    range
+                }
+            };
+            out.lods.push(range);
+        }
+        out
     }
 }
 
@@ -1248,10 +1279,11 @@ struct ChunkState {
     /// Whether the active web refit's triangle-error cache has been seeded.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     active_candidates_refreshed: bool,
-    /// Whether the active incremental refinement added any topology and
-    /// therefore needs one GPU mesh upload when it converges.
+    /// Whether the active incremental refinement changed topology or touched
+    /// dual-layer terrain and therefore needs a GPU mesh upload. Heights are
+    /// sampled live, but cave ceilings and closing walls are index geometry.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    topology_changed: bool,
+    mesh_changed: bool,
     /// LODs whose initial web fit has converged and may be drawn/refined.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     built_lods: u8,
@@ -1260,47 +1292,28 @@ struct ChunkState {
     building_lod: Option<u8>,
 }
 
-/// A cheap, crack-free low surface used until a web TIN LOD converges.
-/// Heights deliberately stay at zero here: the mesh shader replaces them
-/// from the terrain texture at draw time.
-#[cfg(target_arch = "wasm32")]
-fn fallback_mesh(state: &ChunkState) -> ChunkMesh {
-    let axis = |end: u32| {
-        let mut points = (0..end).step_by(FALLBACK_STEP as usize).collect::<Vec<_>>();
-        points.push(end);
-        points
-    };
-    let xs = axis(state.w);
-    let ys = axis(state.h);
+/// Renderable form of [`Chunk::new`], before a sample grid has been read.
+/// Heights are placeholders because the mesh shader always samples the live
+/// terrain texture. Once a grid is available, the normal `emit_chunk` path
+/// produces every layer and wall from this same triangulation.
+fn seed_mesh(state: &ChunkState) -> ChunkMesh {
     let mut out = ChunkMesh {
-        vertices: Vec::with_capacity(xs.len() * ys.len()),
-        indices: Vec::with_capacity((xs.len() - 1) * (ys.len() - 1) * 6),
+        vertices: Vec::with_capacity(4),
+        indices: Vec::with_capacity(6),
         slab_indices: 0,
     };
-    for &y in &ys {
-        for &x in &xs {
-            out.vertices.push(MeshVertex {
-                pos: [
-                    state.x0 as f32 + x as f32 + 0.5,
-                    state.y0 as f32 + y as f32 + 0.5,
-                    0.0,
-                ],
-                layer: Layer::Low as u32,
-            });
-        }
+    for [x, y] in [[0, 0], [state.w, 0], [state.w, state.h], [0, state.h]] {
+        out.vertices.push(MeshVertex {
+            pos: [
+                state.x0 as f32 + x as f32 + 0.5,
+                state.y0 as f32 + y as f32 + 0.5,
+                0.0,
+            ],
+            layer: Layer::Low as u32,
+        });
     }
-    let columns = xs.len() as u32;
-    for y in 0..ys.len() as u32 - 1 {
-        for x in 0..columns - 1 {
-            let tl = y * columns + x;
-            let tr = tl + 1;
-            let bl = tl + columns;
-            let br = bl + 1;
-            // Match `Emitter::tri`: reversed from CCW in world XY because
-            // the camera's Y flip changes handedness before rasterisation.
-            out.indices.extend_from_slice(&[br, tr, tl, bl, br, tl]);
-        }
-    }
+    // Match the two triangles and winding in `Chunk::new` / `Emitter::tri`.
+    out.indices.extend_from_slice(&[2, 1, 0, 3, 2, 0]);
     out
 }
 
@@ -1456,6 +1469,12 @@ impl Rect {
 /// Chunks whose topology changed, by index, with their new buffers.
 pub type Update = Vec<(usize, ChunkBuffers)>;
 
+#[derive(Clone)]
+struct InitialBuild {
+    index: usize,
+    grid: Grid,
+}
+
 /// A live TIN: the triangulations stay resident so terrain edits can refine
 /// the mesh instead of rebuilding it.
 ///
@@ -1472,6 +1491,10 @@ pub struct Tin {
     /// Free-running update counter, for spreading refits across the ticks
     /// of a period - see `ChunkState::due_on`.
     tick: u32,
+    /// Sample data for the one initial chunk fit currently being resumed.
+    /// Keeping only the active grid avoids both the per-step resampling hitch
+    /// and the hundreds of megabytes needed to retain every chunk's grid.
+    initial_build: Option<InitialBuild>,
     pub stats: Stats,
 }
 
@@ -1569,7 +1592,7 @@ impl Tin {
                     hidden: false,
                     active_lod: None,
                     active_candidates_refreshed: false,
-                    topology_changed: false,
+                    mesh_changed: false,
                     built_lods: (1u8 << LOD_COUNT) - 1,
                     building_lod: None,
                 },
@@ -1594,6 +1617,7 @@ impl Tin {
             quality: config.quality,
             chunks,
             chunk_columns: spans_of(level.size.0).len(),
+            initial_build: None,
             stats: mesh.stats,
         };
         tin.log("built");
@@ -1728,11 +1752,9 @@ impl Tin {
             if state.pending.is_none() {
                 continue;
             }
-            // Not built yet - the web build scaffolds every chunk and fills
-            // them in over later ticks (`build_chunk_step`). Until one is
-            // built its LODs are empty, and a refit has no triangulation to
-            // refine. `build_chunk_step` reads the current level, so the edit
-            // banked here is picked up then.
+            // Kept for callers constructing metadata-only chunks. The web
+            // scaffold now contains real TIN seeds, so its LODs are present
+            // even before their initial fits have converged.
             if state.lods.is_empty() {
                 continue;
             }
@@ -1910,7 +1932,13 @@ impl Tin {
                     !state.active_candidates_refreshed,
                 );
                 state.active_candidates_refreshed |= outcome.candidates_refreshed;
-                state.topology_changed |= outcome.added;
+                let dual_layer_edit = local.iter().any(|rect| {
+                    (rect.y0..=rect.y1).any(|y| {
+                        (rect.x0..=rect.x1)
+                            .any(|x| grid.sample(grid.index(x as u32, y as u32)).is_dual)
+                    })
+                });
+                state.mesh_changed |= outcome.added || dual_layer_edit;
                 if outcome.converged {
                     state.stale_lods &= !(1u8 << lod_index);
                     state.active_lod = None;
@@ -1922,7 +1950,7 @@ impl Tin {
                         // another LOD of this one.
                         state.pending_since = tick;
                     }
-                    if std::mem::take(&mut state.topology_changed) {
+                    if std::mem::take(&mut state.mesh_changed) {
                         let per_lod = state
                             .lods
                             .iter()
@@ -1936,15 +1964,14 @@ impl Tin {
         }
     }
 
-    /// Chunk scaffolding with nothing triangulated, for the web build.
+    /// Chunk scaffolding for incremental construction.
     ///
     /// `build` triangulates the whole level up front; on a single-threaded
     /// wasm that is the seconds-long hitch the loading screen sits on.
-    /// `scaffold` creates every `ChunkState` so chunk indices, the render
-    /// wrapper's per-chunk arrays and the draw walk are all stable, but
-    /// leaves every LOD empty. [`Tin::build_chunk_step`] then fills visible
-    /// LODs incrementally over later frames.
-    #[cfg(target_arch = "wasm32")]
+    /// `scaffold` creates the same two-triangle TIN seeds used by `build`.
+    /// They make every chunk drawable immediately; `build_chunk_step` then
+    /// runs the normal adaptive fit coarse-to-fine. Platforms differ only in
+    /// whether that work is drained in parallel or resumed by a scheduler.
     pub fn scaffold(level: &Level, config: &Config) -> (Self, Mesh) {
         profiling::scope!("Scaffold Terrain TIN");
 
@@ -1976,10 +2003,16 @@ impl Tin {
                 y0: y,
                 w,
                 h,
-                // The fallback has no CPU-sampled heights, so conservatively
+                // The seed has no CPU-sampled heights, so conservatively
                 // cover every altitude until `build_chunk_step` refreshes it.
                 alt: (0.0, level.geometry.height as f32),
-                lods: Vec::new(),
+                lods: (0..LOD_COUNT)
+                    .map(|_| LodState {
+                        tri: Chunk::new_size(w + 1, h + 1),
+                        settle: 0,
+                        backoff: 0,
+                    })
+                    .collect(),
                 pending: None,
                 pending_since: 0,
                 stale_lods: 0,
@@ -1987,16 +2020,19 @@ impl Tin {
                 hidden: false,
                 active_lod: None,
                 active_candidates_refreshed: false,
-                topology_changed: false,
+                mesh_changed: false,
                 built_lods: 0,
                 building_lod: None,
             })
             .collect::<Vec<_>>();
-        let meshes = origins
-            .iter()
-            .map(|_| Vec::<ChunkMesh>::new())
-            .collect::<Vec<_>>();
-        let mesh = assemble(&chunks, meshes, level, max_error);
+        let mesh = Mesh {
+            chunks: chunks.iter().map(ChunkBuffers::seed).collect(),
+            stats: Stats {
+                source_texels: (level.size.0 as usize) * (level.size.1 as usize),
+                max_error,
+                ..Default::default()
+            },
+        };
 
         let tin = Tin {
             tick: 0,
@@ -2004,6 +2040,7 @@ impl Tin {
             quality: config.quality,
             chunks,
             chunk_columns: spans_of(level.size.0).len(),
+            initial_build: None,
             stats: mesh.stats,
         };
         tin.log("scaffolded");
@@ -2011,22 +2048,35 @@ impl Tin {
     }
 
     /// Whether initial construction has work for this visible LOD mask.
-    #[cfg(target_arch = "wasm32")]
     pub fn needs_build(&self, index: usize, visible_lods: u8) -> bool {
         let state = &self.chunks[index];
-        state.building_lod.is_some() || visible_lods & !state.built_lods != 0
+        if state.building_lod.is_some() {
+            return true;
+        }
+        let Some(finest) = (0..LOD_COUNT).find(|&k| visible_lods & (1u8 << k) != 0) else {
+            return false;
+        };
+        let required = ((1u8 << LOD_COUNT) - 1) & !((1u8 << finest) - 1);
+        required & !state.built_lods != 0
     }
 
-    /// Renderable regular-grid terrain while this chunk's requested TIN is
-    /// still being fitted. This does not sample the level or begin a fit.
-    #[cfg(target_arch = "wasm32")]
-    pub fn fallback_chunk(&self, index: usize) -> ChunkBuffers {
-        ChunkBuffers::fallback(&self.chunks[index])
+    /// Chunk whose sampled grid is retained between initial-build steps.
+    pub fn active_build(&self) -> Option<usize> {
+        self.initial_build.as_ref().map(|build| build.index)
+    }
+
+    pub fn chunk_rect(&self, index: usize) -> Rect {
+        let state = &self.chunks[index];
+        Rect {
+            x: state.x0,
+            y: state.y0,
+            w: state.w + 1,
+            h: state.h + 1,
+        }
     }
 
     /// Resume one initial LOD fit. Returns render buffers only on convergence;
-    /// until then the regular-grid fallback stays on the GPU.
-    #[cfg(target_arch = "wasm32")]
+    /// until then the nearest completed coarser TIN stays on the GPU.
     pub fn build_chunk_step(
         &mut self,
         level: &Level,
@@ -2034,25 +2084,31 @@ impl Tin {
         visible_lods: u8,
         insertion_budget: usize,
     ) -> Option<ChunkBuffers> {
-        let grid = {
-            let st = &self.chunks[index];
-            Grid::new(level, st.x0, st.y0, st.w, st.h)
-        };
+        let build = self.initial_build.take().unwrap_or_else(|| {
+            let state = &self.chunks[index];
+            InitialBuild {
+                index,
+                grid: Grid::new(level, state.x0, state.y0, state.w, state.h),
+            }
+        });
+        assert_eq!(
+            build.index, index,
+            "initial TIN build changed chunks mid-fit"
+        );
+        let grid = &build.grid;
         let max_error = self.max_error;
         let state = &mut self.chunks[index];
         state.alt = grid.alt;
-        if state.lods.is_empty() {
-            state.lods = (0..LOD_COUNT)
-                .map(|_| LodState {
-                    tri: Chunk::new(&grid),
-                    settle: 0,
-                    backoff: 0,
-                })
-                .collect();
-        }
         let starting_lod = state.building_lod.is_none();
         let lod_index = state.building_lod.map_or_else(
-            || (visible_lods & !state.built_lods).trailing_zeros() as usize,
+            || {
+                let finest = (visible_lods & ((1u8 << LOD_COUNT) - 1)).trailing_zeros();
+                let required = ((1u8 << LOD_COUNT) - 1) & !((1u8 << finest) - 1);
+                (0..LOD_COUNT)
+                    .rev()
+                    .find(|&k| required & !state.built_lods & (1u8 << k) != 0)
+                    .expect("build_chunk_step called without requested work")
+            },
             usize::from,
         );
         state.building_lod = Some(lod_index as u8);
@@ -2061,12 +2117,12 @@ impl Tin {
             // two base triangles once so resumed steps do not rescan every
             // triangle accumulated so far merely to rebuild that cache.
             for t in 0..state.lods[lod_index].tri.tris.len() as u32 {
-                state.lods[lod_index].tri.compute_candidate(&grid, t);
+                state.lods[lod_index].tri.compute_candidate(grid, t);
             }
         }
         let outcome = refine_bounded(
             &mut state.lods[lod_index].tri,
-            &grid,
+            grid,
             max_error * (1 << lod_index) as f32,
             max_error,
             None,
@@ -2075,27 +2131,12 @@ impl Tin {
             false,
         );
         if !outcome.converged {
+            self.initial_build = Some(build);
             return None;
         }
         state.built_lods |= 1u8 << lod_index;
-        state.stale_lods &= !(1u8 << lod_index);
         state.building_lod = None;
-        if state.stale_lods == 0 {
-            state.pending = None;
-        }
-        let per_lod = state
-            .lods
-            .iter()
-            .enumerate()
-            .map(|(k, lod)| {
-                if state.built_lods & (1u8 << k) != 0 {
-                    emit_chunk(&lod.tri, &grid)
-                } else {
-                    fallback_mesh(state)
-                }
-            })
-            .collect();
-        Some(ChunkBuffers::new(state, per_lod))
+        Some(ChunkBuffers::initial(state, grid))
     }
 }
 
@@ -2336,6 +2377,45 @@ mod tests {
                 .all(|v| v.pos[0] < span && v.pos[1] < span),
             "the mesh spilled outside the level bounds"
         );
+    }
+
+    #[test]
+    fn incremental_build_matches_the_parallel_builder() {
+        let level = make_level(64);
+        let config = Config { quality: 0.75 };
+        let (_full_tin, full_mesh) = Tin::build(&level, &config);
+        let (mut incremental, seed_mesh) = Tin::scaffold(&level, &config);
+
+        // Scaffolding is immediately drawable, but all levels share the
+        // actual two-triangle TIN seed rather than a different web mesh.
+        assert_eq!(seed_mesh.chunks.len(), 1);
+        assert_eq!(seed_mesh.chunks[0].indices.len(), 6);
+        assert!(
+            seed_mesh.chunks[0]
+                .lods
+                .windows(2)
+                .all(|pair| pair[0] == pair[1])
+        );
+
+        let mut final_buffers = None;
+        for _ in 0..level.height.len() * LOD_COUNT {
+            if !incremental.needs_build(0, 1) {
+                break;
+            }
+            if let Some(buffers) = incremental.build_chunk_step(&level, 0, 1, 1) {
+                final_buffers = Some(buffers);
+            }
+        }
+        assert!(!incremental.needs_build(0, 1), "incremental fit stalled");
+        let actual = final_buffers.expect("no completed TIN was published");
+        let expected = &full_mesh.chunks[0];
+        assert_eq!(actual.indices, expected.indices);
+        assert_eq!(actual.lods, expected.lods);
+        assert_eq!(actual.vertices.len(), expected.vertices.len());
+        for (a, b) in actual.vertices.iter().zip(&expected.vertices) {
+            assert_eq!(a.pos, b.pos);
+            assert_eq!(a.layer, b.layer);
+        }
     }
 
     #[test]
