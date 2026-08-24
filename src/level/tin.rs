@@ -60,14 +60,12 @@ pub const CHUNK_SIZE: u32 = 128;
 /// units, before the slab is dropped rather than ramped across the step.
 const SLAB_STEP: f32 = 8.0;
 
-/// Spacing of the low-only mesh shown while a web chunk's TIN is built.
-///
-/// The vertex shader samples the live height texture, so this is useful
-/// terrain immediately rather than a flat placeholder. Keeping it regular
-/// also makes neighbouring chunks meet exactly while their independently
-/// refined TINs are still incomplete.
-#[cfg(target_arch = "wasm32")]
-const FALLBACK_STEP: u32 = 16;
+/// WebGL has no worker threads here, so use predictable regular topology
+/// instead of fitting a TIN on the main thread. Eight texels keeps narrow
+/// terrain features visible while remaining substantially smaller than the
+/// three adaptive LODs used by native builds.
+#[cfg(any(test, target_arch = "wasm32"))]
+const WEB_GRID_STEP: u32 = 8;
 
 /// Discrete level-of-detail steps kept per chunk.
 ///
@@ -390,6 +388,69 @@ impl Chunk {
         ];
         Chunk {
             verts: corners.to_vec(),
+            tris,
+            free: Vec::new(),
+        }
+    }
+
+    /// Fixed regular triangulation for the single-threaded web renderer.
+    /// `emit_chunk` supplies the same floor/slab/ceiling/wall semantics as
+    /// the adaptive TIN; only the XY vertex selection differs.
+    #[cfg(any(test, target_arch = "wasm32"))]
+    fn web_regular(grid: &Grid) -> Self {
+        use std::collections::HashMap;
+
+        let axis = |end: u32| {
+            let mut points = (0..end).step_by(WEB_GRID_STEP as usize).collect::<Vec<_>>();
+            points.push(end);
+            points
+        };
+        let xs = axis(grid.nx - 1);
+        let ys = axis(grid.ny - 1);
+        let columns = xs.len() as u32;
+        let verts = ys
+            .iter()
+            .flat_map(|&y| xs.iter().map(move |&x| grid.index(x, y)))
+            .collect::<Vec<_>>();
+        let mut tris = Vec::with_capacity((xs.len() - 1) * (ys.len() - 1) * 2);
+        for y in 0..ys.len() as u32 - 1 {
+            for x in 0..columns - 1 {
+                let tl = y * columns + x;
+                let tr = tl + 1;
+                let bl = tl + columns;
+                let br = bl + 1;
+                for v in [[tl, tr, br], [tl, br, bl]] {
+                    tris.push(Tri {
+                        v,
+                        n: [NONE; 3],
+                        cand: NONE,
+                        err: 0.0,
+                        alive: true,
+                    });
+                }
+            }
+        }
+
+        // `emit_chunk` uses adjacency to omit walls between neighbouring
+        // slab triangles. Derive it once from the regular grid's edges.
+        let mut edges = HashMap::<(u32, u32), (usize, usize)>::new();
+        for t in 0..tris.len() {
+            let vertices = tris[t].v;
+            for edge in 0..3 {
+                let a = vertices[edge];
+                let b = vertices[(edge + 1) % 3];
+                let key = (a.min(b), a.max(b));
+                if let Some((other_t, other_edge)) = edges.remove(&key) {
+                    tris[t].n[edge] = other_t as u32;
+                    tris[other_t].n[other_edge] = t as u32;
+                } else {
+                    edges.insert(key, (t, edge));
+                }
+            }
+        }
+
+        Chunk {
+            verts,
             tris,
             free: Vec::new(),
         }
@@ -1191,14 +1252,12 @@ impl ChunkBuffers {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn fallback(state: &ChunkState) -> Self {
-        let mesh = fallback_mesh(state);
+    fn web_regular(state: &ChunkState, mesh: ChunkMesh) -> Self {
         let count = mesh.indices.len() as u32;
         ChunkBuffers {
             vertices: mesh.vertices,
             indices: mesh.indices,
-            // All detail levels share this range until each is replaced by
-            // its independently fitted TIN.
+            // Regular topology has no distance-dependent variants.
             lods: vec![(0, count); LOD_COUNT],
             center: [
                 state.x0 as f32 + state.w as f32 * 0.5,
@@ -1255,53 +1314,6 @@ struct ChunkState {
     /// LODs whose initial web fit has converged and may be drawn/refined.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     built_lods: u8,
-    /// Initial LOD fit being resumed across web frames.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    building_lod: Option<u8>,
-}
-
-/// A cheap, crack-free low surface used until a web TIN LOD converges.
-/// Heights deliberately stay at zero here: the mesh shader replaces them
-/// from the terrain texture at draw time.
-#[cfg(target_arch = "wasm32")]
-fn fallback_mesh(state: &ChunkState) -> ChunkMesh {
-    let axis = |end: u32| {
-        let mut points = (0..end).step_by(FALLBACK_STEP as usize).collect::<Vec<_>>();
-        points.push(end);
-        points
-    };
-    let xs = axis(state.w);
-    let ys = axis(state.h);
-    let mut out = ChunkMesh {
-        vertices: Vec::with_capacity(xs.len() * ys.len()),
-        indices: Vec::with_capacity((xs.len() - 1) * (ys.len() - 1) * 6),
-        slab_indices: 0,
-    };
-    for &y in &ys {
-        for &x in &xs {
-            out.vertices.push(MeshVertex {
-                pos: [
-                    state.x0 as f32 + x as f32 + 0.5,
-                    state.y0 as f32 + y as f32 + 0.5,
-                    0.0,
-                ],
-                layer: Layer::Low as u32,
-            });
-        }
-    }
-    let columns = xs.len() as u32;
-    for y in 0..ys.len() as u32 - 1 {
-        for x in 0..columns - 1 {
-            let tl = y * columns + x;
-            let tr = tl + 1;
-            let bl = tl + columns;
-            let br = bl + 1;
-            // Match `Emitter::tri`: reversed from CCW in world XY because
-            // the camera's Y flip changes handedness before rasterisation.
-            out.indices.extend_from_slice(&[br, tr, tl, bl, br, tl]);
-        }
-    }
-    out
 }
 
 /// How many detail steps a chunk that far from the viewer has dropped:
@@ -1571,7 +1583,6 @@ impl Tin {
                     active_candidates_refreshed: false,
                     topology_changed: false,
                     built_lods: (1u8 << LOD_COUNT) - 1,
-                    building_lod: None,
                 },
                 meshes,
             )
@@ -1729,9 +1740,9 @@ impl Tin {
                 continue;
             }
             // Not built yet - the web build scaffolds every chunk and fills
-            // them in over later ticks (`build_chunk_step`). Until one is
+            // them in over later ticks. Until one is
             // built its LODs are empty, and a refit has no triangulation to
-            // refine. `build_chunk_step` reads the current level, so the edit
+            // refine. The web builder reads the current level, so the edit
             // banked here is picked up then.
             if state.lods.is_empty() {
                 continue;
@@ -1942,8 +1953,8 @@ impl Tin {
     /// wasm that is the seconds-long hitch the loading screen sits on.
     /// `scaffold` creates every `ChunkState` so chunk indices, the render
     /// wrapper's per-chunk arrays and the draw walk are all stable, but
-    /// leaves every LOD empty. [`Tin::build_chunk_step`] then fills visible
-    /// LODs incrementally over later frames.
+    /// leaves every LOD empty. The renderer then builds fixed regular meshes
+    /// only for visible chunks over later frames.
     #[cfg(target_arch = "wasm32")]
     pub fn scaffold(level: &Level, config: &Config) -> (Self, Mesh) {
         profiling::scope!("Scaffold Terrain TIN");
@@ -1976,8 +1987,8 @@ impl Tin {
                 y0: y,
                 w,
                 h,
-                // The fallback has no CPU-sampled heights, so conservatively
-                // cover every altitude until `build_chunk_step` refreshes it.
+                // Web vertices read live heights in the shader, so keep a
+                // conservative lifetime bound rather than a sampled phase.
                 alt: (0.0, level.geometry.height as f32),
                 lods: Vec::new(),
                 pending: None,
@@ -1989,7 +2000,6 @@ impl Tin {
                 active_candidates_refreshed: false,
                 topology_changed: false,
                 built_lods: 0,
-                building_lod: None,
             })
             .collect::<Vec<_>>();
         let meshes = origins
@@ -2010,92 +2020,34 @@ impl Tin {
         (tin, mesh)
     }
 
-    /// Whether initial construction has work for this visible LOD mask.
+    /// Build one final web chunk with predictable regular topology.
+    ///
+    /// Unlike an incrementally fitted TIN this has no deferred completion,
+    /// one-off emission, or later buffer growth to hitch a gameplay frame.
+    /// The shader samples current heights, so this mesh also needs no CPU
+    /// rebuild for height-only terrain animation and deformation.
     #[cfg(target_arch = "wasm32")]
-    pub fn needs_build(&self, index: usize, visible_lods: u8) -> bool {
-        let state = &self.chunks[index];
-        state.building_lod.is_some() || visible_lods & !state.built_lods != 0
-    }
-
-    /// Renderable regular-grid terrain while this chunk's requested TIN is
-    /// still being fitted. This does not sample the level or begin a fit.
-    #[cfg(target_arch = "wasm32")]
-    pub fn fallback_chunk(&self, index: usize) -> ChunkBuffers {
-        ChunkBuffers::fallback(&self.chunks[index])
-    }
-
-    /// Resume one initial LOD fit. Returns render buffers only on convergence;
-    /// until then the regular-grid fallback stays on the GPU.
-    #[cfg(target_arch = "wasm32")]
-    pub fn build_chunk_step(
-        &mut self,
-        level: &Level,
-        index: usize,
-        visible_lods: u8,
-        insertion_budget: usize,
-    ) -> Option<ChunkBuffers> {
+    pub fn build_web_chunk(&mut self, level: &Level, index: usize) -> ChunkBuffers {
         let grid = {
             let st = &self.chunks[index];
             Grid::new(level, st.x0, st.y0, st.w, st.h)
         };
-        let max_error = self.max_error;
         let state = &mut self.chunks[index];
-        state.alt = grid.alt;
-        if state.lods.is_empty() {
-            state.lods = (0..LOD_COUNT)
-                .map(|_| LodState {
-                    tri: Chunk::new(&grid),
-                    settle: 0,
-                    backoff: 0,
-                })
-                .collect();
+        state.pending = None;
+        let tri = Chunk::web_regular(&grid);
+        let mesh = emit_chunk(&tri, &grid);
+        ChunkBuffers::web_regular(state, mesh)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn chunk_rect(&self, index: usize) -> Rect {
+        let state = &self.chunks[index];
+        Rect {
+            x: state.x0,
+            y: state.y0,
+            w: state.w + 1,
+            h: state.h + 1,
         }
-        let starting_lod = state.building_lod.is_none();
-        let lod_index = state.building_lod.map_or_else(
-            || (visible_lods & !state.built_lods).trailing_zeros() as usize,
-            usize::from,
-        );
-        state.building_lod = Some(lod_index as u8);
-        if starting_lod {
-            // `refine_bounded` caches each triangle's worst sample. Seed the
-            // two base triangles once so resumed steps do not rescan every
-            // triangle accumulated so far merely to rebuild that cache.
-            for t in 0..state.lods[lod_index].tri.tris.len() as u32 {
-                state.lods[lod_index].tri.compute_candidate(&grid, t);
-            }
-        }
-        let outcome = refine_bounded(
-            &mut state.lods[lod_index].tri,
-            &grid,
-            max_error * (1 << lod_index) as f32,
-            max_error,
-            None,
-            true,
-            insertion_budget,
-            false,
-        );
-        if !outcome.converged {
-            return None;
-        }
-        state.built_lods |= 1u8 << lod_index;
-        state.stale_lods &= !(1u8 << lod_index);
-        state.building_lod = None;
-        if state.stale_lods == 0 {
-            state.pending = None;
-        }
-        let per_lod = state
-            .lods
-            .iter()
-            .enumerate()
-            .map(|(k, lod)| {
-                if state.built_lods & (1u8 << k) != 0 {
-                    emit_chunk(&lod.tri, &grid)
-                } else {
-                    fallback_mesh(state)
-                }
-            })
-            .collect();
-        Some(ChunkBuffers::new(state, per_lod))
     }
 }
 
@@ -2369,6 +2321,47 @@ mod tests {
                 })
         });
         assert!(wall, "the slab was never closed off with a vertical wall");
+    }
+
+    #[test]
+    fn web_grid_keeps_the_layered_terrain_geometry() {
+        let level = make_level(64);
+        let grid = Grid::new(&level, 0, 0, 63, 63);
+        let tri = Chunk::web_regular(&grid);
+        check_invariants(&tri, &grid);
+        assert_eq!(tri.tris.len(), 2 * 8 * 8);
+
+        let mesh = emit_chunk(&tri, &grid);
+        assert!(
+            [0, 1, 2]
+                .into_iter()
+                .all(|layer| mesh.vertices.iter().any(|v| v.layer == layer)),
+            "the web grid dropped a terrain layer"
+        );
+        assert!(mesh.slab_indices != 0, "the web grid emitted no slab");
+    }
+
+    #[test]
+    fn adjacent_web_grids_share_every_border_vertex() {
+        let level = make_level(2 * CHUNK_SIZE as i32);
+        let left_grid = Grid::new(&level, 0, 0, CHUNK_SIZE, CHUNK_SIZE);
+        let right_grid = Grid::new(&level, CHUNK_SIZE as i32, 0, CHUNK_SIZE, CHUNK_SIZE);
+        let left = Chunk::web_regular(&left_grid);
+        let right = Chunk::web_regular(&right_grid);
+        let border = |chunk: &Chunk, grid: &Grid, x: i32| {
+            chunk
+                .verts
+                .iter()
+                .filter_map(|&v| {
+                    let [vx, vy] = grid.coord(v);
+                    (vx == x).then_some(vy)
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            border(&left, &left_grid, CHUNK_SIZE as i32),
+            border(&right, &right_grid, 0)
+        );
     }
 
     #[test]

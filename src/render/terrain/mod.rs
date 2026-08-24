@@ -50,6 +50,26 @@ fn box_outside(planes: &[glam::Vec4; 6], min: glam::Vec3, max: glam::Vec3) -> bo
     })
 }
 
+#[cfg(any(test, target_arch = "wasm32"))]
+fn rect_reaches_drawn(
+    rect: super::Rect,
+    drawn: &[Option<level::tin::DrawInfo>],
+    level_size: (i32, i32),
+) -> bool {
+    if rect.w == 0 || rect.h == 0 {
+        return false;
+    }
+    let chunk_size = level::tin::CHUNK_SIZE as usize;
+    let columns = (level_size.0 as usize).div_ceil(chunk_size);
+    let rows = (level_size.1 as usize).div_ceil(chunk_size);
+    let first_x = rect.x as usize / chunk_size;
+    let last_x = (rect.x as usize + rect.w as usize - 1) / chunk_size;
+    let first_y = rect.y as usize / chunk_size;
+    let last_y = (rect.y as usize + rect.h as usize - 1) / chunk_size;
+    (first_y..=last_y.min(rows - 1))
+        .any(|y| (first_x..=last_x.min(columns - 1)).any(|x| drawn[y * columns + x].is_some()))
+}
+
 /// How many wrapped copies of the level the mesh terrain draws around the
 /// camera's own tile, per axis. Has to agree with `c_MaxTileRadius` in
 /// `terrain/mesh.wgsl`.
@@ -392,14 +412,16 @@ struct WirePipelines {
 
 struct MeshGeometry {
     chunks: Vec<ChunkBufs>,
-    /// The live triangulation, kept so terrain edits refine the mesh in
-    /// place instead of rebuilding it.
+    /// Native keeps live triangulations for edit refits. Web uses the same
+    /// chunk metadata to build its permanent regular meshes on demand.
     tin: level::tin::Tin,
     /// What the last `prepare` decided to draw each chunk at, which is
     /// what a refit follows. See `level::tin::Drawn`. Starts as "all of
     /// them, at full detail" so the first frame, which has no decision
     /// behind it yet, refits everything.
     drawn: Vec<Option<level::tin::DrawInfo>>,
+    #[cfg(target_arch = "wasm32")]
+    web_was_visible: Vec<bool>,
     gpu_bytes: u64,
 }
 
@@ -423,28 +445,33 @@ impl MeshGeometry {
             chunks,
             tin,
             drawn,
+            #[cfg(target_arch = "wasm32")]
+            web_was_visible: vec![true; mesh.chunks.len()],
             gpu_bytes,
         }
     }
 
-    /// Gives newly visible chunks cheap terrain immediately, then advances a
-    /// bounded number of initial TIN-fit steps, nearest first. The fallback
-    /// remains drawable until a requested LOD converges.
+    /// Builds final regular-grid geometry for newly visible web chunks,
+    /// nearest first. Each chunk has fixed work and is uploaded exactly once.
     #[cfg(target_arch = "wasm32")]
     fn build_pending(
         &mut self,
         level: &level::Level,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        step_budget: usize,
-    ) {
-        const FALLBACKS_PER_FRAME: usize = 16;
-        const INSERTIONS_PER_STEP: usize = 4;
+    ) -> Vec<level::tin::Rect> {
+        const CHUNKS_PER_FRAME: usize = 4;
 
-        // Publishing a regular grid does no level sampling or fitting. Do a
-        // small batch so turning the camera cannot expose blue holes for
-        // seconds, while keeping buffer creation bounded per frame.
-        for _ in 0..FALLBACKS_PER_FRAME {
+        let mut refresh = Vec::new();
+        for ci in 0..self.drawn.len() {
+            let visible = self.drawn[ci].is_some();
+            if visible && !self.web_was_visible[ci] {
+                refresh.push(self.tin.chunk_rect(ci));
+            }
+            self.web_was_visible[ci] = visible;
+        }
+
+        for _ in 0..CHUNKS_PER_FRAME {
             let nearest = self
                 .drawn
                 .iter()
@@ -462,7 +489,7 @@ impl MeshGeometry {
             let Some(ci) = nearest else {
                 break;
             };
-            let buffers = self.tin.fallback_chunk(ci);
+            let buffers = self.tin.build_web_chunk(level, ci);
             let old_bytes = self.chunks[ci].gpu_bytes();
             self.chunks[ci].update(&buffers, device, queue);
             self.gpu_bytes = self
@@ -470,35 +497,7 @@ impl MeshGeometry {
                 .saturating_sub(old_bytes)
                 .saturating_add(self.chunks[ci].gpu_bytes());
         }
-        for _ in 0..step_budget {
-            let nearest = self
-                .drawn
-                .iter()
-                .enumerate()
-                .filter_map(|(ci, info)| {
-                    let info = (*info)?;
-                    self.tin
-                        .needs_build(ci, info.lod_mask)
-                        .then_some((ci, info.distance))
-                })
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(ci, _)| ci);
-            let Some(ci) = nearest else {
-                break;
-            };
-            let lod_mask = self.drawn[ci].unwrap().lod_mask;
-            if let Some(buffers) =
-                self.tin
-                    .build_chunk_step(level, ci, lod_mask, INSERTIONS_PER_STEP)
-            {
-                let old_bytes = self.chunks[ci].gpu_bytes();
-                self.chunks[ci].update(&buffers, device, queue);
-                self.gpu_bytes = self
-                    .gpu_bytes
-                    .saturating_sub(old_bytes)
-                    .saturating_add(self.chunks[ci].gpu_bytes());
-            }
-        }
+        refresh
     }
 }
 
@@ -2116,8 +2115,9 @@ impl Context {
             });
         }
 
-        // The TIN needs the level data, which `new()` never sees, so it is
-        // fitted on the first update and refined on every one after.
+        // Mesh geometry needs the level data, which `new()` never sees, so
+        // it is created on the first update. Native fits/refines a TIN; web
+        // builds permanent regular chunks only as they become visible.
         if let Kind::Mesh {
             ref config,
             ref mut geo,
@@ -2125,6 +2125,8 @@ impl Context {
             ..
         } = self.kind
         {
+            #[cfg(target_arch = "wasm32")]
+            let _ = defer_refits;
             match *geo {
                 None => {
                     // Build the whole TIN at once on native, where rayon
@@ -2149,6 +2151,7 @@ impl Context {
                     // dirty rectangles routinely land in the same chunk, and
                     // refitting per rectangle rebuilt that chunk - and its
                     // GPU buffers - once for each of them.
+                    #[cfg(not(target_arch = "wasm32"))]
                     let rects = self
                         .dirty_rects
                         .iter()
@@ -2163,6 +2166,7 @@ impl Context {
                     // Height-only changes stay in the terrain texture. This
                     // returns buffers only when incremental refinement added
                     // XY topology and the affected LOD converged.
+                    #[cfg(not(target_arch = "wasm32"))]
                     let MeshGeometry {
                         ref mut tin,
                         ref mut chunks,
@@ -2170,25 +2174,52 @@ impl Context {
                         ref mut gpu_bytes,
                         ..
                     } = *geo;
-                    let drawn = defer_refits.then_some(drawn.as_slice());
-                    for (index, buffers) in tin.update(level, &rects, drawn) {
-                        let old_bytes = chunks[index].gpu_bytes();
-                        chunks[index].update(&buffers, device, queue);
-                        *gpu_bytes = (*gpu_bytes)
-                            .saturating_sub(old_bytes)
-                            .saturating_add(chunks[index].gpu_bytes());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let drawn = defer_refits.then_some(drawn.as_slice());
+                        for (index, buffers) in tin.update(level, &rects, drawn) {
+                            let old_bytes = chunks[index].gpu_bytes();
+                            chunks[index].update(&buffers, device, queue);
+                            *gpu_bytes = (*gpu_bytes)
+                                .saturating_sub(old_bytes)
+                                .saturating_add(chunks[index].gpu_bytes());
+                        }
                     }
-                    // Advance one bounded initial-fit step for the nearest
-                    // visible LOD. Unseen chunks consume no gameplay time.
+                    // Web topology is regular and permanent. Height changes
+                    // come from the live texture, so there is no CPU refit or
+                    // GPU upload after a visible chunk's first build.
                     #[cfg(target_arch = "wasm32")]
-                    geo.build_pending(level, device, queue, 1);
+                    for rect in geo.build_pending(level, device, queue) {
+                        self.dirty_rects.push(super::DirtyRect {
+                            rect: super::Rect {
+                                x: rect.x as u16,
+                                y: rect.y as u16,
+                                w: rect.w as u16,
+                                h: rect.h as u16,
+                            },
+                            z_range: 0..level.geometry.height as u16,
+                            need_upload: true,
+                        });
+                    }
                 }
             }
         }
 
         if !self.dirty_rects.is_empty() {
+            #[cfg(target_arch = "wasm32")]
+            let web_drawn = match self.kind {
+                Kind::Mesh {
+                    geo: Some(ref geo), ..
+                } => Some(geo.drawn.as_slice()),
+                _ => None,
+            };
             for dr in self.dirty_rects.iter_mut() {
                 if !dr.need_upload {
+                    continue;
+                }
+                #[cfg(target_arch = "wasm32")]
+                if web_drawn.is_some_and(|drawn| !rect_reaches_drawn(dr.rect, drawn, level.size)) {
+                    dr.need_upload = false;
                     continue;
                 }
                 // Only the sub-rectangle, not the whole row. A moving-land
@@ -2246,7 +2277,6 @@ impl Context {
 
                 dr.need_upload = false;
             }
-
             match self.kind {
                 Kind::RayVoxel(ref rv) => {
                     let RayVoxelData {
@@ -3303,6 +3333,37 @@ mod cull_tests {
             &planes,
             glam::Vec3::new(-50.0, -500.0, -50.0),
             glam::Vec3::new(50.0, -400.0, 50.0),
+        ));
+    }
+
+    #[test]
+    fn web_uploads_only_reach_retained_chunks() {
+        let mut drawn = vec![None; 8];
+        drawn[5] = Some(crate::level::tin::DrawInfo {
+            lod: 0,
+            distance: 0.0,
+            lod_mask: 1,
+        });
+        let level_size = (512, 256);
+        assert!(super::rect_reaches_drawn(
+            crate::render::Rect {
+                x: 140,
+                y: 140,
+                w: 20,
+                h: 20,
+            },
+            &drawn,
+            level_size,
+        ));
+        assert!(!super::rect_reaches_drawn(
+            crate::render::Rect {
+                x: 10,
+                y: 10,
+                w: 20,
+                h: 20,
+            },
+            &drawn,
+            level_size,
         ));
     }
 }
