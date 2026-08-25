@@ -1,7 +1,7 @@
 use crate::render::object::BodyColor;
 
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Deserialize)]
 pub struct Car {
@@ -278,45 +278,25 @@ pub struct Settings {
 
 impl Settings {
     pub fn load(path: &str) -> Self {
-        use std::io::Read;
-
-        const TEMPLATE: &str = "config/settings.template.ron";
-        const PATH: &str = "config/settings.ron";
-        let mut string = String::new();
-        File::open(path)
-            .unwrap_or_else(|e| panic!("Unable to open the settings file: {:?}.\nPlease copy '{}' to '{}' and adjust 'data_path'",
-                e, TEMPLATE, PATH))
-            .read_to_string(&mut string)
-            .unwrap();
-        let set: Settings = match ron::de::from_str(&string) {
-            Ok(set) => set,
-            Err(e) => panic!(
-                "Unable to parse settings RON: {:?}.\nPlease check if `{}` has changed and your local config needs to be adjusted.",
-                e, TEMPLATE,
-            ),
-        };
-
-        if !set.check_path("options.dat") {
-            panic!(
-                "Can't find the resources of the original Vangers game at {:?}, please check your `{}`",
-                set.data_path, PATH,
-            );
-        }
-
-        set
+        Self::load_from(path).unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// Like `load`, but returns `None` instead of panicking when the
     /// settings file is missing or the game data path is invalid.
     pub fn try_load(path: &str) -> Option<Self> {
-        use std::io::Read as _;
-        let mut string = String::new();
-        File::open(path).ok()?.read_to_string(&mut string).ok()?;
-        let set: Settings = ron::de::from_str(&string).ok()?;
-        if !set.check_path("options.dat") {
-            return None;
-        }
-        Some(set)
+        Self::load_from(path).ok()
+    }
+
+    fn load_from(path: &str) -> Result<Self, String> {
+        const TEMPLATE: &str = "config/settings.template.ron";
+        let string = read_settings_ron(path, TEMPLATE)?;
+        let mut set: Settings = ron::de::from_str(&string).map_err(|e| {
+            format!(
+                "Unable to parse settings RON: {e:?}.\nPlease check if `{TEMPLATE}` has changed and your local config needs to be adjusted."
+            )
+        })?;
+        set.data_path = resolve_data_path(&set.data_path)?;
+        Ok(set)
     }
 
     pub fn open_relative(&self, path: &str) -> File {
@@ -329,12 +309,22 @@ impl Settings {
     }
 
     pub fn open_palette(&self) -> File {
-        let path = self
+        let objects = self
             .data_path
             .join("resource")
             .join("pal")
             .join("objects.pal");
-        File::open(path).expect("Unable to open palette")
+        if let Ok(file) = File::open(&objects) {
+            return file;
+        }
+        // The open-source Vangers tree ships Fostral's world palette.
+        let fostral = self
+            .data_path
+            .join("thechain")
+            .join("fostral")
+            .join("harmony.pal");
+        File::open(&fostral)
+            .unwrap_or_else(|_| panic!("Unable to open palette at {:?} or {:?}", objects, fostral))
     }
 
     pub fn _open_vehicle_model(&self, name: &str) -> File {
@@ -346,5 +336,129 @@ impl Settings {
             .join(name)
             .with_extension("m3d");
         File::open(path).unwrap_or_else(|_| panic!("Unable to open vehicle {}", name))
+    }
+}
+
+const TEMPLATE: &str = "config/settings.template.ron";
+const LOCAL: &str = "config/settings.ron";
+
+/// Markers that this directory is Vangers game data. `options.dat` is
+/// the purchased install; the open-source tree dropped it for
+/// `settings.toml` and publishes Fostral under `thechain/`.
+const DATA_MARKERS: &[&str] = &[
+    "options.dat",
+    "wrlds.dat",
+    "game.lst",
+    "thechain/fostral/world.ini",
+];
+
+const DEFAULT_DATA_CANDIDATES: &[&str] = &["../Vangers/data", "../Vangers"];
+
+fn read_settings_ron(path: &str, template: &str) -> Result<String, String> {
+    use std::io::Read as _;
+    if let Ok(mut file) = File::open(path) {
+        let mut string = String::new();
+        file.read_to_string(&mut string)
+            .map_err(|e| format!("Unable to read settings file {path}: {e}"))?;
+        return Ok(string);
+    }
+    let mut file = File::open(template).map_err(|e| {
+        format!(
+            "Unable to open the settings file {path:?} ({e}). Copy '{template}' to '{LOCAL}' and adjust 'data_path'."
+        )
+    })?;
+    let mut string = String::new();
+    file.read_to_string(&mut string)
+        .map_err(|e| format!("Unable to read {template}: {e}"))?;
+    log::info!("No {path}; using {template}");
+    Ok(string)
+}
+
+pub(crate) fn looks_like_game_data(dir: &Path) -> bool {
+    DATA_MARKERS.iter().any(|marker| dir.join(marker).exists())
+}
+
+fn normalize_data_dir(dir: PathBuf) -> PathBuf {
+    let nested = dir.join("data");
+    if looks_like_game_data(&nested) && !looks_like_game_data(&dir) {
+        nested
+    } else {
+        dir
+    }
+}
+
+fn resolve_data_path(configured: &Path) -> Result<PathBuf, String> {
+    let mut tried = Vec::new();
+    let mut consider = |p: PathBuf| -> Option<PathBuf> {
+        if p.as_os_str().is_empty() {
+            return None;
+        }
+        let p = normalize_data_dir(p);
+        if looks_like_game_data(&p) {
+            Some(p)
+        } else {
+            tried.push(p);
+            None
+        }
+    };
+
+    if let Some(found) = consider(configured.to_path_buf()) {
+        return Ok(found);
+    }
+    if let Ok(env_path) = std::env::var("VANGERS_DATA")
+        && let Some(found) = consider(PathBuf::from(env_path))
+    {
+        return Ok(found);
+    }
+    for candidate in DEFAULT_DATA_CANDIDATES {
+        if let Some(found) = consider(PathBuf::from(candidate)) {
+            return Ok(found);
+        }
+    }
+    Err(format!(
+        "Can't find Vangers game data at {:?}. Tried: {:?}. Set `data_path` in `{LOCAL}` (from `{TEMPLATE}`) to the original game or a KranX/Vangers checkout.",
+        configured, tried
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("vange-rs-settings-{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn touch(path: &Path) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, b"").unwrap();
+    }
+
+    #[test]
+    fn purchased_install_is_detected_by_options_dat() {
+        let dir = scratch("options");
+        touch(&dir.join("options.dat"));
+        assert!(looks_like_game_data(&dir));
+    }
+
+    #[test]
+    fn fostral_in_the_vangers_tree_is_enough() {
+        let dir = scratch("fostral");
+        touch(&dir.join("thechain/fostral/world.ini"));
+        assert!(looks_like_game_data(&dir));
+    }
+
+    #[test]
+    fn vangers_repo_root_resolves_to_data() {
+        let root = scratch("repo");
+        touch(&root.join("data/thechain/fostral/world.ini"));
+        assert_eq!(normalize_data_dir(root.clone()), root.join("data"));
     }
 }

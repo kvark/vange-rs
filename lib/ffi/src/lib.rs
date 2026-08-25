@@ -504,6 +504,7 @@ pub extern "C" fn rv_render(ctx: &mut Context, viewport: Rect) {
         Some(viewport.to_native()),
         &ctx.gfx.device,
         &ctx.gfx.queue,
+        None,
     );
 
     ctx.gfx.queue.submit(Some(encoder.finish()));

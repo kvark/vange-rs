@@ -79,6 +79,14 @@ impl LineBuffer {
         self.colors.clear();
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.vertices.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.vertices.len()
+    }
+
     pub fn add(&mut self, from: [f32; 3], to: [f32; 3], color: u32) {
         self.vertices.push(Position {
             pos: [from[0], from[1], from[2], 1.0],
@@ -94,7 +102,14 @@ impl LineBuffer {
 
 pub struct Context {
     settings: settings::DebugRender,
+    /// Three-group layout for collision-shape draws (globals, debug colour,
+    /// shape storage). Line draws use [`Self::line_pipeline_layout`] instead.
+    #[allow(dead_code)]
     pipeline_layout: Result<wgpu::PipelineLayout, VertexStorageNotSupported>,
+    /// Globals + debug colour. The line shader never reads the shape
+    /// storage group, so this layout is only two groups; using the
+    /// three-group shape layout would demand a dummy group 2 on every draw.
+    line_pipeline_layout: wgpu::PipelineLayout,
     pipelines_line: HashMap<Selector, wgpu::RenderPipeline>,
     pipeline_face: Option<wgpu::RenderPipeline>,
     pipeline_edge: Option<wgpu::RenderPipeline>,
@@ -146,6 +161,11 @@ impl Context {
             }
             Err(e) => Err(e),
         };
+        let line_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("debug-line"),
+            bind_group_layouts: &[Some(&global.bind_group_layout), Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
 
         let line_color_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("debug-line-color"),
@@ -202,6 +222,7 @@ impl Context {
         let mut result = Context {
             settings: *settings,
             pipeline_layout,
+            line_pipeline_layout,
             pipelines_line: HashMap::new(),
             pipeline_face: None,
             pipeline_edge: None,
@@ -218,82 +239,20 @@ impl Context {
     }
 
     pub fn reload(&mut self, device: &wgpu::Device) {
-        let primitive = wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleStrip,
-            front_face: wgpu::FrontFace::Ccw,
-            // original was not drawn with rasterizer, used no culling
-            ..Default::default()
-        };
-
         self.pipelines_line.clear();
-        if self.settings.impulses {
-            let shader = super::load_shader("debug", &[], device).unwrap();
-            for &visibility in &[Visibility::Front, Visibility::Behind] {
-                let (blend, depth_write_enabled, depth_compare) = match visibility {
-                    Visibility::Front => (BLEND_FRONT, true, wgpu::CompareFunction::LessEqual),
-                    Visibility::Behind => (BLEND_BEHIND, false, wgpu::CompareFunction::Greater),
-                };
-                for &color_rate in &[wgpu::VertexStepMode::Vertex, wgpu::VertexStepMode::Instance] {
-                    let name = format!("debug-line-{:?}-{:?}", visibility, color_rate);
-                    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                        label: Some(&name),
-                        layout: match self.pipeline_layout {
-                            Ok(ref layout) => Some(layout),
-                            Err(_) => continue,
-                        },
-                        vertex: wgpu::VertexState {
-                            module: &shader,
-                            entry_point: Some("main_vs"),
-                            compilation_options: Default::default(),
-                            buffers: &[
-                                wgpu::VertexBufferLayout {
-                                    array_stride: mem::size_of::<Position>() as wgpu::BufferAddress,
-                                    step_mode: wgpu::VertexStepMode::Vertex,
-                                    attributes: &[wgpu::VertexAttribute {
-                                        offset: 0,
-                                        format: wgpu::VertexFormat::Float32x4,
-                                        shader_location: 0,
-                                    }],
-                                },
-                                wgpu::VertexBufferLayout {
-                                    array_stride: mem::size_of::<Color>() as wgpu::BufferAddress,
-                                    step_mode: color_rate,
-                                    attributes: &[wgpu::VertexAttribute {
-                                        offset: 0,
-                                        format: wgpu::VertexFormat::Unorm8x4,
-                                        shader_location: 1,
-                                    }],
-                                },
-                            ],
-                        },
-                        fragment: Some(wgpu::FragmentState {
-                            module: &shader,
-                            entry_point: Some("main_fs"),
-                            compilation_options: Default::default(),
-                            targets: &[Some(wgpu::ColorTargetState {
-                                format: self.color_format,
-                                blend: Some(wgpu::BlendState {
-                                    color: blend,
-                                    alpha: blend,
-                                }),
-                                write_mask: wgpu::ColorWrites::all(),
-                            })],
-                        }),
-                        primitive,
-                        depth_stencil: Some(wgpu::DepthStencilState {
-                            format: DEPTH_FORMAT,
-                            depth_write_enabled: Some(depth_write_enabled),
-                            depth_compare: Some(depth_compare),
-                            stencil: Default::default(),
-                            bias: Default::default(),
-                        }),
-                        multisample: wgpu::MultisampleState::default(),
-                        multiview_mask: None,
-                        cache: None,
-                    });
-                    self.pipelines_line
-                        .insert((visibility, color_rate), pipeline);
-                }
+        let shader = super::load_shader("debug", &[], device).unwrap();
+        for &visibility in &[Visibility::Front, Visibility::Behind] {
+            for &color_rate in &[wgpu::VertexStepMode::Vertex, wgpu::VertexStepMode::Instance] {
+                let pipeline = create_line_pipeline(
+                    device,
+                    &self.line_pipeline_layout,
+                    &shader,
+                    self.color_format,
+                    visibility,
+                    color_rate,
+                );
+                self.pipelines_line
+                    .insert((visibility, color_rate), pipeline);
             }
         }
     }
@@ -393,6 +352,7 @@ impl Context {
         );
         assert_eq!(linebuf.vertices.len(), linebuf.colors.len());
 
+        pass.set_bind_group(1, &self.bind_group_line, &[]);
         self.draw_liner(
             pass,
             self.vertex_buf.as_ref().unwrap(),
@@ -400,5 +360,200 @@ impl Context {
             wgpu::VertexStepMode::Vertex,
             linebuf.vertices.len(),
         );
+    }
+}
+
+/// `LineBuffer::add` writes independent 2-vertex segments. A triangle strip
+/// of two vertices is empty; a line list draws each pair as a tick.
+pub(crate) fn line_primitive() -> wgpu::PrimitiveState {
+    wgpu::PrimitiveState {
+        topology: wgpu::PrimitiveTopology::LineList,
+        front_face: wgpu::FrontFace::Ccw,
+        // original was not drawn with rasterizer, used no culling
+        ..Default::default()
+    }
+}
+
+/// Depth state for [`line_primitive`]. wgpu forbids a non-zero depth bias
+/// on non-triangle topologies (`LineList` included); ticks stay above the
+/// ground by spawning them with [`crate::particle::SURFACE_LIFT`] instead.
+pub(crate) fn line_depth_stencil(front: bool) -> wgpu::DepthStencilState {
+    wgpu::DepthStencilState {
+        format: DEPTH_FORMAT,
+        depth_write_enabled: Some(front),
+        depth_compare: Some(if front {
+            wgpu::CompareFunction::LessEqual
+        } else {
+            wgpu::CompareFunction::Greater
+        }),
+        stencil: Default::default(),
+        bias: wgpu::DepthBiasState::default(),
+    }
+}
+
+fn create_line_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    color_format: wgpu::TextureFormat,
+    visibility: Visibility,
+    color_rate: wgpu::VertexStepMode,
+) -> wgpu::RenderPipeline {
+    let blend = match visibility {
+        Visibility::Front => BLEND_FRONT,
+        Visibility::Behind => BLEND_BEHIND,
+    };
+    let name = format!("debug-line-{:?}-{:?}", visibility, color_rate);
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(&name),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("main_vs"),
+            compilation_options: Default::default(),
+            buffers: &[
+                wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<Position>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        offset: 0,
+                        format: wgpu::VertexFormat::Float32x4,
+                        shader_location: 0,
+                    }],
+                },
+                wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<Color>() as wgpu::BufferAddress,
+                    step_mode: color_rate,
+                    attributes: &[wgpu::VertexAttribute {
+                        offset: 0,
+                        format: wgpu::VertexFormat::Unorm8x4,
+                        shader_location: 1,
+                    }],
+                },
+            ],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("main_fs"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: color_format,
+                blend: Some(wgpu::BlendState {
+                    color: blend,
+                    alpha: blend,
+                }),
+                write_mask: wgpu::ColorWrites::all(),
+            })],
+        }),
+        primitive: line_primitive(),
+        depth_stencil: Some(line_depth_stencil(visibility == Visibility::Front)),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn line_pipeline_draws_segments_not_triangles() {
+        assert_eq!(
+            super::line_primitive().topology,
+            wgpu::PrimitiveTopology::LineList
+        );
+    }
+
+    #[test]
+    fn line_list_does_not_use_depth_bias() {
+        // wgpu 29: "Depth bias is not compatible with non-triangle topology LineList"
+        let front = super::line_depth_stencil(true);
+        let behind = super::line_depth_stencil(false);
+        assert_eq!(front.bias, wgpu::DepthBiasState::default());
+        assert_eq!(behind.bias, wgpu::DepthBiasState::default());
+        assert_eq!(front.bias.constant, 0);
+        assert_eq!(front.bias.slope_scale, 0.0);
+        assert_eq!(
+            super::line_primitive().topology,
+            wgpu::PrimitiveTopology::LineList
+        );
+    }
+
+    fn try_headless_device() -> Option<wgpu::Device> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        let (device, _queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                label: Some("debug-line-test"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::Off,
+                experimental_features: Default::default(),
+            }))
+            .ok()?;
+        Some(device)
+    }
+
+    /// Same `Device::create_render_pipeline` the game hits on boot for
+    /// `debug-line-Front-Vertex`. A CPU-only descriptor check does not
+    /// run wgpu-core's LineList + depth-bias validator.
+    #[test]
+    fn debug_line_pipelines_validate_on_device() {
+        let Some(device) = try_headless_device() else {
+            eprintln!("skipping: no wgpu adapter for debug-line pipeline validation");
+            return;
+        };
+
+        let global_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("debug-line-test-global"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let debug_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("debug-line-test-color"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("debug-line"),
+            bind_group_layouts: &[Some(&global_bgl), Some(&debug_bgl)],
+            immediate_size: 0,
+        });
+        let shader = crate::render::load_shader("debug", &[], &device).unwrap();
+        let color_format = wgpu::TextureFormat::Rgba8UnormSrgb;
+
+        for &visibility in &[super::Visibility::Front, super::Visibility::Behind] {
+            for &color_rate in &[wgpu::VertexStepMode::Vertex, wgpu::VertexStepMode::Instance] {
+                let _pipeline = super::create_line_pipeline(
+                    &device,
+                    &layout,
+                    &shader,
+                    color_format,
+                    visibility,
+                    color_rate,
+                );
+            }
+        }
     }
 }

@@ -1,6 +1,7 @@
 use naga::ShaderStage;
 
 const SHADERS: &[(&str, &[(&str, &str)])] = &[
+    ("debug", &[]),
     ("object", &[]),
     ("water", &[]),
     ("terrain/ray", &[]),
@@ -98,5 +99,21 @@ fn integer_varyings_are_flat() {
         missing.is_empty(),
         "integer values crossing stages must be @interpolate(flat):\n  {}",
         missing.join("\n  ")
+    );
+}
+
+/// The line pipeline is laid out with only globals (0) and a colour
+/// uniform (1). A group-2 requirement would need a dummy shape bind
+/// group on every particle/insect draw.
+#[test]
+fn debug_line_shader_does_not_use_a_shape_bind_group() {
+    let (code, _module) = parse("debug", &[]);
+    assert!(
+        code.contains("@group(1)"),
+        "debug.wgsl should bind the colour uniform at group 1"
+    );
+    assert!(
+        !code.contains("@group(2)"),
+        "debug.wgsl binds group 2, but line draws only set groups 0 and 1"
     );
 }

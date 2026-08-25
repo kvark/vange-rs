@@ -1,5 +1,7 @@
 (
-	data_path: "",
+	data_path: "../Vangers/data",
+	// sibling checkout of https://github.com/KranX/Vangers
+	// Fostral lives in that tree; mechous still need original-game `resource/m3d`
 	// "/opt/gog/Vangers/game" #Linux (example)
 	// "/Applications/GOG/Vangers.app/Contents/Resources/game" #OSX
 	game: (

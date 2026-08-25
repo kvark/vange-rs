@@ -606,6 +606,7 @@ impl Render {
         viewport: Option<Rect>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        lines: Option<&debug::LineBuffer>,
     ) {
         profiling::scope!("draw_world");
         batcher.prepare(device);
@@ -736,6 +737,14 @@ impl Render {
             pass.set_bind_group(1, &self.terrain.bind_group, &[]);
             self.water.draw(&mut pass);
             pass.pop_debug_group();
+
+            if let Some(lines) = lines
+                && !lines.is_empty()
+            {
+                pass.push_debug_group("particles");
+                self.debug.draw_lines(&mut pass, device, lines);
+                pass.pop_debug_group();
+            }
         }
     }
 

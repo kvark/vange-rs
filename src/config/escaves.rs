@@ -1,4 +1,5 @@
 use crate::config::text::Reader;
+use crate::config::Settings;
 
 use std::fs::File;
 
@@ -15,6 +16,14 @@ pub struct Escave {
     pub coordinates: (i32, i32),
     pub special_item: String,
     pub need_items: Vec<ItemSource>,
+}
+
+pub fn load_optional(settings: &Settings, name: &str) -> Vec<Escave> {
+    if settings.check_path(name) {
+        load(settings.open_relative(name))
+    } else {
+        Vec::new()
+    }
 }
 
 pub fn load(file: File) -> Vec<Escave> {

@@ -5,7 +5,7 @@ mod model_obj;
 mod vot_ron;
 
 use std::{
-    fs::{File, read as fs_read},
+    fs::{read as fs_read, File},
     io::{BufReader, BufWriter},
     path::{Path, PathBuf},
 };
@@ -112,7 +112,7 @@ fn main() {
             println!("\tImporting OBJ data...");
             let amesh = model_obj::import_a3d(&src_path);
             println!("\tSaving A3D...");
-            amesh.save(File::create(&dst_path).unwrap());
+            amesh.save(&mut File::create(&dst_path).unwrap());
         }
         ("ini", "ron") => {
             println!("\tLoading the level...");
