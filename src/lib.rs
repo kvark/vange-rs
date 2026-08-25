@@ -43,6 +43,7 @@ pub mod physics;
 pub mod render;
 pub mod space;
 pub mod vfs;
+pub mod weapon;
 
 #[cfg(feature = "web")]
 pub mod data;
