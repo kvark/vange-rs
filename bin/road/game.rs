@@ -9,7 +9,7 @@ use vangers::{
         debug::LineBuffer,
         object::{BodyColor, Instance},
     },
-    space,
+    space, weapon,
 };
 use vangers_net::PlayerId;
 
@@ -299,6 +299,24 @@ struct DataBase {
     game: config::game::Registry,
 }
 
+fn hang_weapons(
+    player: &mut Agent,
+    inventory: &escave::Inventory,
+    meshes: &HashMap<String, Arc<model::Mesh>>,
+    db: &DataBase,
+) {
+    let ids = escave::equipped_slot_ids(inventory);
+    let mounted = escave::mounted_meshes(inventory, |id| meshes.get(id).cloned());
+    for (i, (slot, mesh)) in player.car.model.slots.iter_mut().zip(mounted).enumerate() {
+        slot.mesh = mesh;
+        if let Some(id) = ids[i]
+            && let Some(info) = db.game.model_infos.get(id)
+        {
+            slot.scale = info.scale;
+        }
+    }
+}
+
 enum CameraStyle {
     Simple(space::Direction),
     Follow {
@@ -374,6 +392,8 @@ struct Input {
     tick: Option<f32>,
     /// Space: enter a nearby escave/passage, or leave one.
     use_entrance: bool,
+    /// Pressed fire bay, consumed on the next update.
+    fire_bay: Option<usize>,
 }
 
 pub struct Game {
@@ -418,10 +438,18 @@ pub struct Game {
     beebs: i32,
     inventory: escave::Inventory,
     shop: escave::Shop,
+    /// Body meshes for shop weapons, keyed by `game.lst` NameID.
+    weapon_meshes: HashMap<String, Arc<model::Mesh>>,
     visit: Option<escave::Visit>,
     data_path: PathBuf,
     /// Original `Bug` mesh (`.a3d` first frame), if `game.lst` has one.
     bug: Option<(Arc<model::Mesh>, f32)>,
+    shots: Vec<LiveShot>,
+}
+
+struct LiveShot {
+    shot: weapon::Shot,
+    age: f32,
 }
 
 impl Game {
@@ -570,18 +598,41 @@ impl Game {
             &level,
         );
         player_agent.spirit = Spirit::Player;
-        for (ms, sid) in player_agent
+
+        let shop = escave::Shop::fostral();
+        let mut inventory = escave::Inventory::default();
+        for (i, sid) in settings
             .car
-            .model
             .slots
-            .iter_mut()
-            .zip(settings.car.slots.iter())
+            .iter()
+            .enumerate()
+            .take(escave::BAY_COUNT)
         {
-            let info = &db.game.model_infos[sid];
-            let raw = Mesh::load(&mut settings.open_relative(&info.path));
-            ms.mesh = Some(model::load_c3d(raw, &gfx.device));
-            ms.scale = info.scale;
+            let _ = inventory.load_bay(i, escave::Good::weapon(sid.clone(), 0, 0));
         }
+        let mut weapon_meshes = HashMap::new();
+        let mut load_gun = |id: &str| {
+            if weapon_meshes.contains_key(id) {
+                return;
+            }
+            let Some(info) = db.game.model_infos.get(id) else {
+                return;
+            };
+            let Ok(mut file) = File::open(settings.data_path.join(&info.path)) else {
+                return;
+            };
+            let mesh = model::load_c3d(Mesh::load(&mut file), &gfx.device);
+            weapon_meshes.insert(id.to_string(), mesh);
+        };
+        for good in shop.stock() {
+            if good.is_weapon() {
+                load_gun(&good.id);
+            }
+        }
+        for sid in &settings.car.slots {
+            load_gun(sid);
+        }
+        hang_weapons(&mut player_agent, &inventory, &weapon_meshes, &db);
 
         let mut agents = vec![player_agent];
         // populate with random agents
@@ -682,11 +733,13 @@ impl Game {
             particle_time: 0.0,
             swarm,
             beebs: 500,
-            inventory: escave::Inventory::default(),
-            shop: escave::Shop::fostral(),
+            inventory,
+            shop,
+            weapon_meshes,
             visit: None,
             data_path: settings.data_path.clone(),
             bug,
+            shots: Vec::new(),
         }
     }
 
@@ -862,6 +915,14 @@ impl Game {
 
     fn leave_escave(&mut self) {
         self.visit = None;
+        self.sync_weapon_slots();
+    }
+
+    fn sync_weapon_slots(&mut self) {
+        let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
+            return;
+        };
+        hang_weapons(player, &self.inventory, &self.weapon_meshes, &self.db);
     }
 
     fn collect_entrances(&self) -> Vec<escave::Entrance> {
@@ -1073,6 +1134,8 @@ impl Application for Game {
                 KeyCode::ShiftLeft => self.input.turbo = true,
                 KeyCode::KeyM => self.input.mole = true,
                 KeyCode::Space => self.input.use_entrance = true,
+                KeyCode::KeyF => self.input.fire_bay = Some(0),
+                KeyCode::KeyG => self.input.fire_bay = Some(1),
                 KeyCode::AltLeft => self.input.jump = Some(0.0),
                 KeyCode::KeyW => self.input.spin_ver = self.cam.scale.x,
                 KeyCode::KeyS => self.input.spin_ver = -self.cam.scale.x,
@@ -1194,6 +1257,28 @@ impl Application for Game {
             self.input.use_entrance = false;
             self.try_use_entrance();
         }
+
+        if let Some(bay) = self.input.fire_bay.take()
+            && self.visit.is_none()
+        {
+            let player = self
+                .agents
+                .iter()
+                .find(|a| a.spirit == Spirit::Player)
+                .unwrap();
+            let transform = match player.physics {
+                Physics::Cpu { ref transform, .. } => *transform,
+            };
+            let forward = transform.rot * Vec3::Y;
+            if let Some(shot) = weapon::fire(&self.inventory, bay, transform.disp, forward) {
+                self.shots.push(LiveShot { shot, age: 0.0 });
+            }
+        }
+        for live in &mut self.shots {
+            live.shot.step(delta);
+            live.age += delta;
+        }
+        self.shots.retain(|live| live.age < 1.5);
 
         self.step_moving_land(delta);
 
@@ -1465,263 +1550,312 @@ impl Application for Game {
             return;
         }
 
-        let player = self
-            .agents
-            .iter_mut()
-            .find(|agent| agent.spirit == Spirit::Player)
-            .unwrap();
-        let mut selected_car = player.car_name.clone();
+        let mut selected_car;
         let mut enter_name: Option<String> = None;
         let mut leave_escave = false;
+        let mut sync_slots = false;
+        {
+            let player = self
+                .agents
+                .iter_mut()
+                .find(|agent| agent.spirit == Spirit::Player)
+                .unwrap();
+            selected_car = player.car_name.clone();
 
-        #[allow(deprecated)]
-        egui::SidePanel::right("Tweaks").show(context, |ui| {
-            ui.horizontal(|ui| {
-                crate::boilerplate::tweaks::collapse_button(ui, &mut self.ui_expanded);
-                ui.label("Tweaks");
-            });
-            egui::CollapsingHeader::new("Player")
-                .default_open(true)
-                .show(ui, |ui| {
-                    egui::ComboBox::from_label("Mechous")
-                        .selected_text(&player.car_name)
-                        .show_ui(ui, |ui| {
-                            for car_name in self.db.cars.keys() {
-                                ui.selectable_value(&mut selected_car, car_name.clone(), car_name);
-                            }
-                        });
-                    egui::ComboBox::from_label("Color")
-                        .selected_text(player.color.name())
-                        .show_ui(ui, |ui| {
-                            for &color in &[
-                                BodyColor::Green,
-                                BodyColor::Red,
-                                BodyColor::Blue,
-                                BodyColor::Yellow,
-                                BodyColor::Gray,
-                            ] {
-                                ui.selectable_value(&mut player.color, color, color.name());
-                            }
-                        });
-                    if let Physics::Cpu {
-                        ref mut transform,
-                        dynamo: _,
-                    } = player.physics
-                    {
-                        ui.horizontal(|ui| {
-                            ui.label("Position");
-                            ui.add(
-                                egui::DragValue::new(&mut transform.disp.x)
-                                    .speed(1.0)
-                                    .prefix("x:"),
-                            );
-                            ui.add(
-                                egui::DragValue::new(&mut transform.disp.y)
-                                    .speed(1.0)
-                                    .prefix("y:"),
-                            );
-                        });
-                    }
+            #[allow(deprecated)]
+            egui::SidePanel::right("Tweaks").show(context, |ui| {
+                ui.horizontal(|ui| {
+                    crate::boilerplate::tweaks::collapse_button(ui, &mut self.ui_expanded);
+                    ui.label("Tweaks");
                 });
-            egui::CollapsingHeader::new("Camera")
-                .default_open(false)
-                .show(ui, |ui| {
-                    self.cam.draw_ui(ui);
-                    if let CameraStyle::Follow {
-                        ref mut follow,
-                        ref mut ground_anchor,
-                    } = self.cam_style
-                    {
-                        let mut angle_deg = follow.angle_x.to_degrees();
-                        ui.add(egui::Slider::new(&mut angle_deg, -105.0..=0.0).text("Angle"));
-                        follow.angle_x = angle_deg.to_radians();
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::DragValue::new(&mut follow.offset.x)
-                                    .speed(1.0)
-                                    .prefix("x:"),
-                            );
-                            ui.add(
-                                egui::DragValue::new(&mut follow.offset.y)
-                                    .speed(1.0)
-                                    .prefix("y:"),
-                            );
-                            ui.add(
-                                egui::DragValue::new(&mut follow.offset.z)
-                                    .speed(1.0)
-                                    .prefix("z:"),
-                            );
-                        });
-                        ui.add(egui::Slider::new(&mut follow.speed, 0.1..=10.0).text("Speed"));
-                        ui.checkbox(ground_anchor, "Ground anchor");
-                    }
-                });
-            egui::CollapsingHeader::new("Level")
-                .default_open(false)
-                .show(ui, |ui| {
-                    self.level.draw_ui(ui);
-                });
-            if !self.moving.is_empty() {
-                egui::CollapsingHeader::new("Moving land")
-                    .default_open(false)
+                egui::CollapsingHeader::new("Player")
+                    .default_open(true)
                     .show(ui, |ui| {
-                        Self::draw_moving_land_ui(&self.moving.land, &self.moving.triggers, ui);
-                    });
-            }
-            egui::CollapsingHeader::new("Terrain")
-                .default_open(false)
-                .show(ui, |ui| {
-                    Self::draw_terraform_ui(&mut self.terraform, ui);
-                });
-            if !self.palette.is_empty() {
-                egui::CollapsingHeader::new("Palette")
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        ui.checkbox(&mut self.palette.enabled, "Animate");
-                    });
-            }
-            if self.flood.is_dynamic() {
-                egui::CollapsingHeader::new("Tide")
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        let moved = ui.checkbox(&mut self.flood.enabled, "Drift").changed();
-                        ui.add(
-                            egui::Slider::new(&mut self.flood.seconds_per_day, 5.0..=600.0)
-                                .text("Seconds per day"),
-                        );
-                        ui.label(format!(
-                            "level {} ({:+.0}%)",
-                            self.level.flood_map[0],
-                            (self.flood.scale() - 1.0) * 100.0
-                        ));
-                        if moved {
-                            self.flood.apply(&mut self.level);
-                            self.render.terrain.dirty_flood = true;
+                        egui::ComboBox::from_label("Mechous")
+                            .selected_text(&player.car_name)
+                            .show_ui(ui, |ui| {
+                                for car_name in self.db.cars.keys() {
+                                    ui.selectable_value(
+                                        &mut selected_car,
+                                        car_name.clone(),
+                                        car_name,
+                                    );
+                                }
+                            });
+                        egui::ComboBox::from_label("Color")
+                            .selected_text(player.color.name())
+                            .show_ui(ui, |ui| {
+                                for &color in &[
+                                    BodyColor::Green,
+                                    BodyColor::Red,
+                                    BodyColor::Blue,
+                                    BodyColor::Yellow,
+                                    BodyColor::Gray,
+                                ] {
+                                    ui.selectable_value(&mut player.color, color, color.name());
+                                }
+                            });
+                        if let Physics::Cpu {
+                            ref mut transform,
+                            dynamo: _,
+                        } = player.physics
+                        {
+                            ui.horizontal(|ui| {
+                                ui.label("Position");
+                                ui.add(
+                                    egui::DragValue::new(&mut transform.disp.x)
+                                        .speed(1.0)
+                                        .prefix("x:"),
+                                );
+                                ui.add(
+                                    egui::DragValue::new(&mut transform.disp.y)
+                                        .speed(1.0)
+                                        .prefix("y:"),
+                                );
+                            });
                         }
                     });
-            }
-            if self.cycle.is_some() {
-                egui::CollapsingHeader::new("Cycle")
+                egui::CollapsingHeader::new("Camera")
                     .default_open(false)
                     .show(ui, |ui| {
-                        if let Some(jump) = Self::draw_cycle_ui(self.cycle.as_ref().unwrap(), ui) {
-                            let bunch = self.cycle.as_mut().unwrap();
-                            let range = bunch.set_cycle(jump, &mut self.level);
-                            self.render.dirty_palette(range);
-                            self.render.set_light_modulation(bunch.light());
-                            self.palette.rebase(&self.level.palette);
+                        self.cam.draw_ui(ui);
+                        if let CameraStyle::Follow {
+                            ref mut follow,
+                            ref mut ground_anchor,
+                        } = self.cam_style
+                        {
+                            let mut angle_deg = follow.angle_x.to_degrees();
+                            ui.add(egui::Slider::new(&mut angle_deg, -105.0..=0.0).text("Angle"));
+                            follow.angle_x = angle_deg.to_radians();
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::DragValue::new(&mut follow.offset.x)
+                                        .speed(1.0)
+                                        .prefix("x:"),
+                                );
+                                ui.add(
+                                    egui::DragValue::new(&mut follow.offset.y)
+                                        .speed(1.0)
+                                        .prefix("y:"),
+                                );
+                                ui.add(
+                                    egui::DragValue::new(&mut follow.offset.z)
+                                        .speed(1.0)
+                                        .prefix("z:"),
+                                );
+                            });
+                            ui.add(egui::Slider::new(&mut follow.speed, 0.1..=10.0).text("Speed"));
+                            ui.checkbox(ground_anchor, "Ground anchor");
                         }
                     });
-            }
-            egui::CollapsingHeader::new("Renderer")
-                .default_open(false)
-                .show(ui, |ui| {
-                    self.render.draw_ui(ui);
-                });
-            egui::CollapsingHeader::new("World life")
-                .default_open(true)
-                .show(ui, |ui| {
-                    ui.label(format!("Beebs: {}", self.beebs));
-                    ui.label(format!(
-                        "Particles: {}  Beebs on the ground: {}",
-                        self.particles.particles().len(),
-                        self.swarm.insects().len()
-                    ));
-                    ui.label("Space: enter escave / open tunnel");
-                    ui.add(
-                        egui::Slider::new(&mut player.armor, 0..=player.max_armor.max(1))
-                            .text("Armour"),
-                    );
-                    let pos = player.position();
-                    let reach = (level::cycle::DELIVERY_RADIUS * 2).max(96);
-                    let near = self.db.escaves.iter().find(|e| {
-                        let dx = pos.x as i32 - e.coordinates.0;
-                        let dy = pos.y as i32 - e.coordinates.1;
-                        dx * dx + dy * dy <= reach * reach
+                egui::CollapsingHeader::new("Level")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        self.level.draw_ui(ui);
                     });
-                    if let Some(escave) = near {
-                        let name = escave.name.clone();
-                        ui.label(format!("Near {name}"));
-                        if self.visit.is_none() && ui.button(format!("Enter {name}")).clicked() {
-                            enter_name = Some(name);
-                        }
-                    }
-                    if self.visit.is_some() && ui.button("Leave escave").clicked() {
-                        leave_escave = true;
-                    }
-                });
-        });
-
-        if let Some(ref mut visit) = self.visit {
-            let mut leave = false;
-            let mut buy: Option<String> = None;
-            let mut sell: Option<usize> = None;
-            let mut ask: Option<String> = None;
-            let mut next_phrase = false;
-            egui::Window::new(format!("Escave: {}", visit.name)).show(context, |ui| {
-                if ui.button("Leave").clicked() {
-                    leave = true;
+                if !self.moving.is_empty() {
+                    egui::CollapsingHeader::new("Moving land")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            Self::draw_moving_land_ui(&self.moving.land, &self.moving.triggers, ui);
+                        });
                 }
-                ui.separator();
-                ui.label(format!("Beebs: {}", self.beebs));
-                if let Some(ref mut session) = visit.session {
-                    if let Some(phrase) = session.last_phrase() {
-                        ui.label(phrase);
-                    }
-                    if !session.ended() && ui.button("Next phrase").clicked() {
-                        next_phrase = true;
+                egui::CollapsingHeader::new("Terrain")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        Self::draw_terraform_ui(&mut self.terraform, ui);
+                    });
+                if !self.palette.is_empty() {
+                    egui::CollapsingHeader::new("Palette")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.checkbox(&mut self.palette.enabled, "Animate");
+                        });
+                }
+                if self.flood.is_dynamic() {
+                    egui::CollapsingHeader::new("Tide")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            let moved = ui.checkbox(&mut self.flood.enabled, "Drift").changed();
+                            ui.add(
+                                egui::Slider::new(&mut self.flood.seconds_per_day, 5.0..=600.0)
+                                    .text("Seconds per day"),
+                            );
+                            ui.label(format!(
+                                "level {} ({:+.0}%)",
+                                self.level.flood_map[0],
+                                (self.flood.scale() - 1.0) * 100.0
+                            ));
+                            if moved {
+                                self.flood.apply(&mut self.level);
+                                self.render.terrain.dirty_flood = true;
+                            }
+                        });
+                }
+                if self.cycle.is_some() {
+                    egui::CollapsingHeader::new("Cycle")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            if let Some(jump) =
+                                Self::draw_cycle_ui(self.cycle.as_ref().unwrap(), ui)
+                            {
+                                let bunch = self.cycle.as_mut().unwrap();
+                                let range = bunch.set_cycle(jump, &mut self.level);
+                                self.render.dirty_palette(range);
+                                self.render.set_light_modulation(bunch.light());
+                                self.palette.rebase(&self.level.palette);
+                            }
+                        });
+                }
+                egui::CollapsingHeader::new("Renderer")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        self.render.draw_ui(ui);
+                    });
+                egui::CollapsingHeader::new("World life")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.label(format!("Beebs: {}", self.beebs));
+                        ui.label(format!(
+                            "Particles: {}  Beebs on the ground: {}",
+                            self.particles.particles().len(),
+                            self.swarm.insects().len()
+                        ));
+                        ui.label("Space: enter escave / open tunnel");
+                        ui.label("F/G: fire bays 0/1");
+                        ui.add(
+                            egui::Slider::new(&mut player.armor, 0..=player.max_armor.max(1))
+                                .text("Armour"),
+                        );
+                        let pos = player.position();
+                        let reach = (level::cycle::DELIVERY_RADIUS * 2).max(96);
+                        let near = self.db.escaves.iter().find(|e| {
+                            let dx = pos.x as i32 - e.coordinates.0;
+                            let dy = pos.y as i32 - e.coordinates.1;
+                            dx * dx + dy * dy <= reach * reach
+                        });
+                        if let Some(escave) = near {
+                            let name = escave.name.clone();
+                            ui.label(format!("Near {name}"));
+                            if self.visit.is_none() && ui.button(format!("Enter {name}")).clicked()
+                            {
+                                enter_name = Some(name);
+                            }
+                        }
+                        if self.visit.is_some() && ui.button("Leave escave").clicked() {
+                            leave_escave = true;
+                        }
+                    });
+            });
+
+            if let Some(ref mut visit) = self.visit {
+                let mut leave = false;
+                let mut buy: Option<String> = None;
+                let mut sell: Option<usize> = None;
+                let mut equip: Option<(usize, usize)> = None;
+                let mut unequip: Option<usize> = None;
+                let mut ask: Option<String> = None;
+                let mut next_phrase = false;
+                egui::Window::new(format!("Escave: {}", visit.name)).show(context, |ui| {
+                    if ui.button("Leave").clicked() {
+                        leave = true;
                     }
                     ui.separator();
-                    ui.label("Ask:");
-                    for q in session.queries() {
-                        if ui.button(q).clicked() {
-                            ask = Some(q.clone());
+                    ui.label(format!("Beebs: {}", self.beebs));
+                    if let Some(ref mut session) = visit.session {
+                        if let Some(phrase) = session.last_phrase() {
+                            ui.label(phrase);
+                        }
+                        if !session.ended() && ui.button("Next phrase").clicked() {
+                            next_phrase = true;
+                        }
+                        ui.separator();
+                        ui.label("Ask:");
+                        for q in session.queries() {
+                            if ui.button(q).clicked() {
+                                ask = Some(q.clone());
+                            }
+                        }
+                    } else {
+                        ui.label("(no dialog data on this path)");
+                    }
+                    ui.separator();
+                    ui.label("Shop");
+                    for good in self.shop.stock() {
+                        let kind = if good.is_weapon() { "gun" } else { "ware" };
+                        if ui
+                            .button(format!("Buy {kind} {} ({} beebs)", good.id, good.buy_price))
+                            .clicked()
+                        {
+                            buy = Some(good.id.clone());
                         }
                     }
-                } else {
-                    ui.label("(no dialog data on this path)");
-                }
-                ui.separator();
-                ui.label("Shop");
-                for good in self.shop.stock() {
-                    if ui
-                        .button(format!("Buy {} ({} beebs)", good.id, good.buy_price))
-                        .clicked()
-                    {
-                        buy = Some(good.id.clone());
+                    ui.label("Cargo");
+                    for (i, good) in self.inventory.items().iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(format!("Sell {} (+{})", good.id, good.sell_price))
+                                .clicked()
+                            {
+                                sell = Some(i);
+                            }
+                            if good.is_weapon() {
+                                if ui.button("Bay 0").clicked() {
+                                    equip = Some((i, 0));
+                                }
+                                if ui.button("Bay 1").clicked() {
+                                    equip = Some((i, 1));
+                                }
+                            }
+                        });
                     }
-                }
-                ui.label("Inventory");
-                for (i, good) in self.inventory.items().iter().enumerate() {
-                    if ui
-                        .button(format!("Sell {} (+{})", good.id, good.sell_price))
-                        .clicked()
-                    {
-                        sell = Some(i);
+                    ui.label("Bays");
+                    for (i, slot) in self.inventory.bays().iter().enumerate() {
+                        match slot {
+                            Some(good) => {
+                                if ui.button(format!("Unequip bay {i}: {}", good.id)).clicked() {
+                                    unequip = Some(i);
+                                }
+                            }
+                            None => {
+                                ui.label(format!("Bay {i}: empty"));
+                            }
+                        }
                     }
+                });
+                if next_phrase && let Some(ref mut session) = visit.session {
+                    session.next_phrase();
                 }
-            });
-            if next_phrase && let Some(ref mut session) = visit.session {
-                session.next_phrase();
+                if let Some(q) = ask
+                    && let Some(ref mut session) = visit.session
+                {
+                    let _ = session.answer(&q);
+                }
+                if let Some(id) = buy {
+                    let _ = self.shop.buy(&id, &mut self.inventory, &mut self.beebs);
+                }
+                if let Some(i) = sell {
+                    let _ = self.shop.sell(i, &mut self.inventory, &mut self.beebs);
+                }
+                if let Some((cargo, bay)) = equip {
+                    let _ = self.inventory.equip(cargo, bay);
+                    sync_slots = true;
+                }
+                if let Some(bay) = unequip {
+                    let _ = self.inventory.unequip(bay);
+                    sync_slots = true;
+                }
+                if leave {
+                    leave_escave = true;
+                }
             }
-            if let Some(q) = ask
-                && let Some(ref mut session) = visit.session
-            {
-                let _ = session.answer(&q);
-            }
-            if let Some(id) = buy {
-                let _ = self.shop.buy(&id, &mut self.inventory, &mut self.beebs);
-            }
-            if let Some(i) = sell {
-                let _ = self.shop.sell(i, &mut self.inventory, &mut self.beebs);
-            }
-            if leave {
-                leave_escave = true;
+
+            if selected_car != player.car_name {
+                player.change_car(&self.db.cars[&selected_car], selected_car);
             }
         }
-
-        if selected_car != player.car_name {
-            player.change_car(&self.db.cars[&selected_car], selected_car);
+        if sync_slots {
+            self.sync_weapon_slots();
         }
         if let Some(name) = enter_name.take() {
             self.enter_escave(&name);
@@ -1855,6 +1989,18 @@ impl Application for Game {
             eye,
             self.bug.is_none(),
         );
+        const SHOT_COLOR: u32 = 0xFF44_EEFF;
+        for live in &self.shots {
+            let dir = if live.shot.vel.length_squared() > 1e-6 {
+                live.shot.vel.normalize()
+            } else {
+                Vec3::Y
+            };
+            let from = live.shot.pos;
+            let to = from + dir * 18.0;
+            self.line_buffer
+                .add(from.to_array(), to.to_array(), SHOT_COLOR);
+        }
 
         self.render.draw_world(
             &mut encoder,

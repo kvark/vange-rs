@@ -7,7 +7,9 @@ pub mod dialog;
 pub mod shop;
 
 pub use dialog::{Room, Session, find_room};
-pub use shop::{Good, Inventory, Shop, ShopError};
+pub use shop::{
+    BAY_COUNT, Good, Inventory, Kind, Shop, ShopError, equipped_slot_ids, mounted_meshes,
+};
 
 use std::path::Path;
 
