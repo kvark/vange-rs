@@ -34,8 +34,11 @@ extern crate log;
 extern crate serde_derive;
 
 pub mod config;
+pub mod creature;
+pub mod escave;
 pub mod level;
 pub mod model;
+pub mod particle;
 pub mod physics;
 pub mod render;
 pub mod space;

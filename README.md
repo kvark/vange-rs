@@ -5,7 +5,7 @@
 [Vangers](https://www.gog.com/game/vangers) is a legendary game featuring unique gameplay and technical innovation.
 The idea of this project is to replicate the old look and behavior, but with native hardware acceleration for the graphics.
 
-You need the **original game** in order to try out `vange-rs`. The path to resources needs to be set in `config/settings.ron`.
+You need the **original game** in order to try out `vange-rs` with mechouses. Fostral world data is published in the [Vangers source tree](https://github.com/KranX/Vangers); `config/settings.template.ron` points at `../Vangers/data` by default. Copy it to `config/settings.ron` to override.
 
 ![logo](docs/assets/logo-cut.png)
 
@@ -24,10 +24,10 @@ The project is structured to provide multiple binaries. `road` binary is for the
 
 
 ```bash
+git clone https://github.com/KranX/Vangers.git
 git clone https://github.com/kvark/vange-rs
 cd vange-rs
-cp config/settings.template.ron config/settings.ron
-edit config/settings.ron # set the game path
+# optional: cp config/settings.template.ron config/settings.ron
 cargo run
 ```
 

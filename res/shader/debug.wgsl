@@ -6,9 +6,6 @@ struct Debug {
 
 @group(1) @binding(0) var<uniform> c_Debug: Debug;
 
-layout(location = 0) in vec4 a_Pos;
-layout(location = 1) in vec4 a_Color;
-
 struct Varyings {
     @builtin(position) pos: vec4<f32>,
     @location(0) color: vec4<f32>,

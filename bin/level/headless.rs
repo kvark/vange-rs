@@ -974,6 +974,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             None,
             &gfx.device,
             &gfx.queue,
+            None,
         );
 
         if let Some(ref qs) = queries {

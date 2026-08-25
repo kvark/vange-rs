@@ -1,12 +1,12 @@
 use crate::render::{
-    ShapePolygon, VertexStorageNotSupported,
     debug::Position as DebugPos,
     object::{Context as ObjectContext, Vertex as ObjectVertex},
+    ShapePolygon, VertexStorageNotSupported,
 };
 use m3d;
 use wgpu::util::DeviceExt as _;
 
-use std::{fs::File, ops::Range, slice, sync::Arc};
+use std::{fs::File, ops::Range, path::Path, slice, sync::Arc};
 
 #[derive(Copy, Clone, Debug)]
 pub struct BoundingBox {
@@ -355,6 +355,33 @@ pub fn load_m3d(
     shape_sampling: u8,
 ) -> VisualModel {
     build_visual(m3d::FullModel::load(file), device, object, shape_sampling)
+}
+
+/// First animation frame of an `.a3d`. Insects in `game.lst` (the Bug)
+/// are stored this way: the file starts with a frame count, not a C3D
+/// mesh version, so [`load_m3d`] would reject it.
+pub fn load_a3d_body(file: File, device: &wgpu::Device) -> Arc<Mesh> {
+    let animated = m3d::DrawAnimatedMesh::load(file);
+    let mesh = animated
+        .meshes
+        .into_iter()
+        .next()
+        .expect("a3d file has no frames");
+    load_c3d(mesh, device)
+}
+
+/// Body mesh for a `game.lst` entry: `.a3d` insects or `.m3d` mechous.
+pub fn load_listed_body(
+    path: &Path,
+    file: File,
+    device: &wgpu::Device,
+    object: &ObjectContext,
+    shape_sampling: u8,
+) -> Arc<Mesh> {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("a3d") => load_a3d_body(file, device),
+        _ => load_m3d(file, device, object, shape_sampling).body,
+    }
 }
 
 /// Byte-slice variant of [`load_m3d`], for loading a vehicle out of a

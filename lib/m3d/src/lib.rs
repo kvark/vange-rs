@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use std::{fs::File, io::Write};
 
 const MAX_SLOTS: usize = 3;
+/// `C3D_VERSION_3` in the original. Older `C3D_VERSION_1` files are 3.
 const MAGIC_VERSION: u32 = 8;
 
 fn read_vec_i32<I: ReadBytesExt>(source: &mut I) -> [i32; 3] {
@@ -330,7 +331,13 @@ impl<P: Polygon> Mesh<Geometry<P>> {
     pub fn load<I: ReadBytesExt>(source: &mut I) -> Self {
         profiling::scope!("Load Mesh");
         let version = source.read_u32::<E>().unwrap();
-        assert_eq!(version, MAGIC_VERSION);
+        if version != MAGIC_VERSION {
+            panic!(
+                "C3D mesh version {version} (expected {MAGIC_VERSION}). \
+                 An .a3d insect starts with a frame count, not a mesh version; \
+                 load it with AnimatedMesh::load."
+            );
+        }
         let num_positions = source.read_u32::<E>().unwrap();
         let num_normals = source.read_u32::<E>().unwrap();
         let num_polygons = source.read_u32::<E>().unwrap();
@@ -470,6 +477,7 @@ impl<P: Polygon> Mesh<Geometry<P>> {
 
 pub type DrawMesh = Mesh<Geometry<DrawTriangle>>;
 pub type CollisionMesh = Mesh<Geometry<CollisionQuad>>;
+pub type DrawAnimatedMesh = AnimatedMesh<Geometry<DrawTriangle>>;
 
 #[derive(Serialize, Deserialize)]
 pub struct AnimatedMesh<G> {
@@ -488,12 +496,12 @@ impl<P: Polygon> AnimatedMesh<Geometry<P>> {
         }
     }
 
-    pub fn save(&self, mut output: File) {
-        output.write_u32::<E>(self.meshes.len() as u32).unwrap();
-        self.bound.write(&mut output);
-        self.color.write(&mut output);
+    pub fn save<W: Write>(&self, dest: &mut W) {
+        dest.write_u32::<E>(self.meshes.len() as u32).unwrap();
+        self.bound.write(dest);
+        self.color.write(dest);
         for mesh in self.meshes.iter() {
-            mesh.save(&mut output);
+            mesh.save(dest);
         }
     }
 }
@@ -609,5 +617,106 @@ impl FullModel {
             }
             output.write_i32::<E>(slot.angle).unwrap()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn empty_draw_mesh() -> DrawMesh {
+        Mesh {
+            geometry: Geometry {
+                positions: Vec::new(),
+                normals: Vec::new(),
+                polygons: Vec::new(),
+            },
+            bounds: Bounds {
+                coord_min: [0; 3],
+                coord_max: [0; 3],
+            },
+            parent_off: [0; 3],
+            parent_rot: [0; 3],
+            max_radius: 0,
+            physics: Physics {
+                volume: 0.0,
+                rcm: [0.0; 3],
+                jacobi: [[0.0; 3]; 3],
+            },
+        }
+    }
+
+    fn four_frame_a3d() -> DrawAnimatedMesh {
+        DrawAnimatedMesh {
+            meshes: vec![
+                empty_draw_mesh(),
+                empty_draw_mesh(),
+                empty_draw_mesh(),
+                empty_draw_mesh(),
+            ],
+            bound: UpperBound {
+                dimensions: [1, 1, 1],
+                radius: 1,
+            },
+            color: BodyColor {
+                offset: 0,
+                shift: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn a3d_roundtrip_keeps_four_frames() {
+        let mut bytes = Vec::new();
+        four_frame_a3d().save(&mut bytes);
+        assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 4);
+        let loaded = DrawAnimatedMesh::load(Cursor::new(&bytes));
+        assert_eq!(loaded.meshes.len(), 4);
+    }
+
+    fn panic_as_m3d<F: FnOnce() + std::panic::UnwindSafe>(op: F) -> String {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let err = std::panic::catch_unwind(op);
+        std::panic::set_hook(prev);
+        let payload = err.expect_err("an .a3d must not parse as a FullModel");
+        payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn loading_an_a3d_as_m3d_is_a_frame_count_not_a_mesh_version() {
+        let mut bytes = Vec::new();
+        four_frame_a3d().save(&mut bytes);
+        let msg = panic_as_m3d(|| {
+            let _ = FullModel::load(Cursor::new(bytes));
+        });
+        assert!(
+            msg.contains("version 4") && msg.contains("a3d"),
+            "unexpected panic: {msg}"
+        );
+    }
+
+    #[test]
+    fn original_bug_a3d_loads_when_present() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../work/fostral/src/resource/m3d/animated/a1.a3d");
+        let Ok(file) = File::open(&path) else {
+            return;
+        };
+        let loaded = DrawAnimatedMesh::load(file);
+        assert_eq!(loaded.meshes.len(), 4);
+        let path = path.clone();
+        let msg = panic_as_m3d(move || {
+            let _ = FullModel::load(File::open(&path).unwrap());
+        });
+        assert!(
+            msg.contains("version 4"),
+            "the original Bug.a3d must not parse as m3d: {msg}"
+        );
     }
 }

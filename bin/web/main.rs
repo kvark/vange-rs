@@ -794,6 +794,7 @@ impl WebApp {
             None,
             device,
             queue,
+            None,
         );
         encoder.finish()
     }

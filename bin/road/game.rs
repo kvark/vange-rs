@@ -2,10 +2,12 @@ use crate::boilerplate::Application;
 use crate::net::{NetEvent, NetworkClient};
 use m3d::Mesh;
 use vangers::{
-    config, level, model,
+    config, creature, escave, level, model, particle,
     physics::{self, CarPhysicsData},
     render::{
-        Batcher, GraphicsContext, Render, ScreenTargets, debug::LineBuffer, object::BodyColor,
+        Batcher, GraphicsContext, Render, ScreenTargets,
+        debug::LineBuffer,
+        object::{BodyColor, Instance},
     },
     space,
 };
@@ -14,6 +16,9 @@ use vangers_net::PlayerId;
 use glam::Vec3;
 
 use std::collections::HashMap;
+use std::fs::File;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Debug, PartialEq)]
 struct Ai {
@@ -75,6 +80,9 @@ pub struct Agent {
     tracks: level::terraform::Tracks,
     /// The cirt it has gathered and not yet handed in.
     cirtainer: level::cycle::Cirtainer,
+    /// Remaining armour; smoke comes off when this is below `max_armor`.
+    armor: u16,
+    max_armor: u16,
 }
 
 impl Agent {
@@ -112,6 +120,8 @@ impl Agent {
             },
             tracks: level::terraform::Tracks::default(),
             cirtainer: level::cycle::Cirtainer::default(),
+            armor: car.stats.max_armor as u16,
+            max_armor: car.stats.max_armor as u16,
         }
     }
 
@@ -119,6 +129,8 @@ impl Agent {
         self.phys_data = CarPhysicsData::from_car_info(car);
         self.car = car.clone();
         self.car_name = car_name;
+        self.max_armor = car.stats.max_armor as u16;
+        self.armor = self.armor.min(self.max_armor);
         match self.physics {
             Physics::Cpu {
                 ref mut transform,
@@ -360,6 +372,8 @@ struct Input {
     jump: Option<f32>,
     roll: Option<Roll>,
     tick: Option<f32>,
+    /// Space: enter a nearby escave/passage, or leave one.
+    use_entrance: bool,
 }
 
 pub struct Game {
@@ -397,6 +411,17 @@ pub struct Game {
     cam_style: CameraStyle,
     max_quant: f32,
     input: Input,
+    particles: particle::System,
+    particle_time: f32,
+    swarm: creature::Swarm,
+    /// Beeb credits, `aciCurCredits` / `HotBug`.
+    beebs: i32,
+    inventory: escave::Inventory,
+    shop: escave::Shop,
+    visit: Option<escave::Visit>,
+    data_path: PathBuf,
+    /// Original `Bug` mesh (`.a3d` first frame), if `game.lst` has one.
+    bug: Option<(Arc<model::Mesh>, f32)>,
 }
 
 impl Game {
@@ -408,8 +433,8 @@ impl Game {
     ) -> Self {
         let mut rng = rand::thread_rng();
         log::info!("Loading world parameters");
-        let mut escaves = config::escaves::load(settings.open_relative("escaves.prm"));
-        let mut escaves_secondary = config::escaves::load(settings.open_relative("spots.prm"));
+        let mut escaves = config::escaves::load_optional(settings, "escaves.prm");
+        let mut escaves_secondary = config::escaves::load_optional(settings, "spots.prm");
         escaves.append(&mut escaves_secondary);
 
         let (level_config, default_coords) = if settings.game.level.is_empty() {
@@ -428,7 +453,7 @@ impl Game {
                 None => (0, 0),
             };
 
-            let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
+            let worlds = config::worlds::load_from_settings(settings);
             let ini_name = match worlds.get(&settings.game.level) {
                 Some(name) => name,
                 None => panic!(
@@ -483,6 +508,13 @@ impl Game {
 
         log::info!("Loading world database");
         let db = {
+            if !settings.check_path("car.prm") {
+                panic!(
+                    "Need original-game files (car.prm, resource/m3d) at {:?}. \
+                     Fostral terrain is in the Vangers source tree, but mechous are not.",
+                    settings.data_path
+                );
+            }
             let game = config::game::Registry::load(settings);
             DataBase {
                 bunches: config::bunches::load(settings.open_relative("bunches.prm")),
@@ -588,6 +620,30 @@ impl Game {
             NetworkClient::connect(addr, &player_name, &player.car_name, player.color as u8)
         });
 
+        let mut swarm = creature::Swarm::new(level.size);
+        let beebs = creature::Swarm::count_for_size(level.size);
+        log::info!("Spawning {beebs} beebs across the level");
+        swarm.populate(beebs, &level);
+
+        let bug = db.game.model_infos.get("Bug").and_then(|info| {
+            let path = settings.data_path.join(&info.path);
+            File::open(&path).ok().map(|file| {
+                (
+                    model::load_listed_body(
+                        &path,
+                        file,
+                        &gfx.device,
+                        &render.object,
+                        settings.game.physics.shape_sampling,
+                    ),
+                    info.scale.max(0.2),
+                )
+            })
+        });
+        if bug.is_none() {
+            log::info!("No Bug model in game.lst; beebs draw as ticks");
+        }
+
         Game {
             db,
             render,
@@ -622,6 +678,15 @@ impl Game {
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
             input: Input::default(),
+            particles: particle::System::new(),
+            particle_time: 0.0,
+            swarm,
+            beebs: 500,
+            inventory: escave::Inventory::default(),
+            shop: escave::Shop::fostral(),
+            visit: None,
+            data_path: settings.data_path.clone(),
+            bug,
         }
     }
 
@@ -696,6 +761,9 @@ impl Game {
             // Keep the wheels and the blade from stitching a track across
             // everything driven while the switch was off.
             for agent in self.agents.iter_mut() {
+                for track in agent.tracks.drain() {
+                    self.particles.from_track(&track, &self.level);
+                }
                 agent.tracks.reset();
             }
             return;
@@ -730,6 +798,7 @@ impl Game {
                 );
             }
             for track in agent.tracks.drain() {
+                self.particles.from_track(&track, &self.level);
                 level::terraform::apply_tread(
                     &mut self.level,
                     &self.terraform.tread,
@@ -748,6 +817,121 @@ impl Game {
 
         let height = self.level.geometry.height as u16;
         self.render.dirty_terrain(&self.track_regions, height);
+    }
+
+    /// Dust, smoke, bursts, wandering beebs, and the crush that pays.
+    fn step_world_life(&mut self, delta: f32) {
+        self.particle_time += delta;
+        let quant = config::common::MAIN_LOOP_TIME;
+        while self.particle_time >= quant {
+            self.particle_time -= quant;
+            let (player_pos, player_radius, hull, armor, max_armor) = {
+                let player = self
+                    .agents
+                    .iter()
+                    .find(|a| a.spirit == Spirit::Player)
+                    .unwrap();
+                (
+                    player.position(),
+                    player.touch_radius() as f32 + 12.0,
+                    player.position(),
+                    player.armor,
+                    player.max_armor,
+                )
+            };
+            self.swarm.quant(&self.level, Some(player_pos));
+            self.particles.from_hull(hull, armor, max_armor);
+            let crush = self.swarm.crush(player_pos, player_radius);
+            if crush.awarded != 0 {
+                self.beebs += crush.awarded;
+                for at in crush.at {
+                    self.particles.from_crush(at);
+                }
+            }
+            self.particles.quant();
+        }
+    }
+
+    fn enter_escave(&mut self, name: &str) {
+        let mut visit = escave::Visit::enter(name, &self.data_path);
+        if let Some(ref mut session) = visit.session {
+            session.next_phrase();
+        }
+        self.visit = Some(visit);
+    }
+
+    fn leave_escave(&mut self) {
+        self.visit = None;
+    }
+
+    fn collect_entrances(&self) -> Vec<escave::Entrance> {
+        let mut list: Vec<escave::Entrance> = self
+            .db
+            .escaves
+            .iter()
+            .map(|e| escave::Entrance {
+                name: e.name.clone(),
+                pos: e.coordinates,
+                reach: 128,
+            })
+            .collect();
+        for sensor in self.moving.triggers.sensors.iter() {
+            let kind = sensor.kind;
+            if kind != level::vlc::sensor_kind::ESCAVE
+                && kind != level::vlc::sensor_kind::SPOT
+                && kind != level::vlc::sensor_kind::PASSAGE
+            {
+                continue;
+            }
+            let name = if sensor.name.is_empty() {
+                match kind {
+                    level::vlc::sensor_kind::PASSAGE => "Passage".to_string(),
+                    level::vlc::sensor_kind::SPOT => "Spot".to_string(),
+                    _ => "Escave".to_string(),
+                }
+            } else {
+                sensor.name.clone()
+            };
+            list.push(escave::Entrance {
+                name,
+                pos: (sensor.pos.0, sensor.pos.1),
+                reach: sensor.radius.max(48) + 48,
+            });
+        }
+        list
+    }
+
+    /// Space: walk into a nearby escave/spot/passage, or poke nearby door
+    /// sensors so a secret tunnel opens.
+    fn try_use_entrance(&mut self) {
+        if self.visit.is_some() {
+            self.leave_escave();
+            return;
+        }
+        let pos = match self.agents.iter().find(|a| a.spirit == Spirit::Player) {
+            Some(player) => player.position(),
+            None => return,
+        };
+        let at = (pos.x as i32, pos.y as i32);
+        let pads = self.collect_entrances();
+        if let Some(pad) = escave::nearest_entrance(&pads, at) {
+            let name = pad.name.clone();
+            self.enter_escave(&name);
+            return;
+        }
+        let (touch_pos, radius) = match self.agents.iter().find(|a| a.spirit == Spirit::Player) {
+            Some(player) => {
+                let p = player.position();
+                (
+                    (p.x as i32, p.y as i32, p.z as i32),
+                    player.touch_radius() + 96,
+                )
+            }
+            None => return,
+        };
+        self.moving
+            .triggers
+            .touch(touch_pos, radius, self.level.size);
     }
 
     /// Which cycle the world is on, how much cirt each stage has towards
@@ -888,6 +1072,7 @@ impl Application for Game {
                 KeyCode::Period => self.input.tick = Some(1.0),
                 KeyCode::ShiftLeft => self.input.turbo = true,
                 KeyCode::KeyM => self.input.mole = true,
+                KeyCode::Space => self.input.use_entrance = true,
                 KeyCode::AltLeft => self.input.jump = Some(0.0),
                 KeyCode::KeyW => self.input.spin_ver = self.cam.scale.x,
                 KeyCode::KeyS => self.input.spin_ver = -self.cam.scale.x,
@@ -1005,6 +1190,11 @@ impl Application for Game {
             };
         }
 
+        if self.input.use_entrance {
+            self.input.use_entrance = false;
+            self.try_use_entrance();
+        }
+
         self.step_moving_land(delta);
 
         if self.flood.step(&mut self.level, delta) {
@@ -1064,6 +1254,7 @@ impl Application for Game {
         }
 
         self.step_tracks();
+        self.step_world_life(delta);
 
         // Networking: send input and process server events
         if let Some(ref mut net) = self.net {
@@ -1279,7 +1470,9 @@ impl Application for Game {
             .iter_mut()
             .find(|agent| agent.spirit == Spirit::Player)
             .unwrap();
-        let mut selected_car = &player.car_name;
+        let mut selected_car = player.car_name.clone();
+        let mut enter_name: Option<String> = None;
+        let mut leave_escave = false;
 
         #[allow(deprecated)]
         egui::SidePanel::right("Tweaks").show(context, |ui| {
@@ -1294,7 +1487,7 @@ impl Application for Game {
                         .selected_text(&player.car_name)
                         .show_ui(ui, |ui| {
                             for car_name in self.db.cars.keys() {
-                                ui.selectable_value(&mut selected_car, car_name, car_name);
+                                ui.selectable_value(&mut selected_car, car_name.clone(), car_name);
                             }
                         });
                     egui::ComboBox::from_label("Color")
@@ -1425,11 +1618,116 @@ impl Application for Game {
                 .show(ui, |ui| {
                     self.render.draw_ui(ui);
                 });
+            egui::CollapsingHeader::new("World life")
+                .default_open(true)
+                .show(ui, |ui| {
+                    ui.label(format!("Beebs: {}", self.beebs));
+                    ui.label(format!(
+                        "Particles: {}  Beebs on the ground: {}",
+                        self.particles.particles().len(),
+                        self.swarm.insects().len()
+                    ));
+                    ui.label("Space: enter escave / open tunnel");
+                    ui.add(
+                        egui::Slider::new(&mut player.armor, 0..=player.max_armor.max(1))
+                            .text("Armour"),
+                    );
+                    let pos = player.position();
+                    let reach = (level::cycle::DELIVERY_RADIUS * 2).max(96);
+                    let near = self.db.escaves.iter().find(|e| {
+                        let dx = pos.x as i32 - e.coordinates.0;
+                        let dy = pos.y as i32 - e.coordinates.1;
+                        dx * dx + dy * dy <= reach * reach
+                    });
+                    if let Some(escave) = near {
+                        let name = escave.name.clone();
+                        ui.label(format!("Near {name}"));
+                        if self.visit.is_none() && ui.button(format!("Enter {name}")).clicked() {
+                            enter_name = Some(name);
+                        }
+                    }
+                    if self.visit.is_some() && ui.button("Leave escave").clicked() {
+                        leave_escave = true;
+                    }
+                });
         });
 
-        if selected_car != &player.car_name {
-            let name = selected_car.clone();
-            player.change_car(&self.db.cars[&name], name);
+        if let Some(ref mut visit) = self.visit {
+            let mut leave = false;
+            let mut buy: Option<String> = None;
+            let mut sell: Option<usize> = None;
+            let mut ask: Option<String> = None;
+            let mut next_phrase = false;
+            egui::Window::new(format!("Escave: {}", visit.name)).show(context, |ui| {
+                if ui.button("Leave").clicked() {
+                    leave = true;
+                }
+                ui.separator();
+                ui.label(format!("Beebs: {}", self.beebs));
+                if let Some(ref mut session) = visit.session {
+                    if let Some(phrase) = session.last_phrase() {
+                        ui.label(phrase);
+                    }
+                    if !session.ended() && ui.button("Next phrase").clicked() {
+                        next_phrase = true;
+                    }
+                    ui.separator();
+                    ui.label("Ask:");
+                    for q in session.queries() {
+                        if ui.button(q).clicked() {
+                            ask = Some(q.clone());
+                        }
+                    }
+                } else {
+                    ui.label("(no dialog data on this path)");
+                }
+                ui.separator();
+                ui.label("Shop");
+                for good in self.shop.stock() {
+                    if ui
+                        .button(format!("Buy {} ({} beebs)", good.id, good.buy_price))
+                        .clicked()
+                    {
+                        buy = Some(good.id.clone());
+                    }
+                }
+                ui.label("Inventory");
+                for (i, good) in self.inventory.items().iter().enumerate() {
+                    if ui
+                        .button(format!("Sell {} (+{})", good.id, good.sell_price))
+                        .clicked()
+                    {
+                        sell = Some(i);
+                    }
+                }
+            });
+            if next_phrase && let Some(ref mut session) = visit.session {
+                session.next_phrase();
+            }
+            if let Some(q) = ask
+                && let Some(ref mut session) = visit.session
+            {
+                let _ = session.answer(&q);
+            }
+            if let Some(id) = buy {
+                let _ = self.shop.buy(&id, &mut self.inventory, &mut self.beebs);
+            }
+            if let Some(i) = sell {
+                let _ = self.shop.sell(i, &mut self.inventory, &mut self.beebs);
+            }
+            if leave {
+                leave_escave = true;
+            }
+        }
+
+        if selected_car != player.car_name {
+            player.change_car(&self.db.cars[&selected_car], selected_car);
+        }
+        if let Some(name) = enter_name.take() {
+            self.enter_escave(&name);
+        }
+        if leave_escave {
+            self.leave_escave();
         }
 
         // Multiplayer panel
@@ -1520,9 +1818,43 @@ impl Application for Game {
             );
         }
 
+        let eye = self
+            .agents
+            .iter()
+            .find(|a| a.spirit == Spirit::Player)
+            .map(|a| a.position())
+            .unwrap_or(self.cam.loc);
+        if let Some((ref mesh, scale)) = self.bug {
+            for insect in self.swarm.near(eye, creature::ACTIVE_RADIUS) {
+                if clipper.clip(&insect.pos) {
+                    continue;
+                }
+                let transform = space::Transform {
+                    scale,
+                    disp: insect.pos,
+                    rot: glam::Quat::from_rotation_z(insect.heading),
+                };
+                let color = match insect.tier {
+                    2 => BodyColor::Yellow,
+                    1 => BodyColor::Red,
+                    _ => BodyColor::Green,
+                };
+                self.batcher
+                    .add_mesh(mesh, Instance::new(&transform, 0.0, color as u8));
+            }
+        }
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("World"),
         });
+
+        particle::refresh_fx_lines(
+            &mut self.line_buffer,
+            &self.particles,
+            &self.swarm,
+            eye,
+            self.bug.is_none(),
+        );
 
         self.render.draw_world(
             &mut encoder,
@@ -1533,6 +1865,7 @@ impl Application for Game {
             None,
             device,
             queue,
+            Some(&self.line_buffer),
         );
 
         /*

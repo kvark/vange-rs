@@ -117,8 +117,8 @@ impl LevelView {
             let full_path = settings.data_path.join(ini_path);
             level::LevelConfig::load(&full_path)
         } else {
-            let escaves = config::escaves::load(settings.open_relative("escaves.prm"));
-            let worlds = config::worlds::load(settings.open_relative("wrlds.dat"));
+            let escaves = config::escaves::load_optional(settings, "escaves.prm");
+            let worlds = config::worlds::load_from_settings(settings);
 
             let ini_name = worlds.get(&settings.game.level).unwrap_or_else(|| {
                 panic!(
@@ -565,6 +565,7 @@ impl Application for LevelView {
             None,
             device,
             queue,
+            None,
         );
 
         encoder.finish()
