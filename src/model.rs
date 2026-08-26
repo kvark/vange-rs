@@ -1,7 +1,7 @@
 use crate::render::{
+    ShapePolygon, VertexStorageNotSupported,
     debug::Position as DebugPos,
     object::{Context as ObjectContext, Vertex as ObjectVertex},
-    ShapePolygon, VertexStorageNotSupported,
 };
 use m3d;
 use wgpu::util::DeviceExt as _;
@@ -361,13 +361,19 @@ pub fn load_m3d(
 /// are stored this way: the file starts with a frame count, not a C3D
 /// mesh version, so [`load_m3d`] would reject it.
 pub fn load_a3d_body(file: File, device: &wgpu::Device) -> Arc<Mesh> {
-    let animated = m3d::DrawAnimatedMesh::load(file);
-    let mesh = animated
-        .meshes
+    load_a3d_frames(file, device)
         .into_iter()
         .next()
-        .expect("a3d file has no frames");
-    load_c3d(mesh, device)
+        .expect("a3d file has no frames")
+}
+
+/// Every frame of an `.a3d`, for walking insects.
+pub fn load_a3d_frames(file: File, device: &wgpu::Device) -> Vec<Arc<Mesh>> {
+    m3d::DrawAnimatedMesh::load(file)
+        .meshes
+        .into_iter()
+        .map(|mesh| load_c3d(mesh, device))
+        .collect()
 }
 
 /// Body mesh for a `game.lst` entry: `.a3d` insects or `.m3d` mechous.

@@ -561,8 +561,9 @@ impl Tracks {
         let moved = match self.last_burrow {
             None => true,
             Some(from) => {
-                let (dx, dy) = (at.0 - from.0, at.1 - from.1);
-                dx * dx + dy * dy > 4
+                let dx = at.0.saturating_sub(from.0);
+                let dy = at.1.saturating_sub(from.1);
+                dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy)) > 4
             }
         };
         if moved {

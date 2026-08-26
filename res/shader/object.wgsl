@@ -123,7 +123,9 @@ fn color_fs(in: Varyings, @builtin(front_facing) is_front: bool) -> @location(0)
     let lit_factor = fetch_shadow(in.position);
     let normal = normalize(in.normal) * select(-1.0, 1.0, is_front);
     let light = normalize(u_Globals.light_pos.xyz - in.position * u_Globals.light_pos.w);
-    let n_dot_l = lit_factor * max(0.0, dot(normal, light));
+    let sun = max(0.0, dot(normal, light));
+    let local = closest_local_light(in.position, normal);
+    let n_dot_l = lit_factor * max(sun, local);
     let tc_raw = mix(in.palette_range.x, in.palette_range.y, n_dot_l);
     let tc = clamp(tc_raw, in.palette_range.x + 0.5, in.palette_range.y - 0.5) / 256.0;
     var color = textureSample(t_Palette, s_PaletteSampler, vec2<f32>(tc, 0.5));

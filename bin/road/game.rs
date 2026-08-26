@@ -24,6 +24,8 @@ use std::sync::Arc;
 struct Ai {
     last_transform: space::Transform,
     roll_time: f32,
+    target: Vec3,
+    retarget: f32,
 }
 
 #[derive(Debug, PartialEq)]
@@ -107,6 +109,8 @@ impl Agent {
             spirit: Spirit::Other(Ai {
                 last_transform: transform,
                 roll_time: 0.0,
+                target: transform.disp,
+                retarget: 0.0,
             }),
             phys_data: CarPhysicsData::from_car_info(car),
             car: car.clone(),
@@ -216,41 +220,60 @@ impl Agent {
             tracks,
         );
 
+        // Nearby replica, not a fold onto `[0, size)`. wrap_pos at x=0
+        // teleports the car a world-width away and the chase cam follows.
         if let Some(focus) = focus_point {
-            let wrap = glam::Vec2::new(level.size.0 as f32, (level.size.1 >> 1) as f32);
-            let offset = transform.disp - focus;
-            transform.disp = focus
-                + Vec3::new(
-                    (offset.x + 0.5 * wrap.x).rem_euclid(wrap.x) - 0.5 * wrap.x,
-                    (offset.y + 0.5 * wrap.y).rem_euclid(wrap.y) - 0.5 * wrap.y,
-                    offset.z,
-                );
+            transform.disp = level.display_pos(transform.disp, focus);
         }
     }
 
-    fn ai_behavior(&mut self, delta: f32) {
+    fn ai_behavior(&mut self, delta: f32, level: &level::Level) {
         let ai = match self.spirit {
             Spirit::Player => return,
             Spirit::Other(ref mut ai) => ai,
         };
-        self.control.motor = 1.0; //full on
-
         let transform = match self.physics {
-            Physics::Cpu { ref transform, .. } => transform,
+            Physics::Cpu { ref transform, .. } => *transform,
         };
+
+        // `ActionUnit`: steer toward a target, turbo if the heading is
+        // close. Stuck in a hole: side impulse, same as before.
+        ai.retarget -= delta;
+        let to = level.shortest_xy(transform.disp, ai.target);
+        if ai.retarget <= 0.0 || to.length() < 80.0 {
+            let span = level.period();
+            ai.target = Vec3::new(
+                (transform.disp.x + (self.control.rudder + 0.37).sin() * 600.0).rem_euclid(span.x),
+                (transform.disp.y + (self.control.motor + 0.71).cos() * 600.0).rem_euclid(span.y),
+                transform.disp.z,
+            );
+            ai.retarget = 4.0 + (transform.disp.x.abs() % 3.0);
+        }
+        let to = level.shortest_xy(transform.disp, ai.target);
+        let forward = transform.rot * Vec3::Y;
+        let right = transform.rot * Vec3::X;
+        let aim = Vec3::new(to.x, to.y, 0.0);
+        let aligned = forward
+            .truncate()
+            .normalize_or_zero()
+            .dot(aim.truncate().normalize_or_zero());
+        self.control.rudder = right.truncate().dot(aim.truncate()).signum();
+        self.control.motor = if aligned > 0.3 { 1.0 } else { 0.35 };
+        self.control.turbo = aligned > 0.85;
 
         if ai.roll_time > 0.0 {
             ai.roll_time -= delta;
             if ai.roll_time <= 0.0 {
                 self.control.roll = 0.0;
             }
-        } else if ai.last_transform.disp == transform.disp {
+        } else if (ai.last_transform.disp - transform.disp).length() < 0.05 {
             ai.roll_time = 0.5;
             let x_axis = transform.rot * Vec3::X;
             self.control.roll = x_axis.z.signum();
+            self.control.motor = -0.4;
         }
 
-        ai.last_transform = *transform;
+        ai.last_transform = transform;
     }
 
     fn position(&self) -> Vec3 {
@@ -442,14 +465,32 @@ pub struct Game {
     weapon_meshes: HashMap<String, Arc<model::Mesh>>,
     visit: Option<escave::Visit>,
     data_path: PathBuf,
-    /// Original `Bug` mesh (`.a3d` first frame), if `game.lst` has one.
-    bug: Option<(Arc<model::Mesh>, f32)>,
+    /// Original Bug `.a3d` frames, if `game.lst` has one.
+    bug: Option<(Vec<Arc<model::Mesh>>, f32)>,
+    /// Space at an escave: fly in, then open the inner visit.
+    approach: Option<Approach>,
+    /// Secret tunnel: interpolate the car to the other station.
+    ride: Option<Ride>,
     shots: Vec<LiveShot>,
 }
 
 struct LiveShot {
     shot: weapon::Shot,
     age: f32,
+}
+
+struct Approach {
+    name: String,
+    t: f32,
+    start: Vec3,
+    dest: Vec3,
+}
+
+struct Ride {
+    t: f32,
+    duration: f32,
+    start: Vec3,
+    dest: Vec3,
 }
 
 impl Game {
@@ -673,22 +714,25 @@ impl Game {
 
         let mut swarm = creature::Swarm::new(level.size);
         let beebs = creature::Swarm::count_for_size(level.size);
-        log::info!("Spawning {beebs} beebs across the level");
+        log::info!("Spawning {beebs} beebs at Fostral density");
         swarm.populate(beebs, &level);
 
         let bug = db.game.model_infos.get("Bug").and_then(|info| {
             let path = settings.data_path.join(&info.path);
             File::open(&path).ok().map(|file| {
-                (
-                    model::load_listed_body(
+                let frames = if path.extension().and_then(|e| e.to_str()) == Some("a3d") {
+                    model::load_a3d_frames(file, &gfx.device)
+                } else {
+                    vec![model::load_listed_body(
                         &path,
                         file,
                         &gfx.device,
                         &render.object,
                         settings.game.physics.shape_sampling,
-                    ),
-                    info.scale.max(0.2),
-                )
+                    )]
+                };
+                // game.lst Size/MaxSize is ~0.1; we used to floor at 0.2.
+                (frames, info.scale.max(0.2) / 3.0)
             })
         });
         if bug.is_none() {
@@ -740,6 +784,8 @@ impl Game {
             data_path: settings.data_path.clone(),
             bug,
             shots: Vec::new(),
+            approach: None,
+            ride: None,
         }
     }
 
@@ -876,7 +922,16 @@ impl Game {
     fn step_world_life(&mut self, delta: f32) {
         self.particle_time += delta;
         let quant = config::common::MAIN_LOOP_TIME;
+        // A hitch (first frame after load) can dump a second of catch-up
+        // into this loop. A handful of quants is enough; the rest is
+        // dropped so we do not freeze after drawing once.
+        let mut catch_up = 0;
         while self.particle_time >= quant {
+            if catch_up >= 4 {
+                self.particle_time = 0.0;
+                break;
+            }
+            catch_up += 1;
             self.particle_time -= quant;
             let (player_pos, player_radius, hull, armor, max_armor) = {
                 let player = self
@@ -918,6 +973,46 @@ impl Game {
         self.sync_weapon_slots();
     }
 
+    /// Fold camera and every agent onto the home tile so coordinates
+    /// cannot run off to infinity, and a car west of the seam is the
+    /// same car you meet again.
+    fn rebase_torus(&mut self) {
+        let span = self.level.period();
+        if span.x <= 0.0 || span.y <= 0.0 {
+            return;
+        }
+        let shift = Vec3::new(
+            self.cam.loc.x.div_euclid(span.x) * span.x,
+            self.cam.loc.y.div_euclid(span.y) * span.y,
+            0.0,
+        );
+        if shift.x == 0.0 && shift.y == 0.0 {
+            return;
+        }
+        self.cam.loc -= shift;
+        for agent in self.agents.iter_mut() {
+            if let Physics::Cpu {
+                ref mut transform, ..
+            } = agent.physics
+            {
+                transform.disp -= shift;
+            }
+        }
+        for p in self.particles.particles_mut() {
+            p.pos -= shift;
+        }
+        for insect in self.swarm.insects_mut() {
+            insect.pos -= shift;
+        }
+        for live in self.shots.iter_mut() {
+            live.shot.pos -= shift;
+        }
+        if let Some(ref mut ride) = self.ride {
+            ride.start -= shift;
+            ride.dest -= shift;
+        }
+    }
+
     fn sync_weapon_slots(&mut self) {
         let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
             return;
@@ -938,10 +1033,9 @@ impl Game {
             .collect();
         for sensor in self.moving.triggers.sensors.iter() {
             let kind = sensor.kind;
-            if kind != level::vlc::sensor_kind::ESCAVE
-                && kind != level::vlc::sensor_kind::SPOT
-                && kind != level::vlc::sensor_kind::PASSAGE
-            {
+            // Passages and secret tunnels are moving-land doors, not
+            // dialog rooms. Only escaves and spots open a visit.
+            if kind != level::vlc::sensor_kind::ESCAVE && kind != level::vlc::sensor_kind::SPOT {
                 continue;
             }
             let name = if sensor.name.is_empty() {
@@ -962,37 +1056,117 @@ impl Game {
         list
     }
 
-    /// Space: walk into a nearby escave/spot/passage, or poke nearby door
-    /// sensors so a secret tunnel opens.
+    /// Space: poke nearby door sensors so a secret tunnel opens, and if
+    /// standing on an escave/spot, fly in then open the inner visit.
     fn try_use_entrance(&mut self) {
         if self.visit.is_some() {
             self.leave_escave();
+            return;
+        }
+        if self.approach.is_some() {
             return;
         }
         let pos = match self.agents.iter().find(|a| a.spirit == Spirit::Player) {
             Some(player) => player.position(),
             None => return,
         };
+        let radius = self
+            .agents
+            .iter()
+            .find(|a| a.spirit == Spirit::Player)
+            .map(|p| p.touch_radius() + 96)
+            .unwrap_or(128);
+        let at3 = (pos.x as i32, pos.y as i32, pos.z as i32);
+        self.moving.use_at(at3, radius, self.level.size);
+        self.moving.triggers.touch(at3, radius, self.level.size);
+        if self.begin_train_ride(true) {
+            return;
+        }
         let at = (pos.x as i32, pos.y as i32);
         let pads = self.collect_entrances();
         if let Some(pad) = escave::nearest_entrance(&pads, at) {
-            let name = pad.name.clone();
-            self.enter_escave(&name);
-            return;
+            let dest = Vec3::new(pad.pos.0 as f32, pad.pos.1 as f32, pos.z - 24.0);
+            self.approach = Some(Approach {
+                name: pad.name.clone(),
+                t: 0.0,
+                start: self.cam.loc,
+                dest,
+            });
         }
-        let (touch_pos, radius) = match self.agents.iter().find(|a| a.spirit == Spirit::Player) {
-            Some(player) => {
-                let p = player.position();
-                (
-                    (p.x as i32, p.y as i32, p.z as i32),
-                    player.touch_radius() + 96,
-                )
-            }
-            None => return,
+    }
+
+    fn step_approach(&mut self, delta: f32) -> bool {
+        let Some(ref mut approach) = self.approach else {
+            return false;
         };
-        self.moving
-            .triggers
-            .touch(touch_pos, radius, self.level.size);
+        approach.t = (approach.t + delta / 1.2).min(1.0);
+        let t = approach.t;
+        let s = t * t * (3.0 - 2.0 * t);
+        self.cam.loc = approach.start.lerp(approach.dest, s);
+        if t >= 1.0 {
+            let name = approach.name.clone();
+            self.approach = None;
+            self.enter_escave(&name);
+        }
+        true
+    }
+
+    /// `EXTERNAL_MODE_MOVE` of a `TrainEngine`: slide the car from this
+    /// station to the other over `ActiveTime`.
+    fn begin_train_ride(&mut self, ignore_altitude: bool) -> bool {
+        if self.ride.is_some() || self.approach.is_some() {
+            return false;
+        }
+        let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) else {
+            return false;
+        };
+        let pos = player.position();
+        let radius = player.touch_radius();
+        let Some(ride) = self.moving.triggers.train_ride_at(
+            (pos.x as i32, pos.y as i32, pos.z as i32),
+            radius + 48,
+            self.level.size,
+            ignore_altitude,
+        ) else {
+            return false;
+        };
+        let dest_z = self.level.get((ride.dest.0, ride.dest.1)).high() + 8.0;
+        self.ride = Some(Ride {
+            t: 0.0,
+            duration: (ride.quants as f32 * config::common::MAIN_LOOP_TIME).max(0.6),
+            start: pos,
+            dest: Vec3::new(ride.dest.0 as f32, ride.dest.1 as f32, dest_z),
+        });
+        true
+    }
+
+    fn step_ride(&mut self, delta: f32) -> bool {
+        let Some(ref mut ride) = self.ride else {
+            return false;
+        };
+        ride.t = (ride.t + delta / ride.duration).min(1.0);
+        let t = ride.t;
+        let s = t * t * (3.0 - 2.0 * t);
+        let pos = ride.start.lerp(ride.dest, s);
+        let done = t >= 1.0;
+        if let Some(player) = self
+            .agents
+            .iter_mut()
+            .find(|agent| agent.spirit == Spirit::Player)
+            && let Physics::Cpu {
+                ref mut transform,
+                ref mut dynamo,
+            } = player.physics
+        {
+            transform.disp = pos;
+            dynamo.linear_velocity = Vec3::ZERO;
+            dynamo.angular_velocity = Vec3::ZERO;
+            dynamo.traction = 0.0;
+        }
+        if done {
+            self.ride = None;
+        }
+        true
     }
 
     /// Which cycle the world is on, how much cirt each stage has towards
@@ -1257,6 +1431,10 @@ impl Application for Game {
             self.input.use_entrance = false;
             self.try_use_entrance();
         }
+        if self.step_approach(delta) {
+            return;
+        }
+        let mut riding = self.step_ride(delta);
 
         if let Some(bay) = self.input.fire_bay.take()
             && self.visit.is_none()
@@ -1281,6 +1459,9 @@ impl Application for Game {
         self.shots.retain(|live| live.age < 1.5);
 
         self.step_moving_land(delta);
+        if !riding {
+            riding = self.begin_train_ride(false);
+        }
 
         if self.flood.step(&mut self.level, delta) {
             self.render.terrain.dirty_flood = true;
@@ -1313,11 +1494,14 @@ impl Application for Game {
             let level = &self.level;
 
             self.agents.par_iter_mut().for_each(|a| {
+                if riding && a.spirit == Spirit::Player {
+                    return;
+                }
                 let mut dt = physics_dt;
                 a.cpu_apply_control(input_factor, common);
 
                 // only go through the full iteration on visible objects
-                if !clipper.clip(&a.position()) {
+                if !clipper.clip(&level.display_pos(a.position(), focus_point)) {
                     while dt > max_quant {
                         a.cpu_step(max_quant, level, common, SimulationStep::Intermediate);
                         dt -= max_quant;
@@ -1334,7 +1518,7 @@ impl Application for Game {
                     },
                 );
 
-                a.ai_behavior(delta);
+                a.ai_behavior(delta, level);
             });
         }
 
@@ -1510,24 +1694,27 @@ impl Application for Game {
                 Physics::Cpu { ref transform, .. } => *transform,
             };
 
-            match self.cam_style {
-                CameraStyle::Simple(ref dir) => {
-                    self.cam.look_by(&target, dir);
-                }
-                CameraStyle::Follow {
-                    ref follow,
-                    ground_anchor,
-                } => {
-                    if ground_anchor {
-                        target.disp.z = self
-                            .level
-                            .get((target.disp.x as i32, target.disp.y as i32))
-                            .high();
+            if self.visit.is_none() {
+                match self.cam_style {
+                    CameraStyle::Simple(ref dir) => {
+                        self.cam.look_by(&target, dir);
                     }
-                    self.cam.follow(&target, delta, follow);
-                    self.cam.keep_above_ground(&self.level, CAMERA_CLEARANCE);
+                    CameraStyle::Follow {
+                        ref follow,
+                        ground_anchor,
+                    } => {
+                        if ground_anchor {
+                            target.disp.z = self
+                                .level
+                                .get((target.disp.x as i32, target.disp.y as i32))
+                                .high();
+                        }
+                        self.cam.follow(&target, delta, follow);
+                        self.cam.keep_above_ground(&self.level, CAMERA_CLEARANCE);
+                    }
                 }
             }
+            self.rebase_torus();
         }
     }
 
@@ -1921,60 +2108,68 @@ impl Application for Game {
     ) -> wgpu::CommandBuffer {
         let clipper = Clipper::new(&self.cam);
         self.batcher.clear();
-
-        for agent in self.agents.iter() {
-            let transform = match agent.physics {
-                Physics::Cpu { ref transform, .. } => {
-                    if clipper.clip(&transform.disp) {
-                        continue;
-                    }
-                    transform
+        {
+            let eye = self.cam.loc;
+            let mut best = (f32::MAX, eye);
+            for agent in self.agents.iter() {
+                let p = self.level.display_pos(agent.position(), eye);
+                let d = (p - eye).length_squared();
+                if d < best.0 {
+                    best = (d, p);
                 }
+            }
+            self.render
+                .set_local_light(best.1, 420.0, [1.0, 0.85, 0.55]);
+        }
+
+        let eye = self.cam.loc;
+        for agent in self.agents.iter() {
+            let mut drawn = match agent.physics {
+                Physics::Cpu { ref transform, .. } => *transform,
             };
+            drawn.disp = self.level.display_pos(drawn.disp, eye);
+            if clipper.clip(&drawn.disp) {
+                continue;
+            }
             let debug_shape_scale = match agent.spirit {
                 Spirit::Player => Some(agent.car.physics.scale_bound),
                 Spirit::Other { .. } => None,
             };
             self.batcher
-                .add_model(&agent.car.model, transform, debug_shape_scale, agent.color);
+                .add_model(&agent.car.model, &drawn, debug_shape_scale, agent.color);
         }
 
         // Render remote agents from the network (using interpolated transform)
         for remote in self.remote_agents.values() {
-            if clipper.clip(&remote.render_transform.disp) {
+            let mut drawn = remote.render_transform;
+            drawn.disp = self.level.display_pos(drawn.disp, eye);
+            if clipper.clip(&drawn.disp) {
                 continue;
             }
-            self.batcher.add_model(
-                &remote.car.model,
-                &remote.render_transform,
-                None,
-                remote.color,
-            );
+            self.batcher
+                .add_model(&remote.car.model, &drawn, None, remote.color);
         }
 
-        let eye = self
-            .agents
-            .iter()
-            .find(|a| a.spirit == Spirit::Player)
-            .map(|a| a.position())
-            .unwrap_or(self.cam.loc);
-        if let Some((ref mesh, scale)) = self.bug {
+        if let Some((ref frames, scale)) = self.bug {
             for insect in self.swarm.near(eye, creature::ACTIVE_RADIUS) {
-                if clipper.clip(&insect.pos) {
+                let disp = self.level.display_pos(insect.pos, eye);
+                if clipper.clip(&disp) {
                     continue;
                 }
+                let mesh = &frames[insect.frame(frames.len())];
                 let transform = space::Transform {
                     scale,
-                    disp: insect.pos,
+                    disp,
                     rot: glam::Quat::from_rotation_z(insect.heading),
                 };
+                // `InsectUnit::CreateInsect`: MATERIAL_1/2/4.
                 let color = match insect.tier {
-                    2 => BodyColor::Yellow,
-                    1 => BodyColor::Red,
-                    _ => BodyColor::Green,
+                    0 => m3d::ColorId::Custom1 as u8,
+                    1 => m3d::ColorId::Custom2 as u8,
+                    _ => m3d::ColorId::Custom4 as u8,
                 };
                 self.batcher
-                    .add_mesh(mesh, Instance::new(&transform, 0.0, color as u8));
+                    .add_mesh(mesh, Instance::new(&transform, 0.0, color));
             }
         }
 

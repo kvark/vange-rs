@@ -124,7 +124,7 @@ fn evaluate_color_normal(
     let base_id = (terr.w + 0.5) / 256.0;
     let base = textureSampleLevel(t_Palette, s_Palette, vec2<f32>(base_id, 0.5), 0.0);
     let light_dir = normalize(u_Globals.light_pos.xyz - pos * u_Globals.light_pos.w);
-    let n_dot_l = max(0.0, dot(normal, light_dir));
+    let n_dot_l = max(max(0.0, dot(normal, light_dir)), closest_local_light(pos, normal));
     let modulation = c_TerrainAmbient + (1.0 - c_TerrainAmbient) * shadow_visibility * n_dot_l;
     return vec4<f32>(base.rgb * modulation, base.a);
 }
@@ -151,7 +151,7 @@ fn evaluate_color(ty: u32, pos: vec3<f32>, shadow_visibility: f32) -> vec4<f32> 
     let gradient = get_surface_gradient(pos);
     let normal = normalize(vec3<f32>(-0.5 * gradient.x, -0.5 * gradient.y, 1.0));
     let light_dir = normalize(u_Globals.light_pos.xyz - pos * u_Globals.light_pos.w);
-    let n_dot_l = max(0.0, dot(normal, light_dir));
+    let n_dot_l = max(max(0.0, dot(normal, light_dir)), closest_local_light(pos, normal));
 
     let modulation = c_TerrainAmbient + (1.0 - c_TerrainAmbient) * shadow_visibility * n_dot_l;
     return vec4<f32>(base.rgb * modulation, base.a);

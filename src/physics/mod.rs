@@ -18,6 +18,25 @@ const MAX_TRACTION: config::common::Traction = 4.0;
 const MOLE_SUBMERGED: f32 = 900.0;
 const MOLE_SURFACED: f32 = 50.0;
 
+/// Height change (squared) over a 2-texel sample that counts as a slope.
+/// Flatter than this is treated as a wheel standing on the ground.
+const SLOPE_GRIP: f32 = 4.0;
+
+/// Original `analyse_dynamics` when `stand_on_wheels`: `u0.x = u0.y = 0`.
+pub(crate) fn wheel_contact_cancel(pv: Vec3) -> Vec3 {
+    Vec3::new(0.0, 0.0, pv.z)
+}
+
+/// How steep the ground is at `pos`, as squared height change over 2 texels.
+pub(crate) fn terrain_slope2(level: &level::Level, pos: Vec3) -> f32 {
+    let x = pos.x as i32;
+    let y = pos.y as i32;
+    let h = level.get((x, y)).high();
+    let dx = level.get((x + 2, y)).high() - h;
+    let dy = level.get((x, y + 2)).high() - h;
+    dx * dx + dy * dy
+}
+
 /// Where a car is in a burrow.
 ///
 /// The original spells this `mole_on`, an int that is `256` while the car
@@ -411,8 +430,9 @@ pub fn step(
                     let r1 = rot_inv * Vec3::new(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
                     let pv = rigid.velocity_at(r1);
                     if pv.dot(z_axis) < 0.0 {
-                        let vec = if stand_on_wheels {
-                            Vec3::new(0.0, 0.0, pv.z)
+                        let on_slope = terrain_slope2(level, cp.pos) > SLOPE_GRIP;
+                        let vec = if stand_on_wheels && !on_slope {
+                            wheel_contact_cancel(pv)
                         } else {
                             let projected = poly_norm * poly_norm.dot(pv);
                             common.impulse.k_friction * pv
@@ -511,7 +531,7 @@ pub fn step(
             ],
         });
     }
-    if wheels_touch != 0 && stand_on_wheels {
+    if wheels_touch != 0 && stand_on_wheels && dynamo.mole == Mole::Off {
         let f_traction_per_wheel =
             car.physics.mobility_factor * common.global.mobility_factor * f_turbo * dynamo.traction
                 / (car.wheels.len() as f32);
@@ -743,4 +763,44 @@ pub fn step(
     }
     // slow down
     dynamo.slow_down(dt * common.car.traction_decr);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wheel_contact_keeps_only_the_vertical() {
+        let pv = Vec3::new(10.0, 4.0, 2.0);
+        let out = wheel_contact_cancel(pv);
+        assert_eq!(out, Vec3::new(0.0, 0.0, 2.0));
+    }
+
+    #[test]
+    fn a_steep_slope_is_not_treated_as_a_wheel_stand() {
+        use crate::config::settings;
+        use crate::level::{Level, LevelConfig, TerrainBits, terraform::MAIN_TERRAIN};
+        let size = 16i32;
+        let bits = TerrainBits::new(8);
+        let mut height = vec![40u8; (size * size) as usize];
+        for x in 0..size {
+            height[x as usize] = 40 + (x as u8) * 4;
+        }
+        let level = Level {
+            size: (size, size),
+            flood_map: vec![0; size as usize].into_boxed_slice(),
+            height: height.into_boxed_slice(),
+            meta: vec![bits.write(MAIN_TERRAIN); (size * size) as usize].into_boxed_slice(),
+            palette: [[0; 4]; 0x100],
+            terrains: LevelConfig::new_test().terrains,
+            geometry: settings::Geometry::default(),
+        };
+        let flat = terrain_slope2(&level, Vec3::new(2.0, 4.0, 40.0));
+        let slope = terrain_slope2(&level, Vec3::new(2.0, 0.0, 40.0));
+        assert!(flat <= SLOPE_GRIP, "flat ground counted as a wall: {flat}");
+        assert!(
+            slope > SLOPE_GRIP,
+            "a 4-texel ramp was not a slope: {slope}"
+        );
+    }
 }

@@ -457,6 +457,7 @@ impl MovingLandUi {
             }
             Kind::Tiristor { .. } => "Tiristor".to_string(),
             Kind::Cyclic { .. } => "Cyclic".to_string(),
+            Kind::Train { .. } => "Train".to_string(),
             Kind::Unsupported(t) => format!("type {t}, not driven"),
         };
         let target = match engine.location {

@@ -27,6 +27,14 @@ pub const DOUBLE_LEVEL: u8 = 1 << 6;
 pub const DELTA_BITS: u8 = 2;
 pub const DELTA_MASK: u8 = 0x3;
 
+fn shortest_delta(d: f32, span: f32) -> f32 {
+    if span <= 0.0 {
+        return d;
+    }
+    let half = span * 0.5;
+    (d + half).rem_euclid(span) - half
+}
+
 pub struct Level {
     pub size: (i32, i32),
     pub flood_map: Box<[u8]>,
@@ -153,6 +161,34 @@ impl Level {
     /// Wrap a level coordinate into a flat index into `meta`/`height`.
     pub fn wrap(&self, coord: (i32, i32)) -> usize {
         (coord.1.rem_euclid(self.size.1) * self.size.0 + coord.0.rem_euclid(self.size.0)) as usize
+    }
+
+    /// Period of the world torus, in texels.
+    pub fn period(&self) -> glam::Vec2 {
+        glam::Vec2::new(self.size.0 as f32, self.size.1 as f32)
+    }
+
+    /// Fold XY onto `[0, size)`. A body that just crossed 0 lands on the
+    /// far edge; use [`display_pos`] to keep the nearby replica.
+    pub fn wrap_pos(&self, p: glam::Vec3) -> glam::Vec3 {
+        let s = self.period();
+        glam::Vec3::new(p.x.rem_euclid(s.x), p.y.rem_euclid(s.y), p.z)
+    }
+
+    /// Shortest XY offset from `from` to `to` on the torus.
+    pub fn shortest_xy(&self, from: glam::Vec3, to: glam::Vec3) -> glam::Vec2 {
+        let s = self.period();
+        glam::Vec2::new(
+            shortest_delta(to.x - from.x, s.x),
+            shortest_delta(to.y - from.y, s.y),
+        )
+    }
+
+    /// Replica of `p` nearest to `eye`, so a car past the seam is drawn
+    /// next to you rather than a world-width away.
+    pub fn display_pos(&self, p: glam::Vec3, eye: glam::Vec3) -> glam::Vec3 {
+        let d = self.shortest_xy(eye, p);
+        glam::Vec3::new(eye.x + d.x, eye.y + d.y, p.z)
     }
 
     pub fn get(&self, coord: (i32, i32)) -> Texel {
@@ -740,5 +776,63 @@ pub fn load(config: &LevelConfig, geometry: &settings::Geometry) -> Level {
         palette,
         terrains: config.terrains.clone(),
         geometry: *geometry,
+    }
+}
+
+#[cfg(test)]
+mod torus_tests {
+    use super::*;
+    use crate::config::settings;
+    use crate::level::terraform::MAIN_TERRAIN;
+
+    fn tiny_level(w: i32, h: i32) -> Level {
+        let total = (w * h) as usize;
+        let bits = TerrainBits::new(8);
+        Level {
+            size: (w, h),
+            flood_map: vec![0; h as usize].into_boxed_slice(),
+            height: vec![40u8; total].into_boxed_slice(),
+            meta: vec![bits.write(MAIN_TERRAIN); total].into_boxed_slice(),
+            palette: [[0; 4]; 0x100],
+            terrains: LevelConfig::new_test().terrains,
+            geometry: settings::Geometry::default(),
+        }
+    }
+
+    #[test]
+    fn driving_west_meets_the_same_spot() {
+        let level = tiny_level(256, 128);
+        let car = glam::Vec3::new(10.0, 40.0, 5.0);
+        let west = glam::Vec3::new(-20.0, 40.0, 5.0);
+        let shown = level.display_pos(car, west);
+        assert!(
+            (shown.x - west.x).abs() < 40.0,
+            "the car should appear just east of a driver who crossed the seam, got {shown:?}"
+        );
+    }
+
+    #[test]
+    fn wrap_pos_folds_onto_the_map() {
+        let level = tiny_level(256, 128);
+        let p = level.wrap_pos(glam::Vec3::new(300.0, -10.0, 3.0));
+        assert!((0.0..256.0).contains(&p.x));
+        assert!((0.0..128.0).contains(&p.y));
+    }
+
+    #[test]
+    fn crossing_zero_stays_next_to_the_camera() {
+        let level = tiny_level(256, 128);
+        let eye = glam::Vec3::new(8.0, 40.0, 5.0);
+        let just_west = glam::Vec3::new(-4.0, 40.0, 5.0);
+        let shown = level.display_pos(just_west, eye);
+        let folded = level.wrap_pos(just_west);
+        assert!(
+            (shown.x - eye.x).abs() < 20.0,
+            "the nearby replica must stay by the camera, got {shown:?}"
+        );
+        assert!(
+            (folded.x - eye.x).abs() > 100.0,
+            "folding onto [0, size) is the teleport: {folded:?}"
+        );
     }
 }

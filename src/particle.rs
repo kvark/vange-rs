@@ -6,8 +6,8 @@
 //! Positions live in world space and age in quants; the original's software
 //! framebuffer plotter is not reproduced.
 
-use crate::level::terraform::{Track, MAIN_TERRAIN};
 use crate::level::Level;
+use crate::level::terraform::{MAIN_TERRAIN, Track};
 use crate::render::debug::LineBuffer;
 
 use glam::Vec3;
@@ -24,10 +24,11 @@ const DUST_COUNT: usize = 4;
 const SMOKE_COUNT: usize = 2;
 const BURST_COUNT: usize = 16;
 
-/// Lift off the terrain so a LessEqual depth test does not bury the tick
-/// in the ground it just left.
-pub const SURFACE_LIFT: f32 = 5.0;
-const TICK_HEIGHT: f32 = 8.0;
+/// A hair above the terrain so a LessEqual depth test does not bury the
+/// puff in the ground it just left. Larger values read as floating dust.
+pub const SURFACE_LIFT: f32 = 0.6;
+const DUST_TICK: f32 = 2.0;
+const SMOKE_TICK: f32 = 6.0;
 
 const DUST_COLOR: u32 = 0xFF88_AACC;
 const SMOKE_COLOR: u32 = 0xFFAA_AAAA;
@@ -75,6 +76,10 @@ impl System {
 
     pub fn particles(&self) -> &[Particle] {
         &self.particles
+    }
+
+    pub fn particles_mut(&mut self) -> &mut [Particle] {
+        &mut self.particles
     }
 
     pub fn is_empty(&self) -> bool {
@@ -136,10 +141,11 @@ impl System {
     pub fn emit_dust(&mut self, pos: Vec3, speed: f32) {
         let speed = speed.max(1.0);
         for _ in 0..DUST_COUNT {
+            // Kick sideways along the ground, not up into the air.
             let vel = Vec3::new(
-                self.signed(speed * 0.4),
-                self.signed(speed * 0.4),
-                0.6 + self.unit() * 0.8,
+                self.signed(speed * 0.35),
+                self.signed(speed * 0.35),
+                0.05 + self.unit() * 0.15,
             );
             self.push(pos, vel, DUST_COLOR, DUST_LIFE, Kind::Dust);
         }
@@ -166,9 +172,9 @@ impl System {
             p.age += 1;
             // Dust and smoke settle; a burst keeps its kick.
             if p.kind != Kind::Burst {
-                p.vel.z *= 0.9;
-                p.vel.x *= 0.95;
-                p.vel.y *= 0.95;
+                p.vel.z *= 0.7;
+                p.vel.x *= 0.92;
+                p.vel.y *= 0.92;
             }
         }
         self.particles.retain(|p| p.age < p.life);
@@ -177,7 +183,17 @@ impl System {
     pub fn draw(&self, lines: &mut LineBuffer) {
         for p in self.particles.iter() {
             let from = [p.pos.x, p.pos.y, p.pos.z];
-            let to = [p.pos.x, p.pos.y, p.pos.z + TICK_HEIGHT];
+            let to = if p.kind == Kind::Dust {
+                let dir = Vec3::new(p.vel.x, p.vel.y, 0.0);
+                let step = if dir.length_squared() > 1e-6 {
+                    dir.normalize() * DUST_TICK
+                } else {
+                    Vec3::X * DUST_TICK
+                };
+                [from[0] + step.x, from[1] + step.y, from[2]]
+            } else {
+                [from[0], from[1], from[2] + SMOKE_TICK]
+            };
             lines.add(from, to, p.color);
         }
     }
@@ -197,11 +213,7 @@ impl System {
         self.seed ^= self.seed >> 3;
         self.seed ^= self.seed << 28;
         self.seed &= 0x7FFF_FFFF;
-        if modulus == 0 {
-            0
-        } else {
-            self.seed % modulus
-        }
+        if modulus == 0 { 0 } else { self.seed % modulus }
     }
 
     fn unit(&mut self) -> f32 {
@@ -342,6 +354,12 @@ mod tests {
                 .iter()
                 .all(|p| p.pos.z >= ground + SURFACE_LIFT - 0.1),
             "dust spawned in the ground, where the depth test hides it"
+        );
+        assert!(
+            sys.particles()
+                .iter()
+                .all(|p| p.pos.z <= ground + SURFACE_LIFT + 1.5),
+            "dust spawned too high above the wheel"
         );
 
         let mut water = test_level();
