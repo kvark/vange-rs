@@ -50,6 +50,35 @@ fn box_outside(planes: &[glam::Vec4; 6], min: glam::Vec3, max: glam::Vec3) -> bo
     })
 }
 
+/// Inclusive-exclusive texel window for a height-map upload, clipped to
+/// the level. TIN chunk rects include an extra border sample (`w+1` /
+/// `h+1`) so a trailing chunk's rectangle sits one row past the map.
+fn texture_upload_window(
+    rect: super::Rect,
+    level_size: (i32, i32),
+) -> Option<(usize, usize, usize, usize)> {
+    let width = level_size.0.max(0) as usize;
+    let height = level_size.1.max(0) as usize;
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let x0 = (rect.x as usize).min(width) & !1;
+    let x1 = ((rect.x as usize)
+        .saturating_add(rect.w as usize)
+        .saturating_add(1)
+        & !1)
+        .min(width);
+    let y0 = (rect.y as usize).min(height);
+    let y1 = (rect.y as usize)
+        .saturating_add(rect.h as usize)
+        .min(height);
+    if x1 <= x0 || y1 <= y0 {
+        None
+    } else {
+        Some((x0, x1, y0, y1))
+    }
+}
+
 #[cfg(any(test, target_arch = "wasm32"))]
 fn rect_reaches_drawn(
     rect: super::Rect,
@@ -2243,17 +2272,15 @@ impl Context {
                 // span has to be widened to a pair boundary at both ends.
                 // `write_texture` takes care of the staging copy, which also
                 // gets rid of a buffer allocation per rectangle.
-                let x0 = dr.rect.x as usize & !1;
-                let x1 = (((dr.rect.x + dr.rect.w) as usize + 1) & !1).min(level.size.0 as usize);
-                if x1 <= x0 || dr.rect.h == 0 {
+                let Some((x0, x1, y0, y1)) = texture_upload_window(dr.rect, level.size) else {
                     dr.need_upload = false;
                     continue;
-                }
+                };
                 let row_bytes = (x1 - x0) * 2;
-                self.upload_scratch
-                    .resize(dr.rect.h as usize * row_bytes, 0);
+                let rows = y1 - y0;
+                self.upload_scratch.resize(rows * row_bytes, 0);
                 for (y_off, line) in self.upload_scratch.chunks_mut(row_bytes).enumerate() {
-                    let base = (dr.rect.y as usize + y_off) * level.size.0 as usize;
+                    let base = (y0 + y_off) * level.size.0 as usize;
                     let heights = &level.height[base + x0..base + x1];
                     let metas = &level.meta[base + x0..base + x1];
                     for (i, (&h, &m)) in heights.iter().zip(metas).enumerate() {
@@ -2268,7 +2295,7 @@ impl Context {
                         mip_level: 0,
                         origin: wgpu::Origin3d {
                             x: (x0 / 2) as u32,
-                            y: dr.rect.y as u32,
+                            y: y0 as u32,
                             z: 0,
                         },
                         aspect: wgpu::TextureAspect::All,
@@ -2281,7 +2308,7 @@ impl Context {
                     },
                     wgpu::Extent3d {
                         width: ((x1 - x0) / 2) as u32,
-                        height: dr.rect.h as u32,
+                        height: rows as u32,
                         depth_or_array_layers: 1,
                     },
                 );
@@ -3376,5 +3403,42 @@ mod cull_tests {
             &drawn,
             level_size,
         ));
+    }
+
+    #[test]
+    fn a_trailing_chunk_border_does_not_index_past_the_height_map() {
+        // Fostral: 2048 × 16384. TIN `chunk_rect` is `w+1`/`h+1`, so the
+        // last 128-texel chunk at (1792, 16256) asks for row 16384.
+        // The panic was `33556224` on a slice of length `33554432`:
+        // 16384 * 2048 + 1792.
+        let size = (2048, 16384);
+        let rect = crate::render::Rect {
+            x: 1792,
+            y: 16256,
+            w: 129,
+            h: 129,
+        };
+        let (x0, x1, y0, y1) = super::texture_upload_window(rect, size).unwrap();
+        assert_eq!(y0, 16256);
+        assert_eq!(y1, size.1 as usize);
+        assert!(x1 <= size.0 as usize);
+        let last = (y1 - 1) * size.0 as usize + x0;
+        assert!(
+            last < size.0 as usize * size.1 as usize,
+            "last sample {last} is past {} texels",
+            size.0 as usize * size.1 as usize
+        );
+        assert!(
+            super::texture_upload_window(
+                crate::render::Rect {
+                    x: 0,
+                    y: 16384,
+                    w: 16,
+                    h: 8,
+                },
+                size,
+            )
+            .is_none()
+        );
     }
 }

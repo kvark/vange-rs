@@ -264,11 +264,19 @@ impl Context {
         color_buf: &'a wgpu::Buffer,
         color_rate: wgpu::VertexStepMode,
         num_vert: usize,
+        visibilities: &[Visibility],
     ) {
-        pass.set_blend_constant(wgpu::Color::WHITE);
+        // Behind uses Constant/OneMinusConstant. A white constant would
+        // replace the framebuffer and paint occluded ticks on top.
+        pass.set_blend_constant(wgpu::Color {
+            r: 0.2,
+            g: 0.2,
+            b: 0.2,
+            a: 0.2,
+        });
         pass.set_vertex_buffer(0, vertex_buf.slice(..));
         pass.set_vertex_buffer(1, color_buf.slice(..));
-        for &vis in &[Visibility::Front, Visibility::Behind] {
+        for &vis in visibilities {
             if let Some(pipeline) = self.pipelines_line.get(&(vis, color_rate)) {
                 pass.set_pipeline(pipeline);
                 pass.draw(0..num_vert as u32, 0..1);
@@ -326,6 +334,7 @@ impl Context {
                 &self.line_color_buf,
                 wgpu::VertexStepMode::Instance,
                 num_vert,
+                &[Visibility::Front, Visibility::Behind],
             );
         }
     }
@@ -359,8 +368,15 @@ impl Context {
             self.color_buf.as_ref().unwrap(),
             wgpu::VertexStepMode::Vertex,
             linebuf.vertices.len(),
+            particle_line_visibilities(),
         );
     }
+}
+
+/// Beebs, dust, and the other ticks. Only the LessEqual pass: a Greater
+/// pass would still draw the occluded half, which reads as "no depth".
+fn particle_line_visibilities() -> &'static [Visibility] {
+    &[Visibility::Front]
 }
 
 /// `LineBuffer::add` writes independent 2-vertex segments. A triangle strip
@@ -461,6 +477,17 @@ mod tests {
             super::line_primitive().topology,
             wgpu::PrimitiveTopology::LineList
         );
+    }
+
+    #[test]
+    fn particle_lines_only_use_the_front_depth_test() {
+        assert_eq!(
+            super::particle_line_visibilities(),
+            &[super::Visibility::Front]
+        );
+        let front = super::line_depth_stencil(true);
+        assert_eq!(front.depth_compare, Some(wgpu::CompareFunction::LessEqual));
+        assert_eq!(front.depth_write_enabled, Some(true));
     }
 
     #[test]
