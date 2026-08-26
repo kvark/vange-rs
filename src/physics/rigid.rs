@@ -63,6 +63,22 @@ impl RigidBody {
         pulse
     }
 
+    pub fn push_capped(&mut self, point: Vec3, vec: Vec3, incoming: Vec3) -> Vec3 {
+        let unconstrained = self.calc_collision_matrix_inv(&point) * vec;
+        let mag2 = unconstrained.length_squared();
+        if mag2 <= f32::EPSILON {
+            return Vec3::ZERO;
+        }
+        let closing = incoming.dot(unconstrained);
+        if closing >= 0.0 {
+            return Vec3::ZERO;
+        }
+        let pulse = unconstrained * (-closing / mag2).min(1.0);
+        self.vel += pulse;
+        self.wel_raw += point.cross(pulse);
+        pulse
+    }
+
     pub fn velocity_at(&self, point: Vec3) -> Vec3 {
         self.vel + self.wel_orig.cross(point)
     }
@@ -82,5 +98,32 @@ impl RigidBody {
 
     pub fn finish(self) -> (Vec3, Vec3) {
         (self.vel, self.wel_orig + self.j_inv * self.wel_raw)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::{Mat3, Vec3};
+
+    #[test]
+    fn ground_repulsion_does_not_reverse_a_sink() {
+        let mut body = RigidBody::new(&Mat3::IDENTITY, Vec3::new(0.0, 0.0, -4.0), Vec3::ZERO);
+        // Factor 2 would send +8 and leave vz = +4.
+        body.push_capped(
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, 8.0),
+            Vec3::new(0.0, 0.0, -4.0),
+        );
+        assert!(
+            body.vel.z <= 1e-5,
+            "ground repulsion launched: {:?}",
+            body.vel
+        );
+        assert!(
+            body.vel.z >= -0.1,
+            "should have cancelled the sink: {:?}",
+            body.vel
+        );
     }
 }

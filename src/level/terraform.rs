@@ -480,6 +480,8 @@ pub struct Tracks {
     /// Where the car last went under, for the burrow it is digging.
     last_burrow: Option<(i32, i32)>,
     burrows: Vec<Burrow>,
+    /// Double-level texels the hull punched through from below.
+    ceilings: Vec<(i32, i32)>,
 }
 
 impl Tracks {
@@ -582,6 +584,15 @@ impl Tracks {
         self.burrows.drain(..)
     }
 
+    /// Original `destroy_double_level`: a fast hit on a cave roof.
+    pub fn smash_ceiling(&mut self, at: (i32, i32)) {
+        self.ceilings.push(at);
+    }
+
+    pub fn drain_ceilings(&mut self) -> std::vec::Drain<'_, (i32, i32)> {
+        self.ceilings.drain(..)
+    }
+
     /// Forgets every wheel's contact and any track not yet drawn, so that
     /// the next contact starts fresh. Needed whenever the car is moved
     /// rather than driven.
@@ -593,6 +604,7 @@ impl Tracks {
         self.hull = None;
         self.last_burrow = None;
         self.burrows.clear();
+        self.ceilings.clear();
     }
 
     pub fn is_empty(&self) -> bool {
@@ -600,6 +612,7 @@ impl Tracks {
             && self.sweeps.is_empty()
             && self.hull.is_none()
             && self.burrows.is_empty()
+            && self.ceilings.is_empty()
     }
 
     /// Hands over the stretches recorded since the last drain.
@@ -611,6 +624,45 @@ impl Tracks {
     pub fn drain_sweeps(&mut self) -> std::vec::Drain<'_, Sweep> {
         self.sweeps.drain(..)
     }
+}
+
+/// Apply ceiling smashes and, if enabled, the blade/tread/press/mole
+/// edits recorded on `tracks`. Returns the wheel stretches so a caller
+/// can spawn dust from them.
+pub fn apply_vehicle(
+    level: &mut Level,
+    config: &Config,
+    tracks: &mut Tracks,
+    smash_radius: i32,
+    regions: &mut Vec<Region>,
+) -> Vec<Track> {
+    for at in tracks.drain_ceilings() {
+        smash_ceiling(level, at, smash_radius, regions);
+    }
+    let editing = config.tread.enabled
+        || config.grader.enabled
+        || config.press.enabled
+        || config.molehills.enabled;
+    if !editing {
+        let treads: Vec<Track> = tracks.drain().collect();
+        tracks.reset();
+        return treads;
+    }
+    for burrow in tracks.drain_burrows() {
+        apply_burrow(level, &config.molehills, &burrow, regions);
+    }
+    if let Some(hull) = tracks.take_hull() {
+        apply_press(level, &config.press, &hull, regions);
+    }
+    for sweep in tracks.drain_sweeps() {
+        apply_grader(level, &config.grader, &sweep, regions);
+    }
+    let mut treads = Vec::new();
+    for track in tracks.drain() {
+        apply_tread(level, &config.tread, &track, regions);
+        treads.push(track);
+    }
+    treads
 }
 
 /// Cuts `track` into the level, pushing what it touched onto `regions`.
@@ -1062,6 +1114,26 @@ fn collapses(level: &Level, i: usize, height: i32) -> bool {
     ceiling_of(level, i) + (1 << level.geometry.delta_power as u32) >= height
 }
 
+/// `Object::destroy_double_level`: collapse dual-level texels around `at`.
+pub fn smash_ceiling(level: &mut Level, at: (i32, i32), radius: i32, regions: &mut Vec<Region>) {
+    let mut bounds = Bounds::default();
+    for dy in -radius..=radius {
+        for dx in -radius..=radius {
+            if dx * dx + dy * dy > radius * radius {
+                continue;
+            }
+            let (x, y) = (at.0 + dx, at.1 + dy);
+            let i = level.wrap((x, y));
+            if level.meta[i] & DOUBLE_LEVEL == 0 {
+                continue;
+            }
+            collapse(level, i, x, y);
+            bounds.add(x, y);
+        }
+    }
+    bounds.push(regions, level.size);
+}
+
 /// Drops a cave roof that has been driven through, leaving flat ground.
 ///
 /// The pair stops being double-level, the surviving terrain type is the one
@@ -1467,6 +1539,17 @@ mod tests {
             level.height[i], 70,
             "and settled between its floor and the ground next door"
         );
+        assert!(!regions.is_empty());
+    }
+
+    #[test]
+    fn smashing_a_cave_roof_opens_the_room() {
+        let mut level = test_level();
+        dual_level(&mut level, 10, 5, 40, 200, 4);
+        let mut regions = Vec::new();
+        smash_ceiling(&mut level, (10, 5), 3, &mut regions);
+        let i = level.wrap((10, 5));
+        assert_eq!(level.meta[i] & DOUBLE_LEVEL, 0, "the slab is still there");
         assert!(!regions.is_empty());
     }
 

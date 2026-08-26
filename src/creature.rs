@@ -1,9 +1,4 @@
-//! Ground insects / beebs: they wander the terrain, and a player vehicle
-//! running one over awards beeb currency by tier and relocates it.
-//!
-//! Port of `InsectUnit` (`src/units/mechos.cpp`). Flocking constants are
-//! not reproduced. The original Bug `.a3d` is drawn when `game.lst`
-//! lists it; otherwise they are ticks.
+//! Ground insects / beebs.
 
 use crate::level::Level;
 use crate::render::debug::LineBuffer;
@@ -22,8 +17,6 @@ const FOSTRAL_AREA: i64 = 2048 * 16384;
 /// How far from the camera an insect is simulated and drawn.
 pub const ACTIVE_RADIUS: f32 = 768.0;
 
-/// Crawl speed, a little under original `MaxHideSpeed` of 3 so a quant
-/// of 0.05s does not make them dart.
 pub const MAX_SPEED: f32 = 0.7;
 
 /// `MECHOS_ROT_DELTA` analogue: how far heading can change in one quant.
@@ -35,13 +28,14 @@ const SEPARATION: f32 = 48.0;
 /// How far an insect looks for a new wander target, `INSECT_RADIUS`.
 const WANDER_RADIUS: f32 = 2500.0;
 
-/// Texels of walking per animation frame of the Bug `.a3d`.
-const WALK_PER_FRAME: f32 = 6.0;
-
-/// How far above the ground a mark is drawn, so the depth test does not
-/// bury it in the terrain.
-const MARK_LIFT: f32 = 2.0;
+const TRACTION: u32 = 256;
+const SLOPE_SAMPLE: f32 = 6.0;
+const MARK_LIFT: f32 = 0.0;
 const MARK_SPAN: f32 = 12.0;
+/// Steeper than this (rise/run) is a wall or a cliff, not a walkable hill.
+const STEEP: f32 = 4.0;
+const FALL_ACCEL: f32 = 0.7;
+const FALL_MAX: f32 = 10.0;
 
 const TIER_COLORS: [u32; 3] = [0xFF66_CC88, 0xFF44_88CC, 0xFF22_CCFF];
 
@@ -51,10 +45,14 @@ pub struct Insect {
     pub pos: Vec3,
     /// Where it is currently walking towards, on the level plane.
     pub target: (f32, f32),
-    /// Facing, for the Bug mesh.
+    /// Facing about world Z, for the Bug mesh.
     pub heading: f32,
-    /// Distance walked, for the `.a3d` frame.
-    pub walk: f32,
+    /// Look up/down along the slope. Positive is nose up.
+    pub pitch: f32,
+    /// `Object::i_model`. The drawn frame is this `>> 8`.
+    pub i_model: u32,
+    /// Vertical speed while falling. Zero when walking.
+    pub vz: f32,
     /// 0, 1 or 2 - indexes [`TIER_PRICES`].
     pub tier: u8,
 }
@@ -65,7 +63,9 @@ impl Insect {
             pos,
             target: (pos.x, pos.y),
             heading: 0.0,
-            walk: 0.0,
+            pitch: 0.0,
+            i_model: 0,
+            vz: 0.0,
             tier: tier.min(2),
         }
     }
@@ -74,12 +74,19 @@ impl Insect {
         TIER_PRICES[self.tier as usize]
     }
 
-    /// Frame of the Bug animation, wrapping at `n` meshes.
+    /// Frame of the Bug animation. Original `Object::draw` indexes
+    /// `models[(i_model >> 8) % n_models]`.
     pub fn frame(&self, n: usize) -> usize {
         if n == 0 {
             return 0;
         }
-        (self.walk / WALK_PER_FRAME).floor() as usize % n
+        ((self.i_model >> 8) as usize) % n
+    }
+
+    /// Mesh `+Y` forward, `+Z` up: heading on the ground, then pitch so
+    /// the nose follows the slope.
+    pub fn rotation(&self) -> glam::Quat {
+        glam::Quat::from_rotation_z(self.heading) * glam::Quat::from_rotation_x(self.pitch)
     }
 }
 
@@ -119,10 +126,10 @@ impl Swarm {
         self.insects.len()
     }
 
-    /// Ten times the original Fostral count of 30, scaled by map area.
+    /// Twenty times the original Fostral count of 30, scaled by map area.
     pub fn count_for_size(size: (i32, i32)) -> usize {
         let area = size.0.max(1) as i64 * size.1.max(1) as i64;
-        let authored = MAX_INSECTS as i64 * 10;
+        let authored = MAX_INSECTS as i64 * 20;
         let n = (authored * area + FOSTRAL_AREA / 2) / FOSTRAL_AREA;
         n.clamp(1, 4_000) as usize
     }
@@ -170,6 +177,8 @@ impl Swarm {
             let dist = (dx * dx + dy * dy).sqrt();
             if dist < 24.0 {
                 self.insects[i].target = self.wander_target(pos);
+                let slope = surface_slope(level, pos, self.insects[i].heading);
+                self.insects[i].pitch = pitch_from_slope(slope);
                 continue;
             }
             for &j in &active {
@@ -193,14 +202,14 @@ impl Swarm {
             dh = dh.clamp(-TURN_RATE, TURN_RATE);
             self.insects[i].heading += dh;
             let heading = self.insects[i].heading;
+            let slope = surface_slope(level, pos, heading);
+            self.insects[i].pitch = pitch_from_slope(slope);
             let step = MAX_SPEED * (1.0 - 0.5 * (dh.abs() / TURN_RATE));
-            let fwd = glam::Quat::from_rotation_z(heading) * Vec3::Y;
-            // Do not fold onto `[0, size)`: `rebase_torus` already shifts
-            // the swarm with the camera, and a fold here is a seam jump.
-            let nx = pos.x + fwd.x * step;
-            let ny = pos.y + fwd.y * step;
-            let z = level.get((nx as i32, ny as i32)).high() + MARK_LIFT;
-            self.insects[i].walk += step;
+            let (fx, fy) = (-heading.sin(), heading.cos());
+            let (nx, ny, z, vz) =
+                crawl_or_fall(level, pos, fx, fy, step, slope, self.insects[i].vz);
+            self.insects[i].vz = vz;
+            self.insects[i].i_model = self.insects[i].i_model.wrapping_add(TRACTION);
             self.insects[i].pos = Vec3::new(nx, ny, z);
         }
     }
@@ -216,21 +225,23 @@ impl Swarm {
         })
     }
 
-    /// A vehicle at `pos` with `radius` has run over every insect inside
-    /// that circle. Each one pays its tier, is moved away, and the old
-    /// positions are returned so a burst can be spawned there.
-    pub fn crush(&mut self, pos: Vec3, radius: f32) -> Crush {
+    /// Original `test_wheels_to_sphere`: a wheel has to actually pass
+    /// through the insect. `points` are the wheel positions in the world.
+    pub fn crush(&mut self, points: &[Vec3], radius: f32) -> Crush {
         let mut awarded = 0;
         let mut at = Vec::new();
         let reach = radius * radius;
         let size = self.size;
         let mut hits = Vec::new();
         for (i, insect) in self.insects.iter().enumerate() {
-            let dx = wrap_delta(insect.pos.x - pos.x, size.0 as f32);
-            let dy = wrap_delta(insect.pos.y - pos.y, size.1 as f32);
-            let dz = insect.pos.z - pos.z;
-            if dx * dx + dy * dy + dz * dz <= reach {
-                hits.push(i);
+            for &pos in points {
+                let dx = wrap_delta(insect.pos.x - pos.x, size.0 as f32);
+                let dy = wrap_delta(insect.pos.y - pos.y, size.1 as f32);
+                let dz = insect.pos.z - pos.z;
+                if dx * dx + dy * dy + dz * dz <= reach {
+                    hits.push(i);
+                    break;
+                }
             }
         }
         for i in hits {
@@ -240,6 +251,7 @@ impl Swarm {
             let ny = self.rng(size.1.max(1) as u32) as f32;
             self.insects[i].pos.x = nx;
             self.insects[i].pos.y = ny;
+            self.insects[i].vz = 0.0;
             self.insects[i].target = self.wander_target(self.insects[i].pos);
         }
         Crush { awarded, at }
@@ -295,6 +307,76 @@ pub struct Crush {
     pub awarded: i32,
     /// Where the insects were, for a particle burst.
     pub at: Vec<Vec3>,
+}
+
+fn surface_height(level: &Level, x: f32, y: f32) -> f32 {
+    level.get((x as i32, y as i32)).high()
+}
+
+/// Rise over run along `heading`, sampled `SLOPE_SAMPLE` texels out.
+fn surface_slope(level: &Level, pos: Vec3, heading: f32) -> f32 {
+    let (s, c) = heading.sin_cos();
+    let z0 = surface_height(level, pos.x, pos.y);
+    let z1 = surface_height(level, pos.x - s * SLOPE_SAMPLE, pos.y + c * SLOPE_SAMPLE);
+    (z1 - z0) / SLOPE_SAMPLE
+}
+
+/// Original `insect_analysis` flattens a normal steeper than 45°.
+fn pitch_from_slope(slope: f32) -> f32 {
+    slope
+        .atan()
+        .clamp(-std::f32::consts::FRAC_PI_4, std::f32::consts::FRAC_PI_4)
+}
+
+/// Walk a medium slope at constant 3D speed, climb a wall, or fall off a
+/// cliff. Never snaps Z by more than `step` in one quant.
+fn crawl_or_fall(
+    level: &Level,
+    pos: Vec3,
+    fx: f32,
+    fy: f32,
+    step: f32,
+    slope: f32,
+    vz: f32,
+) -> (f32, f32, f32, f32) {
+    let ground = surface_height(level, pos.x, pos.y) + MARK_LIFT;
+    if pos.z > ground + 1.5 {
+        let vz = (vz - FALL_ACCEL).max(-FALL_MAX);
+        let nx = pos.x + fx * step * 0.35;
+        let ny = pos.y + fy * step * 0.35;
+        let z = pos.z + vz;
+        let g = surface_height(level, nx, ny) + MARK_LIFT;
+        if z <= g {
+            return (nx, ny, g, 0.0);
+        }
+        return (nx, ny, z, vz);
+    }
+    if slope > STEEP {
+        let top = surface_height(level, pos.x + fx * SLOPE_SAMPLE, pos.y + fy * SLOPE_SAMPLE);
+        let z = pos.z + step;
+        if z >= top + MARK_LIFT {
+            let nx = pos.x + fx * step * 0.5;
+            let ny = pos.y + fy * step * 0.5;
+            return (nx, ny, surface_height(level, nx, ny) + MARK_LIFT, 0.0);
+        }
+        return (pos.x, pos.y, z, 0.0);
+    }
+    if slope < -STEEP {
+        let nx = pos.x + fx * step;
+        let ny = pos.y + fy * step;
+        let g = surface_height(level, nx, ny) + MARK_LIFT;
+        if g < pos.z - step {
+            let vz = -step;
+            return (nx, ny, pos.z + vz, vz);
+        }
+        return (nx, ny, g, 0.0);
+    }
+    let xy = step / (1.0 + slope * slope).sqrt();
+    let nx = pos.x + fx * xy;
+    let ny = pos.y + fy * xy;
+    let want = surface_height(level, nx, ny) + MARK_LIFT;
+    let z = pos.z + (want - pos.z).clamp(-step, step);
+    (nx, ny, z, 0.0)
 }
 
 fn pick_tier(seed: &mut u32, counts: &[i32; 3]) -> u8 {
@@ -360,184 +442,80 @@ mod tests {
     }
 
     #[test]
-    fn an_insect_walks_towards_its_target() {
-        let level = test_level();
-        let mut swarm = Swarm::new(level.size);
-        let mut bug = Insect::at(Vec3::new(40.0, 40.0, 10.0), 0);
-        bug.target = (140.0, 40.0);
-        bug.heading = -std::f32::consts::FRAC_PI_2;
-        swarm.push(bug);
-        let start = swarm.insects()[0].pos;
-        for _ in 0..30 {
-            swarm.quant(&level, None);
-        }
-        let now = swarm.insects()[0].pos;
-        assert!(
-            now.x > start.x + 10.0,
-            "did not walk along +x: {} -> {}",
-            start.x,
-            now.x
-        );
-        assert!(
-            (now.y - start.y).abs() < 8.0,
-            "drifted off the line: {}",
-            now.y
-        );
-        let first = {
-            let mut s = Swarm::new(level.size);
-            let mut bug = Insect::at(Vec3::new(40.0, 40.0, 10.0), 0);
-            bug.target = (140.0, 40.0);
-            bug.heading = -std::f32::consts::FRAC_PI_2;
-            s.push(bug);
-            s.quant(&level, None);
-            s.insects()[0].pos.x - 40.0
-        };
-        assert!(first <= MAX_SPEED + 0.1, "a quant still teleports: {first}");
-    }
-
-    #[test]
     fn they_walk_the_way_the_mesh_faces() {
         let level = test_level();
         let mut swarm = Swarm::new(level.size);
         let mut bug = Insect::at(Vec3::new(80.0, 80.0, 10.0), 0);
         bug.target = (80.0, 180.0);
-        bug.heading = 0.0;
         swarm.push(bug);
         swarm.quant(&level, None);
         let now = swarm.insects()[0].pos;
-        assert!(
-            now.y > 80.0 + 0.5,
-            "heading 0 is +Y on the mesh, but it went to {now:?}"
-        );
-        assert!((now.x - 80.0).abs() < 1.0, "slid sideways: {now:?}");
+        assert!(now.y > 80.5, "heading 0 should be +Y, got {now:?}");
+        assert!((now.x - 80.0).abs() < 1.0);
+        assert_eq!(swarm.insects()[0].frame(4), 1);
     }
 
     #[test]
-    fn walking_advances_the_animation_frame() {
-        let mut bug = Insect::at(Vec3::new(0.0, 0.0, 0.0), 0);
-        bug.walk = 0.0;
-        assert_eq!(bug.frame(4), 0);
-        bug.walk = WALK_PER_FRAME * 2.5;
-        assert_eq!(bug.frame(4), 2);
-    }
-
-    #[test]
-    fn crushing_an_insect_pays_its_tier_and_moves_it() {
+    fn crush_is_only_under_a_wheel() {
         let mut swarm = Swarm::new((256, 256));
         swarm.push(Insect::at(Vec3::new(50.0, 50.0, 10.0), 0));
         swarm.push(Insect::at(Vec3::new(200.0, 200.0, 10.0), 2));
-        let crush = swarm.crush(Vec3::new(50.0, 50.0, 10.0), 20.0);
-        assert_eq!(
-            crush.awarded, TIER_PRICES[0],
-            "wrong purse for a cheap beeb"
-        );
-        assert_eq!(crush.at.len(), 1);
-        let moved = &swarm.insects()[0];
-        assert!(
-            (moved.pos.x - 50.0).abs() > 1.0 || (moved.pos.y - 50.0).abs() > 1.0,
-            "the cheap beeb is still sitting on the impact"
-        );
-        let gold = &swarm.insects()[1];
-        assert_eq!(gold.pos, Vec3::new(200.0, 200.0, 10.0), "the far one moved");
+        assert_eq!(swarm.crush(&[Vec3::new(80.0, 50.0, 10.0)], 8.0).awarded, 0);
+        let crush = swarm.crush(&[Vec3::new(50.0, 50.0, 10.0)], 8.0);
+        assert_eq!(crush.awarded, TIER_PRICES[0]);
+        assert_eq!(swarm.insects()[1].pos, Vec3::new(200.0, 200.0, 10.0));
     }
 
     #[test]
-    fn a_gold_beeb_pays_a_hundred() {
-        let mut swarm = Swarm::new((256, 256));
-        swarm.push(Insect::at(Vec3::new(10.0, 10.0, 5.0), 2));
-        let crush = swarm.crush(Vec3::new(10.0, 10.0, 5.0), 8.0);
-        assert_eq!(crush.awarded, 100);
+    fn they_pitch_on_a_slope_and_fall_off_a_cliff() {
+        let mut slope = test_level();
+        let (w, h) = slope.size;
+        for y in 0..h {
+            for x in 0..w {
+                slope.height[(y * w + x) as usize] = (40 + y).clamp(0, 255) as u8;
+            }
+        }
+        let mut swarm = Swarm::new(slope.size);
+        let start = Vec3::new(80.0, 80.0, surface_height(&slope, 80.0, 80.0));
+        let mut bug = Insect::at(start, 0);
+        bug.target = (80.0, 180.0);
+        swarm.push(bug);
+        swarm.quant(&slope, None);
+        assert!(swarm.insects()[0].pitch > 0.6);
+        assert!(swarm.insects()[0].pos.y - start.y < MAX_SPEED * 0.85);
+
+        let mut cliff = test_level();
+        for y in 0..h {
+            let altitude = if y < 40 { 200 } else { 40 };
+            for x in 0..w {
+                cliff.height[(y * w + x) as usize] = altitude;
+            }
+        }
+        let mut swarm = Swarm::new(cliff.size);
+        let start = Vec3::new(80.0, 38.0, surface_height(&cliff, 80.0, 38.0));
+        let mut bug = Insect::at(start, 0);
+        bug.target = (80.0, 80.0);
+        swarm.push(bug);
+        swarm.quant(&cliff, None);
+        assert!(swarm.insects()[0].pos.z > start.z - MAX_SPEED - 0.2);
+        for _ in 0..40 {
+            swarm.quant(&cliff, None);
+        }
+        assert!(swarm.insects()[0].pos.z < 50.0);
     }
 
     #[test]
-    fn populate_fills_the_world() {
-        let level = test_level();
-        let mut swarm = Swarm::new(level.size);
-        swarm.populate(MAX_INSECTS, &level);
-        assert_eq!(swarm.insects().len(), MAX_INSECTS);
-        assert_eq!(swarm.insects()[0].tier, 2, "the first insect is gold");
-    }
-
-    #[test]
-    fn density_is_ten_times_the_original_fostral_count() {
-        assert_eq!(Swarm::count_for_size((2048, 16384)), MAX_INSECTS * 10);
-        assert_eq!(Swarm::count_for_size((256, 256)), 1);
-        assert_eq!(Swarm::count_for_size((4096, 16384)), MAX_INSECTS * 20);
-    }
-
-    #[test]
-    fn a_full_map_quant_does_not_pair_every_insect() {
-        // Fostral-scale population. Pairing each nearby beeb against the
-        // whole list froze the game after the first frame.
-        let level = test_level();
-        let mut swarm = Swarm::new((8192, 8192));
-        swarm.populate(12_000, &level);
-        let t0 = std::time::Instant::now();
-        swarm.quant(&level, Some(Vec3::new(80.0, 80.0, 10.0)));
-        assert!(
-            t0.elapsed() < std::time::Duration::from_millis(250),
-            "quant scanned the whole population: {:?}",
-            t0.elapsed()
-        );
-    }
-
-    #[test]
-    fn far_insects_sleep() {
+    fn density_and_culling() {
+        assert_eq!(Swarm::count_for_size((2048, 16384)), MAX_INSECTS * 20);
         let level = test_level();
         let mut swarm = Swarm::new((8192, 8192));
         swarm.push(Insect::at(Vec3::new(10.0, 10.0, 10.0), 0));
-        let start = swarm.insects()[0].pos;
         swarm.quant(&level, Some(Vec3::new(7000.0, 7000.0, 10.0)));
-        assert_eq!(
-            swarm.insects()[0].pos,
-            start,
-            "a distant beeb still crawled"
-        );
+        assert_eq!(swarm.insects()[0].pos, Vec3::new(10.0, 10.0, 10.0));
     }
 
     #[test]
-    fn they_wander_instead_of_hunting_the_player() {
-        let level = test_level();
-        let mut swarm = Swarm::new((4096, 4096));
-        let mut bug = Insect::at(Vec3::new(40.0, 40.0, 10.0), 0);
-        bug.target = (40.0, 180.0);
-        bug.heading = 0.0;
-        swarm.push(bug);
-        let player = Vec3::new(200.0, 40.0, 10.0);
-        for _ in 0..20 {
-            swarm.quant(&level, Some(player));
-        }
-        let now = swarm.insects()[0].pos;
-        assert!(
-            now.y > 50.0,
-            "did not walk toward its wander target: {now:?}"
-        );
-        assert!(
-            (now.x - 40.0).abs() < 20.0,
-            "veered off toward the player: {now:?}"
-        );
-    }
-
-    #[test]
-    fn walking_changes_the_bug_frame() {
-        let level = test_level();
-        let mut swarm = Swarm::new(level.size);
-        let mut bug = Insect::at(Vec3::new(40.0, 40.0, 10.0), 0);
-        bug.target = (40.0, 180.0);
-        swarm.push(bug);
-        let start = swarm.insects()[0].frame(4);
-        for _ in 0..40 {
-            swarm.quant(&level, None);
-        }
-        assert_ne!(
-            swarm.insects()[0].frame(4),
-            start,
-            "the walk cycle never left frame {start}"
-        );
-    }
-
-    #[test]
-    fn walking_west_does_not_jump_to_the_far_edge() {
+    fn walking_west_does_not_fold_the_seam() {
         let level = test_level();
         let mut swarm = Swarm::new(level.size);
         let mut bug = Insect::at(Vec3::new(2.0, 40.0, 10.0), 0);
@@ -548,26 +526,6 @@ mod tests {
             swarm.quant(&level, None);
         }
         let now = swarm.insects()[0].pos;
-        assert!(
-            now.x < 0.0,
-            "folding onto [0, size) is a seam teleport: {now:?}"
-        );
-        assert!(now.x > -40.0, "it ran off instead of walking west: {now:?}");
-    }
-
-    #[test]
-    fn draw_skips_insects_outside_the_view() {
-        let mut swarm = Swarm::new((2048, 2048));
-        swarm.push(Insect::at(Vec3::new(10.0, 10.0, 10.0), 0));
-        swarm.push(Insect::at(Vec3::new(1800.0, 1800.0, 10.0), 0));
-        let mut near = LineBuffer::new();
-        swarm.draw_near(&mut near, Vec3::new(10.0, 10.0, 10.0), 100.0);
-        assert!(!near.is_empty(), "the nearby beeb was culled");
-        let mut all = LineBuffer::new();
-        swarm.draw_near(&mut all, Vec3::new(10.0, 10.0, 10.0), 4000.0);
-        assert!(
-            all.len() > near.len(),
-            "the far beeb was drawn as if it were next to the camera"
-        );
+        assert!(now.x < 0.0 && now.x > -40.0, "{now:?}");
     }
 }

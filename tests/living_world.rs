@@ -116,7 +116,7 @@ fn driving_on_drivable_ground_emits_dust_from_the_real_tracks() {
 fn crushing_a_beeb_pays_and_a_burst_follows() {
     let mut swarm = Swarm::new((128, 128));
     swarm.push(Insect::at(Vec3::new(20.0, 20.0, 8.0), 1));
-    let crush = swarm.crush(Vec3::new(20.0, 20.0, 8.0), 12.0);
+    let crush = swarm.crush(&[Vec3::new(20.0, 20.0, 8.0)], 8.0);
     assert_eq!(crush.awarded, TIER_PRICES[1]);
     assert_ne!(swarm.insects()[0].pos, Vec3::new(20.0, 20.0, 8.0));
 

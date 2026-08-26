@@ -2,7 +2,7 @@ use crate::boilerplate::Application;
 use crate::net::{NetEvent, NetworkClient};
 use m3d::Mesh;
 use vangers::{
-    config, creature, escave, level, model, particle,
+    config, creature, escave, level, life, model,
     physics::{self, CarPhysicsData},
     render::{
         Batcher, GraphicsContext, Render, ScreenTargets,
@@ -454,11 +454,7 @@ pub struct Game {
     cam_style: CameraStyle,
     max_quant: f32,
     input: Input,
-    particles: particle::System,
-    particle_time: f32,
-    swarm: creature::Swarm,
-    /// Beeb credits, `aciCurCredits` / `HotBug`.
-    beebs: i32,
+    life: life::World,
     inventory: escave::Inventory,
     shop: escave::Shop,
     /// Body meshes for shop weapons, keyed by `game.lst` NameID.
@@ -467,6 +463,7 @@ pub struct Game {
     data_path: PathBuf,
     /// Original Bug `.a3d` frames, if `game.lst` has one.
     bug: Option<(Vec<Arc<model::Mesh>>, f32)>,
+    fauna_meshes: FaunaMeshes,
     /// Space at an escave: fly in, then open the inner visit.
     approach: Option<Approach>,
     /// Secret tunnel: interpolate the car to the other station.
@@ -491,6 +488,12 @@ struct Ride {
     duration: f32,
     start: Vec3,
     dest: Vec3,
+}
+
+struct FaunaMeshes {
+    farmer: Option<(Arc<model::Mesh>, f32)>,
+    fish: Option<(Arc<model::Mesh>, f32)>,
+    clef: Option<(Arc<model::Mesh>, f32)>,
 }
 
 impl Game {
@@ -712,10 +715,8 @@ impl Game {
             NetworkClient::connect(addr, &player_name, &player.car_name, player.color as u8)
         });
 
-        let mut swarm = creature::Swarm::new(level.size);
-        let beebs = creature::Swarm::count_for_size(level.size);
-        log::info!("Spawning {beebs} beebs at Fostral density");
-        swarm.populate(beebs, &level);
+        let mut life = life::World::spawn(&settings.game.level, &level, &settings.data_path);
+        life.beebs = 500;
 
         let bug = db.game.model_infos.get("Bug").and_then(|info| {
             let path = settings.data_path.join(&info.path);
@@ -739,6 +740,28 @@ impl Game {
             log::info!("No Bug model in game.lst; beebs draw as ticks");
         }
 
+        let load_listed = |name: &str| {
+            db.game.model_infos.get(name).and_then(|info| {
+                let path = settings.data_path.join(&info.path);
+                File::open(&path).ok().map(|file| {
+                    (
+                        model::load_listed_body(
+                            &path,
+                            file,
+                            &gfx.device,
+                            &render.object,
+                            settings.game.physics.shape_sampling,
+                        ),
+                        info.scale.max(0.15),
+                    )
+                })
+            })
+        };
+        let fauna_meshes = FaunaMeshes {
+            farmer: load_listed("SkyFarmer"),
+            fish: load_listed("FishWarrior"),
+            clef: load_listed("WorldLocker"),
+        };
         Game {
             db,
             render,
@@ -773,16 +796,14 @@ impl Game {
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
             input: Input::default(),
-            particles: particle::System::new(),
-            particle_time: 0.0,
-            swarm,
-            beebs: 500,
+            life,
             inventory,
             shop,
             weapon_meshes,
             visit: None,
             data_path: settings.data_path.clone(),
             bug,
+            fauna_meshes,
             shots: Vec::new(),
             approach: None,
             ride: None,
@@ -852,111 +873,55 @@ impl Game {
     /// is over an immutable level and in parallel across the agents. Doing
     /// the cutting here, afterwards, is what lets both of those stand.
     fn step_tracks(&mut self) {
-        if !self.terraform.tread.enabled
-            && !self.terraform.grader.enabled
-            && !self.terraform.press.enabled
-            && !self.terraform.molehills.enabled
-        {
-            // Keep the wheels and the blade from stitching a track across
-            // everything driven while the switch was off.
-            for agent in self.agents.iter_mut() {
-                for track in agent.tracks.drain() {
-                    self.particles.from_track(&track, &self.level);
-                }
-                agent.tracks.reset();
-            }
-            return;
-        }
-
         self.track_regions.clear();
         for agent in self.agents.iter_mut() {
-            // The hull goes first, then the blade, then the wheels: each
-            // works on the ground the one before it left.
-            for burrow in agent.tracks.drain_burrows() {
-                level::terraform::apply_burrow(
-                    &mut self.level,
-                    &self.terraform.molehills,
-                    &burrow,
-                    &mut self.track_regions,
-                );
-            }
-            if let Some(hull) = agent.tracks.take_hull() {
-                level::terraform::apply_press(
-                    &mut self.level,
-                    &self.terraform.press,
-                    &hull,
-                    &mut self.track_regions,
-                );
-            }
-            for sweep in agent.tracks.drain_sweeps() {
-                level::terraform::apply_grader(
-                    &mut self.level,
-                    &self.terraform.grader,
-                    &sweep,
-                    &mut self.track_regions,
-                );
-            }
-            for track in agent.tracks.drain() {
-                self.particles.from_track(&track, &self.level);
-                level::terraform::apply_tread(
-                    &mut self.level,
-                    &self.terraform.tread,
-                    &track,
-                    &mut self.track_regions,
-                );
+            let reach = (agent.phys_data.bbox.radius * agent.car.scale).max(8.0) as i32;
+            let treads = level::terraform::apply_vehicle(
+                &mut self.level,
+                &self.terraform,
+                &mut agent.tracks,
+                reach,
+                &mut self.track_regions,
+            );
+            for track in treads {
+                self.life.particles.from_track(&track, &self.level);
             }
         }
         if self.track_regions.is_empty() {
             return;
         }
-
-        // Four wheels of the same car overlap heavily at low speed.
         self.track_regions.sort_unstable();
         self.track_regions.dedup();
-
         let height = self.level.geometry.height as u16;
         self.render.dirty_terrain(&self.track_regions, height);
     }
 
-    /// Dust, smoke, bursts, wandering beebs, and the crush that pays.
     fn step_world_life(&mut self, delta: f32) {
-        self.particle_time += delta;
-        let quant = config::common::MAIN_LOOP_TIME;
-        // A hitch (first frame after load) can dump a second of catch-up
-        // into this loop. A handful of quants is enough; the rest is
-        // dropped so we do not freeze after drawing once.
-        let mut catch_up = 0;
-        while self.particle_time >= quant {
-            if catch_up >= 4 {
-                self.particle_time = 0.0;
-                break;
-            }
-            catch_up += 1;
-            self.particle_time -= quant;
-            let (player_pos, player_radius, hull, armor, max_armor) = {
-                let player = self
-                    .agents
-                    .iter()
-                    .find(|a| a.spirit == Spirit::Player)
-                    .unwrap();
-                (
-                    player.position(),
-                    player.touch_radius() as f32 + 12.0,
-                    player.position(),
-                    player.armor,
-                    player.max_armor,
-                )
-            };
-            self.swarm.quant(&self.level, Some(player_pos));
-            self.particles.from_hull(hull, armor, max_armor);
-            let crush = self.swarm.crush(player_pos, player_radius);
-            if crush.awarded != 0 {
-                self.beebs += crush.awarded;
-                for at in crush.at {
-                    self.particles.from_crush(at);
-                }
-            }
-            self.particles.quant();
+        let player = self
+            .agents
+            .iter()
+            .find(|a| a.spirit == Spirit::Player)
+            .unwrap();
+        let transform = match player.physics {
+            Physics::Cpu { ref transform, .. } => *transform,
+        };
+        let wheels = player.phys_data.wheel_points(&transform);
+        let contact = life::Contact {
+            pos: player.position(),
+            wheels: &wheels,
+            radius: player.touch_radius() as f32,
+            armor: player.armor,
+            max_armor: player.max_armor,
+        };
+        let shots: Vec<Vec3> = self.shots.iter().map(|s| s.shot.pos).collect();
+        let nibble = self.life.step(&self.level, delta, contact, &shots);
+        if nibble != 0 {
+            let player = self
+                .agents
+                .iter_mut()
+                .find(|a| a.spirit == Spirit::Player)
+                .unwrap();
+            player.armor = player.armor.saturating_sub(nibble);
         }
     }
 
@@ -998,12 +963,7 @@ impl Game {
                 transform.disp -= shift;
             }
         }
-        for p in self.particles.particles_mut() {
-            p.pos -= shift;
-        }
-        for insect in self.swarm.insects_mut() {
-            insect.pos -= shift;
-        }
+        self.life.shift(shift);
         for live in self.shots.iter_mut() {
             live.shot.pos -= shift;
         }
@@ -1079,9 +1039,8 @@ impl Game {
         let at3 = (pos.x as i32, pos.y as i32, pos.z as i32);
         self.moving.use_at(at3, radius, self.level.size);
         self.moving.triggers.touch(at3, radius, self.level.size);
-        if self.begin_train_ride(true) {
-            return;
-        }
+        // Space only opens the door. The ride starts once the car has
+        // actually fallen into the hole, not from the surface.
         let at = (pos.x as i32, pos.y as i32);
         let pads = self.collect_entrances();
         if let Some(pad) = escave::nearest_entrance(&pads, at) {
@@ -1113,7 +1072,7 @@ impl Game {
 
     /// `EXTERNAL_MODE_MOVE` of a `TrainEngine`: slide the car from this
     /// station to the other over `ActiveTime`.
-    fn begin_train_ride(&mut self, ignore_altitude: bool) -> bool {
+    fn begin_train_ride(&mut self) -> bool {
         if self.ride.is_some() || self.approach.is_some() {
             return false;
         }
@@ -1124,9 +1083,8 @@ impl Game {
         let radius = player.touch_radius();
         let Some(ride) = self.moving.triggers.train_ride_at(
             (pos.x as i32, pos.y as i32, pos.z as i32),
-            radius + 48,
+            radius,
             self.level.size,
-            ignore_altitude,
         ) else {
             return false;
         };
@@ -1460,7 +1418,7 @@ impl Application for Game {
 
         self.step_moving_land(delta);
         if !riding {
-            riding = self.begin_train_ride(false);
+            riding = self.begin_train_ride();
         }
 
         if self.flood.step(&mut self.level, delta) {
@@ -1902,11 +1860,11 @@ impl Application for Game {
                 egui::CollapsingHeader::new("World life")
                     .default_open(true)
                     .show(ui, |ui| {
-                        ui.label(format!("Beebs: {}", self.beebs));
+                        ui.label(format!("Beebs: {}", self.life.beebs));
                         ui.label(format!(
                             "Particles: {}  Beebs on the ground: {}",
-                            self.particles.particles().len(),
-                            self.swarm.insects().len()
+                            self.life.particles.particles().len(),
+                            self.life.swarm.insects().len()
                         ));
                         ui.label("Space: enter escave / open tunnel");
                         ui.label("F/G: fire bays 0/1");
@@ -1948,7 +1906,7 @@ impl Application for Game {
                         leave = true;
                     }
                     ui.separator();
-                    ui.label(format!("Beebs: {}", self.beebs));
+                    ui.label(format!("Beebs: {}", self.life.beebs));
                     if let Some(ref mut session) = visit.session {
                         if let Some(phrase) = session.last_phrase() {
                             ui.label(phrase);
@@ -2019,10 +1977,12 @@ impl Application for Game {
                     let _ = session.answer(&q);
                 }
                 if let Some(id) = buy {
-                    let _ = self.shop.buy(&id, &mut self.inventory, &mut self.beebs);
+                    let _ = self
+                        .shop
+                        .buy(&id, &mut self.inventory, &mut self.life.beebs);
                 }
                 if let Some(i) = sell {
-                    let _ = self.shop.sell(i, &mut self.inventory, &mut self.beebs);
+                    let _ = self.shop.sell(i, &mut self.inventory, &mut self.life.beebs);
                 }
                 if let Some((cargo, bay)) = equip {
                     let _ = self.inventory.equip(cargo, bay);
@@ -2151,7 +2111,7 @@ impl Application for Game {
         }
 
         if let Some((ref frames, scale)) = self.bug {
-            for insect in self.swarm.near(eye, creature::ACTIVE_RADIUS) {
+            for insect in self.life.swarm.near(eye, creature::ACTIVE_RADIUS) {
                 let disp = self.level.display_pos(insect.pos, eye);
                 if clipper.clip(&disp) {
                     continue;
@@ -2160,7 +2120,7 @@ impl Application for Game {
                 let transform = space::Transform {
                     scale,
                     disp,
-                    rot: glam::Quat::from_rotation_z(insect.heading),
+                    rot: insect.rotation(),
                 };
                 // `InsectUnit::CreateInsect`: MATERIAL_1/2/4.
                 let color = match insect.tier {
@@ -2173,17 +2133,65 @@ impl Application for Game {
             }
         }
 
+        let level = &self.level;
+        let add_body = |batcher: &mut Batcher,
+                        mesh: &Arc<model::Mesh>,
+                        scale: f32,
+                        pos: Vec3,
+                        heading: f32,
+                        color: u8| {
+            let disp = level.display_pos(pos, eye);
+            if clipper.clip(&disp) {
+                return;
+            }
+            let transform = space::Transform {
+                scale,
+                disp,
+                rot: glam::Quat::from_rotation_z(heading),
+            };
+            batcher.add_mesh(mesh, Instance::new(&transform, 0.0, color));
+        };
+        if let Some((ref mesh, scale)) = self.fauna_meshes.farmer {
+            for (pos, heading, kernoboo) in self.life.fauna.farmers() {
+                let color = if kernoboo {
+                    m3d::ColorId::SkyFarmerKernboo as u8
+                } else {
+                    m3d::ColorId::SkyFarmerPipetka as u8
+                };
+                add_body(&mut self.batcher, mesh, scale, pos, heading, color);
+            }
+        }
+        if let Some((ref mesh, scale)) = self.fauna_meshes.fish {
+            for (pos, heading) in self.life.fauna.fish() {
+                add_body(
+                    &mut self.batcher,
+                    mesh,
+                    scale,
+                    pos,
+                    heading,
+                    m3d::ColorId::Body as u8,
+                );
+            }
+        }
+        if let Some((ref mesh, scale)) = self.fauna_meshes.clef {
+            for pos in self.life.fauna.clefs() {
+                add_body(
+                    &mut self.batcher,
+                    mesh,
+                    scale,
+                    pos,
+                    0.0,
+                    m3d::ColorId::Custom5 as u8,
+                );
+            }
+        }
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("World"),
         });
 
-        particle::refresh_fx_lines(
-            &mut self.line_buffer,
-            &self.particles,
-            &self.swarm,
-            eye,
-            self.bug.is_none(),
-        );
+        self.life
+            .draw_fx(&mut self.line_buffer, eye, self.bug.is_none());
         const SHOT_COLOR: u32 = 0xFF44_EEFF;
         for live in &self.shots {
             let dir = if live.shot.vel.length_squared() > 1e-6 {

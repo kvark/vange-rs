@@ -18,23 +18,9 @@ const MAX_TRACTION: config::common::Traction = 4.0;
 const MOLE_SUBMERGED: f32 = 900.0;
 const MOLE_SURFACED: f32 = 50.0;
 
-/// Height change (squared) over a 2-texel sample that counts as a slope.
-/// Flatter than this is treated as a wheel standing on the ground.
-const SLOPE_GRIP: f32 = 4.0;
-
 /// Original `analyse_dynamics` when `stand_on_wheels`: `u0.x = u0.y = 0`.
 pub(crate) fn wheel_contact_cancel(pv: Vec3) -> Vec3 {
     Vec3::new(0.0, 0.0, pv.z)
-}
-
-/// How steep the ground is at `pos`, as squared height change over 2 texels.
-pub(crate) fn terrain_slope2(level: &level::Level, pos: Vec3) -> f32 {
-    let x = pos.x as i32;
-    let y = pos.y as i32;
-    let h = level.get((x, y)).high();
-    let dx = level.get((x + 2, y)).high() - h;
-    let dy = level.get((x, y + 2)).high() - h;
-    dx * dx + dy * dy
 }
 
 /// Where a car is in a burrow.
@@ -280,10 +266,22 @@ impl CarPhysicsData {
             scale: car.scale,
         }
     }
+
+    pub fn wheel_points(&self, transform: &space::Transform) -> Vec<Vec3> {
+        let mut pts: Vec<Vec3> = self
+            .wheels
+            .iter()
+            .map(|w| transform.transform_point(Vec3::from(w.pos)))
+            .collect();
+        if pts.is_empty() {
+            pts.push(transform.disp);
+        }
+        pts
+    }
 }
 
 pub fn jump_dir(power: f32) -> Vec3 {
-    5.0 * power * Vec3::new(0.0, 3.0, 10.0).normalize()
+    2.5 * power * Vec3::new(0.0, 3.0, 10.0).normalize()
 }
 
 pub fn step(
@@ -403,49 +401,31 @@ pub fn step(
             };
 
             let origin = transform.disp;
-            let mostly_horisontal = {
-                let tmp = rigid.velocity_at(r);
-                tmp.z * tmp.z < tmp.x * tmp.x + tmp.y * tmp.y
-            };
-            match cdata {
-                terrain::CollisionData {
-                    hard: Some(ref cp), ..
-                } if mostly_horisontal => {
-                    log::debug!("\t\t\tmostly horisontal");
-                    let r1 = rot_inv * Vec3::new(cp.pos.x - origin.x, cp.pos.y - origin.y, 0.0);
-                    let pv = rigid.velocity_at(r1);
-                    let normal = {
-                        let bm = car.bbox.max;
-                        let n = Vec3::new(r1.x / bm[0], r1.y / bm[1], r1.z / bm[2]);
-                        n.normalize()
+            // Original `code & 2` wall bounce uses a bounding-box normal,
+            // which punches a car sideways off a valley bank. Stay on the
+            // vertical spring path for every ground contact.
+            if let Some(cp) = cdata.soft.as_ref().or(cdata.hard.as_ref()) {
+                let r1 = rot_inv * Vec3::new(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
+                let pv = rigid.velocity_at(r1);
+                if pv.dot(z_axis) < 0.0 {
+                    let vec = if stand_on_wheels {
+                        wheel_contact_cancel(pv)
+                    } else {
+                        let projected = poly_norm * poly_norm.dot(pv);
+                        common.impulse.k_friction * pv
+                            + (1.0 - common.impulse.k_friction) * projected
                     };
-                    let dot = pv.dot(normal);
-                    if dot > 0.0 {
-                        rigid.push(r, normal * (dot * -common.impulse.factors[0] * modulation));
-                    }
+                    rigid.push_capped(r, vec * (-common.impulse.factors[1] * modulation), pv);
                 }
-                terrain::CollisionData {
-                    soft: Some(ref cp), ..
-                } => {
-                    let r1 = rot_inv * Vec3::new(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
-                    let pv = rigid.velocity_at(r1);
-                    if pv.dot(z_axis) < 0.0 {
-                        let on_slope = terrain_slope2(level, cp.pos) > SLOPE_GRIP;
-                        let vec = if stand_on_wheels && !on_slope {
-                            wheel_contact_cancel(pv)
-                        } else {
-                            let projected = poly_norm * poly_norm.dot(pv);
-                            common.impulse.k_friction * pv
-                                + (1.0 - common.impulse.k_friction) * projected
-                        };
-                        rigid.push(r, vec * (-common.impulse.factors[1] * modulation));
-                    }
-                }
-                _ => (),
             }
 
-            if let Some(ref cp) = cdata.soft {
-                let df0 = common.contact.k_elastic_spring * modulation * cp.depth;
+            // Original `code & 5`: springs fire on soft contacts *or* a
+            // wall-dominant poly (`N1 > N/2`). Skipping hard contacts left
+            // a buried car with nothing to lift it back out.
+            let spring = cdata.soft.as_ref().or(cdata.hard.as_ref());
+            if let Some(cp) = spring {
+                let depth = cp.depth.min(common.terrain.min_wall_delta);
+                let df0 = common.contact.k_elastic_spring * modulation * depth;
                 let df = df0.min(common.impulse.elastic_restriction);
                 log::debug!("\t\tbound[{}] dF.z = {}, rg0={:?}", bound_poly_id, df, rg0);
 
@@ -473,7 +453,35 @@ pub fn step(
                 }
             }
         } else {
-            //TODO: upper average
+            let cdata = terrain::CollisionData::collide_high(
+                poly,
+                &car.shape_samples,
+                car.physics.scale_bound,
+                transform,
+                level,
+                &common.terrain,
+            );
+            if let Some(cp) = cdata.soft.as_ref().or(cdata.hard.as_ref()) {
+                let origin = transform.disp;
+                let r1 = rot_inv * Vec3::new(cp.pos.x - origin.x, cp.pos.y - origin.y, rg0.z);
+                let pv = rigid.velocity_at(r1);
+                if pv.dot(z_axis) > 0.0 {
+                    let vec = poly_norm * poly_norm.dot(pv);
+                    rigid.push_capped(r, vec * (-common.impulse.factors[1] * modulation), pv);
+                }
+                let df = (-common.contact.k_elastic_spring * modulation * cp.depth).max(-2.0);
+                acc_springs.f.z += df;
+                acc_springs.k.x += rg0.y * df;
+                acc_springs.k.y -= rg0.x * df;
+                spring_touch += 1;
+                down_minus_up -= 1;
+                let world_vz = (transform.rot * rigid.vel).z;
+                if world_vz > 30.0
+                    && let Some(ref mut tracks) = tracks
+                {
+                    tracks.smash_ceiling((cp.pos.x as i32, cp.pos.y as i32));
+                }
+            }
         }
     }
 
@@ -777,30 +785,14 @@ mod tests {
     }
 
     #[test]
-    fn a_steep_slope_is_not_treated_as_a_wheel_stand() {
-        use crate::config::settings;
-        use crate::level::{Level, LevelConfig, TerrainBits, terraform::MAIN_TERRAIN};
-        let size = 16i32;
-        let bits = TerrainBits::new(8);
-        let mut height = vec![40u8; (size * size) as usize];
-        for x in 0..size {
-            height[x as usize] = 40 + (x as u8) * 4;
-        }
-        let level = Level {
-            size: (size, size),
-            flood_map: vec![0; size as usize].into_boxed_slice(),
-            height: height.into_boxed_slice(),
-            meta: vec![bits.write(MAIN_TERRAIN); (size * size) as usize].into_boxed_slice(),
-            palette: [[0; 4]; 0x100],
-            terrains: LevelConfig::new_test().terrains,
-            geometry: settings::Geometry::default(),
-        };
-        let flat = terrain_slope2(&level, Vec3::new(2.0, 4.0, 40.0));
-        let slope = terrain_slope2(&level, Vec3::new(2.0, 0.0, 40.0));
-        assert!(flat <= SLOPE_GRIP, "flat ground counted as a wall: {flat}");
+    fn jump_is_half_the_original_impulse() {
+        let dir = Vec3::new(0.0, 3.0, 10.0).normalize();
+        let got = jump_dir(2.0);
+        let want = 2.5 * 2.0 * dir;
+        assert!((got - want).length() < 1e-5, "jump_dir {got:?} vs {want:?}");
         assert!(
-            slope > SLOPE_GRIP,
-            "a 4-texel ramp was not a slope: {slope}"
+            (got.length() * 2.0 - 5.0 * 2.0 * dir.length()).abs() < 1e-4,
+            "max jump was not halved"
         );
     }
 }

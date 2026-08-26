@@ -98,12 +98,54 @@ impl CollisionData {
         }
 
         let total = (poly.samples.end - poly.samples.start) as f32;
-        // This is tricky: original code was doing pixel collisions and had
-        // a hard-coded constants of 4 pixels to be the threshold.
-        // See `VariablePolygon::lower_average` implementation.
+        // Original `lower_average`: N1 > 4 pixels to count as a wall.
         let threshold = 0.05 * total;
         CollisionData {
-            soft: (if soft.count > 0.0 { &soft } else { &hard }).finish(0.0),
+            // Springs use the shallow average (`dZ0` / N0). Feeding the
+            // deep wall samples in here launched the car off valley slopes.
+            soft: soft.finish(0.0),
+            _hard_dominant: hard.count * 2.0 >= total,
+            hard: hard.finish(threshold),
+        }
+    }
+
+    /// Ceiling of a double-level slab: original `upper_average` when the
+    /// sample sits between `mid` and `high`, closer to the cave roof than
+    /// the ground on top.
+    pub fn collide_high(
+        poly: &model::Polygon,
+        samples: &[model::RawVertex],
+        scale: f32,
+        transform: &space::Transform,
+        level: &level::Level,
+        terraconf: &config::common::Terrain,
+    ) -> Self {
+        let (mut soft, mut hard) = (HitAccumulator::new(), HitAccumulator::new());
+        for s in samples[poly.samples.clone()].iter() {
+            let sp = Vec3::new(s[0] as f32, s[1] as f32, s[2] as f32);
+            let pos = transform.transform_point(sp * scale);
+            let level::Texel::Dual { mid, high, .. } = level.get((pos.x as i32, pos.y as i32))
+            else {
+                continue;
+            };
+            if pos.z <= mid || pos.z >= high.0 {
+                continue;
+            }
+            let dm = pos.z - mid;
+            let du = high.0 - pos.z;
+            if dm >= du {
+                continue;
+            }
+            if dm > terraconf.min_wall_delta {
+                hard.add(pos, dm);
+            } else if dm > 0.0 {
+                soft.add(pos, dm);
+            }
+        }
+        let total = (poly.samples.end - poly.samples.start) as f32;
+        let threshold = 0.05 * total;
+        CollisionData {
+            soft: soft.finish(0.0),
             _hard_dominant: hard.count * 2.0 >= total,
             hard: hard.finish(threshold),
         }
