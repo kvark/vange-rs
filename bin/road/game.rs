@@ -459,13 +459,17 @@ pub struct Game {
     shop: escave::Shop,
     /// Body meshes for shop weapons, keyed by `game.lst` NameID.
     weapon_meshes: HashMap<String, Arc<model::Mesh>>,
-    visit: Option<escave::Visit>,
+    screen: escave::Screen,
     data_path: PathBuf,
     /// Original Bug `.a3d` frames, if `game.lst` has one.
     bug: Option<(Vec<Arc<model::Mesh>>, f32)>,
     fauna_meshes: FaunaMeshes,
-    /// Space at an escave: fly in, then open the inner visit.
-    approach: Option<Approach>,
+    /// Chase-camera and pad while the gates are closing on the way in.
+    approach_cam: Option<(Vec3, Vec3)>,
+    /// Last shop line shown in the interior ("Bought Nymbos", "Not enough beebs").
+    escave_note: Option<String>,
+    /// Warehouse id currently shown in the shop preview.
+    escave_selected: Option<String>,
     /// Secret tunnel: interpolate the car to the other station.
     ride: Option<Ride>,
     shots: Vec<LiveShot>,
@@ -474,13 +478,6 @@ pub struct Game {
 struct LiveShot {
     shot: weapon::Shot,
     age: f32,
-}
-
-struct Approach {
-    name: String,
-    t: f32,
-    start: Vec3,
-    dest: Vec3,
 }
 
 struct Ride {
@@ -800,12 +797,14 @@ impl Game {
             inventory,
             shop,
             weapon_meshes,
-            visit: None,
+            screen: escave::Screen::new(),
             data_path: settings.data_path.clone(),
             bug,
             fauna_meshes,
             shots: Vec::new(),
-            approach: None,
+            approach_cam: None,
+            escave_note: None,
+            escave_selected: None,
             ride: None,
         }
     }
@@ -925,17 +924,58 @@ impl Game {
         }
     }
 
-    fn enter_escave(&mut self, name: &str) {
-        let mut visit = escave::Visit::enter(name, &self.data_path);
-        if let Some(ref mut session) = visit.session {
-            session.next_phrase();
+    fn start_enter(&mut self, name: String, dest: Vec3) {
+        if self.screen.blocks_drive() {
+            return;
         }
-        self.visit = Some(visit);
+        self.approach_cam = Some((self.cam.loc, dest));
+        self.escave_note = None;
+        self.escave_selected = None;
+        self.screen.begin_enter(name);
     }
 
-    fn leave_escave(&mut self) {
-        self.visit = None;
-        self.sync_weapon_slots();
+    fn step_screen(&mut self, delta: f32) {
+        let had_visit = self.screen.visit().is_some();
+        self.screen.step(delta, &self.data_path);
+        if let Some(blend) = self.screen.camera_blend()
+            && let Some((start, dest)) = self.approach_cam
+        {
+            self.cam.loc = start.lerp(dest, blend);
+        }
+        if had_visit && self.screen.is_world() {
+            self.approach_cam = None;
+            self.sync_weapon_slots();
+        }
+    }
+
+    fn update_follow_camera(&mut self, delta: f32) {
+        let player = self
+            .agents
+            .iter()
+            .find(|a| a.spirit == Spirit::Player)
+            .unwrap();
+        let mut target = match player.physics {
+            Physics::Cpu { ref transform, .. } => *transform,
+        };
+        match self.cam_style {
+            CameraStyle::Simple(ref dir) => {
+                self.cam.look_by(&target, dir);
+            }
+            CameraStyle::Follow {
+                ref follow,
+                ground_anchor,
+            } => {
+                if ground_anchor {
+                    target.disp.z = self
+                        .level
+                        .get((target.disp.x as i32, target.disp.y as i32))
+                        .high();
+                }
+                self.cam.follow(&target, delta, follow);
+                self.cam.keep_above_ground(&self.level, CAMERA_CLEARANCE);
+            }
+        }
+        self.rebase_torus();
     }
 
     /// Fold camera and every agent onto the home tile so coordinates
@@ -985,33 +1025,17 @@ impl Game {
             .db
             .escaves
             .iter()
-            .map(|e| escave::Entrance {
-                name: e.name.clone(),
-                pos: e.coordinates,
-                reach: 128,
-            })
+            .map(|e| escave::Entrance::named(e.name.clone(), e.coordinates))
             .collect();
         for sensor in self.moving.triggers.sensors.iter() {
-            let kind = sensor.kind;
-            // Passages and secret tunnels are moving-land doors, not
-            // dialog rooms. Only escaves and spots open a visit.
-            if kind != level::vlc::sensor_kind::ESCAVE && kind != level::vlc::sensor_kind::SPOT {
-                continue;
+            if let Some(pad) = escave::Entrance::from_sensor(
+                sensor.kind,
+                &sensor.name,
+                (sensor.pos.0, sensor.pos.1),
+                sensor.radius,
+            ) {
+                list.push(pad);
             }
-            let name = if sensor.name.is_empty() {
-                match kind {
-                    level::vlc::sensor_kind::PASSAGE => "Passage".to_string(),
-                    level::vlc::sensor_kind::SPOT => "Spot".to_string(),
-                    _ => "Escave".to_string(),
-                }
-            } else {
-                sensor.name.clone()
-            };
-            list.push(escave::Entrance {
-                name,
-                pos: (sensor.pos.0, sensor.pos.1),
-                reach: sensor.radius.max(48) + 48,
-            });
         }
         list
     }
@@ -1019,11 +1043,11 @@ impl Game {
     /// Space: poke nearby door sensors so a secret tunnel opens, and if
     /// standing on an escave/spot, fly in then open the inner visit.
     fn try_use_entrance(&mut self) {
-        if self.visit.is_some() {
-            self.leave_escave();
+        if self.screen.visit().is_some() {
+            self.screen.begin_leave();
             return;
         }
-        if self.approach.is_some() {
+        if self.screen.blocks_drive() {
             return;
         }
         let pos = match self.agents.iter().find(|a| a.spirit == Spirit::Player) {
@@ -1045,35 +1069,14 @@ impl Game {
         let pads = self.collect_entrances();
         if let Some(pad) = escave::nearest_entrance(&pads, at) {
             let dest = Vec3::new(pad.pos.0 as f32, pad.pos.1 as f32, pos.z - 24.0);
-            self.approach = Some(Approach {
-                name: pad.name.clone(),
-                t: 0.0,
-                start: self.cam.loc,
-                dest,
-            });
+            self.start_enter(pad.name.clone(), dest);
         }
-    }
-
-    fn step_approach(&mut self, delta: f32) -> bool {
-        let Some(ref mut approach) = self.approach else {
-            return false;
-        };
-        approach.t = (approach.t + delta / 1.2).min(1.0);
-        let t = approach.t;
-        let s = t * t * (3.0 - 2.0 * t);
-        self.cam.loc = approach.start.lerp(approach.dest, s);
-        if t >= 1.0 {
-            let name = approach.name.clone();
-            self.approach = None;
-            self.enter_escave(&name);
-        }
-        true
     }
 
     /// `EXTERNAL_MODE_MOVE` of a `TrainEngine`: slide the car from this
     /// station to the other over `ActiveTime`.
     fn begin_train_ride(&mut self) -> bool {
-        if self.ride.is_some() || self.approach.is_some() {
+        if self.ride.is_some() || self.screen.blocks_drive() {
             return false;
         }
         let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) else {
@@ -1389,13 +1392,17 @@ impl Application for Game {
             self.input.use_entrance = false;
             self.try_use_entrance();
         }
-        if self.step_approach(delta) {
+        if self.screen.blocks_drive() {
+            self.step_screen(delta);
+            if self.screen.follows_camera() {
+                self.update_follow_camera(delta);
+            }
             return;
         }
         let mut riding = self.step_ride(delta);
 
         if let Some(bay) = self.input.fire_bay.take()
-            && self.visit.is_none()
+            && !self.screen.blocks_drive()
         {
             let player = self
                 .agents
@@ -1642,38 +1649,7 @@ impl Application for Game {
 
         // Camera follow runs last so it sees the post-physics,
         // post-network-correction transform — no oscillation.
-        {
-            let player = self
-                .agents
-                .iter()
-                .find(|a| a.spirit == Spirit::Player)
-                .unwrap();
-            let mut target = match player.physics {
-                Physics::Cpu { ref transform, .. } => *transform,
-            };
-
-            if self.visit.is_none() {
-                match self.cam_style {
-                    CameraStyle::Simple(ref dir) => {
-                        self.cam.look_by(&target, dir);
-                    }
-                    CameraStyle::Follow {
-                        ref follow,
-                        ground_anchor,
-                    } => {
-                        if ground_anchor {
-                            target.disp.z = self
-                                .level
-                                .get((target.disp.x as i32, target.disp.y as i32))
-                                .high();
-                        }
-                        self.cam.follow(&target, delta, follow);
-                        self.cam.keep_above_ground(&self.level, CAMERA_CLEARANCE);
-                    }
-                }
-            }
-            self.rebase_torus();
-        }
+        self.update_follow_camera(delta);
     }
 
     fn resize(&mut self, device: &wgpu::Device, extent: wgpu::Extent3d) {
@@ -1688,17 +1664,61 @@ impl Application for Game {
     }
 
     fn draw_ui(&mut self, context: &egui::Context) {
+        let mut leave_escave = false;
+        let mut sync_slots = false;
+        if let Some(visit) = self.screen.visit() {
+            let action = escave::draw_interior(
+                context,
+                visit,
+                &self.shop,
+                &self.inventory,
+                self.life.beebs,
+                self.escave_note.as_deref(),
+                &mut self.escave_selected,
+            );
+            if let Some(visit) = self.screen.visit_mut() {
+                let (note, slots) = action.apply(
+                    visit,
+                    &mut self.shop,
+                    &mut self.inventory,
+                    &mut self.life.beebs,
+                );
+                if let Some(note) = note {
+                    self.escave_note = Some(note);
+                }
+                sync_slots = slots;
+            }
+            if action.leave {
+                leave_escave = true;
+                self.escave_selected = None;
+            }
+        }
+        let shutter = self.screen.shutter();
+        if shutter > 0.0 {
+            escave::draw_shutters(context, shutter);
+        }
+
         if !self.ui.enabled {
+            if sync_slots {
+                self.sync_weapon_slots();
+            }
+            if leave_escave {
+                self.screen.begin_leave();
+            }
             return;
         }
         if !crate::boilerplate::tweaks::expanded(context, &mut self.ui_expanded) {
+            if sync_slots {
+                self.sync_weapon_slots();
+            }
+            if leave_escave {
+                self.screen.begin_leave();
+            }
             return;
         }
 
         let mut selected_car;
         let mut enter_name: Option<String> = None;
-        let mut leave_escave = false;
-        let mut sync_slots = false;
         {
             let player = self
                 .agents
@@ -1882,120 +1902,17 @@ impl Application for Game {
                         if let Some(escave) = near {
                             let name = escave.name.clone();
                             ui.label(format!("Near {name}"));
-                            if self.visit.is_none() && ui.button(format!("Enter {name}")).clicked()
+                            if self.screen.is_world()
+                                && ui.button(format!("Enter {name}")).clicked()
                             {
                                 enter_name = Some(name);
                             }
                         }
-                        if self.visit.is_some() && ui.button("Leave escave").clicked() {
+                        if self.screen.visit().is_some() && ui.button("Leave escave").clicked() {
                             leave_escave = true;
                         }
                     });
             });
-
-            if let Some(ref mut visit) = self.visit {
-                let mut leave = false;
-                let mut buy: Option<String> = None;
-                let mut sell: Option<usize> = None;
-                let mut equip: Option<(usize, usize)> = None;
-                let mut unequip: Option<usize> = None;
-                let mut ask: Option<String> = None;
-                let mut next_phrase = false;
-                egui::Window::new(format!("Escave: {}", visit.name)).show(context, |ui| {
-                    if ui.button("Leave").clicked() {
-                        leave = true;
-                    }
-                    ui.separator();
-                    ui.label(format!("Beebs: {}", self.life.beebs));
-                    if let Some(ref mut session) = visit.session {
-                        if let Some(phrase) = session.last_phrase() {
-                            ui.label(phrase);
-                        }
-                        if !session.ended() && ui.button("Next phrase").clicked() {
-                            next_phrase = true;
-                        }
-                        ui.separator();
-                        ui.label("Ask:");
-                        for q in session.queries() {
-                            if ui.button(q).clicked() {
-                                ask = Some(q.clone());
-                            }
-                        }
-                    } else {
-                        ui.label("(no dialog data on this path)");
-                    }
-                    ui.separator();
-                    ui.label("Shop");
-                    for good in self.shop.stock() {
-                        let kind = if good.is_weapon() { "gun" } else { "ware" };
-                        if ui
-                            .button(format!("Buy {kind} {} ({} beebs)", good.id, good.buy_price))
-                            .clicked()
-                        {
-                            buy = Some(good.id.clone());
-                        }
-                    }
-                    ui.label("Cargo");
-                    for (i, good) in self.inventory.items().iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button(format!("Sell {} (+{})", good.id, good.sell_price))
-                                .clicked()
-                            {
-                                sell = Some(i);
-                            }
-                            if good.is_weapon() {
-                                if ui.button("Bay 0").clicked() {
-                                    equip = Some((i, 0));
-                                }
-                                if ui.button("Bay 1").clicked() {
-                                    equip = Some((i, 1));
-                                }
-                            }
-                        });
-                    }
-                    ui.label("Bays");
-                    for (i, slot) in self.inventory.bays().iter().enumerate() {
-                        match slot {
-                            Some(good) => {
-                                if ui.button(format!("Unequip bay {i}: {}", good.id)).clicked() {
-                                    unequip = Some(i);
-                                }
-                            }
-                            None => {
-                                ui.label(format!("Bay {i}: empty"));
-                            }
-                        }
-                    }
-                });
-                if next_phrase && let Some(ref mut session) = visit.session {
-                    session.next_phrase();
-                }
-                if let Some(q) = ask
-                    && let Some(ref mut session) = visit.session
-                {
-                    let _ = session.answer(&q);
-                }
-                if let Some(id) = buy {
-                    let _ = self
-                        .shop
-                        .buy(&id, &mut self.inventory, &mut self.life.beebs);
-                }
-                if let Some(i) = sell {
-                    let _ = self.shop.sell(i, &mut self.inventory, &mut self.life.beebs);
-                }
-                if let Some((cargo, bay)) = equip {
-                    let _ = self.inventory.equip(cargo, bay);
-                    sync_slots = true;
-                }
-                if let Some(bay) = unequip {
-                    let _ = self.inventory.unequip(bay);
-                    sync_slots = true;
-                }
-                if leave {
-                    leave_escave = true;
-                }
-            }
 
             if selected_car != player.car_name {
                 player.change_car(&self.db.cars[&selected_car], selected_car);
@@ -2005,10 +1922,25 @@ impl Application for Game {
             self.sync_weapon_slots();
         }
         if let Some(name) = enter_name.take() {
-            self.enter_escave(&name);
+            let dest = self
+                .db
+                .escaves
+                .iter()
+                .find(|e| e.name == name)
+                .map(|e| {
+                    let z = self
+                        .agents
+                        .iter()
+                        .find(|a| a.spirit == Spirit::Player)
+                        .map(|a| a.position().z)
+                        .unwrap_or(0.0);
+                    Vec3::new(e.coordinates.0 as f32, e.coordinates.1 as f32, z - 24.0)
+                })
+                .unwrap_or(self.cam.loc);
+            self.start_enter(name, dest);
         }
         if leave_escave {
-            self.leave_escave();
+            self.screen.begin_leave();
         }
 
         // Multiplayer panel

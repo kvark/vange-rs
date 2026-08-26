@@ -131,6 +131,22 @@ impl Session {
         &self.visible
     }
 
+    /// How a listed query is asked: the `.query` file wraps names with
+    /// `"What is"` / `"counselor?"`.
+    pub fn query_prompt(&self, name: &str) -> String {
+        let prefix = self.room.prefix.trim();
+        let postfix = self.room.postfix.trim();
+        if prefix.is_empty() && postfix.is_empty() {
+            name.to_string()
+        } else if prefix.is_empty() {
+            format!("{name} {postfix}")
+        } else if postfix.is_empty() {
+            format!("{prefix} {name}")
+        } else {
+            format!("{prefix} {name} {postfix}")
+        }
+    }
+
     /// Next counselor line, or `None` once the opening molecule is spent.
     pub fn next_phrase(&mut self) -> Option<String> {
         let name = self.molecule.as_ref()?;
@@ -380,8 +396,11 @@ fn parse_text(src: &str) -> HashMap<String, Vec<Atom>> {
 fn parse_queries(src: &str) -> (String, String, HashMap<String, Query>) {
     let tokens = tokenize(src);
     let mut cur = Cursor::new(&tokens, true);
-    let prefix = quoted_or_empty(cur.next());
-    let postfix = quoted_or_empty(cur.next());
+    // Dual-language files lead with the Russian wrapper, then the English
+    // `"What is"` / `"counselor?"`. Lossy CP1251 turns Cyrillic into `�`,
+    // which `is_english` cannot tell from punctuation, so require a letter.
+    let prefix = next_english_quoted(&mut cur);
+    let postfix = next_english_quoted(&mut cur);
 
     let mut queries = HashMap::new();
     while let Some(tok) = cur.next() {
@@ -426,17 +445,18 @@ fn parse_queries(src: &str) -> (String, String, HashMap<String, Query>) {
     (prefix, postfix, queries)
 }
 
-fn quoted_or_empty(tok: Option<&Token>) -> String {
-    match tok {
-        Some(tok) => {
-            if let Token::Quoted(ref s) = *tok {
-                s.clone()
-            } else {
-                String::new()
-            }
+fn next_english_quoted(cur: &mut Cursor<'_>) -> String {
+    while let Some(tok) = cur.peek() {
+        let Token::Quoted(ref s) = *tok else {
+            break;
+        };
+        let s = s.clone();
+        cur.next();
+        if s.chars().any(|c| c.is_ascii_alphabetic()) {
+            return s;
         }
-        None => String::new(),
     }
+    String::new()
 }
 
 fn english_name(first: &str, second: &str) -> String {
@@ -567,6 +587,11 @@ mod tests {
             session.queries().iter().any(|q| q == "mechos"),
             "mechos was not involved: {:?}",
             session.queries()
+        );
+        let prompt = session.query_prompt("mechos");
+        assert!(
+            prompt.contains("mechos") && prompt.contains("What is"),
+            "query wrapper missing: {prompt:?}"
         );
         let answer = session.answer("mechos").expect("no answer");
         assert!(
