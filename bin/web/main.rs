@@ -9,8 +9,10 @@ use wasm_bindgen::prelude::*;
 
 use vangers::{
     config::{self, settings},
-    data, level, model, physics,
-    render::{self, Batcher, DEPTH_FORMAT, GraphicsContext, Render, ScreenTargets},
+    data, level, life, model, physics,
+    render::{
+        self, Batcher, DEPTH_FORMAT, GraphicsContext, Render, ScreenTargets, debug::LineBuffer,
+    },
     space,
     vfs::Vfs,
 };
@@ -267,6 +269,8 @@ struct Agent {
     /// Stretches each wheel covered since the last frame, cut into the
     /// ground afterwards - see `WebApp::step_tracks`.
     tracks: level::terraform::Tracks,
+    armor: u16,
+    max_armor: u16,
 }
 
 impl Agent {
@@ -378,6 +382,7 @@ fn spawn_default_agent(
         rot: glam::Quat::IDENTITY,
     };
 
+    let armor = car.stats.max_armor as u16;
     Some(Agent {
         car,
         phys_data,
@@ -386,6 +391,8 @@ fn spawn_default_agent(
         control: Control::default(),
         color: PLAYER_COLOR,
         tracks: level::terraform::Tracks::default(),
+        armor,
+        max_armor: armor,
     })
 }
 
@@ -412,6 +419,17 @@ struct WebApp {
     /// Terrain-editing effects the car is allowed to leave behind. Same
     /// defaults as the native game: tread on, hull-press and mole mounds off.
     terraform: level::terraform::Config,
+    life: life::World,
+    line_buffer: LineBuffer,
+    space_held: bool,
+    ride: Option<Ride>,
+}
+
+struct Ride {
+    t: f32,
+    duration: f32,
+    start: glam::Vec3,
+    dest: glam::Vec3,
 }
 
 impl WebApp {
@@ -464,12 +482,26 @@ impl WebApp {
         let settings = Self::load_settings();
         let level_config = level::LevelConfig::new_test();
         let level = level::load(&level_config, &settings.game.geometry);
-        Self::build(gfx, level_config, level, None, is_webgpu, &settings)
+        Self::build(
+            gfx,
+            level_config,
+            level,
+            None,
+            is_webgpu,
+            &settings,
+            "fostral",
+        )
     }
 
     /// Build the app from a real level in a [`Vfs`]. `ini_path` is the
     /// VFS key of the world INI (e.g. `"fostral/world.ini"`).
-    fn new_from_vfs(gfx: &GraphicsContext, vfs: &Vfs, ini_path: &str, is_webgpu: bool) -> Self {
+    fn new_from_vfs(
+        gfx: &GraphicsContext,
+        vfs: &Vfs,
+        ini_path: &str,
+        world: &str,
+        is_webgpu: bool,
+    ) -> Self {
         let settings = Self::load_settings();
         let t = Instant::now();
         let level_config = level::LevelConfig::load_from_vfs(vfs, ini_path);
@@ -480,7 +512,15 @@ impl WebApp {
             level.size.0 as u64 * level.size.1 as u64 / 1024 * 1024
         );
         let t = Instant::now();
-        let app = Self::build(gfx, level_config, level, Some(vfs), is_webgpu, &settings);
+        let app = Self::build(
+            gfx,
+            level_config,
+            level,
+            Some(vfs),
+            is_webgpu,
+            &settings,
+            world,
+        );
         log::info!(
             "[startup] app built in {:.0} ms",
             t.elapsed().as_secs_f32() * 1e3
@@ -495,6 +535,7 @@ impl WebApp {
         vfs: Option<&Vfs>,
         is_webgpu: bool,
         settings: &settings::Settings,
+        world: &str,
     ) -> Self {
         let objects_palette = vfs
             .and_then(|v| v.read("resource/pal/objects.pal"))
@@ -629,6 +670,7 @@ impl WebApp {
             }
         }
 
+        let life = life::World::spawn(world, &level, std::path::Path::new(""));
         WebApp {
             render,
             level,
@@ -641,6 +683,10 @@ impl WebApp {
             is_webgpu,
             moving,
             terraform: level::terraform::Config::default(),
+            life,
+            line_buffer: LineBuffer::new(),
+            space_held: false,
+            ride: None,
         }
     }
 
@@ -718,47 +764,17 @@ impl WebApp {
         let Some(agent) = self.agent.as_mut() else {
             return;
         };
-        if !self.terraform.tread.enabled
-            && !self.terraform.grader.enabled
-            && !self.terraform.press.enabled
-            && !self.terraform.molehills.enabled
-        {
-            agent.tracks.reset();
-            return;
-        }
-
         let mut regions = Vec::new();
-        for burrow in agent.tracks.drain_burrows() {
-            level::terraform::apply_burrow(
-                &mut self.level,
-                &self.terraform.molehills,
-                &burrow,
-                &mut regions,
-            );
-        }
-        if let Some(hull) = agent.tracks.take_hull() {
-            level::terraform::apply_press(
-                &mut self.level,
-                &self.terraform.press,
-                &hull,
-                &mut regions,
-            );
-        }
-        for sweep in agent.tracks.drain_sweeps() {
-            level::terraform::apply_grader(
-                &mut self.level,
-                &self.terraform.grader,
-                &sweep,
-                &mut regions,
-            );
-        }
-        for track in agent.tracks.drain() {
-            level::terraform::apply_tread(
-                &mut self.level,
-                &self.terraform.tread,
-                &track,
-                &mut regions,
-            );
+        let reach = (agent.phys_data.bbox.radius * agent.car.scale).max(8.0) as i32;
+        let treads = level::terraform::apply_vehicle(
+            &mut self.level,
+            &self.terraform,
+            &mut agent.tracks,
+            reach,
+            &mut regions,
+        );
+        for track in treads {
+            self.life.particles.from_track(&track, &self.level);
         }
         if regions.is_empty() {
             return;
@@ -767,6 +783,84 @@ impl WebApp {
         regions.dedup();
         let height = self.level.geometry.height as u16;
         self.render.dirty_terrain(&regions, height);
+    }
+
+    fn step_life(&mut self, delta: f32) {
+        let Some(ref agent) = self.agent else {
+            return;
+        };
+        let wheels = agent.phys_data.wheel_points(&agent.transform);
+        let contact = life::Contact {
+            pos: agent.transform.disp,
+            wheels: &wheels,
+            radius: agent.phys_data.bbox.radius * agent.car.scale,
+            armor: agent.armor,
+            max_armor: agent.max_armor,
+        };
+        let nibble = self.life.step(&self.level, delta, contact, &[]);
+        if nibble != 0
+            && let Some(ref mut agent) = self.agent
+        {
+            agent.armor = agent.armor.saturating_sub(nibble);
+        }
+    }
+
+    fn try_use(&mut self) {
+        let Some(ref agent) = self.agent else {
+            return;
+        };
+        let pos = agent.transform.disp;
+        let radius = (agent.phys_data.bbox.radius * agent.car.scale) as i32;
+        let at = (pos.x as i32, pos.y as i32, pos.z as i32);
+        self.moving.use_at(at, radius, self.level.size);
+        self.moving.triggers.touch(at, radius, self.level.size);
+    }
+
+    fn begin_train_ride(&mut self) -> bool {
+        if self.ride.is_some() {
+            return false;
+        }
+        let Some(ref agent) = self.agent else {
+            return false;
+        };
+        let pos = agent.transform.disp;
+        let radius = (agent.phys_data.bbox.radius * agent.car.scale) as i32;
+        let Some(ride) = self.moving.triggers.train_ride_at(
+            (pos.x as i32, pos.y as i32, pos.z as i32),
+            radius,
+            self.level.size,
+        ) else {
+            return false;
+        };
+        let dest_z = self.level.get((ride.dest.0, ride.dest.1)).high() + 8.0;
+        self.ride = Some(Ride {
+            t: 0.0,
+            duration: (ride.quants as f32 * config::common::MAIN_LOOP_TIME).max(0.6),
+            start: pos,
+            dest: glam::Vec3::new(ride.dest.0 as f32, ride.dest.1 as f32, dest_z),
+        });
+        true
+    }
+
+    fn step_ride(&mut self, delta: f32) -> bool {
+        let Some(ref mut ride) = self.ride else {
+            return false;
+        };
+        ride.t = (ride.t + delta / ride.duration).min(1.0);
+        let t = ride.t;
+        let s = t * t * (3.0 - 2.0 * t);
+        let pos = ride.start.lerp(ride.dest, s);
+        let done = t >= 1.0;
+        if let Some(ref mut agent) = self.agent {
+            agent.transform.disp = pos;
+            agent.dynamo.linear_velocity = glam::Vec3::ZERO;
+            agent.dynamo.angular_velocity = glam::Vec3::ZERO;
+            agent.dynamo.traction = 0.0;
+        }
+        if done {
+            self.ride = None;
+        }
+        true
     }
 
     fn draw(
@@ -784,6 +878,8 @@ impl WebApp {
             self.batcher
                 .add_model(&agent.car.model, &agent.transform, None, agent.color);
         }
+        let eye = self.cam.loc;
+        self.life.draw_fx(&mut self.line_buffer, eye, true);
 
         self.render.draw_world(
             &mut encoder,
@@ -794,7 +890,7 @@ impl WebApp {
             None,
             device,
             queue,
-            None,
+            Some(&self.line_buffer),
         );
         encoder.finish()
     }
@@ -944,6 +1040,7 @@ fn key_from_code(code: &str) -> Option<KeyCode> {
         "KeyZ" => KeyCode::KeyZ,
         "KeyX" => KeyCode::KeyX,
         "Space" => KeyCode::Space,
+        "ControlLeft" | "ControlRight" => KeyCode::ControlLeft,
         "ShiftLeft" | "ShiftRight" => KeyCode::ShiftLeft,
         "AltLeft" | "AltRight" => KeyCode::AltLeft,
         _ => return None,
@@ -1377,6 +1474,7 @@ impl ApplicationHandler for WebHandler {
                                     queue: wgpu::Queue,
                                     screen_size: wgpu::Extent3d,
                                     vfs_level: Option<(Vfs, String)>,
+                                    world: String,
                                     is_webgpu: bool,
                                     window: Arc<Window>|
               -> GpuState {
@@ -1433,7 +1531,9 @@ impl ApplicationHandler for WebHandler {
                 queue,
             };
             let app = match vfs_level {
-                Some((vfs, ini_path)) => WebApp::new_from_vfs(&gfx, &vfs, &ini_path, is_webgpu),
+                Some((vfs, ini_path)) => {
+                    WebApp::new_from_vfs(&gfx, &vfs, &ini_path, &world, is_webgpu)
+                }
                 None => WebApp::new(&gfx, is_webgpu),
             };
 
@@ -1500,6 +1600,7 @@ impl ApplicationHandler for WebHandler {
                 queue,
                 screen_size,
                 vfs_level,
+                level_id,
                 is_webgpu,
                 window.clone(),
             );
@@ -1681,7 +1782,8 @@ impl WebHandler {
         if keys.contains(&KeyCode::KeyD) {
             rudder = -1.0;
         }
-        let brake = keys.contains(&KeyCode::Space);
+        let brake = keys.contains(&KeyCode::ControlLeft);
+        let space = keys.contains(&KeyCode::Space);
         let turbo = keys.contains(&KeyCode::ShiftLeft);
         // Roll direction matches native: Q/E are scaled by cam.scale.y
         // (which is -1) so Q → +1, E → -1.
@@ -1710,6 +1812,14 @@ impl WebHandler {
         // Moving land first, so the car drives on this quant's surface
         // (same order as the native game).
         gpu.app.step_moving_land(dt);
+        if space && !gpu.app.space_held {
+            gpu.app.try_use();
+        }
+        gpu.app.space_held = space;
+        let riding = gpu.app.step_ride(dt);
+        if !riding {
+            gpu.app.begin_train_ride();
+        }
 
         if gpu.app.agent.is_some() {
             // Drive the player vehicle. Keyboard feeds control; physics
@@ -1744,22 +1854,15 @@ impl WebHandler {
                         * n.time_delta0
                         * n.num_calls_analysis as f32
                 };
-                agent.apply_control(input_factor, &common);
-                // Sub-step, as the native build does. `physics::step`
-                // is not linear in `dt` - it derives a speed
-                // correction from `dt / time_delta0` and applies drag
-                // and collision response once per call, both of which
-                // saturate - so folding a long frame into one large
-                // step loses speed rather than covering the same
-                // ground. That showed up as the car crawling whenever
-                // the frame rate dipped, which is exactly when the
-                // camera swings and more terrain comes into view.
-                let mut left = physics_dt;
-                while left > max_quant {
-                    agent.physics_step(max_quant, level_ref, &common);
-                    left -= max_quant;
+                if !riding {
+                    agent.apply_control(input_factor, &common);
+                    let mut left = physics_dt;
+                    while left > max_quant {
+                        agent.physics_step(max_quant, level_ref, &common);
+                        left -= max_quant;
+                    }
+                    agent.physics_step(left, level_ref, &common);
                 }
-                agent.physics_step(left, level_ref, &common);
                 // A small speed-sensitive pullback gives a sense of speed
                 // without shrinking the vehicle into the distance.
                 let speed_xy = {
@@ -1809,6 +1912,7 @@ impl WebHandler {
 
         // Cut the wheels' tracks into the level after the physics ran.
         gpu.app.step_tracks();
+        gpu.app.step_life(dt);
 
         // Process multiplayer messages
         if let Some(ref mut ws) = self.ws_client {

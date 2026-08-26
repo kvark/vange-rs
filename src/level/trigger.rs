@@ -77,8 +77,10 @@ pub enum Kind {
         /// Bit 0 pins it closed, bit 1 pins it open.
         lock: i32,
     },
-    /// Opens on the first touch and never closes itself.
-    Tiristor { sensors: Vec<usize> },
+    /// Opens on the first touch and never closes itself. `LockFlag` bit 0
+    /// is `DOOR_OPEN_LOCK`: Crypts on Fostral have it set, so they wait
+    /// for Space instead of popping open as you drive by.
+    Tiristor { sensors: Vec<usize>, lock: i32 },
     /// Runs on a timer. `actions` are sensors it enables while it sits in
     /// `action_mode`, which is how the original gates a passage on a bridge
     /// having finished extending.
@@ -142,7 +144,7 @@ impl Engine {
     /// Sensors this engine listens to, as indices into [`Triggers::sensors`].
     pub fn sensors(&self) -> &[usize] {
         match self.kind {
-            Kind::Door { ref sensors, .. } | Kind::Tiristor { ref sensors } => sensors,
+            Kind::Door { ref sensors, .. } | Kind::Tiristor { ref sensors, .. } => sensors,
             Kind::Train { ref stations } => stations,
             Kind::Cyclic { .. } | Kind::Unsupported(_) => &[],
         }
@@ -171,7 +173,7 @@ impl Engine {
         // branch can never be taken.
         match self.kind {
             Kind::Door { lock, .. } => self.update_door(&mut land.locations[index], lock),
-            Kind::Tiristor { .. } => self.update_tiristor(&mut land.locations[index]),
+            Kind::Tiristor { lock, .. } => self.update_tiristor(&mut land.locations[index], lock),
             Kind::Cyclic { .. } => {
                 self.update_cyclic(&mut land.locations[index]);
                 self.publish_actions(enables);
@@ -217,11 +219,11 @@ impl Engine {
         }
     }
 
-    fn update_tiristor(&mut self, location: &mut crate::level::moving::Location) {
+    fn update_tiristor(&mut self, location: &mut crate::level::moving::Location, lock: i32) {
         if !location.is_go_finish() {
             return;
         }
-        if self.touch_count > 0 && self.mode != Mode::Open {
+        if self.touch_count > 0 && self.mode != Mode::Open && lock & DOOR_OPEN_LOCK == 0 {
             self.mode = Mode::Open;
             location.go_key_phase(self.active_phase);
         }
@@ -380,7 +382,10 @@ impl Triggers {
                         engine_index,
                         true,
                     );
-                    Kind::Tiristor { sensors }
+                    Kind::Tiristor {
+                        sensors,
+                        lock: scan.int_after("LockFlag").unwrap_or(0),
+                    }
                 }
                 engine_type::CYCLIC => {
                     let raw_mode = scan.int_after("ActionMode").unwrap_or(-1);
@@ -491,14 +496,13 @@ impl Triggers {
     /// `TrainEngine` ride: station 0 to station 1. Original `LockFlag` is
     /// `DOOR_CLOSE_LOCK`, so the reverse is not offered.
     ///
-    /// `ignore_altitude` is for Space at the surface door: the train pad
-    /// sits in a hole below the car.
+    /// The car has to be inside the hole's altitude band. Space at the
+    /// surface door opens the hatch; it does not start the ride.
     pub fn train_ride_at(
         &self,
         pos: (i32, i32, i32),
         radius: i32,
         size: (i32, i32),
-        ignore_altitude: bool,
     ) -> Option<TrainRide> {
         for engine in self.engines.iter() {
             let Kind::Train { stations } = engine.kind else {
@@ -513,9 +517,7 @@ impl Triggers {
             if dx.abs() >= reach {
                 continue;
             }
-            if !ignore_altitude
-                && (pos.2 <= entrance.z_range.0 - radius || pos.2 >= entrance.z_range.1 + radius)
-            {
+            if pos.2 <= entrance.z_range.0 - radius || pos.2 >= entrance.z_range.1 + radius {
                 continue;
             }
             let dy = wrap_delta(entrance.pos.1 - pos.1, size.1);
@@ -958,6 +960,22 @@ Luck 0
         assert!(triggers.engines[0].is_open());
     }
 
+    #[test]
+    fn a_locked_tiristor_waits_for_space() {
+        let text = TIRISTOR_LST.replace("LockFlag 0", "LockFlag 1");
+        let mut land = land_with(&["gate"]);
+        let mut triggers = triggers_with(vec![sensor("pad", 10, 10, 5)], &text, &land);
+        triggers.reset_locations(&mut land);
+        triggers.touch((10, 10, 100), 3, SIZE);
+        triggers.update(&mut land);
+        assert!(
+            !triggers.engines[0].is_open(),
+            "Crypt-style lock opened on a drive-by"
+        );
+        assert!(triggers.use_at((10, 10, 100), 3, SIZE, &mut land));
+        assert!(triggers.engines[0].is_open(), "Space left the crypt shut");
+    }
+
     const CYCLIC_LST: &str = "\
 Part 0
 EngineType 4
@@ -1212,21 +1230,17 @@ EffectID 0
             Kind::Train { stations } => assert_eq!(stations, [0, 1]),
             ref other => panic!("expected a train, got {other:?}"),
         }
+        assert!(
+            triggers.train_ride_at((36, 42, 162), 20, SIZE).is_none(),
+            "a car on the surface must not start the ride"
+        );
         let ride = triggers
-            .train_ride_at((36, 42, 162), 20, SIZE, true)
-            .expect("Space at the door should start the ride");
+            .train_ride_at((36, 42, 10), 20, SIZE)
+            .expect("falling into the hole should start the ride");
         assert_eq!(ride.dest, (200, 40, -80));
         assert_eq!(ride.quants, 40);
         assert!(
-            triggers
-                .train_ride_at((36, 42, 162), 20, SIZE, false)
-                .is_none(),
-            "the surface car is above the hole's altitude band"
-        );
-        assert!(
-            triggers
-                .train_ride_at((200, 40, 20), 20, SIZE, true)
-                .is_none(),
+            triggers.train_ride_at((200, 40, 10), 20, SIZE).is_none(),
             "the reverse ride is locked"
         );
     }
