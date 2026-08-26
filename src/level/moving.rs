@@ -624,6 +624,11 @@ impl MovingWorld {
         self.land.is_empty()
     }
 
+    /// Space: open the nearest door or secret, even if it is lock-flagged.
+    pub fn use_at(&mut self, pos: (i32, i32, i32), radius: i32, size: (i32, i32)) -> bool {
+        self.triggers.use_at(pos, radius, size, &mut self.land)
+    }
+
     /// Run `quants` simulation steps. Sensors see `touches` every quant.
     pub fn run_quants(
         &mut self,

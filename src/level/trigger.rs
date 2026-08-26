@@ -6,16 +6,17 @@
 //! a vehicle drives into a sensor the engine sends its location to the active
 //! key phase, and the moving land animates the bridge, door or lift there.
 //!
-//! Three engine types are implemented, the ones whose behaviour is entirely
+//! Four engine types are implemented, the ones whose behaviour is entirely
 //! moving land plus proximity:
 //!
 //! - [`Kind::Door`] opens while something is standing on a sensor and closes
 //!   again once everything leaves;
 //! - [`Kind::Tiristor`] is a latch - it opens on the first touch and stays
 //!   open;
-//! - [`Kind::Cyclic`] ignores sensors and cycles on a timer.
+//! - [`Kind::Cyclic`] ignores sensors and cycles on a timer;
+//! - [`Kind::Train`] is a one-way secret tunnel between two stations.
 //!
-//! The rest (escaves, passages, trains, item generators) hang off quest and
+//! The rest (escaves, passages, item generators) hang off quest and
 //! inventory systems this port does not have, so they are parsed far enough
 //! to be skipped and reported.
 
@@ -29,6 +30,7 @@ use std::path::Path;
 mod engine_type {
     pub const DOOR: i32 = 0;
     pub const CYCLIC: i32 = 4;
+    pub const TRAIN: i32 = 5;
     pub const TIRISTOR: i32 = 7;
 }
 
@@ -84,9 +86,24 @@ pub enum Kind {
         actions: Vec<usize>,
         action_mode: Option<Mode>,
     },
+    /// Secret tunnel. `TrainEngine`: station 0 is the entrance, station 1
+    /// the exit. Original `LockFlag` is always `DOOR_CLOSE_LOCK`, so the
+    /// ride is one-way.
+    Train {
+        /// Sensor indices: `[first, second]`.
+        stations: [usize; 2],
+    },
     /// Parsed but not driven - the engine types that need systems this port
     /// does not have.
     Unsupported(i32),
+}
+
+/// Where a secret tunnel drops the car, and how long the ride lasts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrainRide {
+    pub dest: (i32, i32, i32),
+    /// `ActiveTime` of the original, in main-loop quants.
+    pub quants: i32,
 }
 
 /// One entry of `location.lst`.
@@ -126,6 +143,7 @@ impl Engine {
     pub fn sensors(&self) -> &[usize] {
         match self.kind {
             Kind::Door { ref sensors, .. } | Kind::Tiristor { ref sensors } => sensors,
+            Kind::Train { ref stations } => stations,
             Kind::Cyclic { .. } | Kind::Unsupported(_) => &[],
         }
     }
@@ -158,7 +176,7 @@ impl Engine {
                 self.update_cyclic(&mut land.locations[index]);
                 self.publish_actions(enables);
             }
-            Kind::Unsupported(_) => {}
+            Kind::Train { .. } | Kind::Unsupported(_) => {}
         }
         self.touch_count = 0;
     }
@@ -179,6 +197,23 @@ impl Engine {
         } else if self.mode != Mode::Wait && lock & DOOR_CLOSE_LOCK == 0 {
             self.mode = Mode::Wait;
             location.go_key_phase(self.deactive_phase);
+        }
+    }
+
+    /// Space: open even if `DOOR_OPEN_LOCK` would block a drive-on.
+    fn force_open(&mut self, land: &mut crate::level::moving::Location) {
+        if self.location.is_none() {
+            return;
+        }
+        if self.mode == Mode::Open {
+            return;
+        }
+        match self.kind {
+            Kind::Door { .. } | Kind::Tiristor { .. } => {
+                self.mode = Mode::Open;
+                land.go_key_phase(self.active_phase);
+            }
+            _ => {}
         }
     }
 
@@ -367,6 +402,24 @@ impl Triggers {
                         action_mode: Mode::from_index(raw_mode),
                     }
                 }
+                engine_type::TRAIN => {
+                    let first = scan.name_after("FirstStationName");
+                    let second = scan.name_after("SecondStationName");
+                    match (first, second) {
+                        (Some(a), Some(b)) => {
+                            match (
+                                self.link_named_sensor(a, engine_index),
+                                self.link_named_sensor(b, engine_index),
+                            ) {
+                                (Some(from), Some(to)) => Kind::Train {
+                                    stations: [from, to],
+                                },
+                                _ => Kind::Unsupported(engine_type::TRAIN),
+                            }
+                        }
+                        _ => Kind::Unsupported(engine_type::TRAIN),
+                    }
+                }
                 other => {
                     unsupported.push(other);
                     Kind::Unsupported(other)
@@ -428,6 +481,56 @@ impl Triggers {
         linked
     }
 
+    fn link_named_sensor(&mut self, name: &str, engine: usize) -> Option<usize> {
+        let index = self.sensors.iter().position(|s| s.name == name)?;
+        self.owners[index] = Some(engine);
+        self.enabled[index] = true;
+        Some(index)
+    }
+
+    /// `TrainEngine` ride: station 0 to station 1. Original `LockFlag` is
+    /// `DOOR_CLOSE_LOCK`, so the reverse is not offered.
+    ///
+    /// `ignore_altitude` is for Space at the surface door: the train pad
+    /// sits in a hole below the car.
+    pub fn train_ride_at(
+        &self,
+        pos: (i32, i32, i32),
+        radius: i32,
+        size: (i32, i32),
+        ignore_altitude: bool,
+    ) -> Option<TrainRide> {
+        for engine in self.engines.iter() {
+            let Kind::Train { stations } = engine.kind else {
+                continue;
+            };
+            if !engine.enabled {
+                continue;
+            }
+            let entrance = &self.sensors[stations[0]];
+            let reach = radius + entrance.radius;
+            let dx = wrap_delta(entrance.pos.0 - pos.0, size.0);
+            if dx.abs() >= reach {
+                continue;
+            }
+            if !ignore_altitude
+                && (pos.2 <= entrance.z_range.0 - radius || pos.2 >= entrance.z_range.1 + radius)
+            {
+                continue;
+            }
+            let dy = wrap_delta(entrance.pos.1 - pos.1, size.1);
+            if dx * dx + dy * dy >= reach * reach {
+                continue;
+            }
+            let dest = self.sensors[stations[1]].pos;
+            return Some(TrainRide {
+                dest,
+                quants: engine.active_time.max(8),
+            });
+        }
+        None
+    }
+
     /// Sends every engine's location to its closed phase, which is what the
     /// `Open` of each engine type does once the level is up.
     ///
@@ -446,6 +549,49 @@ impl Triggers {
             }
             land.locations[index].go_key_phase(engine.deactive_phase);
         }
+    }
+
+    /// Space at a secret door. Ignores `DOOR_OPEN_LOCK` and the altitude
+    /// band: the player is standing on the pad and asking it to open.
+    /// Returns whether a door or tiristor was told to open.
+    pub fn use_at(
+        &mut self,
+        pos: (i32, i32, i32),
+        radius: i32,
+        size: (i32, i32),
+        land: &mut crate::level::moving::MovingLand,
+    ) -> bool {
+        let mut best: Option<(i32, usize)> = None;
+        for (index, sensor) in self.sensors.iter().enumerate() {
+            if !self.enabled[index] {
+                continue;
+            }
+            let Some(engine) = self.owners[index] else {
+                continue;
+            };
+            match self.engines[engine].kind {
+                Kind::Door { .. } | Kind::Tiristor { .. } => {}
+                _ => continue,
+            }
+            let reach = radius + sensor.radius;
+            let dx = wrap_delta(sensor.pos.0 - pos.0, size.0);
+            if dx.abs() >= reach {
+                continue;
+            }
+            let dy = wrap_delta(sensor.pos.1 - pos.1, size.1);
+            let d2 = dx * dx + dy * dy;
+            if d2 < reach * reach && best.is_none_or(|(best_d2, _)| d2 < best_d2) {
+                best = Some((d2, engine));
+            }
+        }
+        if let Some((_, engine)) = best {
+            let loc = self.engines[engine].location;
+            if let Some(index) = loc {
+                self.engines[engine].force_open(&mut land.locations[index]);
+                return true;
+            }
+        }
+        false
     }
 
     /// Registers an object standing at `pos` with radius `radius`, in level
@@ -1001,10 +1147,87 @@ Luck 0
     }
 
     #[test]
+    fn space_opens_a_lock_flagged_secret() {
+        // ScDoor8 on Fostral: LockFlag 1, at ~1426,2097. Driving on the
+        // pad does nothing; Space still has to open it.
+        let land = land_with(&["bridge"]);
+        let text = DOOR_LST.replace("LockFlag 0", "LockFlag 1");
+        let mut land = land;
+        let mut triggers = triggers_with(vec![sensor("west", 10, 10, 5)], &text, &land);
+        triggers.reset_locations(&mut land);
+        assert!(
+            triggers.use_at((10, 10, 100), 3, SIZE, &mut land),
+            "Space did not find the door"
+        );
+        assert!(triggers.engines[0].is_open(), "Space left the secret shut");
+    }
+
+    #[test]
     fn wrap_delta_takes_the_short_way() {
         assert_eq!(wrap_delta(3, 256), 3);
         assert_eq!(wrap_delta(-3, 256), -3);
         assert_eq!(wrap_delta(255, 256), -1);
         assert_eq!(wrap_delta(-255, 256), 1);
+    }
+
+    const TRAIN_LST: &str = "\
+NumEngine 1
+
+Part 0
+EngineType 5
+MLName tunnel
+ActivePhase 1
+DeactivePhase 0
+ActiveTime 40
+DeactiveTime 10
+SoundID 0
+FirstStationName Sc7l0
+SecondStationName Sc7l1
+EffectID 0
+";
+
+    fn train_pad(name: &str, x: i32, y: i32) -> Sensor {
+        Sensor {
+            pos: (x, y, -80),
+            kind: vlc::sensor_kind::TRAIN,
+            radius: 20,
+            name: name.to_string(),
+            z_range: (0, 30),
+            direction: (0, 0, 0),
+            power: 0,
+            data5: 0,
+            data6: 0,
+        }
+    }
+
+    #[test]
+    fn a_secret_train_rides_from_the_first_station_to_the_second() {
+        let land = land_with(&["tunnel"]);
+        let triggers = triggers_with(
+            vec![train_pad("Sc7l0", 40, 40), train_pad("Sc7l1", 200, 40)],
+            TRAIN_LST,
+            &land,
+        );
+        match triggers.engines[0].kind {
+            Kind::Train { stations } => assert_eq!(stations, [0, 1]),
+            ref other => panic!("expected a train, got {other:?}"),
+        }
+        let ride = triggers
+            .train_ride_at((36, 42, 162), 20, SIZE, true)
+            .expect("Space at the door should start the ride");
+        assert_eq!(ride.dest, (200, 40, -80));
+        assert_eq!(ride.quants, 40);
+        assert!(
+            triggers
+                .train_ride_at((36, 42, 162), 20, SIZE, false)
+                .is_none(),
+            "the surface car is above the hole's altitude band"
+        );
+        assert!(
+            triggers
+                .train_ride_at((200, 40, 20), 20, SIZE, true)
+                .is_none(),
+            "the reverse ride is locked"
+        );
     }
 }

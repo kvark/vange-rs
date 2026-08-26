@@ -418,6 +418,8 @@ pub struct Render {
     /// `WorldLightParam` of the original, which dims Fostral's third
     /// cycle well below its first.
     light_modulation: f32,
+    /// Closest local point light, for forward shading.
+    local_light: Option<(glam::Vec3, f32, [f32; 3])>,
     pub fog_config: settings::Fog,
     screen_size: wgpu::Extent3d,
 }
@@ -428,6 +430,10 @@ impl Render {
     /// Sets how much of the authored light this world's cycle lets through.
     pub fn set_light_modulation(&mut self, scale: f32) {
         self.light_modulation = scale;
+    }
+
+    pub fn set_local_light(&mut self, pos: glam::Vec3, radius: f32, color: [f32; 3]) {
+        self.local_light = Some((pos, radius, color));
     }
 
     /// The light as the current cycle leaves it.
@@ -568,6 +574,7 @@ impl Render {
             shadow,
             light_config: settings.light,
             light_modulation: 1.0,
+            local_light: None,
             fog_config: settings.fog,
             screen_size: gfx.screen_size,
         }
@@ -667,8 +674,11 @@ impl Render {
         // main pass
         {
             profiling::scope!("Main Pass");
-            let constants =
+            let mut constants =
                 global::Constants::new(cam, &lit, self.shadow.as_ref().map(|shadow| &shadow.cam));
+            if let Some((pos, radius, color)) = self.local_light {
+                constants = constants.with_local_light(pos, radius, color);
+            }
             queue.write_buffer(&self.global.uniform_buf, 0, bytemuck::bytes_of(&constants));
 
             self.terrain.prepare(

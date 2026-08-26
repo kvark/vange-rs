@@ -12,6 +12,8 @@ pub struct Constants {
     light_pos: [f32; 4],
     light_color: [f32; 3],
     pad: f32,
+    local_light_pos: [f32; 4],
+    local_light_color: [f32; 4],
 }
 unsafe impl Pod for Constants {}
 unsafe impl Zeroable for Constants {}
@@ -31,7 +33,15 @@ impl Constants {
             light_pos: light.pos,
             light_color: light.color,
             pad: 1.0,
+            local_light_pos: [0.0; 4],
+            local_light_color: [0.0; 4],
         }
+    }
+
+    pub fn with_local_light(mut self, pos: glam::Vec3, radius: f32, color: [f32; 3]) -> Self {
+        self.local_light_pos = [pos.x, pos.y, pos.z, radius];
+        self.local_light_color = [color[0], color[1], color[2], 1.0];
+        self
     }
 }
 
