@@ -9,7 +9,7 @@ use wasm_bindgen::prelude::*;
 
 use vangers::{
     config::{self, settings},
-    data, level, life, model, physics,
+    data, escave, level, life, model, physics,
     render::{
         self, Batcher, DEPTH_FORMAT, GraphicsContext, Render, ScreenTargets, debug::LineBuffer,
     },
@@ -423,6 +423,13 @@ struct WebApp {
     line_buffer: LineBuffer,
     space_held: bool,
     ride: Option<Ride>,
+    inventory: escave::Inventory,
+    shop: escave::Shop,
+    screen: escave::Screen,
+    approach_cam: Option<(glam::Vec3, glam::Vec3)>,
+    escave_note: Option<String>,
+    escave_selected: Option<String>,
+    data_path: std::path::PathBuf,
 }
 
 struct Ride {
@@ -670,7 +677,8 @@ impl WebApp {
             }
         }
 
-        let life = life::World::spawn(world, &level, std::path::Path::new(""));
+        let mut life = life::World::spawn(world, &level, std::path::Path::new(""));
+        life.beebs = 500;
         WebApp {
             render,
             level,
@@ -687,10 +695,48 @@ impl WebApp {
             line_buffer: LineBuffer::new(),
             space_held: false,
             ride: None,
+            inventory: escave::Inventory::default(),
+            shop: escave::Shop::fostral(),
+            screen: escave::Screen::new(),
+            approach_cam: None,
+            escave_note: None,
+            escave_selected: None,
+            data_path: std::path::PathBuf::new(),
         }
     }
 
-    fn draw_ui(&self, ctx: &egui::Context) {
+    fn draw_ui(&mut self, ctx: &egui::Context) {
+        if let Some(visit) = self.screen.visit() {
+            let action = escave::draw_interior(
+                ctx,
+                visit,
+                &self.shop,
+                &self.inventory,
+                self.life.beebs,
+                self.escave_note.as_deref(),
+                &mut self.escave_selected,
+            );
+            if let Some(visit) = self.screen.visit_mut() {
+                let (note, _slots) = action.apply(
+                    visit,
+                    &mut self.shop,
+                    &mut self.inventory,
+                    &mut self.life.beebs,
+                );
+                if let Some(note) = note {
+                    self.escave_note = Some(note);
+                }
+            }
+            if action.leave {
+                self.escave_selected = None;
+                self.screen.begin_leave();
+            }
+        }
+        let shutter = self.screen.shutter();
+        if shutter > 0.0 {
+            escave::draw_shutters(ctx, shutter);
+        }
+
         const PANEL_WIDTH: f32 = 340.0;
 
         let window = egui::Window::new("Settings")
@@ -805,7 +851,53 @@ impl WebApp {
         }
     }
 
+    fn collect_entrances(&self) -> Vec<escave::Entrance> {
+        self.moving
+            .triggers
+            .sensors
+            .iter()
+            .filter_map(|sensor| {
+                escave::Entrance::from_sensor(
+                    sensor.kind,
+                    &sensor.name,
+                    (sensor.pos.0, sensor.pos.1),
+                    sensor.radius,
+                )
+            })
+            .collect()
+    }
+
+    fn start_enter(&mut self, name: String, dest: glam::Vec3) {
+        if self.screen.blocks_drive() {
+            return;
+        }
+        self.approach_cam = Some((self.cam.loc, dest));
+        self.escave_note = None;
+        self.escave_selected = None;
+        self.screen.begin_enter(name);
+    }
+
+    fn step_screen(&mut self, delta: f32) {
+        let had_visit = self.screen.visit().is_some();
+        self.screen.step(delta, &self.data_path);
+        if let Some(blend) = self.screen.camera_blend()
+            && let Some((start, dest)) = self.approach_cam
+        {
+            self.cam.loc = start.lerp(dest, blend);
+        }
+        if had_visit && self.screen.is_world() {
+            self.approach_cam = None;
+        }
+    }
+
     fn try_use(&mut self) {
+        if self.screen.visit().is_some() {
+            self.screen.begin_leave();
+            return;
+        }
+        if self.screen.blocks_drive() {
+            return;
+        }
         let Some(ref agent) = self.agent else {
             return;
         };
@@ -814,10 +906,15 @@ impl WebApp {
         let at = (pos.x as i32, pos.y as i32, pos.z as i32);
         self.moving.use_at(at, radius, self.level.size);
         self.moving.triggers.touch(at, radius, self.level.size);
+        let pads = self.collect_entrances();
+        if let Some(pad) = escave::nearest_entrance(&pads, (pos.x as i32, pos.y as i32)) {
+            let dest = glam::Vec3::new(pad.pos.0 as f32, pad.pos.1 as f32, pos.z - 24.0);
+            self.start_enter(pad.name.clone(), dest);
+        }
     }
 
     fn begin_train_ride(&mut self) -> bool {
-        if self.ride.is_some() {
+        if self.ride.is_some() || self.screen.blocks_drive() {
             return false;
         }
         let Some(ref agent) = self.agent else {
@@ -1816,103 +1913,116 @@ impl WebHandler {
             gpu.app.try_use();
         }
         gpu.app.space_held = space;
-        let riding = gpu.app.step_ride(dt);
-        if !riding {
-            gpu.app.begin_train_ride();
-        }
-
-        if gpu.app.agent.is_some() {
-            // Drive the player vehicle. Keyboard feeds control; physics
-            // integrates the dynamo; the camera chases the transform.
-            // We take a mutable reborrow scope so the follow-camera
-            // update below can read from gpu.app too.
-            let common = gpu.app.common;
-            let level_ref = &gpu.app.level;
-            let mut follow = gpu.app.follow;
-            let max_quant = gpu.app.max_quant;
-            if let Some(ref mut agent) = gpu.app.agent {
-                agent.control.motor = motor;
-                agent.control.rudder = rudder;
-                agent.control.brake = brake;
-                agent.control.turbo = turbo;
-                agent.control.roll = roll;
-                // Jump: charge while Alt is held, fire on release
-                if jump_held {
-                    let power = dt * common.speed.standard_frame_rate as f32;
-                    let charge = agent.control.jump_charge.get_or_insert(0.0);
-                    *charge = (*charge + power).min(common.force.max_jump_power);
-                } else if let Some(power) = agent.control.jump_charge.take() {
-                    agent.control.jump = Some(power);
-                }
-                // Match the native build's time scaling (see bin/road/game.rs):
-                //   input_factor = delta / MAIN_LOOP_TIME
-                //   physics_dt   = delta * fps * time_delta0 * num_calls
-                let input_factor = dt / config::common::MAIN_LOOP_TIME;
-                let physics_dt = dt * {
-                    let n = &common.nature;
-                    common.speed.standard_frame_rate as f32
-                        * n.time_delta0
-                        * n.num_calls_analysis as f32
-                };
-                if !riding {
-                    agent.apply_control(input_factor, &common);
-                    let mut left = physics_dt;
-                    while left > max_quant {
-                        agent.physics_step(max_quant, level_ref, &common);
-                        left -= max_quant;
-                    }
-                    agent.physics_step(left, level_ref, &common);
-                }
-                // A small speed-sensitive pullback gives a sense of speed
-                // without shrinking the vehicle into the distance.
-                let speed_xy = {
-                    let v = agent.dynamo.linear_velocity;
-                    (v.x * v.x + v.y * v.y).sqrt()
-                };
-                follow.offset.y += (speed_xy * 0.08).min(8.0);
-                follow.look_ahead += (speed_xy * 0.12).min(12.0);
+        if gpu.app.screen.blocks_drive() {
+            gpu.app.step_screen(dt);
+            if gpu.app.screen.follows_camera()
+                && let Some(ref agent) = gpu.app.agent
+            {
+                let follow = gpu.app.follow;
                 gpu.app.cam.follow(&agent.transform, dt, &follow);
-                gpu.app.cam.keep_above_ground(level_ref, CAMERA_CLEARANCE);
+                gpu.app
+                    .cam
+                    .keep_above_ground(&gpu.app.level, CAMERA_CLEARANCE);
             }
-        } else if !connected {
-            // No vehicle loaded — fall back to the free camera. Same
-            // bindings as the level-viewer behaviour this build
-            // shipped with before gameplay was wired in.
-            let move_speed = 100.0;
-            let rotation_speed = 1.0;
-            if motor != 0.0 {
-                let mut dir = gpu.app.cam.rot * glam::Vec3::Y;
-                dir.z = 0.0;
-                if dir.length_squared() > 0.0 {
-                    gpu.app.cam.loc += move_speed * dt * motor * dir.normalize();
-                }
+        } else {
+            let riding = gpu.app.step_ride(dt);
+            if !riding {
+                gpu.app.begin_train_ride();
             }
-            if rudder != 0.0 {
-                let mut dir = gpu.app.cam.rot * glam::Vec3::X;
-                dir.z = 0.0;
-                if dir.length_squared() > 0.0 {
-                    gpu.app.cam.loc -= move_speed * dt * rudder * dir.normalize();
-                }
-            }
-            if free_z_up {
-                gpu.app.cam.loc.z += move_speed * dt;
-            }
-            if free_z_down {
-                gpu.app.cam.loc.z -= move_speed * dt;
-            }
-            if free_q {
-                let rotation = glam::Quat::from_rotation_z(rotation_speed * dt);
-                gpu.app.cam.rot = rotation * gpu.app.cam.rot;
-            }
-            if free_e {
-                let rotation = glam::Quat::from_rotation_z(-rotation_speed * dt);
-                gpu.app.cam.rot = rotation * gpu.app.cam.rot;
-            }
-        }
 
-        // Cut the wheels' tracks into the level after the physics ran.
-        gpu.app.step_tracks();
-        gpu.app.step_life(dt);
+            if gpu.app.agent.is_some() {
+                // Drive the player vehicle. Keyboard feeds control; physics
+                // integrates the dynamo; the camera chases the transform.
+                // We take a mutable reborrow scope so the follow-camera
+                // update below can read from gpu.app too.
+                let common = gpu.app.common;
+                let level_ref = &gpu.app.level;
+                let mut follow = gpu.app.follow;
+                let max_quant = gpu.app.max_quant;
+                if let Some(ref mut agent) = gpu.app.agent {
+                    agent.control.motor = motor;
+                    agent.control.rudder = rudder;
+                    agent.control.brake = brake;
+                    agent.control.turbo = turbo;
+                    agent.control.roll = roll;
+                    // Jump: charge while Alt is held, fire on release
+                    if jump_held {
+                        let power = dt * common.speed.standard_frame_rate as f32;
+                        let charge = agent.control.jump_charge.get_or_insert(0.0);
+                        *charge = (*charge + power).min(common.force.max_jump_power);
+                    } else if let Some(power) = agent.control.jump_charge.take() {
+                        agent.control.jump = Some(power);
+                    }
+                    // Match the native build's time scaling (see bin/road/game.rs):
+                    //   input_factor = delta / MAIN_LOOP_TIME
+                    //   physics_dt   = delta * fps * time_delta0 * num_calls
+                    let input_factor = dt / config::common::MAIN_LOOP_TIME;
+                    let physics_dt = dt * {
+                        let n = &common.nature;
+                        common.speed.standard_frame_rate as f32
+                            * n.time_delta0
+                            * n.num_calls_analysis as f32
+                    };
+                    if !riding {
+                        agent.apply_control(input_factor, &common);
+                        let mut left = physics_dt;
+                        while left > max_quant {
+                            agent.physics_step(max_quant, level_ref, &common);
+                            left -= max_quant;
+                        }
+                        agent.physics_step(left, level_ref, &common);
+                    }
+                    // A small speed-sensitive pullback gives a sense of speed
+                    // without shrinking the vehicle into the distance.
+                    let speed_xy = {
+                        let v = agent.dynamo.linear_velocity;
+                        (v.x * v.x + v.y * v.y).sqrt()
+                    };
+                    follow.offset.y += (speed_xy * 0.08).min(8.0);
+                    follow.look_ahead += (speed_xy * 0.12).min(12.0);
+                    gpu.app.cam.follow(&agent.transform, dt, &follow);
+                    gpu.app.cam.keep_above_ground(level_ref, CAMERA_CLEARANCE);
+                }
+            } else if !connected {
+                // No vehicle loaded — fall back to the free camera. Same
+                // bindings as the level-viewer behaviour this build
+                // shipped with before gameplay was wired in.
+                let move_speed = 100.0;
+                let rotation_speed = 1.0;
+                if motor != 0.0 {
+                    let mut dir = gpu.app.cam.rot * glam::Vec3::Y;
+                    dir.z = 0.0;
+                    if dir.length_squared() > 0.0 {
+                        gpu.app.cam.loc += move_speed * dt * motor * dir.normalize();
+                    }
+                }
+                if rudder != 0.0 {
+                    let mut dir = gpu.app.cam.rot * glam::Vec3::X;
+                    dir.z = 0.0;
+                    if dir.length_squared() > 0.0 {
+                        gpu.app.cam.loc -= move_speed * dt * rudder * dir.normalize();
+                    }
+                }
+                if free_z_up {
+                    gpu.app.cam.loc.z += move_speed * dt;
+                }
+                if free_z_down {
+                    gpu.app.cam.loc.z -= move_speed * dt;
+                }
+                if free_q {
+                    let rotation = glam::Quat::from_rotation_z(rotation_speed * dt);
+                    gpu.app.cam.rot = rotation * gpu.app.cam.rot;
+                }
+                if free_e {
+                    let rotation = glam::Quat::from_rotation_z(-rotation_speed * dt);
+                    gpu.app.cam.rot = rotation * gpu.app.cam.rot;
+                }
+            }
+
+            // Cut the wheels' tracks into the level after the physics ran.
+            gpu.app.step_tracks();
+            gpu.app.step_life(dt);
+        }
 
         // Process multiplayer messages
         if let Some(ref mut ws) = self.ws_client {
@@ -2014,9 +2124,12 @@ impl WebHandler {
                 });
             }
         }
-        let full_output = gpu.egui_state.egui_ctx().run_ui(raw_input, |ctx| {
-            gpu.app.draw_ui(ctx);
-        });
+        let full_output = {
+            let app = &mut gpu.app;
+            gpu.egui_state.egui_ctx().run_ui(raw_input, |ctx| {
+                app.draw_ui(ctx);
+            })
+        };
         gpu.egui_state
             .handle_platform_output(&gpu.window, full_output.platform_output);
 

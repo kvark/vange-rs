@@ -1,16 +1,21 @@
 //! Escave interiors: counselor dialog and the shop counter.
 //!
 //! The original 2.5D iscreen chrome is not here. A visit is a dialog
-//! session plus a shop, entered from the world by proximity or by hand.
+//! session plus a shop. The road covers itself with gate shutters, then
+//! this module draws talk and trade on top.
 
 pub mod dialog;
+pub mod screen;
 pub mod shop;
 
 pub use dialog::{Room, Session, find_room};
+pub use screen::{InteriorAction, Screen, draw_interior, draw_shutters};
 pub use shop::{
-    BAY_COUNT, Good, Inventory, Kind, Shop, ShopError, equipped_slot_ids, mounted_meshes,
+    BAY_COUNT, DropTarget, GRID_HEIGHT, GRID_WIDTH, Good, Hand, Inventory, Kind, Placed, Preview,
+    Shop, ShopError, drop_held, equipped_slot_ids, mounted_meshes, preview, preview_good,
 };
 
+use crate::level::vlc::sensor_kind;
 use std::path::Path;
 
 /// A named pad the player can Use (Space): an escave, a spot, or a passage.
@@ -20,6 +25,39 @@ pub struct Entrance {
     pub pos: (i32, i32),
     /// How close counts as standing on it, in level texels.
     pub reach: i32,
+}
+
+impl Entrance {
+    pub const REACH: i32 = 128;
+
+    pub fn named(name: impl Into<String>, pos: (i32, i32)) -> Self {
+        Entrance {
+            name: name.into(),
+            pos,
+            reach: Self::REACH,
+        }
+    }
+
+    /// An ESCAVE or SPOT sensor becomes a pad. Passages and tunnels do not.
+    pub fn from_sensor(kind: i32, name: &str, pos: (i32, i32), radius: i32) -> Option<Self> {
+        if kind != sensor_kind::ESCAVE && kind != sensor_kind::SPOT {
+            return None;
+        }
+        let name = if name.is_empty() {
+            if kind == sensor_kind::SPOT {
+                "Spot".to_string()
+            } else {
+                "Escave".to_string()
+            }
+        } else {
+            name.to_string()
+        };
+        Some(Entrance {
+            name,
+            pos,
+            reach: radius.max(48) + 48,
+        })
+    }
 }
 
 /// The closest entrance `at` is standing on, if any.
@@ -63,6 +101,14 @@ mod tests {
             pos: (x, y),
             reach,
         }
+    }
+
+    #[test]
+    fn a_spot_sensor_is_a_pad_and_a_passage_is_not() {
+        let spot = Entrance::from_sensor(3, "Incubator", (10, 20), 40).unwrap();
+        assert_eq!(spot.name, "Incubator");
+        assert_eq!(spot.pos, (10, 20));
+        assert!(Entrance::from_sensor(5, "Hole", (0, 0), 40).is_none());
     }
 
     #[test]
