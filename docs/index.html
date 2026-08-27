@@ -456,9 +456,54 @@ WGSL shaders, compute-based voxel baking</code></pre>
             }
         }
 
+        // Count JS objects the WASM glue actually constructs. Firefox
+        // GC markers do not name constructors; this does. Enable with
+        // `#gc=1` (or `&gc=1`) and watch the console / window.vangeGc.
+        function installGcCensus() {
+            const hash = window.location.hash.replace(/^#/, '');
+            const on = hash.split('&').some((p) => p === 'gc' || p === 'gc=1');
+            if (!on) return;
+            const c = {
+                AbortController: 0,
+                abort: 0,
+                postTask: 0,
+                createBuffer: 0,
+                deleteBuffer: 0,
+            };
+            window.vangeGc = c;
+            const wrap = (obj, name, key) => {
+                const orig = obj[name];
+                if (typeof orig !== 'function') return;
+                obj[name] = function () {
+                    c[key]++;
+                    return orig.apply(this, arguments);
+                };
+            };
+            const AC = window.AbortController;
+            if (AC) {
+                window.AbortController = function () {
+                    c.AbortController++;
+                    return new AC(...arguments);
+                };
+                window.AbortController.prototype = AC.prototype;
+                wrap(AC.prototype, 'abort', 'abort');
+            }
+            const hookGl = (proto) => {
+                wrap(proto, 'createBuffer', 'createBuffer');
+                wrap(proto, 'deleteBuffer', 'deleteBuffer');
+            };
+            if (window.WebGL2RenderingContext) hookGl(WebGL2RenderingContext.prototype);
+            if (window.WebGLRenderingContext) hookGl(WebGLRenderingContext.prototype);
+            const sched = navigator.scheduling || window.scheduler;
+            if (sched && sched.postTask) wrap(sched, 'postTask', 'postTask');
+            setInterval(() => console.log('[vangeGc]', { ...c }), 2000);
+            console.log('[vangeGc] counting AbortController / postTask / WebGL buffers');
+        }
+
         // Set up UI before the WASM module starts so its initial
         // `vangeSelectedLevel()` call sees the populated <select>.
         initLevelPicker();
+        installGcCensus();
         loadGame();
     </script>
 </body>
