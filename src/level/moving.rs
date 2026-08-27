@@ -629,6 +629,12 @@ impl MovingWorld {
         self.triggers.use_at(pos, radius, size, &mut self.land)
     }
 
+    /// Close nearby open hatches. Used when leaving an escave.
+    pub fn close_doors_at(&mut self, pos: (i32, i32, i32), radius: i32, size: (i32, i32)) -> bool {
+        self.triggers
+            .close_doors_at(pos, radius, size, &mut self.land)
+    }
+
     /// Run `quants` simulation steps. Sensors see `touches` every quant.
     pub fn run_quants(
         &mut self,

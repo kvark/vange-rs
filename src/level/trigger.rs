@@ -108,6 +108,20 @@ pub struct TrainRide {
     pub quants: i32,
 }
 
+/// The player has fallen into an escave or spot hole, like `train_ride_at`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EscaveArrival {
+    pub name: String,
+    pub pos: (i32, i32, i32),
+}
+
+/// `SensorTypeList::IMPULSE`: a kick used when leaving an escave.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImpulseKick {
+    pub direction: (i32, i32, i32),
+    pub power: i32,
+}
+
 /// One entry of `location.lst`.
 pub struct Engine {
     pub kind: Kind,
@@ -531,6 +545,127 @@ impl Triggers {
             });
         }
         None
+    }
+
+    /// Space opens the hatch. The visit starts once the car is inside the
+    /// hole's altitude band, the same rule as [`Self::train_ride_at`].
+    pub fn escave_arrival_at(
+        &self,
+        pos: (i32, i32, i32),
+        radius: i32,
+        size: (i32, i32),
+    ) -> Option<EscaveArrival> {
+        let mut best: Option<(i32, usize)> = None;
+        for (index, sensor) in self.sensors.iter().enumerate() {
+            if sensor.kind != vlc::sensor_kind::ESCAVE && sensor.kind != vlc::sensor_kind::SPOT {
+                continue;
+            }
+            if !self.enabled[index] {
+                continue;
+            }
+            let reach = radius + sensor.radius;
+            let dx = wrap_delta(sensor.pos.0 - pos.0, size.0);
+            if dx.abs() >= reach {
+                continue;
+            }
+            if pos.2 <= sensor.z_range.0 - radius || pos.2 >= sensor.z_range.1 + radius {
+                continue;
+            }
+            let dy = wrap_delta(sensor.pos.1 - pos.1, size.1);
+            let d2 = dx * dx + dy * dy;
+            if d2 < reach * reach && best.is_none_or(|(best_d2, _)| d2 < best_d2) {
+                best = Some((d2, index));
+            }
+        }
+        best.map(|(_, index)| {
+            let sensor = &self.sensors[index];
+            let name = if sensor.name.is_empty() {
+                if sensor.kind == vlc::sensor_kind::SPOT {
+                    "Spot".to_string()
+                } else {
+                    "Escave".to_string()
+                }
+            } else {
+                sensor.name.clone()
+            };
+            EscaveArrival {
+                name,
+                pos: sensor.pos,
+            }
+        })
+    }
+
+    /// Nearby `IMPULSE` sensor: original `continuous_impulse(vData, Power)`
+    /// when leaving an ImpulseEscave.
+    pub fn impulse_at(
+        &self,
+        pos: (i32, i32, i32),
+        radius: i32,
+        size: (i32, i32),
+    ) -> Option<ImpulseKick> {
+        let mut best: Option<(i32, usize)> = None;
+        for (index, sensor) in self.sensors.iter().enumerate() {
+            if sensor.kind != vlc::sensor_kind::IMPULSE {
+                continue;
+            }
+            if !self.enabled[index] {
+                continue;
+            }
+            let reach = (radius + sensor.radius).max(96);
+            let dx = wrap_delta(sensor.pos.0 - pos.0, size.0);
+            if dx.abs() >= reach {
+                continue;
+            }
+            let dy = wrap_delta(sensor.pos.1 - pos.1, size.1);
+            let d2 = dx * dx + dy * dy;
+            if d2 < reach * reach && best.is_none_or(|(best_d2, _)| d2 < best_d2) {
+                best = Some((d2, index));
+            }
+        }
+        best.map(|(_, index)| {
+            let sensor = &self.sensors[index];
+            ImpulseKick {
+                direction: sensor.direction,
+                power: sensor.power,
+            }
+        })
+    }
+
+    /// Send nearby open doors back to their closed key. Original
+    /// `ImpulseEscave` closes the hatch as the car is kicked out.
+    pub fn close_doors_at(
+        &mut self,
+        pos: (i32, i32, i32),
+        radius: i32,
+        size: (i32, i32),
+        land: &mut crate::level::moving::MovingLand,
+    ) -> bool {
+        let mut closed = false;
+        for engine_index in 0..self.engines.len() {
+            let Kind::Door { ref sensors, .. } = self.engines[engine_index].kind else {
+                continue;
+            };
+            if self.engines[engine_index].mode != Mode::Open {
+                continue;
+            }
+            let near = sensors.iter().any(|&si| {
+                let sensor = &self.sensors[si];
+                let reach = radius + sensor.radius;
+                let dx = wrap_delta(sensor.pos.0 - pos.0, size.0);
+                let dy = wrap_delta(sensor.pos.1 - pos.1, size.1);
+                dx * dx + dy * dy < reach * reach
+            });
+            if !near {
+                continue;
+            }
+            let Some(loc) = self.engines[engine_index].location else {
+                continue;
+            };
+            self.engines[engine_index].mode = Mode::Wait;
+            land.locations[loc].go_key_phase(self.engines[engine_index].deactive_phase);
+            closed = true;
+        }
+        closed
     }
 
     /// Sends every engine's location to its closed phase, which is what the
@@ -1243,5 +1378,73 @@ EffectID 0
             triggers.train_ride_at((200, 40, 10), 20, SIZE).is_none(),
             "the reverse ride is locked"
         );
+    }
+
+    fn hole_pad(name: &str, kind: i32, x: i32, y: i32) -> Sensor {
+        Sensor {
+            pos: (x, y, -80),
+            kind,
+            radius: 20,
+            name: name.to_string(),
+            z_range: (0, 30),
+            direction: (0, 0, 64),
+            power: 40,
+            data5: 0,
+            data6: 0,
+        }
+    }
+
+    #[test]
+    fn an_escave_visit_starts_only_after_the_fall() {
+        let land = land_with(&["g1"]);
+        let triggers = triggers_with(
+            vec![hole_pad("Escave1", vlc::sensor_kind::ESCAVE, 40, 40)],
+            "NumEngine 0\n",
+            &land,
+        );
+        assert!(
+            triggers
+                .escave_arrival_at((42, 41, 160), 20, SIZE)
+                .is_none(),
+            "standing on the pad must not open the shop"
+        );
+        let arrival = triggers
+            .escave_arrival_at((42, 41, 10), 20, SIZE)
+            .expect("falling into the hole should start the visit");
+        assert_eq!(arrival.name, "Escave1");
+    }
+
+    #[test]
+    fn leaving_closes_the_hatch_and_finds_the_impulse() {
+        let mut land = land_with(&["bridge"]);
+        let mut triggers = triggers_with(vec![sensor("west", 10, 10, 5)], DOOR_LST, &land);
+        triggers.reset_locations(&mut land);
+        triggers.touch((12, 11, 100), 3, SIZE);
+        triggers.update(&mut land);
+        assert!(triggers.engines[0].is_open());
+        assert!(triggers.close_doors_at((12, 11, 100), 3, SIZE, &mut land));
+        assert!(!triggers.engines[0].is_open());
+        assert_eq!(land.locations[0].go_phase(), 0);
+
+        let impulse_triggers = triggers_with(
+            vec![Sensor {
+                pos: (40, 40, 10),
+                kind: vlc::sensor_kind::IMPULSE,
+                radius: 20,
+                name: "EscaveImpulse2".to_string(),
+                z_range: (0, 30),
+                direction: (0, 16, 64),
+                power: 48,
+                data5: 0,
+                data6: 0,
+            }],
+            "NumEngine 0\n",
+            &land,
+        );
+        let kick = impulse_triggers
+            .impulse_at((38, 42, 8), 20, SIZE)
+            .expect("impulse under the hole");
+        assert_eq!(kick.direction, (0, 16, 64));
+        assert_eq!(kick.power, 48);
     }
 }
