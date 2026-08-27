@@ -369,7 +369,22 @@ pub fn load_a3d_body(file: File, device: &wgpu::Device) -> Arc<Mesh> {
 
 /// Every frame of an `.a3d`, for walking insects.
 pub fn load_a3d_frames(file: File, device: &wgpu::Device) -> Vec<Arc<Mesh>> {
-    m3d::DrawAnimatedMesh::load(file)
+    load_a3d_frames_bytes_inner(m3d::DrawAnimatedMesh::load(file), device)
+}
+
+/// Byte-slice variant of [`load_a3d_frames`], for the web VFS.
+pub fn load_a3d_frames_bytes(bytes: &[u8], device: &wgpu::Device) -> Vec<Arc<Mesh>> {
+    load_a3d_frames_bytes_inner(
+        m3d::DrawAnimatedMesh::load(std::io::Cursor::new(bytes)),
+        device,
+    )
+}
+
+fn load_a3d_frames_bytes_inner(
+    animated: m3d::DrawAnimatedMesh,
+    device: &wgpu::Device,
+) -> Vec<Arc<Mesh>> {
+    animated
         .meshes
         .into_iter()
         .map(|mesh| load_c3d(mesh, device))

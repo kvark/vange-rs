@@ -9,9 +9,10 @@ use wasm_bindgen::prelude::*;
 
 use vangers::{
     config::{self, settings},
-    data, escave, level, life, model, physics,
+    creature, data, escave, level, life, model, physics,
     render::{
         self, Batcher, DEPTH_FORMAT, GraphicsContext, Render, ScreenTargets, debug::LineBuffer,
+        object::Instance,
     },
     space,
     vfs::Vfs,
@@ -396,6 +397,28 @@ fn spawn_default_agent(
     })
 }
 
+fn load_bug(
+    vfs: &Vfs,
+    device: &wgpu::Device,
+    object: &render::object::Context,
+) -> Option<(Vec<std::sync::Arc<model::Mesh>>, f32)> {
+    use std::io::Cursor;
+
+    let game_lst = vfs.read("game.lst")?;
+    let registry = config::game::Registry::load_reader(Cursor::new(&*game_lst));
+    let info = registry.model_infos.get("Bug")?;
+    let bytes = vfs.read(&info.path)?;
+    let frames = if info.path.rsplit('.').next() == Some("a3d") {
+        model::load_a3d_frames_bytes(&bytes, device)
+    } else {
+        vec![model::load_m3d_bytes(&bytes, device, object, SHAPE_SAMPLING).body]
+    };
+    if frames.is_empty() {
+        return None;
+    }
+    Some((frames, info.scale.max(0.2) / 3.0))
+}
+
 struct WebApp {
     render: Render,
     level: level::Level,
@@ -423,6 +446,8 @@ struct WebApp {
     line_buffer: LineBuffer,
     space_held: bool,
     ride: Option<Ride>,
+    /// Original Bug `.a3d` frames, if `game.lst` has one in the VFS.
+    bug: Option<(Vec<std::sync::Arc<model::Mesh>>, f32)>,
     inventory: escave::Inventory,
     shop: escave::Shop,
     screen: escave::Screen,
@@ -583,9 +608,10 @@ impl WebApp {
             other => other,
         };
         if choice == TerrainChoice::Mesh {
-            // Quality 0.25 is the cheapest setting that still matches the
-            // other renderers on open ground; see the terrain-mesh post.
-            render_settings.terrain = settings::Terrain::Mesh { quality: 0.25 };
+            // Same quality as native `tin::Config` default. Wasm still
+            // scaffolds and drains instead of blocking startup on a full
+            // parallel fit; the drain is sized so nearby chunks catch up.
+            render_settings.terrain = settings::Terrain::Mesh { quality: 0.75 };
             // Ray-traced shadows work on both backends and do not depend
             // on the terrain renderer.
             render_settings.light.shadow.terrain = settings::ShadowTerrain::RayTraced;
@@ -679,6 +705,10 @@ impl WebApp {
 
         let mut life = life::World::spawn(world, &level, std::path::Path::new(""));
         life.beebs = 500;
+        let bug = vfs.and_then(|v| load_bug(v, &gfx.device, &render.object));
+        if bug.is_none() {
+            log::info!("No Bug model in the VFS; beebs draw as ticks");
+        }
         WebApp {
             render,
             level,
@@ -695,6 +725,7 @@ impl WebApp {
             line_buffer: LineBuffer::new(),
             space_held: false,
             ride: None,
+            bug,
             inventory: escave::Inventory::default(),
             shop: escave::Shop::fostral(),
             screen: escave::Screen::new(),
@@ -976,7 +1007,25 @@ impl WebApp {
                 .add_model(&agent.car.model, &agent.transform, None, agent.color);
         }
         let eye = self.cam.loc;
-        self.life.draw_fx(&mut self.line_buffer, eye, true);
+        if let Some((ref frames, scale)) = self.bug {
+            for insect in self.life.swarm.near(eye, creature::ACTIVE_RADIUS) {
+                let mesh = &frames[insect.frame(frames.len())];
+                let transform = space::Transform {
+                    scale,
+                    disp: self.level.display_pos(insect.pos, eye),
+                    rot: insect.rotation(),
+                };
+                let color = match insect.tier {
+                    0 => m3d::ColorId::Custom1 as u8,
+                    1 => m3d::ColorId::Custom2 as u8,
+                    _ => m3d::ColorId::Custom4 as u8,
+                };
+                self.batcher
+                    .add_mesh(mesh, Instance::new(&transform, 0.0, color));
+            }
+        }
+        self.life
+            .draw_fx(&mut self.line_buffer, eye, self.bug.is_none());
 
         self.render.draw_world(
             &mut encoder,
@@ -1124,6 +1173,8 @@ struct DomInputHooks {
     _pointerdown: Closure<dyn FnMut(web_sys::PointerEvent)>,
     _pointerup: Closure<dyn FnMut(web_sys::PointerEvent)>,
     _pointermove: Closure<dyn FnMut(web_sys::PointerEvent)>,
+    _blur: Closure<dyn FnMut(web_sys::Event)>,
+    _visibility: Closure<dyn FnMut(web_sys::Event)>,
 }
 
 fn key_from_code(code: &str) -> Option<KeyCode> {
@@ -1189,6 +1240,9 @@ struct WebHandler {
     /// `document` instead.
     _dom_input: Option<DomInputHooks>,
     last_frame: Option<Instant>,
+    /// Set when the tab hides so the next frame does not inherit a huge
+    /// pause or a stuck Ctrl (brake) from Ctrl+Tab.
+    clock_stale: std::rc::Rc<std::cell::Cell<bool>>,
     ws_client: Option<net_ws::WsClient>,
     /// The first frame builds the whole terrain TIN and uploads it; time
     /// it once so the console shows where startup actually goes.
@@ -1244,6 +1298,7 @@ impl WebHandler {
             ui_pointer: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             _dom_input: None,
             last_frame: None,
+            clock_stale: std::rc::Rc::new(std::cell::Cell::new(false)),
             first_draw_measured: false,
             ws_client,
             mp_status,
@@ -1338,14 +1393,49 @@ impl WebHandler {
             capture,
         );
 
+        let keys = self.keys_pressed.clone();
+        let stale = self.clock_stale.clone();
+        let on_blur = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+            release_held_keys(&mut keys.borrow_mut());
+            stale.set(true);
+        }) as Box<dyn FnMut(web_sys::Event)>);
+
+        let keys = self.keys_pressed.clone();
+        let stale = self.clock_stale.clone();
+        let on_visibility = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+            let hidden = web_sys::window()
+                .and_then(|w| w.document())
+                .is_some_and(|d| d.hidden());
+            if hidden {
+                release_held_keys(&mut keys.borrow_mut());
+                stale.set(true);
+            }
+        }) as Box<dyn FnMut(web_sys::Event)>);
+
+        let win = web_sys::window().expect("no window");
+        let _ = win.add_event_listener_with_callback("blur", on_blur.as_ref().unchecked_ref());
+        let _ = document.add_event_listener_with_callback(
+            "visibilitychange",
+            on_visibility.as_ref().unchecked_ref(),
+        );
+
         self._dom_input = Some(DomInputHooks {
             _keydown: on_keydown,
             _keyup: on_keyup,
             _pointerdown: on_pointerdown,
             _pointerup: on_pointerup,
             _pointermove: on_pointermove,
+            _blur: on_blur,
+            _visibility: on_visibility,
         });
     }
+}
+
+/// Ctrl+Tab (and any other chord the browser eats) never delivers keyup.
+/// ControlLeft is brake, so a leftover Ctrl parks the car until something
+/// clears it. Jump still works because Alt is a fresh press.
+fn release_held_keys(keys: &mut std::collections::HashSet<KeyCode>) {
+    keys.clear();
 }
 
 impl ApplicationHandler for WebHandler {
@@ -1739,6 +1829,10 @@ impl ApplicationHandler for WebHandler {
         }
 
         match event {
+            WindowEvent::Focused(false) => {
+                release_held_keys(&mut self.keys_pressed.borrow_mut());
+                self.last_frame = None;
+            }
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::KeyboardInput {
                 event:
@@ -1853,6 +1947,10 @@ impl WebHandler {
         }
 
         // Compute delta time
+        if self.clock_stale.get() {
+            self.clock_stale.set(false);
+            self.last_frame = None;
+        }
         let now = Instant::now();
         let dt = match self.last_frame {
             Some(prev) => (now - prev).as_secs_f32(),
@@ -2213,4 +2311,16 @@ pub fn web_main() {
 
 fn main() {
     web_main();
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn hiding_the_tab_releases_brake_and_drive() {
+        let mut keys = std::collections::HashSet::from([KeyCode::ControlLeft, KeyCode::KeyW]);
+        release_held_keys(&mut keys);
+        assert!(keys.is_empty());
+    }
 }

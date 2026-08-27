@@ -89,6 +89,12 @@ impl Default for Config {
     }
 }
 
+/// Delaunay insertions one wasm quant may spend on a chunk. Native
+/// `build` / `update` ignore this and drain the fit on rayon. Keep the
+/// initial-fit step and the edit refit on the same budget.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) const WASM_DRAIN_INSERTIONS: usize = 128;
+
 impl Config {
     /// Vertical tolerance in world altitude units, for this level's height
     /// scale.
@@ -1858,10 +1864,11 @@ impl Tin {
         {
             // A chunk is not a useful web budget: its topology and all three
             // emitted LOD buffers can differ by orders of magnitude. Work on
-            // one LOD and cap the actual Delaunay insertions instead. Vertex
-            // heights come straight from the terrain texture, so an
-            // unfinished topology refinement never delays the animation.
-            const INSERTION_BUDGET: usize = 4;
+            // one LOD and cap Delaunay insertions instead. Vertex heights
+            // come from the terrain texture, so an unfinished topology
+            // never delays the animation. The cap matches the initial-fit
+            // drain so tyre tracks catch up as fast as nearby chunks.
+            const INSERTION_BUDGET: usize = WASM_DRAIN_INSERTIONS;
             let n = self.chunks.len();
             if n == 0 {
                 return Vec::new();
@@ -2416,6 +2423,29 @@ mod tests {
             assert_eq!(a.pos, b.pos);
             assert_eq!(a.layer, b.layer);
         }
+    }
+
+    #[test]
+    fn a_wide_wasm_drain_matches_the_parallel_builder() {
+        let level = make_level(64);
+        let config = Config { quality: 0.75 };
+        let (_full_tin, full_mesh) = Tin::build(&level, &config);
+        let (mut incremental, _) = Tin::scaffold(&level, &config);
+        let mut final_buffers = None;
+        for _ in 0..level.height.len() * LOD_COUNT {
+            if !incremental.needs_build(0, 1) {
+                break;
+            }
+            if let Some(buffers) = incremental.build_chunk_step(&level, 0, 1, WASM_DRAIN_INSERTIONS)
+            {
+                final_buffers = Some(buffers);
+            }
+        }
+        assert!(!incremental.needs_build(0, 1), "wide drain stalled");
+        let actual = final_buffers.expect("no completed TIN was published");
+        let expected = &full_mesh.chunks[0];
+        assert_eq!(actual.indices, expected.indices);
+        assert_eq!(actual.lods, expected.lods);
     }
 
     #[test]

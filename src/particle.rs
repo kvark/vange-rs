@@ -394,4 +394,19 @@ mod tests {
             "a second redraw appended instead of replacing"
         );
     }
+
+    #[test]
+    fn a_bug_mesh_means_insects_are_not_drawn_as_ticks() {
+        let particles = System::new();
+        let mut swarm = crate::creature::Swarm::new((64, 64));
+        swarm.push(crate::creature::Insect::at(Vec3::new(8.0, 8.0, 10.0), 0));
+        let mut lines = LineBuffer::new();
+        refresh_fx_lines(&mut lines, &particles, &swarm, Vec3::ZERO, false);
+        assert!(
+            lines.is_empty(),
+            "ticks should stay off when the Bug mesh is instanced"
+        );
+        refresh_fx_lines(&mut lines, &particles, &swarm, Vec3::ZERO, true);
+        assert!(!lines.is_empty(), "ticks are the fallback without a mesh");
+    }
 }

@@ -483,9 +483,9 @@ impl MeshGeometry {
     /// Advances the shared TIN builder within a small wall-clock budget.
     ///
     /// Native drains the same fits in parallel during `Tin::build`; wasm
-    /// resumes one sampled chunk here. A completed coarse TIN remains
-    /// drawable while finer LODs are fitted, and at most one mesh upload is
-    /// published per frame.
+    /// resumes sampled chunks here. A completed coarse TIN remains
+    /// drawable while finer LODs are fitted. Several chunks may publish
+    /// in one frame as long as the CPU budget holds.
     #[cfg(target_arch = "wasm32")]
     fn build_pending(
         &mut self,
@@ -495,8 +495,8 @@ impl MeshGeometry {
     ) -> Vec<level::tin::Rect> {
         use std::time::Duration;
 
-        const CPU_BUDGET: Duration = Duration::from_millis(4);
-        const INSERTIONS_PER_STEP: usize = 4;
+        const CPU_BUDGET: Duration = Duration::from_millis(8);
+        const INSERTIONS_PER_STEP: usize = level::tin::WASM_DRAIN_INSERTIONS;
         let start = web_time::Instant::now();
         let mut attempted = false;
         let mut refresh = Vec::new();
@@ -543,7 +543,6 @@ impl MeshGeometry {
                     .gpu_bytes
                     .saturating_sub(old_bytes)
                     .saturating_add(self.chunks[ci].gpu_bytes());
-                break;
             }
         }
         refresh
