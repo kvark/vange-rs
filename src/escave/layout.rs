@@ -9,9 +9,11 @@ use std::path::Path;
 /// Bays we can hang on an m3d (the original hardpoint count).
 const BAYS: usize = 3;
 
-/// Cargo-only rectangle used by tests and a vehicle we do not know.
-pub const PACK_WIDTH: i32 = 8;
-pub const PACK_HEIGHT: i32 = 6;
+/// Open rectangle used by shop unit tests that are not about a mechos.
+#[cfg(test)]
+const PACK_WIDTH: i32 = 8;
+#[cfg(test)]
+const PACK_HEIGHT: i32 = 6;
 
 /// One cell of a mechos board.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +32,15 @@ pub struct Layout {
 }
 
 impl Layout {
+    pub(crate) fn empty() -> Self {
+        Layout {
+            width: 0,
+            height: 0,
+            cells: Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
     pub fn pack() -> Self {
         Layout {
             width: PACK_WIDTH,
@@ -78,7 +89,6 @@ impl Catalog {
                 return Self::parse(&String::from_utf8_lossy(&a), &String::from_utf8_lossy(&n));
             }
         }
-        log::info!("no actint.inc; cargo pack only");
         Catalog::default()
     }
 
@@ -102,19 +112,13 @@ impl Catalog {
         Catalog { by_key }
     }
 
-    pub fn layout_for(&self, car: &str) -> Layout {
+    pub fn layout_for(&self, car: &str) -> Option<&Layout> {
         let k = key(car);
         if let Some(layout) = self.by_key.get(&k) {
-            return layout.clone();
+            return Some(layout);
         }
         let stripped = k.strip_prefix("the").unwrap_or(&k);
-        if let Some(layout) = self.by_key.get(stripped) {
-            return layout.clone();
-        }
-        self.by_key
-            .get("mech00")
-            .cloned()
-            .unwrap_or_else(Layout::pack)
+        self.by_key.get(stripped)
     }
 }
 
@@ -490,7 +494,7 @@ mod tests {
     #[test]
     fn actint_macros_are_the_oxidize_monk_board() {
         let cat = Catalog::parse(ACTINT, NAMES);
-        let layout = cat.layout_for("OxidizeMonk");
+        let layout = cat.layout_for("OxidizeMonk").expect("Oxidize Monk");
         assert_eq!(layout.width, 8);
         assert_eq!(layout.height, 14);
         let occupied = (0..14)
@@ -503,7 +507,7 @@ mod tests {
         assert_eq!(layout.cell(7, 4), Cell::Bay(1));
         assert_eq!(layout.cell(4, 5), Cell::Bay(2));
         assert!(layout.is_cargo(3, 7));
-        assert_eq!(cat.layout_for("Oxidize Monk"), layout);
+        assert_eq!(cat.layout_for("Oxidize Monk"), Some(layout));
         assert!(Layout::row_offset(5));
         assert!(!Layout::row_offset(4));
     }
@@ -520,11 +524,11 @@ mod tests {
             &String::from_utf8_lossy(&std::fs::read(actint).unwrap()),
             &String::from_utf8_lossy(&std::fs::read(names).unwrap()),
         );
-        let monk = cat.layout_for("OxidizeMonk");
+        let monk = cat.layout_for("OxidizeMonk").expect("Oxidize Monk");
         assert_eq!(monk.cell(1, 4), Cell::Bay(0));
-        assert_ne!(cat.layout_for("IronShadow"), monk);
-        assert_eq!(cat.layout_for("TheRipper").width, 8);
-        assert_eq!(cat.layout_for("BladeKeeper").width, 8);
+        assert_ne!(cat.layout_for("IronShadow"), Some(monk));
+        assert_eq!(cat.layout_for("TheRipper").unwrap().width, 8);
+        assert_eq!(cat.layout_for("BladeKeeper").unwrap().width, 8);
     }
 
     #[test]

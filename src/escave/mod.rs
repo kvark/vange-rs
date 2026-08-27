@@ -16,7 +16,7 @@ pub use layout::{Catalog, Cell, Layout};
 pub use preview::{SpinMesh, description_for, display_name, mesh_id};
 pub use screen::{InteriorAction, Screen, draw_interior, draw_shutters};
 pub use shop::{
-    BAY_COUNT, DropTarget, GRID_HEIGHT, GRID_WIDTH, Good, Hand, Inventory, Kind, Placed, Preview,
+    BAY_COUNT, DropTarget, Good, Hand, Inventory, Kind, Placed, Preview,
     Shop, ShopError, drop_held, equipped_slot_ids, mounted_meshes, preview, preview_good,
 };
 
