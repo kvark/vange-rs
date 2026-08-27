@@ -218,6 +218,7 @@ async fn fetch_release_level(level_id: &str) -> Option<(Vfs, String)> {
     Some((vfs, ini_path))
 }
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
@@ -397,6 +398,42 @@ fn spawn_default_agent(
     })
 }
 
+fn load_shop_spins(
+    vfs: &Vfs,
+    shop: &escave::Shop,
+    slots: &[String],
+) -> HashMap<String, escave::SpinMesh> {
+    use std::io::Cursor;
+
+    let Some(game_lst) = vfs.read("game.lst") else {
+        return HashMap::new();
+    };
+    let registry = config::game::Registry::load_reader(Cursor::new(&*game_lst));
+    let mut meshes = HashMap::new();
+    let mut load = |id: &str, model_id: &str| {
+        if meshes.contains_key(id) {
+            return;
+        }
+        let Some(info) = registry.model_infos.get(model_id) else {
+            return;
+        };
+        let Some(bytes) = vfs.read(&info.path) else {
+            return;
+        };
+        let Some(spin) = escave::SpinMesh::load_bytes(&bytes) else {
+            return;
+        };
+        meshes.insert(id.to_string(), spin);
+    };
+    for good in shop.stock() {
+        load(&good.id, good.mesh_id());
+    }
+    for sid in slots {
+        load(sid, sid);
+    }
+    meshes
+}
+
 fn load_bug(
     vfs: &Vfs,
     device: &wgpu::Device,
@@ -450,6 +487,7 @@ struct WebApp {
     bug: Option<(Vec<std::sync::Arc<model::Mesh>>, f32)>,
     inventory: escave::Inventory,
     shop: escave::Shop,
+    spin_meshes: HashMap<String, escave::SpinMesh>,
     screen: escave::Screen,
     approach_cam: Option<(glam::Vec3, glam::Vec3)>,
     escave_note: Option<String>,
@@ -491,13 +529,14 @@ impl WebApp {
 
         {
             // Close third-person chase cam. The mechos is roughly 30 world
-            // units long, so this sits a little over one body length behind
-            // its centre and looks just beyond the nose. `angle` is unused
+            // units long; with the wide focal-512 FOV a long chase shrinks
+            // it into the screen, so this sits under a body length behind
+            // the centre and looks just beyond the nose. `angle` is unused
             // once `look_ahead` is set and remains a fallback pitch.
             s.game.camera.angle = 12;
-            s.game.camera.offset = 46.0;
-            s.game.camera.height = 15.0;
-            s.game.camera.look_ahead = 28.0;
+            s.game.camera.offset = 24.0;
+            s.game.camera.height = 9.0;
+            s.game.camera.look_ahead = 10.0;
             // Snappier than the default so the camera stays behind the
             // car through turns instead of trailing wide.
             s.game.camera.speed = 8.0;
@@ -709,6 +748,18 @@ impl WebApp {
         if bug.is_none() {
             log::info!("No Bug model in the VFS; beebs draw as ticks");
         }
+        let shop = escave::Shop::fostral();
+        let spin_meshes = {
+            let spins = vfs
+                .map(|v| load_shop_spins(v, &shop, &settings.car.slots))
+                .unwrap_or_default();
+            if spins.is_empty() {
+                log::warn!("No shop item meshes; the preview turntable will be empty");
+            } else {
+                log::info!("Loaded {} shop preview meshes", spins.len());
+            }
+            spins
+        };
         WebApp {
             render,
             level,
@@ -737,9 +788,15 @@ impl WebApp {
                         ))
                     })
                     .unwrap_or_else(|| escave::Catalog::load(&settings.data_path));
+                if boards.is_empty() {
+                    log::warn!(
+                        "No actint mechos boards; shop hex grid will be empty (need actint/actint.inc)"
+                    );
+                }
                 escave::Inventory::for_car(&settings.car.id, &boards)
             },
-            shop: escave::Shop::fostral(),
+            shop,
+            spin_meshes,
             screen: escave::Screen::new(),
             approach_cam: None,
             escave_note: None,
@@ -758,7 +815,7 @@ impl WebApp {
                 self.life.beebs,
                 self.escave_note.as_deref(),
                 &mut self.escave_selected,
-                None,
+                &self.spin_meshes,
                 false,
             );
             if let Some(visit) = self.screen.visit_mut() {
@@ -2143,8 +2200,8 @@ impl WebHandler {
                         let v = agent.dynamo.linear_velocity;
                         (v.x * v.x + v.y * v.y).sqrt()
                     };
-                    follow.offset.y += (speed_xy * 0.08).min(8.0);
-                    follow.look_ahead += (speed_xy * 0.12).min(12.0);
+                    follow.offset.y += (speed_xy * 0.03).min(3.0);
+                    follow.look_ahead += (speed_xy * 0.04).min(4.0);
                     gpu.app.cam.follow(&agent.transform, dt, &follow);
                     gpu.app.cam.keep_above_ground(level_ref, CAMERA_CLEARANCE);
                 }

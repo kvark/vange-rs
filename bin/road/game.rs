@@ -1830,8 +1830,6 @@ impl Application for Game {
         let mut leave_escave = false;
         let mut sync_slots = false;
         if let Some(visit) = self.screen.visit() {
-            let selected_id = self.escave_selected.clone();
-            let spin = selected_id.as_ref().and_then(|id| self.spin_meshes.get(id));
             let see_through = self.cave.is_some();
             let action = escave::draw_interior(
                 context,
@@ -1841,7 +1839,7 @@ impl Application for Game {
                 self.life.beebs,
                 self.escave_note.as_deref(),
                 &mut self.escave_selected,
-                spin,
+                &self.spin_meshes,
                 see_through,
             );
             if let Some(visit) = self.screen.visit_mut() {
