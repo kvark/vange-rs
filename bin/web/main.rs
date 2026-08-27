@@ -1265,6 +1265,9 @@ struct GpuState {
 
 struct WebHandler {
     window: Option<Arc<Window>>,
+    /// Shared with the visibility listener so a hidden tab can restart
+    /// the rAF chain when it comes back (Wait does not poll).
+    window_slot: std::rc::Rc<std::cell::RefCell<Option<Arc<Window>>>>,
     gpu: Option<GpuState>,
     /// Shared slot for async WASM GPU init to deliver results.
     gpu_pending: std::rc::Rc<std::cell::RefCell<Option<GpuState>>>,
@@ -1321,6 +1324,7 @@ impl WebHandler {
 
         WebHandler {
             window: None,
+            window_slot: std::rc::Rc::new(std::cell::RefCell::new(None)),
             gpu: None,
             gpu_pending: std::rc::Rc::new(std::cell::RefCell::new(None)),
             screen_size: wgpu::Extent3d {
@@ -1438,6 +1442,7 @@ impl WebHandler {
 
         let keys = self.keys_pressed.clone();
         let stale = self.clock_stale.clone();
+        let slot = self.window_slot.clone();
         let on_visibility = Closure::wrap(Box::new(move |_event: web_sys::Event| {
             let hidden = web_sys::window()
                 .and_then(|w| w.document())
@@ -1445,6 +1450,8 @@ impl WebHandler {
             if hidden {
                 release_held_keys(&mut keys.borrow_mut());
                 stale.set(true);
+            } else if let Some(ref window) = *slot.borrow() {
+                window.request_redraw();
             }
         }) as Box<dyn FnMut(web_sys::Event)>);
 
@@ -1476,12 +1483,11 @@ fn release_held_keys(keys: &mut std::collections::HashSet<KeyCode>) {
 
 impl ApplicationHandler for WebHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // Wait + canvas rAF only fires while the document is considered
-        // visible and focused. itch.io hosts us in a cross-origin iframe
-        // that often gets a single animation frame and then goes idle,
-        // which looks like a frozen first present. Poll keeps the loop
-        // alive with setTimeout / scheduler.postTask.
-        event_loop.set_control_flow(ControlFlow::Poll);
+        // Wait + request_redraw is a requestAnimationFrame chain. Poll
+        // on Firefox uses scheduler.postTask with a fresh AbortController
+        // every iteration; dropping the previous one fires `abort` and
+        // the cycle collector later walks millions of WebTasks.
+        event_loop.set_control_flow(ControlFlow::Wait);
 
         if self.window.is_some() {
             return;
@@ -1786,7 +1792,9 @@ impl ApplicationHandler for WebHandler {
             }
         };
 
-        self.window = Some(window);
+        self.window = Some(window.clone());
+        *self.window_slot.borrow_mut() = Some(window.clone());
+        window.request_redraw();
         let pending = self.gpu_pending.clone();
         wasm_bindgen_futures::spawn_local(async move {
             let _ = js_phase("Initializing GPU…");
@@ -1932,10 +1940,11 @@ impl ApplicationHandler for WebHandler {
 
                 self.render();
 
-                // Schedule the next frame. On web this calls
-                // requestAnimationFrame; on native with ControlFlow::Poll
-                // this is redundant but harmless.
-                if let Some(ref window) = self.window {
+                // Next frame via requestAnimationFrame. Do not also Poll:
+                // that path is scheduler.postTask + AbortController.abort.
+                if self.gpu.is_some()
+                    && let Some(ref window) = self.window
+                {
                     window.request_redraw();
                 }
             }
@@ -1944,8 +1953,13 @@ impl ApplicationHandler for WebHandler {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        event_loop.set_control_flow(ControlFlow::Poll);
-        if let Some(ref window) = self.window {
+        event_loop.set_control_flow(ControlFlow::Wait);
+        // Kick the rAF chain once GPU init has posted a pending state,
+        // or we would sit in Wait until a DOM event.
+        if self.gpu.is_none()
+            && self.gpu_pending.borrow().is_some()
+            && let Some(ref window) = self.window
+        {
             window.request_redraw();
         }
     }
@@ -2346,7 +2360,10 @@ pub fn web_main() {
     let event_loop = EventLoop::new().unwrap();
     let handler = WebHandler::new();
 
-    use winit::platform::web::EventLoopExtWebSys;
+    use winit::platform::web::{EventLoopExtWebSys, PollStrategy};
+    // If anything sets ControlFlow::Poll, skip scheduler.postTask (the
+    // default). IdleCallback cancels with cancelIdleCallback, not abort.
+    event_loop.set_poll_strategy(PollStrategy::IdleCallback);
     event_loop.spawn_app(handler);
 }
 
