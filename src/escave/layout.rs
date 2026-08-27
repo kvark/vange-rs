@@ -111,6 +111,10 @@ impl Catalog {
         let stripped = k.strip_prefix("the").unwrap_or(&k);
         self.by_key.get(stripped)
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_key.is_empty()
+    }
 }
 
 fn key(name: &str) -> String {
@@ -493,6 +497,18 @@ mod tests {
         assert_eq!(cat.layout_for("Oxidize Monk"), Some(layout));
         assert!(Layout::row_offset(5));
         assert!(!Layout::row_offset(4));
+        let inv = crate::escave::Inventory::for_car("OxidizeMonk", &cat);
+        assert_eq!(inv.layout().width, 8);
+        assert_eq!(inv.layout().height, 14);
+        assert!(!cat.is_empty());
+    }
+
+    #[test]
+    fn a_missing_catalog_has_no_hex_cells() {
+        let inv = crate::escave::Inventory::for_car("OxidizeMonk", &Catalog::default());
+        assert_eq!(inv.layout().width, 0);
+        assert_eq!(inv.layout().height, 0);
+        assert!(Catalog::default().is_empty());
     }
 
     #[test]

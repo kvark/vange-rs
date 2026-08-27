@@ -10,6 +10,7 @@ use super::preview::SpinMesh;
 use super::{
     DropTarget, Hand, Inventory, Kind, Preview, Shop, Visit, drop_held, preview, preview_good,
 };
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Camera dive, then the gates close. Seconds.
@@ -360,9 +361,13 @@ pub fn draw_interior(
     beebs: i32,
     note: Option<&str>,
     selected: &mut Option<String>,
-    spin: Option<&SpinMesh>,
+    spins: &HashMap<String, SpinMesh>,
     see_through: bool,
 ) -> InteriorAction {
+    if selected.is_none() {
+        *selected = shop.stock().first().map(|g| g.id.clone());
+    }
+    let spin = selected.as_ref().and_then(|id| spins.get(id.as_str()));
     let mut action = InteriorAction::default();
     let rect = ctx.content_rect();
     let veil = if see_through {
@@ -846,6 +851,110 @@ mod tests {
         assert!(inventory.contains("Nymbos"));
         assert_eq!(beebs, 88);
         assert_eq!(note.as_deref(), Some("Bought Nymbos"));
+    }
+
+    fn viewport_input() -> egui::RawInput {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1280.0, 800.0));
+        egui::RawInput {
+            screen_rect: Some(rect),
+            ..egui::RawInput::default()
+        }
+    }
+
+    fn is_cell_rect(shape: &egui::Shape) -> bool {
+        #[allow(clippy::pattern_type_mismatch)]
+        match shape {
+            egui::Shape::Rect(rect) => {
+                (rect.rect.width() - CELL).abs() < 1.0 && (rect.rect.height() - CELL).abs() < 1.0
+            }
+            _ => false,
+        }
+    }
+
+    fn cell_sized_rects(output: &egui::FullOutput) -> usize {
+        output
+            .shapes
+            .iter()
+            .filter(|clipped| is_cell_rect(&clipped.shape))
+            .count()
+    }
+
+    fn painted_paths(output: &egui::FullOutput) -> usize {
+        output
+            .shapes
+            .iter()
+            .filter(|clipped| matches!(clipped.shape, egui::Shape::Path(_)))
+            .count()
+    }
+
+    fn paint_mechos(inventory: &Inventory) -> egui::FullOutput {
+        let ctx = egui::Context::default();
+        let mut selected = None;
+        let mut action = InteriorAction::default();
+        ctx.run_ui(viewport_input(), |ui| {
+            draw_mechos(ui, inventory, &mut selected, &mut action);
+        })
+    }
+
+    #[test]
+    fn the_interior_paints_the_hex_board() {
+        let inventory = Inventory::default();
+        assert!(inventory.layout().width > 0);
+        let output = paint_mechos(&inventory);
+        let cells = cell_sized_rects(&output);
+        assert!(
+            cells >= (inventory.layout().width * inventory.layout().height) as usize,
+            "expected a painted hex cell per board slot, got {cells}"
+        );
+    }
+
+    #[test]
+    fn an_empty_board_paints_no_hex_cells() {
+        let inventory = Inventory::for_car("Nobody", &super::super::Catalog::default());
+        assert_eq!(inventory.layout().width, 0);
+        assert_eq!(cell_sized_rects(&paint_mechos(&inventory)), 0);
+    }
+
+    #[test]
+    fn a_selected_ware_paints_on_the_turntable() {
+        let mesh = SpinMesh::triangle();
+        let shop = Shop::fostral();
+        let inventory = Inventory::default();
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(viewport_input(), |ui| {
+            draw_preview(ui, &shop, &inventory, Some("Nymbos"), Some(&mesh));
+        });
+        assert!(
+            painted_paths(&output) > 0,
+            "the shop preview must paint the spinning mesh"
+        );
+    }
+
+    #[test]
+    fn opening_the_shop_selects_the_first_ware() {
+        let visit = Visit {
+            name: "Podish".into(),
+            session: None,
+        };
+        let shop = Shop::fostral();
+        let inventory = Inventory::default();
+        let mut selected = None;
+        let ctx = egui::Context::default();
+        #[expect(deprecated)]
+        let _ = ctx.run(viewport_input(), |ctx| {
+            let _ = draw_interior(
+                ctx,
+                &visit,
+                &shop,
+                &inventory,
+                200,
+                None,
+                &mut selected,
+                &HashMap::new(),
+                false,
+            );
+        });
+        assert_eq!(selected.as_deref(), Some("Nymbos"));
     }
 
     #[test]

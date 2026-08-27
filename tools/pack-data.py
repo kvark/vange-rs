@@ -9,6 +9,7 @@ assets, laid out to match the layout expected by `src/data.rs`:
 
     <out>/
       common.zip            game.lst, wrlds.dat, car.prm, common.prm,
+                            actint/actint.inc, actint/a_str.inc,
                             resource/m3d/, resource/pal/ — the files
                             the web build actually reads. Everything
                             else under --root (cutscene videos, menu
@@ -51,6 +52,8 @@ from pathlib import Path
 #   - bin/web/main.rs::spawn_default_agent  — game.lst, car.prm, m3d,
 #     per-vehicle .prm, default.prm
 #   - WebApp::build                         — common.prm
+#   - WebApp::build inventory               — actint/actint.inc,
+#     actint/a_str.inc (mechos hex boards)
 # The palette dir is included defensively; nothing in the web build
 # currently reads it, but it's ~10 KiB and levels reference palettes
 # by relative path.
@@ -64,6 +67,8 @@ WEB_KEEP_FILES = {
     "spots.prm",
     "bunches.prm",
     "tabutask.prm",
+    "actint/actint.inc",
+    "actint/a_str.inc",
 }
 WEB_KEEP_PREFIXES = (
     "resource/m3d/",

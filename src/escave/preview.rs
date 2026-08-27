@@ -96,13 +96,30 @@ impl SpinMesh {
         }
     }
 
-    pub fn load_path(path: &Path) -> Option<Self> {
-        let bytes = std::fs::read(path).ok()?;
+    pub fn load_bytes(bytes: &[u8]) -> Option<Self> {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let model = m3d::FullModel::load(std::io::Cursor::new(&bytes));
+            let model = m3d::FullModel::load(std::io::Cursor::new(bytes));
             Self::from_draw(&model.body)
         }))
         .ok()
+    }
+
+    pub fn load_path(path: &Path) -> Option<Self> {
+        let bytes = std::fs::read(path).ok()?;
+        Self::load_bytes(&bytes)
+    }
+
+    /// One face pointing at the camera, for shop-preview tests.
+    #[cfg(test)]
+    pub fn triangle() -> Self {
+        SpinMesh {
+            positions: vec![[-8.0, 0.0, -8.0], [8.0, 0.0, -8.0], [0.0, 0.0, 8.0]],
+            faces: vec![Face {
+                verts: [0, 1, 2],
+                normal: [0.0, -1.0, 0.0],
+            }],
+            radius: 12.0,
+        }
     }
 
     /// Turntable: Z-up, spin around Z, slight nod, Lambert faces.
@@ -181,5 +198,40 @@ mod tests {
             "Some eleepods' stuff from Podish"
         );
         assert!(description_for("LightLaser").contains("arms slot"));
+    }
+
+    fn viewport_input() -> egui::RawInput {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 300.0));
+        egui::RawInput {
+            screen_rect: Some(rect),
+            ..egui::RawInput::default()
+        }
+    }
+
+    fn painted_paths(output: &egui::FullOutput) -> usize {
+        output
+            .shapes
+            .iter()
+            .filter(|clipped| matches!(clipped.shape, egui::Shape::Path(_)))
+            .count()
+    }
+
+    #[test]
+    fn the_turntable_paints_faces() {
+        let mesh = SpinMesh::triangle();
+        let ctx = egui::Context::default();
+        #[expect(deprecated)]
+        let output = ctx.run(viewport_input(), |ctx| {
+            mesh.paint(
+                &ctx.layer_painter(egui::LayerId::background()),
+                ctx.content_rect(),
+                0.0,
+                egui::Color32::from_rgb(200, 140, 48),
+            );
+        });
+        assert!(
+            painted_paths(&output) > 0,
+            "a visible face must hit the painter"
+        );
     }
 }

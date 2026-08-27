@@ -796,4 +796,36 @@ mod ground_tests {
             "looking at the car {to_car:?} would pitch down more than {got:?}"
         );
     }
+
+    /// Wide-FOV chase used by the web build: one body-length back so the
+    /// car does not shrink into the distance.
+    #[test]
+    fn a_close_chase_keeps_the_car_nearby() {
+        let target = Transform {
+            scale: 1.0,
+            rot: Quat::IDENTITY,
+            disp: Vec3::ZERO,
+        };
+        let follow = Follow {
+            angle_x: 12f32.to_radians() - std::f32::consts::FRAC_PI_2,
+            offset: Vec3::new(0.0, 24.0, 9.0),
+            speed: 8.0,
+            look_ahead: 10.0,
+        };
+        let mut cam = cam_at(Vec3::new(0.0, 0.0, 200.0));
+        for _ in 0..120 {
+            cam.follow(&target, 1.0 / 60.0, &follow);
+        }
+        let dist = (cam.loc - target.disp).length();
+        assert!(
+            dist < 30.0,
+            "close chase settled {dist} away at {:?}",
+            cam.loc
+        );
+        assert!(
+            dist > 18.0,
+            "should still sit behind the hull, got {dist} at {:?}",
+            cam.loc
+        );
+    }
 }

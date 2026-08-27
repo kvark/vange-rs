@@ -12,6 +12,15 @@ pub mod terrain;
 
 const MAX_TRACTION: config::common::Traction = 4.0;
 
+/// Original `traction` is an int; the port stores it already divided by 64
+/// (`MAX_TRACTION` 4 = original 256). Water thrust in `analyse_dynamics`
+/// uses the int, so swimming scales it back.
+const ORIGINAL_TRACTION: f32 = 64.0;
+/// Original rudder is a `PI/2048` integer angle; the port stores radians.
+const ORIGINAL_ANGLE: f32 = std::f32::consts::PI / 2048.0;
+/// `pow(15/16, XTCORE_FRAME_NORMAL)` while the hull is driving in water.
+const WATER_RUDDER_DRAG: f32 = 15.0 / 16.0;
+
 /// How deep the car has to be before the mole stops pushing it down, and
 /// how shallow before it counts as having surfaced. Both are
 /// `terrain_immersion` thresholds straight out of `analyse_dynamics`.
@@ -308,6 +317,14 @@ pub fn step(
     let flood_level = level.flood_map[0] as f32;
     // Z axis in the local coordinate space
     let z_axis = rot_inv * Vec3::Z;
+    let num_bounds = car.shape_polygons.len().max(1);
+    // Original `f_archimedean = k_archimedean * archimedean / 256 / num_bounds`.
+    // Devices are not ported, so a wet hull swims at full flotation (256).
+    let f_archimedean = if dynamo.mole == Mole::Off {
+        car.physics.k_archimedean / num_bounds as f32
+    } else {
+        0.0
+    };
     let device_modulation = 1.0;
     let dt_impulse = 1.0;
 
@@ -329,7 +346,7 @@ pub fn step(
     let mut wheels_touch = 0u32;
     let mut spring_touch = 0;
 
-    let mut float_count = 0;
+    let mut float_count = 0i32;
     let (mut terrain_immersion, mut water_immersion) = (0.0, 0.0);
     let stand_on_wheels = z_axis.z > 0.0 && (transform.rot * Vec3::X).z.abs() < 0.7;
     // `k_elastic_modulation` of the original: under the ground the car is
@@ -365,20 +382,30 @@ pub fn step(
             poly.middle,
             r
         );
-        match level.get((rglob.x as i32, rglob.y as i32)) {
-            level::Texel::Single(level::Point(_, 0))
-            | level::Texel::Dual {
-                low: level::Point(_, 0),
-                ..
-            } => {
-                let dz = flood_level - rglob.z;
-                if dz > 0.0 {
-                    float_count += 1;
-                    water_immersion += dz;
+        // Original: `GET_TERRAIN == WATER_TERRAIN` and `dZ = FloodLEVEL - rg.z`.
+        // Terrain 0 is water on every shipped world. Mole skips this, same as
+        // `if (!mole_on)` around the water test in `basic_mechous_analysis`.
+        if dynamo.mole == Mole::Off {
+            match level.get((rglob.x as i32, rglob.y as i32)) {
+                level::Texel::Single(level::Point(_, 0))
+                | level::Texel::Dual {
+                    low: level::Point(_, 0),
+                    ..
+                } => {
+                    let dz = flood_level - rglob.z;
+                    if dz > 0.0 {
+                        float_count += 1;
+                        water_immersion += dz;
+                        if f_archimedean != 0.0 {
+                            let df = z_axis * (f_archimedean * dz);
+                            acc_cur.f += df;
+                            acc_cur.k += r.cross(df);
+                        }
+                    }
                 }
+                _ => {}
             }
-            _ => {}
-        };
+        }
         let poly_norm = Vec3::from(poly.normal).normalize();
         if z_axis.dot(poly_norm) < 0.0 {
             let cdata = terrain::CollisionData::collide_low(
@@ -511,7 +538,40 @@ pub fn step(
         rigid.vel.y *= (1.0 + speed).powf(speed_correction_factor);
     }
 
-    let _ = (float_count, water_immersion, terrain_immersion); //TODO
+    // Original `in_water = (float_cnt << 8) / num_bounds` (0..=256).
+    let in_water = (float_count << 8) / num_bounds as i32;
+    log::debug!(
+        "water in_water={} immersion={} terrain={}",
+        in_water,
+        water_immersion,
+        terrain_immersion
+    );
+    // `archimedean && traction`: water thrust plus a bit of rudder, using
+    // the original int traction/rudder units. `k_water_traction` is loaded
+    // from the mechos `.prm` but never read in `analyse_dynamics`.
+    if dynamo.mole == Mole::Off && in_water > 32 && dynamo.traction.abs() > EPSILON {
+        let traction_int = dynamo.traction * ORIGINAL_TRACTION;
+        let mut d_fy = traction_int;
+        let rudder_int = dynamo.rudder / ORIGINAL_ANGLE;
+        let d_fx = if dynamo.traction > 0.0 {
+            -rudder_int
+        } else {
+            rudder_int
+        } * d_fy
+            * car.physics.k_water_rudder;
+        d_fy *= car.physics.water_speed_factor * common.global.water_speed_factor;
+        acc_cur.f.y += d_fy;
+        acc_cur.f.x += d_fx;
+        let ymax = car.bbox.max[1].abs().max(car.bbox.min[1].abs()) * transform.scale;
+        let zmax = car.bbox.max[2].abs().max(car.bbox.min[2].abs()) * transform.scale;
+        acc_cur.k.z -= if dynamo.traction > 0.0 {
+            ymax * d_fx
+        } else {
+            -ymax * d_fx
+        };
+        acc_cur.k.x += zmax * d_fy * (1.0 / 16.0);
+        dynamo.rudder *= WATER_RUDDER_DRAG.powf(speed_correction_factor);
+    }
     let is_after_collision = false;
     if let Some(ref mut tracks) = tracks
         && (wheels_touch == 0 || !stand_on_wheels)
@@ -608,16 +668,18 @@ pub fn step(
         }
     }
 
-    if spring_touch + wheels_touch != 0 {
+    if spring_touch + wheels_touch != 0 || in_water != 0 {
         let tmp = Vec3::new(
             0.0,
             0.0,
             car.physics.z_offset_of_mass_center * transform.scale,
         );
         acc_cur.k -= common.nature.gravity * tmp.cross(z_axis);
-        let vz = z_axis.dot(rigid.vel);
-        if vz < -10.0 {
-            v_drag *= common.drag.z.powf(-vz);
+        if spring_touch + wheels_touch != 0 {
+            let vz = z_axis.dot(rigid.vel);
+            if vz < -10.0 {
+                v_drag *= common.drag.z.powf(-vz);
+            }
         }
     }
 
@@ -693,8 +755,16 @@ pub fn step(
         v_drag *= common.drag.spring.v;
         w_drag *= common.drag.spring.w;
     }
+    if in_water > 64 {
+        v_drag *= common.drag.float.v;
+        w_drag *= common.drag.float.w;
+    }
     let (v_mag, w_mag) = (v_vel.length(), w_vel.length());
-    if stand_on_wheels && v_mag < common.drag.abs_min.v && w_mag < common.drag.abs_min.w {
+    if stand_on_wheels
+        && in_water < 32
+        && v_mag < common.drag.abs_min.v
+        && w_mag < common.drag.abs_min.w
+    {
         let v_pow = common.drag.abs_min.v / (v_mag + EPSILON);
         let w_pow = common.drag.abs_min.w / (w_mag + EPSILON);
         v_drag *= common.drag.coll.v.powf(v_pow);
@@ -793,6 +863,102 @@ mod tests {
         assert!(
             (got.length() * 2.0 - 5.0 * 2.0 * dir.length()).abs() < 1e-4,
             "max jump was not halved"
+        );
+    }
+
+    fn water_level(flood: u8, ground: u8) -> level::Level {
+        let mut level = level::load(
+            &level::LevelConfig::new_test(),
+            &crate::config::settings::Geometry::default(),
+        );
+        let bits = level.terrain_bits();
+        let water = bits.write(0);
+        for meta in level.meta.iter_mut() {
+            *meta = water;
+        }
+        for h in level.height.iter_mut() {
+            *h = ground;
+        }
+        for band in level.flood_map.iter_mut() {
+            *band = flood;
+        }
+        level
+    }
+
+    fn step_in_water(
+        dynamo: &mut Dynamo,
+        transform: &mut space::Transform,
+        car: &CarPhysicsData,
+        level: &level::Level,
+    ) {
+        step(
+            dynamo,
+            transform,
+            0.02,
+            car,
+            level,
+            &config::common::Common::test_default(),
+            1.0,
+            0.0,
+            None,
+            0.0,
+            None,
+            None,
+        );
+    }
+
+    #[test]
+    fn a_car_in_deep_water_floats_instead_of_sinking() {
+        let level = water_level(100, 20);
+        let car = CarPhysicsData::test_default();
+        let mut transform = space::Transform {
+            scale: 1.0,
+            rot: Quat::IDENTITY,
+            disp: Vec3::new(40.0, 40.0, 50.0),
+        };
+        let mut dynamo = Dynamo::default();
+        for _ in 0..200 {
+            step_in_water(&mut dynamo, &mut transform, &car, &level);
+        }
+        assert!(
+            transform.disp.z > 70.0,
+            "should sit near the water line, got z={}",
+            transform.disp.z
+        );
+        assert!(
+            transform.disp.z < 120.0,
+            "should not fly out of the water, got z={}",
+            transform.disp.z
+        );
+    }
+
+    #[test]
+    fn a_car_in_deep_water_moves_on_traction() {
+        let level = water_level(100, 20);
+        let car = CarPhysicsData::test_default();
+        let spawn = || {
+            (
+                Dynamo::default(),
+                space::Transform {
+                    scale: 1.0,
+                    rot: Quat::IDENTITY,
+                    disp: Vec3::new(40.0, 40.0, 80.0),
+                },
+            )
+        };
+        let (mut idle_dyn, mut idle_tf) = spawn();
+        let (mut drive_dyn, mut drive_tf) = spawn();
+        drive_dyn.traction = 1.0;
+        for _ in 0..8 {
+            step_in_water(&mut idle_dyn, &mut idle_tf, &car, &level);
+            step_in_water(&mut drive_dyn, &mut drive_tf, &car, &level);
+            drive_dyn.traction = 1.0;
+        }
+        assert!(
+            drive_dyn.linear_velocity.y > idle_dyn.linear_velocity.y + 0.5,
+            "water traction should add forward speed, idle={:?} drive={:?}",
+            idle_dyn.linear_velocity,
+            drive_dyn.linear_velocity
         );
     }
 }
