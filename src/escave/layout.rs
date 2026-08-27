@@ -41,7 +41,7 @@ impl Layout {
     }
 
     #[cfg(test)]
-    pub fn pack() -> Self {
+    pub(crate) fn pack() -> Self {
         Layout {
             width: PACK_WIDTH,
             height: PACK_HEIGHT,
@@ -60,13 +60,6 @@ impl Layout {
         matches!(self.cell(x, y), Cell::Cargo)
     }
 
-    pub fn bay_at(&self, x: i32, y: i32) -> Option<usize> {
-        match self.cell(x, y) {
-            Cell::Bay(i) => Some(i),
-            _ => None,
-        }
-    }
-
     /// Odd rows are shifted half a cell, original even-r hex.
     pub fn row_offset(y: i32) -> bool {
         y & 1 == 1
@@ -81,15 +74,13 @@ pub struct Catalog {
 
 impl Catalog {
     pub fn load(data_path: &Path) -> Self {
-        for dir in search_dirs(data_path) {
-            let actint = dir.join("actint.inc");
-            let names = dir.join("a_str.inc");
-            if let (Ok(a), Ok(n)) = (std::fs::read(&actint), std::fs::read(&names)) {
-                log::info!("mechos boards from {}", actint.display());
-                return Self::parse(&String::from_utf8_lossy(&a), &String::from_utf8_lossy(&n));
-            }
-        }
-        Catalog::default()
+        let dir = data_path.join("actint");
+        let actint = dir.join("actint.inc");
+        let names = dir.join("a_str.inc");
+        let (Ok(a), Ok(n)) = (std::fs::read(&actint), std::fs::read(&names)) else {
+            return Catalog::default();
+        };
+        Self::parse(&String::from_utf8_lossy(&a), &String::from_utf8_lossy(&n))
     }
 
     pub fn parse(actint: &str, names: &str) -> Self {
@@ -120,14 +111,6 @@ impl Catalog {
         let stripped = k.strip_prefix("the").unwrap_or(&k);
         self.by_key.get(stripped)
     }
-}
-
-fn search_dirs(data_path: &Path) -> Vec<std::path::PathBuf> {
-    vec![
-        data_path.join("actint"),
-        Path::new("../Vangers/data/actint").to_path_buf(),
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../Vangers/data/actint"),
-    ]
 }
 
 fn key(name: &str) -> String {
