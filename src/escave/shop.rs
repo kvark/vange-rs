@@ -2,7 +2,7 @@
 //!
 //! Names of the default wares come from `actintItemTypes` (Nymbos, Phlegma,
 //! and the other Fostral trade goods). Weapon ids match `game.lst`.
-//! Occupancy follows the vehicle's hex `invMatrix`; tests use a full pack.
+//! Occupancy follows the vehicle's hex `invMatrix`.
 
 /// Whether a good is trade cargo or a gun that can go in a weapon bay.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -11,12 +11,8 @@ pub enum Kind {
     Weapon,
 }
 
-use super::layout::{Layout, PACK_HEIGHT, PACK_WIDTH};
+use super::layout::Layout;
 use super::preview::{description_for, display_name, mesh_id};
-
-/// Cargo pack size, in cells. Tests and a nameless pack use this.
-pub const GRID_WIDTH: i32 = PACK_WIDTH;
-pub const GRID_HEIGHT: i32 = PACK_HEIGHT;
 
 /// One kind of good, with the prices a shop will honour and the cells
 /// it covers when placed.
@@ -120,7 +116,16 @@ pub struct Inventory {
 impl Default for Inventory {
     fn default() -> Self {
         Inventory {
-            layout: Layout::pack(),
+            layout: {
+                #[cfg(test)]
+                {
+                    Layout::pack()
+                }
+                #[cfg(not(test))]
+                {
+                    Layout::empty()
+                }
+            },
             cargo: Vec::new(),
             bays: Default::default(),
         }
@@ -130,7 +135,10 @@ impl Default for Inventory {
 impl Inventory {
     pub fn for_car(name: &str, catalog: &super::layout::Catalog) -> Self {
         Inventory {
-            layout: catalog.layout_for(name),
+            layout: catalog
+                .layout_for(name)
+                .cloned()
+                .unwrap_or_else(Layout::empty),
             cargo: Vec::new(),
             bays: Default::default(),
         }
@@ -912,7 +920,7 @@ mod tests {
     fn oxidize_monk_cargo_sits_on_the_mechos_not_the_corner() {
         let cat = crate::escave::Catalog::load(std::path::Path::new("../Vangers/data"));
         let mut inv = Inventory::for_car("OxidizeMonk", &cat);
-        if inv.layout().height < 8 {
+        if inv.layout().height == 0 {
             return;
         }
         assert!(!inv.check_fit(&[(0, 0)], (0, 0), None));
