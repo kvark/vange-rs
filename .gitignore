@@ -16,6 +16,7 @@ res/data
 /work/
 __pycache__/
 /*.zip
+/*.json.gz
 /remote/
 /paper/figures/teaser-*.png
 /paper/paper.aux

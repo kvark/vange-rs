@@ -96,11 +96,6 @@ impl SpinMesh {
         }
     }
 
-    pub fn load_reader<R: std::io::Read>(mut reader: R) -> Self {
-        let model = m3d::FullModel::load(&mut reader);
-        Self::from_draw(&model.body)
-    }
-
     pub fn load_path(path: &Path) -> Option<Self> {
         let bytes = std::fs::read(path).ok()?;
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
