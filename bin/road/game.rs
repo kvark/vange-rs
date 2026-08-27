@@ -470,9 +470,31 @@ pub struct Game {
     escave_note: Option<String>,
     /// Warehouse id currently shown in the shop preview.
     escave_selected: Option<String>,
+    /// CPU turntable meshes for shop goods.
+    spin_meshes: HashMap<String, escave::SpinMesh>,
+    cave_boot: CaveBoot,
+    cave: Option<CaveView>,
     /// Secret tunnel: interpolate the car to the other station.
     ride: Option<Ride>,
     shots: Vec<LiveShot>,
+}
+
+struct CaveBoot {
+    render: config::settings::Render,
+    geometry: config::settings::Geometry,
+    downlevel_caps: wgpu::DownlevelCapabilities,
+    color_format: wgpu::TextureFormat,
+    front_face: wgpu::FrontFace,
+}
+
+struct CaveView {
+    name: String,
+    level: level::Level,
+    render: Render,
+    cam: space::Camera,
+    target: Vec3,
+    distance: f32,
+    yaw: f32,
 }
 
 struct LiveShot {
@@ -641,7 +663,7 @@ impl Game {
         player_agent.spirit = Spirit::Player;
 
         let shop = escave::Shop::fostral();
-        let mut inventory = escave::Inventory::default();
+        let mut inventory = escave::Inventory::for_car(&settings.car.id);
         for (i, sid) in settings
             .car
             .slots
@@ -652,6 +674,7 @@ impl Game {
             let _ = inventory.load_bay(i, escave::Good::weapon(sid.clone(), 0, 0));
         }
         let mut weapon_meshes = HashMap::new();
+        let mut spin_meshes = HashMap::new();
         let mut load_gun = |id: &str| {
             if weapon_meshes.contains_key(id) {
                 return;
@@ -665,15 +688,31 @@ impl Game {
             let mesh = model::load_c3d(Mesh::load(&mut file), &gfx.device);
             weapon_meshes.insert(id.to_string(), mesh);
         };
+        let mut load_spin = |id: &str, model_id: &str| {
+            if spin_meshes.contains_key(id) {
+                return;
+            }
+            let Some(info) = db.game.model_infos.get(model_id) else {
+                return;
+            };
+            let Some(spin) = escave::SpinMesh::load_path(&settings.data_path.join(&info.path))
+            else {
+                return;
+            };
+            spin_meshes.insert(id.to_string(), spin);
+        };
         for good in shop.stock() {
             if good.is_weapon() {
                 load_gun(&good.id);
             }
+            load_spin(&good.id, good.mesh_id());
         }
         for sid in &settings.car.slots {
             load_gun(sid);
+            load_spin(sid, sid);
         }
         hang_weapons(&mut player_agent, &inventory, &weapon_meshes, &db);
+        let front_face = cam.front_face();
 
         let mut agents = vec![player_agent];
         // populate with random agents
@@ -797,6 +836,7 @@ impl Game {
             inventory,
             shop,
             weapon_meshes,
+            spin_meshes,
             screen: escave::Screen::new(),
             data_path: settings.data_path.clone(),
             bug,
@@ -805,6 +845,14 @@ impl Game {
             approach_cam: None,
             escave_note: None,
             escave_selected: None,
+            cave_boot: CaveBoot {
+                render: settings.render.clone(),
+                geometry: settings.game.geometry,
+                downlevel_caps: gfx.downlevel_caps.clone(),
+                color_format: gfx.color_format,
+                front_face,
+            },
+            cave: None,
             ride: None,
         }
     }
@@ -935,17 +983,71 @@ impl Game {
     }
 
     fn step_screen(&mut self, delta: f32) {
-        let had_visit = self.screen.visit().is_some();
+        let leaving = !self.screen.is_world();
+        let had_interior = self.screen.visit().is_some();
         self.screen.step(delta, &self.data_path);
         if let Some(blend) = self.screen.camera_blend()
             && let Some((start, dest)) = self.approach_cam
         {
             self.cam.loc = start.lerp(dest, blend);
         }
-        if had_visit && self.screen.is_world() {
-            self.approach_cam = None;
+        if had_interior && self.screen.visit().is_none() {
             self.sync_weapon_slots();
+            self.eject_from_escave();
         }
+        if leaving && self.screen.is_world() {
+            self.approach_cam = None;
+        }
+        if let Some(ref mut cave) = self.cave {
+            cave.yaw += delta * 0.12;
+            escave::cave::orbit(&mut cave.cam, cave.target, cave.distance, cave.yaw, 0.55);
+        }
+    }
+
+    fn ensure_cave(
+        &mut self,
+        name: &str,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        extent: wgpu::Extent3d,
+    ) {
+        if self.cave.as_ref().is_some_and(|c| c.name == name) {
+            return;
+        }
+        let Some((config, level)) =
+            escave::cave::load(&self.data_path, name, &self.cave_boot.geometry)
+        else {
+            self.cave = None;
+            return;
+        };
+        let gfx = GraphicsContext {
+            device: device.clone(),
+            queue: queue.clone(),
+            downlevel_caps: self.cave_boot.downlevel_caps.clone(),
+            color_format: self.cave_boot.color_format,
+            screen_size: extent,
+        };
+        let pal = level.palette;
+        let render = Render::new(
+            &gfx,
+            &config,
+            &pal,
+            &self.cave_boot.render,
+            &self.cave_boot.geometry,
+            self.cave_boot.front_face,
+        );
+        let (mut cam, target, distance) = escave::cave::camera(&level, self.cam.proj);
+        cam.proj.update(extent.width as u16, extent.height as u16);
+        log::info!("escave iscreen {name} {}x{}", level.size.0, level.size.1);
+        self.cave = Some(CaveView {
+            name: name.to_string(),
+            level,
+            render,
+            cam,
+            target,
+            distance,
+            yaw: 0.35,
+        });
     }
 
     fn update_follow_camera(&mut self, delta: f32) {
@@ -1020,28 +1122,8 @@ impl Game {
         hang_weapons(player, &self.inventory, &self.weapon_meshes, &self.db);
     }
 
-    fn collect_entrances(&self) -> Vec<escave::Entrance> {
-        let mut list: Vec<escave::Entrance> = self
-            .db
-            .escaves
-            .iter()
-            .map(|e| escave::Entrance::named(e.name.clone(), e.coordinates))
-            .collect();
-        for sensor in self.moving.triggers.sensors.iter() {
-            if let Some(pad) = escave::Entrance::from_sensor(
-                sensor.kind,
-                &sensor.name,
-                (sensor.pos.0, sensor.pos.1),
-                sensor.radius,
-            ) {
-                list.push(pad);
-            }
-        }
-        list
-    }
-
-    /// Space: poke nearby door sensors so a secret tunnel opens, and if
-    /// standing on an escave/spot, fly in then open the inner visit.
+    /// Space: poke nearby door sensors so a secret tunnel or escave hatch
+    /// opens. The visit starts once the car has fallen into the hole.
     fn try_use_entrance(&mut self) {
         if self.screen.visit().is_some() {
             self.screen.begin_leave();
@@ -1063,13 +1145,82 @@ impl Game {
         let at3 = (pos.x as i32, pos.y as i32, pos.z as i32);
         self.moving.use_at(at3, radius, self.level.size);
         self.moving.triggers.touch(at3, radius, self.level.size);
-        // Space only opens the door. The ride starts once the car has
-        // actually fallen into the hole, not from the surface.
-        let at = (pos.x as i32, pos.y as i32);
-        let pads = self.collect_entrances();
-        if let Some(pad) = escave::nearest_entrance(&pads, at) {
-            let dest = Vec3::new(pad.pos.0 as f32, pad.pos.1 as f32, pos.z - 24.0);
-            self.start_enter(pad.name.clone(), dest);
+    }
+
+    /// `EXTERNAL_MODE_ESCAVE_IN` after the fall: the hatch is already open.
+    fn try_begin_escave_visit(&mut self) {
+        if !self.screen.is_world() || self.ride.is_some() {
+            return;
+        }
+        let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) else {
+            return;
+        };
+        if let Physics::Cpu { ref dynamo, .. } = player.physics
+            && dynamo.linear_velocity.z > 10.0
+        {
+            return;
+        }
+        let pos = player.position();
+        let radius = player.touch_radius();
+        let Some(arrival) = self.moving.triggers.escave_arrival_at(
+            (pos.x as i32, pos.y as i32, pos.z as i32),
+            radius,
+            self.level.size,
+        ) else {
+            return;
+        };
+        let name = self.resolve_escave_name(&arrival.name, (arrival.pos.0, arrival.pos.1));
+        self.start_enter(
+            name,
+            Vec3::new(arrival.pos.0 as f32, arrival.pos.1 as f32, pos.z),
+        );
+    }
+
+    fn resolve_escave_name(&self, sensor: &str, pos: (i32, i32)) -> String {
+        const REACH2: i32 = 256 * 256;
+        self.db
+            .escaves
+            .iter()
+            .filter(|e| {
+                let dx = e.coordinates.0 - pos.0;
+                let dy = e.coordinates.1 - pos.1;
+                dx * dx + dy * dy <= REACH2
+            })
+            .min_by_key(|e| {
+                let dx = e.coordinates.0 - pos.0;
+                let dy = e.coordinates.1 - pos.1;
+                dx * dx + dy * dy
+            })
+            .map(|e| e.name.clone())
+            .unwrap_or_else(|| sensor.to_string())
+    }
+
+    /// Close the hatch and kick the car out, `ImpulseEscave::Active`.
+    fn eject_from_escave(&mut self) {
+        let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
+            return;
+        };
+        let pos = player.position();
+        let radius = player.touch_radius() + 96;
+        let at = (pos.x as i32, pos.y as i32, pos.z as i32);
+        let size = self.level.size;
+        self.moving.close_doors_at(at, radius, size);
+        let kick = self.moving.triggers.impulse_at(at, radius, size);
+        let vel = match kick {
+            Some(k) => {
+                let dir = Vec3::new(
+                    k.direction.0 as f32,
+                    k.direction.1 as f32,
+                    k.direction.2 as f32,
+                );
+                let n = dir.length();
+                let dir = if n < 1e-3 { Vec3::Z } else { dir / n };
+                dir * (k.power as f32).max(24.0)
+            }
+            None => Vec3::new(0.0, 24.0, 80.0),
+        };
+        if let Physics::Cpu { ref mut dynamo, .. } = player.physics {
+            dynamo.linear_velocity += vel;
         }
     }
 
@@ -1392,8 +1543,10 @@ impl Application for Game {
             self.input.use_entrance = false;
             self.try_use_entrance();
         }
-        if self.screen.blocks_drive() {
+        if !self.screen.is_world() {
             self.step_screen(delta);
+        }
+        if self.screen.blocks_drive() {
             if self.screen.follows_camera() {
                 self.update_follow_camera(delta);
             }
@@ -1426,6 +1579,9 @@ impl Application for Game {
         self.step_moving_land(delta);
         if !riding {
             riding = self.begin_train_ride();
+        }
+        if !riding {
+            self.try_begin_escave_visit();
         }
 
         if self.flood.step(&mut self.level, delta) {
@@ -1657,6 +1813,12 @@ impl Application for Game {
             .proj
             .update(extent.width as u16, extent.height as u16);
         self.render.resize(extent, device);
+        if let Some(ref mut cave) = self.cave {
+            cave.cam
+                .proj
+                .update(extent.width as u16, extent.height as u16);
+            cave.render.resize(extent, device);
+        }
     }
 
     fn reload(&mut self, device: &wgpu::Device) {
@@ -1667,6 +1829,9 @@ impl Application for Game {
         let mut leave_escave = false;
         let mut sync_slots = false;
         if let Some(visit) = self.screen.visit() {
+            let selected_id = self.escave_selected.clone();
+            let spin = selected_id.as_ref().and_then(|id| self.spin_meshes.get(id));
+            let see_through = self.cave.is_some();
             let action = escave::draw_interior(
                 context,
                 visit,
@@ -1675,6 +1840,8 @@ impl Application for Game {
                 self.life.beebs,
                 self.escave_note.as_deref(),
                 &mut self.escave_selected,
+                spin,
+                see_through,
             );
             if let Some(visit) = self.screen.visit_mut() {
                 let (note, slots) = action.apply(
@@ -1998,6 +2165,32 @@ impl Application for Game {
         queue: &wgpu::Queue,
         targets: ScreenTargets,
     ) -> wgpu::CommandBuffer {
+        if let Some(name) = self.screen.cave_name().map(str::to_string) {
+            self.ensure_cave(&name, device, queue, targets.extent);
+        }
+        if self.screen.visit().is_some()
+            && let Some(ref mut cave) = self.cave
+        {
+            self.batcher.clear();
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Escave"),
+            });
+            cave.render
+                .set_local_light(cave.target, 280.0, [1.0, 0.82, 0.52]);
+            cave.render.draw_world(
+                &mut encoder,
+                &mut self.batcher,
+                &cave.level,
+                &cave.cam,
+                targets,
+                None,
+                device,
+                queue,
+                None,
+            );
+            return encoder.finish();
+        }
+
         let clipper = Clipper::new(&self.cam);
         self.batcher.clear();
         {

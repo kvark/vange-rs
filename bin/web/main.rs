@@ -726,7 +726,7 @@ impl WebApp {
             space_held: false,
             ride: None,
             bug,
-            inventory: escave::Inventory::default(),
+            inventory: escave::Inventory::for_car("OxidizeMonk"),
             shop: escave::Shop::fostral(),
             screen: escave::Screen::new(),
             approach_cam: None,
@@ -746,6 +746,8 @@ impl WebApp {
                 self.life.beebs,
                 self.escave_note.as_deref(),
                 &mut self.escave_selected,
+                None,
+                false,
             );
             if let Some(visit) = self.screen.visit_mut() {
                 let (note, _slots) = action.apply(
@@ -882,22 +884,6 @@ impl WebApp {
         }
     }
 
-    fn collect_entrances(&self) -> Vec<escave::Entrance> {
-        self.moving
-            .triggers
-            .sensors
-            .iter()
-            .filter_map(|sensor| {
-                escave::Entrance::from_sensor(
-                    sensor.kind,
-                    &sensor.name,
-                    (sensor.pos.0, sensor.pos.1),
-                    sensor.radius,
-                )
-            })
-            .collect()
-    }
-
     fn start_enter(&mut self, name: String, dest: glam::Vec3) {
         if self.screen.blocks_drive() {
             return;
@@ -909,14 +895,18 @@ impl WebApp {
     }
 
     fn step_screen(&mut self, delta: f32) {
-        let had_visit = self.screen.visit().is_some();
+        let leaving = !self.screen.is_world();
+        let had_interior = self.screen.visit().is_some();
         self.screen.step(delta, &self.data_path);
         if let Some(blend) = self.screen.camera_blend()
             && let Some((start, dest)) = self.approach_cam
         {
             self.cam.loc = start.lerp(dest, blend);
         }
-        if had_visit && self.screen.is_world() {
+        if had_interior && self.screen.visit().is_none() {
+            self.eject_from_escave();
+        }
+        if leaving && self.screen.is_world() {
             self.approach_cam = None;
         }
     }
@@ -937,11 +927,57 @@ impl WebApp {
         let at = (pos.x as i32, pos.y as i32, pos.z as i32);
         self.moving.use_at(at, radius, self.level.size);
         self.moving.triggers.touch(at, radius, self.level.size);
-        let pads = self.collect_entrances();
-        if let Some(pad) = escave::nearest_entrance(&pads, (pos.x as i32, pos.y as i32)) {
-            let dest = glam::Vec3::new(pad.pos.0 as f32, pad.pos.1 as f32, pos.z - 24.0);
-            self.start_enter(pad.name.clone(), dest);
+    }
+
+    fn try_begin_escave_visit(&mut self) {
+        if !self.screen.is_world() || self.ride.is_some() {
+            return;
         }
+        let Some(ref agent) = self.agent else {
+            return;
+        };
+        if agent.dynamo.linear_velocity.z > 10.0 {
+            return;
+        }
+        let pos = agent.transform.disp;
+        let radius = (agent.phys_data.bbox.radius * agent.car.scale) as i32;
+        let Some(arrival) = self.moving.triggers.escave_arrival_at(
+            (pos.x as i32, pos.y as i32, pos.z as i32),
+            radius,
+            self.level.size,
+        ) else {
+            return;
+        };
+        self.start_enter(
+            arrival.name,
+            glam::Vec3::new(arrival.pos.0 as f32, arrival.pos.1 as f32, pos.z),
+        );
+    }
+
+    fn eject_from_escave(&mut self) {
+        let Some(ref mut agent) = self.agent else {
+            return;
+        };
+        let pos = agent.transform.disp;
+        let radius = (agent.phys_data.bbox.radius * agent.car.scale) as i32 + 96;
+        let at = (pos.x as i32, pos.y as i32, pos.z as i32);
+        let size = self.level.size;
+        self.moving.close_doors_at(at, radius, size);
+        let kick = self.moving.triggers.impulse_at(at, radius, size);
+        let vel = match kick {
+            Some(k) => {
+                let dir = glam::Vec3::new(
+                    k.direction.0 as f32,
+                    k.direction.1 as f32,
+                    k.direction.2 as f32,
+                );
+                let n = dir.length();
+                let dir = if n < 1e-3 { glam::Vec3::Z } else { dir / n };
+                dir * (k.power as f32).max(24.0)
+            }
+            None => glam::Vec3::new(0.0, 24.0, 80.0),
+        };
+        agent.dynamo.linear_velocity += vel;
     }
 
     fn begin_train_ride(&mut self) -> bool {
@@ -2011,8 +2047,10 @@ impl WebHandler {
             gpu.app.try_use();
         }
         gpu.app.space_held = space;
-        if gpu.app.screen.blocks_drive() {
+        if !gpu.app.screen.is_world() {
             gpu.app.step_screen(dt);
+        }
+        if gpu.app.screen.blocks_drive() {
             if gpu.app.screen.follows_camera()
                 && let Some(ref agent) = gpu.app.agent
             {
@@ -2026,6 +2064,9 @@ impl WebHandler {
             let riding = gpu.app.step_ride(dt);
             if !riding {
                 gpu.app.begin_train_ride();
+            }
+            if gpu.app.ride.is_none() {
+                gpu.app.try_begin_escave_visit();
             }
 
             if gpu.app.agent.is_some() {

@@ -1,14 +1,19 @@
 //! Escave interiors: counselor dialog and the shop counter.
 //!
-//! The original 2.5D iscreen chrome is not here. A visit is a dialog
-//! session plus a shop. The road covers itself with gate shutters, then
-//! this module draws talk and trade on top.
+//! Space opens the hatch. The visit starts after the car falls in, then
+//! shutters cover the road and this module draws talk and trade. Leave
+//! closes the door and kicks the car out.
 
+pub mod cave;
 pub mod dialog;
+pub mod layout;
+pub mod preview;
 pub mod screen;
 pub mod shop;
 
 pub use dialog::{Room, Session, find_room};
+pub use layout::{Cell, Layout};
+pub use preview::{SpinMesh, description_for, display_name, mesh_id};
 pub use screen::{InteriorAction, Screen, draw_interior, draw_shutters};
 pub use shop::{
     BAY_COUNT, DropTarget, GRID_HEIGHT, GRID_WIDTH, Good, Hand, Inventory, Kind, Placed, Preview,

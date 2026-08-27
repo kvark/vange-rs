@@ -1,12 +1,14 @@
 //! In and out of an escave: gate shutters, then talk and trade.
 //!
 //! The original swaps the road for a 2.5D iscreen (`RTO_ESCAVE_ID`) after
-//! `EXTERNAL_MODE_ESCAVE_IN` waits out the gate. We keep the road drawn
-//! underneath, cover it with shutters, and show a two-column interior.
+//! `EXTERNAL_MODE_ESCAVE_IN` waits out the gate. Space opens the hatch;
+//! the visit starts once the car has fallen in. The interior is shop on
+//! the left, the mechos hex on the right, counselor along the bottom.
 
+use super::layout::{Cell, Layout};
+use super::preview::SpinMesh;
 use super::{
-    DropTarget, GRID_HEIGHT, GRID_WIDTH, Good, Hand, Inventory, Kind, Preview, Shop, Visit,
-    drop_held, preview, preview_good,
+    DropTarget, Hand, Inventory, Kind, Preview, Shop, Visit, drop_held, preview, preview_good,
 };
 use std::path::Path;
 
@@ -77,8 +79,14 @@ impl Screen {
     }
 
     /// Car, fauna, and the rest of the road freeze for the visit.
+    /// After the interior hides on the way out, physics runs so the
+    /// impulse can throw the car while the gates are still opening.
     pub fn blocks_drive(&self) -> bool {
-        !self.is_world()
+        match self.phase {
+            Phase::World => false,
+            Phase::Leave { ref visit, .. } => visit.is_some(),
+            Phase::Enter { .. } | Phase::Inside(_) => true,
+        }
     }
 
     /// Chase-camera while the gates open back onto the road, and on the
@@ -96,6 +104,16 @@ impl Screen {
             Phase::World => None,
             Phase::Inside(ref visit) => Some(visit),
             Phase::Enter { ref visit, .. } | Phase::Leave { ref visit, .. } => visit.as_ref(),
+        }
+    }
+
+    /// Escave we are entering or sitting in, for the iscreen map.
+    pub fn cave_name(&self) -> Option<&str> {
+        match self.phase {
+            Phase::Enter { ref name, .. } => Some(name.as_str()),
+            Phase::Inside(ref visit) => Some(visit.name.as_str()),
+            Phase::Leave { ref visit, .. } => visit.as_ref().map(|v| v.name.as_str()),
+            Phase::World => None,
         }
     }
 
@@ -342,18 +360,29 @@ pub fn draw_interior(
     beebs: i32,
     note: Option<&str>,
     selected: &mut Option<String>,
+    spin: Option<&SpinMesh>,
+    see_through: bool,
 ) -> InteriorAction {
     let mut action = InteriorAction::default();
     let rect = ctx.content_rect();
+    let veil = if see_through {
+        egui::Color32::from_rgba_unmultiplied(8, 6, 4, 70)
+    } else {
+        BG
+    };
+    let panel = if see_through {
+        egui::Color32::from_rgba_unmultiplied(36, 26, 16, 210)
+    } else {
+        PANEL
+    };
     egui::Area::new(egui::Id::new("escave-interior"))
         .fixed_pos(rect.left_top())
         .order(egui::Order::Middle)
         .show(ctx, |ui| {
-            ui.painter().rect_filled(rect, 0.0, BG);
+            ui.painter().rect_filled(rect, 0.0, veil);
             ui.set_min_size(rect.size());
             egui::Frame::new()
-                .fill(BG)
-                .inner_margin(egui::Margin::same(18))
+                .inner_margin(egui::Margin::same(16))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
                     ui.horizontal(|ui| {
@@ -372,21 +401,28 @@ pub fn draw_interior(
                     if let Some(note) = note {
                         ui.label(rich(note, MUTED));
                     }
-                    ui.add_space(6.0);
+                    ui.add_space(4.0);
                     ui.columns(2, |cols| {
                         egui::Frame::new()
-                            .fill(PANEL)
-                            .inner_margin(egui::Margin::same(12))
+                            .fill(panel)
+                            .inner_margin(egui::Margin::same(10))
                             .show(&mut cols[0], |ui| {
-                                draw_talk(ui, visit, &mut action);
+                                draw_shop(ui, shop, inventory, selected, spin, &mut action);
                             });
                         egui::Frame::new()
-                            .fill(PANEL)
-                            .inner_margin(egui::Margin::same(12))
+                            .fill(panel)
+                            .inner_margin(egui::Margin::same(10))
                             .show(&mut cols[1], |ui| {
-                                draw_shop(ui, shop, inventory, selected, &mut action);
+                                draw_mechos(ui, inventory, selected, &mut action);
                             });
                     });
+                    ui.add_space(6.0);
+                    egui::Frame::new()
+                        .fill(panel)
+                        .inner_margin(egui::Margin::same(10))
+                        .show(ui, |ui| {
+                            draw_talk(ui, visit, &mut action);
+                        });
                 });
         });
     action
@@ -405,7 +441,7 @@ fn draw_talk(ui: &mut egui::Ui, visit: &Visit, action: &mut InteriorAction) {
     };
     let phrase = session.last_phrase().unwrap_or("");
     egui::ScrollArea::vertical()
-        .max_height(220.0)
+        .max_height(140.0)
         .id_salt("escave-phrase")
         .show(ui, |ui| {
             ui.add(
@@ -433,20 +469,23 @@ fn draw_talk(ui: &mut egui::Ui, visit: &Visit, action: &mut InteriorAction) {
     });
 }
 
-const CELL: f32 = 28.0;
+const CELL: f32 = 22.0;
 const CELL_EMPTY: egui::Color32 = egui::Color32::from_rgb(24, 18, 12);
 const CELL_FULL: egui::Color32 = egui::Color32::from_rgb(72, 52, 28);
+const CELL_BAY: egui::Color32 = egui::Color32::from_rgb(48, 36, 22);
+const CELL_DEAD: egui::Color32 = egui::Color32::from_rgb(12, 9, 6);
 
 fn draw_shop(
     ui: &mut egui::Ui,
     shop: &Shop,
     inventory: &Inventory,
     selected: &mut Option<String>,
+    spin: Option<&SpinMesh>,
     action: &mut InteriorAction,
 ) {
     ui.label(rich("Shop", ACCENT).size(16.0));
     ui.label(rich(
-        "Drag a ware onto cargo to buy. Drag cargo here to sell.",
+        "Drag a ware onto the mechos to buy. Drag cargo here to sell.",
         MUTED,
     ));
     ui.add_space(4.0);
@@ -469,7 +508,7 @@ fn draw_shop(
                     let marked = selected.as_deref() == Some(good.id.as_str());
                     let color = if marked { ACCENT } else { INK };
                     ui.label(rich(
-                        format!("{} ({kind})  {} beebs", good.id, good.buy_price),
+                        format!("{} ({kind})  {} beebs", good.display_name(), good.buy_price),
                         color,
                     ));
                 })
@@ -485,112 +524,138 @@ fn draw_shop(
     }
 
     ui.add_space(10.0);
-    ui.label(rich("Cargo", ACCENT));
-    draw_cargo_grid(ui, inventory, selected, action);
-
-    ui.add_space(10.0);
-    ui.label(rich("Bays", ACCENT));
-    ui.horizontal(|ui| {
-        for (i, slot) in inventory.bays().iter().enumerate() {
-            draw_bay_slot(ui, i, slot.as_ref(), selected, action);
-        }
-    });
-
-    ui.add_space(10.0);
-    draw_preview(ui, shop, inventory, selected.as_deref());
+    draw_preview(ui, shop, inventory, selected.as_deref(), spin);
 }
 
-fn draw_cargo_grid(
+fn draw_mechos(
     ui: &mut egui::Ui,
     inventory: &Inventory,
     selected: &mut Option<String>,
     action: &mut InteriorAction,
 ) {
+    ui.label(rich("Mechos", ACCENT).size(16.0));
+    ui.label(rich("Hex board of this vehicle.", MUTED));
+    ui.add_space(4.0);
+    let layout = inventory.layout();
     let cell_size = egui::vec2(CELL, CELL);
-    for y in 0..GRID_HEIGHT {
+    for y in 0..layout.height {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
-            for x in 0..GRID_WIDTH {
-                let origin = (x, y);
-                let occupant = inventory.occupant(origin);
-                let is_origin = occupant.is_some_and(|(_, p)| p.origin == origin);
-                let fill = if occupant.is_some() {
-                    CELL_FULL
-                } else {
-                    CELL_EMPTY
-                };
-                let frame = egui::Frame::new().inner_margin(egui::Margin::same(1));
-                let (inner, dropped) = ui.dnd_drop_zone::<Hand, ()>(frame, |ui| {
-                    let (rect, _) = ui.allocate_exact_size(cell_size, egui::Sense::hover());
-                    ui.painter().rect_filled(rect, 2.0, fill);
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                        if let Some((index, placed)) = occupant {
-                            let payload = Hand::Cargo { index };
-                            let id = egui::Id::new(("cargo-cell", x, y, index));
-                            let response = ui
-                                .dnd_drag_source(id, payload, |ui| {
-                                    if is_origin {
-                                        let marked =
-                                            selected.as_deref() == Some(placed.good.id.as_str());
-                                        let color = if marked { ACCENT } else { INK };
-                                        ui.label(rich(short_id(&placed.good.id), color).small());
-                                    }
-                                })
-                                .response;
-                            if response.clicked() {
-                                *selected = Some(placed.good.id.clone());
-                            }
-                        }
-                    });
-                });
-                let _ = inner;
-                if let Some(hand) = dropped.as_deref() {
-                    action.drop = Some((hand.clone(), DropTarget::Cargo { origin }));
-                }
+            if Layout::row_offset(y) {
+                ui.add_space(CELL * 0.5);
+            }
+            for x in 0..layout.width {
+                draw_board_cell(
+                    ui,
+                    inventory,
+                    layout.cell(x, y),
+                    (x, y),
+                    cell_size,
+                    selected,
+                    action,
+                );
             }
         });
     }
 }
 
-fn draw_bay_slot(
+fn draw_board_cell(
     ui: &mut egui::Ui,
-    index: usize,
-    good: Option<&Good>,
+    inventory: &Inventory,
+    cell: Cell,
+    origin: (i32, i32),
+    cell_size: egui::Vec2,
     selected: &mut Option<String>,
     action: &mut InteriorAction,
 ) {
-    let frame = egui::Frame::new()
-        .fill(CELL_EMPTY)
-        .inner_margin(egui::Margin::same(6));
-    let (inner, dropped) = ui.dnd_drop_zone::<Hand, ()>(frame, |ui| {
-        ui.set_min_width(90.0);
-        match good {
-            Some(good) => {
-                let payload = Hand::Bay { index };
-                let id = egui::Id::new(("bay", index));
-                let response = ui
-                    .dnd_drag_source(id, payload, |ui| {
-                        let marked = selected.as_deref() == Some(good.id.as_str());
-                        let color = if marked { ACCENT } else { INK };
-                        ui.label(rich(format!("Bay {index}: {}", good.id), color));
-                    })
-                    .response;
-                if response.clicked() {
-                    *selected = Some(good.id.clone());
-                }
-            }
-            None => {
-                ui.label(rich(format!("Bay {index}: empty"), MUTED));
+    match cell {
+        Cell::Empty => {
+            let (rect, _) = ui.allocate_exact_size(cell_size, egui::Sense::hover());
+            ui.painter().rect_filled(rect, 2.0, CELL_DEAD);
+        }
+        Cell::Cargo => {
+            let occupant = inventory.occupant(origin);
+            let is_origin = occupant.is_some_and(|(_, p)| p.origin == origin);
+            let fill = if occupant.is_some() {
+                CELL_FULL
+            } else {
+                CELL_EMPTY
+            };
+            let frame = egui::Frame::new().inner_margin(egui::Margin::same(1));
+            let (inner, dropped) = ui.dnd_drop_zone::<Hand, ()>(frame, |ui| {
+                let (rect, _) = ui.allocate_exact_size(cell_size, egui::Sense::hover());
+                ui.painter().rect_filled(rect, 2.0, fill);
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                    if let Some((index, placed)) = occupant {
+                        let payload = Hand::Cargo { index };
+                        let id = egui::Id::new(("cargo-cell", origin.0, origin.1, index));
+                        let response = ui
+                            .dnd_drag_source(id, payload, |ui| {
+                                if is_origin {
+                                    let marked =
+                                        selected.as_deref() == Some(placed.good.id.as_str());
+                                    let color = if marked { ACCENT } else { INK };
+                                    ui.label(
+                                        rich(short_id(placed.good.display_name()), color).small(),
+                                    );
+                                }
+                            })
+                            .response;
+                        if response.clicked() {
+                            *selected = Some(placed.good.id.clone());
+                        }
+                    }
+                });
+            });
+            let _ = inner;
+            if let Some(hand) = dropped.as_deref() {
+                action.drop = Some((hand.clone(), DropTarget::Cargo { origin }));
             }
         }
-    });
-    let _ = inner;
-    if let Some(hand) = dropped.as_deref() {
-        action.drop = Some((hand.clone(), DropTarget::Bay { index }));
+        Cell::Bay(index) => {
+            let good = inventory.bay(index);
+            let fill = if good.is_some() { CELL_FULL } else { CELL_BAY };
+            let frame = egui::Frame::new()
+                .fill(fill)
+                .inner_margin(egui::Margin::same(1));
+            let (inner, dropped) = ui.dnd_drop_zone::<Hand, ()>(frame, |ui| {
+                let (rect, _) = ui.allocate_exact_size(cell_size, egui::Sense::hover());
+                ui.painter().rect_filled(rect, 2.0, fill);
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| match good {
+                    Some(good) => {
+                        let payload = Hand::Bay { index };
+                        let id = egui::Id::new(("bay-cell", origin.0, origin.1, index));
+                        let response = ui
+                            .dnd_drag_source(id, payload, |ui| {
+                                let marked = selected.as_deref() == Some(good.id.as_str());
+                                let color = if marked { ACCENT } else { INK };
+                                ui.label(rich(short_id(good.display_name()), color).small());
+                            })
+                            .response;
+                        if response.clicked() {
+                            *selected = Some(good.id.clone());
+                        }
+                    }
+                    None => {
+                        ui.label(rich(format!("W{index}"), MUTED).small());
+                    }
+                });
+            });
+            let _ = inner;
+            if let Some(hand) = dropped.as_deref() {
+                action.drop = Some((hand.clone(), DropTarget::Bay { index }));
+            }
+        }
     }
 }
 
-fn draw_preview(ui: &mut egui::Ui, shop: &Shop, inventory: &Inventory, selected: Option<&str>) {
+fn draw_preview(
+    ui: &mut egui::Ui,
+    shop: &Shop,
+    inventory: &Inventory,
+    selected: Option<&str>,
+    spin: Option<&SpinMesh>,
+) {
     ui.label(rich("Preview", ACCENT));
     let Some(id) = selected else {
         ui.label(rich("Select a ware to see its stats.", MUTED));
@@ -620,6 +685,7 @@ fn draw_preview(ui: &mut egui::Ui, shop: &Shop, inventory: &Inventory, selected:
             Some(p) => p,
             None => Preview {
                 id: id.to_string(),
+                name: id.to_string(),
                 kind: Kind::Ware,
                 buy_price: 0,
                 sell_price: 0,
@@ -632,11 +698,20 @@ fn draw_preview(ui: &mut egui::Ui, shop: &Shop, inventory: &Inventory, selected:
     } else {
         "ware"
     };
-    ui.label(rich(format!("{} ({kind})", stats.id), INK));
+    ui.label(rich(format!("{} ({kind})", stats.name), INK));
     ui.label(rich(
         format!("Buy {}   Sell {}", stats.buy_price, stats.sell_price),
         MUTED,
     ));
+    if let Some(mesh) = spin {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(180.0, 140.0), egui::Sense::hover());
+        ui.painter()
+            .rect_filled(rect, 4.0, egui::Color32::from_rgb(20, 14, 10));
+        let angle = ui.input(|i| i.time) as f32;
+        let painter = ui.painter();
+        mesh.paint(painter, rect, angle, ACCENT);
+        ui.ctx().request_repaint();
+    }
     if stats.description.is_empty() {
         ui.label(rich("No description.", MUTED));
     } else {
@@ -706,6 +781,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cave_name_tracks_the_visit() {
+        let mut screen = Screen::new();
+        assert!(screen.cave_name().is_none());
+        screen.begin_enter("Podish".into());
+        assert_eq!(screen.cave_name(), Some("Podish"));
+        screen.step(ENTER_SECS + 0.05, Path::new("."));
+        assert_eq!(screen.cave_name(), Some("Podish"));
+    }
+
+    #[test]
     fn entering_closes_the_gates_then_opens_the_interior() {
         let mut screen = Screen::new();
         screen.begin_enter("Podish".into());
@@ -732,7 +817,13 @@ mod tests {
         assert!(screen.visit().is_some());
         screen.begin_leave();
         assert!(screen.blocks_drive());
-        screen.step(LEAVE_SECS + 0.05, Path::new("."));
+        screen.step(LEAVE_SECS * 0.50, Path::new("."));
+        assert!(
+            !screen.blocks_drive(),
+            "car must be free to fly out while the gates open"
+        );
+        assert!(!screen.is_world());
+        screen.step(LEAVE_SECS, Path::new("."));
         assert!(screen.is_world());
         assert_eq!(screen.shutter(), 0.0);
     }

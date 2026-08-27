@@ -1,8 +1,8 @@
-//! Buy and sell against beeb credits, on a 2D cargo grid.
+//! Buy and sell against beeb credits, on a mechos board.
 //!
 //! Names of the default wares come from `actintItemTypes` (Nymbos, Phlegma,
 //! and the other Fostral trade goods). Weapon ids match `game.lst`.
-//! Occupancy is a rectangular tetris pack, not the original hex cells.
+//! Occupancy follows the vehicle's hex `invMatrix`; tests use a full pack.
 
 /// Whether a good is trade cargo or a gun that can go in a weapon bay.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -11,9 +11,12 @@ pub enum Kind {
     Weapon,
 }
 
-/// Cargo pack size, in cells.
-pub const GRID_WIDTH: i32 = 8;
-pub const GRID_HEIGHT: i32 = 6;
+use super::layout::{Layout, PACK_HEIGHT, PACK_WIDTH};
+use super::preview::{description_for, display_name, mesh_id};
+
+/// Cargo pack size, in cells. Tests and a nameless pack use this.
+pub const GRID_WIDTH: i32 = PACK_WIDTH;
+pub const GRID_HEIGHT: i32 = PACK_HEIGHT;
 
 /// One kind of good, with the prices a shop will honour and the cells
 /// it covers when placed.
@@ -65,6 +68,15 @@ impl Good {
     pub fn shape(&self) -> &[(i32, i32)] {
         &self.shape
     }
+
+    pub fn display_name(&self) -> &str {
+        display_name(&self.id)
+    }
+
+    /// `game.lst` NameID for the 3D model.
+    pub fn mesh_id(&self) -> &str {
+        mesh_id(&self.id)
+    }
 }
 
 fn default_shape(id: &str, kind: Kind) -> Vec<(i32, i32)> {
@@ -98,13 +110,36 @@ impl Placed {
 
 /// What the player is carrying. Cargo is the pack; bays are the guns
 /// mounted on the vehicle.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Inventory {
+    layout: Layout,
     cargo: Vec<Placed>,
     bays: [Option<Good>; BAY_COUNT],
 }
 
+impl Default for Inventory {
+    fn default() -> Self {
+        Inventory {
+            layout: Layout::pack(),
+            cargo: Vec::new(),
+            bays: Default::default(),
+        }
+    }
+}
+
 impl Inventory {
+    pub fn for_car(name: &str) -> Self {
+        Inventory {
+            layout: Layout::for_car(name),
+            cargo: Vec::new(),
+            bays: Default::default(),
+        }
+    }
+
+    pub fn layout(&self) -> &Layout {
+        &self.layout
+    }
+
     pub fn cargo(&self) -> &[Placed] {
         &self.cargo
     }
@@ -145,10 +180,7 @@ impl Inventory {
 
     /// Which placed good owns `cell`, if any.
     pub fn occupant(&self, cell: (i32, i32)) -> Option<(usize, &Placed)> {
-        self.cargo
-            .iter()
-            .enumerate()
-            .find(|&(_, p)| p.covers(cell))
+        self.cargo.iter().enumerate().find(|&(_, p)| p.covers(cell))
     }
 
     /// True when every cell of `shape` at `origin` is on the grid and
@@ -163,7 +195,7 @@ impl Inventory {
         for &(dx, dy) in shape {
             let x = origin.0 + dx;
             let y = origin.1 + dy;
-            if x < 0 || y < 0 || x >= GRID_WIDTH || y >= GRID_HEIGHT {
+            if !self.layout.is_cargo(x, y) {
                 return false;
             }
             if let Some((i, _)) = self.occupant((x, y))
@@ -176,8 +208,8 @@ impl Inventory {
     }
 
     pub fn first_fit(&self, shape: &[(i32, i32)]) -> Option<(i32, i32)> {
-        for y in 0..GRID_HEIGHT {
-            for x in 0..GRID_WIDTH {
+        for y in 0..self.layout.height {
+            for x in 0..self.layout.width {
                 if self.check_fit(shape, (x, y), None) {
                     return Some((x, y));
                 }
@@ -357,6 +389,7 @@ pub enum DropTarget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Preview {
     pub id: String,
+    pub name: String,
     pub kind: Kind,
     pub buy_price: i32,
     pub sell_price: i32,
@@ -366,6 +399,7 @@ pub struct Preview {
 pub fn preview_good(good: &Good) -> Preview {
     Preview {
         id: good.id.clone(),
+        name: display_name(&good.id).to_string(),
         kind: good.kind,
         buy_price: good.buy_price,
         sell_price: good.sell_price,
@@ -380,20 +414,6 @@ pub fn preview(id: &str) -> Option<Preview> {
         .iter()
         .find(|g| g.id == id)
         .map(preview_good)
-}
-
-fn description_for(id: &str) -> &'static str {
-    match id {
-        "Nymbos" => "Eleepod spawn. Living cargo the belts still pay for.",
-        "Phlegma" => "Thick bios jelly. Sticky, valuable, and slightly aware.",
-        "Heroin" => "A distilled cycle extract. High price, short fuse.",
-        "Shrub" => "A rooted bios clump. Grows if you leave it alone.",
-        "Poponka" => "A dense fruiting body. Heavy, and it wants a square of pack.",
-        "Toxick" => "Bitter residue from a spent cycle. Handle through the crate.",
-        "LightLaser" => "A light energy gun. Two cells in the pack, one bay on the hull.",
-        "LightMissile" => "A short missile rack. Three cells long until it is mounted.",
-        _ => "A trade good from the belts.",
-    }
 }
 
 impl Shop {
@@ -875,13 +895,25 @@ mod tests {
     fn nymbos_preview_has_price_kind_and_description() {
         let p = preview("Nymbos").expect("Nymbos is a Fostral ware");
         assert_eq!(p.id, "Nymbos");
+        assert_eq!(p.name, "Nymbos");
         assert_eq!(p.kind, Kind::Ware);
         assert_eq!(p.buy_price, 12);
         assert_eq!(p.sell_price, 6);
-        assert!(!p.description.is_empty(), "description must be non-empty");
+        assert_eq!(p.description, "Some eleepods' stuff from Podish");
         let live = preview_good(&Good::new("Nymbos", 12, 6));
         assert_eq!(live.kind, p.kind);
         assert_eq!(live.buy_price, p.buy_price);
-        assert!(!live.description.is_empty());
+        assert_eq!(live.description, p.description);
+        let gun = preview("LightLaser").unwrap();
+        assert_eq!(gun.name, "MacHOTine Gun");
+    }
+
+    #[test]
+    fn oxidize_monk_cargo_sits_on_the_mechos_not_the_corner() {
+        let mut inv = Inventory::for_car("OxidizeMonk");
+        assert!(!inv.check_fit(&[(0, 0)], (0, 0), None));
+        inv.place(nymbos(), (3, 7)).unwrap();
+        assert_eq!(inv.cargo()[0].origin, (3, 7));
+        assert_eq!(inv.first_fit(&[(0, 0)]), Some((2, 7)));
     }
 }
