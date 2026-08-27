@@ -5,7 +5,6 @@ use crate::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt as _;
 
 use std::{collections::HashMap, io::Error as IoError, mem, ops::Range, sync::Arc};
 
@@ -332,17 +331,24 @@ impl Batcher {
         }
     }
 
-    pub fn prepare(&mut self, device: &wgpu::Device) {
+    pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         for array in self.instances.values_mut() {
-            if !array.data.is_empty() {
-                array.buffer = Some(
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("instance"),
-                        contents: bytemuck::cast_slice(&array.data),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    }),
-                );
+            if array.data.is_empty() {
+                continue;
             }
+            let bytes = bytemuck::cast_slice(&array.data);
+            let need = bytes.len() as u64;
+            let have = array.buffer.as_ref().map(|b| b.size()).unwrap_or(0);
+            if have < need {
+                let size = grow_buffer_bytes(have, need);
+                array.buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("instance"),
+                    size,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
+            }
+            queue.write_buffer(array.buffer.as_ref().unwrap(), 0, bytes);
         }
     }
 
@@ -363,10 +369,29 @@ impl Batcher {
     pub fn clear(&mut self) {
         for array in self.instances.values_mut() {
             array.data.clear();
-            array.buffer = None;
         }
         self.debug_shapes.clear();
         self.debug_instances.clear();
+    }
+}
+
+/// Next GPU buffer size: keep slack, grow by powers of two.
+pub(crate) fn grow_buffer_bytes(current: u64, needed: u64) -> u64 {
+    if needed <= current {
+        current
+    } else {
+        needed.next_power_of_two().max(256)
+    }
+}
+
+#[cfg(test)]
+mod buffer_tests {
+    #[test]
+    fn gpu_storage_grows_in_powers_of_two_and_keeps_slack() {
+        assert_eq!(super::grow_buffer_bytes(0, 10), 256);
+        assert_eq!(super::grow_buffer_bytes(256, 10), 256);
+        assert_eq!(super::grow_buffer_bytes(256, 257), 512);
+        assert_eq!(super::grow_buffer_bytes(1024, 1024), 1024);
     }
 }
 
@@ -616,7 +641,7 @@ impl Render {
         lines: Option<&debug::LineBuffer>,
     ) {
         profiling::scope!("draw_world");
-        batcher.prepare(device);
+        batcher.prepare(device, queue);
         self.terrain.update_dirty(encoder, level, device, queue);
 
         //TODO: common routine for draw passes
@@ -752,7 +777,7 @@ impl Render {
                 && !lines.is_empty()
             {
                 pass.push_debug_group("particles");
-                self.debug.draw_lines(&mut pass, device, lines);
+                self.debug.draw_lines(&mut pass, device, queue, lines);
                 pass.pop_debug_group();
             }
         }

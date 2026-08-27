@@ -191,7 +191,7 @@ impl Application for ResourceView {
         };
         let mut batcher = render::Batcher::new();
         batcher.add_model(&self.model, &self.transform, bound, color);
-        batcher.prepare(device);
+        batcher.prepare(device, _queue);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Draw"),

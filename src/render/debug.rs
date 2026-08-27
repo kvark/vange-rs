@@ -343,23 +343,40 @@ impl Context {
         &'a mut self,
         pass: &mut wgpu::RenderPass<'a>,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         linebuf: &LineBuffer,
     ) {
-        self.vertex_buf = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("debug-vertices"),
-                contents: bytemuck::cast_slice(&linebuf.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            }),
-        );
-        self.color_buf = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("debug-colors"),
-                contents: bytemuck::cast_slice(&linebuf.colors),
-                usage: wgpu::BufferUsages::VERTEX,
-            }),
-        );
         assert_eq!(linebuf.vertices.len(), linebuf.colors.len());
+        if linebuf.is_empty() {
+            return;
+        }
+        let n = linebuf.vertices.len();
+        let v_bytes = bytemuck::cast_slice(&linebuf.vertices);
+        let c_bytes = bytemuck::cast_slice(&linebuf.colors);
+        let v_need = v_bytes.len() as u64;
+        let c_need = c_bytes.len() as u64;
+        let v_have = self.vertex_buf.as_ref().map(|b| b.size()).unwrap_or(0);
+        if v_have < v_need {
+            let v_size = super::grow_buffer_bytes(v_have, v_need);
+            let c_size = super::grow_buffer_bytes(
+                self.color_buf.as_ref().map(|b| b.size()).unwrap_or(0),
+                c_need,
+            );
+            self.vertex_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("debug-vertices"),
+                size: v_size,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.color_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("debug-colors"),
+                size: c_size,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+        queue.write_buffer(self.vertex_buf.as_ref().unwrap(), 0, v_bytes);
+        queue.write_buffer(self.color_buf.as_ref().unwrap(), 0, c_bytes);
 
         pass.set_bind_group(1, &self.bind_group_line, &[]);
         self.draw_liner(
@@ -367,7 +384,7 @@ impl Context {
             self.vertex_buf.as_ref().unwrap(),
             self.color_buf.as_ref().unwrap(),
             wgpu::VertexStepMode::Vertex,
-            linebuf.vertices.len(),
+            n,
             particle_line_visibilities(),
         );
     }
