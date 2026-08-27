@@ -663,7 +663,8 @@ impl Game {
         player_agent.spirit = Spirit::Player;
 
         let shop = escave::Shop::fostral();
-        let mut inventory = escave::Inventory::for_car(&settings.car.id);
+        let boards = escave::Catalog::load(&settings.data_path);
+        let mut inventory = escave::Inventory::for_car(&settings.car.id, &boards);
         for (i, sid) in settings
             .car
             .slots
