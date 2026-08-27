@@ -726,7 +726,19 @@ impl WebApp {
             space_held: false,
             ride: None,
             bug,
-            inventory: escave::Inventory::for_car("OxidizeMonk"),
+            inventory: {
+                let boards = vfs
+                    .and_then(|v| {
+                        let a = v.read("actint/actint.inc")?;
+                        let n = v.read("actint/a_str.inc")?;
+                        Some(escave::Catalog::parse(
+                            &String::from_utf8_lossy(&a),
+                            &String::from_utf8_lossy(&n),
+                        ))
+                    })
+                    .unwrap_or_else(|| escave::Catalog::load(&settings.data_path));
+                escave::Inventory::for_car(&settings.car.id, &boards)
+            },
             shop: escave::Shop::fostral(),
             screen: escave::Screen::new(),
             approach_cam: None,

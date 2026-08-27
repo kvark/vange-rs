@@ -12,7 +12,7 @@ pub mod screen;
 pub mod shop;
 
 pub use dialog::{Room, Session, find_room};
-pub use layout::{Cell, Layout};
+pub use layout::{Catalog, Cell, Layout};
 pub use preview::{SpinMesh, description_for, display_name, mesh_id};
 pub use screen::{InteriorAction, Screen, draw_interior, draw_shutters};
 pub use shop::{

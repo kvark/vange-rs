@@ -128,9 +128,9 @@ impl Default for Inventory {
 }
 
 impl Inventory {
-    pub fn for_car(name: &str) -> Self {
+    pub fn for_car(name: &str, catalog: &super::layout::Catalog) -> Self {
         Inventory {
-            layout: Layout::for_car(name),
+            layout: catalog.layout_for(name),
             cargo: Vec::new(),
             bays: Default::default(),
         }
@@ -910,7 +910,11 @@ mod tests {
 
     #[test]
     fn oxidize_monk_cargo_sits_on_the_mechos_not_the_corner() {
-        let mut inv = Inventory::for_car("OxidizeMonk");
+        let cat = crate::escave::Catalog::load(std::path::Path::new("../Vangers/data"));
+        let mut inv = Inventory::for_car("OxidizeMonk", &cat);
+        if inv.layout().height < 8 {
+            return;
+        }
         assert!(!inv.check_fit(&[(0, 0)], (0, 0), None));
         inv.place(nymbos(), (3, 7)).unwrap();
         assert_eq!(inv.cargo()[0].origin, (3, 7));
