@@ -929,7 +929,6 @@ fn refine_bounded(
 
     let mut added = false;
     let mut insertions = 0;
-    let mut candidates_refreshed = !refresh_candidates;
 
     // Border vertices first. Both chunks sharing a border derive the same
     // set from the same samples, so the seam matches exactly - and because
@@ -993,18 +992,13 @@ fn refine_bounded(
         if present[i] {
             continue;
         }
-        if insertions == insertion_budget {
-            return RefineOutcome {
-                added,
-                converged: false,
-                candidates_refreshed,
-            };
-        }
+        // Border insertions are not budgeted. A yielded fit that has only
+        // half the shared edge is a visible crack against a neighbour that
+        // already finished; the interior can wait, the seam cannot.
         let seed = chunk.locate(grid, grid.coord(gi), 0);
         // A border insertion rewrites triangles, so their candidates have to
         // be recomputed whether or not an edit reached them.
         added = true;
-        insertions += 1;
         for slot in chunk.insert(grid, gi, seed) {
             chunk.compute_candidate(grid, slot);
         }
@@ -1054,7 +1048,7 @@ fn refine_bounded(
             chunk.compute_candidate(grid, t);
         }
     }
-    candidates_refreshed = true;
+    let candidates_refreshed = true;
     let mut heap = BinaryHeap::new();
     for (t, tri) in chunk.tris.iter().enumerate() {
         if tri.alive && tri.cand != NONE {
@@ -1081,7 +1075,7 @@ fn refine_bounded(
             }
         }
         let cand = chunk.tris[t as usize].cand;
-        if insertions == insertion_budget {
+        if insertions >= insertion_budget {
             return RefineOutcome {
                 added,
                 converged: false,
@@ -1215,8 +1209,10 @@ impl ChunkBuffers {
     }
 
     /// Pack each completed initial-build LOD once, and point unfinished
-    /// detail levels at the nearest completed coarser TIN. Before the first
-    /// completion they all point at the two-triangle seed.
+    /// detail levels at the nearest completed coarser TIN. An in-progress
+    /// fit that already holds its shared-edge vertices is drawn in place of
+    /// the two-triangle seed, so a neighbour that finished first does not
+    /// open a crack along the tile border.
     fn initial(state: &ChunkState, grid: &Grid) -> Self {
         let mut out = Self::seed(state);
         out.vertices.clear();
@@ -1224,9 +1220,7 @@ impl ChunkBuffers {
         out.lods.clear();
         let mut ranges = [None; LOD_COUNT + 1];
         for requested in 0..LOD_COUNT {
-            let source = (requested..LOD_COUNT)
-                .find(|&k| state.built_lods & (1u8 << k) != 0)
-                .unwrap_or(LOD_COUNT);
+            let source = state.draw_source_lod(requested).unwrap_or(LOD_COUNT);
             let range = match ranges[source] {
                 Some(range) => range,
                 None => {
@@ -1296,6 +1290,20 @@ struct ChunkState {
     /// Initial LOD fit being resumed across web frames.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     building_lod: Option<u8>,
+}
+
+impl ChunkState {
+    /// Which triangulation to draw for `requested` (0 = finest). Prefers a
+    /// finished LOD, then an in-progress fit that already has more than the
+    /// two-triangle seed - those extra vertices are the shared border.
+    fn draw_source_lod(&self, requested: usize) -> Option<usize> {
+        (requested..LOD_COUNT)
+            .find(|&k| self.built_lods & (1u8 << k) != 0)
+            .or_else(|| {
+                let b = self.building_lod? as usize;
+                (requested <= b && self.lods[b].tri.verts.len() > 4).then_some(b)
+            })
+    }
 }
 
 /// Renderable form of [`Chunk::new`], before a sample grid has been read.
@@ -2082,8 +2090,9 @@ impl Tin {
         }
     }
 
-    /// Resume one initial LOD fit. Returns render buffers only on convergence;
-    /// until then the nearest completed coarser TIN stays on the GPU.
+    /// Resume one initial LOD fit. Returns buffers when a LOD converges, and
+    /// also as soon as the shared border is in so a neighbour that already
+    /// finished can stitch instead of showing a crack against the seed.
     pub fn build_chunk_step(
         &mut self,
         level: &Level,
@@ -2102,48 +2111,54 @@ impl Tin {
             build.index, index,
             "initial TIN build changed chunks mid-fit"
         );
-        let grid = &build.grid;
         let max_error = self.max_error;
-        let state = &mut self.chunks[index];
-        state.alt = grid.alt;
-        let starting_lod = state.building_lod.is_none();
-        let lod_index = state.building_lod.map_or_else(
-            || {
-                let finest = (visible_lods & ((1u8 << LOD_COUNT) - 1)).trailing_zeros();
-                let required = ((1u8 << LOD_COUNT) - 1) & !((1u8 << finest) - 1);
-                (0..LOD_COUNT)
-                    .rev()
-                    .find(|&k| required & !state.built_lods & (1u8 << k) != 0)
-                    .expect("build_chunk_step called without requested work")
-            },
-            usize::from,
-        );
-        state.building_lod = Some(lod_index as u8);
-        if starting_lod {
-            // `refine_bounded` caches each triangle's worst sample. Seed the
-            // two base triangles once so resumed steps do not rescan every
-            // triangle accumulated so far merely to rebuild that cache.
-            for t in 0..state.lods[lod_index].tri.tris.len() as u32 {
-                state.lods[lod_index].tri.compute_candidate(grid, t);
+        let (outcome, publish) = {
+            let grid = &build.grid;
+            let state = &mut self.chunks[index];
+            state.alt = grid.alt;
+            let starting_lod = state.building_lod.is_none();
+            let lod_index = state.building_lod.map_or_else(
+                || {
+                    let finest = (visible_lods & ((1u8 << LOD_COUNT) - 1)).trailing_zeros();
+                    let required = ((1u8 << LOD_COUNT) - 1) & !((1u8 << finest) - 1);
+                    (0..LOD_COUNT)
+                        .rev()
+                        .find(|&k| required & !state.built_lods & (1u8 << k) != 0)
+                        .expect("build_chunk_step called without requested work")
+                },
+                usize::from,
+            );
+            state.building_lod = Some(lod_index as u8);
+            if starting_lod {
+                // `refine_bounded` caches each triangle's worst sample. Seed the
+                // two base triangles once so resumed steps do not rescan every
+                // triangle accumulated so far merely to rebuild that cache.
+                for t in 0..state.lods[lod_index].tri.tris.len() as u32 {
+                    state.lods[lod_index].tri.compute_candidate(grid, t);
+                }
             }
-        }
-        let outcome = refine_bounded(
-            &mut state.lods[lod_index].tri,
-            grid,
-            max_error * (1 << lod_index) as f32,
-            max_error,
-            None,
-            true,
-            insertion_budget,
-            false,
-        );
+            let outcome = refine_bounded(
+                &mut state.lods[lod_index].tri,
+                grid,
+                max_error * (1 << lod_index) as f32,
+                max_error,
+                None,
+                true,
+                insertion_budget,
+                false,
+            );
+            if outcome.converged {
+                state.built_lods |= 1u8 << lod_index;
+                state.building_lod = None;
+            }
+            let publish = outcome.converged || state.lods[lod_index].tri.verts.len() > 4;
+            (outcome, publish)
+        };
+        let buffers = publish.then(|| ChunkBuffers::initial(&self.chunks[index], &build.grid));
         if !outcome.converged {
             self.initial_build = Some(build);
-            return None;
         }
-        state.built_lods |= 1u8 << lod_index;
-        state.building_lod = None;
-        Some(ChunkBuffers::initial(state, grid))
+        buffers
     }
 }
 
@@ -2569,6 +2584,79 @@ mod tests {
                 k
             );
         }
+    }
+
+    fn expected_border(grid: &Grid, border_error: f32) -> Vec<u32> {
+        let (mx, my) = (grid.nx - 1, grid.ny - 1);
+        let mut border = Vec::new();
+        let mut line = Vec::new();
+        for (fixed, horizontal) in [(0, true), (my, true), (0, false), (mx, false)] {
+            line.clear();
+            let count = if horizontal { grid.nx } else { grid.ny };
+            for i in 0..count {
+                let gi = if horizontal {
+                    grid.index(i, fixed)
+                } else {
+                    grid.index(fixed, i)
+                };
+                line.push(*grid.sample(gi));
+            }
+            let mut picks = Vec::new();
+            simplify_line(&line, border_error, &mut picks);
+            for i in picks {
+                border.push(if horizontal {
+                    grid.index(i, fixed)
+                } else {
+                    grid.index(fixed, i)
+                });
+            }
+        }
+        // Corners are already in the seed, and simplify_line only emits
+        // interior split points.
+        for gi in [0, mx, my * grid.nx + mx, my * grid.nx] {
+            border.push(gi);
+        }
+        border.sort_unstable();
+        border.dedup();
+        border
+    }
+
+    fn column_ys(chunk: &Chunk, grid: &Grid, lx: u32) -> Vec<i32> {
+        let mut ys: Vec<i32> = chunk
+            .verts
+            .iter()
+            .map(|&gi| grid.coord(gi))
+            .filter(|c| c[0] == lx as i32)
+            .map(|c| c[1])
+            .collect();
+        ys.sort_unstable();
+        ys
+    }
+
+    #[test]
+    fn a_budgeted_fit_still_completes_the_shared_border() {
+        let level = make_level(64);
+        let size = 16u32;
+        let left = Grid::new(&level, 0, 0, size, size);
+        let right = Grid::new(&level, size as i32, 0, size, size);
+        let want = expected_border(&left, 1.0);
+
+        let mut partial = Chunk::new(&left);
+        let _ = refine_bounded(&mut partial, &left, 1.0, 1.0, None, true, 0, true);
+        for gi in &want {
+            assert!(
+                partial.verts.contains(gi),
+                "shared-edge vertex {gi} missing after a yielded fit"
+            );
+        }
+
+        let mut finished = Chunk::new(&right);
+        refine(&mut finished, &right, 4.0, 1.0, None, true);
+        assert_eq!(
+            column_ys(&partial, &left, size),
+            column_ys(&finished, &right, 0),
+            "a yielded fit must still stitch to a finished neighbour"
+        );
     }
 
     #[test]
@@ -3110,30 +3198,48 @@ mod tests {
         let mut bounded = Chunk::new(&grid);
         let mut calls = 0;
         let mut candidates_refreshed = false;
+        let mut finished_border = false;
+        let max_error = 0.01f32;
+        let border = expected_border(&grid, max_error);
         loop {
             let before = bounded.verts.len();
             let outcome = refine_bounded(
                 &mut bounded,
                 &grid,
-                1.0,
-                1.0,
+                max_error,
+                max_error,
                 None,
                 true,
                 1,
                 !candidates_refreshed,
             );
             candidates_refreshed |= outcome.candidates_refreshed;
-            assert!(bounded.verts.len() - before <= 1);
+            let added = bounded.verts.len() - before;
+            if finished_border {
+                assert!(added <= 1, "interior insertions must respect the budget");
+            } else {
+                for gi in &border {
+                    assert!(
+                        bounded.verts.contains(gi),
+                        "border vertex {gi} missing from a budgeted first step"
+                    );
+                }
+                finished_border = true;
+            }
             calls += 1;
             if outcome.converged {
                 break;
             }
             assert!(calls < grid.samples.len());
         }
+        assert!(
+            calls > 1,
+            "the fixture did not exercise yielding ({} verts after {calls} call(s))",
+            bounded.verts.len()
+        );
 
         let mut immediate = Chunk::new(&grid);
-        refine(&mut immediate, &grid, 1.0, 1.0, None, true);
-        assert!(calls > 1, "the fixture did not exercise yielding");
+        refine(&mut immediate, &grid, max_error, max_error, None, true);
         assert_eq!(bounded.verts, immediate.verts);
         assert_eq!(bounded.tris.len(), immediate.tris.len());
         check_invariants(&bounded, &grid);
