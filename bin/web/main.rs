@@ -1958,6 +1958,16 @@ impl ApplicationHandler for WebHandler {
             } => match state {
                 event::ElementState::Pressed => {
                     self.keys_pressed.borrow_mut().insert(key);
+                    if key == KeyCode::KeyC
+                        && let Some(ref mut gpu) = self.gpu
+                        && let Some(ref mut agent) = gpu.app.agent
+                    {
+                        agent.dynamo.flotator = !agent.dynamo.flotator;
+                        log::info!(
+                            "cutterig {}",
+                            if agent.dynamo.flotator { "on" } else { "off" }
+                        );
+                    }
                 }
                 event::ElementState::Released => {
                     self.keys_pressed.borrow_mut().remove(&key);

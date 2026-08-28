@@ -1420,6 +1420,18 @@ impl Application for Game {
                 KeyCode::Period => self.input.tick = Some(1.0),
                 KeyCode::ShiftLeft => self.input.turbo = true,
                 KeyCode::KeyM => self.input.mole = true,
+                KeyCode::KeyC => {
+                    if let Physics::Cpu {
+                        ref mut dynamo, ..
+                    } = player.physics
+                    {
+                        dynamo.flotator = !dynamo.flotator;
+                        log::info!(
+                            "cutterig {}",
+                            if dynamo.flotator { "on" } else { "off" }
+                        );
+                    }
+                }
                 KeyCode::Space => self.input.use_entrance = true,
                 KeyCode::KeyF => self.input.fire_bay = Some(0),
                 KeyCode::KeyG => self.input.fire_bay = Some(1),

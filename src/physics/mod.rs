@@ -60,6 +60,10 @@ pub struct Dynamo {
     pub angular_velocity: Vec3,
     /// Whether the car is burrowing, and which way it is heading.
     pub mole: Mole,
+    /// Original cutterig / flotation device. Off: the hull sinks and the
+    /// wheels drive on the lakebed. On: Archimedean buoyancy and water
+    /// thrust, the `FLOTATION_UP` path in `analyse_dynamics`.
+    pub flotator: bool,
 }
 
 impl Default for Dynamo {
@@ -70,6 +74,7 @@ impl Default for Dynamo {
             linear_velocity: Vec3::ZERO,
             angular_velocity: Vec3::ZERO,
             mole: Mole::Off,
+            flotator: false,
         }
     }
 }
@@ -318,8 +323,8 @@ pub fn step(
     let z_axis = rot_inv * Vec3::Z;
     let num_bounds = car.shape_polygons.len().max(1);
     // Original `f_archimedean = k_archimedean * archimedean / 256 / num_bounds`.
-    // Devices are not ported, so a wet hull swims at full flotation (256).
-    let f_archimedean = if dynamo.mole == Mole::Off {
+    // `archimedean` is 0 without a cutterig and 256 once flotation is up.
+    let f_archimedean = if dynamo.flotator && dynamo.mole == Mole::Off {
         car.physics.k_archimedean / num_bounds as f32
     } else {
         0.0
@@ -547,19 +552,24 @@ pub fn step(
         water_immersion,
         terrain_immersion
     );
-    // `archimedean && traction`: water thrust plus a bit of rudder, using
-    // the original int traction/rudder units. `k_water_traction` is loaded
-    // from the mechos `.prm` but never read in `analyse_dynamics`.
-    if dynamo.mole == Mole::Off && in_water > 32 && dynamo.traction.abs() > EPSILON {
+    // Original `archimedean && traction`: water thrust plus rudder. Without
+    // a cutterig the hull just sinks; wheels still work if they find the bed.
+    // `k_water_traction` is loaded from the mechos `.prm` but never read.
+    if dynamo.flotator
+        && dynamo.mole == Mole::Off
+        && in_water > 32
+        && dynamo.traction.abs() > EPSILON
+    {
         let traction_int = dynamo.traction * ORIGINAL_TRACTION;
         let mut d_fy = traction_int;
         let rudder_int = dynamo.rudder / ORIGINAL_ANGLE;
         // Original `dFx = (traction > 0 ? -rudder : rudder) * dFy * k`.
-        // Left (positive rudder, same as KeyA) yaws the nose toward -X.
+        // Wheel constraints here use `(cos, -sin)` rather than `(Cos, Sin)`,
+        // so the lateral force is flipped or A/D steer the wrong way.
         let d_fx = if dynamo.traction > 0.0 {
-            -rudder_int
-        } else {
             rudder_int
+        } else {
+            -rudder_int
         } * d_fy
             * car.physics.k_water_rudder;
         d_fy *= car.physics.water_speed_factor * common.global.water_speed_factor;
@@ -888,6 +898,11 @@ mod tests {
         level
     }
 
+    fn swimming(mut dynamo: Dynamo) -> Dynamo {
+        dynamo.flotator = true;
+        dynamo
+    }
+
     fn step_in_water(
         dynamo: &mut Dynamo,
         transform: &mut space::Transform,
@@ -919,7 +934,7 @@ mod tests {
             rot: Quat::IDENTITY,
             disp: Vec3::new(40.0, 40.0, 50.0),
         };
-        let mut dynamo = Dynamo::default();
+        let mut dynamo = swimming(Dynamo::default());
         for _ in 0..200 {
             step_in_water(&mut dynamo, &mut transform, &car, &level);
         }
@@ -951,6 +966,8 @@ mod tests {
         };
         let (mut idle_dyn, mut idle_tf) = spawn();
         let (mut drive_dyn, mut drive_tf) = spawn();
+        idle_dyn.flotator = true;
+        drive_dyn.flotator = true;
         drive_dyn.traction = 1.0;
         for _ in 0..8 {
             step_in_water(&mut idle_dyn, &mut idle_tf, &car, &level);
@@ -967,8 +984,8 @@ mod tests {
 
     #[test]
     fn water_steering_matches_the_left_key() {
-        // KeyA / LEFT raises rudder (see bin/road and bin/web). Facing +Y,
-        // a left turn points the nose toward -X.
+        // KeyA raises rudder. Water dFx is flipped from the original so
+        // A/D match the road (wheels use `(cos, -sin)`, not `(Cos, Sin)`).
         let level = water_level(100, 20);
         let car = CarPhysicsData::test_default();
         let mut transform = space::Transform {
@@ -976,11 +993,11 @@ mod tests {
             rot: Quat::IDENTITY,
             disp: Vec3::new(40.0, 40.0, 80.0),
         };
-        let mut dynamo = Dynamo {
+        let mut dynamo = swimming(Dynamo {
             traction: 1.0,
             rudder: 0.4,
             ..Dynamo::default()
-        };
+        });
         for _ in 0..24 {
             step_in_water(&mut dynamo, &mut transform, &car, &level);
             dynamo.traction = 1.0;
@@ -988,9 +1005,36 @@ mod tests {
         }
         let forward = transform.rot * Vec3::Y;
         assert!(
-            forward.x < -0.02,
-            "left rudder should yaw the nose left, forward={forward:?}"
+            forward.x > 0.02,
+            "left rudder should yaw the same way as on the road, forward={forward:?}"
         );
+    }
+
+    #[test]
+    fn a_car_without_a_flotator_sinks_instead_of_swimming() {
+        let level = water_level(100, 20);
+        let car = CarPhysicsData::test_default();
+        let mut transform = space::Transform {
+            scale: 1.0,
+            rot: Quat::IDENTITY,
+            disp: Vec3::new(40.0, 40.0, 50.0),
+        };
+        let mut dynamo = Dynamo::default();
+        for _ in 0..200 {
+            step_in_water(&mut dynamo, &mut transform, &car, &level);
+        }
+        let flood_z = level.flood_level_at(40);
+        assert!(
+            transform.disp.z < flood_z - 20.0,
+            "without a cutterig the hull should sink, z={} flood={flood_z}",
+            transform.disp.z
+        );
+        assert!(
+            transform.disp.z > 15.0,
+            "should rest on the lakebed, not fall through, z={}",
+            transform.disp.z
+        );
+        assert!(!dynamo.flotator);
     }
 
     #[test]
@@ -1009,7 +1053,7 @@ mod tests {
             rot: Quat::IDENTITY,
             disp: Vec3::new(40.0, 40.0, 60.0),
         };
-        let mut dynamo = Dynamo::default();
+        let mut dynamo = swimming(Dynamo::default());
         for _ in 0..200 {
             step_in_water(&mut dynamo, &mut transform, &car, &level);
         }
@@ -1033,7 +1077,7 @@ mod tests {
             rot: Quat::IDENTITY,
             disp: Vec3::new(40.0, 200.0, 160.0),
         };
-        let mut dynamo = Dynamo::default();
+        let mut dynamo = swimming(Dynamo::default());
         for _ in 0..200 {
             step_in_water(&mut dynamo, &mut transform, &car, &level);
         }
