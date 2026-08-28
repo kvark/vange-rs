@@ -314,7 +314,6 @@ pub fn step(
     };
     let rot_inv = transform.rot.inverse();
     log::debug!("dt {}, num {}", dt, common.nature.num_calls_analysis);
-    let flood_level = level.flood_map[0] as f32;
     // Z axis in the local coordinate space
     let z_axis = rot_inv * Vec3::Z;
     let num_bounds = car.shape_polygons.len().max(1);
@@ -385,6 +384,8 @@ pub fn step(
         // Original: `GET_TERRAIN == WATER_TERRAIN` and `dZ = FloodLEVEL - rg.z`.
         // Terrain 0 is water on every shipped world. Mole skips this, same as
         // `if (!mole_on)` around the water test in `basic_mechous_analysis`.
+        // `FloodLEVEL` is a height quant; the flood texture is per-Y, so
+        // the plane the car feels is the same one the water draw uses.
         if dynamo.mole == Mole::Off {
             match level.get((rglob.x as i32, rglob.y as i32)) {
                 level::Texel::Single(level::Point(_, 0))
@@ -392,7 +393,7 @@ pub fn step(
                     low: level::Point(_, 0),
                     ..
                 } => {
-                    let dz = flood_level - rglob.z;
+                    let dz = level.flood_level_at(rglob.y as i32) - rglob.z;
                     if dz > 0.0 {
                         float_count += 1;
                         water_immersion += dz;
@@ -553,6 +554,8 @@ pub fn step(
         let traction_int = dynamo.traction * ORIGINAL_TRACTION;
         let mut d_fy = traction_int;
         let rudder_int = dynamo.rudder / ORIGINAL_ANGLE;
+        // Original `dFx = (traction > 0 ? -rudder : rudder) * dFy * k`.
+        // Left (positive rudder, same as KeyA) yaws the nose toward -X.
         let d_fx = if dynamo.traction > 0.0 {
             -rudder_int
         } else {
@@ -959,6 +962,86 @@ mod tests {
             "water traction should add forward speed, idle={:?} drive={:?}",
             idle_dyn.linear_velocity,
             drive_dyn.linear_velocity
+        );
+    }
+
+    #[test]
+    fn water_steering_matches_the_left_key() {
+        // KeyA / LEFT raises rudder (see bin/road and bin/web). Facing +Y,
+        // a left turn points the nose toward -X.
+        let level = water_level(100, 20);
+        let car = CarPhysicsData::test_default();
+        let mut transform = space::Transform {
+            scale: 1.0,
+            rot: Quat::IDENTITY,
+            disp: Vec3::new(40.0, 40.0, 80.0),
+        };
+        let mut dynamo = Dynamo {
+            traction: 1.0,
+            rudder: 0.4,
+            ..Dynamo::default()
+        };
+        for _ in 0..24 {
+            step_in_water(&mut dynamo, &mut transform, &car, &level);
+            dynamo.traction = 1.0;
+            dynamo.rudder = 0.4;
+        }
+        let forward = transform.rot * Vec3::Y;
+        assert!(
+            forward.x < -0.02,
+            "left rudder should yaw the nose left, forward={forward:?}"
+        );
+    }
+
+    #[test]
+    fn a_car_floats_at_the_flood_plane_not_the_raw_byte() {
+        let mut level = water_level(200, 20);
+        level.geometry.height = 0x80;
+        let flood_z = level.flood_level_at(40);
+        let want = 200.0 / 255.0 * 128.0;
+        assert!(
+            (flood_z - want).abs() < 1e-3,
+            "flood texture scale {want}, got {flood_z}"
+        );
+        let car = CarPhysicsData::test_default();
+        let mut transform = space::Transform {
+            scale: 1.0,
+            rot: Quat::IDENTITY,
+            disp: Vec3::new(40.0, 40.0, 60.0),
+        };
+        let mut dynamo = Dynamo::default();
+        for _ in 0..200 {
+            step_in_water(&mut dynamo, &mut transform, &car, &level);
+        }
+        assert!(
+            (transform.disp.z - flood_z).abs() < 25.0,
+            "should sit near the flood plane {flood_z}, got z={}",
+            transform.disp.z
+        );
+    }
+
+    #[test]
+    fn flood_height_follows_the_band_under_the_car() {
+        let mut level = water_level(40, 20);
+        level.flood_map = vec![40u8, 200].into_boxed_slice();
+        let h = level.geometry.height as f32;
+        assert!((level.flood_level_at(40) - 40.0 / 255.0 * h).abs() < 1e-3);
+        assert!((level.flood_level_at(200) - 200.0 / 255.0 * h).abs() < 1e-3);
+        let car = CarPhysicsData::test_default();
+        let mut transform = space::Transform {
+            scale: 1.0,
+            rot: Quat::IDENTITY,
+            disp: Vec3::new(40.0, 200.0, 160.0),
+        };
+        let mut dynamo = Dynamo::default();
+        for _ in 0..200 {
+            step_in_water(&mut dynamo, &mut transform, &car, &level);
+        }
+        let flood_z = level.flood_level_at(200);
+        assert!(
+            (transform.disp.z - flood_z).abs() < 25.0,
+            "should sit on the far band at {flood_z}, got z={}",
+            transform.disp.z
         );
     }
 }
