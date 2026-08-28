@@ -158,6 +158,23 @@ impl Level {
         self.geometry.height as f32 / 256.0
     }
 
+    /// World-Z of the water plane at level-Y `y`, from the flood map.
+    ///
+    /// Each flood band covers a slice of the map along Y, the same way the
+    /// water draw and `reflood` pick a sample. The GPU uploads the byte as
+    /// R8Unorm and the water shader multiplies by `geometry.height`, so
+    /// this uses the same `byte/255 * height` scale - not a raw 0..=255
+    /// compared against world Z, and not the terrain's `/256` altitude
+    /// scale.
+    pub fn flood_level_at(&self, y: i32) -> f32 {
+        let n = self.flood_map.len();
+        if n == 0 || self.size.1 <= 0 {
+            return 0.0;
+        }
+        let band = (y.rem_euclid(self.size.1) as usize * n) / self.size.1 as usize;
+        self.flood_map[band.min(n - 1)] as f32 / 255.0 * self.geometry.height as f32
+    }
+
     /// Wrap a level coordinate into a flat index into `meta`/`height`.
     pub fn wrap(&self, coord: (i32, i32)) -> usize {
         (coord.1.rem_euclid(self.size.1) * self.size.0 + coord.0.rem_euclid(self.size.0)) as usize
@@ -817,6 +834,16 @@ mod torus_tests {
         let p = level.wrap_pos(glam::Vec3::new(300.0, -10.0, 3.0));
         assert!((0.0..256.0).contains(&p.x));
         assert!((0.0..128.0).contains(&p.y));
+    }
+
+    #[test]
+    fn flood_height_is_the_band_under_y_in_world_units() {
+        let mut level = tiny_level(256, 128);
+        level.flood_map = vec![64, 192].into_boxed_slice();
+        level.geometry.height = 0x80;
+        assert!((level.flood_level_at(10) - 64.0 / 255.0 * 128.0).abs() < 1e-3);
+        assert!((level.flood_level_at(100) - 192.0 / 255.0 * 128.0).abs() < 1e-3);
+        assert_eq!(level.flood_level_at(10), level.flood_level_at(10 + 128));
     }
 
     #[test]
