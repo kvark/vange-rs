@@ -11,13 +11,16 @@ pub mod preview;
 pub mod screen;
 pub mod shop;
 
+#[cfg(test)]
+mod shot;
+
 pub use dialog::{Room, Session, find_room};
 pub use layout::{Catalog, Cell, Layout};
 pub use preview::{SpinMesh, description_for, display_name, mesh_id};
 pub use screen::{InteriorAction, Screen, draw_interior, draw_shutters};
 pub use shop::{
-    BAY_COUNT, DropTarget, Good, Hand, Inventory, Kind, Placed, Preview,
-    Shop, ShopError, drop_held, equipped_slot_ids, mounted_meshes, preview, preview_good,
+    BAY_COUNT, DropTarget, Good, Hand, Inventory, Kind, Placed, Preview, Shop, ShopError,
+    drop_held, equipped_slot_ids, mounted_meshes, preview, preview_good,
 };
 
 use crate::level::vlc::sensor_kind;
