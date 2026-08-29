@@ -445,6 +445,8 @@ pub struct Render {
     light_modulation: f32,
     /// Closest local point light, for forward shading.
     local_light: Option<(glam::Vec3, f32, [f32; 3])>,
+    /// Vehicle to keep visible through intervening terrain. `None` disables the hole.
+    focus: Option<(glam::Vec3, f32)>,
     pub fog_config: settings::Fog,
     screen_size: wgpu::Extent3d,
 }
@@ -459,6 +461,14 @@ impl Render {
 
     pub fn set_local_light(&mut self, pos: glam::Vec3, radius: f32, color: [f32; 3]) {
         self.local_light = Some((pos, radius, color));
+    }
+
+    pub fn set_focus(&mut self, pos: glam::Vec3, radius: f32) {
+        self.focus = Some((pos, radius));
+    }
+
+    pub fn clear_focus(&mut self) {
+        self.focus = None;
     }
 
     /// The light as the current cycle leaves it.
@@ -600,6 +610,7 @@ impl Render {
             light_config: settings.light,
             light_modulation: 1.0,
             local_light: None,
+            focus: None,
             fog_config: settings.fog,
             screen_size: gfx.screen_size,
         }
@@ -703,6 +714,9 @@ impl Render {
                 global::Constants::new(cam, &lit, self.shadow.as_ref().map(|shadow| &shadow.cam));
             if let Some((pos, radius, color)) = self.local_light {
                 constants = constants.with_local_light(pos, radius, color);
+            }
+            if let Some((pos, radius)) = self.focus {
+                constants = constants.with_focus(pos, radius);
             }
             queue.write_buffer(&self.global.uniform_buf, 0, bytemuck::bytes_of(&constants));
 

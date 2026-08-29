@@ -352,7 +352,7 @@ fn drop_note(hand: &Hand, target: &DropTarget) -> String {
     }
 }
 
-/// Talk/trade overlay. Background order so Tweaks/Settings stay clickable.
+/// Talk/trade overlay. Tweaks/Settings are hidden for the visit.
 ///
 /// Original 800×600 shop: spinning AVI top-left, item list under it,
 /// mechos matrix on the right, price/info along the bottom. Scaled to
@@ -594,7 +594,28 @@ fn draw_shop(
 
 fn draw_video(ui: &mut egui::Ui, selected: Option<&str>, spin: Option<&SpinMesh>, height: f32) {
     let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let size = egui::vec2(width, height);
+    if let Some(id) = selected {
+        let payload = Hand::Shop { id: id.to_string() };
+        let _ = ui
+            .dnd_drag_source(egui::Id::new("shop-preview-drag"), payload, |ui| {
+                let (rect, _) = ui.allocate_exact_size(size, egui::Sense::drag());
+                paint_turntable(ui, rect, selected, spin);
+            })
+            .response
+            .on_hover_text("Drag onto the mechos to buy");
+    } else {
+        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        paint_turntable(ui, rect, selected, spin);
+    }
+}
+
+fn paint_turntable(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    selected: Option<&str>,
+    spin: Option<&SpinMesh>,
+) {
     ui.painter()
         .rect_filled(rect, 6.0, egui::Color32::from_rgb(28, 20, 12));
     ui.painter().rect_stroke(
@@ -686,7 +707,7 @@ fn draw_stock_list(
 ) {
     ui.label(rich("Shop", ACCENT).size(14.0));
     ui.label(rich(
-        "Click to preview. Drag onto the mechos to buy.",
+        "Click a ware to preview. Drag the picture onto the mechos to buy.",
         MUTED,
     ));
     let shop_frame = egui::Frame::new()
@@ -703,35 +724,15 @@ fn draw_stock_list(
             .show(ui, |ui| {
                 for good in shop.stock() {
                     let marked = selected.as_deref() == Some(good.id.as_str());
-                    let id = egui::Id::new(("shop-stock", good.id.as_str()));
-                    let payload = Hand::Shop {
-                        id: good.id.clone(),
-                    };
-                    let response = ui
-                        .dnd_drag_source(id, payload, |ui| {
-                            let color = if marked { ACCENT } else { INK };
-                            let kind = if good.is_weapon() { "gun" } else { "ware" };
-                            let label = format!(
-                                "{}  {} · {} beebs",
-                                good.display_name(),
-                                kind,
-                                good.buy_price
-                            );
-                            let fill = if marked {
-                                egui::Color32::from_rgb(56, 38, 18)
-                            } else {
-                                egui::Color32::TRANSPARENT
-                            };
-                            egui::Frame::new()
-                                .fill(fill)
-                                .inner_margin(egui::Margin::symmetric(6, 4))
-                                .show(ui, |ui| {
-                                    ui.set_min_width(ui.available_width());
-                                    ui.label(rich(label, color));
-                                });
-                        })
-                        .response;
-                    if response.clicked() {
+                    let color = if marked { ACCENT } else { INK };
+                    let kind = if good.is_weapon() { "gun" } else { "ware" };
+                    let label = format!(
+                        "{}  {} · {} beebs",
+                        good.display_name(),
+                        kind,
+                        good.buy_price
+                    );
+                    if ui.selectable_label(marked, rich(label, color)).clicked() {
                         *selected = Some(good.id.clone());
                     }
                 }
@@ -750,7 +751,7 @@ fn draw_mechos(
     action: &mut InteriorAction,
 ) {
     ui.label(rich("Mechos", ACCENT).size(16.0));
-    ui.label(rich("Drag a shop ware onto a hex to buy.", MUTED));
+    ui.label(rich("Drag the picture onto a hex to buy.", MUTED));
     ui.add_space(6.0);
     let layout = inventory.layout();
     let Some((x0, y0, x1, y1)) = layout_bounds(layout) else {

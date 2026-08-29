@@ -78,7 +78,7 @@ pub fn look_target(level: &Level) -> Vec3 {
 }
 
 pub fn look_distance(level: &Level) -> f32 {
-    (level.size.0.min(level.size.1) as f32 * 0.48).max(64.0)
+    (level.size.0.min(level.size.1) as f32 * 0.82).max(64.0)
 }
 
 /// Radians above the XY plane. 90° is straight down; this is 30° off vertical
@@ -134,6 +134,24 @@ mod tests {
             ((std::f32::consts::FRAC_PI_2 - ELEVATION).to_degrees() - 30.0).abs() < 0.05,
             "cave view should sit 30° off vertical, got {}°",
             (std::f32::consts::FRAC_PI_2 - ELEVATION).to_degrees()
+        );
+    }
+
+    #[test]
+    fn look_distance_is_backed_off_the_map() {
+        let level = Level {
+            size: (2048, 1024),
+            flood_map: vec![0; 4].into_boxed_slice(),
+            height: vec![0; 4].into_boxed_slice(),
+            meta: vec![0; 4].into_boxed_slice(),
+            palette: [[0; 4]; 0x100],
+            terrains: Box::new([]),
+            geometry: settings::Geometry::default(),
+        };
+        assert!(
+            look_distance(&level) > 800.0,
+            "camera should sit back from a 1024-wide iscreen, got {}",
+            look_distance(&level)
         );
     }
 

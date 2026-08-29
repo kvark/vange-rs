@@ -46,6 +46,9 @@ fn get_surface_height(pos: vec3<f32>) -> f32 {
 }
 
 fn get_surface_gradient(pos: vec3<f32>) -> vec2<f32> {
+    if (pos.z <= 0.0) {
+        return vec2<f32>(0.0);
+    }
     let vl = get_surface_height(pos + vec3<f32>(-1.0, 0.0, 0.0));
     let vr = get_surface_height(pos + vec3<f32>(1.0, 0.0, 0.0));
     let vt = get_surface_height(pos + vec3<f32>(0.0, 1.0, 0.0));

@@ -882,6 +882,10 @@ impl WebApp {
             escave::draw_shutters(ctx, shutter);
         }
 
+        if !self.screen.is_world() {
+            return;
+        }
+
         const PANEL_WIDTH: f32 = 340.0;
 
         let window = egui::Window::new("Settings")
@@ -1241,6 +1245,11 @@ impl WebApp {
         if let Some(ref agent) = self.agent {
             self.batcher
                 .add_model(&agent.car.model, &agent.transform, None, agent.color);
+            let r = (agent.phys_data.bbox.radius * agent.car.scale).max(8.0);
+            let p = self.level.display_pos(agent.transform.disp, self.cam.loc);
+            self.render.set_focus(p, r * 1.4);
+        } else {
+            self.render.clear_focus();
         }
         let eye = self.cam.loc;
         if let Some((ref frames, scale)) = self.bug {

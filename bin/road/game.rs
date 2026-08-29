@@ -1876,7 +1876,7 @@ impl Application for Game {
             escave::draw_shutters(context, shutter);
         }
 
-        if !self.ui.enabled {
+        if !self.ui.enabled || !self.screen.is_world() {
             if sync_slots {
                 self.sync_weapon_slots();
             }
@@ -2216,6 +2216,13 @@ impl Application for Game {
             }
             self.render
                 .set_local_light(best.1, 420.0, [1.0, 0.85, 0.55]);
+            if let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) {
+                let p = self.level.display_pos(player.position(), eye);
+                let r = (player.phys_data.bbox.radius * player.car.scale).max(8.0);
+                self.render.set_focus(p, r * 1.4);
+            } else {
+                self.render.clear_focus();
+            }
         }
 
         let eye = self.cam.loc;
