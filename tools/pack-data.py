@@ -8,18 +8,15 @@ Produces one zip per level plus a `common.zip` holding cross-level
 assets, laid out to match the layout expected by `src/data.rs`:
 
     <out>/
-      common.zip            game.lst, wrlds.dat, car.prm, common.prm,
-                            actint/actint.inc, actint/a_str.inc,
-                            resource/m3d/, resource/pal/ — the files
-                            the web build actually reads. Everything
-                            else under --root (cutscene videos, menu
-                            art, music, original binaries, editor
-                            scripts…) is dropped by default because the
-                            web build doesn't use it and the full data
-                            is ~180 MiB on the wire.
-      fostral.zip           contents of the Fostral level directory,
-                            flat (no leading `fostral/` prefix)
-      necross.zip           ...
+      common.zip            game.lst, wrlds.dat, vehicle/item .prm/.lst,
+                            the whole actint/ text tree, resource/m3d/,
+                            resource/pal/ — metadata and models the web
+                            build reads. Cutscene videos, menu art,
+                            music, original binaries, and editor scripts
+                            are dropped by default (~180 MiB on the wire).
+      fostral.zip           Fostral's world.ini / output.vmc plus that
+                            world's iscreen locations (Podish, Incubator)
+      glorx.zip             ... plus VigBoo / Lampasso / Ogorod iscreen
       ...
 
 A level directory is any directory containing a `world.ini` file; the
@@ -52,11 +49,17 @@ from pathlib import Path
 #   - bin/web/main.rs::spawn_default_agent  — game.lst, car.prm, m3d,
 #     per-vehicle .prm, default.prm
 #   - WebApp::build                         — common.prm
-#   - WebApp::build inventory               — actint/actint.inc,
-#     actint/a_str.inc (mechos hex boards)
+#   - WebApp::build inventory               — actint/ (mechos hex boards,
+#     names, item comments, mechos/item parameter macros)
+#   - shop / device tables                  — item.prm, price.prm,
+#     device.lst, vangers.prm
 # The palette dir is included defensively; nothing in the web build
 # currently reads it, but it's ~10 KiB and levels reference palettes
 # by relative path.
+#
+# IScreen location maps live in the *level* zip, not common.zip: see
+# LEVEL_ISCREEN. resource/actint/ is the original 2D menu art and stays
+# out of the minimal pack.
 WEB_KEEP_FILES = {
     "game.lst",
     "wrlds.dat",
@@ -67,13 +70,29 @@ WEB_KEEP_FILES = {
     "spots.prm",
     "bunches.prm",
     "tabutask.prm",
-    "actint/actint.inc",
-    "actint/a_str.inc",
+    "item.prm",
+    "price.prm",
+    "device.lst",
+    "vangers.prm",
+    "passages.prm",
 }
 WEB_KEEP_PREFIXES = (
     "resource/m3d/",
     "resource/pal/",
+    "actint/",
 )
+
+# Original ESCAVE_ID0..7 folders under resource/iscreen/ldata/, grouped
+# by the world that owns them (escaves.prm + spots.prm). Same names as
+# src/escave/cave.rs. Arcnames keep the root-relative path so a VFS key
+# of `resource/iscreen/ldata/l0/escave.ini` matches native data_path.
+LEVEL_ISCREEN = {
+    "fostral": ("l0", "l1"),
+    "glorx": ("l2", "l3", "l4"),
+    "necross": ("l5", "l6"),
+    "xplo": ("l7",),
+}
+ISCREEN_LDATA = Path("resource/iscreen/ldata")
 
 
 def find_level_dirs(root: Path) -> dict[str, Path]:
@@ -99,11 +118,43 @@ def find_level_dirs(root: Path) -> dict[str, Path]:
     return levels
 
 
-def pack_level(level_id: str, level_dir: Path, out_path: Path, verbose: bool) -> None:
+def iscreen_extras(root: Path, level_id: str) -> list[tuple[Path, str]]:
+    """Files from this world's iscreen locations, if present under root.
+
+    Missing folders (open-source tree, incomplete install) yield an
+    empty list; the caller logs that. Arcnames are root-relative.
+    """
+    extras: list[tuple[Path, str]] = []
+    for folder in LEVEL_ISCREEN.get(level_id.lower(), ()):
+        src_dir = root / ISCREEN_LDATA / folder
+        if not src_dir.is_dir():
+            continue
+        for p in sorted(src_dir.rglob("*")):
+            if p.is_dir():
+                continue
+            extras.append((p, p.relative_to(root).as_posix()))
+    return extras
+
+
+def is_level_iscreen(arcname: str) -> bool:
+    """True for files that belong in a world zip, not common.zip."""
+    prefix = ISCREEN_LDATA.as_posix() + "/"
+    return arcname.startswith(prefix)
+
+
+def pack_level(
+    level_id: str,
+    level_dir: Path,
+    out_path: Path,
+    verbose: bool,
+    extras: list[tuple[Path, str]] | None = None,
+) -> None:
     """Zip the contents of `level_dir` directly into `out_path`.
 
-    Files are stored without the `<level_id>/` prefix so the client's
-    VFS can load them with keys like `"world.ini"` / `"output.vmc"`.
+    Files from the level directory are stored without the `<level_id>/`
+    prefix so the client's VFS can load them with keys like `"world.ini"`
+    / `"output.vmc"`. `extras` are additional (src, arcname) pairs —
+    iscreen location maps — stored at their root-relative keys.
     """
     if verbose:
         print(f"  building {out_path.name} from {level_dir}")
@@ -116,6 +167,10 @@ def pack_level(level_id: str, level_dir: Path, out_path: Path, verbose: bool) ->
             if verbose:
                 print(f"    + {arcname}")
             zf.write(p, arcname=arcname)
+        for src, arcname in extras or ():
+            if verbose:
+                print(f"    + {arcname}")
+            zf.write(src, arcname=arcname)
 
 
 def keep_for_web(arcname: str) -> bool:
@@ -155,6 +210,12 @@ def pack_common(
             if any(anc in level_dirs_abs for anc in p.resolve().parents):
                 continue
             arcname = p.relative_to(root).as_posix()
+            # World-owned iscreen maps go in the level zip even with
+            # --full-common, so they are not duplicated in both archives.
+            if is_level_iscreen(arcname):
+                dropped += 1
+                dropped_bytes += p.stat().st_size
+                continue
             if not full and not keep_for_web(arcname):
                 dropped += 1
                 dropped_bytes += p.stat().st_size
@@ -249,8 +310,21 @@ def main() -> int:
 
     for lid, d in sorted(selected.items()):
         out_path = out / f"{lid}.zip"
-        pack_level(lid, d, out_path, args.verbose)
-        print(f"    -> {out_path.name}  {human_bytes(out_path.stat().st_size)}")
+        extras = iscreen_extras(root, lid)
+        if lid in LEVEL_ISCREEN and not extras:
+            wanted = ", ".join(LEVEL_ISCREEN[lid])
+            print(
+                f"    note: no iscreen ldata for {lid} "
+                f"(looked for {ISCREEN_LDATA.as_posix()}/{{{wanted}}})"
+            )
+        pack_level(lid, d, out_path, args.verbose, extras)
+        extra_note = (
+            f", {len(extras)} iscreen file(s)" if extras else ""
+        )
+        print(
+            f"    -> {out_path.name}  {human_bytes(out_path.stat().st_size)}"
+            f"{extra_note}"
+        )
 
     if not args.skip_common:
         out_path = out / "common.zip"
