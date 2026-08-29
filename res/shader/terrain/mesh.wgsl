@@ -61,6 +61,9 @@ fn vertex(
 
 @fragment
 fn fragment(in: Varyings) -> @location(0) vec4<f32> {
+    if (in.world_pos.z <= 0.0 || focus_visibility(in.world_pos) < 0.45) {
+        discard;
+    }
     let suf = get_surface(in.world_pos.xy);
     let ty = select(suf.low_type, suf.high_type, in.layer != 0u);
     let visibility = fetch_shadow_visibility(in.world_pos);

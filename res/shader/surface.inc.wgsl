@@ -93,6 +93,12 @@ struct SurfaceAlt {
     mid: f32,
 };
 
+/// Height 0 is empty (the iscreen void, unused map). A `z <= low` test
+/// would treat that plane as solid and light it from noisy meta bytes.
+fn surface_is_void(alt: SurfaceAlt) -> bool {
+    return alt.high <= 0.0;
+}
+
 fn get_surface_alt(pos: vec2<f32>) -> SurfaceAlt {
     let surface = get_surface(pos);
     var s: SurfaceAlt;
