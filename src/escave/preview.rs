@@ -5,6 +5,7 @@
 //! `game.lst` `.m3d`, turned on a turntable each frame.
 
 use glam::{Quat, Vec3};
+use std::cell::RefCell;
 use std::path::Path;
 
 /// English names from `ITM*_NAME1`. Ids that already match stay as-is.
@@ -57,6 +58,8 @@ pub struct SpinMesh {
     positions: Vec<[f32; 3]>,
     faces: Vec<Face>,
     radius: f32,
+    /// Last raster, kept alive so egui does not free the texture mid-frame.
+    tex: RefCell<Option<egui::TextureHandle>>,
 }
 
 impl SpinMesh {
@@ -93,6 +96,7 @@ impl SpinMesh {
             positions,
             faces,
             radius,
+            tex: RefCell::new(None),
         }
     }
 
@@ -119,10 +123,15 @@ impl SpinMesh {
                 normal: [0.0, -1.0, 0.0],
             }],
             radius: 12.0,
+            tex: RefCell::new(None),
         }
     }
 
-    /// Turntable: Z-up, spin around Z, slight nod, Lambert faces.
+    /// Turntable: Z-up, spin around Z, look down a bit, Lambert faces.
+    ///
+    /// egui's painter has no depth attachment, so this is a software
+    /// z-buffer (closer pixel wins) rather than GPU `depth_compare`.
+    /// Triangle order does not matter.
     pub fn paint(
         &self,
         painter: &egui::Painter,
@@ -133,50 +142,111 @@ impl SpinMesh {
         if self.positions.is_empty() || rect.width() < 8.0 || rect.height() < 8.0 {
             return;
         }
-        let rot = Quat::from_rotation_z(angle) * Quat::from_rotation_x(-0.55);
+        let w = rect.width().round().max(1.0) as i32;
+        let h = rect.height().round().max(1.0) as i32;
+        let mut pixels = vec![0u8; (w * h * 4) as usize];
+        let mut zbuf = vec![f32::INFINITY; (w * h) as usize];
+        let rot = Quat::from_rotation_z(angle) * Quat::from_rotation_x(-0.85);
         let light = Vec3::new(0.35, -0.8, 0.45).normalize();
-        let dist = self.radius * 2.6;
-        let cx = rect.center().x;
-        let cy = rect.center().y;
-        let scale = rect.height().min(rect.width()) * 0.42 / self.radius;
-        let mut order: Vec<(f32, usize)> = self
-            .faces
-            .iter()
-            .enumerate()
-            .filter_map(|(i, face)| {
-                let n = rot * Vec3::from(face.normal);
-                if n.y > 0.2 {
-                    return None;
-                }
-                let a = rot * Vec3::from(self.positions[face.verts[0]]);
-                let b = rot * Vec3::from(self.positions[face.verts[1]]);
-                let c = rot * Vec3::from(self.positions[face.verts[2]]);
-                Some(((a.y + b.y + c.y) / 3.0, i))
-            })
-            .collect();
-        order.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-        for &(_, i) in &order {
-            let face = &self.faces[i];
-            let n = (rot * Vec3::from(face.normal)).normalize_or(Vec3::Z);
+        let dist = self.radius * 2.8;
+        let scale = rect.height().min(rect.width()) * 0.46 / self.radius;
+        let cx = w as f32 * 0.5;
+        let cy = h as f32 * 0.5;
+        for face in &self.faces {
+            let n = rot * Vec3::from(face.normal);
+            if n.y >= 0.0 {
+                continue;
+            }
+            let n = n.normalize_or(Vec3::NEG_Y);
             let lambert = (0.22 + 0.78 * n.dot(light).clamp(0.0, 1.0)).clamp(0.0, 1.0);
-            let fill = egui::Color32::from_rgba_unmultiplied(
+            let fill = [
                 (color.r() as f32 * lambert) as u8,
                 (color.g() as f32 * lambert) as u8,
                 (color.b() as f32 * lambert) as u8,
                 255,
-            );
+            ];
             let pts = face.verts.map(|vi| {
                 let p = rot * Vec3::from(self.positions[vi]);
                 let z = (p.y + dist).max(1.0);
                 let px = cx + p.x * scale * dist / z;
                 let py = cy - p.z * scale * dist / z;
-                egui::pos2(px, py)
+                [px, py, z]
             });
-            painter.add(egui::Shape::convex_polygon(
-                pts.to_vec(),
-                fill,
-                egui::Stroke::NONE,
-            ));
+            raster_ztest(&mut pixels, &mut zbuf, w, h, pts, fill);
+        }
+        let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &pixels);
+        let options = egui::TextureOptions::LINEAR;
+        let tex_id = {
+            let mut slot = self.tex.borrow_mut();
+            match slot.as_mut() {
+                Some(handle) => {
+                    handle.set(image, options);
+                    handle.id()
+                }
+                None => {
+                    let handle = painter.ctx().load_texture("shop-spin", image, options);
+                    let id = handle.id();
+                    *slot = Some(handle);
+                    id
+                }
+            }
+        };
+        painter.image(
+            tex_id,
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+}
+
+fn raster_ztest(
+    pixels: &mut [u8],
+    zbuf: &mut [f32],
+    width: i32,
+    height: i32,
+    pts: [[f32; 3]; 3],
+    fill: [u8; 4],
+) {
+    let area = (pts[1][0] - pts[0][0]) * (pts[2][1] - pts[0][1])
+        - (pts[2][0] - pts[0][0]) * (pts[1][1] - pts[0][1]);
+    if area.abs() < 0.5 {
+        return;
+    }
+    let min_x = pts[0][0].min(pts[1][0]).min(pts[2][0]).max(0.0);
+    let max_x = pts[0][0].max(pts[1][0]).max(pts[2][0]).min(width as f32);
+    let min_y = pts[0][1].min(pts[1][1]).min(pts[2][1]).max(0.0);
+    let max_y = pts[0][1].max(pts[1][1]).max(pts[2][1]).min(height as f32);
+    if min_x >= max_x || min_y >= max_y {
+        return;
+    }
+    let x0 = min_x.floor() as i32;
+    let x1 = max_x.ceil() as i32;
+    let y0 = min_y.floor() as i32;
+    let y1 = max_y.ceil() as i32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if x < 0 || y < 0 || x >= width || y >= height {
+                continue;
+            }
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let w0 =
+                ((pts[1][0] - px) * (pts[2][1] - py) - (pts[2][0] - px) * (pts[1][1] - py)) / area;
+            let w1 =
+                ((pts[2][0] - px) * (pts[0][1] - py) - (pts[0][0] - px) * (pts[2][1] - py)) / area;
+            let w2 = 1.0 - w0 - w1;
+            if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                continue;
+            }
+            let z = pts[0][2] * w0 + pts[1][2] * w1 + pts[2][2] * w2;
+            let i = (y * width + x) as usize;
+            if z >= zbuf[i] {
+                continue;
+            }
+            zbuf[i] = z;
+            let o = i * 4;
+            pixels[o..o + 4].copy_from_slice(&fill);
         }
     }
 }
@@ -208,11 +278,11 @@ mod tests {
         }
     }
 
-    fn painted_paths(output: &egui::FullOutput) -> usize {
+    fn painted_images(output: &egui::FullOutput) -> usize {
         output
             .shapes
             .iter()
-            .filter(|clipped| matches!(clipped.shape, egui::Shape::Path(_)))
+            .filter(|clipped| matches!(clipped.shape, egui::Shape::Mesh(_)))
             .count()
     }
 
@@ -230,8 +300,20 @@ mod tests {
             );
         });
         assert!(
-            painted_paths(&output) > 0,
+            painted_images(&output) > 0,
             "a visible face must hit the painter"
         );
+    }
+
+    #[test]
+    fn a_near_face_wins_the_z_buffer() {
+        let mut pixels = vec![0u8; 64 * 64 * 4];
+        let mut zbuf = vec![f32::INFINITY; 64 * 64];
+        let near = [[20.0, 20.0, 2.0], [44.0, 20.0, 2.0], [32.0, 44.0, 2.0]];
+        let far = [[8.0, 8.0, 9.0], [56.0, 8.0, 9.0], [32.0, 56.0, 9.0]];
+        raster_ztest(&mut pixels, &mut zbuf, 64, 64, far, [10, 10, 10, 255]);
+        raster_ztest(&mut pixels, &mut zbuf, 64, 64, near, [200, 140, 48, 255]);
+        let i = (32 * 64 + 32) * 4;
+        assert_eq!(&pixels[i..i + 3], &[200, 140, 48]);
     }
 }

@@ -7,6 +7,7 @@
 use crate::config::settings;
 use crate::level::{self, Level, LevelConfig, Texel};
 use crate::space::Camera;
+use crate::vfs::Vfs;
 use glam::{Quat, Vec3};
 use std::path::{Path, PathBuf};
 
@@ -29,6 +30,11 @@ pub fn ini_path(data_path: &Path, name: &str) -> Option<PathBuf> {
     Some(data_path.join(ldata_dir(name)?).join("escave.ini"))
 }
 
+/// VFS key of this escave's `escave.ini`, matching the packed level zip.
+pub fn ini_key(name: &str) -> Option<String> {
+    Some(format!("{}/escave.ini", ldata_dir(name)?))
+}
+
 /// Load the iscreen height map if the purchased data is on disk.
 pub fn load(
     data_path: &Path,
@@ -45,6 +51,22 @@ pub fn load(
     Some((config, level))
 }
 
+/// Same map, from a VFS (web packs `resource/iscreen/ldata/lN/` into the world zip).
+pub fn load_from_vfs(
+    vfs: &Vfs,
+    name: &str,
+    geometry: &settings::Geometry,
+) -> Option<(LevelConfig, Level)> {
+    let ini = ini_key(name)?;
+    if !vfs.contains(&ini) {
+        log::info!("escave iscreen missing at {ini}");
+        return None;
+    }
+    let config = LevelConfig::load_from_vfs(vfs, &ini);
+    let level = level::load_from_vfs(vfs, &config, geometry);
+    Some((config, level))
+}
+
 pub fn look_target(level: &Level) -> Vec3 {
     let cx = level.size.0 as f32 * 0.5;
     let cy = level.size.1 as f32 * 0.5;
@@ -56,8 +78,12 @@ pub fn look_target(level: &Level) -> Vec3 {
 }
 
 pub fn look_distance(level: &Level) -> f32 {
-    (level.size.0.min(level.size.1) as f32 * 0.42).max(64.0)
+    (level.size.0.min(level.size.1) as f32 * 0.48).max(64.0)
 }
+
+/// Radians above the XY plane. 90° is straight down; this is 30° off vertical
+/// so the living thing reads as a shape instead of a cliff face.
+pub const ELEVATION: f32 = std::f32::consts::FRAC_PI_3;
 
 pub fn orbit(cam: &mut Camera, target: Vec3, distance: f32, yaw: f32, elevation: f32) {
     let ce = elevation.cos();
@@ -76,8 +102,17 @@ pub fn camera(level: &Level, proj: crate::space::Projection) -> (Camera, Vec3, f
         scale: Vec3::new(1.0, -1.0, 1.0),
         proj,
     };
-    orbit(&mut cam, target, distance, 0.35, 0.55);
+    orbit(&mut cam, target, distance, 0.35, ELEVATION);
     (cam, target, distance)
+}
+
+/// Cave interiors are a 2048×1024 height field. Mesh TIN chunks tile that
+/// at 128 px and show as a grid; the height-field march does not.
+pub fn render_settings(world: &settings::Render) -> settings::Render {
+    let mut render = world.clone();
+    render.terrain = settings::Terrain::RayTraced;
+    render.light.shadow.terrain = settings::ShadowTerrain::RayTraced;
+    render
 }
 
 #[cfg(test)]
@@ -91,5 +126,20 @@ mod tests {
         assert!(ldata_dir("MysteryHole").is_none());
         let path = ini_path(Path::new("/data"), "Podish").unwrap();
         assert!(path.ends_with("resource/iscreen/ldata/l0/escave.ini"));
+        assert_eq!(
+            ini_key("Podish").as_deref(),
+            Some("resource/iscreen/ldata/l0/escave.ini")
+        );
+        assert!(
+            ((std::f32::consts::FRAC_PI_2 - ELEVATION).to_degrees() - 30.0).abs() < 0.05,
+            "cave view should sit 30° off vertical, got {}°",
+            (std::f32::consts::FRAC_PI_2 - ELEVATION).to_degrees()
+        );
+    }
+
+    #[test]
+    fn missing_iscreen_in_vfs_is_none() {
+        let vfs = Vfs::new();
+        assert!(load_from_vfs(&vfs, "Podish", &settings::Geometry::default()).is_none());
     }
 }

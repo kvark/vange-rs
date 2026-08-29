@@ -85,6 +85,21 @@ impl Vfs {
         self.entries.is_empty()
     }
 
+    /// Clone the entries whose path is `prefix` or lives under it.
+    /// `Arc` payloads are shared, so this is cheap on the bytes.
+    pub fn prefix(&self, prefix: &str) -> Self {
+        let prefix = normalize(prefix);
+        let prefix = prefix.trim_end_matches('/');
+        let under = format!("{prefix}/");
+        let mut out = Self::new();
+        for (key, bytes) in &self.entries {
+            if key == prefix || key.starts_with(&under) {
+                out.entries.insert(key.clone(), Arc::clone(bytes));
+            }
+        }
+        out
+    }
+
     pub fn paths(&self) -> impl Iterator<Item = &str> {
         self.entries.keys().map(String::as_str)
     }
@@ -152,5 +167,20 @@ mod tests {
         );
         assert_eq!(vfs.files_in("data.vot/"), vfs.files_in("DATA.VOT"));
         assert_eq!(vfs.files_in(""), vec!["location.lst".to_string()]);
+    }
+
+    #[test]
+    fn prefix_keeps_only_that_tree() {
+        let mut vfs = Vfs::new();
+        vfs.insert("resource/iscreen/ldata/l0/escave.ini", b"ini".to_vec());
+        vfs.insert("resource/iscreen/ldata/l0/escave.vmc", b"vmc".to_vec());
+        vfs.insert("world.ini", b"world".to_vec());
+        vfs.insert("resource/m3d/car.m3d", b"car".to_vec());
+        let slice = vfs.prefix("resource/iscreen/ldata");
+        assert_eq!(slice.len(), 2);
+        assert!(slice.contains("resource/iscreen/ldata/l0/escave.ini"));
+        assert!(slice.contains("RESOURCE/ISCREEN/LDATA/L0/ESCAVE.VMC"));
+        assert!(!slice.contains("world.ini"));
+        assert!(!slice.contains("resource/m3d/car.m3d"));
     }
 }

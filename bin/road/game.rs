@@ -847,7 +847,7 @@ impl Game {
             escave_note: None,
             escave_selected: None,
             cave_boot: CaveBoot {
-                render: settings.render.clone(),
+                render: escave::cave::render_settings(&settings.render),
                 geometry: settings.game.geometry,
                 downlevel_caps: gfx.downlevel_caps.clone(),
                 color_format: gfx.color_format,
@@ -1001,7 +1001,13 @@ impl Game {
         }
         if let Some(ref mut cave) = self.cave {
             cave.yaw += delta * 0.12;
-            escave::cave::orbit(&mut cave.cam, cave.target, cave.distance, cave.yaw, 0.55);
+            escave::cave::orbit(
+                &mut cave.cam,
+                cave.target,
+                cave.distance,
+                cave.yaw,
+                escave::cave::ELEVATION,
+            );
         }
     }
 
@@ -1421,15 +1427,9 @@ impl Application for Game {
                 KeyCode::ShiftLeft => self.input.turbo = true,
                 KeyCode::KeyM => self.input.mole = true,
                 KeyCode::KeyC => {
-                    if let Physics::Cpu {
-                        ref mut dynamo, ..
-                    } = player.physics
-                    {
+                    if let Physics::Cpu { ref mut dynamo, .. } = player.physics {
                         dynamo.flotator = !dynamo.flotator;
-                        log::info!(
-                            "cutterig {}",
-                            if dynamo.flotator { "on" } else { "off" }
-                        );
+                        log::info!("cutterig {}", if dynamo.flotator { "on" } else { "off" });
                     }
                 }
                 KeyCode::Space => self.input.use_entrance = true,

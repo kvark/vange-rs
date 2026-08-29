@@ -493,6 +493,29 @@ struct WebApp {
     escave_note: Option<String>,
     escave_selected: Option<String>,
     data_path: std::path::PathBuf,
+    /// Packed `resource/iscreen/ldata/` from the world zip. Empty when the
+    /// release has no cave maps (open-source tree, test level).
+    iscreen: Vfs,
+    cave_boot: CaveBoot,
+    cave: Option<CaveView>,
+}
+
+struct CaveBoot {
+    render: settings::Render,
+    geometry: settings::Geometry,
+    downlevel_caps: wgpu::DownlevelCapabilities,
+    color_format: wgpu::TextureFormat,
+    front_face: wgpu::FrontFace,
+}
+
+struct CaveView {
+    name: String,
+    level: level::Level,
+    render: Render,
+    cam: space::Camera,
+    target: glam::Vec3,
+    distance: f32,
+    yaw: f32,
 }
 
 struct Ride {
@@ -802,11 +825,31 @@ impl WebApp {
             escave_note: None,
             escave_selected: None,
             data_path: std::path::PathBuf::new(),
+            iscreen: {
+                let slice = vfs
+                    .map(|v| v.prefix("resource/iscreen/ldata"))
+                    .unwrap_or_default();
+                if slice.is_empty() {
+                    log::info!("No iscreen ldata in VFS; escave interiors stay 2D");
+                } else {
+                    log::info!("Kept {} iscreen file(s) for escave voxels", slice.len());
+                }
+                slice
+            },
+            cave_boot: CaveBoot {
+                render: escave::cave::render_settings(&render_settings),
+                geometry,
+                downlevel_caps: gfx.downlevel_caps.clone(),
+                color_format: gfx.color_format,
+                front_face: cam.front_face(),
+            },
+            cave: None,
         }
     }
 
     fn draw_ui(&mut self, ctx: &egui::Context) {
         if let Some(visit) = self.screen.visit() {
+            let see_through = self.cave.is_some();
             let action = escave::draw_interior(
                 ctx,
                 visit,
@@ -816,7 +859,7 @@ impl WebApp {
                 self.escave_note.as_deref(),
                 &mut self.escave_selected,
                 &self.spin_meshes,
-                false,
+                see_through,
             );
             if let Some(visit) = self.screen.visit_mut() {
                 let (note, _slots) = action.apply(
@@ -887,6 +930,12 @@ impl WebApp {
         self.render.resize(extent, device);
         if let space::Projection::Perspective(ref mut p) = self.cam.proj {
             p.aspect = extent.width as f32 / extent.height.max(1) as f32;
+        }
+        if let Some(ref mut cave) = self.cave {
+            cave.cam
+                .proj
+                .update(extent.width as u16, extent.height as u16);
+            cave.render.resize(extent, device);
         }
     }
 
@@ -978,6 +1027,62 @@ impl WebApp {
         if leaving && self.screen.is_world() {
             self.approach_cam = None;
         }
+        if let Some(ref mut cave) = self.cave {
+            cave.yaw += delta * 0.12;
+            escave::cave::orbit(
+                &mut cave.cam,
+                cave.target,
+                cave.distance,
+                cave.yaw,
+                escave::cave::ELEVATION,
+            );
+        }
+    }
+
+    fn ensure_cave(
+        &mut self,
+        name: &str,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        extent: wgpu::Extent3d,
+    ) {
+        if self.cave.as_ref().is_some_and(|c| c.name == name) {
+            return;
+        }
+        let Some((config, level)) =
+            escave::cave::load_from_vfs(&self.iscreen, name, &self.cave_boot.geometry)
+        else {
+            self.cave = None;
+            return;
+        };
+        let gfx = GraphicsContext {
+            device: device.clone(),
+            queue: queue.clone(),
+            downlevel_caps: self.cave_boot.downlevel_caps.clone(),
+            color_format: self.cave_boot.color_format,
+            screen_size: extent,
+        };
+        let pal = level.palette;
+        let render = Render::new(
+            &gfx,
+            &config,
+            &pal,
+            &self.cave_boot.render,
+            &self.cave_boot.geometry,
+            self.cave_boot.front_face,
+        );
+        let (mut cam, target, distance) = escave::cave::camera(&level, self.cam.proj);
+        cam.proj.update(extent.width as u16, extent.height as u16);
+        log::info!("escave iscreen {name} {}x{}", level.size.0, level.size.1);
+        self.cave = Some(CaveView {
+            name: name.to_string(),
+            level,
+            render,
+            cam,
+            target,
+            distance,
+            yaw: 0.35,
+        });
     }
 
     fn try_use(&mut self) {
@@ -1102,6 +1207,32 @@ impl WebApp {
         queue: &wgpu::Queue,
         targets: ScreenTargets,
     ) -> wgpu::CommandBuffer {
+        if let Some(name) = self.screen.cave_name().map(str::to_string) {
+            self.ensure_cave(&name, device, queue, targets.extent);
+        }
+        if self.screen.visit().is_some()
+            && let Some(ref mut cave) = self.cave
+        {
+            self.batcher.clear();
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Escave"),
+            });
+            cave.render
+                .set_local_light(cave.target, 280.0, [1.0, 0.82, 0.52]);
+            cave.render.draw_world(
+                &mut encoder,
+                &mut self.batcher,
+                &cave.level,
+                &cave.cam,
+                targets,
+                None,
+                device,
+                queue,
+                None,
+            );
+            return encoder.finish();
+        }
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("World"),
         });

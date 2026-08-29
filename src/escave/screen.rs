@@ -352,7 +352,11 @@ fn drop_note(hand: &Hand, target: &DropTarget) -> String {
     }
 }
 
-/// Full-screen talk/trade. The road is covered; this is the visit.
+/// Talk/trade overlay. Background order so Tweaks/Settings stay clickable.
+///
+/// Original 800×600 shop: spinning AVI top-left, item list under it,
+/// mechos matrix on the right, price/info along the bottom. Scaled to
+/// the current window; the cave map shows through the gaps.
 pub fn draw_interior(
     ctx: &egui::Context,
     visit: &Visit,
@@ -371,25 +375,25 @@ pub fn draw_interior(
     let mut action = InteriorAction::default();
     let rect = ctx.content_rect();
     let veil = if see_through {
-        egui::Color32::from_rgba_unmultiplied(8, 6, 4, 70)
+        egui::Color32::from_rgba_unmultiplied(8, 6, 4, 40)
     } else {
         BG
     };
     let panel = if see_through {
-        egui::Color32::from_rgba_unmultiplied(36, 26, 16, 210)
+        egui::Color32::from_rgba_unmultiplied(36, 26, 16, 220)
     } else {
         PANEL
     };
     egui::Area::new(egui::Id::new("escave-interior"))
         .fixed_pos(rect.left_top())
-        .order(egui::Order::Middle)
+        .order(egui::Order::Background)
         .show(ctx, |ui| {
             ui.painter().rect_filled(rect, 0.0, veil);
             ui.set_min_size(rect.size());
             egui::Frame::new()
-                .inner_margin(egui::Margin::same(16))
+                .inner_margin(egui::Margin::same(12))
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
+                    ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
                     ui.horizontal(|ui| {
                         if ui.add(egui::Button::new(rich("Leave", ACCENT))).clicked() {
                             action.leave = true;
@@ -397,34 +401,47 @@ pub fn draw_interior(
                         ui.label(
                             egui::RichText::new(visit.name.to_uppercase())
                                 .color(ACCENT)
-                                .size(22.0),
+                                .size(20.0),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(rich(format!("Beebs: {beebs}"), INK));
+                            if let Some(note) = note {
+                                ui.label(rich(note, MUTED));
+                            }
                         });
                     });
-                    if let Some(note) = note {
-                        ui.label(rich(note, MUTED));
-                    }
-                    ui.add_space(4.0);
-                    ui.columns(2, |cols| {
-                        egui::Frame::new()
-                            .fill(panel)
-                            .inner_margin(egui::Margin::same(10))
-                            .show(&mut cols[0], |ui| {
-                                draw_shop(ui, shop, inventory, selected, spin, &mut action);
-                            });
-                        egui::Frame::new()
-                            .fill(panel)
-                            .inner_margin(egui::Margin::same(10))
-                            .show(&mut cols[1], |ui| {
-                                draw_mechos(ui, inventory, selected, &mut action);
-                            });
+                    let avail = ui.available_size();
+                    let talk_h = 96.0;
+                    let body_h = (avail.y - talk_h - 8.0).max(220.0);
+                    let left_w = (avail.x * 0.36).clamp(280.0, 440.0);
+                    let mech = mechos_panel_size(inventory.layout());
+                    let gap = (avail.x - left_w - mech.x - 12.0).max(16.0);
+                    ui.horizontal(|ui| {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(left_w, body_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                draw_shop(ui, panel, shop, inventory, selected, spin, &mut action);
+                            },
+                        );
+                        ui.add_space(gap);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(mech.x, body_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                egui::Frame::new()
+                                    .fill(panel)
+                                    .inner_margin(egui::Margin::same(10))
+                                    .show(ui, |ui| {
+                                        draw_mechos(ui, inventory, selected, &mut action);
+                                    });
+                            },
+                        );
                     });
                     ui.add_space(6.0);
                     egui::Frame::new()
                         .fill(panel)
-                        .inner_margin(egui::Margin::same(10))
+                        .inner_margin(egui::Margin::same(8))
                         .show(ui, |ui| {
                             draw_talk(ui, visit, &mut action);
                         });
@@ -438,33 +455,15 @@ fn rich(text: impl Into<String>, color: egui::Color32) -> egui::RichText {
 }
 
 fn draw_talk(ui: &mut egui::Ui, visit: &Visit, action: &mut InteriorAction) {
-    ui.label(rich("Counselor", ACCENT).size(16.0));
-    ui.add_space(6.0);
-    let Some(ref session) = visit.session else {
-        ui.label(rich("The counselor is silent.", MUTED));
-        return;
-    };
-    let phrase = session.last_phrase().unwrap_or("");
-    egui::ScrollArea::vertical()
-        .max_height(140.0)
-        .id_salt("escave-phrase")
-        .show(ui, |ui| {
-            ui.add(
-                egui::Label::new(rich(phrase, INK).size(15.0))
-                    .wrap()
-                    .selectable(false),
-            );
-        });
-    ui.add_space(8.0);
-    if !session.ended() && ui.button(rich("Next", INK)).clicked() {
-        action.next_phrase = true;
-    }
-    if session.queries().is_empty() {
-        return;
-    }
-    ui.add_space(8.0);
-    ui.label(rich("Ask", ACCENT));
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
+        ui.label(rich("Counselor", ACCENT).size(14.0));
+        let Some(ref session) = visit.session else {
+            ui.label(rich("The counselor is silent.", MUTED));
+            return;
+        };
+        if !session.ended() && ui.button(rich("Next", INK)).clicked() {
+            action.next_phrase = true;
+        }
         for q in session.queries() {
             let label = session.query_prompt(q);
             if ui.button(rich(label, INK)).clicked() {
@@ -472,202 +471,185 @@ fn draw_talk(ui: &mut egui::Ui, visit: &Visit, action: &mut InteriorAction) {
             }
         }
     });
+    let Some(ref session) = visit.session else {
+        return;
+    };
+    let phrase = session.last_phrase().unwrap_or("");
+    egui::ScrollArea::vertical()
+        .max_height(52.0)
+        .id_salt("escave-phrase")
+        .show(ui, |ui| {
+            ui.add(
+                egui::Label::new(rich(phrase, INK).size(14.0))
+                    .wrap()
+                    .selectable(false),
+            );
+        });
 }
 
-const CELL: f32 = 22.0;
-const CELL_EMPTY: egui::Color32 = egui::Color32::from_rgb(24, 18, 12);
-const CELL_FULL: egui::Color32 = egui::Color32::from_rgb(72, 52, 28);
-const CELL_BAY: egui::Color32 = egui::Color32::from_rgb(48, 36, 22);
-const CELL_DEAD: egui::Color32 = egui::Color32::from_rgb(12, 9, 6);
+/// Pointy-top hex radius in UI points. Original matrix sat ~300 px wide
+/// for 8 columns on an 800-wide screen.
+const HEX_R: f32 = 18.0;
+const CELL_EMPTY: egui::Color32 = egui::Color32::from_rgb(42, 30, 18);
+const CELL_BAY: egui::Color32 = egui::Color32::from_rgb(64, 46, 26);
+const CELL_DEAD: egui::Color32 = egui::Color32::from_rgb(22, 16, 12);
+
+fn hex_pitch() -> (f32, f32) {
+    (HEX_R * 3.0_f32.sqrt(), HEX_R * 1.5)
+}
+
+/// Inclusive (min_x, min_y, max_x, max_y) of cells that are part of the mechos.
+fn layout_bounds(layout: &Layout) -> Option<(i32, i32, i32, i32)> {
+    let mut min_x = layout.width;
+    let mut min_y = layout.height;
+    let mut max_x = -1;
+    let mut max_y = -1;
+    for y in 0..layout.height {
+        for x in 0..layout.width {
+            if layout.cell(x, y) == Cell::Empty {
+                continue;
+            }
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+        }
+    }
+    if max_x < 0 {
+        None
+    } else {
+        Some((min_x, min_y, max_x, max_y))
+    }
+}
+
+fn mechos_panel_size(layout: &Layout) -> egui::Vec2 {
+    let Some((x0, y0, x1, y1)) = layout_bounds(layout) else {
+        return egui::vec2(220.0, 220.0);
+    };
+    let cols = (x1 - x0 + 1) as f32;
+    let rows = (y1 - y0 + 1) as f32;
+    let (dx, dy) = hex_pitch();
+    egui::vec2(
+        HEX_R * 2.0 + (cols - 1.0) * dx + dx * 0.5 + 28.0,
+        HEX_R * 2.0 + (rows - 1.0) * dy + 56.0,
+    )
+}
+
+fn hex_center(origin: egui::Pos2, x: i32, y: i32) -> egui::Pos2 {
+    let (dx, dy) = hex_pitch();
+    let odd = Layout::row_offset(y);
+    egui::pos2(
+        origin.x + HEX_R + x as f32 * dx + if odd { dx * 0.5 } else { 0.0 },
+        origin.y + HEX_R + y as f32 * dy,
+    )
+}
+
+fn hex_points(center: egui::Pos2) -> Vec<egui::Pos2> {
+    (0..6)
+        .map(|i| {
+            let a = (i as f32 + 0.5) * std::f32::consts::FRAC_PI_3;
+            egui::pos2(center.x + HEX_R * a.cos(), center.y + HEX_R * a.sin())
+        })
+        .collect()
+}
+
+fn ware_fill(id: &str) -> egui::Color32 {
+    let mut h = 0u32;
+    for b in id.bytes() {
+        h = h.wrapping_mul(16777619) ^ u32::from(b);
+    }
+    let r = 70 + (h & 0x3f) as u8;
+    let g = 42 + ((h >> 6) & 0x2f) as u8;
+    let b = 20 + ((h >> 12) & 0x1f) as u8;
+    egui::Color32::from_rgb(r, g, b)
+}
 
 fn draw_shop(
     ui: &mut egui::Ui,
+    panel: egui::Color32,
     shop: &Shop,
     inventory: &Inventory,
     selected: &mut Option<String>,
     spin: Option<&SpinMesh>,
     action: &mut InteriorAction,
 ) {
-    ui.label(rich("Shop", ACCENT).size(16.0));
-    ui.label(rich(
-        "Drag a ware onto the mechos to buy. Drag cargo here to sell.",
-        MUTED,
-    ));
-    ui.add_space(4.0);
-    let shop_frame = egui::Frame::new()
-        .fill(egui::Color32::from_rgb(28, 20, 12))
-        .inner_margin(egui::Margin::same(6));
-    let (inner, dropped) = ui.dnd_drop_zone::<Hand, ()>(shop_frame, |ui| {
-        if shop.stock().is_empty() {
-            ui.label(rich("Nothing on the counter.", MUTED));
-            return;
-        }
-        for good in shop.stock() {
-            let id = egui::Id::new(("shop-stock", good.id.as_str()));
-            let payload = Hand::Shop {
-                id: good.id.clone(),
-            };
-            let response = ui
-                .dnd_drag_source(id, payload, |ui| {
-                    let kind = if good.is_weapon() { "gun" } else { "ware" };
-                    let marked = selected.as_deref() == Some(good.id.as_str());
-                    let color = if marked { ACCENT } else { INK };
-                    ui.label(rich(
-                        format!("{} ({kind})  {} beebs", good.display_name(), good.buy_price),
-                        color,
-                    ));
-                })
-                .response;
-            if response.clicked() {
-                *selected = Some(good.id.clone());
-            }
-        }
-    });
-    let _ = inner;
-    if let Some(hand) = dropped.as_deref() {
-        action.drop = Some((hand.clone(), DropTarget::Shop));
-    }
-
-    ui.add_space(10.0);
-    draw_preview(ui, shop, inventory, selected.as_deref(), spin);
-}
-
-fn draw_mechos(
-    ui: &mut egui::Ui,
-    inventory: &Inventory,
-    selected: &mut Option<String>,
-    action: &mut InteriorAction,
-) {
-    ui.label(rich("Mechos", ACCENT).size(16.0));
-    ui.label(rich("Hex board of this vehicle.", MUTED));
-    ui.add_space(4.0);
-    let layout = inventory.layout();
-    let cell_size = egui::vec2(CELL, CELL);
-    for y in 0..layout.height {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
-            if Layout::row_offset(y) {
-                ui.add_space(CELL * 0.5);
-            }
-            for x in 0..layout.width {
-                draw_board_cell(
-                    ui,
-                    inventory,
-                    layout.cell(x, y),
-                    (x, y),
-                    cell_size,
-                    selected,
-                    action,
-                );
-            }
+    let inner = ui.available_size();
+    let video_h = (inner.x * 0.72).clamp(200.0, 280.0);
+    egui::Frame::new()
+        .fill(panel)
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            draw_video(ui, selected.as_deref(), spin, video_h);
+            ui.add_space(6.0);
+            draw_stats(ui, shop, inventory, selected.as_deref());
         });
+    ui.add_space(8.0);
+    egui::Frame::new()
+        .fill(panel)
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            draw_stock_list(ui, shop, selected, action);
+        });
+}
+
+fn draw_video(ui: &mut egui::Ui, selected: Option<&str>, spin: Option<&SpinMesh>, height: f32) {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, 6.0, egui::Color32::from_rgb(28, 20, 12));
+    ui.painter().rect_stroke(
+        rect,
+        6.0,
+        egui::Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.5)),
+        egui::StrokeKind::Inside,
+    );
+    if let Some(mesh) = spin {
+        let angle = ui.input(|i| i.time) as f32;
+        mesh.paint(ui.painter(), rect.shrink(10.0), angle, ACCENT);
+        ui.ctx().request_repaint();
+    } else if selected.is_some() {
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "No mesh",
+            egui::FontId::proportional(14.0),
+            MUTED,
+        );
     }
 }
 
-fn draw_board_cell(
-    ui: &mut egui::Ui,
-    inventory: &Inventory,
-    cell: Cell,
-    origin: (i32, i32),
-    cell_size: egui::Vec2,
-    selected: &mut Option<String>,
-    action: &mut InteriorAction,
-) {
-    match cell {
-        Cell::Empty => {
-            let (rect, _) = ui.allocate_exact_size(cell_size, egui::Sense::hover());
-            ui.painter().rect_filled(rect, 2.0, CELL_DEAD);
-        }
-        Cell::Cargo => {
-            let occupant = inventory.occupant(origin);
-            let is_origin = occupant.is_some_and(|(_, p)| p.origin == origin);
-            let fill = if occupant.is_some() {
-                CELL_FULL
-            } else {
-                CELL_EMPTY
-            };
-            let frame = egui::Frame::new().inner_margin(egui::Margin::same(1));
-            let (inner, dropped) = ui.dnd_drop_zone::<Hand, ()>(frame, |ui| {
-                let (rect, _) = ui.allocate_exact_size(cell_size, egui::Sense::hover());
-                ui.painter().rect_filled(rect, 2.0, fill);
-                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                    if let Some((index, placed)) = occupant {
-                        let payload = Hand::Cargo { index };
-                        let id = egui::Id::new(("cargo-cell", origin.0, origin.1, index));
-                        let response = ui
-                            .dnd_drag_source(id, payload, |ui| {
-                                if is_origin {
-                                    let marked =
-                                        selected.as_deref() == Some(placed.good.id.as_str());
-                                    let color = if marked { ACCENT } else { INK };
-                                    ui.label(
-                                        rich(short_id(placed.good.display_name()), color).small(),
-                                    );
-                                }
-                            })
-                            .response;
-                        if response.clicked() {
-                            *selected = Some(placed.good.id.clone());
-                        }
-                    }
-                });
-            });
-            let _ = inner;
-            if let Some(hand) = dropped.as_deref() {
-                action.drop = Some((hand.clone(), DropTarget::Cargo { origin }));
-            }
-        }
-        Cell::Bay(index) => {
-            let good = inventory.bay(index);
-            let fill = if good.is_some() { CELL_FULL } else { CELL_BAY };
-            let frame = egui::Frame::new()
-                .fill(fill)
-                .inner_margin(egui::Margin::same(1));
-            let (inner, dropped) = ui.dnd_drop_zone::<Hand, ()>(frame, |ui| {
-                let (rect, _) = ui.allocate_exact_size(cell_size, egui::Sense::hover());
-                ui.painter().rect_filled(rect, 2.0, fill);
-                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| match good {
-                    Some(good) => {
-                        let payload = Hand::Bay { index };
-                        let id = egui::Id::new(("bay-cell", origin.0, origin.1, index));
-                        let response = ui
-                            .dnd_drag_source(id, payload, |ui| {
-                                let marked = selected.as_deref() == Some(good.id.as_str());
-                                let color = if marked { ACCENT } else { INK };
-                                ui.label(rich(short_id(good.display_name()), color).small());
-                            })
-                            .response;
-                        if response.clicked() {
-                            *selected = Some(good.id.clone());
-                        }
-                    }
-                    None => {
-                        ui.label(rich(format!("W{index}"), MUTED).small());
-                    }
-                });
-            });
-            let _ = inner;
-            if let Some(hand) = dropped.as_deref() {
-                action.drop = Some((hand.clone(), DropTarget::Bay { index }));
-            }
-        }
-    }
-}
-
-fn draw_preview(
-    ui: &mut egui::Ui,
-    shop: &Shop,
-    inventory: &Inventory,
-    selected: Option<&str>,
-    spin: Option<&SpinMesh>,
-) {
-    ui.label(rich("Preview", ACCENT));
+fn draw_stats(ui: &mut egui::Ui, shop: &Shop, inventory: &Inventory, selected: Option<&str>) {
     let Some(id) = selected else {
-        ui.label(rich("Select a ware to see its stats.", MUTED));
+        ui.label(rich("Select a ware.", MUTED));
         return;
     };
-    let live = shop
-        .stock()
+    let stats = lookup_stats(shop, inventory, id);
+    let kind = if stats.kind == Kind::Weapon {
+        "gun"
+    } else {
+        "ware"
+    };
+    ui.label(rich(format!("{}  ·  {kind}", stats.name), INK).size(16.0));
+    ui.label(rich(
+        format!(
+            "Buy {} beebs    Sell {} beebs",
+            stats.buy_price, stats.sell_price
+        ),
+        ACCENT,
+    ));
+    if stats.description.is_empty() {
+        ui.label(rich("No description.", MUTED));
+    } else {
+        ui.add(
+            egui::Label::new(rich(&stats.description, INK).size(13.0))
+                .wrap()
+                .selectable(false),
+        );
+    }
+}
+
+fn lookup_stats(shop: &Shop, inventory: &Inventory, id: &str) -> Preview {
+    shop.stock()
         .iter()
         .find(|g| g.id == id)
         .or_else(|| {
@@ -683,54 +665,272 @@ fn draw_preview(
                 .iter()
                 .filter_map(Option::as_ref)
                 .find(|g| g.id == id)
-        });
-    let stats = match live {
-        Some(good) => preview_good(good),
-        None => match preview(id) {
-            Some(p) => p,
-            None => Preview {
-                id: id.to_string(),
-                name: id.to_string(),
-                kind: Kind::Ware,
-                buy_price: 0,
-                sell_price: 0,
-                description: String::new(),
-            },
-        },
-    };
-    let kind = if stats.kind == Kind::Weapon {
-        "gun"
-    } else {
-        "ware"
-    };
-    ui.label(rich(format!("{} ({kind})", stats.name), INK));
+        })
+        .map(preview_good)
+        .or_else(|| preview(id))
+        .unwrap_or_else(|| Preview {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind: Kind::Ware,
+            buy_price: 0,
+            sell_price: 0,
+            description: String::new(),
+        })
+}
+
+fn draw_stock_list(
+    ui: &mut egui::Ui,
+    shop: &Shop,
+    selected: &mut Option<String>,
+    action: &mut InteriorAction,
+) {
+    ui.label(rich("Shop", ACCENT).size(14.0));
     ui.label(rich(
-        format!("Buy {}   Sell {}", stats.buy_price, stats.sell_price),
+        "Click to preview. Drag onto the mechos to buy.",
         MUTED,
     ));
-    if let Some(mesh) = spin {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(180.0, 140.0), egui::Sense::hover());
-        ui.painter()
-            .rect_filled(rect, 4.0, egui::Color32::from_rgb(20, 14, 10));
-        let angle = ui.input(|i| i.time) as f32;
-        let painter = ui.painter();
-        mesh.paint(painter, rect, angle, ACCENT);
-        ui.ctx().request_repaint();
+    let shop_frame = egui::Frame::new()
+        .fill(egui::Color32::from_rgb(22, 16, 10))
+        .inner_margin(egui::Margin::same(4));
+    let (inner, dropped) = ui.dnd_drop_zone::<Hand, ()>(shop_frame, |ui| {
+        if shop.stock().is_empty() {
+            ui.label(rich("Nothing on the counter.", MUTED));
+            return;
+        }
+        egui::ScrollArea::vertical()
+            .id_salt("escave-stock")
+            .max_height(ui.available_height().max(80.0))
+            .show(ui, |ui| {
+                for good in shop.stock() {
+                    let marked = selected.as_deref() == Some(good.id.as_str());
+                    let id = egui::Id::new(("shop-stock", good.id.as_str()));
+                    let payload = Hand::Shop {
+                        id: good.id.clone(),
+                    };
+                    let response = ui
+                        .dnd_drag_source(id, payload, |ui| {
+                            let color = if marked { ACCENT } else { INK };
+                            let kind = if good.is_weapon() { "gun" } else { "ware" };
+                            let label = format!(
+                                "{}  {} · {} beebs",
+                                good.display_name(),
+                                kind,
+                                good.buy_price
+                            );
+                            let fill = if marked {
+                                egui::Color32::from_rgb(56, 38, 18)
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
+                            egui::Frame::new()
+                                .fill(fill)
+                                .inner_margin(egui::Margin::symmetric(6, 4))
+                                .show(ui, |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    ui.label(rich(label, color));
+                                });
+                        })
+                        .response;
+                    if response.clicked() {
+                        *selected = Some(good.id.clone());
+                    }
+                }
+            });
+    });
+    let _ = inner;
+    if let Some(hand) = dropped.as_deref() {
+        action.drop = Some((hand.clone(), DropTarget::Shop));
     }
-    if stats.description.is_empty() {
-        ui.label(rich("No description.", MUTED));
-    } else {
-        ui.add(
-            egui::Label::new(rich(&stats.description, INK))
-                .wrap()
-                .selectable(false),
-        );
+}
+
+fn draw_mechos(
+    ui: &mut egui::Ui,
+    inventory: &Inventory,
+    selected: &mut Option<String>,
+    action: &mut InteriorAction,
+) {
+    ui.label(rich("Mechos", ACCENT).size(16.0));
+    ui.label(rich("Drag a shop ware onto a hex to buy.", MUTED));
+    ui.add_space(6.0);
+    let layout = inventory.layout();
+    let Some((x0, y0, x1, y1)) = layout_bounds(layout) else {
+        ui.label(rich("No board for this mechos.", MUTED));
+        return;
+    };
+    let (dx, dy) = hex_pitch();
+    let cols = (x1 - x0 + 1) as f32;
+    let rows = (y1 - y0 + 1) as f32;
+    let board_w = HEX_R * 2.0 + (cols - 1.0) * dx + dx * 0.5;
+    let board_h = HEX_R * 2.0 + (rows - 1.0) * dy;
+    let (board, _) = ui.allocate_exact_size(egui::vec2(board_w, board_h), egui::Sense::hover());
+    let painter = ui.painter().with_clip_rect(board);
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let cell = layout.cell(x, y);
+            if cell == Cell::Empty {
+                continue;
+            }
+            let center = hex_center(board.min, x - x0, y - y0);
+            let points = hex_points(center);
+            let bbox = egui::Rect::from_center_size(
+                center,
+                egui::vec2(dx.max(HEX_R * 2.0) - 1.0, dy + HEX_R * 0.2),
+            )
+            .intersect(board);
+            draw_hex_cell(
+                ui,
+                &painter,
+                inventory,
+                cell,
+                (x, y),
+                points,
+                bbox,
+                selected,
+                action,
+            );
+        }
     }
+}
+
+fn draw_hex_cell(
+    ui: &mut egui::Ui,
+    painter: &egui::Painter,
+    inventory: &Inventory,
+    cell: Cell,
+    origin: (i32, i32),
+    points: Vec<egui::Pos2>,
+    bbox: egui::Rect,
+    selected: &mut Option<String>,
+    action: &mut InteriorAction,
+) {
+    if bbox.width() < 4.0 || bbox.height() < 4.0 {
+        return;
+    }
+    match cell {
+        Cell::Empty => {
+            painter.add(egui::Shape::convex_polygon(
+                points,
+                CELL_DEAD,
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(40, 28, 18)),
+            ));
+        }
+        Cell::Cargo => {
+            let occupant = inventory.occupant(origin);
+            let is_origin = occupant.is_some_and(|(_, p)| p.origin == origin);
+            let marked = occupant
+                .map(|(_, p)| selected.as_deref() == Some(p.good.id.as_str()))
+                .unwrap_or(false);
+            let fill = occupant
+                .map(|(_, p)| ware_fill(&p.good.id))
+                .unwrap_or(CELL_EMPTY);
+            let stroke = if marked {
+                egui::Stroke::new(2.0_f32, ACCENT)
+            } else {
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(60, 42, 26))
+            };
+            painter.add(egui::Shape::convex_polygon(points, fill, stroke));
+            if let Some((_, placed)) = occupant
+                && is_origin
+            {
+                painter.text(
+                    bbox.center(),
+                    egui::Align2::CENTER_CENTER,
+                    short_id(placed.good.display_name()),
+                    egui::FontId::proportional(11.0),
+                    if marked { ACCENT } else { INK },
+                );
+            }
+            ui.scope_builder(egui::UiBuilder::new().max_rect(bbox), |ui| {
+                let frame = egui::Frame::new().inner_margin(0);
+                let (inner, dropped) = ui.dnd_drop_zone::<Hand, ()>(frame, |ui| {
+                    if let Some((index, placed)) = occupant {
+                        let payload = Hand::Cargo { index };
+                        let id = egui::Id::new(("cargo-hex", origin.0, origin.1, index));
+                        let response = ui
+                            .dnd_drag_source(id, payload, |ui| {
+                                ui.allocate_exact_size(bbox.size(), egui::Sense::click());
+                            })
+                            .response;
+                        response.clone().on_hover_text(placed.good.display_name());
+                        if response.clicked() {
+                            *selected = Some(placed.good.id.clone());
+                        }
+                    } else {
+                        ui.allocate_exact_size(bbox.size(), egui::Sense::hover());
+                    }
+                });
+                let _ = inner;
+                if let Some(hand) = dropped.as_deref() {
+                    action.drop = Some((hand.clone(), DropTarget::Cargo { origin }));
+                }
+            });
+        }
+        Cell::Bay(index) => {
+            let good = inventory.bay(index);
+            let marked = good
+                .map(|g| selected.as_deref() == Some(g.id.as_str()))
+                .unwrap_or(false);
+            let fill = good.map(|g| ware_fill(&g.id)).unwrap_or(CELL_BAY);
+            let stroke = if marked {
+                egui::Stroke::new(2.0_f32, ACCENT)
+            } else {
+                egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(180, 140, 48))
+            };
+            painter.add(egui::Shape::convex_polygon(points, fill, stroke));
+            let label = match good {
+                Some(g) => short_id(g.display_name()),
+                None => format!("W{}", index + 1),
+            };
+            painter.text(
+                bbox.center(),
+                egui::Align2::CENTER_CENTER,
+                label,
+                egui::FontId::proportional(11.0),
+                if marked { ACCENT } else { INK },
+            );
+            ui.scope_builder(egui::UiBuilder::new().max_rect(bbox), |ui| {
+                let frame = egui::Frame::new().inner_margin(0);
+                let (inner, dropped) = ui.dnd_drop_zone::<Hand, ()>(frame, |ui| {
+                    if let Some(good) = good {
+                        let payload = Hand::Bay { index };
+                        let id = egui::Id::new(("bay-hex", origin.0, origin.1, index));
+                        let response = ui
+                            .dnd_drag_source(id, payload, |ui| {
+                                ui.allocate_exact_size(bbox.size(), egui::Sense::click());
+                            })
+                            .response;
+                        response.clone().on_hover_text(good.display_name());
+                        if response.clicked() {
+                            *selected = Some(good.id.clone());
+                        }
+                    } else {
+                        ui.allocate_exact_size(bbox.size(), egui::Sense::hover());
+                    }
+                });
+                let _ = inner;
+                if let Some(hand) = dropped.as_deref() {
+                    action.drop = Some((hand.clone(), DropTarget::Bay { index }));
+                }
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+fn draw_preview(
+    ui: &mut egui::Ui,
+    shop: &Shop,
+    inventory: &Inventory,
+    selected: Option<&str>,
+    spin: Option<&SpinMesh>,
+) {
+    draw_video(ui, selected, spin, 140.0);
+    draw_stats(ui, shop, inventory, selected);
 }
 
 fn short_id(id: &str) -> String {
     let mut chars = id.chars();
-    let take: String = chars.by_ref().take(4).collect();
+    let take: String = chars.by_ref().take(5).collect();
     if chars.next().is_some() {
         format!("{take}…")
     } else {
@@ -861,29 +1061,31 @@ mod tests {
         }
     }
 
-    fn is_cell_rect(shape: &egui::Shape) -> bool {
+    fn is_hex_path(shape: &egui::Shape) -> bool {
         #[allow(clippy::pattern_type_mismatch)]
         match shape {
-            egui::Shape::Rect(rect) => {
-                (rect.rect.width() - CELL).abs() < 1.0 && (rect.rect.height() - CELL).abs() < 1.0
+            egui::Shape::Path(path) => {
+                path.points.len() >= 6
+                    && path.points.len() <= 7
+                    && (path.points[0] - path.points[1]).length() > 4.0
             }
             _ => false,
         }
     }
 
-    fn cell_sized_rects(output: &egui::FullOutput) -> usize {
+    fn hex_paths(output: &egui::FullOutput) -> usize {
         output
             .shapes
             .iter()
-            .filter(|clipped| is_cell_rect(&clipped.shape))
+            .filter(|clipped| is_hex_path(&clipped.shape))
             .count()
     }
 
-    fn painted_paths(output: &egui::FullOutput) -> usize {
+    fn painted_images(output: &egui::FullOutput) -> usize {
         output
             .shapes
             .iter()
-            .filter(|clipped| matches!(clipped.shape, egui::Shape::Path(_)))
+            .filter(|clipped| matches!(clipped.shape, egui::Shape::Mesh(_)))
             .count()
     }
 
@@ -901,7 +1103,7 @@ mod tests {
         let inventory = Inventory::default();
         assert!(inventory.layout().width > 0);
         let output = paint_mechos(&inventory);
-        let cells = cell_sized_rects(&output);
+        let cells = hex_paths(&output);
         assert!(
             cells >= (inventory.layout().width * inventory.layout().height) as usize,
             "expected a painted hex cell per board slot, got {cells}"
@@ -912,7 +1114,7 @@ mod tests {
     fn an_empty_board_paints_no_hex_cells() {
         let inventory = Inventory::for_car("Nobody", &super::super::Catalog::default());
         assert_eq!(inventory.layout().width, 0);
-        assert_eq!(cell_sized_rects(&paint_mechos(&inventory)), 0);
+        assert_eq!(hex_paths(&paint_mechos(&inventory)), 0);
     }
 
     #[test]
@@ -925,7 +1127,7 @@ mod tests {
             draw_preview(ui, &shop, &inventory, Some("Nymbos"), Some(&mesh));
         });
         assert!(
-            painted_paths(&output) > 0,
+            painted_images(&output) > 0,
             "the shop preview must paint the spinning mesh"
         );
     }
@@ -983,5 +1185,85 @@ mod tests {
         let preview = preview("Nymbos").unwrap();
         assert_eq!(preview.kind, Kind::Ware);
         assert!(!preview.description.is_empty());
+    }
+
+    fn data_root() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../Vangers/data")
+    }
+
+    fn preview_mesh() -> SpinMesh {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for rel in [
+            "../Vangers/data/resource/m3d/items/i4.m3d",
+            "../VangersData/resource/m3d/items/i4.m3d",
+        ] {
+            if let Some(mesh) = SpinMesh::load_path(&root.join(rel)) {
+                return mesh;
+            }
+        }
+        SpinMesh::triangle()
+    }
+
+    #[test]
+    fn shop_layout_preview_png() {
+        let visit = Visit {
+            name: "Podish".into(),
+            session: None,
+        };
+        let shop = Shop::fostral();
+        let mut inventory = {
+            let cat = super::super::Catalog::load(&data_root());
+            if cat.is_empty() {
+                Inventory::default()
+            } else {
+                Inventory::for_car("OxidizeMonk", &cat)
+            }
+        };
+        if let Some(origin) = inventory.first_fit(shop.stock()[0].shape()) {
+            let _ = inventory.place(shop.stock()[0].clone(), origin);
+        }
+        let mut selected = Some("Nymbos".into());
+        let mut spins = HashMap::new();
+        spins.insert("Nymbos".into(), preview_mesh());
+        let ctx = egui::Context::default();
+        let mut input = viewport_input();
+        input.time = Some(0.8);
+        #[expect(deprecated)]
+        let _ = ctx.run(input.clone(), |ctx| {
+            let _ = draw_interior(
+                ctx,
+                &visit,
+                &shop,
+                &inventory,
+                188,
+                Some("Bought Nymbos"),
+                &mut selected,
+                &spins,
+                true,
+            );
+        });
+        input.time = Some(0.8);
+        #[expect(deprecated)]
+        let output = ctx.run(input, |ctx| {
+            let _ = draw_interior(
+                ctx,
+                &visit,
+                &shop,
+                &inventory,
+                188,
+                Some("Bought Nymbos"),
+                &mut selected,
+                &spins,
+                true,
+            );
+        });
+        let primitives = ctx.tessellate(output.shapes.clone(), output.pixels_per_point);
+        let pixels = crate::escave::shot::rasterize(1280, 800, &output, &primitives);
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/shop-preview.png");
+        crate::escave::shot::write_png(&path, 1280, 800, &pixels).expect("write shop preview");
+        assert!(
+            path.metadata().map(|m| m.len()).unwrap_or(0) > 8_000,
+            "shop preview png should have pixels"
+        );
     }
 }
