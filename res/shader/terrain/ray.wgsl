@@ -148,23 +148,11 @@ fn ray_color(in: RayInput) -> FragOutput {
         return FragOutput(u_Locals.fog_color, 1.0);
     }
 
-    var visibility = fetch_shadow_visibility(pt.pos);
+    let visibility = fetch_shadow_visibility(pt.pos);
     var frag_color = apply_fog(color_point(pt, visibility), pt.pos.xy);
-    var depth_pos = pt.pos;
-    let cover = focus_visibility(pt.pos);
-    if (cover < 0.999) {
-        let dir = normalize(sp_far_world - sp_near_world);
-        let behind = cast_ray_to_map(pt.pos + dir * 0.75, sp_far_world);
-        var back_color = u_Locals.fog_color;
-        if (behind.hit) {
-            let back_vis = fetch_shadow_visibility(behind.pos);
-            back_color = apply_fog(color_point(behind, back_vis), behind.pos.xy);
-            depth_pos = behind.pos;
-        }
-        frag_color = mix(back_color, frag_color, cover * 0.4);
-    }
+    frag_color.a = focus_visibility(pt.pos);
 
-    let target_ndc = u_Globals.view_proj * vec4<f32>(depth_pos, 1.0);
+    let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
     let depth = target_ndc.z / target_ndc.w;
     return FragOutput(frag_color, depth);
 }

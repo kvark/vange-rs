@@ -6,7 +6,7 @@
     <title>Vangers – Rust WebGPU</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #c9d1d9; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #c9d1d9; overscroll-behavior: none; }
 
         /* Tab bar */
         nav { display: flex; background: #161b22; border-bottom: 1px solid #30363d; }
@@ -26,6 +26,7 @@
         #game-panel { position: relative; }
         #game-panel canvas {
             width: 100vw; height: calc(100vh - 47px); display: block; background: #1a1a2e;
+            touch-action: none; user-select: none; -webkit-user-select: none;
         }
         #loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);

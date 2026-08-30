@@ -798,7 +798,8 @@ mod ground_tests {
     }
 
     /// Wide-FOV chase used by the web build: one body-length back so the
-    /// car does not shrink into the distance.
+    /// car does not shrink into the distance. Live play then adds one
+    /// body-height on top of `offset.z`.
     #[test]
     fn a_close_chase_keeps_the_car_nearby() {
         let target = Transform {

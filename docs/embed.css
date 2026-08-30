@@ -8,6 +8,7 @@ html, body {
     color: #c9d1d9;
     font-family: 'Segoe UI', system-ui, sans-serif;
     overflow: hidden;
+    overscroll-behavior: none;
 }
 
 #canvas {
@@ -15,6 +16,9 @@ html, body {
     height: 100vh;
     display: block;
     background: #1a1a2e;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 #loading {

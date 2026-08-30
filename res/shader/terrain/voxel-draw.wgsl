@@ -63,9 +63,6 @@ fn cast_miss() -> CastPoint {
 }
 
 fn check_hit(pos: vec3<f32>) -> u32 {
-    if (focus_visibility(pos) < 0.45) {
-        return TYPE_MISS;
-    }
     let suf = get_surface(pos.xy);
     if (suf.high_alt <= 0.0) {
         return TYPE_MISS;
@@ -258,7 +255,8 @@ fn draw_color(@builtin(position) frag_coord: vec4<f32>) -> FragOutput {
     }
 
     let visibility = fetch_shadow_visibility(pt.pos);
-    let frag_color = apply_fog(evaluate_color(pt.ty, pt.pos, visibility), pt.pos.xy);
+    var frag_color = apply_fog(evaluate_color(pt.ty, pt.pos, visibility), pt.pos.xy);
+    frag_color.a = focus_visibility(pt.pos);
     let actual_color = mix(frag_color, debug_color, debug_color.a);
 
     let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
