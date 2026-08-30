@@ -61,7 +61,7 @@ fn vertex(
 
 @fragment
 fn fragment(in: Varyings) -> @location(0) vec4<f32> {
-    if (in.world_pos.z <= 0.0 || focus_visibility(in.world_pos) < 0.45) {
+    if (in.world_pos.z <= 0.0) {
         discard;
     }
     let suf = get_surface(in.world_pos.xy);
@@ -93,6 +93,8 @@ fn fragment(in: Varyings) -> @location(0) vec4<f32> {
     // `u_Locals.lighting_flags[1]`: 1 = smooth normals on, 0 = flat.
     let normal = normalize(mix(geo, mix(grad_normal, geo, smoothstep(0.55, 0.8, slant)), f32(u_Locals.lighting_flags[1u])));
 
-    let terrain_color = evaluate_color_normal(ty, in.world_pos, visibility, normal);
-    return apply_fog(terrain_color, in.world_pos.xy);
+    var terrain_color = evaluate_color_normal(ty, in.world_pos, visibility, normal);
+    terrain_color = apply_fog(terrain_color, in.world_pos.xy);
+    terrain_color.a = focus_visibility(in.world_pos);
+    return terrain_color;
 }

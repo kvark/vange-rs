@@ -15,8 +15,8 @@ struct Globals {
 
 @group(0) @binding(0) var<uniform> u_Globals: Globals;
 
-/// 0 = this sample sits in the cone from the camera through the vehicle
-/// (terrain here would hide the car), 1 = leave the surface alone.
+/// Opacity of terrain that sits between the camera and the vehicle.
+/// 1 = fully solid, ~0.2 on the view axis (see the car through a veil).
 fn focus_visibility(pos: vec3<f32>) -> f32 {
     let f = u_Globals.focus_pos;
     if (f.w <= 0.001) {
@@ -31,7 +31,7 @@ fn focus_visibility(pos: vec3<f32>) -> f32 {
     }
     let to_pos = pos - cam;
     let dist_pos = length(to_pos);
-    if (dist_pos >= dist_car - f.w) {
+    if (dist_pos >= dist_car - f.w * 0.4) {
         return 1.0;
     }
     let axis = to_car / dist_car;
@@ -40,8 +40,9 @@ fn focus_visibility(pos: vec3<f32>) -> f32 {
         return 1.0;
     }
     let perp = length(to_pos - axis * along);
-    let cone_r = f.w * (along / dist_car) * 1.45;
-    return smoothstep(cone_r * 0.35, cone_r, perp);
+    let cone_r = f.w * (along / dist_car) * 2.6;
+    let edge = smoothstep(0.0, cone_r, perp);
+    return mix(0.18, 1.0, edge * edge);
 }
 
 fn closest_local_light(pos: vec3<f32>, normal: vec3<f32>) -> f32 {

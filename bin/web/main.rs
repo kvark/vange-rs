@@ -498,6 +498,14 @@ struct WebApp {
     iscreen: Vfs,
     cave_boot: CaveBoot,
     cave: Option<CaveView>,
+    /// `escaves.prm` + `spots.prm` so VLC names like `Escave1` map to VigBoo.
+    cave_pads: Vec<escave::cave::Pad>,
+    /// On-screen stick (motor, rudder), only while a thumb is on it.
+    stick: (f32, f32),
+    /// On-screen Use, same edge as Space.
+    use_held: bool,
+    /// Phone / tablet: coarse pointer or a narrow touch screen.
+    touch_stick: bool,
 }
 
 struct CaveBoot {
@@ -554,8 +562,10 @@ impl WebApp {
             // Close third-person chase cam. The mechos is roughly 30 world
             // units long; with the wide focal-512 FOV a long chase shrinks
             // it into the screen, so this sits under a body length behind
-            // the centre and looks just beyond the nose. `angle` is unused
-            // once `look_ahead` is set and remains a fallback pitch.
+            // the centre and looks just beyond the nose. `height` is the
+            // base; `build` then adds one body height so the view sits
+            // over the hull instead of staring at the dirt under it.
+            // `angle` is unused once `look_ahead` is set.
             s.game.camera.angle = 12;
             s.game.camera.offset = 24.0;
             s.game.camera.height = 9.0;
@@ -738,12 +748,23 @@ impl WebApp {
 
         // Camera follow params from settings.ron, same conversion as
         // native (bin/road/game.rs CameraStyle::new).
-        let follow = space::Follow {
+        let mut follow = space::Follow {
             angle_x: (cam_config.angle as f32).to_radians() - std::f32::consts::FRAC_PI_2,
             offset: glam::vec3(0.0, cam_config.offset, cam_config.height),
             speed: cam_config.speed,
             look_ahead: cam_config.look_ahead,
         };
+        if let Some(ref a) = agent {
+            let b = &a.phys_data.bbox;
+            let body_h = (b.max[2] - b.min[2]).abs() * a.car.scale;
+            let extra = if body_h > 1.0 {
+                body_h.clamp(6.0, 28.0)
+            } else {
+                12.0
+            };
+            follow.offset.z += extra;
+            log::info!("chase camera raised by {extra:.0} (one body height)");
+        }
 
         let moving_t = Instant::now();
         let moving = level::moving::MovingWorld::load(&level_config, vfs);
@@ -844,6 +865,27 @@ impl WebApp {
                 front_face: cam.front_face(),
             },
             cave: None,
+            cave_pads: {
+                let mut pads = Vec::new();
+                if let Some(v) = vfs {
+                    for key in ["escaves.prm", "spots.prm"] {
+                        if let Some(bytes) = v.read(key) {
+                            pads.extend(escave::cave::pads_from_prm(&String::from_utf8_lossy(
+                                &bytes,
+                            )));
+                        }
+                    }
+                }
+                if pads.is_empty() {
+                    log::info!("No escaves.prm/spots.prm; VLC names like Escave1 will not map");
+                } else {
+                    log::info!("Loaded {} escave/spot pads for iscreen", pads.len());
+                }
+                pads
+            },
+            stick: (0.0, 0.0),
+            use_held: false,
+            touch_stick: uses_touch_stick(),
         }
     }
 
@@ -882,7 +924,17 @@ impl WebApp {
             escave::draw_shutters(ctx, shutter);
         }
 
+        if self.touch_stick {
+            self.use_held = draw_use_button(ctx);
+        }
+
         if !self.screen.is_world() {
+            self.stick = (0.0, 0.0);
+            return;
+        }
+
+        if self.touch_stick {
+            self.stick = draw_drive_stick(ctx);
             return;
         }
 
@@ -1053,8 +1105,9 @@ impl WebApp {
         if self.cave.as_ref().is_some_and(|c| c.name == name) {
             return;
         }
+        let situation = escave::cave::Situation::Shop;
         let Some((config, level)) =
-            escave::cave::load_from_vfs(&self.iscreen, name, &self.cave_boot.geometry)
+            escave::cave::load_from_vfs(&self.iscreen, name, &self.cave_boot.geometry, situation)
         else {
             self.cave = None;
             return;
@@ -1075,9 +1128,18 @@ impl WebApp {
             &self.cave_boot.geometry,
             self.cave_boot.front_face,
         );
-        let (mut cam, target, distance) = escave::cave::camera(&level, self.cam.proj);
+        let (mut cam, target, distance) = escave::cave::camera(&level, self.cam.proj, situation);
         cam.proj.update(extent.width as u16, extent.height as u16);
-        log::info!("escave iscreen {name} {}x{}", level.size.0, level.size.1);
+        let tile = situation.region();
+        log::info!(
+            "escave iscreen {name} {}x{} from {}x{}+{},{}",
+            level.size.0,
+            level.size.1,
+            tile.w,
+            tile.h,
+            tile.x,
+            tile.y
+        );
         self.cave = Some(CaveView {
             name: name.to_string(),
             level,
@@ -1126,8 +1188,13 @@ impl WebApp {
         ) else {
             return;
         };
+        let name = escave::cave::resolve_name(
+            &arrival.name,
+            (arrival.pos.0, arrival.pos.1),
+            &self.cave_pads,
+        );
         self.start_enter(
-            arrival.name,
+            name,
             glam::Vec3::new(arrival.pos.0 as f32, arrival.pos.1 as f32, pos.z),
         );
     }
@@ -1440,6 +1507,115 @@ fn key_from_code(code: &str) -> Option<KeyCode> {
     })
 }
 
+/// Phone / tablet: a coarse pointer, or a narrow screen that also has touch.
+fn uses_touch_stick() -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    if window
+        .match_media("(pointer: coarse)")
+        .ok()
+        .flatten()
+        .is_some_and(|m| m.matches())
+    {
+        return true;
+    }
+    let touch = window.navigator().max_touch_points() > 0;
+    let narrow = window
+        .inner_width()
+        .ok()
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1024.0)
+        < 900.0;
+    touch && narrow
+}
+
+const STICK_RADIUS: f32 = 56.0;
+const USE_RADIUS: f32 = 36.0;
+const TOUCH_MARGIN: f32 = 20.0;
+const TOUCH_GAP: f32 = 16.0;
+
+/// Bottom-right analog stick. Returns (motor, rudder) in [-1, 1], matching WASD.
+fn draw_drive_stick(ctx: &egui::Context) -> (f32, f32) {
+    const RADIUS: f32 = STICK_RADIUS;
+    const MARGIN: f32 = TOUCH_MARGIN;
+    let mut drive = (0.0f32, 0.0f32);
+    egui::Area::new(egui::Id::new("drive-stick"))
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-MARGIN, -MARGIN))
+        .show(ctx, |ui| {
+            let size = egui::vec2(RADIUS * 2.0, RADIUS * 2.0);
+            let (resp, painter) = ui.allocate_painter(size, egui::Sense::drag());
+            let center = resp.rect.center();
+            let mut knob = egui::Vec2::ZERO;
+            if resp.dragged()
+                && let Some(pos) = resp.interact_pointer_pos()
+            {
+                let v = pos - center;
+                let max = RADIUS - 6.0;
+                let len = v.length();
+                knob = if len > max { v * (max / len) } else { v };
+            }
+            painter.circle_filled(center, RADIUS, egui::Color32::from_black_alpha(90));
+            painter.circle_stroke(
+                center,
+                RADIUS,
+                egui::Stroke::new(2.0_f32, egui::Color32::from_white_alpha(70)),
+            );
+            painter.circle_filled(
+                center + knob,
+                RADIUS * 0.38,
+                egui::Color32::from_white_alpha(150),
+            );
+            let reach = RADIUS - 6.0;
+            let nx = (knob.x / reach).clamp(-1.0, 1.0);
+            let ny = (knob.y / reach).clamp(-1.0, 1.0);
+            const DEAD: f32 = 0.12;
+            if nx.abs() > DEAD || ny.abs() > DEAD {
+                // egui +Y is down; W is motor +, A is rudder +.
+                drive = (-ny, -nx);
+            }
+        });
+    drive
+}
+
+/// Use / Space, to the left of the stick so a thumb can hit it without
+/// fighting the knob. Held like the key: press edge opens a pad, or
+/// leaves the shop.
+fn draw_use_button(ctx: &egui::Context) -> bool {
+    const RADIUS: f32 = USE_RADIUS;
+    let x = -(TOUCH_MARGIN + STICK_RADIUS * 2.0 + TOUCH_GAP);
+    let mut held = false;
+    egui::Area::new(egui::Id::new("use-button"))
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(x, -TOUCH_MARGIN))
+        .show(ctx, |ui| {
+            let size = egui::vec2(RADIUS * 2.0, RADIUS * 2.0);
+            let (resp, painter) = ui.allocate_painter(size, egui::Sense::click_and_drag());
+            held = resp.is_pointer_button_down_on();
+            let fill = if held {
+                egui::Color32::from_white_alpha(50)
+            } else {
+                egui::Color32::from_black_alpha(90)
+            };
+            let center = resp.rect.center();
+            painter.circle_filled(center, RADIUS, fill);
+            painter.circle_stroke(
+                center,
+                RADIUS,
+                egui::Stroke::new(2.0_f32, egui::Color32::from_white_alpha(70)),
+            );
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                "USE",
+                egui::FontId::proportional(16.0),
+                egui::Color32::from_white_alpha(200),
+            );
+        });
+    held
+}
+
 fn pointer_pos(canvas: &web_sys::HtmlCanvasElement, event: &web_sys::PointerEvent) -> [f32; 2] {
     let rect = canvas.get_bounding_client_rect();
     [
@@ -1599,6 +1775,9 @@ impl WebHandler {
         let on_pointerdown = Closure::wrap(Box::new(move |event: web_sys::PointerEvent| {
             let _ = canvas_focus.focus();
             if event.button() == 0 {
+                if !in_level_picker(&event) {
+                    event.prevent_default();
+                }
                 down(event, Some(true));
             }
         }) as Box<dyn FnMut(web_sys::PointerEvent)>);
@@ -2246,8 +2425,17 @@ impl WebHandler {
         if keys.contains(&KeyCode::KeyD) {
             rudder = -1.0;
         }
+        {
+            let (sm, sr) = gpu.app.stick;
+            if sm.abs() > 0.01 {
+                motor = sm;
+            }
+            if sr.abs() > 0.01 {
+                rudder = sr;
+            }
+        }
         let brake = keys.contains(&KeyCode::ControlLeft);
-        let space = keys.contains(&KeyCode::Space);
+        let space = keys.contains(&KeyCode::Space) || gpu.app.use_held;
         let turbo = keys.contains(&KeyCode::ShiftLeft);
         // Roll direction matches native: Q/E are scaled by cam.scale.y
         // (which is -1) so Q → +1, E → -1.

@@ -16,7 +16,7 @@ pub(super) fn create_ray_pipeline(
 ) -> wgpu::RenderPipeline {
     let color_descs = [Some(wgpu::ColorTargetState {
         format: color_format,
-        blend: None,
+        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
         write_mask: wgpu::ColorWrites::all(),
     })];
     let (targets, depth_format) = match kind {
@@ -55,7 +55,10 @@ pub(super) fn create_ray_pipeline(
         depth_stencil: Some(wgpu::DepthStencilState {
             format: depth_format,
             depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Always),
+            depth_compare: Some(match kind {
+                PipelineKind::Main => wgpu::CompareFunction::Less,
+                PipelineKind::Shadow => wgpu::CompareFunction::Always,
+            }),
             stencil: Default::default(),
             bias: Default::default(),
         }),
@@ -100,7 +103,7 @@ pub(super) fn create_voxel_pipelines(
         super::super::load_shader("terrain/voxel-draw", &substitutions, device).unwrap();
     let color_descs = [Some(wgpu::ColorTargetState {
         format: color_format,
-        blend: None,
+        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
         write_mask: wgpu::ColorWrites::all(),
     })];
 
@@ -126,7 +129,7 @@ pub(super) fn create_voxel_pipelines(
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
             depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Always),
+            depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: Default::default(),
             bias: Default::default(),
         }),

@@ -771,15 +771,15 @@ impl Render {
             }
 
             pass.set_bind_group(0, &self.global.bind_group, &[]);
-            pass.push_debug_group("terrain");
-            self.terrain.draw(&mut pass);
-            pass.pop_debug_group();
-
             pass.push_debug_group("vehicles");
             pass.set_pipeline(&self.object.pipelines.main);
             pass.set_bind_group(1, &self.object.surface_bind_group, &[]);
             pass.set_bind_group(2, &self.object.bind_group, &[]);
             batcher.draw(&mut pass);
+            pass.pop_debug_group();
+
+            pass.push_debug_group("terrain");
+            self.terrain.draw(&mut pass);
             pass.pop_debug_group();
 
             pass.push_debug_group("water");

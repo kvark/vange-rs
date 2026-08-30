@@ -1021,8 +1021,9 @@ impl Game {
         if self.cave.as_ref().is_some_and(|c| c.name == name) {
             return;
         }
+        let situation = escave::cave::Situation::Shop;
         let Some((config, level)) =
-            escave::cave::load(&self.data_path, name, &self.cave_boot.geometry)
+            escave::cave::load(&self.data_path, name, &self.cave_boot.geometry, situation)
         else {
             self.cave = None;
             return;
@@ -1043,9 +1044,18 @@ impl Game {
             &self.cave_boot.geometry,
             self.cave_boot.front_face,
         );
-        let (mut cam, target, distance) = escave::cave::camera(&level, self.cam.proj);
+        let (mut cam, target, distance) = escave::cave::camera(&level, self.cam.proj, situation);
         cam.proj.update(extent.width as u16, extent.height as u16);
-        log::info!("escave iscreen {name} {}x{}", level.size.0, level.size.1);
+        let tile = situation.region();
+        log::info!(
+            "escave iscreen {name} {}x{} from {}x{}+{},{}",
+            level.size.0,
+            level.size.1,
+            tile.w,
+            tile.h,
+            tile.x,
+            tile.y
+        );
         self.cave = Some(CaveView {
             name: name.to_string(),
             level,
@@ -1184,22 +1194,16 @@ impl Game {
     }
 
     fn resolve_escave_name(&self, sensor: &str, pos: (i32, i32)) -> String {
-        const REACH2: i32 = 256 * 256;
-        self.db
+        let pads: Vec<escave::cave::Pad> = self
+            .db
             .escaves
             .iter()
-            .filter(|e| {
-                let dx = e.coordinates.0 - pos.0;
-                let dy = e.coordinates.1 - pos.1;
-                dx * dx + dy * dy <= REACH2
+            .map(|e| escave::cave::Pad {
+                name: e.name.clone(),
+                pos: e.coordinates,
             })
-            .min_by_key(|e| {
-                let dx = e.coordinates.0 - pos.0;
-                let dy = e.coordinates.1 - pos.1;
-                dx * dx + dy * dy
-            })
-            .map(|e| e.name.clone())
-            .unwrap_or_else(|| sensor.to_string())
+            .collect();
+        escave::cave::resolve_name(sensor, pos, &pads)
     }
 
     /// Close the hatch and kick the car out, `ImpulseEscave::Active`.
