@@ -64,7 +64,7 @@ fn cast_miss() -> CastPoint {
 
 fn check_hit(pos: vec3<f32>) -> u32 {
     let suf = get_surface(pos.xy);
-    if (suf.high_alt <= 0.0) {
+    if (u_Surface.void_zero != 0u && suf.high_alt <= 0.0) {
         return TYPE_MISS;
     }
     if (pos.z < suf.low_alt) {

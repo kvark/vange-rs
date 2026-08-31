@@ -935,6 +935,7 @@ impl WebApp {
 
         if self.touch_stick {
             self.stick = draw_drive_stick(ctx);
+            self.draw_camera_window(ctx, true);
             return;
         }
 
@@ -975,11 +976,27 @@ impl WebApp {
             }
             ui.separator();
             ui.label("Camera");
-            ui.label(format!(
-                "Pos: ({:.0}, {:.0}, {:.0})",
-                self.cam.loc.x, self.cam.loc.y, self.cam.loc.z
-            ));
+            self.draw_camera_controls(ui);
         });
+    }
+
+    fn draw_camera_window(&mut self, ctx: &egui::Context, compact: bool) {
+        egui::Window::new("Camera")
+            .collapsible(true)
+            .default_open(!compact)
+            .resizable(false)
+            .show(ctx, |ui| {
+                self.draw_camera_controls(ui);
+            });
+    }
+
+    fn draw_camera_controls(&mut self, ui: &mut egui::Ui) {
+        let follow = if self.agent.is_some() {
+            Some(&mut self.follow)
+        } else {
+            None
+        };
+        self.cam.draw_controls(ui, follow, None);
     }
 
     fn resize(&mut self, extent: wgpu::Extent3d, device: &wgpu::Device) {
@@ -1120,7 +1137,7 @@ impl WebApp {
             screen_size: extent,
         };
         let pal = level.palette;
-        let render = Render::new(
+        let mut render = Render::new(
             &gfx,
             &config,
             &pal,
@@ -1128,6 +1145,7 @@ impl WebApp {
             &self.cave_boot.geometry,
             self.cave_boot.front_face,
         );
+        render.terrain.set_void_at_zero(true);
         let (mut cam, target, distance) = escave::cave::camera(&level, self.cam.proj, situation);
         cam.proj.update(extent.width as u16, extent.height as u16);
         let tile = situation.region();

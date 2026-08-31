@@ -157,7 +157,7 @@ pub fn create_stub_surface(device: &wgpu::Device) -> StubSurface {
     use wgpu::util::DeviceExt as _;
 
     // SurfaceConstants layout: vec4 texture_scale, u32 terrain_bits,
-    // u32 delta_mode, u32 pad0, u32 pad1. We need texture_scale.x and
+    // u32 delta_mode, u32 void_zero, u32 pad1. We need texture_scale.x and
     // .y to be non-zero so the shader's wrap math doesn't divide by 0,
     // and texture_scale.z = 0 so the flood-fed water Z stays at 0
     // (keeps the underwater check inert for vehicles above ground).

@@ -4,6 +4,9 @@ struct SurfaceConstants {
     texture_scale: vec4<f32>,    // XY = size, Z = height scale, w = number of layers
     terrain_bits: u32, // low 4 bits = shift, high 4 bits = mask
     delta_mode: u32, // low 8 bits = power, higher 16 bits = mask
+    /// 1 = height 0 is empty (iscreen padding / holes). World maps keep 0 solid.
+    void_zero: u32,
+    _pad: u32,
 };
 
 @group(1) @binding(0) var<uniform> u_Surface: SurfaceConstants;
@@ -93,10 +96,10 @@ struct SurfaceAlt {
     mid: f32,
 };
 
-/// Height 0 is empty (the iscreen void, unused map). A `z <= low` test
-/// would treat that plane as solid and light it from noisy meta bytes.
+/// Height 0 is empty only on iscreen maps (`void_zero`). World ground at
+/// altitude 0 is real terrain and must stay solid.
 fn surface_is_void(alt: SurfaceAlt) -> bool {
-    return alt.high <= 0.0;
+    return u_Surface.void_zero != 0u && alt.high <= 0.0;
 }
 
 fn get_surface_alt(pos: vec2<f32>) -> SurfaceAlt {

@@ -196,6 +196,33 @@ pub struct Follow {
     pub look_ahead: f32,
 }
 
+impl Follow {
+    pub fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        let mut angle_deg = self.angle_x.to_degrees();
+        ui.add(egui::Slider::new(&mut angle_deg, -105.0..=0.0).text("Angle"));
+        self.angle_x = angle_deg.to_radians();
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::DragValue::new(&mut self.offset.x)
+                    .speed(1.0)
+                    .prefix("x:"),
+            );
+            ui.add(
+                egui::DragValue::new(&mut self.offset.y)
+                    .speed(1.0)
+                    .prefix("y:"),
+            );
+            ui.add(
+                egui::DragValue::new(&mut self.offset.z)
+                    .speed(1.0)
+                    .prefix("z:"),
+            );
+        });
+        ui.add(egui::Slider::new(&mut self.speed, 0.1..=16.0).text("Speed"));
+        ui.add(egui::Slider::new(&mut self.look_ahead, 0.0..=80.0).text("Look-ahead"));
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct Direction {
     pub view: Vec3,
@@ -551,6 +578,27 @@ impl Camera {
                 ui.add(egui::Slider::new(&mut p.far, 50.0..=10000.0).text("Depth far"));
             }
         }
+    }
+
+    /// Tweaks + web Settings. Free-cam knobs always; chase sliders when
+    /// `follow` is `Some`. `ground_anchor` is native-only.
+    pub fn draw_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        follow: Option<&mut Follow>,
+        ground_anchor: Option<&mut bool>,
+    ) {
+        self.draw_ui(ui);
+        if let Some(follow) = follow {
+            follow.draw_ui(ui);
+        }
+        if let Some(anchor) = ground_anchor {
+            ui.checkbox(anchor, "Ground anchor");
+        }
+        ui.label(format!(
+            "Pos: ({:.0}, {:.0}, {:.0})",
+            self.loc.x, self.loc.y, self.loc.z
+        ));
     }
 }
 

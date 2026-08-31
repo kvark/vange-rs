@@ -61,7 +61,7 @@ fn vertex(
 
 @fragment
 fn fragment(in: Varyings) -> @location(0) vec4<f32> {
-    if (in.world_pos.z <= 0.0) {
+    if (u_Surface.void_zero != 0u && in.world_pos.z <= 0.0) {
         discard;
     }
     let suf = get_surface(in.world_pos.xy);
