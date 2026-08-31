@@ -116,7 +116,8 @@ struct SurfaceConstants {
     texture_scale: [f32; 4],
     terrain_bits: u32,
     delta_mode: u32,
-    pad0: u32,
+    /// 1 = treat height 0 as empty (iscreen). World maps leave this 0.
+    void_zero: u32,
     pad1: u32,
 }
 unsafe impl Pod for SurfaceConstants {}
@@ -694,10 +695,18 @@ pub struct Context {
     /// gradient so low-poly faces shade continuously; `false` → the flat
     /// per-triangle geometric normal.
     pub smooth_normals: bool,
+    /// Height 0 is empty (iscreen padding and holes). Off for world maps.
+    void_at_zero: bool,
     ray_steps: u32,
 }
 
 impl Context {
+    /// Height 0 is empty on iscreen maps (padding and the creature's hole).
+    /// World ground at altitude 0 stays solid.
+    pub fn set_void_at_zero(&mut self, yes: bool) {
+        self.void_at_zero = yes;
+    }
+
     pub fn memory_stats(&self) -> MemoryStats {
         match self.kind {
             Kind::Ray { .. } | Kind::Slice { .. } => MemoryStats::default(),
@@ -1986,9 +1995,10 @@ impl Context {
                 texture_scale: [0.0; 4],
                 terrain_bits: 0,
                 delta_mode: 0,
-                pad0: 0,
+                void_zero: 0,
                 pad1: 0,
             },
+            void_at_zero: false,
             // Default to unbaked diffuse + shadow — matches the look
             // we tuned in the cosine-lighting commit. Toggle in the UI
             // to A/B against the original baked-palette path.
@@ -2132,7 +2142,7 @@ impl Context {
                 ],
                 terrain_bits: bits.shift as u32 | ((bits.mask as u32) << 4),
                 delta_mode,
-                pad0: 0,
+                void_zero: u32::from(self.void_at_zero),
                 pad1: 0,
             }
         };

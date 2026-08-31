@@ -1036,7 +1036,7 @@ impl Game {
             screen_size: extent,
         };
         let pal = level.palette;
-        let render = Render::new(
+        let mut render = Render::new(
             &gfx,
             &config,
             &pal,
@@ -1044,6 +1044,7 @@ impl Game {
             &self.cave_boot.geometry,
             self.cave_boot.front_face,
         );
+        render.terrain.set_void_at_zero(true);
         let (mut cam, target, distance) = escave::cave::camera(&level, self.cam.proj, situation);
         cam.proj.update(extent.width as u16, extent.height as u16);
         let tile = situation.region();
@@ -1965,34 +1966,15 @@ impl Application for Game {
                 egui::CollapsingHeader::new("Camera")
                     .default_open(false)
                     .show(ui, |ui| {
-                        self.cam.draw_ui(ui);
                         if let CameraStyle::Follow {
                             ref mut follow,
                             ref mut ground_anchor,
                         } = self.cam_style
                         {
-                            let mut angle_deg = follow.angle_x.to_degrees();
-                            ui.add(egui::Slider::new(&mut angle_deg, -105.0..=0.0).text("Angle"));
-                            follow.angle_x = angle_deg.to_radians();
-                            ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::DragValue::new(&mut follow.offset.x)
-                                        .speed(1.0)
-                                        .prefix("x:"),
-                                );
-                                ui.add(
-                                    egui::DragValue::new(&mut follow.offset.y)
-                                        .speed(1.0)
-                                        .prefix("y:"),
-                                );
-                                ui.add(
-                                    egui::DragValue::new(&mut follow.offset.z)
-                                        .speed(1.0)
-                                        .prefix("z:"),
-                                );
-                            });
-                            ui.add(egui::Slider::new(&mut follow.speed, 0.1..=10.0).text("Speed"));
-                            ui.checkbox(ground_anchor, "Ground anchor");
+                            self.cam
+                                .draw_controls(ui, Some(follow), Some(ground_anchor));
+                        } else {
+                            self.cam.draw_controls(ui, None, None);
                         }
                     });
                 egui::CollapsingHeader::new("Level")
