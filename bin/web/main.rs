@@ -9,7 +9,7 @@ use wasm_bindgen::prelude::*;
 
 use vangers::{
     config::{self, settings},
-    creature, data, escave, level, life, model, physics,
+    creature, data, escave, level, life, minimap, model, physics,
     render::{
         self, Batcher, DEPTH_FORMAT, GraphicsContext, Render, ScreenTargets, debug::LineBuffer,
         object::Instance,
@@ -506,6 +506,7 @@ struct WebApp {
     use_held: bool,
     /// Phone / tablet: coarse pointer or a narrow touch screen.
     touch_stick: bool,
+    minimap: minimap::Minimap,
 }
 
 struct CaveBoot {
@@ -886,6 +887,7 @@ impl WebApp {
             stick: (0.0, 0.0),
             use_held: false,
             touch_stick: uses_touch_stick(),
+            minimap: minimap::Minimap::new(),
         }
     }
 
@@ -932,6 +934,8 @@ impl WebApp {
             self.stick = (0.0, 0.0);
             return;
         }
+
+        self.draw_minimap(ctx);
 
         if self.touch_stick {
             self.stick = draw_drive_stick(ctx);
@@ -988,6 +992,28 @@ impl WebApp {
             .show(ctx, |ui| {
                 self.draw_camera_controls(ui);
             });
+    }
+
+    fn draw_minimap(&mut self, ctx: &egui::Context) {
+        let (center, heading) = if let Some(ref agent) = self.agent {
+            let mut f = agent.transform.rot * glam::Vec3::Y;
+            f.z = 0.0;
+            (agent.transform.disp.truncate(), f.truncate())
+        } else {
+            (
+                self.cam.loc.truncate(),
+                self.cam.ground_forward().truncate(),
+            )
+        };
+        let mut marks = Vec::new();
+        for pad in &self.cave_pads {
+            marks.push(minimap::Mark {
+                pos: glam::Vec2::new(pad.pos.0 as f32, pad.pos.1 as f32),
+                color: egui::Color32::from_rgb(220, 160, 40),
+                large: true,
+            });
+        }
+        self.minimap.show(ctx, &self.level, center, heading, &marks);
     }
 
     fn draw_camera_controls(&mut self, ui: &mut egui::Ui) {

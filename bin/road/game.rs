@@ -2,7 +2,7 @@ use crate::boilerplate::Application;
 use crate::net::{NetEvent, NetworkClient};
 use m3d::Mesh;
 use vangers::{
-    config, creature, escave, level, life, model,
+    config, creature, escave, level, life, minimap, model,
     physics::{self, CarPhysicsData},
     render::{
         Batcher, GraphicsContext, Render, ScreenTargets,
@@ -14,6 +14,17 @@ use vangers::{
 use vangers_net::PlayerId;
 
 use glam::Vec3;
+
+fn body_mark(color: BodyColor) -> egui::Color32 {
+    match color {
+        BodyColor::Green => egui::Color32::from_rgb(80, 220, 80),
+        BodyColor::Red => egui::Color32::from_rgb(230, 70, 70),
+        BodyColor::Blue => egui::Color32::from_rgb(70, 130, 240),
+        BodyColor::Yellow => egui::Color32::from_rgb(240, 210, 50),
+        BodyColor::Gray => egui::Color32::from_rgb(180, 180, 180),
+        BodyColor::Dummy => egui::Color32::from_rgb(220, 220, 220),
+    }
+}
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -477,6 +488,8 @@ pub struct Game {
     /// Secret tunnel: interpolate the car to the other station.
     ride: Option<Ride>,
     shots: Vec<LiveShot>,
+    world: String,
+    minimap: minimap::Minimap,
 }
 
 struct CaveBoot {
@@ -855,6 +868,8 @@ impl Game {
             },
             cave: None,
             ride: None,
+            world: settings.game.level.clone(),
+            minimap: minimap::Minimap::new(),
         }
     }
 
@@ -1399,6 +1414,58 @@ impl Game {
         back.z = 0.0;
         self.cam.loc -= back.normalize() * step;
     }
+
+    fn draw_minimap(&mut self, context: &egui::Context) {
+        let player = self.agents.iter().find(|a| a.spirit == Spirit::Player);
+        let (center, heading) = if let Some(p) = player {
+            let pos = p.position();
+            let h = match p.physics {
+                Physics::Cpu { ref transform, .. } => {
+                    let mut f = transform.rot * Vec3::Y;
+                    f.z = 0.0;
+                    f.truncate()
+                }
+            };
+            (pos.truncate(), h)
+        } else {
+            (
+                self.cam.loc.truncate(),
+                self.cam.ground_forward().truncate(),
+            )
+        };
+        let mut marks = Vec::new();
+        for agent in &self.agents {
+            if agent.spirit == Spirit::Player {
+                continue;
+            }
+            marks.push(minimap::Mark {
+                pos: agent.position().truncate(),
+                color: body_mark(agent.color),
+                large: false,
+            });
+        }
+        for remote in self.remote_agents.values() {
+            marks.push(minimap::Mark {
+                pos: remote.render_transform.disp.truncate(),
+                color: body_mark(remote.color),
+                large: false,
+            });
+        }
+        for pad in self
+            .db
+            .escaves
+            .iter()
+            .filter(|e| e.world.eq_ignore_ascii_case(&self.world))
+        {
+            marks.push(minimap::Mark {
+                pos: glam::Vec2::new(pad.coordinates.0 as f32, pad.coordinates.1 as f32),
+                color: egui::Color32::from_rgb(220, 160, 40),
+                large: true,
+            });
+        }
+        self.minimap
+            .show(context, &self.level, center, heading, &marks);
+    }
 }
 
 impl Application for Game {
@@ -1879,6 +1946,10 @@ impl Application for Game {
         let shutter = self.screen.shutter();
         if shutter > 0.0 {
             escave::draw_shutters(context, shutter);
+        }
+
+        if self.ui.enabled && self.screen.is_world() {
+            self.draw_minimap(context);
         }
 
         if !self.ui.enabled || !self.screen.is_world() {
