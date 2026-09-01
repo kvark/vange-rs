@@ -3,6 +3,10 @@
 //! The world is a torus. Samples and markers wrap with the shortest
 //! offset so a car that just crossed x=0 stays on the map instead of
 //! jumping to the far edge.
+//!
+//! X is flipped to match the left-handed chase camera (`scale.y = -1`):
+//! world +X is screen-left, so a left turn on the road is a left turn
+//! on the radar.
 
 use crate::level::{Level, Point, Texel};
 use glam::Vec2;
@@ -65,13 +69,20 @@ impl Minimap {
         };
 
         let side = SIZE as f32;
+        const BORDER: f32 = 4.0;
+        let frame = side + BORDER * 2.0;
+        let ink = egui::Color32::from_rgb(12, 8, 4);
+        let edge = egui::Color32::from_rgb(200, 140, 48);
+        let you = egui::Color32::from_rgb(255, 230, 80);
         egui::Area::new(egui::Id::new("minimap"))
             .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 let (resp, painter) =
-                    ui.allocate_painter(egui::vec2(side, side), egui::Sense::hover());
-                let rect = resp.rect;
+                    ui.allocate_painter(egui::vec2(frame, frame), egui::Sense::hover());
+                let outer = resp.rect;
+                let rect = outer.shrink(BORDER);
+                painter.rect_filled(outer, 3.0, ink);
                 painter.image(
                     tex_id,
                     rect,
@@ -88,30 +99,29 @@ impl Minimap {
                         }
                     }
                 }
-                painter.circle_filled(origin, 3.0, egui::Color32::from_rgb(255, 230, 80));
+                painter.circle_filled(origin, 3.0, you);
                 let h = heading.normalize_or(Vec2::Y);
-                // World +Y is up on the radar (screen -Y).
-                let tip = origin + egui::vec2(h.x, -h.y) * 10.0;
-                painter.line_segment(
-                    [origin, tip],
-                    egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(255, 230, 80)),
-                );
+                // World +Y is screen-up; world +X is screen-left (left-handed view).
+                let tip = origin + egui::vec2(-h.x, -h.y) * 10.0;
+                painter.line_segment([origin, tip], egui::Stroke::new(1.5_f32, you));
                 painter.rect_stroke(
-                    rect,
-                    0.0,
-                    egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(70)),
+                    outer,
+                    3.0,
+                    egui::Stroke::new(2.0_f32, edge),
                     egui::StrokeKind::Inside,
                 );
             });
     }
 }
 
-/// World XY sampled by map pixel `(px, py)`. Y is flipped so world +Y
-/// is up on the radar.
+/// World XY sampled by map pixel `(px, py)`.
+///
+/// Screen-up is world +Y; screen-left is world +X, matching the
+/// left-handed chase camera.
 pub fn sample_world(center: Vec2, px: u32, py: u32, size: u32, scale: f32) -> Vec2 {
     let half = size as f32 * 0.5;
     Vec2::new(
-        center.x + (px as f32 + 0.5 - half) * scale,
+        center.x - (px as f32 + 0.5 - half) * scale,
         center.y - (py as f32 + 0.5 - half) * scale,
     )
 }
@@ -123,7 +133,7 @@ pub fn mark_pixel(level: &Level, center: Vec2, world: Vec2, size: u32, scale: f3
         return None;
     }
     let d = level.shortest_xy(center.extend(0.0), world.extend(0.0));
-    let p = Vec2::new(d.x / scale, -d.y / scale);
+    let p = Vec2::new(-d.x / scale, -d.y / scale);
     let half = size as f32 * 0.5;
     if p.x.abs() >= half || p.y.abs() >= half {
         None
@@ -160,11 +170,10 @@ fn sample_rgba(level: &Level, x: i32, y: i32) -> [u8; 4] {
         .unwrap_or((0, 255));
     let span = hi.saturating_sub(lo);
     let idx = (lo as f32 + span as f32 * t) as usize;
+    // Palette bytes are sRGB, same as the terrain texture. egui's
+    // ColorImage is sRGB too, so copy them as-is — a gamma-space shade
+    // multiply here made the radar darker than the world.
     let mut c = level.palette[idx.min(255)];
-    let shade = 0.4 + 0.6 * t;
-    c[0] = (c[0] as f32 * shade) as u8;
-    c[1] = (c[1] as f32 * shade) as u8;
-    c[2] = (c[2] as f32 * shade) as u8;
     c[3] = 255;
     c
 }
@@ -189,37 +198,37 @@ mod tests {
     }
 
     #[test]
-    fn a_mark_across_the_west_seam_sits_just_left_of_centre() {
+    fn a_mark_across_the_west_seam_sits_just_right_of_centre() {
         let level = dummy(32, 32);
         let center = Vec2::new(0.0, 0.0);
         let world = Vec2::new(31.0, 0.0);
         let p = mark_pixel(&level, center, world, 16, 1.0).unwrap();
         assert!(
-            p.x < -0.4 && p.x > -2.0,
-            "wrapped west should be left of centre, got {p:?}"
+            p.x > 0.4 && p.x < 2.0,
+            "wrapped west is screen-right (left-handed view), got {p:?}"
         );
         assert!(p.y.abs() < 0.6, "same Y, got {p:?}");
     }
 
     #[test]
-    fn sample_west_of_centre_wraps_to_the_east_edge() {
+    fn sample_left_of_centre_looks_east() {
         let w = sample_world(Vec2::ZERO, 0, 8, 16, 1.0);
-        // half=8, px=0 -> x = 0 + (0.5-8)*1 = -7.5, wraps to 24.5 on 32-wide
+        // half=8, px=0 -> x = 0 - (0.5-8)*1 = 7.5
         assert!(
-            (w.x + 7.5).abs() < 0.01,
-            "leftmost pixel should look west of centre, got {w:?}"
+            (w.x - 7.5).abs() < 0.01,
+            "leftmost pixel should look east of centre, got {w:?}"
         );
     }
 
     #[test]
-    fn a_pixel_west_of_centre_reads_the_east_edge() {
+    fn a_pixel_left_of_centre_reads_world_plus_x() {
         let mut level = dummy(32, 32);
-        level.height[31] = 200;
+        level.height[1] = 200;
         let w = sample_world(Vec2::ZERO, 1, 2, 5, 1.0);
-        // half=2.5, px=1 -> x = -1, wraps to 31
+        // half=2.5, px=1 -> x = 0 - (1.5-2.5)*1 = 1
         assert!(
-            (w.x + 1.0).abs() < 0.01,
-            "left-of-centre pixel should look at x=-1, got {w:?}"
+            (w.x - 1.0).abs() < 0.01,
+            "left-of-centre pixel should look at x=+1, got {w:?}"
         );
         assert_eq!(level.get((w.x as i32, w.y as i32)).high(), 200.0);
     }
