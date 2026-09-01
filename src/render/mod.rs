@@ -715,7 +715,9 @@ impl Render {
             if let Some((pos, radius, color)) = self.local_light {
                 constants = constants.with_local_light(pos, radius, color);
             }
-            if let Some((pos, radius)) = self.focus {
+            if self.terrain.after_vehicles()
+                && let Some((pos, radius)) = self.focus
+            {
                 constants = constants.with_focus(pos, radius);
             }
             queue.write_buffer(&self.global.uniform_buf, 0, bytemuck::bytes_of(&constants));
@@ -771,16 +773,23 @@ impl Render {
             }
 
             pass.set_bind_group(0, &self.global.bind_group, &[]);
+            let terrain_after = self.terrain.after_vehicles();
+            if !terrain_after {
+                pass.push_debug_group("terrain");
+                self.terrain.draw(&mut pass);
+                pass.pop_debug_group();
+            }
             pass.push_debug_group("vehicles");
             pass.set_pipeline(&self.object.pipelines.main);
             pass.set_bind_group(1, &self.object.surface_bind_group, &[]);
             pass.set_bind_group(2, &self.object.bind_group, &[]);
             batcher.draw(&mut pass);
             pass.pop_debug_group();
-
-            pass.push_debug_group("terrain");
-            self.terrain.draw(&mut pass);
-            pass.pop_debug_group();
+            if terrain_after {
+                pass.push_debug_group("terrain");
+                self.terrain.draw(&mut pass);
+                pass.pop_debug_group();
+            }
 
             pass.push_debug_group("water");
             pass.set_bind_group(1, &self.terrain.bind_group, &[]);

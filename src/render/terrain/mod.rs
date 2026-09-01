@@ -707,6 +707,13 @@ impl Context {
         self.void_at_zero = yes;
     }
 
+    /// Mesh triangles carry real depths, so they can blend over the car
+    /// (see-through hills). Ray-style methods are a full-screen pass with
+    /// `Always` depth; drawn afterwards they hide the mechos.
+    pub fn after_vehicles(&self) -> bool {
+        matches!(self.kind, Kind::Mesh { .. })
+    }
+
     pub fn memory_stats(&self) -> MemoryStats {
         match self.kind {
             Kind::Ray { .. } | Kind::Slice { .. } => MemoryStats::default(),
