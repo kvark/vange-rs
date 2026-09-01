@@ -411,7 +411,7 @@ impl Context {
             Err(VertexStorageNotSupported)
         };
 
-        let palette = Palette::new(&gfx.device);
+        let palette = Palette::new(&gfx.device, gfx.color_format);
         palette.init(&gfx.queue, palette_data);
 
         let (color_table_view, color_table_sampler) = Self::create_color_table(gfx);

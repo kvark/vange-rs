@@ -76,8 +76,12 @@ fn fragment(in: Varyings) -> @location(0) vec4<f32> {
     // stops following the height field - on vertical walls and cave
     // ceilings, where the gradient is undefined.
     var geo = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
-    let to_eye = u_Globals.camera_pos.xyz - in.world_pos;
-    if (dot(geo, to_eye) < 0.0) {
+    // Floors and slab tops face +Z; cave ceilings face -Z. Aiming at the
+    // camera (a leftover from Y-flipped derivatives) lit the ground as a
+    // wall in the chase view and washed the mesh brighter than the ray
+    // marcher, which always uses an upward height-field normal.
+    let want_up = in.layer != 1u;
+    if ((geo.z > 0.0) != want_up) {
         geo = -geo;
     }
 

@@ -749,7 +749,8 @@ impl Context {
     ) -> wgpu::RenderPipeline {
         let color_descs = [Some(wgpu::ColorTargetState {
             format: color_format,
-            blend: None,
+            // Same as the mesh path so sRGB targets blend in one space.
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
             write_mask: wgpu::ColorWrites::all(),
         })];
         let (targets, depth_format) = match kind {
@@ -831,7 +832,7 @@ impl Context {
         let draw_shader = super::load_shader("terrain/voxel-draw", &substitutions, device).unwrap();
         let color_descs = [Some(wgpu::ColorTargetState {
             format: color_format,
-            blend: None,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
             write_mask: wgpu::ColorWrites::all(),
         })];
 
@@ -1329,7 +1330,7 @@ impl Context {
             table_extent,
         );
 
-        let palette = Palette::new(&gfx.device);
+        let palette = Palette::new(&gfx.device, gfx.color_format);
 
         let flood_sampler = gfx.device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,

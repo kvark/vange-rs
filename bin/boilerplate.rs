@@ -155,9 +155,11 @@ impl Harness {
                 wgpu::PresentMode::Fifo
             }
         };
+        let color_format = vangers::render::pick_surface_format(&surface_caps.formats);
+        log::info!("Color format: {color_format:?}");
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_caps.formats[0],
+            format: color_format,
             width: extent.width,
             height: extent.height,
             present_mode,
