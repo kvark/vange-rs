@@ -39,6 +39,7 @@ pub mod escave;
 pub mod fauna;
 pub mod level;
 pub mod life;
+pub mod minimap;
 pub mod model;
 pub mod particle;
 pub mod physics;
