@@ -2159,9 +2159,11 @@ impl ApplicationHandler for WebHandler {
                 screen_size
             };
             let caps = surface.get_capabilities(adapter);
+            let color_format = render::pick_surface_format(&caps.formats);
+            log::info!("Color format: {color_format:?}");
             let config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: caps.formats[0],
+                format: color_format,
                 width: screen_size.width,
                 height: screen_size.height,
                 present_mode: wgpu::PresentMode::Fifo,

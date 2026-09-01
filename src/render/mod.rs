@@ -25,6 +25,38 @@ mod water;
 pub use shadow::FORMAT as SHADOW_FORMAT;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+/// Prefer an sRGB swapchain so palette sampling and the color target
+/// both convert. Shaders light in linear; the GPU encodes on write.
+pub fn pick_surface_format(formats: &[wgpu::TextureFormat]) -> wgpu::TextureFormat {
+    formats
+        .iter()
+        .copied()
+        .find(wgpu::TextureFormat::is_srgb)
+        .or_else(|| formats.first().copied())
+        .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb)
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::{Palette, pick_surface_format};
+    use wgpu::TextureFormat::{Bgra8Unorm, Bgra8UnormSrgb, Rgba8Unorm, Rgba8UnormSrgb};
+
+    #[test]
+    fn prefers_an_srgb_swapchain() {
+        assert_eq!(
+            pick_surface_format(&[Bgra8Unorm, Bgra8UnormSrgb]),
+            Bgra8UnormSrgb
+        );
+        assert_eq!(pick_surface_format(&[Rgba8Unorm]), Rgba8Unorm);
+    }
+
+    #[test]
+    fn palette_matches_the_target_transfer() {
+        assert_eq!(Palette::format_for_target(Bgra8UnormSrgb), Rgba8UnormSrgb);
+        assert_eq!(Palette::format_for_target(Bgra8Unorm), Rgba8Unorm);
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct VertexStorageNotSupported;
 
@@ -210,7 +242,17 @@ pub struct Palette {
 }
 
 impl Palette {
-    pub fn new(device: &wgpu::Device) -> Self {
+    /// Match the color target: sRGB target → sRGB palette (sample linear,
+    /// write linear). Unorm target → Unorm palette (no extra transfer).
+    pub fn format_for_target(target: wgpu::TextureFormat) -> wgpu::TextureFormat {
+        if target.is_srgb() {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        }
+    }
+
+    pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
         profiling::scope!("Create Palette");
         let extent = wgpu::Extent3d {
             width: 0x100,
@@ -223,7 +265,7 @@ impl Palette {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: Self::format_for_target(target),
             view_formats: &[],
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });

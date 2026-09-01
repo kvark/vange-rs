@@ -16,6 +16,13 @@ const c_ShadowDepthScale: f32 = 0.6; //~ 2.0 / 3.0;
 // is zero. Defined here so every terrain method uses the same floor.
 const c_TerrainAmbient: f32 = 0.25;
 
+/// Palette and the color target are both sRGB formats (or both Unorm
+/// when the surface has no sRGB). Sampling is already linear on an
+/// sRGB palette; the GPU encodes on write. Shade in that space.
+fn shade_albedo(base: vec4<f32>, modulation: f32) -> vec4<f32> {
+    return vec4<f32>(base.rgb * modulation, base.a);
+}
+
 // see `RenderPrepare` in `land.cpp` for the original game logic
 
 // material coefficients are called "dx", "sd" and "jj" in the original
@@ -129,7 +136,7 @@ fn evaluate_color_normal(
     let light_dir = normalize(u_Globals.light_pos.xyz - pos * u_Globals.light_pos.w);
     let n_dot_l = max(max(0.0, dot(normal, light_dir)), closest_local_light(pos, normal));
     let modulation = c_TerrainAmbient + (1.0 - c_TerrainAmbient) * shadow_visibility * n_dot_l;
-    return vec4<f32>(base.rgb * modulation, base.a);
+    return shade_albedo(base, modulation);
 }
 
 fn evaluate_color(ty: u32, pos: vec3<f32>, shadow_visibility: f32) -> vec4<f32> {
@@ -157,5 +164,5 @@ fn evaluate_color(ty: u32, pos: vec3<f32>, shadow_visibility: f32) -> vec4<f32> 
     let n_dot_l = max(max(0.0, dot(normal, light_dir)), closest_local_light(pos, normal));
 
     let modulation = c_TerrainAmbient + (1.0 - c_TerrainAmbient) * shadow_visibility * n_dot_l;
-    return vec4<f32>(base.rgb * modulation, base.a);
+    return shade_albedo(base, modulation);
 }
