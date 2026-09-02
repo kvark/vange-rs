@@ -79,6 +79,53 @@ fn texture_upload_window(
     }
 }
 
+/// Cap a `write_texture` staging copy. A Fostral-wide row is 4 KiB, so
+/// 4 MiB is 1024 rows — well under typical `max_buffer_size`, unlike the
+/// 64 MiB whole-map upload that Firefox/WebGPU drops.
+const MAX_UPLOAD_BYTES: usize = 4 << 20;
+
+/// Voxel bake tile. One 2048×16384 dispatch times out on Firefox; 256×256
+/// workgroups stay small and the grid fills over the next second.
+fn max_bake_tile() -> u16 {
+    if cfg!(target_arch = "wasm32") {
+        256
+    } else {
+        512
+    }
+}
+
+fn tile_rect(rect: super::Rect, max_w: u16, max_h: u16) -> Vec<super::Rect> {
+    let max_w = max_w.max(1);
+    let max_h = max_h.max(1);
+    if rect.w == 0 || rect.h == 0 {
+        return Vec::new();
+    }
+    if rect.w <= max_w && rect.h <= max_h {
+        return vec![rect];
+    }
+    let x1 = rect.x.saturating_add(rect.w);
+    let y1 = rect.y.saturating_add(rect.h);
+    let mut out = Vec::new();
+    let mut y = rect.y;
+    while y < y1 {
+        let h = (y1 - y).min(max_h);
+        let mut x = rect.x;
+        while x < x1 {
+            let w = (x1 - x).min(max_w);
+            out.push(super::Rect { x, y, w, h });
+            x = x.saturating_add(w);
+            if w == 0 {
+                break;
+            }
+        }
+        y = y.saturating_add(h);
+        if h == 0 {
+            break;
+        }
+    }
+    out
+}
+
 #[cfg(any(test, target_arch = "wasm32"))]
 fn rect_reaches_drawn(
     rect: super::Rect,
@@ -712,6 +759,61 @@ impl Context {
     /// `Always` depth; drawn afterwards they hide the mechos.
     pub fn after_vehicles(&self) -> bool {
         matches!(self.kind, Kind::Mesh { .. })
+    }
+
+    fn upload_height_window(
+        &mut self,
+        queue: &wgpu::Queue,
+        level: &level::Level,
+        x0: usize,
+        x1: usize,
+        y0: usize,
+        y1: usize,
+        max_bytes: usize,
+    ) {
+        let row_bytes = (x1 - x0) * 2;
+        if row_bytes == 0 || y1 <= y0 {
+            return;
+        }
+        let max_rows = (max_bytes / row_bytes).max(1);
+        let mut y = y0;
+        while y < y1 {
+            let rows = (y1 - y).min(max_rows);
+            self.upload_scratch.resize(rows * row_bytes, 0);
+            for (y_off, line) in self.upload_scratch.chunks_mut(row_bytes).enumerate() {
+                let base = (y + y_off) * level.size.0 as usize;
+                let heights = &level.height[base + x0..base + x1];
+                let metas = &level.meta[base + x0..base + x1];
+                for (i, (&h, &m)) in heights.iter().zip(metas).enumerate() {
+                    line[2 * i] = h;
+                    line[2 * i + 1] = m;
+                }
+            }
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.terrain_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: (x0 / 2) as u32,
+                        y: y as u32,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &self.upload_scratch,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row_bytes as u32),
+                    rows_per_image: None,
+                },
+                wgpu::Extent3d {
+                    width: ((x1 - x0) / 2) as u32,
+                    height: rows as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+            y += rows;
+        }
     }
 
     pub fn memory_stats(&self) -> MemoryStats {
@@ -2270,6 +2372,7 @@ impl Context {
                 } => Some(geo.drawn.as_slice()),
                 _ => None,
             };
+            let mut uploads = Vec::new();
             for dr in self.dirty_rects.iter_mut() {
                 if !dr.need_upload {
                     continue;
@@ -2287,50 +2390,17 @@ impl Context {
                 //
                 // One texture texel packs a *pair* of level texels, so the
                 // span has to be widened to a pair boundary at both ends.
-                // `write_texture` takes care of the staging copy, which also
-                // gets rid of a buffer allocation per rectangle.
-                let Some((x0, x1, y0, y1)) = texture_upload_window(dr.rect, level.size) else {
+                let Some(window) = texture_upload_window(dr.rect, level.size) else {
                     dr.need_upload = false;
                     continue;
                 };
-                let row_bytes = (x1 - x0) * 2;
-                let rows = y1 - y0;
-                self.upload_scratch.resize(rows * row_bytes, 0);
-                for (y_off, line) in self.upload_scratch.chunks_mut(row_bytes).enumerate() {
-                    let base = (y0 + y_off) * level.size.0 as usize;
-                    let heights = &level.height[base + x0..base + x1];
-                    let metas = &level.meta[base + x0..base + x1];
-                    for (i, (&h, &m)) in heights.iter().zip(metas).enumerate() {
-                        line[2 * i] = h;
-                        line[2 * i + 1] = m;
-                    }
-                }
-
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &self.terrain_texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: (x0 / 2) as u32,
-                            y: y0 as u32,
-                            z: 0,
-                        },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &self.upload_scratch,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(row_bytes as u32),
-                        rows_per_image: None,
-                    },
-                    wgpu::Extent3d {
-                        width: ((x1 - x0) / 2) as u32,
-                        height: rows as u32,
-                        depth_or_array_layers: 1,
-                    },
-                );
-
+                uploads.push(window);
                 dr.need_upload = false;
+            }
+            let max_bytes =
+                (device.limits().max_buffer_size as usize / 4).clamp(1, MAX_UPLOAD_BYTES);
+            for (x0, x1, y0, y1) in uploads {
+                self.upload_height_window(queue, level, x0, x1, y0, y1, max_bytes);
             }
 
             match self.kind {
@@ -2356,30 +2426,13 @@ impl Context {
 
                     let mut texels_to_update = max_update_texels;
                     let mut update_buffer_contents = Vec::new();
+                    let tile = max_bake_tile();
                     while let Some(dr) = self.dirty_rects.pop() {
                         let num_texels = dr.rect.w as usize * dr.rect.h as usize;
-                        if num_texels > max_update_texels {
-                            // split into 4 quadrants
-                            let mid_x = dr.rect.x + dr.rect.w / 2;
-                            let mid_y = dr.rect.y + dr.rect.h / 2;
-                            for (xb, yb) in
-                                [(false, false), (true, false), (false, true), (true, true)]
-                            {
+                        if dr.rect.w > tile || dr.rect.h > tile || num_texels > max_update_texels {
+                            for rect in tile_rect(dr.rect, tile, tile) {
                                 self.dirty_rects.push(super::DirtyRect {
-                                    rect: super::Rect {
-                                        x: if xb { mid_x } else { dr.rect.x },
-                                        y: if yb { mid_y } else { dr.rect.y },
-                                        w: if xb {
-                                            dr.rect.x + dr.rect.w - mid_x
-                                        } else {
-                                            mid_x - dr.rect.x
-                                        },
-                                        h: if yb {
-                                            dr.rect.y + dr.rect.h - mid_y
-                                        } else {
-                                            mid_y - dr.rect.y
-                                        },
-                                    },
+                                    rect,
                                     z_range: dr.z_range.clone(),
                                     need_upload: false,
                                 });
@@ -2416,46 +2469,55 @@ impl Context {
                         }
                     }
 
-                    let staging_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("Voxel bake update"),
-                            contents: bytemuck::cast_slice(&update_buffer_contents),
-                            usage: wgpu::BufferUsages::COPY_SRC,
-                        });
-                    for i in 0..update_buffer_contents.len() {
-                        encoder.copy_buffer_to_buffer(
-                            &staging_buf,
-                            (i * mem::size_of::<BakeConstants>()) as wgpu::BufferAddress,
-                            update_buffer,
-                            (i * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT) as wgpu::BufferAddress,
-                            mem::size_of::<BakeConstants>() as wgpu::BufferAddress,
-                        );
-                    }
-
-                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("Voxel bake"),
-                        timestamp_writes: None,
-                    });
-                    pass.set_pipeline(init_pipeline);
-                    pass.set_bind_group(1, &self.bind_group, &[]);
-                    for (i, update) in update_buffer_contents.iter().enumerate() {
-                        let groups = update.init_workgroups([8, 8, 1]);
-                        let offset = i * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT;
-                        pass.set_bind_group(0, bake_bind_group, &[offset as u32, 0]);
-                        pass.dispatch_workgroups(groups[0], groups[1], 1);
-                    }
-                    pass.set_pipeline(mip_pipeline);
-                    for dst_lod in 1..mips.len() {
-                        for (i, update) in update_buffer_contents.iter().enumerate() {
-                            let groups = update.mip_workgroups([4, 4, 4], dst_lod as u32);
-                            let offset = i * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT;
-                            let mip_data_offset = (dst_lod - 1) * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT;
-                            pass.set_bind_group(
-                                0,
-                                bake_bind_group,
-                                &[offset as u32, mip_data_offset as u32],
+                    if !update_buffer_contents.is_empty() {
+                        let staging_buf =
+                            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Voxel bake update"),
+                                contents: bytemuck::cast_slice(&update_buffer_contents),
+                                usage: wgpu::BufferUsages::COPY_SRC,
+                            });
+                        for i in 0..update_buffer_contents.len() {
+                            encoder.copy_buffer_to_buffer(
+                                &staging_buf,
+                                (i * mem::size_of::<BakeConstants>()) as wgpu::BufferAddress,
+                                update_buffer,
+                                (i * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT) as wgpu::BufferAddress,
+                                mem::size_of::<BakeConstants>() as wgpu::BufferAddress,
                             );
-                            pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
+                        }
+
+                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("Voxel bake"),
+                            timestamp_writes: None,
+                        });
+                        pass.set_pipeline(init_pipeline);
+                        pass.set_bind_group(1, &self.bind_group, &[]);
+                        for (i, update) in update_buffer_contents.iter().enumerate() {
+                            let groups = update.init_workgroups([8, 8, 1]);
+                            if groups[0] == 0 || groups[1] == 0 {
+                                continue;
+                            }
+                            let offset = i * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT;
+                            pass.set_bind_group(0, bake_bind_group, &[offset as u32, 0]);
+                            pass.dispatch_workgroups(groups[0], groups[1], 1);
+                        }
+                        pass.set_pipeline(mip_pipeline);
+                        for dst_lod in 1..mips.len() {
+                            for (i, update) in update_buffer_contents.iter().enumerate() {
+                                let groups = update.mip_workgroups([4, 4, 4], dst_lod as u32);
+                                if groups[0] == 0 || groups[1] == 0 || groups[2] == 0 {
+                                    continue;
+                                }
+                                let offset = i * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT;
+                                let mip_data_offset =
+                                    (dst_lod - 1) * MAXIMUM_UNIFORM_BUFFER_ALIGNMENT;
+                                pass.set_bind_group(
+                                    0,
+                                    bake_bind_group,
+                                    &[offset as u32, mip_data_offset as u32],
+                                );
+                                pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
+                            }
                         }
                     }
                 }
@@ -3457,5 +3519,47 @@ mod cull_tests {
             )
             .is_none()
         );
+    }
+}
+
+#[cfg(test)]
+mod tile_tests {
+    use super::tile_rect;
+    use crate::render::Rect;
+
+    #[test]
+    fn a_small_rect_stays_one_tile() {
+        let tiles = tile_rect(
+            Rect {
+                x: 10,
+                y: 20,
+                w: 8,
+                h: 8,
+            },
+            256,
+            256,
+        );
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0].x, 10);
+        assert_eq!(tiles[0].w, 8);
+    }
+
+    #[test]
+    fn fostral_splits_into_256_tiles() {
+        let tiles = tile_rect(
+            Rect {
+                x: 0,
+                y: 0,
+                w: 2048,
+                h: 16384,
+            },
+            256,
+            256,
+        );
+        assert_eq!(tiles.len(), 8 * 64);
+        assert!(tiles.iter().all(|t| t.w == 256 && t.h == 256));
+        let last = tiles.last().unwrap();
+        assert_eq!(last.x + last.w, 2048);
+        assert_eq!(last.y + last.h, 16384);
     }
 }
