@@ -99,6 +99,10 @@ fn fragment(in: Varyings) -> @location(0) vec4<f32> {
 
     var terrain_color = evaluate_color_normal(ty, in.world_pos, visibility, normal);
     terrain_color = apply_fog(terrain_color, in.world_pos.xy);
-    terrain_color.a = focus_visibility(in.world_pos);
+    let opacity = focus_opacity(in.world_pos, in.position.xy);
+    if (opacity < 0.02) {
+        discard;
+    }
+    terrain_color.a = opacity;
     return terrain_color;
 }

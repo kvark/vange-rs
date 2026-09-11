@@ -150,7 +150,7 @@ fn ray_color(in: RayInput) -> FragOutput {
 
     let visibility = fetch_shadow_visibility(pt.pos);
     var frag_color = apply_fog(color_point(pt, visibility), pt.pos.xy);
-    frag_color.a = focus_visibility(pt.pos);
+    frag_color.a = focus_opacity(pt.pos, in.frag_coord.xy);
 
     let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
     let depth = target_ndc.z / target_ndc.w;

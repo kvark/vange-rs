@@ -256,7 +256,7 @@ fn draw_color(@builtin(position) frag_coord: vec4<f32>) -> FragOutput {
 
     let visibility = fetch_shadow_visibility(pt.pos);
     var frag_color = apply_fog(evaluate_color(pt.ty, pt.pos, visibility), pt.pos.xy);
-    frag_color.a = focus_visibility(pt.pos);
+    frag_color.a = focus_opacity(pt.pos, frag_coord.xy);
     let actual_color = mix(frag_color, debug_color, debug_color.a);
 
     let target_ndc = u_Globals.view_proj * vec4<f32>(pt.pos, 1.0);
