@@ -1163,8 +1163,24 @@ impl Game {
                         .get((target.disp.x as i32, target.disp.y as i32))
                         .high();
                 }
+                let look_ahead = follow.look_ahead;
                 self.cam.follow(&target, delta, follow);
-                self.cam.keep_above_ground(&self.level, CAMERA_CLEARANCE);
+                // Pull out of hills toward the car, then re-aim so the
+                // collision move does not leave a stale look-ahead rotation
+                // fighting the see-through veil.
+                self.cam
+                    .avoid_terrain(&self.level, target.disp, CAMERA_CLEARANCE);
+                if look_ahead.abs() > 1e-4 {
+                    let mut front = target.rot * Vec3::Y;
+                    front.z = 0.0;
+                    let twist = if front.length_squared() > 1e-8 {
+                        glam::Quat::from_rotation_arc(Vec3::Y, front.normalize())
+                    } else {
+                        glam::Quat::IDENTITY
+                    };
+                    let look_at = target.disp + twist * Vec3::new(0.0, look_ahead, 0.0);
+                    self.cam.rot = space::Camera::look_rotation(look_at - self.cam.loc);
+                }
             }
         }
         self.rebase_torus();
@@ -2345,7 +2361,13 @@ impl Application for Game {
             if let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) {
                 let p = self.level.display_pos(player.position(), eye);
                 let r = (player.phys_data.bbox.radius * player.car.scale).max(8.0);
-                self.render.set_focus(p, r * 1.4);
+                // Only punch the see-through cone when terrain still blocks
+                // the car after camera avoidance — otherwise solid hills.
+                if space::Camera::terrain_blocks_view(&self.level, eye, p, CAMERA_CLEARANCE) {
+                    self.render.set_focus(p, r * 1.15);
+                } else {
+                    self.render.clear_focus();
+                }
             } else {
                 self.render.clear_focus();
             }
