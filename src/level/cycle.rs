@@ -87,6 +87,17 @@ impl Cirtainer {
     pub fn clear(&mut self) {
         self.held.iter_mut().for_each(|c| *c = 0);
     }
+
+    /// Build a cirtainer from an authoritative held vector (network sync).
+    pub fn from_held(held: Vec<i32>) -> Self {
+        Self { held }
+    }
+
+    /// Replace carried amounts from an authoritative snapshot.
+    pub fn set_held(&mut self, held: &[i32]) {
+        self.held.clear();
+        self.held.extend_from_slice(held);
+    }
 }
 
 /// A world's bunch: its stages, which one is current, and what has been
@@ -212,9 +223,85 @@ impl Bunch {
         self.fade.is_some()
     }
 
+    /// Fade target and remaining quants, when a cycle change is in flight.
+    pub fn fade_progress(&self) -> Option<(usize, i32)> {
+        self.fade.as_ref().map(|f| (f.target, f.left))
+    }
+
     /// The palette this bunch has settled on, once nothing is fading.
     pub fn settled_palette(&self) -> &[[u8; 4]; 0x100] {
         &self.stages[self.current].palette
+    }
+
+    /// Advance only the palette fade by one quant (no gather / decay / advance).
+    ///
+    /// Used by networked clients that let the server own bank progression but
+    /// still need local palette interpolation between WorldState snaps.
+    pub fn step_fade_quant(&mut self, level: &mut Level) -> Range<u32> {
+        self.step_fade(level).unwrap_or(0..0)
+    }
+
+    /// Apply an authoritative multiplayer snapshot.
+    ///
+    /// Updates banks and light, (re)starts or catches up a fade, and snaps the
+    /// settled stage when the server is not fading. Returns the palette range
+    /// that should be re-uploaded.
+    pub fn sync_authority(
+        &mut self,
+        level: &mut Level,
+        current: usize,
+        banked: &[i32],
+        light: f32,
+        fade: Option<(usize, i32)>,
+    ) -> Range<u32> {
+        for (dst, src) in self.banked.iter_mut().zip(banked.iter()) {
+            *dst = *src;
+        }
+        // Grow if the snapshot is longer (should not happen in practice).
+        if banked.len() > self.banked.len() {
+            self.banked.extend_from_slice(&banked[self.banked.len()..]);
+        }
+
+        match fade {
+            Some((target, left)) if left > 0 && target < self.stages.len() => {
+                let need_restart = self
+                    .fade
+                    .as_ref()
+                    .is_none_or(|f| f.target != target);
+                if need_restart {
+                    self.start_fade(level, target);
+                }
+                let mut range = 0..0;
+                if let Some(f) = self.fade.as_ref() {
+                    // Catch up if the client lags the server fade clock.
+                    let mut steps = f.left.saturating_sub(left);
+                    while steps > 0 {
+                        let step = self.step_fade(level).unwrap_or(0..0);
+                        if step.start != step.end {
+                            range = step;
+                        }
+                        steps -= 1;
+                        if self.fade.is_none() {
+                            break;
+                        }
+                    }
+                }
+                self.light = light;
+                range
+            }
+            _ => {
+                // Server is settled. Snap if we disagree on the stage or are
+                // still fading locally.
+                if self.is_fading() || self.current != current {
+                    let range = self.set_cycle(current, level);
+                    self.light = light;
+                    range
+                } else {
+                    self.light = light;
+                    0..0
+                }
+            }
+        }
     }
 
     /// Tops up what a car at `pos` is carrying.
@@ -700,5 +787,42 @@ mod tests {
         let b = bunch();
         // Two texels apart across the seam, not most of a level.
         assert_eq!(distance((1, 10), (SIZE - 1, 10), b.size), 2);
+    }
+
+    #[test]
+    fn authority_sync_snaps_settled_cycle() {
+        let mut level = test_level();
+        let mut b = bunch();
+        b.sync_authority(&mut level, 2, &[1, 2, 3], b.stages[2].light, None);
+        assert_eq!(b.current(), 2);
+        assert!(!b.is_fading());
+        assert_eq!(b.banked(), &[1, 2, 3]);
+        assert_eq!(level.palette[0], [120, 120, 120, 0xFF]);
+    }
+
+    #[test]
+    fn authority_sync_starts_and_catches_up_a_fade() {
+        let mut level = test_level();
+        let mut b = bunch();
+        let range = b.sync_authority(
+            &mut level,
+            0,
+            &[8, 0, 0],
+            b.stages[0].light,
+            Some((1, FADE_QUANTS - 10)),
+        );
+        assert!(b.is_fading());
+        let (_target, left) = b.fade_progress().unwrap();
+        assert_eq!(left, FADE_QUANTS - 10, "caught up to server left");
+        assert_ne!(range, 0..0);
+    }
+
+    #[test]
+    fn cirtainer_set_held_round_trips() {
+        let mut c = Cirtainer::default();
+        c.set_held(&[1, 0, 7]);
+        assert_eq!(c.held(), &[1, 0, 7]);
+        let c2 = Cirtainer::from_held(vec![3, 3]);
+        assert_eq!(c2.held(), &[3, 3]);
     }
 }

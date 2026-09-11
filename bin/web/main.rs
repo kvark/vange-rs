@@ -1,9 +1,11 @@
 //! Web entry point for vange-rs level viewer with test level.
 //! Compiled with `cargo build --target wasm32-unknown-unknown --features web --bin web`
 //!
-//! If the `VANGERS_SERVER_WS` environment variable is set at compile time,
-//! the viewer will attempt to connect to that WebSocket address on startup.
-//! If the connection fails, it continues as a standalone viewer.
+//! If the `VANGERS_SERVER_WS` environment variable is set at compile time
+//! (e.g. `ws://127.0.0.1:7801`), the viewer connects to that WebSocket on
+//! startup. Story-cycle state (`CycleState` on `WorldState`) is applied from
+//! the server so web and native clients stay aligned. If the connection
+//! fails, it continues as a standalone viewer with local cycle stepping.
 
 use wasm_bindgen::prelude::*;
 
@@ -271,6 +273,8 @@ struct Agent {
     /// Stretches each wheel covered since the last frame, cut into the
     /// ground afterwards - see `WebApp::step_tracks`.
     tracks: level::terraform::Tracks,
+    /// Cirt gathered toward the world's story cycles.
+    cirtainer: level::cycle::Cirtainer,
     armor: u16,
     max_armor: u16,
 }
@@ -393,6 +397,7 @@ fn spawn_default_agent(
         control: Control::default(),
         color: PLAYER_COLOR,
         tracks: level::terraform::Tracks::default(),
+        cirtainer: level::cycle::Cirtainer::default(),
         armor,
         max_armor: armor,
     })
@@ -475,6 +480,13 @@ struct WebApp {
     max_quant: f32,
     /// True when running on WebGPU (vs WebGL2 fallback).
     is_webgpu: bool,
+    /// World name used for story cycles / fauna (e.g. "Fostral").
+    world_name: String,
+    /// Story cycles when the world has an escave bunch.
+    cycle: Option<level::cycle::Bunch>,
+    cycle_time: f32,
+    /// Set after the first WorldState snap from the multiplayer server.
+    server_synced: bool,
     moving: level::moving::MovingWorld,
     /// Terrain-editing effects the car is allowed to leave behind. Same
     /// defaults as the native game: tread on, hull-press and mole mounds off.
@@ -787,6 +799,41 @@ impl WebApp {
             }
         }
 
+        // Story cycles from VFS bunches/escaves + stage palettes.
+        let mut level = level;
+        let cycle = vfs.and_then(|v| {
+            let bunches =
+                config::bunches::load_reader(std::io::Cursor::new(v.read("bunches.prm")?));
+            let mut escaves = v
+                .read("escaves.prm")
+                .map(|b| config::escaves::load_reader(std::io::Cursor::new(b)))
+                .unwrap_or_default();
+            if let Some(bytes) = v.read("spots.prm") {
+                escaves.extend(config::escaves::load_reader(std::io::Cursor::new(bytes)));
+            }
+            level::cycle::Bunch::load(world, &level, &bunches, &escaves, |path| {
+                v.read(path)
+                    .or_else(|| v.read(&format!("resource/{path}")))
+                    .or_else(|| {
+                        let trimmed = path.trim_start_matches("./");
+                        v.read(trimmed)
+                    })
+                    .map(|bytes| bytes.as_ref().to_vec())
+            })
+        });
+        if let Some(ref bunch) = cycle {
+            level.palette = *bunch.settled_palette();
+            log::info!(
+                "Story cycle loaded for '{world}': {} stages ({})",
+                bunch.stages.len(),
+                bunch.escave
+            );
+            // Light matches the opening stage.
+            // (render is already built; modulation is applied below.)
+        } else {
+            log::info!("No story cycle for '{world}'");
+        }
+
         let mut life = life::World::spawn(world, &level, std::path::Path::new(""));
         life.beebs = 500;
         let bug = vfs.and_then(|v| load_bug(v, &gfx.device, &render.object));
@@ -805,7 +852,7 @@ impl WebApp {
             }
             spins
         };
-        WebApp {
+        let mut app = WebApp {
             render,
             level,
             cam,
@@ -815,6 +862,10 @@ impl WebApp {
             follow,
             max_quant: settings.game.physics.max_quant,
             is_webgpu,
+            world_name: world.to_string(),
+            cycle,
+            cycle_time: 0.0,
+            server_synced: false,
             moving,
             terraform: level::terraform::Config::default(),
             life,
@@ -888,7 +939,12 @@ impl WebApp {
             use_held: false,
             touch_stick: uses_touch_stick(),
             minimap: minimap::Minimap::new(),
+        };
+        if let Some(ref bunch) = app.cycle {
+            app.render.set_light_modulation(bunch.light());
+            app.render.dirty_palette(0..0x100);
         }
+        app
     }
 
     fn draw_ui(&mut self, ctx: &egui::Context) {
@@ -1056,6 +1112,79 @@ impl WebApp {
     /// native game's `step_tracks` (bin/road/game.rs); the physics records
     /// the wheels' stretches over an immutable level, and the cutting here
     /// runs where the level can be borrowed mutably.
+
+    /// Solo: gather / deliver / advance. Networked: fade visuals only.
+    fn step_cycle(&mut self, delta: f32, networked: bool) {
+        let bunch = match self.cycle {
+            Some(ref mut bunch) => bunch,
+            None => return,
+        };
+        self.cycle_time += delta;
+        let quants = (self.cycle_time / config::common::MAIN_LOOP_TIME) as u32;
+        if quants == 0 {
+            return;
+        }
+        self.cycle_time -= quants as f32 * config::common::MAIN_LOOP_TIME;
+
+        let mut range = 0..0;
+        for _ in 0..quants.min(4) {
+            let step = if networked {
+                bunch.step_fade_quant(&mut self.level)
+            } else {
+                if let Some(ref mut agent) = self.agent {
+                    let coord = (
+                        agent.transform.disp.x as i32,
+                        agent.transform.disp.y as i32,
+                    );
+                    bunch.gather(coord, &mut agent.cirtainer);
+                    bunch.deliver(coord, &mut agent.cirtainer);
+                }
+                bunch.quant(&mut self.level)
+            };
+            if step.start != step.end {
+                range = step;
+            }
+        }
+        if range.start != range.end {
+            self.render.dirty_palette(range);
+            self.render.set_light_modulation(bunch.light());
+        }
+    }
+
+    fn apply_cycle_state(&mut self, state: &vangers_net::CycleState) {
+        let fade = state.fade.as_ref().map(|f| (f.target as usize, f.left));
+        let applied = if let Some(ref mut bunch) = self.cycle {
+            let range = bunch.sync_authority(
+                &mut self.level,
+                state.current as usize,
+                &state.banked,
+                state.light,
+                fade,
+            );
+            Some((range, bunch.light()))
+        } else {
+            None
+        };
+        if let Some((range, light)) = applied {
+            if range.start != range.end {
+                self.render.dirty_palette(range);
+            }
+            self.render.set_light_modulation(light);
+        }
+    }
+
+    fn apply_player_cirt(&mut self, my_id: Option<vangers_net::PlayerId>, state: &vangers_net::CycleState) {
+        let Some(ref mut agent) = self.agent else {
+            return;
+        };
+        for pc in &state.players {
+            if Some(pc.player_id) == my_id {
+                agent.cirtainer.set_held(&pc.held);
+                break;
+            }
+        }
+    }
+
     fn step_tracks(&mut self) {
         let Some(agent) = self.agent.as_mut() else {
             return;
@@ -2630,6 +2759,10 @@ impl WebHandler {
             gpu.app.step_life(dt);
         }
 
+        // Story cycles run whether or not the escave UI is up so solo
+        // palette fades and MP fade catch-up stay consistent.
+        gpu.app.step_cycle(dt, connected);
+
         // Process multiplayer messages
         if let Some(ref mut ws) = self.ws_client {
             // Send input
@@ -2660,13 +2793,41 @@ impl WebHandler {
                     vangers_net::ServerMessage::PlayerLeft { player_id } => {
                         log::info!("Player {} left", player_id);
                     }
-                    vangers_net::ServerMessage::WorldState { agents, .. } => {
-                        // Move camera to follow our agent
+                    vangers_net::ServerMessage::WorldState { agents, cycle, .. } => {
+                        if let Some(ref cycle_state) = cycle {
+                            gpu.app.apply_cycle_state(cycle_state);
+                            gpu.app.apply_player_cirt(ws.player_id, cycle_state);
+                        }
                         if let Some(my_id) = ws.player_id
                             && let Some(me) = agents.iter().find(|a| a.player_id == my_id)
                         {
-                            let pos = glam::Vec3::from(me.transform.position);
-                            gpu.app.cam.loc = glam::vec3(pos.x, pos.y, pos.z + 200.0);
+                            let server_transform = space::Transform {
+                                disp: glam::Vec3::from(me.transform.position),
+                                rot: glam::Quat::from_xyzw(
+                                    me.transform.rotation[0],
+                                    me.transform.rotation[1],
+                                    me.transform.rotation[2],
+                                    me.transform.rotation[3],
+                                ),
+                                scale: me.transform.scale,
+                            };
+                            if let Some(ref mut agent) = gpu.app.agent {
+                                if !gpu.app.server_synced {
+                                    gpu.app.server_synced = true;
+                                    gpu.app.cam.focus_on(&server_transform);
+                                }
+                                agent.transform = server_transform;
+                                agent.dynamo.linear_velocity =
+                                    glam::Vec3::from(me.dynamo.linear_velocity);
+                                agent.dynamo.angular_velocity =
+                                    glam::Vec3::from(me.dynamo.angular_velocity);
+                                agent.dynamo.traction = me.dynamo.traction;
+                                agent.dynamo.rudder = me.dynamo.rudder;
+                            } else {
+                                // No local vehicle mesh — at least park the camera.
+                                let pos = server_transform.disp;
+                                gpu.app.cam.loc = glam::vec3(pos.x, pos.y, pos.z + 200.0);
+                            }
                         }
                     }
                 }

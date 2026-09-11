@@ -4,8 +4,8 @@ use vangers::{
     space,
 };
 use vangers_net::{
-    decode, encode, AgentState, ClientMessage, NetControl, NetDynamo, NetTransform, PlayerId,
-    ServerMessage,
+    decode, encode, AgentState, ClientMessage, CycleFade, CycleState, NetControl, NetDynamo,
+    NetTransform, PlayerCirt, PlayerId, ServerMessage,
 };
 
 use clap::Parser;
@@ -75,6 +75,7 @@ struct ServerAgent {
     transform: space::Transform,
     dynamo: Dynamo,
     phys_data: CarPhysicsData,
+    cirtainer: level::cycle::Cirtainer,
     sender: mpsc::UnboundedSender<Vec<u8>>,
     joined: bool,
 }
@@ -154,13 +155,51 @@ async fn main() {
         .as_ref()
         .map(|s| s.game.geometry)
         .unwrap_or_default();
-    let level = level::load(&level_config, &geometry);
+    let mut level = level::load(&level_config, &geometry);
     info!(
         "Level loaded: {}x{} (test={})",
         level.size.0,
         level.size.1,
         cli.level == "test"
     );
+
+    // Story cycles (cirt → escave → palette). Server is authoritative so
+    // native TCP and web WS clients stay on the same stage / banks.
+    // World name comes from settings when available (e.g. "Fostral"); the
+    // --level path only selects terrain data.
+    let cycle_world = settings
+        .as_ref()
+        .map(|s| s.game.level.clone())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| cli.level.clone());
+    let mut cycle = if let Some(ref settings) = settings {
+        if !settings.check_path("bunches.prm") {
+            None
+        } else {
+            let bunches = config::bunches::load(settings.open_relative("bunches.prm"));
+            let mut escaves = config::escaves::load_optional(settings, "escaves.prm");
+            escaves.extend(config::escaves::load_optional(settings, "spots.prm"));
+            level::cycle::Bunch::load(&cycle_world, &level, &bunches, &escaves, |path| {
+                settings
+                    .check_path(path)
+                    .then(|| std::fs::read(settings.data_path.join(path)).ok())
+                    .flatten()
+            })
+        }
+    } else {
+        None
+    };
+    if let Some(ref bunch) = cycle {
+        level.palette = *bunch.settled_palette();
+        info!(
+            "Story cycle loaded for '{}': {} stages, escave {}",
+            cycle_world,
+            bunch.stages.len(),
+            bunch.escave
+        );
+    } else {
+        info!("No story cycle for '{}' (test/bonus world or missing data)", cycle_world);
+    }
 
     // Load physics constants and car data from game files when available.
     let (common, car_physics) = if let Some(ref settings) = settings {
@@ -249,7 +288,7 @@ async fn main() {
     let mut tick_interval = time::interval(tick_duration);
     let mut players: HashMap<PlayerId, ServerAgent> = HashMap::new();
     let mut tick: u32 = 0;
-    let level_name = cli.level.clone();
+    let level_name = cycle_world.clone();
     let max_players = cli.max_players;
     let max_quant = 0.02f32;
 
@@ -342,6 +381,44 @@ async fn main() {
                         agent.transform.disp.y.rem_euclid(size.1 as f32);
                 }
 
+                // Story cycle: one quant per server tick (tick_rate 20 Hz
+                // matches MAIN_LOOP_TIME = 0.05). All joined players
+                // gather/deliver — including those that clients only
+                // keep as remote_agents.
+                let cycle_state = if let Some(ref mut bunch) = cycle {
+                    for agent in players.values_mut() {
+                        if !agent.joined {
+                            continue;
+                        }
+                        let coord = (
+                            agent.transform.disp.x as i32,
+                            agent.transform.disp.y as i32,
+                        );
+                        bunch.gather(coord, &mut agent.cirtainer);
+                        bunch.deliver(coord, &mut agent.cirtainer);
+                    }
+                    let _ = bunch.quant(&mut level);
+                    Some(CycleState {
+                        current: bunch.current() as u32,
+                        banked: bunch.banked().to_vec(),
+                        light: bunch.light(),
+                        fade: bunch.fade_progress().map(|(target, left)| CycleFade {
+                            target: target as u32,
+                            left,
+                        }),
+                        players: players
+                            .iter()
+                            .filter(|(_, a)| a.joined)
+                            .map(|(&id, a)| PlayerCirt {
+                                player_id: id,
+                                held: a.cirtainer.held().to_vec(),
+                            })
+                            .collect(),
+                    })
+                } else {
+                    None
+                };
+
                 // Collect agent states and broadcast
                 let agents: Vec<AgentState> = players
                     .iter()
@@ -352,6 +429,7 @@ async fn main() {
                 let msg = encode(&ServerMessage::WorldState {
                     tick,
                     agents,
+                    cycle: cycle_state,
                 });
 
                 let mut disconnected = Vec::new();
@@ -382,6 +460,7 @@ async fn main() {
                             transform: space::Transform::IDENTITY,
                             dynamo: Dynamo::default(),
                             phys_data: CarPhysicsData::test_default(), // replaced on Join
+                            cirtainer: level::cycle::Cirtainer::default(),
                             sender,
                             joined: false,
                         });
@@ -409,6 +488,7 @@ async fn main() {
                                     agent.car_name = car_name.clone();
                                     agent.color = color;
                                     agent.joined = true;
+                                    agent.cirtainer = level::cycle::Cirtainer::default();
                                     agent.transform = space::Transform {
                                         scale: agent.phys_data.scale,
                                         disp: Vec3::new(
