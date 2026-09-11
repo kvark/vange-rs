@@ -33,6 +33,10 @@ pub struct Camera {
     pub look_ahead: f32,
 }
 
+/// Where NPC vangers appear at game start.
+///
+/// `Random` is a ring around the player (not the whole torus) so huge
+/// levels still produce encounters. `Player` stacks them on the same cell.
 #[derive(Copy, Clone, Deserialize)]
 pub enum SpawnAt {
     Player,
