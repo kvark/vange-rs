@@ -393,11 +393,6 @@ impl CameraStyle {
 /// How far above the ground the follow camera is held, so it does not
 /// end up inside a hillside looking at terrain backfaces.
 const CAMERA_CLEARANCE: f32 = 4.0;
-/// Random NPC spawns sit in this ring around the player so huge maps
-/// (Fostral ~2048×16384) still produce encounters. Full-map scatter made
-/// the ten default vangers effectively invisible.
-const NPC_SPAWN_MIN_DIST: f32 = 400.0;
-const NPC_SPAWN_MAX_DIST: f32 = 1800.0;
 
 struct Clipper {
     mx_vp: glam::Mat4,
@@ -752,16 +747,12 @@ impl Game {
             let car_id = car_names.choose(&mut rng).unwrap();
             let (x, y) = match settings.game.other.spawn_at {
                 config::settings::SpawnAt::Player => coords,
-                config::settings::SpawnAt::Random => {
-                    // Ring around the player (wrap-aware), not the whole torus.
-                    let angle = rng.gen_range(0.0..std::f32::consts::TAU);
-                    let dist = rng.gen_range(NPC_SPAWN_MIN_DIST..NPC_SPAWN_MAX_DIST);
-                    let x = (coords.0 as f32 + angle.cos() * dist)
-                        .rem_euclid(level.size.0 as f32) as i32;
-                    let y = (coords.1 as f32 + angle.sin() * dist)
-                        .rem_euclid(level.size.1 as f32) as i32;
-                    (x, y)
-                }
+                // Independent of the player — same as other drivers already
+                // out on the torus, not clustered around you.
+                config::settings::SpawnAt::Random => (
+                    rng.gen_range(0..level.size.0),
+                    rng.gen_range(0..level.size.1),
+                ),
             };
             let agent = Agent::spawn(
                 format!("Other-{}", i),
