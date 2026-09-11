@@ -829,6 +829,21 @@ mod torus_tests {
     }
 
     #[test]
+    fn npc_across_the_seam_draws_beside_you() {
+        let level = tiny_level(256, 128);
+        let eye = glam::Vec3::new(5.0, 40.0, 5.0);
+        // Same torus cell as x=250, but the naive world gap is ~245.
+        let npc = glam::Vec3::new(250.0, 40.0, 5.0);
+        let shown = level.display_pos(npc, eye);
+        assert!(
+            (shown.x - eye.x).abs() < 20.0,
+            "NPC west of the seam must draw beside the eye, got {shown:?}"
+        );
+        let gap = level.shortest_xy(eye, npc).length();
+        assert!(gap < 20.0, "wrap distance must stay small, got {gap}");
+    }
+
+    #[test]
     fn wrap_pos_folds_onto_the_map() {
         let level = tiny_level(256, 128);
         let p = level.wrap_pos(glam::Vec3::new(300.0, -10.0, 3.0));

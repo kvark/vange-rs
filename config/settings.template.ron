@@ -22,8 +22,8 @@
 			projection: Perspective, // can be "Flat" or "Perspective"
 		),
 		other: (
-			count: 10, // number of NPC vangers
-			spawn_at: Random, // Player
+			count: 12, // NPC vangers (Random = ring around player)
+			spawn_at: Random, // Random | Player
 		),
 		physics: (
 			max_quant: 0.1,
