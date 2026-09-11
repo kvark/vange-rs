@@ -6,6 +6,15 @@
 //! both sides, periodically "sends" a WorldState from server to client
 //! (just copying the transform), and checks that the camera position
 //! stays stable.
+//!
+//! ## Extending for story-cycle sync
+//!
+//! `WorldState` now carries an optional `CycleState` (banks, light, fade,
+//! per-player cirtainer). A follow-up test can:
+//! 1. Build a tiny `level::cycle::Bunch` (see `src/level/cycle.rs` tests).
+//! 2. Step gather/deliver/quant on the server side each 20 Hz tick.
+//! 3. Apply `Bunch::sync_authority` on the client from the snapshot.
+//! 4. Assert matching `current`, `banked`, and `light` after a delivery.
 
 use glam::{Quat, Vec3};
 use vangers::{

@@ -892,7 +892,12 @@ impl Game {
     /// dolly it is near, hands it over on reaching the escave, and once a
     /// stage has had its fill the whole world fades to the next one's
     /// colours.
+    ///
+    /// When connected to a multiplayer server, gather / deliver / bank
+    /// progression are server-authoritative (`CycleState` on WorldState).
+    /// This path only advances the local palette fade for visuals.
     fn step_cycle(&mut self, delta: f32) {
+        let networked = self.mp_state.connected;
         let bunch = match self.cycle {
             Some(ref mut bunch) => bunch,
             None => return,
@@ -906,13 +911,17 @@ impl Game {
 
         let mut range = 0..0;
         for _ in 0..quants.min(4) {
-            for agent in self.agents.iter_mut() {
-                let pos = agent.position();
-                let coord = (pos.x as i32, pos.y as i32);
-                bunch.gather(coord, &mut agent.cirtainer);
-                bunch.deliver(coord, &mut agent.cirtainer);
-            }
-            let step = bunch.quant(&mut self.level);
+            let step = if networked {
+                bunch.step_fade_quant(&mut self.level)
+            } else {
+                for agent in self.agents.iter_mut() {
+                    let pos = agent.position();
+                    let coord = (pos.x as i32, pos.y as i32);
+                    bunch.gather(coord, &mut agent.cirtainer);
+                    bunch.deliver(coord, &mut agent.cirtainer);
+                }
+                bunch.quant(&mut self.level)
+            };
             if step.start != step.end {
                 range = step;
             }
@@ -925,6 +934,46 @@ impl Game {
             // to start again from the colours it left behind.
             if !bunch.is_fading() {
                 self.palette.rebase(&self.level.palette);
+            }
+        }
+    }
+
+    /// Apply a server `CycleState` to the local bunch and player cirtainers.
+    fn apply_cycle_state(&mut self, state: &vangers_net::CycleState) {
+        let fade = state
+            .fade
+            .as_ref()
+            .map(|f| (f.target as usize, f.left));
+        let applied = if let Some(ref mut bunch) = self.cycle {
+            let range = bunch.sync_authority(
+                &mut self.level,
+                state.current as usize,
+                &state.banked,
+                state.light,
+                fade,
+            );
+            Some((range, bunch.light(), bunch.is_fading()))
+        } else {
+            None
+        };
+        if let Some((range, light, fading)) = applied {
+            if range.start != range.end {
+                self.render.dirty_palette(range);
+                self.render.set_light_modulation(light);
+                if !fading {
+                    self.palette.rebase(&self.level.palette);
+                }
+            } else {
+                self.render.set_light_modulation(state.light);
+            }
+        }
+
+        let my_id = self.net.as_ref().and_then(|n| n.player_id);
+        for pc in &state.players {
+            if Some(pc.player_id) == my_id {
+                if let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
+                    player.cirtainer.set_held(&pc.held);
+                }
             }
         }
     }
@@ -1731,30 +1780,30 @@ impl Application for Game {
         self.step_tracks();
         self.step_world_life(delta);
 
-        // Networking: send input and process server events
-        if let Some(ref mut net) = self.net {
-            // Send local player's control to the server
+        // Networking: send input and process server events.
+        // Send + poll under a short `net` borrow, then handle events with
+        // full `&mut self` so cycle sync can touch render/level/agents.
+        if self.net.is_some() {
             let player = self
                 .agents
                 .iter()
                 .find(|a| a.spirit == Spirit::Player)
                 .unwrap();
             self.input_seq += 1;
-            net.send_input(
-                self.input_seq,
-                &vangers_net::NetControl {
-                    motor: player.control.motor,
-                    rudder: player.control.rudder,
-                    roll: player.control.roll,
-                    brake: player.control.brake,
-                    turbo: player.control.turbo,
-                    jump: player.jump,
-                },
-            );
-
-            // Process events from the server
-            let my_id = net.player_id;
-            for event in net.poll() {
+            let control = vangers_net::NetControl {
+                motor: player.control.motor,
+                rudder: player.control.rudder,
+                roll: player.control.roll,
+                brake: player.control.brake,
+                turbo: player.control.turbo,
+                jump: player.jump,
+            };
+            let (events, my_id) = {
+                let net = self.net.as_mut().unwrap();
+                net.send_input(self.input_seq, &control);
+                (net.poll(), net.player_id)
+            };
+            for event in events {
                 match event {
                     NetEvent::Welcome {
                         player_id,
@@ -1809,7 +1858,10 @@ impl Application for Game {
                         log::info!("Remote player {} left", player_id);
                         self.remote_agents.remove(&player_id);
                     }
-                    NetEvent::WorldState { agents, .. } => {
+                    NetEvent::WorldState { agents, cycle, .. } => {
+                        if let Some(ref cycle_state) = cycle {
+                            self.apply_cycle_state(cycle_state);
+                        }
                         for agent_state in &agents {
                             let server_transform = space::Transform {
                                 disp: Vec3::from(agent_state.transform.position),

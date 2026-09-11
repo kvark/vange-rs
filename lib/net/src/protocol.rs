@@ -37,7 +37,45 @@ pub enum ServerMessage {
     /// A player has left the session.
     PlayerLeft { player_id: PlayerId },
     /// Authoritative world state snapshot broadcast every tick.
-    WorldState { tick: u32, agents: Vec<AgentState> },
+    WorldState {
+        tick: u32,
+        agents: Vec<AgentState>,
+        /// Story-cycle snapshot when the hosted world runs cycles.
+        /// `None` for test / bonus worlds with no bunch.
+        cycle: Option<CycleState>,
+    },
+}
+
+/// Authoritative story-cycle snapshot (cirt banks, palette stage, carry).
+///
+/// Clients that are connected apply this instead of advancing gather /
+/// deliver / bank decay locally, so native TCP and web WS stay aligned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CycleState {
+    /// Index of the settled (or still-current-during-fade) stage.
+    pub current: u32,
+    /// `cirtQ` banked toward each stage's `cirt_max`.
+    pub banked: Vec<i32>,
+    /// World light scale for the current / fading cycle.
+    pub light: f32,
+    /// When fading, the stage being faded toward and quants remaining.
+    pub fade: Option<CycleFade>,
+    /// Per-player cirtainer contents.
+    pub players: Vec<PlayerCirt>,
+}
+
+/// In-progress palette cross-fade.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CycleFade {
+    pub target: u32,
+    pub left: i32,
+}
+
+/// What one player is carrying in their cirtainer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlayerCirt {
+    pub player_id: PlayerId,
+    pub held: Vec<i32>,
 }
 
 /// Player control input, sent from client to server.
@@ -146,17 +184,59 @@ mod tests {
                     angular_velocity: [0.0, 0.0, 0.5],
                 },
             }],
+            cycle: None,
         };
         let encoded = encode(&msg);
         let (decoded, consumed): (ServerMessage, _) = decode(&encoded).unwrap();
         assert_eq!(consumed, encoded.len());
         match decoded {
-            ServerMessage::WorldState { tick, agents } => {
+            ServerMessage::WorldState { tick, agents, cycle } => {
                 assert_eq!(tick, 42);
                 assert_eq!(agents.len(), 1);
                 assert_eq!(agents[0].player_id, 1);
+                assert!(cycle.is_none());
             }
             _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn round_trip_world_state_with_cycle() {
+        let msg = ServerMessage::WorldState {
+            tick: 7,
+            agents: vec![],
+            cycle: Some(CycleState {
+                current: 1,
+                banked: vec![3, 8, 0],
+                light: 0.8,
+                fade: Some(CycleFade {
+                    target: 2,
+                    left: 40,
+                }),
+                players: vec![PlayerCirt {
+                    player_id: 1,
+                    held: vec![7, 0, 2],
+                }],
+            }),
+        };
+        let encoded = encode(&msg);
+        let (decoded, consumed): (ServerMessage, _) = decode(&encoded).unwrap();
+        assert_eq!(consumed, encoded.len());
+        match decoded {
+            ServerMessage::WorldState {
+                cycle: Some(cycle),
+                ..
+            } => {
+                assert_eq!(cycle.current, 1);
+                assert_eq!(cycle.banked, vec![3, 8, 0]);
+                assert!((cycle.light - 0.8).abs() < 1e-6);
+                let fade = cycle.fade.expect("fade");
+                assert_eq!(fade.target, 2);
+                assert_eq!(fade.left, 40);
+                assert_eq!(cycle.players.len(), 1);
+                assert_eq!(cycle.players[0].held, vec![7, 0, 2]);
+            }
+            _ => panic!("expected WorldState with cycle"),
         }
     }
 

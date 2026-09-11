@@ -3,6 +3,7 @@ use crate::config::text::Reader;
 use serde_scan;
 
 use std::fs::File;
+use std::io::Read;
 
 #[derive(Debug, Deserialize)]
 pub struct Cycle {
@@ -21,8 +22,12 @@ pub struct Bunch {
 }
 
 pub fn load(file: File) -> Vec<Bunch> {
+    load_reader(file)
+}
+
+pub fn load_reader<R: Read>(reader: R) -> Vec<Bunch> {
     let mut bunches = Vec::new();
-    let mut fi = Reader::new(file);
+    let mut fi = Reader::new(reader);
     fi.advance();
     assert_eq!(fi.cur(), "uniVang-ParametersFile_Ver_1");
 

@@ -2,6 +2,7 @@ use crate::config::text::Reader;
 use crate::config::Settings;
 
 use std::fs::File;
+use std::io::Read;
 
 #[derive(Debug, Deserialize)]
 pub struct ItemSource {
@@ -27,8 +28,12 @@ pub fn load_optional(settings: &Settings, name: &str) -> Vec<Escave> {
 }
 
 pub fn load(file: File) -> Vec<Escave> {
+    load_reader(file)
+}
+
+pub fn load_reader<R: Read>(reader: R) -> Vec<Escave> {
     let mut escaves = Vec::new();
-    let mut fi = Reader::new(file);
+    let mut fi = Reader::new(reader);
     fi.advance();
     assert_eq!(fi.cur(), "uniVang-ParametersFile_Ver_1");
 
