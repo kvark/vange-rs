@@ -16,7 +16,8 @@ struct Globals {
 @group(0) @binding(0) var<uniform> u_Globals: Globals;
 
 /// Opacity of terrain that sits between the camera and the vehicle.
-/// 1 = fully solid, ~0.2 on the view axis (see the car through a veil).
+/// 1 = fully solid; on-axis veil is mild — used only when the CPU says
+/// the line of sight is still blocked after camera avoidance.
 fn focus_visibility(pos: vec3<f32>) -> f32 {
     let f = u_Globals.focus_pos;
     if (f.w <= 0.001) {
@@ -31,7 +32,7 @@ fn focus_visibility(pos: vec3<f32>) -> f32 {
     }
     let to_pos = pos - cam;
     let dist_pos = length(to_pos);
-    if (dist_pos >= dist_car - f.w * 0.4) {
+    if (dist_pos >= dist_car - f.w * 0.35) {
         return 1.0;
     }
     let axis = to_car / dist_car;
@@ -40,9 +41,10 @@ fn focus_visibility(pos: vec3<f32>) -> f32 {
         return 1.0;
     }
     let perp = length(to_pos - axis * along);
-    let cone_r = f.w * (along / dist_car) * 2.6;
+    // Narrower cone, higher floor opacity — a soft veil, not a tunnel.
+    let cone_r = f.w * (along / dist_car) * 1.6;
     let edge = smoothstep(0.0, cone_r, perp);
-    return mix(0.18, 1.0, edge * edge);
+    return mix(0.42, 1.0, edge * edge);
 }
 
 fn closest_local_light(pos: vec3<f32>, normal: vec3<f32>) -> f32 {

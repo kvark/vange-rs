@@ -385,6 +385,98 @@ impl Camera {
         self.loc.z = self.loc.z.max(floor + clearance);
     }
 
+    /// Pull the chase camera out of intervening terrain toward `anchor`
+    /// (usually the car), then apply [`keep_above_ground`].
+    ///
+    /// Z-only lifts park the camera on a ridge while the see-through
+    /// focus cone still punches a hole. Sampling the car→camera segment
+    /// and shortening that arm clears the hill for real; the focus veil
+    /// can then stay off when the line of sight is open.
+    pub fn avoid_terrain(
+        &mut self,
+        level: &crate::level::Level,
+        anchor: Vec3,
+        clearance: f32,
+    ) {
+        // `floor_below` returns the cave floor when z is under a slab, which
+        // makes a buried outdoor chase cam look "clear" inside a hill. Use
+        // the top surface outdoors; only trust floor_below when the car
+        // itself is in a cave.
+        let cave_mode = matches!(
+            level.get((anchor.x as i32, anchor.y as i32)),
+            crate::level::Texel::Dual { mid, .. } if anchor.z < mid
+        );
+        let eye_start = Vec3::new(anchor.x, anchor.y, anchor.z + clearance);
+        let delta = self.loc - eye_start;
+        let dist = delta.length();
+        if dist > 1.0 {
+            let dir = delta / dist;
+            let steps = ((dist / 6.0) as usize).clamp(6, 40);
+            let mut hit_t = 1.0_f32;
+            for i in 1..=steps {
+                let t = i as f32 / steps as f32;
+                let p = eye_start + dir * (dist * t);
+                if Self::point_hits_terrain(level, p, clearance, cave_mode) {
+                    hit_t = ((i - 1) as f32 / steps as f32).max(0.12);
+                    break;
+                }
+            }
+            if hit_t < 0.999 {
+                self.loc = eye_start + dir * (dist * hit_t);
+            }
+        }
+        self.keep_above_ground(level, clearance);
+    }
+
+    fn point_hits_terrain(
+        level: &crate::level::Level,
+        p: Vec3,
+        clearance: f32,
+        cave_mode: bool,
+    ) -> bool {
+        let texel = level.get((p.x as i32, p.y as i32));
+        if cave_mode {
+            return p.z < level.floor_below(p) + clearance;
+        }
+        p.z < texel.high() + clearance
+    }
+
+    /// True when height samples along cam→car rise through the sight line.
+    /// Cheap CPU gate for the GPU focus veil.
+    pub fn terrain_blocks_view(
+        level: &crate::level::Level,
+        cam: Vec3,
+        car: Vec3,
+        clearance: f32,
+    ) -> bool {
+        let delta = car - cam;
+        let dist = delta.length();
+        if dist < 1.0 {
+            return false;
+        }
+        let cave_mode = matches!(
+            level.get((car.x as i32, car.y as i32)),
+            crate::level::Texel::Dual { mid, .. } if car.z < mid
+        );
+        let dir = delta / dist;
+        let steps = ((dist / 8.0) as usize).clamp(4, 24);
+        // Stop short of the car body so the mechos itself is not a "hit".
+        let end = 0.85;
+        for i in 1..steps {
+            let t = end * (i as f32 / steps as f32);
+            let p = cam + dir * (dist * t);
+            let surface = if cave_mode {
+                level.floor_below(p)
+            } else {
+                level.get((p.x as i32, p.y as i32)).high()
+            };
+            if surface > p.z + clearance * 0.35 {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn look_by(&mut self, target: &Transform, dir: &Direction) {
         debug_assert!(dir.view.z < 0.0);
         let k = (target.disp.z - self.loc.z) / -dir.view.z;
@@ -773,6 +865,38 @@ mod ground_tests {
         let mut cam = cam_at(Vec3::new(x, y, floor + 200.0));
         cam.keep_above_ground(&level, 4.0);
         assert_eq!(cam.loc.z, floor + 200.0);
+    }
+
+    /// A camera buried in a far ridge is pulled toward the car, not just
+    /// lifted onto the ridge top.
+    #[test]
+    fn avoid_terrain_pulls_toward_the_anchor() {
+        let level = test_level();
+        let car_floor = level.get((10, 10)).high();
+        let ridge = level.get((10, 80)).high();
+        let car = Vec3::new(10.0, 10.0, car_floor + 8.0);
+        // Deep under the ridge top so a Z-only lift would perch on it.
+        let mut cam = cam_at(Vec3::new(10.0, 80.0, ridge - 40.0));
+        let before = cam.loc;
+        cam.avoid_terrain(&level, car, 4.0);
+        assert!(
+            (cam.loc - car).length() + 1.0 < (before - car).length(),
+            "expected a pull toward the car, got {before:?} -> {:?} (car_floor={car_floor}, ridge={ridge})",
+            cam.loc
+        );
+        assert!(
+            cam.loc.z >= level.floor_below(cam.loc) + 4.0 - 1e-3,
+            "still needs floor clearance"
+        );
+    }
+
+    #[test]
+    fn open_line_of_sight_is_not_blocked() {
+        let level = test_level();
+        let floor = level.get((10, 10)).low();
+        let cam = Vec3::new(10.0, 10.0, floor + 80.0);
+        let car = Vec3::new(10.0, 40.0, floor + 8.0);
+        assert!(!Camera::terrain_blocks_view(&level, cam, car, 4.0));
     }
 
     /// The case that makes this more than a `max`: under a slab, the
