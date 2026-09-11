@@ -15,10 +15,24 @@ struct Globals {
 
 @group(0) @binding(0) var<uniform> u_Globals: Globals;
 
-/// Opacity of terrain that sits between the camera and the vehicle.
-/// 1 = fully solid; on-axis veil is mild — used only when the CPU says
-/// the line of sight is still blocked after camera avoidance.
-fn focus_visibility(pos: vec3<f32>) -> f32 {
+/// 4×4 Bayer threshold in 0..1, stable in screen space (Diablo-style dissolve).
+fn bayer4(frag_xy: vec2<f32>) -> f32 {
+    let x = u32(frag_xy.x) & 3u;
+    let y = u32(frag_xy.y) & 3u;
+    // Row-major Bayer matrix / 16.
+    let i = y * 4u + x;
+    var m: array<f32, 16> = array<f32, 16>(
+        0.0 / 16.0, 8.0 / 16.0, 2.0 / 16.0, 10.0 / 16.0,
+        12.0 / 16.0, 4.0 / 16.0, 14.0 / 16.0, 6.0 / 16.0,
+        3.0 / 16.0, 11.0 / 16.0, 1.0 / 16.0, 9.0 / 16.0,
+        15.0 / 16.0, 7.0 / 16.0, 13.0 / 16.0, 5.0 / 16.0,
+    );
+    return m[i];
+}
+
+/// How solid terrain should stay at `pos` (1 = opaque, 0 = fully dissolved).
+/// Soft along-axis and radial falloffs so the hole eases in/out like Diablo.
+fn focus_cover(pos: vec3<f32>) -> f32 {
     let f = u_Globals.focus_pos;
     if (f.w <= 0.001) {
         return 1.0;
@@ -32,7 +46,8 @@ fn focus_visibility(pos: vec3<f32>) -> f32 {
     }
     let to_pos = pos - cam;
     let dist_pos = length(to_pos);
-    if (dist_pos >= dist_car - f.w * 0.35) {
+    // Past the car body: never dissolve the ground under/behind the mechos.
+    if (dist_pos >= dist_car - f.w * 0.25) {
         return 1.0;
     }
     let axis = to_car / dist_car;
@@ -40,11 +55,35 @@ fn focus_visibility(pos: vec3<f32>) -> f32 {
     if (along <= 0.0) {
         return 1.0;
     }
+    let along_n = along / dist_car;
+    // Soft ramp from the camera, soft ramp back near the car.
+    let along_w = smoothstep(0.02, 0.22, along_n) * (1.0 - smoothstep(0.68, 0.96, along_n));
     let perp = length(to_pos - axis * along);
-    // Narrower cone, higher floor opacity — a soft veil, not a tunnel.
-    let cone_r = f.w * (along / dist_car) * 1.6;
-    let edge = smoothstep(0.0, cone_r, perp);
-    return mix(0.42, 1.0, edge * edge);
+    let cone_r = max(f.w * 0.4, f.w * along_n * 2.0);
+    // 1 on the view axis, 0 outside the cone.
+    let radial = 1.0 - smoothstep(cone_r * 0.45, cone_r, perp);
+    let dissolve = clamp(along_w * radial, 0.0, 1.0);
+    return 1.0 - dissolve;
+}
+
+/// Screen opacity: soft cover + Bayer dither band (blend + dissolve).
+fn focus_opacity(pos: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
+    let cover = focus_cover(pos);
+    if (cover >= 0.999) {
+        return 1.0;
+    }
+    if (cover <= 0.001) {
+        return 0.0;
+    }
+    let dither = bayer4(frag_xy);
+    // Soft threshold around the Bayer value — pixels dissolve gradually
+    // instead of a hard screen-door or a muddy flat veil.
+    return smoothstep(dither - 0.14, dither + 0.14, cover);
+}
+
+/// Back-compat alias used by older call sites; no dither (prefer focus_opacity).
+fn focus_visibility(pos: vec3<f32>) -> f32 {
+    return focus_cover(pos);
 }
 
 fn closest_local_light(pos: vec3<f32>, normal: vec3<f32>) -> f32 {
