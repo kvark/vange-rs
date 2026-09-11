@@ -267,7 +267,7 @@ impl Bunch {
                 let need_restart = self
                     .fade
                     .as_ref()
-                    .map_or(true, |f| f.target != target);
+                    .is_none_or(|f| f.target != target);
                 if need_restart {
                     self.start_fade(level, target);
                 }
