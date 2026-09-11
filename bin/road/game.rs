@@ -2022,7 +2022,7 @@ impl Application for Game {
         }
 
         if !self.ui.enabled || !self.screen.is_world() {
-            if sync_slots {
+            if sync_slots || leave_escave {
                 self.sync_weapon_slots();
             }
             if leave_escave {
@@ -2031,7 +2031,7 @@ impl Application for Game {
             return;
         }
         if !crate::boilerplate::tweaks::expanded(context, &mut self.ui_expanded) {
-            if sync_slots {
+            if sync_slots || leave_escave {
                 self.sync_weapon_slots();
             }
             if leave_escave {
@@ -2222,7 +2222,7 @@ impl Application for Game {
                 player.change_car(&self.db.cars[&selected_car], selected_car);
             }
         }
-        if sync_slots {
+        if sync_slots || leave_escave {
             self.sync_weapon_slots();
         }
         if let Some(name) = enter_name.take() {
