@@ -228,7 +228,7 @@ fn test_physics_updates_position() {
     let world_states: Vec<_> = msgs
         .iter()
         .filter_map(|m| match m {
-            ServerMessage::WorldState { tick, agents } => Some((tick, agents)),
+            ServerMessage::WorldState { tick, agents, .. } => Some((tick, agents)),
             _ => None,
         })
         .collect();

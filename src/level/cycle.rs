@@ -264,10 +264,10 @@ impl Bunch {
 
         match fade {
             Some((target, left)) if left > 0 && target < self.stages.len() => {
-                let need_restart = match &self.fade {
-                    Some(f) => f.target != target,
-                    None => true,
-                };
+                let need_restart = self
+                    .fade
+                    .as_ref()
+                    .map_or(true, |f| f.target != target);
                 if need_restart {
                     self.start_fade(level, target);
                 }

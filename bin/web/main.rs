@@ -818,6 +818,7 @@ impl WebApp {
                         let trimmed = path.trim_start_matches("./");
                         v.read(trimmed)
                     })
+                    .map(|bytes| bytes.as_ref().to_vec())
             })
         });
         if let Some(ref bunch) = cycle {
