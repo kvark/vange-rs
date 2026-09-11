@@ -970,10 +970,10 @@ impl Game {
 
         let my_id = self.net.as_ref().and_then(|n| n.player_id);
         for pc in &state.players {
-            if Some(pc.player_id) == my_id {
-                if let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
-                    player.cirtainer.set_held(&pc.held);
-                }
+            if Some(pc.player_id) == my_id
+                && let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player)
+            {
+                player.cirtainer.set_held(&pc.held);
             }
         }
     }
