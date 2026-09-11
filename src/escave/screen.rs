@@ -22,13 +22,16 @@ const DIVE_END: f32 = 0.45;
 const CLOSE_END: f32 = 0.70;
 const LEAVE_CLOSE: f32 = 0.45;
 
-const BG: egui::Color32 = egui::Color32::from_rgb(16, 12, 8);
-const PANEL: egui::Color32 = egui::Color32::from_rgb(36, 26, 16);
-const INK: egui::Color32 = egui::Color32::from_rgb(232, 208, 144);
-const MUTED: egui::Color32 = egui::Color32::from_rgb(168, 140, 96);
-const ACCENT: egui::Color32 = egui::Color32::from_rgb(200, 140, 48);
+const BG: egui::Color32 = egui::Color32::from_rgb(18, 12, 8);
+const PANEL: egui::Color32 = egui::Color32::from_rgb(48, 32, 20);
+const PANEL_DEEP: egui::Color32 = egui::Color32::from_rgb(28, 18, 12);
+const INK: egui::Color32 = egui::Color32::from_rgb(242, 220, 170);
+const MUTED: egui::Color32 = egui::Color32::from_rgb(170, 140, 100);
+const ACCENT: egui::Color32 = egui::Color32::from_rgb(220, 158, 64);
+const ACCENT_SOFT: egui::Color32 = egui::Color32::from_rgb(180, 120, 50);
 const GATE: egui::Color32 = egui::Color32::from_rgb(6, 4, 3);
 const GATE_EDGE: egui::Color32 = egui::Color32::from_rgb(180, 120, 40);
+const OK: egui::Color32 = egui::Color32::from_rgb(140, 190, 100);
 
 fn smooth(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
@@ -311,10 +314,17 @@ impl InteriorAction {
         }
         if self.drop.is_none() {
             if let Some(ref id) = self.buy {
-                note = Some(match shop.buy(id, inventory, credits) {
-                    Ok(()) => format!("Bought {id}"),
-                    Err(err) => err.to_string(),
-                });
+                match shop.buy_or_mount(id, inventory, credits) {
+                    Ok(mounted) => {
+                        note = Some(if mounted {
+                            format!("Bought and mounted {id}")
+                        } else {
+                            format!("Bought {id}")
+                        });
+                        slots |= mounted;
+                    }
+                    Err(err) => note = Some(err.to_string()),
+                }
             }
             if let Some(i) = self.sell {
                 note = Some(match shop.sell(i, inventory, credits) {
@@ -391,31 +401,39 @@ pub fn draw_interior(
             ui.painter().rect_filled(rect, 0.0, veil);
             ui.set_min_size(rect.size());
             egui::Frame::new()
-                .inner_margin(egui::Margin::same(12))
+                .inner_margin(egui::Margin::same(16))
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
-                    ui.horizontal(|ui| {
-                        if ui.add(egui::Button::new(rich("Leave", ACCENT))).clicked() {
-                            action.leave = true;
-                        }
-                        ui.label(
-                            egui::RichText::new(visit.name.to_uppercase())
-                                .color(ACCENT)
-                                .size(20.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(rich(format!("Beebs: {beebs}"), INK));
-                            if let Some(note) = note {
-                                ui.label(rich(note, MUTED));
+                    ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
+                    cozy_frame(panel).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let leave = egui::Button::new(rich("Leave", INK))
+                                .fill(PANEL_DEEP)
+                                .corner_radius(6.0);
+                            if ui.add(leave).clicked() {
+                                action.leave = true;
                             }
+                            ui.label(
+                                egui::RichText::new(visit.name.to_uppercase())
+                                    .color(ACCENT)
+                                    .size(22.0)
+                                    .strong(),
+                            );
+                            ui.label(rich(" · warehouse", MUTED).size(14.0));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(rich(format!("✦ {beebs} beebs"), ACCENT).size(16.0));
+                                if let Some(note) = note {
+                                    ui.label(rich(note, OK));
+                                }
+                            });
                         });
                     });
+                    ui.add_space(4.0);
                     let avail = ui.available_size();
-                    let talk_h = 96.0;
-                    let body_h = (avail.y - talk_h - 8.0).max(220.0);
-                    let left_w = (avail.x * 0.36).clamp(280.0, 440.0);
+                    let talk_h = 110.0;
+                    let body_h = (avail.y - talk_h - 12.0).max(240.0);
+                    let left_w = (avail.x * 0.38).clamp(300.0, 460.0);
                     let mech = mechos_panel_size(inventory.layout());
-                    let gap = (avail.x - left_w - mech.x - 12.0).max(16.0);
+                    let gap = (avail.x - left_w - mech.x - 16.0).max(20.0);
                     ui.horizontal(|ui| {
                         ui.allocate_ui_with_layout(
                             egui::vec2(left_w, body_h),
@@ -426,25 +444,19 @@ pub fn draw_interior(
                         );
                         ui.add_space(gap);
                         ui.allocate_ui_with_layout(
-                            egui::vec2(mech.x, body_h),
+                            egui::vec2(mech.x.max(240.0), body_h),
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
-                                egui::Frame::new()
-                                    .fill(panel)
-                                    .inner_margin(egui::Margin::same(10))
-                                    .show(ui, |ui| {
-                                        draw_mechos(ui, inventory, selected, &mut action);
-                                    });
+                                cozy_frame(panel).show(ui, |ui| {
+                                    draw_mechos(ui, inventory, selected, &mut action);
+                                });
                             },
                         );
                     });
-                    ui.add_space(6.0);
-                    egui::Frame::new()
-                        .fill(panel)
-                        .inner_margin(egui::Margin::same(8))
-                        .show(ui, |ui| {
-                            draw_talk(ui, visit, &mut action);
-                        });
+                    ui.add_space(8.0);
+                    cozy_frame(panel).show(ui, |ui| {
+                        draw_talk(ui, visit, &mut action);
+                    });
                 });
         });
     action
@@ -454,19 +466,47 @@ fn rich(text: impl Into<String>, color: egui::Color32) -> egui::RichText {
     egui::RichText::new(text).color(color)
 }
 
+fn cozy_frame(fill: egui::Color32) -> egui::Frame {
+    egui::Frame::new()
+        .fill(fill)
+        .corner_radius(10.0)
+        .stroke(egui::Stroke::new(1.0_f32, ACCENT_SOFT.gamma_multiply(0.55)))
+        .inner_margin(egui::Margin::symmetric(12, 10))
+}
+
+fn section_title(ui: &mut egui::Ui, title: &str) {
+    ui.label(rich(title, ACCENT).size(15.0).strong());
+    let y = ui.cursor().top();
+    let w = ui.available_width();
+    ui.painter().hline(
+        ui.max_rect().left()..=ui.max_rect().left() + w,
+        y,
+        egui::Stroke::new(1.0_f32, ACCENT_SOFT.gamma_multiply(0.4)),
+    );
+    ui.add_space(6.0);
+}
+
 fn draw_talk(ui: &mut egui::Ui, visit: &Visit, action: &mut InteriorAction) {
-    ui.horizontal(|ui| {
-        ui.label(rich("Counselor", ACCENT).size(14.0));
+    section_title(ui, "Counselor");
+    ui.horizontal_wrapped(|ui| {
         let Some(ref session) = visit.session else {
-            ui.label(rich("The counselor is silent.", MUTED));
+            ui.label(rich("The counselor is silent. Trade at the counter.", MUTED));
             return;
         };
-        if !session.ended() && ui.button(rich("Next", INK)).clicked() {
-            action.next_phrase = true;
+        if !session.ended() {
+            let next = egui::Button::new(rich("Next", INK))
+                .fill(PANEL_DEEP)
+                .corner_radius(5.0);
+            if ui.add(next).clicked() {
+                action.next_phrase = true;
+            }
         }
         for q in session.queries() {
             let label = session.query_prompt(q);
-            if ui.button(rich(label, INK)).clicked() {
+            let btn = egui::Button::new(rich(label, ACCENT))
+                .fill(PANEL_DEEP)
+                .corner_radius(5.0);
+            if ui.add(btn).clicked() {
                 action.ask = Some(q.clone());
             }
         }
@@ -475,23 +515,30 @@ fn draw_talk(ui: &mut egui::Ui, visit: &Visit, action: &mut InteriorAction) {
         return;
     };
     let phrase = session.last_phrase().unwrap_or("");
-    egui::ScrollArea::vertical()
-        .max_height(52.0)
-        .id_salt("escave-phrase")
+    ui.add_space(4.0);
+    egui::Frame::new()
+        .fill(PANEL_DEEP)
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
-            ui.add(
-                egui::Label::new(rich(phrase, INK).size(14.0))
-                    .wrap()
-                    .selectable(false),
-            );
+            egui::ScrollArea::vertical()
+                .max_height(56.0)
+                .id_salt("escave-phrase")
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(rich(phrase, INK).size(15.0).italics())
+                            .wrap()
+                            .selectable(false),
+                    );
+                });
         });
 }
 
 /// Pointy-top hex radius in UI points. Original matrix sat ~300 px wide
 /// for 8 columns on an 800-wide screen.
 const HEX_R: f32 = 18.0;
-const CELL_EMPTY: egui::Color32 = egui::Color32::from_rgb(42, 30, 18);
-const CELL_BAY: egui::Color32 = egui::Color32::from_rgb(64, 46, 26);
+const CELL_EMPTY: egui::Color32 = egui::Color32::from_rgb(52, 36, 22);
+const CELL_BAY: egui::Color32 = egui::Color32::from_rgb(78, 52, 28);
 const CELL_DEAD: egui::Color32 = egui::Color32::from_rgb(22, 16, 12);
 
 fn hex_pitch() -> (f32, f32) {
@@ -574,22 +621,17 @@ fn draw_shop(
     action: &mut InteriorAction,
 ) {
     let inner = ui.available_size();
-    let video_h = (inner.x * 0.72).clamp(200.0, 280.0);
-    egui::Frame::new()
-        .fill(panel)
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            draw_video(ui, selected.as_deref(), spin, video_h);
-            ui.add_space(6.0);
-            draw_stats(ui, shop, inventory, selected.as_deref());
-        });
-    ui.add_space(8.0);
-    egui::Frame::new()
-        .fill(panel)
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            draw_stock_list(ui, shop, selected, action);
-        });
+    let video_h = (inner.x * 0.68).clamp(200.0, 260.0);
+    cozy_frame(panel).show(ui, |ui| {
+        section_title(ui, "On the counter");
+        draw_video(ui, selected.as_deref(), spin, video_h);
+        ui.add_space(8.0);
+        draw_stats(ui, shop, inventory, selected, action);
+    });
+    ui.add_space(10.0);
+    cozy_frame(panel).show(ui, |ui| {
+        draw_stock_list(ui, shop, selected, action);
+    });
 }
 
 fn draw_video(ui: &mut egui::Ui, selected: Option<&str>, spin: Option<&SpinMesh>, height: f32) {
@@ -617,11 +659,11 @@ fn paint_turntable(
     spin: Option<&SpinMesh>,
 ) {
     ui.painter()
-        .rect_filled(rect, 6.0, egui::Color32::from_rgb(28, 20, 12));
+        .rect_filled(rect, 10.0, PANEL_DEEP);
     ui.painter().rect_stroke(
         rect,
-        6.0,
-        egui::Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.5)),
+        10.0,
+        egui::Stroke::new(1.5_f32, ACCENT.gamma_multiply(0.55)),
         egui::StrokeKind::Inside,
     );
     if let Some(mesh) = spin {
@@ -639,34 +681,93 @@ fn paint_turntable(
     }
 }
 
-fn draw_stats(ui: &mut egui::Ui, shop: &Shop, inventory: &Inventory, selected: Option<&str>) {
-    let Some(id) = selected else {
-        ui.label(rich("Select a ware.", MUTED));
+fn draw_stats(
+    ui: &mut egui::Ui,
+    shop: &Shop,
+    inventory: &Inventory,
+    selected: &mut Option<String>,
+    action: &mut InteriorAction,
+) {
+    let Some(id) = selected.clone() else {
+        ui.label(rich("Pick something from the list — or drag the picture onto a hex.", MUTED));
         return;
     };
-    let stats = lookup_stats(shop, inventory, id);
+    let stats = lookup_stats(shop, inventory, &id);
     let kind = if stats.kind == Kind::Weapon {
         "gun"
     } else {
         "ware"
     };
-    ui.label(rich(format!("{}  ·  {kind}", stats.name), INK).size(16.0));
+    let in_stock = shop.stock().iter().any(|g| g.id == id);
+    let cargo_index = inventory
+        .cargo()
+        .iter()
+        .position(|p| p.good.id == id);
+    let free_bay = inventory.first_free_bay();
+
+    ui.label(rich(format!("{}  ·  {kind}", stats.name), INK).size(17.0).strong());
     ui.label(rich(
         format!(
-            "Buy {} beebs    Sell {} beebs",
+            "Buy {} beebs   ·   Sell {} beebs",
             stats.buy_price, stats.sell_price
         ),
         ACCENT,
     ));
     if stats.description.is_empty() {
-        ui.label(rich("No description.", MUTED));
+        ui.label(rich("No description in the ledger.", MUTED));
     } else {
         ui.add(
-            egui::Label::new(rich(&stats.description, INK).size(13.0))
+            egui::Label::new(rich(&stats.description, MUTED).size(13.0))
                 .wrap()
                 .selectable(false),
         );
     }
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if in_stock {
+            let label = if stats.kind == Kind::Weapon && free_bay.is_some() {
+                "Buy & mount"
+            } else {
+                "Buy"
+            };
+            let buy = egui::Button::new(rich(label, BG))
+                .fill(ACCENT)
+                .corner_radius(6.0);
+            if ui.add(buy).on_hover_text("Spend beebs; guns fill a free bay when one is open").clicked()
+            {
+                action.buy = Some(id.clone());
+            }
+        }
+        if let (Some(cargo), Some(bay)) = (cargo_index, free_bay)
+            && stats.kind == Kind::Weapon
+        {
+            let mount = egui::Button::new(rich("Install on bay", INK))
+                .fill(PANEL_DEEP)
+                .corner_radius(6.0);
+            if ui
+                .add(mount)
+                .on_hover_text(format!("Mount into weapon bay {}", bay + 1))
+                .clicked()
+            {
+                action.equip = Some((cargo, bay));
+            }
+        }
+        if let Some(bay) = inventory
+            .bays()
+            .iter()
+            .enumerate()
+            .find_map(|(i, g)| g.as_ref().filter(|g| g.id == id).map(|_| i))
+        {
+            let off = egui::Button::new(rich("Unequip", MUTED))
+                .fill(PANEL_DEEP)
+                .corner_radius(6.0);
+            if ui.add(off).clicked() {
+                action.unequip = Some(bay);
+            }
+        }
+    });
+    let open = inventory.bays().iter().filter(|b| b.is_none()).count();
+    ui.label(rich(format!("{open} weapon bay(s) free"), MUTED).size(12.0));
 }
 
 fn lookup_stats(shop: &Shop, inventory: &Inventory, id: &str) -> Preview {
@@ -705,36 +806,56 @@ fn draw_stock_list(
     selected: &mut Option<String>,
     action: &mut InteriorAction,
 ) {
-    ui.label(rich("Shop", ACCENT).size(14.0));
+    section_title(ui, "Shop ledger");
     ui.label(rich(
-        "Click a ware to preview. Drag the picture onto the mechos to buy.",
+        "Select a line, then Buy — or drag the picture onto a cargo / gun hex.",
         MUTED,
-    ));
+    ).size(12.0));
+    ui.add_space(4.0);
     let shop_frame = egui::Frame::new()
-        .fill(egui::Color32::from_rgb(22, 16, 10))
-        .inner_margin(egui::Margin::same(4));
+        .fill(PANEL_DEEP)
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::same(6));
     let (inner, dropped) = ui.dnd_drop_zone::<Hand, ()>(shop_frame, |ui| {
         if shop.stock().is_empty() {
-            ui.label(rich("Nothing on the counter.", MUTED));
+            ui.label(rich("The shelves are bare.", MUTED));
             return;
         }
         egui::ScrollArea::vertical()
             .id_salt("escave-stock")
-            .max_height(ui.available_height().max(80.0))
+            .max_height(ui.available_height().max(100.0))
             .show(ui, |ui| {
                 for good in shop.stock() {
                     let marked = selected.as_deref() == Some(good.id.as_str());
-                    let color = if marked { ACCENT } else { INK };
                     let kind = if good.is_weapon() { "gun" } else { "ware" };
-                    let label = format!(
-                        "{}  {} · {} beebs",
-                        good.display_name(),
-                        kind,
-                        good.buy_price
-                    );
-                    if ui.selectable_label(marked, rich(label, color)).clicked() {
-                        *selected = Some(good.id.clone());
-                    }
+                    let row = egui::Frame::new()
+                        .fill(if marked {
+                            ACCENT_SOFT.gamma_multiply(0.35)
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
+                        .corner_radius(5.0)
+                        .inner_margin(egui::Margin::symmetric(8, 4));
+                    row.show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let name_color = if marked { ACCENT } else { INK };
+                            if ui
+                                .add(
+                                    egui::Label::new(
+                                        rich(format!("{}  ({kind})", good.display_name()), name_color)
+                                            .size(14.0),
+                                    )
+                                    .sense(egui::Sense::click()),
+                                )
+                                .clicked()
+                            {
+                                *selected = Some(good.id.clone());
+                            }
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(rich(format!("{}✦", good.buy_price), ACCENT).size(13.0));
+                            });
+                        });
+                    });
                 }
             });
     });
@@ -750,9 +871,12 @@ fn draw_mechos(
     selected: &mut Option<String>,
     action: &mut InteriorAction,
 ) {
-    ui.label(rich("Mechos", ACCENT).size(16.0));
-    ui.label(rich("Drag the picture onto a hex to buy.", MUTED));
-    ui.add_space(6.0);
+    section_title(ui, "Your mechos");
+    ui.label(rich(
+        "Gold-rim hexes are gun bays. Drop a gun there to mount it for the road.",
+        MUTED,
+    ).size(12.0));
+    ui.add_space(8.0);
     let layout = inventory.layout();
     let Some((x0, y0, x1, y1)) = layout_bounds(layout) else {
         ui.label(rich("No board for this mechos.", MUTED));
@@ -925,8 +1049,10 @@ fn draw_preview(
     selected: Option<&str>,
     spin: Option<&SpinMesh>,
 ) {
-    draw_video(ui, selected, spin, 140.0);
-    draw_stats(ui, shop, inventory, selected);
+    let mut selected = selected.map(str::to_string);
+    let mut action = InteriorAction::default();
+    draw_video(ui, selected.as_deref(), spin, 140.0);
+    draw_stats(ui, shop, inventory, &mut selected, &mut action);
 }
 
 fn short_id(id: &str) -> String {
@@ -1052,6 +1178,25 @@ mod tests {
         assert!(inventory.contains("Nymbos"));
         assert_eq!(beebs, 88);
         assert_eq!(note.as_deref(), Some("Bought Nymbos"));
+    }
+
+    #[test]
+    fn buying_a_gun_from_the_interior_mounts_when_a_bay_is_free() {
+        let mut visit = Visit {
+            name: "Podish".into(),
+            session: None,
+        };
+        let mut shop = Shop::fostral();
+        let mut inventory = Inventory::default();
+        let mut beebs = 200;
+        let action = InteriorAction {
+            buy: Some("LightLaser".into()),
+            ..InteriorAction::default()
+        };
+        let (note, slots) = action.apply(&mut visit, &mut shop, &mut inventory, &mut beebs);
+        assert!(slots, "mounted guns need a mechos hang");
+        assert!(inventory.equipped("LightLaser"));
+        assert_eq!(note.as_deref(), Some("Bought and mounted LightLaser"));
     }
 
     fn viewport_input() -> egui::RawInput {

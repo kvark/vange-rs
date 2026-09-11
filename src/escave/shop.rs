@@ -164,6 +164,11 @@ impl Inventory {
         self.bays.get(index).and_then(|slot| slot.as_ref())
     }
 
+    /// First empty weapon hardpoint, if any.
+    pub fn first_free_bay(&self) -> Option<usize> {
+        self.bays.iter().position(Option::is_none)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.cargo.is_empty() && self.bays.iter().all(Option::is_none)
     }
@@ -495,6 +500,29 @@ impl Shop {
         Ok(())
     }
 
+    /// Buy `id`. Weapons go straight onto the first free bay when one
+    /// exists; otherwise (and for wares) they land in cargo. Returns
+    /// `true` when a bay was filled so the mechos mesh slots need a hang.
+    pub fn buy_or_mount(
+        &mut self,
+        id: &str,
+        inventory: &mut Inventory,
+        credits: &mut i32,
+    ) -> Result<bool, ShopError> {
+        let weapon = self
+            .stock
+            .iter()
+            .find(|g| g.id == id)
+            .map(|g| g.is_weapon())
+            .ok_or(ShopError::OutOfStock)?;
+        if weapon && let Some(bay) = inventory.first_free_bay() {
+            buy_to_bay(self, inventory, credits, id, bay)?;
+            return Ok(true);
+        }
+        self.buy(id, inventory, credits)?;
+        Ok(false)
+    }
+
     /// Sell the cargo slot `index` back to the shop. Credits go up by
     /// that good's sell price.
     pub fn sell(
@@ -692,6 +720,38 @@ mod tests {
         assert_eq!(credits, 200 - price);
         assert!(inv.contains("LightLaser"));
         assert!(!shop.stock().iter().any(|g| g.id == "LightLaser"));
+    }
+
+    #[test]
+    fn buying_a_weapon_with_a_free_bay_mounts_it() {
+        let mut shop = Shop::fostral();
+        let mut inv = Inventory::default();
+        let mut credits = 200;
+        assert!(inv.first_free_bay().is_some());
+        let mounted = shop
+            .buy_or_mount("LightLaser", &mut inv, &mut credits)
+            .unwrap();
+        assert!(mounted);
+        assert!(inv.equipped("LightLaser"));
+        assert!(inv.cargo().is_empty());
+        assert_eq!(equipped_slot_ids(&inv)[0], Some("LightLaser"));
+    }
+
+    #[test]
+    fn buying_a_weapon_with_full_bays_goes_to_cargo() {
+        let mut shop = Shop::fostral();
+        let mut inv = Inventory::default();
+        for i in 0..BAY_COUNT {
+            inv.load_bay(i, Good::weapon(format!("Gun{i}"), 1, 1))
+                .unwrap();
+        }
+        let mut credits = 200;
+        let mounted = shop
+            .buy_or_mount("LightLaser", &mut inv, &mut credits)
+            .unwrap();
+        assert!(!mounted);
+        assert!(!inv.equipped("LightLaser"));
+        assert!(inv.contains("LightLaser"));
     }
 
     #[test]
