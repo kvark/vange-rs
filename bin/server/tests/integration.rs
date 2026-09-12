@@ -254,3 +254,55 @@ fn test_physics_updates_position() {
         pos
     );
 }
+
+#[test]
+fn test_reconnect_same_name_reclaims_player_id() {
+    let server = ServerProcess::start();
+
+    let mut alice = server.connect();
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+    });
+    let mut stash = Vec::new();
+    let first_id = match alice.recv_welcome(&mut stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+
+    // Drop the TCP connection (disconnect without Leave).
+    drop(alice);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let mut alice2 = server.connect();
+    alice2.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+    });
+    let mut stash2 = Vec::new();
+    let second_id = match alice2.recv_welcome(&mut stash2) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+
+    assert_eq!(
+        first_id, second_id,
+        "same --name should reclaim the same player_id on reconnect"
+    );
+
+    // A different name must still get a distinct id.
+    let mut bob = server.connect();
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 7,
+    });
+    let mut bob_stash = Vec::new();
+    let bob_id = match bob.recv_welcome(&mut bob_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    assert_ne!(bob_id, second_id, "different names get distinct player_ids");
+}

@@ -45,6 +45,20 @@ Protocol: TCP `7800` (native), WebSocket `7801` (wasm). Messages live in
 `agents` plus optional `cycle: Option<CycleState>` (stage index, banks,
 light, fade progress, per-player cirtainer).
 
+## Player identity on reconnect
+
+The server reclaims `player_id` by **Join name** (`--name` / UI name). After leave
+or disconnect, joining again with the same name receives the same `player_id` in
+`Welcome` (and the same agent slot in `WorldState` / cycle carry). Different
+names still get distinct ids. No protocol change: clients keep sending
+`ClientMessage::Join { player_name, ... }` as today.
+
+```bash
+# Terminal B — leave (Ctrl+C) and rerun with the same --name:
+cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
+# Welcome player_id matches the previous session for that name.
+```
+
 ## Tests
 
 ```bash
