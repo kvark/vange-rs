@@ -54,17 +54,21 @@ struct Cli {
 }
 
 /// Events from client connection tasks to the main game loop.
+///
+/// `conn_id` is assigned at accept time. On `Join`, the server may map it to a
+/// previously used `player_id` when the same `--name` reconnects (see
+/// `name_ids` / `conn_to_player` in the game loop).
 enum SessionEvent {
     Connected {
-        player_id: PlayerId,
+        conn_id: PlayerId,
         sender: mpsc::UnboundedSender<Vec<u8>>,
     },
     Message {
-        player_id: PlayerId,
+        conn_id: PlayerId,
         msg: ClientMessage,
     },
     Disconnected {
-        player_id: PlayerId,
+        conn_id: PlayerId,
     },
 }
 
@@ -439,6 +443,11 @@ async fn main() {
     let tick_duration = Duration::from_secs_f64(1.0 / cli.tick_rate as f64);
     let mut tick_interval = time::interval(tick_duration);
     let mut players: HashMap<PlayerId, ServerAgent> = HashMap::new();
+    // Last player_id claimed by each Join name. Survives disconnect so a
+    // client reconnecting with the same `--name` reclaims that identity.
+    let mut name_ids: HashMap<String, PlayerId> = HashMap::new();
+    // Accept-time conn_id → effective player_id (identity after name reclaim).
+    let mut conn_to_player: HashMap<PlayerId, PlayerId> = HashMap::new();
     let mut tick: u32 = 0;
     let level_name = cycle_world.clone();
     let max_players = cli.max_players;
@@ -591,20 +600,21 @@ async fn main() {
                     }
                 }
                 for id in disconnected {
-                    remove_player(&mut players, id);
+                    remove_player(&mut players, &mut conn_to_player, id);
                 }
             }
 
             Some(event) = event_rx.recv() => {
                 match event {
-                    SessionEvent::Connected { player_id, sender } => {
+                    SessionEvent::Connected { conn_id, sender } => {
                         if players.len() >= max_players {
-                            warn!("Rejecting player_id={}: server full", player_id);
+                            warn!("Rejecting conn_id={}: server full", conn_id);
                             drop(sender);
                             continue;
                         }
                         // Create agent with placeholder state, wait for Join
-                        players.insert(player_id, ServerAgent {
+                        conn_to_player.insert(conn_id, conn_id);
+                        players.insert(conn_id, ServerAgent {
                             name: String::new(),
                             car_name: String::new(),
                             color: 0,
@@ -618,16 +628,34 @@ async fn main() {
                         });
                     }
 
-                    SessionEvent::Message { player_id, msg } => {
+                    SessionEvent::Message { conn_id, msg } => {
                         match msg {
                             ClientMessage::Join { player_name, car_name, color } => {
-                                let spawn_index = players.len();
+                                let player_id = reclaim_player_id(
+                                    conn_id,
+                                    &player_name,
+                                    &mut players,
+                                    &mut name_ids,
+                                    &mut conn_to_player,
+                                );
+
+                                let spawn_index = players.values().filter(|a| a.joined).count();
                                 let coords = find_spawn_point(&level, spawn_index);
                                 let height = level.get(coords).high() + 5.0;
 
                                 info!(
-                                    "Player {} ({}) joined with car={}, color={}, spawn=({},{})",
-                                    player_id, player_name, car_name, color, coords.0, coords.1
+                                    "Player {} ({}) joined with car={}, color={}, spawn=({},{}){}",
+                                    player_id,
+                                    player_name,
+                                    car_name,
+                                    color,
+                                    coords.0,
+                                    coords.1,
+                                    if player_id != conn_id {
+                                        format!(" (reclaimed from conn_id={})", conn_id)
+                                    } else {
+                                        String::new()
+                                    }
                                 );
 
                                 if let Some(agent) = players.get_mut(&player_id) {
@@ -692,21 +720,24 @@ async fn main() {
                             }
 
                             ClientMessage::Input { control, .. } => {
+                                let player_id = effective_player_id(&conn_to_player, conn_id);
                                 if let Some(agent) = players.get_mut(&player_id) {
                                     agent.control = control;
                                 }
                             }
 
                             ClientMessage::Leave => {
+                                let player_id = effective_player_id(&conn_to_player, conn_id);
                                 info!("Player {} leaving", player_id);
-                                remove_player(&mut players, player_id);
+                                remove_player(&mut players, &mut conn_to_player, player_id);
                             }
                         }
                     }
 
-                    SessionEvent::Disconnected { player_id } => {
-                        info!("Player {} disconnected", player_id);
-                        remove_player(&mut players, player_id);
+                    SessionEvent::Disconnected { conn_id } => {
+                        let player_id = effective_player_id(&conn_to_player, conn_id);
+                        info!("Player {} disconnected (conn_id={})", player_id, conn_id);
+                        remove_player(&mut players, &mut conn_to_player, player_id);
                     }
                 }
             }
@@ -714,9 +745,75 @@ async fn main() {
     }
 }
 
-fn remove_player(players: &mut HashMap<PlayerId, ServerAgent>, player_id: PlayerId) {
+/// Resolve accept-time conn_id to the effective player_id (after name reclaim).
+fn effective_player_id(conn_to_player: &HashMap<PlayerId, PlayerId>, conn_id: PlayerId) -> PlayerId {
+    *conn_to_player.get(&conn_id).unwrap_or(&conn_id)
+}
+
+/// On Join, reuse a prior player_id when this `--name` is free to reclaim.
+///
+/// Connection tasks keep speaking `conn_id`; `conn_to_player` remaps them so
+/// Welcome / WorldState / remotes see a stable identity across reconnects.
+fn reclaim_player_id(
+    conn_id: PlayerId,
+    player_name: &str,
+    players: &mut HashMap<PlayerId, ServerAgent>,
+    name_ids: &mut HashMap<String, PlayerId>,
+    conn_to_player: &mut HashMap<PlayerId, PlayerId>,
+) -> PlayerId {
+    // Empty names are not identity keys (avoid every anonymous client colliding).
+    if player_name.is_empty() {
+        return conn_id;
+    }
+
+    let effective = match name_ids.get(player_name).copied() {
+        Some(old_id) if old_id != conn_id => {
+            let live = players.get(&old_id).is_some_and(|a| a.joined);
+            if live {
+                // Another connected client already holds this name; keep provisional id.
+                conn_id
+            } else {
+                old_id
+            }
+        }
+        Some(old_id) => old_id,
+        None => conn_id,
+    };
+
+    if effective != conn_id {
+        if let Some(agent) = players.remove(&conn_id) {
+            players.insert(effective, agent);
+        }
+        conn_to_player.insert(conn_id, effective);
+        info!(
+            "Reclaimed player_id={} for name {:?} (conn_id={})",
+            effective, player_name, conn_id
+        );
+    }
+
+    // Bind name → id unless a different live player already owns the binding.
+    let steal = match name_ids.get(player_name).copied() {
+        Some(bound) if bound != effective => {
+            players.get(&bound).is_some_and(|a| a.joined)
+        }
+        _ => false,
+    };
+    if !steal {
+        name_ids.insert(player_name.to_string(), effective);
+    }
+
+    effective
+}
+
+fn remove_player(
+    players: &mut HashMap<PlayerId, ServerAgent>,
+    conn_to_player: &mut HashMap<PlayerId, PlayerId>,
+    player_id: PlayerId,
+) {
+    conn_to_player.retain(|_, mapped| *mapped != player_id);
     if let Some(removed) = players.remove(&player_id) {
         info!("Removed player {} ({})", player_id, removed.name);
+        // Keep `name_ids` so a later Join with the same name can reclaim.
         let msg = encode(&ServerMessage::PlayerLeft { player_id });
         for agent in players.values() {
             let _ = agent.sender.send(msg.clone());
@@ -737,7 +834,7 @@ async fn handle_tcp_connection(
 
     // Register connection
     let _ = event_tx.send(SessionEvent::Connected {
-        player_id,
+        conn_id: player_id,
         sender: send_tx,
     });
 
@@ -760,7 +857,7 @@ async fn handle_tcp_connection(
             Ok(n) => {
                 buf.extend_from_slice(&tmp[..n]);
                 while let Some((msg, consumed)) = decode::<ClientMessage>(&buf) {
-                    let _ = event_tx.send(SessionEvent::Message { player_id, msg });
+                    let _ = event_tx.send(SessionEvent::Message { conn_id: player_id, msg });
                     buf.drain(..consumed);
                 }
             }
@@ -771,7 +868,7 @@ async fn handle_tcp_connection(
         }
     }
 
-    let _ = event_tx.send(SessionEvent::Disconnected { player_id });
+    let _ = event_tx.send(SessionEvent::Disconnected { conn_id: player_id });
     write_handle.abort();
 }
 
@@ -795,7 +892,7 @@ async fn handle_ws_connection(
 
     // Register connection
     let _ = event_tx.send(SessionEvent::Connected {
-        player_id,
+        conn_id: player_id,
         sender: send_tx,
     });
 
@@ -820,7 +917,7 @@ async fn handle_ws_connection(
             Ok(tungstenite::Message::Binary(data)) => {
                 buf.extend_from_slice(&data);
                 while let Some((msg, consumed)) = decode::<ClientMessage>(&buf) {
-                    let _ = event_tx.send(SessionEvent::Message { player_id, msg });
+                    let _ = event_tx.send(SessionEvent::Message { conn_id: player_id, msg });
                     buf.drain(..consumed);
                 }
             }
@@ -833,6 +930,6 @@ async fn handle_ws_connection(
         }
     }
 
-    let _ = event_tx.send(SessionEvent::Disconnected { player_id });
+    let _ = event_tx.send(SessionEvent::Disconnected { conn_id: player_id });
     write_handle.abort();
 }
