@@ -25,20 +25,37 @@ pub fn load_from_settings(settings: &Settings) -> Worlds {
 
 /// Same as [`load_from_settings`], keyed off a data root.
 pub fn load_from_path(data_path: &Path) -> Worlds {
+    try_load_from_path(data_path).unwrap_or_else(|| {
+        panic!(
+            "Can't find wrlds.dat or Fostral world data at {:?}",
+            data_path
+        )
+    })
+}
+
+/// Like [`load_from_path`], but returns `None` when game data is missing
+/// (e.g. CI without a Vangers tree). Prefer this in the multiplayer server.
+pub fn try_load_from_path(data_path: &Path) -> Option<Worlds> {
     let wrlds = data_path.join("wrlds.dat");
     if wrlds.is_file() {
-        return load(File::open(wrlds).expect("open wrlds.dat"));
+        return Some(load(File::open(wrlds).ok()?));
     }
     const FOSTRAL: &str = "thechain/fostral/world.ini";
     if data_path.join(FOSTRAL).is_file() {
         let mut worlds = HashMap::new();
         worlds.insert("Fostral".to_string(), FOSTRAL.to_string());
-        return worlds;
+        return Some(worlds);
     }
-    panic!(
-        "Can't find wrlds.dat or Fostral world data at {:?}",
-        data_path
-    );
+    None
+}
+
+/// Canonical world key from `wrlds.dat` / Fostral fallback (preserves shipped casing).
+pub fn canonical_name<'a>(worlds: &'a Worlds, name: &str) -> Option<&'a str> {
+    let key = name.to_ascii_lowercase();
+    worlds
+        .iter()
+        .find(|entry| entry.0.to_ascii_lowercase() == key)
+        .map(|entry| entry.0.as_str())
 }
 
 /// Case-insensitive lookup of the relative `world.ini` path in `wrlds.dat`.
@@ -88,5 +105,20 @@ mod tests {
         }
         assert!(ini_path_if_present(data, &worlds, "Weexow").is_none());
         assert!(ini_path_if_present(data, &worlds, "Glorx").is_some());
+    }
+
+    #[test]
+    fn canonical_name_preserves_shipped_casing() {
+        let mut worlds = Worlds::new();
+        worlds.insert("Fostral".into(), "thechain/fostral/world.ini".into());
+        worlds.insert("GLORX".into(), "thechain/glorx/world.ini".into());
+        assert_eq!(canonical_name(&worlds, "fostral"), Some("Fostral"));
+        assert_eq!(canonical_name(&worlds, "Glorx"), Some("GLORX"));
+        assert!(canonical_name(&worlds, "Weexow").is_none());
+    }
+
+    #[test]
+    fn try_load_from_path_none_without_data() {
+        assert!(try_load_from_path(Path::new("/no/such/vangers/data")).is_none());
     }
 }

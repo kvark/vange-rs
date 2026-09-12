@@ -42,9 +42,11 @@ struct Cli {
     #[arg(long, default_value = "20")]
     tick_rate: u32,
 
-    /// Level name to host (use "test" for procedural test level)
-    #[arg(short, long, default_value = "test")]
-    level: String,
+    /// Level to host: `test`, a `world.ini` path, or a world name from `wrlds.dat`.
+    /// When omitted, uses `settings.game.level` (resolved to `world.ini`) if game
+    /// data is present; otherwise the procedural `test` level (CI / no data).
+    #[arg(short, long)]
+    level: Option<String>,
 
     /// Path to settings file (default: config/settings.ron)
     #[arg(short, long, default_value = "config/settings.ron")]
@@ -119,6 +121,155 @@ impl ServerAgent {
     }
 }
 
+/// Resolved terrain + the name reported in Welcome / used for story cycles.
+struct HostedLevel {
+    /// Absolute or relative `world.ini`, or `None` for the procedural test level.
+    ini_path: Option<std::path::PathBuf>,
+    /// Welcome / cycle world name (`"test"`, `"Fostral"`, …).
+    name: String,
+}
+
+impl HostedLevel {
+    fn test() -> Self {
+        Self {
+            ini_path: None,
+            name: "test".into(),
+        }
+    }
+
+    fn is_test(&self) -> bool {
+        self.ini_path.is_none()
+    }
+}
+
+/// Resolve `--level` / settings into terrain + a name that matches what clients load.
+fn resolve_hosted_level(
+    cli_level: Option<&str>,
+    settings: Option<&config::Settings>,
+) -> HostedLevel {
+    match cli_level {
+        Some("test") => HostedLevel::test(),
+        Some(arg) => resolve_level_arg(arg, settings),
+        None => resolve_default_level(settings),
+    }
+}
+
+fn resolve_default_level(settings: Option<&config::Settings>) -> HostedLevel {
+    let Some(settings) = settings else {
+        return HostedLevel::test();
+    };
+    let name = settings.game.level.trim();
+    if name.is_empty() {
+        return HostedLevel::test();
+    }
+    match resolve_world_ini(settings, name) {
+        Some(hosted) => hosted,
+        None => {
+            warn!(
+                "settings.game.level={:?} but world.ini not found under {:?} — falling back to test",
+                name, settings.data_path
+            );
+            HostedLevel::test()
+        }
+    }
+}
+
+fn resolve_level_arg(arg: &str, settings: Option<&config::Settings>) -> HostedLevel {
+    let path = std::path::Path::new(arg);
+    let looks_like_path =
+        path.is_file() || arg.ends_with(".ini") || arg.contains('/') || arg.contains('\\');
+    if looks_like_path {
+        let resolved = resolve_ini_filesystem_path(path, settings);
+        let name = world_name_for_ini_path(&resolved, settings).unwrap_or_else(|| arg.to_string());
+        return HostedLevel {
+            ini_path: Some(resolved),
+            name,
+        };
+    }
+    // World name (e.g. Fostral / Glorx)
+    if let Some(settings) = settings {
+        if let Some(hosted) = resolve_world_ini(settings, arg) {
+            return hosted;
+        }
+        warn!(
+            "Unknown world name {:?} under {:?} — treating as world.ini path",
+            arg, settings.data_path
+        );
+    }
+    HostedLevel {
+        ini_path: Some(path.to_path_buf()),
+        name: arg.to_string(),
+    }
+}
+
+/// Prefer an existing path as given; otherwise try under `settings.data_path`.
+fn resolve_ini_filesystem_path(
+    path: &std::path::Path,
+    settings: Option<&config::Settings>,
+) -> std::path::PathBuf {
+    if path.is_file() {
+        return path.to_path_buf();
+    }
+    if let Some(settings) = settings {
+        let under_data = settings.data_path.join(path);
+        if under_data.is_file() {
+            return under_data;
+        }
+    }
+    path.to_path_buf()
+}
+
+fn resolve_world_ini(settings: &config::Settings, name: &str) -> Option<HostedLevel> {
+    let worlds = config::worlds::try_load_from_path(&settings.data_path)?;
+    let path = config::worlds::ini_path_if_present(&settings.data_path, &worlds, name)?;
+    let display = config::worlds::canonical_name(&worlds, name)
+        .unwrap_or(name)
+        .to_string();
+    Some(HostedLevel {
+        ini_path: Some(path),
+        name: display,
+    })
+}
+
+/// Prefer the settings / wrlds.dat key when `ini` matches a known world.
+fn world_name_for_ini_path(
+    ini: &std::path::Path,
+    settings: Option<&config::Settings>,
+) -> Option<String> {
+    let settings = settings?;
+    let worlds = config::worlds::try_load_from_path(&settings.data_path)?;
+    // Exact match against resolved paths
+    for (name, rel) in &worlds {
+        let candidate = settings.data_path.join(rel);
+        if paths_equal(&candidate, ini) {
+            return Some(name.clone());
+        }
+    }
+    // settings.game.level if it resolves to the same file
+    let level = settings.game.level.trim();
+    if !level.is_empty() {
+        if let Some(path) =
+            config::worlds::ini_path_if_present(&settings.data_path, &worlds, level)
+        {
+            if paths_equal(&path, ini) {
+                return Some(
+                    config::worlds::canonical_name(&worlds, level)
+                        .unwrap_or(level)
+                        .to_string(),
+                );
+            }
+        }
+    }
+    None
+}
+
+fn paths_equal(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => a == b,
+    }
+}
+
 /// Find a spawn point on the level terrain.
 fn find_spawn_point(level: &level::Level, index: usize) -> (i32, i32) {
     let spacing = 30;
@@ -144,12 +295,17 @@ async fn main() {
         );
     }
 
-    // Load level
-    info!("Loading level: {}", cli.level);
-    let level_config = if cli.level == "test" {
-        level::LevelConfig::new_test()
-    } else {
-        level::LevelConfig::load(std::path::Path::new(&cli.level))
+    // Load level: prefer settings.game.level (same as clients) when --level
+    // is omitted and game data is present; `--level test` stays for CI.
+    let hosted = resolve_hosted_level(cli.level.as_deref(), settings.as_ref());
+    let level_src = match &hosted.ini_path {
+        None => "procedural test".to_string(),
+        Some(p) => p.display().to_string(),
+    };
+    info!("Loading level: {} ({})", hosted.name, level_src);
+    let level_config = match &hosted.ini_path {
+        None => level::LevelConfig::new_test(),
+        Some(path) => level::LevelConfig::load(path),
     };
     let geometry = settings
         .as_ref()
@@ -160,18 +316,14 @@ async fn main() {
         "Level loaded: {}x{} (test={})",
         level.size.0,
         level.size.1,
-        cli.level == "test"
+        hosted.is_test()
     );
 
     // Story cycles (cirt → escave → palette). Server is authoritative so
     // native TCP and web WS clients stay on the same stage / banks.
-    // World name comes from settings when available (e.g. "Fostral"); the
-    // --level path only selects terrain data.
-    let cycle_world = settings
-        .as_ref()
-        .map(|s| s.game.level.clone())
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| cli.level.clone());
+    // Name matches the hosted terrain (Welcome + cycle), not a mismatched
+    // settings.game.level when `--level test` was forced.
+    let cycle_world = hosted.name.clone();
     let mut cycle = if let Some(ref settings) = settings {
         if !settings.check_path("bunches.prm") {
             None
