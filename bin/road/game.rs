@@ -500,7 +500,7 @@ pub struct Game {
     all_passages: Vec<config::passages::Passage>,
     /// World-to-world portals that leave the current level.
     passages: Vec<config::passages::Passage>,
-    /// Charges at an escave, spent to open a passage.
+    /// Charges at an escave or outdoor KEY_UPDATE station; spent to open a passage.
     spiral: level::spiral::Spiral,
     /// HUD line: charge, proximity prompt, arrival, or missing-data note.
     passage_note: Option<String>,
@@ -1647,8 +1647,47 @@ impl Game {
                 large: true,
             });
         }
+        for sensor in &self.moving.triggers.sensors {
+            if sensor.kind != level::vlc::sensor_kind::KEY_UPDATE {
+                continue;
+            }
+            marks.push(minimap::Mark {
+                pos: glam::Vec2::new(sensor.pos.0 as f32, sensor.pos.1 as f32),
+                color: egui::Color32::from_rgb(220, 80, 200),
+                large: true,
+            });
+        }
         self.minimap
             .show(context, &self.level, center, heading, &marks);
+    }
+
+    /// Outdoor spiral station: `KEY_UPDATE` pads in `snstable.vlc` (KranX
+    /// `VangerUnit::TouchSensor`). Fills the spiral without entering an escave.
+    fn try_charge_spiral_station(&mut self) {
+        if !self.screen.is_world() {
+            return;
+        }
+        let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) else {
+            return;
+        };
+        let pos = player.position();
+        let radius = player.touch_radius();
+        let Some(station) = self.moving.triggers.spiral_station_at(
+            (pos.x as i32, pos.y as i32, pos.z as i32),
+            radius,
+            self.level.size,
+        ) else {
+            return;
+        };
+        if self.spiral.charge_full() {
+            self.passage_note = Some("Spiral charged.".to_string());
+            log::info!(
+                "Spiral charged at station {} ({},{})",
+                station.name,
+                station.pos.0,
+                station.pos.1
+            );
+        }
     }
 
     /// Near a world passage: HUD prompt. Keeps arrival / missing notes until we leave reach.
@@ -2137,6 +2176,7 @@ impl Application for Game {
         // Train ride and post-hop pad lock both freeze local player physics.
         let hold_player = riding || pad_locked;
         self.update_passage_proximity();
+        self.try_charge_spiral_station();
 
         if self.flood.step(&mut self.level, delta) {
             self.render.terrain.dirty_flood = true;

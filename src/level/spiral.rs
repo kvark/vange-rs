@@ -1,5 +1,9 @@
 //! Spiral energy: charges at stations / escaves, spent to open passages.
 //!
+//! Outdoor refill matches KranX `SensorTypeList::KEY_UPDATE` pads
+//! (`KeyUpdate*` in each world's `snstable.vlc`; compass label "Spiral
+//! Station"). Escave enter also fills the spiral in this remake.
+//!
 //! Original UI strings live in `game.lst` ("Spiral charged…",
 //! "Spiral discharged. Passage closed!"). Capacity matches
 //! `ACI_MECHOS_SPIRAL_CAPACITY` (4) unless a car overrides via
