@@ -5,7 +5,7 @@ use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 
-use vangers_net::{decode, encode, ClientMessage, ServerMessage};
+use vangers_net::{decode, encode, ClientMessage, NetTransform, ServerMessage};
 
 static NEXT_PORT: AtomicU16 = AtomicU16::new(19876);
 
@@ -558,4 +558,82 @@ fn test_reconnect_restores_cirtainer() {
         })
         .expect("Bob should appear in CycleState.players");
     assert_eq!(bob_held, vec![7, 0, 2], "fresh name uses seed, not Alice slot");
+}
+
+#[test]
+fn test_set_pose_updates_world_state() {
+    let server = ServerProcess::start();
+    let mut alice = server.connect();
+    let mut bob = server.connect();
+
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+    });
+    let mut alice_stash = Vec::new();
+    let alice_id = match alice.recv_welcome(&mut alice_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 7,
+    });
+    let mut bob_stash = Vec::new();
+    let _bob_id = match bob.recv_welcome(&mut bob_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+
+    // Debug teleport within the 256x256 test level.
+    let target = [180.0_f32, 200.0, 40.0];
+    alice.send(&ClientMessage::SetPose {
+        transform: NetTransform {
+            position: target,
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: 1.0,
+        },
+    });
+
+    bob_stash.extend(bob.recv_for(Duration::from_secs(1)));
+    let alice_pos = bob_stash
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == alice_id)
+                .map(|a| a.transform.position),
+            _ => None,
+        })
+        .expect("Bob should see Alice in WorldState after SetPose");
+
+    assert!(
+        (alice_pos[0] - target[0]).abs() < 2.0 && (alice_pos[1] - target[1]).abs() < 2.0,
+        "Bob should see Alice near SetPose XY {:?}, got {:?}",
+        target,
+        alice_pos
+    );
+
+    alice_stash.extend(alice.recv_for(Duration::from_secs(1)));
+    let self_pos = alice_stash
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == alice_id)
+                .map(|a| a.transform.position),
+            _ => None,
+        })
+        .expect("Alice should receive WorldState reflecting her SetPose");
+    assert!(
+        (self_pos[0] - target[0]).abs() < 2.0 && (self_pos[1] - target[1]).abs() < 2.0,
+        "Alice WorldState should keep SetPose XY {:?}, got {:?}",
+        target,
+        self_pos
+    );
 }

@@ -69,16 +69,20 @@ cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
 ```
 
 
-## Tweaks Position (debug hold)
+## Tweaks Position (debug hold + SetPose)
 
 In multiplayer, `WorldState` normally snaps the local player's transform to the
 server each tick. Editing **Player → Position** in the Tweaks panel (egui
 `DragValue`) would otherwise fight that snap. While those X/Y controls are
 focused or being dragged — and for a short hold after — the client skips
-applying the server transform/dynamo to the local agent only. Remote agents and
-normal sync when not editing are unchanged. This is a debug-only local hold, not
-an authoritative teleport; after the hold expires the next `WorldState` snaps
-again.
+applying the server transform/dynamo to the local agent only.
+
+When the edit session ends (controls lose focus / drag stops), or when the hold
+timer expires with a pending edit, the client sends `ClientMessage::SetPose`
+with the local position and orientation. The server applies that transform for
+the sender's `player_id` (and clears residual velocity) so the next `WorldState`
+broadcast keeps the tweaked spot for everyone. Remote agents and normal sync
+when not editing are unchanged. **Debug-only** — not for normal gameplay.
 
 ```bash
 # Terminal A — server (matching level as usual)
@@ -87,8 +91,8 @@ cargo run -p vangers-server -- --port 7800 --ws-port 7801
 # Terminal B / C — Alice and Bob
 cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
 cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
-# In Alice Tweaks → Player → Position: drag X/Y; value sticks for the edit
-# session. Bob still sees Alice move when she is not tweaking.
+# In Alice Tweaks → Player → Position: drag X/Y; release / unfocus.
+# Alice stays at the edited spot (no snap-back). Bob sees Alice there.
 ```
 
 ## Tests
@@ -98,6 +102,8 @@ cargo test -p vangers-net
 cargo test --test net_physics
 # cycle unit tests (incl. sync_authority):
 cargo test --lib level::cycle
+# server integration (incl. SetPose → WorldState):
+cargo test -p vangers-server --test integration
 ```
 
 See the header comment in `tests/net_physics.rs` for how to extend that

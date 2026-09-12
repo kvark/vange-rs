@@ -468,6 +468,8 @@ pub struct Game {
     /// player while Tweaks Position DragValue is focused / recently edited.
     /// Prevents WorldState from snapping the drag back mid-edit.
     tweaks_pos_hold: f32,
+    /// Debug: local Tweaks Position changed and not yet uploaded via SetPose.
+    tweaks_pose_dirty: bool,
     ui: config::settings::Ui,
     /// Whether the tweaks panel is showing. See `boilerplate::tweaks`.
     ui_expanded: bool,
@@ -903,6 +905,7 @@ impl Game {
             input_seq: 0,
             server_synced: false,
             tweaks_pos_hold: 0.0,
+            tweaks_pose_dirty: false,
             ui: settings.ui,
             ui_expanded: true,
             cam,
@@ -1977,6 +1980,31 @@ impl Game {
         );
     }
 
+
+    /// Debug MP: push local Tweaks Position/orientation to the server.
+    fn send_tweaks_pose(&self) {
+        let Some(net) = self.net.as_ref() else {
+            return;
+        };
+        let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) else {
+            return;
+        };
+        let Physics::Cpu { ref transform, .. } = player.physics else {
+            return;
+        };
+        let nt = vangers_net::NetTransform {
+            position: transform.disp.into(),
+            rotation: [
+                transform.rot.x,
+                transform.rot.y,
+                transform.rot.z,
+                transform.rot.w,
+            ],
+            scale: transform.scale,
+        };
+        net.send_set_pose(&nt);
+    }
+
     fn draw_spiral_hud(&self, context: &egui::Context) {
         egui::Area::new(egui::Id::new("spiral-hud"))
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 120.0))
@@ -2412,6 +2440,12 @@ impl Application for Game {
 
         if self.tweaks_pos_hold > 0.0 {
             self.tweaks_pos_hold = (self.tweaks_pos_hold - delta).max(0.0);
+            // Hold ended without an earlier apply (e.g. panel collapsed):
+            // upload so WorldState keeps the edited pose for all clients.
+            if self.tweaks_pos_hold <= 0.0 && self.tweaks_pose_dirty {
+                self.send_tweaks_pose();
+                self.tweaks_pose_dirty = false;
+            }
         }
 
         // Advance remote agent interpolation
@@ -2523,6 +2557,7 @@ impl Application for Game {
 
         let mut selected_car;
         let mut enter_name: Option<String> = None;
+        let mut upload_tweaks_pose = false;
         {
             let player = self
                 .agents
@@ -2583,15 +2618,23 @@ impl Application for Game {
                                 );
                                 // Debug MP: keep local edit while DragValue
                                 // is focused / dragged, plus a short hold
-                                // after release so WorldState does not snap
-                                // the value back mid-session.
-                                if rx.changed()
+                                // after release. When the edit session ends,
+                                // upload via SetPose so WorldState keeps it.
+                                let editing = rx.changed()
                                     || ry.changed()
                                     || rx.dragged()
                                     || ry.dragged()
                                     || rx.has_focus()
-                                    || ry.has_focus()
-                                {
+                                    || ry.has_focus();
+                                if editing {
+                                    self.tweaks_pos_hold = 0.75;
+                                    self.tweaks_pose_dirty = true;
+                                } else if self.tweaks_pose_dirty {
+                                    // Defer send: `player` still borrows self.
+                                    upload_tweaks_pose = true;
+                                    self.tweaks_pose_dirty = false;
+                                    // Keep hold briefly so the next snap
+                                    // already reflects the uploaded pose.
                                     self.tweaks_pos_hold = 0.75;
                                 }
                             });
@@ -2722,6 +2765,9 @@ impl Application for Game {
             if selected_car != player.car_name {
                 player.change_car(&self.db.cars[&selected_car], selected_car);
             }
+        }
+        if upload_tweaks_pose {
+            self.send_tweaks_pose();
         }
         if sync_slots || leave_escave {
             self.sync_weapon_slots();
