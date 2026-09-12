@@ -506,6 +506,8 @@ pub struct Game {
     passage_note: Option<String>,
     /// Space queued a portal hop; applied on the next `update` with GPU handles.
     pending_portal: Option<PendingPortal>,
+    /// After a world hop: hold XY on the reverse-passage pad while physics settles.
+    portal_pad_lock: Option<PortalPadLock>,
 }
 
 struct CaveBoot {
@@ -523,6 +525,15 @@ struct PendingPortal {
     id: String,
     dest: String,
 }
+
+/// Keep the player on the reverse-passage pad for a short settle window.
+struct PortalPadLock {
+    xy: (f32, f32),
+    remaining: f32,
+}
+
+/// How long to reassert pad XY / zero dynamo after a portal hop.
+const PORTAL_PAD_LOCK_SECS: f32 = 1.5;
 
 struct CaveView {
     name: String,
@@ -923,6 +934,7 @@ impl Game {
             spiral,
             passage_note: None,
             pending_portal: None,
+            portal_pad_lock: None,
         }
     }
 
@@ -1438,6 +1450,41 @@ impl Game {
         true
     }
 
+    /// Hold the player on the reverse-passage pad while ground contact settles.
+    /// Mirrors `step_ride`: reassert XY + height, zero dynamo, skip physics.
+    fn step_portal_pad_lock(&mut self, delta: f32) -> bool {
+        let Some(ref mut lock) = self.portal_pad_lock else {
+            return false;
+        };
+        lock.remaining -= delta;
+        let xy = lock.xy;
+        let done = lock.remaining <= 0.0;
+        if let Some(player) = self
+            .agents
+            .iter_mut()
+            .find(|agent| agent.spirit == Spirit::Player)
+        {
+            player.control = Control::default();
+            player.jump = None;
+            if let Physics::Cpu {
+                ref mut transform,
+                ref mut dynamo,
+            } = player.physics
+            {
+                let height = self.level.get((xy.0 as i32, xy.1 as i32)).high() + 5.;
+                transform.disp.x = xy.0;
+                transform.disp.y = xy.1;
+                transform.disp.z = height;
+                *dynamo = physics::Dynamo::default();
+            }
+        }
+        if done {
+            self.portal_pad_lock = None;
+            log::info!("Portal pad lock released at ({:.0},{:.0})", xy.0, xy.1);
+        }
+        true
+    }
+
     /// Which cycle the world is on, how much cirt each stage has towards
     /// its turn, and where the dollies that cirt comes from are. Returns a
     /// cycle to jump straight to, if one was clicked.
@@ -1804,13 +1851,23 @@ impl Game {
                     ref mut transform,
                     ref mut dynamo,
                 } => {
+                    // Level the chassis (spawn-style Z yaw only). Leftover pitch/roll
+                    // from the origin world digs wheels into Glorx slopes and slides.
+                    let fwd = transform.rot * Vec3::Y;
+                    let yaw = (-fwd.x).atan2(fwd.y);
+                    transform.rot = glam::Quat::from_rotation_z(yaw);
                     transform.disp = Vec3::new(arrival.0 as f32, arrival.1 as f32, height);
                     *dynamo = physics::Dynamo::default();
                 }
             }
             player.jump = None;
             player.control = Control::default();
+            player.tracks.reset();
             self.cam.loc = Vec3::new(arrival.0 as f32, arrival.1 as f32, height + 200.0);
+            self.portal_pad_lock = Some(PortalPadLock {
+                xy: (arrival.0 as f32, arrival.1 as f32),
+                remaining: PORTAL_PAD_LOCK_SECS,
+            });
         }
 
         // Respawn local NPCs on the new torus; keep the player agent.
@@ -2046,6 +2103,7 @@ impl Application for Game {
             return;
         }
         let mut riding = self.step_ride(delta);
+        let pad_locked = self.step_portal_pad_lock(delta);
 
         if let Some(bay) = self.input.fire_bay.take()
             && !self.screen.blocks_drive()
@@ -2070,12 +2128,14 @@ impl Application for Game {
         self.shots.retain(|live| live.age < 1.5);
 
         self.step_moving_land(delta);
-        if !riding {
+        if !riding && !pad_locked {
             riding = self.begin_train_ride();
         }
-        if !riding {
+        if !riding && !pad_locked {
             self.try_begin_escave_visit();
         }
+        // Train ride and post-hop pad lock both freeze local player physics.
+        let hold_player = riding || pad_locked;
         self.update_passage_proximity();
 
         if self.flood.step(&mut self.level, delta) {
@@ -2109,7 +2169,7 @@ impl Application for Game {
             let level = &self.level;
 
             self.agents.par_iter_mut().for_each(|a| {
-                if riding && a.spirit == Spirit::Player {
+                if hold_player && a.spirit == Spirit::Player {
                     return;
                 }
                 let mut dt = physics_dt;
