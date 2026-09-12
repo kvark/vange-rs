@@ -1,4 +1,4 @@
-use vangers_net::{AgentState, ClientMessage, CycleState, NetControl, PlayerId, ServerMessage, decode, encode};
+use vangers_net::{AgentState, ClientMessage, CycleState, NetControl, NetTransform, PlayerId, ServerMessage, decode, encode};
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -138,6 +138,14 @@ impl NetworkClient {
         let msg = encode(&ClientMessage::Input {
             sequence: seq,
             control: control.clone(),
+        });
+        let _ = self.send_tx.send(msg);
+    }
+
+    /// Debug: upload local pose so the server WorldState keeps it.
+    pub fn send_set_pose(&self, transform: &NetTransform) {
+        let msg = encode(&ClientMessage::SetPose {
+            transform: transform.clone(),
         });
         let _ = self.send_tx.send(msg);
     }

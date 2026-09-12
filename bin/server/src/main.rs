@@ -786,6 +786,27 @@ async fn main() {
                                 }
                             }
 
+                            ClientMessage::SetPose { transform } => {
+                                let player_id = effective_player_id(&conn_to_player, conn_id);
+                                if let Some(agent) = players.get_mut(&player_id) {
+                                    if agent.joined {
+                                        agent.transform.disp = Vec3::from(transform.position);
+                                        agent.transform.rot = glam::Quat::from_xyzw(
+                                            transform.rotation[0],
+                                            transform.rotation[1],
+                                            transform.rotation[2],
+                                            transform.rotation[3],
+                                        );
+                                        // Keep car model scale authoritative.
+                                        agent.transform.scale = agent.phys_data.scale;
+                                        // Stop residual motion so the debug
+                                        // teleport sticks in WorldState.
+                                        agent.dynamo.linear_velocity = Vec3::ZERO;
+                                        agent.dynamo.angular_velocity = Vec3::ZERO;
+                                    }
+                                }
+                            }
+
                             ClientMessage::Leave => {
                                 let player_id = effective_player_id(&conn_to_player, conn_id);
                                 info!("Player {} leaving", player_id);

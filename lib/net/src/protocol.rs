@@ -16,6 +16,11 @@ pub enum ClientMessage {
     Input { sequence: u32, control: NetControl },
     /// Client is leaving the session.
     Leave,
+    /// Debug: set this player's authoritative pose (Tweaks Position apply).
+    ///
+    /// Server accepts for the sender's `player_id` and uses the transform in
+    /// subsequent `WorldState` snapshots. Not for normal gameplay.
+    SetPose { transform: NetTransform },
 }
 
 /// Server-to-client messages.
@@ -237,6 +242,28 @@ mod tests {
                 assert_eq!(cycle.players[0].held, vec![7, 0, 2]);
             }
             _ => panic!("expected WorldState with cycle"),
+        }
+    }
+
+    #[test]
+    fn round_trip_set_pose() {
+        let msg = ClientMessage::SetPose {
+            transform: NetTransform {
+                position: [12.0, 34.0, 56.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: 1.0,
+            },
+        };
+        let encoded = encode(&msg);
+        let (decoded, consumed): (ClientMessage, _) = decode(&encoded).unwrap();
+        assert_eq!(consumed, encoded.len());
+        match decoded {
+            ClientMessage::SetPose { transform } => {
+                assert_eq!(transform.position, [12.0, 34.0, 56.0]);
+                assert_eq!(transform.rotation, [0.0, 0.0, 0.0, 1.0]);
+                assert!((transform.scale - 1.0).abs() < 1e-6);
+            }
+            _ => panic!("wrong variant"),
         }
     }
 
