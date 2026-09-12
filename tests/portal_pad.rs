@@ -19,12 +19,10 @@ fn data_root() -> Option<PathBuf> {
         Some(PathBuf::from("../vange-data")),
         Some(PathBuf::from("../Vangers/data")),
     ];
-    for root in candidates.into_iter().flatten() {
-        if root.join("thechain/glorx/world.ini").is_file() {
-            return Some(root);
-        }
-    }
-    None
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|root| root.join("thechain/glorx/world.ini").is_file())
 }
 
 fn load_oxidize(root: &Path) -> Option<CarPhysicsData> {
