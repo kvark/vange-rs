@@ -7,6 +7,8 @@ The idea of this project is to replicate the old look and behavior, but with nat
 
 You need the **original game** in order to try out `vange-rs` with mechouses. Fostral world data is published in the [Vangers source tree](https://github.com/KranX/Vangers); `config/settings.template.ron` points at `../Vangers/data` by default. Copy it to `config/settings.ron` to override.
 
+Design intent (remake aligned with that OSS tree): see [docs/DESIGN.md](docs/DESIGN.md).
+
 ![logo](docs/assets/logo-cut.png)
 
 ## Technology
