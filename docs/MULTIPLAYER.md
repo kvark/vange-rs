@@ -42,8 +42,9 @@ VANGERS_SERVER_WS=ws://127.0.0.1:7801 cargo build --target wasm32-unknown-unknow
 
 Protocol: TCP `7800` (native), WebSocket `7801` (wasm). Messages live in
 `lib/net` (`ClientMessage` / `ServerMessage`). `WorldState` carries
-`agents` plus optional `cycle: Option<CycleState>` (stage index, banks,
-light, fade progress, per-player cirtainer).
+`agents` (pose, dynamo, **`spiral_charge`**) plus optional
+`cycle: Option<CycleState>` (stage index, banks, light, fade progress,
+per-player cirtainer).
 
 ## Player identity on reconnect
 
@@ -54,13 +55,13 @@ names still get distinct ids. No protocol change: clients keep sending
 `ClientMessage::Join { player_name, ... }` as today.
 
 For a short **grace window** (currently 5 minutes), the server also keeps that
-player's last `WorldState` transform / dynamo **and** per-player cycle carry
-(`Cirtainer` / `CycleState.players[].held`). A same-name reclaim inside the
-window restores pose and cirtainer together instead of a fresh spawn, so
-leave→rejoin keeps story progress continuous on a shared world. World-level
-banks / stage / fade stay on the server `Bunch` for everyone either way.
-After the grace expires (or for a brand-new name), spawn and carry are fresh
-as before. Other players are unaffected.
+player's last `WorldState` transform / dynamo, per-player cycle carry
+(`Cirtainer` / `CycleState.players[].held`), **and spiral charge**. A same-name
+reclaim inside the window restores pose, cirtainer, and spiral together instead
+of a fresh spawn, so leave→rejoin keeps story progress continuous on a shared
+world. World-level banks / stage / fade stay on the server `Bunch` for everyone
+either way. After the grace expires (or for a brand-new name), spawn and carry
+are fresh as before. Other players are unaffected.
 
 ```bash
 # Terminal B — gather some cirt, leave (Ctrl+C), rerun with the same --name:
@@ -68,6 +69,28 @@ cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
 # Welcome player_id matches; you reappear near the prior XY with the same held cirt.
 ```
 
+
+## Spiral charge (WorldState + reclaim)
+
+Spiral energy (passage fuel) is **server-tracked per player** as
+`AgentState.spiral_charge`. Capacity stays client-local (car `max_teleport`).
+Solo offline still charges/discharges only in memory; multiplayer clients
+report fills and spends with `ClientMessage::SetSpiral { charge }` after
+escave / outdoor `KEY_UPDATE` charge or a successful passage hop. The server
+echoes the value on every `WorldState`, so Alice’s HUD and Bob’s Multiplayer
+panel / log stay aligned, and a same-name reclaim inside the grace window
+restores the charged spiral with pose and cirtainer.
+
+```bash
+# Terminal A — server (matching level)
+cargo run -p vangers-server -- --port 7800 --ws-port 7801
+
+# Terminal B / C — Alice charges at a spiral station or escave; Bob watches
+# Multiplayer panel / logs for Alice’s spiral_charge. Alice Ctrl+C and reconnects
+# with the same --name → spiral still charged.
+cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
+cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
+```
 
 ## Tweaks Position (debug hold + SetPose)
 
@@ -102,7 +125,7 @@ cargo test -p vangers-net
 cargo test --test net_physics
 # cycle unit tests (incl. sync_authority):
 cargo test --lib level::cycle
-# server integration (incl. SetPose → WorldState):
+# server integration (incl. SetPose / SetSpiral → WorldState, reclaim):
 cargo test -p vangers-server --test integration
 ```
 

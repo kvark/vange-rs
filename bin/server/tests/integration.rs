@@ -637,3 +637,165 @@ fn test_set_pose_updates_world_state() {
         self_pos
     );
 }
+
+#[test]
+fn test_set_spiral_broadcasts_to_peers() {
+    let server = ServerProcess::start();
+    let mut alice = server.connect();
+    let mut bob = server.connect();
+
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+    });
+    let mut alice_stash = Vec::new();
+    let alice_id = match alice.recv_welcome(&mut alice_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 7,
+    });
+    let mut bob_stash = Vec::new();
+    let _ = bob.recv_welcome(&mut bob_stash);
+
+    alice.send(&ClientMessage::SetSpiral { charge: 4 });
+
+    bob_stash.extend(bob.recv_for(Duration::from_secs(1)));
+    let alice_spiral = bob_stash
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == alice_id)
+                .map(|a| a.spiral_charge),
+            _ => None,
+        })
+        .expect("Bob should see Alice spiral_charge in WorldState");
+    assert_eq!(alice_spiral, 4, "Bob should see Alice spiral charged to 4");
+
+    alice_stash.extend(alice.recv_for(Duration::from_secs(1)));
+    let self_spiral = alice_stash
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == alice_id)
+                .map(|a| a.spiral_charge),
+            _ => None,
+        })
+        .expect("Alice should see her own spiral_charge");
+    assert_eq!(self_spiral, 4);
+}
+
+#[test]
+fn test_reconnect_restores_spiral() {
+    // Seed on fresh spawn only; reclaim must restore LastPose.spiral_charge.
+    let server = ServerProcess::start_with("test", &[("VANGERS_TEST_SEED_SPIRAL", "3")]);
+    let mut alice = server.connect();
+
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+    });
+    let mut stash = Vec::new();
+    let first_id = match alice.recv_welcome(&mut stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+
+    stash.extend(alice.recv_for(Duration::from_secs(1)));
+    let charge_before = stash
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == first_id)
+                .map(|a| a.spiral_charge),
+            _ => None,
+        })
+        .expect("Alice should have spiral_charge before disconnect");
+    assert_eq!(charge_before, 3, "test seed should set spiral on first join");
+
+    // Bump charge, then disconnect so LastPose keeps the updated value.
+    alice.send(&ClientMessage::SetSpiral { charge: 4 });
+    stash.extend(alice.recv_for(Duration::from_secs(1)));
+    let charged = stash
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == first_id)
+                .map(|a| a.spiral_charge),
+            _ => None,
+        })
+        .expect("Alice spiral after SetSpiral");
+    assert_eq!(charged, 4);
+
+    drop(alice);
+
+    let mut alice2 = server.connect();
+    alice2.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+    });
+    let mut stash2 = Vec::new();
+    let second_id = match alice2.recv_welcome(&mut stash2) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    assert_eq!(first_id, second_id, "same name reclaims player_id");
+
+    stash2.extend(alice2.recv_for(Duration::from_secs(1)));
+    let charge_after = stash2
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == second_id)
+                .map(|a| a.spiral_charge),
+            _ => None,
+        })
+        .expect("Alice should have spiral_charge after reconnect");
+    assert_eq!(
+        charge_after, 4,
+        "reclaim should restore spiral_charge, not re-seed"
+    );
+
+    // Fresh name still gets the seed, not Alice's slot.
+    let mut bob = server.connect();
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 7,
+    });
+    let mut bob_stash = Vec::new();
+    let bob_id = match bob.recv_welcome(&mut bob_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    bob_stash.extend(bob.recv_for(Duration::from_secs(1)));
+    let bob_charge = bob_stash
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == bob_id)
+                .map(|a| a.spiral_charge),
+            _ => None,
+        })
+        .expect("Bob should appear in WorldState");
+    assert_eq!(bob_charge, 3, "fresh name uses seed, not Alice spiral");
+}

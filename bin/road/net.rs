@@ -150,6 +150,12 @@ impl NetworkClient {
         let _ = self.send_tx.send(msg);
     }
 
+    /// Upload spiral charge so WorldState / reclaim stay aligned.
+    pub fn send_set_spiral(&self, charge: u8) {
+        let msg = encode(&ClientMessage::SetSpiral { charge });
+        let _ = self.send_tx.send(msg);
+    }
+
     /// Poll for events from the server (non-blocking).
     pub fn poll(&mut self) -> Vec<NetEvent> {
         let mut events = Vec::new();
