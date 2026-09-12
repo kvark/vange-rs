@@ -21,6 +21,11 @@ pub enum ClientMessage {
     /// Server accepts for the sender's `player_id` and uses the transform in
     /// subsequent `WorldState` snapshots. Not for normal gameplay.
     SetPose { transform: NetTransform },
+    /// Report spiral charge after escave / KEY_UPDATE fill or passage spend.
+    ///
+    /// Server stores the value and broadcasts it on `AgentState.spiral_charge`
+    /// so remotes and reclaim see the same charge. Solo offline never sends this.
+    SetSpiral { charge: u8 },
 }
 
 /// Server-to-client messages.
@@ -100,6 +105,8 @@ pub struct AgentState {
     pub player_id: PlayerId,
     pub transform: NetTransform,
     pub dynamo: NetDynamo,
+    /// Spiral energy slots filled (0 = discharged). Capacity stays client-local.
+    pub spiral_charge: u8,
 }
 
 /// Network-serializable transform (position + rotation + scale).
@@ -188,6 +195,7 @@ mod tests {
                     linear_velocity: [1.0, 2.0, 0.0],
                     angular_velocity: [0.0, 0.0, 0.5],
                 },
+                spiral_charge: 3,
             }],
             cycle: None,
         };
@@ -199,6 +207,7 @@ mod tests {
                 assert_eq!(tick, 42);
                 assert_eq!(agents.len(), 1);
                 assert_eq!(agents[0].player_id, 1);
+                assert_eq!(agents[0].spiral_charge, 3);
                 assert!(cycle.is_none());
             }
             _ => panic!("wrong variant"),
@@ -263,6 +272,18 @@ mod tests {
                 assert_eq!(transform.rotation, [0.0, 0.0, 0.0, 1.0]);
                 assert!((transform.scale - 1.0).abs() < 1e-6);
             }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn round_trip_set_spiral() {
+        let msg = ClientMessage::SetSpiral { charge: 4 };
+        let encoded = encode(&msg);
+        let (decoded, consumed): (ClientMessage, _) = decode(&encoded).unwrap();
+        assert_eq!(consumed, encoded.len());
+        match decoded {
+            ClientMessage::SetSpiral { charge } => assert_eq!(charge, 4),
             _ => panic!("wrong variant"),
         }
     }

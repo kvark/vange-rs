@@ -78,13 +78,22 @@ const RECONNECT_POSE_GRACE: Duration = Duration::from_secs(5 * 60);
 
 /// Last per-player snapshot after leave/disconnect, restored on same-name reclaim.
 ///
-/// Holds WorldState pose (transform/dynamo) plus story-cycle carry (`cirtainer`).
-/// Shared world cycle banks stay on the server `Bunch` regardless.
+/// Holds WorldState pose (transform/dynamo), story-cycle carry (`cirtainer`),
+/// and spiral charge. Shared world cycle banks stay on the server `Bunch`.
 struct LastPose {
     transform: space::Transform,
     dynamo: Dynamo,
     cirtainer: level::cycle::Cirtainer,
+    spiral_charge: u8,
     disconnected_at: Instant,
+}
+
+/// Optional test-only spiral charge (`VANGERS_TEST_SEED_SPIRAL=3`).
+///
+/// Fresh spawn only — reclaim must restore `LastPose.spiral_charge`.
+fn test_seed_spiral() -> Option<u8> {
+    let raw = std::env::var("VANGERS_TEST_SEED_SPIRAL").ok()?;
+    raw.trim().parse::<u8>().ok()
 }
 
 /// Optional test-only cirtainer seed (`VANGERS_TEST_SEED_CIRT=7,0,2`).
@@ -117,6 +126,8 @@ struct ServerAgent {
     dynamo: Dynamo,
     phys_data: CarPhysicsData,
     cirtainer: level::cycle::Cirtainer,
+    /// Spiral charge slots filled; capacity is client-local / car-dependent.
+    spiral_charge: u8,
     sender: mpsc::UnboundedSender<Vec<u8>>,
     joined: bool,
 }
@@ -141,6 +152,7 @@ impl ServerAgent {
                 linear_velocity: self.dynamo.linear_velocity.into(),
                 angular_velocity: self.dynamo.angular_velocity.into(),
             },
+            spiral_charge: self.spiral_charge,
         }
     }
 
@@ -483,7 +495,7 @@ async fn main() {
     let mut name_ids: HashMap<String, PlayerId> = HashMap::new();
     // Accept-time conn_id → effective player_id (identity after name reclaim).
     let mut conn_to_player: HashMap<PlayerId, PlayerId> = HashMap::new();
-    // Last known pose + cirtainer per player_id after leave (grace-window reclaim).
+    // Last known pose + cirtainer + spiral per player_id after leave (grace reclaim).
     let mut last_poses: HashMap<PlayerId, LastPose> = HashMap::new();
     let mut tick: u32 = 0;
     let level_name = cycle_world.clone();
@@ -660,6 +672,7 @@ async fn main() {
                             dynamo: Dynamo::default(),
                             phys_data: CarPhysicsData::test_default(), // replaced on Join
                             cirtainer: level::cycle::Cirtainer::default(),
+                            spiral_charge: 0,
                             sender,
                             joined: false,
                         });
@@ -686,7 +699,7 @@ async fn main() {
                                 let height = level.get(coords).high() + 5.0;
 
                                 let pose_note = if restored.is_some() {
-                                    " (restored last pose/cirtainer)"
+                                    " (restored last pose/cirtainer/spiral)"
                                 } else if player_id != conn_id {
                                     " (reclaimed id, fresh spawn)"
                                 } else {
@@ -717,6 +730,7 @@ async fn main() {
                                         agent.transform = pose.transform;
                                         agent.dynamo = pose.dynamo;
                                         agent.cirtainer = pose.cirtainer;
+                                        agent.spiral_charge = pose.spiral_charge;
                                         // Keep model scale in sync with the chosen car.
                                         agent.transform.scale = agent.phys_data.scale;
                                     } else {
@@ -726,6 +740,11 @@ async fn main() {
                                             test_seed_cirtainer().unwrap_or_default()
                                         } else {
                                             level::cycle::Cirtainer::default()
+                                        };
+                                        agent.spiral_charge = if player_id == conn_id {
+                                            test_seed_spiral().unwrap_or(0)
+                                        } else {
+                                            0
                                         };
                                         agent.dynamo = Dynamo::default();
                                         agent.transform = space::Transform {
@@ -803,6 +822,16 @@ async fn main() {
                                         // teleport sticks in WorldState.
                                         agent.dynamo.linear_velocity = Vec3::ZERO;
                                         agent.dynamo.angular_velocity = Vec3::ZERO;
+                                    }
+                                }
+                            }
+
+                            ClientMessage::SetSpiral { charge } => {
+                                let player_id = effective_player_id(&conn_to_player, conn_id);
+                                if let Some(agent) = players.get_mut(&player_id) {
+                                    if agent.joined {
+                                        // Capacity is car-local on clients; store charge only.
+                                        agent.spiral_charge = charge;
                                     }
                                 }
                             }
@@ -898,7 +927,7 @@ fn remove_player(
 ) {
     conn_to_player.retain(|_, mapped| *mapped != player_id);
     if let Some(removed) = players.remove(&player_id) {
-        // Keep name→id (reclaim) and last pose/cirtainer (grace-window restore).
+        // Keep name→id (reclaim) and last pose/cirtainer/spiral (grace-window restore).
         if removed.joined {
             last_poses.insert(
                 player_id,
@@ -906,6 +935,7 @@ fn remove_player(
                     transform: removed.transform,
                     dynamo: removed.dynamo,
                     cirtainer: removed.cirtainer,
+                    spiral_charge: removed.spiral_charge,
                     disconnected_at: Instant::now(),
                 },
             );

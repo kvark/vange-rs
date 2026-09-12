@@ -307,6 +307,7 @@ impl Agent {
 
 /// A remote player received via network, rendered locally with interpolation.
 struct RemoteAgent {
+    name: String,
     car: config::car::CarInfo,
     color: BodyColor,
     /// Previous snapshot transform (interpolation source).
@@ -317,6 +318,8 @@ struct RemoteAgent {
     render_transform: space::Transform,
     /// Interpolation progress [0..1], advances each frame.
     interp_t: f32,
+    /// Last spiral charge from WorldState (for change logs / HUD).
+    spiral_charge: u8,
 }
 
 /// Multiplayer connection state for the lobby UI.
@@ -1049,6 +1052,48 @@ impl Game {
         }
     }
 
+    /// Push local spiral charge to the server after charge/discharge.
+    fn report_spiral_to_server(&self) {
+        if let Some(net) = self.net.as_ref()
+            && net.player_id.is_some()
+        {
+            net.send_set_spiral(self.spiral.charge);
+        }
+    }
+
+    /// Apply server spiral for the local player; log remote charge changes.
+    fn apply_spiral_from_world(&mut self, agents: &[vangers_net::AgentState], my_id: Option<PlayerId>) {
+        for agent_state in agents {
+            if Some(agent_state.player_id) == my_id {
+                let prev = self.spiral.charge;
+                let next = agent_state.spiral_charge.min(self.spiral.capacity);
+                if next != prev {
+                    self.spiral.charge = next;
+                    if next > prev && next == self.spiral.capacity {
+                        self.passage_note = Some("Spiral charged.".to_string());
+                    }
+                    log::info!(
+                        "Spiral synced from server: {}/{}",
+                        self.spiral.charge,
+                        self.spiral.capacity
+                    );
+                } else {
+                    self.spiral.charge = next;
+                }
+            } else if let Some(remote) = self.remote_agents.get_mut(&agent_state.player_id)
+                && remote.spiral_charge != agent_state.spiral_charge
+            {
+                log::info!(
+                    "Remote {} spiral {} -> {}",
+                    remote.name,
+                    remote.spiral_charge,
+                    agent_state.spiral_charge
+                );
+                remote.spiral_charge = agent_state.spiral_charge;
+            }
+        }
+    }
+
     /// Cuts the stretches the wheels have covered since the last frame into
     /// the level, and hands the touched rectangles to the renderer.
     ///
@@ -1117,6 +1162,7 @@ impl Game {
         self.escave_selected = None;
         if self.spiral.charge_full() {
             self.passage_note = Some("Spiral charged.".to_string());
+            self.report_spiral_to_server();
         }
         self.screen.begin_enter(name);
     }
@@ -1694,6 +1740,7 @@ impl Game {
         };
         if self.spiral.charge_full() {
             self.passage_note = Some("Spiral charged.".to_string());
+            self.report_spiral_to_server();
             log::info!(
                 "Spiral charged at station {} ({},{})",
                 station.name,
@@ -1890,6 +1937,7 @@ impl Game {
             self.passage_note = Some("Spiral discharged. Passage closed!".to_string());
             return;
         }
+        self.report_spiral_to_server();
 
         self.level = level;
         self.render = render;
@@ -2358,12 +2406,14 @@ impl Application for Game {
                             self.remote_agents.insert(
                                 player_id,
                                 RemoteAgent {
+                                    name: player_name.clone(),
                                     car: car.clone(),
                                     color: body_color,
                                     prev_transform: space::Transform::IDENTITY,
                                     target_transform: space::Transform::IDENTITY,
                                     render_transform: space::Transform::IDENTITY,
                                     interp_t: 1.0,
+                                    spiral_charge: 0,
                                 },
                             );
                         }
@@ -2376,6 +2426,7 @@ impl Application for Game {
                         if let Some(ref cycle_state) = cycle {
                             self.apply_cycle_state(cycle_state);
                         }
+                        self.apply_spiral_from_world(&agents, my_id);
                         for agent_state in &agents {
                             let server_transform = space::Transform {
                                 disp: Vec3::from(agent_state.transform.position),
@@ -2806,6 +2857,16 @@ impl Application for Game {
                         ui.label(format!("Player ID: {}", id));
                     }
                     ui.label(format!("Remote players: {}", self.remote_agents.len()));
+                    ui.label(format!(
+                        "Spiral (you): {}/{}",
+                        self.spiral.charge, self.spiral.capacity
+                    ));
+                    for remote in self.remote_agents.values() {
+                        ui.label(format!(
+                            "Spiral ({}): {}",
+                            remote.name, remote.spiral_charge
+                        ));
+                    }
                     if ui.button("Disconnect").clicked() {
                         self.net = None;
                         self.remote_agents.clear();
