@@ -33,6 +33,12 @@ pub mod sensor_kind {
     pub const PASSAGE: i32 = 5;
     pub const TRAIN: i32 = 6;
     pub const TRAP: i32 = 7;
+    pub const ARMOR_UPDATE: i32 = 8;
+    pub const FLY_UPDATE: i32 = 9;
+    /// Outdoor spiral charger (`KeyUpdate*` in `snstable.vlc`).
+    pub const KEY_UPDATE: i32 = 10;
+    pub const FIRE_UPDATE: i32 = 11;
+    pub const RANDOMIZE_UPDATE: i32 = 12;
 }
 
 /// One entry of `snstable.vlc` - a named trigger volume.

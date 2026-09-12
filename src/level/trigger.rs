@@ -18,7 +18,8 @@
 //!
 //! The rest (escaves, passages, item generators) hang off quest and
 //! inventory systems this port does not have, so they are parsed far enough
-//! to be skipped and reported.
+//! to be skipped and reported. Outdoor spiral chargers are the exception:
+//! [`Triggers::spiral_station_at`] reacts to `KEY_UPDATE` sensors directly.
 
 use crate::level::moving::MovingLand;
 use crate::level::vlc::{self, Sensor};
@@ -593,6 +594,40 @@ impl Triggers {
                 pos: sensor.pos,
             }
         })
+    }
+
+    /// Outdoor spiral charger: original `SensorTypeList::KEY_UPDATE`
+    /// (`KeyUpdate*` pads in `snstable.vlc`). Touching one fills
+    /// `PassageCount` in KranX `VangerUnit::TouchSensor`.
+    pub fn spiral_station_at(
+        &self,
+        pos: (i32, i32, i32),
+        radius: i32,
+        size: (i32, i32),
+    ) -> Option<&Sensor> {
+        let mut best: Option<(i32, usize)> = None;
+        for (index, sensor) in self.sensors.iter().enumerate() {
+            if sensor.kind != vlc::sensor_kind::KEY_UPDATE {
+                continue;
+            }
+            if !self.enabled[index] {
+                continue;
+            }
+            let reach = radius + sensor.radius;
+            let dx = wrap_delta(sensor.pos.0 - pos.0, size.0);
+            if dx.abs() >= reach {
+                continue;
+            }
+            if pos.2 <= sensor.z_range.0 - radius || pos.2 >= sensor.z_range.1 + radius {
+                continue;
+            }
+            let dy = wrap_delta(sensor.pos.1 - pos.1, size.1);
+            let d2 = dx * dx + dy * dy;
+            if d2 < reach * reach && best.is_none_or(|(best_d2, _)| d2 < best_d2) {
+                best = Some((d2, index));
+            }
+        }
+        best.map(|(_, index)| &self.sensors[index])
     }
 
     /// Nearby `IMPULSE` sensor: original `continuous_impulse(vData, Power)`
@@ -1412,6 +1447,28 @@ EffectID 0
             .escave_arrival_at((42, 41, 10), 20, SIZE)
             .expect("falling into the hole should start the visit");
         assert_eq!(arrival.name, "Escave1");
+    }
+
+    #[test]
+    fn spiral_station_charges_on_key_update_pad() {
+        let land = land_with(&["g1"]);
+        let mut pad = hole_pad("KeyUpdate1", vlc::sensor_kind::KEY_UPDATE, 100, 200);
+        pad.pos = (100, 200, 80);
+        pad.radius = 70;
+        pad.z_range = (10, 150);
+        let triggers = triggers_with(vec![pad], "NumEngine 0\n", &land);
+        assert!(
+            triggers
+                .spiral_station_at((100, 200, 80), 20, SIZE)
+                .is_some_and(|s| s.name == "KeyUpdate1")
+        );
+        assert!(
+            triggers
+                .spiral_station_at((100, 200, 200), 20, SIZE)
+                .is_none(),
+            "above the altitude band should miss"
+        );
+        assert!(triggers.spiral_station_at((0, 0, 80), 20, SIZE).is_none());
     }
 
     #[test]
