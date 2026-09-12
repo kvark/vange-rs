@@ -464,6 +464,10 @@ pub struct Game {
     /// Before this, the client's player position may differ from the
     /// server's spawn point, so we need to hard-snap the camera.
     server_synced: bool,
+    /// Debug: seconds remaining to ignore server transform for the local
+    /// player while Tweaks Position DragValue is focused / recently edited.
+    /// Prevents WorldState from snapping the drag back mid-edit.
+    tweaks_pos_hold: f32,
     ui: config::settings::Ui,
     /// Whether the tweaks panel is showing. See `boilerplate::tweaks`.
     ui_expanded: bool,
@@ -898,6 +902,7 @@ impl Game {
             },
             input_seq: 0,
             server_synced: false,
+            tweaks_pos_hold: 0.0,
             ui: settings.ui,
             ui_expanded: true,
             cam,
@@ -2359,6 +2364,8 @@ impl Application for Game {
                                 // Sync local player with server state.
                                 // Both client and server run physics independently,
                                 // so just snap to keep them consistent.
+                                // Skip while Tweaks Position is being edited
+                                // (debug hold); remote agents still update.
                                 let player =
                                     self.agents.iter_mut().find(|a| a.spirit == Spirit::Player);
                                 if let Some(player) = player
@@ -2373,13 +2380,15 @@ impl Application for Game {
                                         self.server_synced = true;
                                         self.cam.focus_on(&server_transform);
                                     }
-                                    *transform = server_transform;
-                                    dynamo.linear_velocity =
-                                        Vec3::from(agent_state.dynamo.linear_velocity);
-                                    dynamo.angular_velocity =
-                                        Vec3::from(agent_state.dynamo.angular_velocity);
-                                    dynamo.traction = agent_state.dynamo.traction;
-                                    dynamo.rudder = agent_state.dynamo.rudder;
+                                    if self.tweaks_pos_hold <= 0.0 {
+                                        *transform = server_transform;
+                                        dynamo.linear_velocity =
+                                            Vec3::from(agent_state.dynamo.linear_velocity);
+                                        dynamo.angular_velocity =
+                                            Vec3::from(agent_state.dynamo.angular_velocity);
+                                        dynamo.traction = agent_state.dynamo.traction;
+                                        dynamo.rudder = agent_state.dynamo.rudder;
+                                    }
                                 }
                             } else if let Some(remote) =
                                 self.remote_agents.get_mut(&agent_state.player_id)
@@ -2399,6 +2408,10 @@ impl Application for Game {
                     }
                 }
             }
+        }
+
+        if self.tweaks_pos_hold > 0.0 {
+            self.tweaks_pos_hold = (self.tweaks_pos_hold - delta).max(0.0);
         }
 
         // Advance remote agent interpolation
@@ -2558,16 +2571,29 @@ impl Application for Game {
                         {
                             ui.horizontal(|ui| {
                                 ui.label("Position");
-                                ui.add(
+                                let rx = ui.add(
                                     egui::DragValue::new(&mut transform.disp.x)
                                         .speed(1.0)
                                         .prefix("x:"),
                                 );
-                                ui.add(
+                                let ry = ui.add(
                                     egui::DragValue::new(&mut transform.disp.y)
                                         .speed(1.0)
                                         .prefix("y:"),
                                 );
+                                // Debug MP: keep local edit while DragValue
+                                // is focused / dragged, plus a short hold
+                                // after release so WorldState does not snap
+                                // the value back mid-session.
+                                if rx.changed()
+                                    || ry.changed()
+                                    || rx.dragged()
+                                    || ry.dragged()
+                                    || rx.has_focus()
+                                    || ry.has_focus()
+                                {
+                                    self.tweaks_pos_hold = 0.75;
+                                }
                             });
                         }
                     });
