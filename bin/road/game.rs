@@ -496,20 +496,32 @@ pub struct Game {
     shots: Vec<LiveShot>,
     world: String,
     minimap: minimap::Minimap,
+    /// All passages from `passages.prm` (needed for reverse arrival pads).
+    all_passages: Vec<config::passages::Passage>,
     /// World-to-world portals that leave the current level.
     passages: Vec<config::passages::Passage>,
     /// Charges at an escave, spent to open a passage.
     spiral: level::spiral::Spiral,
-    /// HUD line: charge, proximity prompt, or the dest-load stub.
+    /// HUD line: charge, proximity prompt, arrival, or missing-data note.
     passage_note: Option<String>,
+    /// Space queued a portal hop; applied on the next `update` with GPU handles.
+    pending_portal: Option<PendingPortal>,
 }
 
 struct CaveBoot {
+    /// Outdoor / world render settings (not the cave-forced RayTraced copy).
+    world_render: config::settings::Render,
     render: config::settings::Render,
     geometry: config::settings::Geometry,
     downlevel_caps: wgpu::DownlevelCapabilities,
     color_format: wgpu::TextureFormat,
     front_face: wgpu::FrontFace,
+    screen_size: wgpu::Extent3d,
+}
+
+struct PendingPortal {
+    id: String,
+    dest: String,
 }
 
 struct CaveView {
@@ -570,7 +582,7 @@ impl Game {
             };
 
             let worlds = config::worlds::load_from_settings(settings);
-            let ini_name = match worlds.get(&settings.game.level) {
+            let ini_name = match config::worlds::resolve(&worlds, &settings.game.level) {
                 Some(name) => name,
                 None => panic!(
                     "Unknown level '{}', valid names are: {:?}",
@@ -894,19 +906,23 @@ impl Game {
             escave_note: None,
             escave_selected: None,
             cave_boot: CaveBoot {
+                world_render: settings.render.clone(),
                 render: escave::cave::render_settings(&settings.render),
                 geometry: settings.game.geometry,
                 downlevel_caps: gfx.downlevel_caps.clone(),
                 color_format: gfx.color_format,
                 front_face,
+                screen_size: gfx.screen_size,
             },
             cave: None,
             ride: None,
             world: settings.game.level.clone(),
             minimap: minimap::Minimap::new(),
+            all_passages,
             passages,
             spiral,
             passage_note: None,
+            pending_portal: None,
         }
     }
 
@@ -977,10 +993,7 @@ impl Game {
 
     /// Apply a server `CycleState` to the local bunch and player cirtainers.
     fn apply_cycle_state(&mut self, state: &vangers_net::CycleState) {
-        let fade = state
-            .fade
-            .as_ref()
-            .map(|f| (f.target as usize, f.left));
+        let fade = state.fade.as_ref().map(|f| (f.target as usize, f.left));
         let applied = if let Some(ref mut bunch) = self.cycle {
             let range = bunch.sync_authority(
                 &mut self.level,
@@ -1582,10 +1595,7 @@ impl Game {
         }
         for passage in &self.passages {
             marks.push(minimap::Mark {
-                pos: glam::Vec2::new(
-                    passage.coordinates.0 as f32,
-                    passage.coordinates.1 as f32,
-                ),
+                pos: glam::Vec2::new(passage.coordinates.0 as f32, passage.coordinates.1 as f32),
                 color: egui::Color32::from_rgb(80, 220, 220),
                 large: true,
             });
@@ -1594,7 +1604,7 @@ impl Game {
             .show(context, &self.level, center, heading, &marks);
     }
 
-    /// Near a world passage: HUD prompt. Keeps a just-used stub until we leave reach.
+    /// Near a world passage: HUD prompt. Keeps arrival / missing notes until we leave reach.
     fn update_passage_proximity(&mut self) {
         if !self.screen.is_world() {
             return;
@@ -1615,27 +1625,33 @@ impl Game {
                 if self
                     .passage_note
                     .as_deref()
-                    .is_some_and(|n| n.contains("stubbed for this slice"))
+                    .is_some_and(Self::sticky_passage_note)
                 {
                     return;
                 }
                 self.passage_note = Some(level::spiral::passage_prompt(passage, &self.spiral));
             }
             None => {
-                if self
-                    .passage_note
-                    .as_deref()
-                    .is_some_and(|n| n.contains("in sight") || n.contains("Passage closed"))
-                {
+                if self.passage_note.as_deref().is_some_and(|n| {
+                    n.contains("in sight")
+                        || n.contains("Passage closed")
+                        || Self::sticky_passage_note(n)
+                }) {
                     self.passage_note = None;
                 }
             }
         }
     }
 
-    /// Space at a charged passage: spend one slot. Dest world load is stubbed.
+    fn sticky_passage_note(note: &str) -> bool {
+        note.starts_with("Arrived on ")
+            || note.contains("data not found")
+            || note.contains("stubbed for this slice")
+    }
+
+    /// Space at a charged passage: queue a dest-world hop (discharged on success).
     fn try_use_passage(&mut self) -> bool {
-        if !self.screen.is_world() {
+        if !self.screen.is_world() || self.pending_portal.is_some() {
             return false;
         }
         let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) else {
@@ -1655,14 +1671,188 @@ impl Game {
         if !self.spiral.is_ready() {
             return false;
         }
-        if !self.spiral.discharge() {
-            return false;
-        }
-        self.passage_note = Some(format!(
-            "Portal ride to {dest} ({id}) is stubbed for this slice."
-        ));
-        log::info!("Passage {id} to {dest} used; dest load stubbed");
+        log::info!("Passage {id} to {dest}: queueing dest load");
+        self.pending_portal = Some(PendingPortal { id, dest });
         true
+    }
+
+    /// Apply a queued portal hop once GPU handles are available.
+    fn apply_pending_portal(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let Some(pending) = self.pending_portal.take() else {
+            return;
+        };
+        let worlds = config::worlds::load_from_path(&self.data_path);
+        let Some(ini_path) =
+            config::worlds::ini_path_if_present(&self.data_path, &worlds, &pending.dest)
+        else {
+            self.passage_note = Some(format!(
+                "{} data not found. Install thechain/{{world}} from data-0.",
+                pending.dest
+            ));
+            log::warn!(
+                "Passage {} to {}: dest world.ini missing under {:?}",
+                pending.id,
+                pending.dest,
+                self.data_path
+            );
+            return;
+        };
+
+        let old_world = self.world.clone();
+        let arrival =
+            config::passages::arrival_coords(&self.all_passages, &pending.dest, &old_world)
+                .unwrap_or_else(|| {
+                    log::warn!(
+                        "No reverse passage for {} <- {}; spawning at origin",
+                        pending.dest,
+                        old_world
+                    );
+                    (0, 0)
+                });
+
+        log::info!(
+            "Loading dest world {} from {:?} -> arrival {:?}",
+            pending.dest,
+            ini_path,
+            arrival
+        );
+
+        let level_config = level::LevelConfig::load(&ini_path);
+        let mut level = level::load(&level_config, &self.cave_boot.geometry);
+        let gfx = GraphicsContext {
+            device: device.clone(),
+            queue: queue.clone(),
+            downlevel_caps: self.cave_boot.downlevel_caps.clone(),
+            color_format: self.cave_boot.color_format,
+            screen_size: self.cave_boot.screen_size,
+        };
+        let pal = level.palette;
+        let render = Render::new(
+            &gfx,
+            &level_config,
+            &pal,
+            &self.cave_boot.world_render,
+            &self.cave_boot.geometry,
+            self.cave_boot.front_face,
+        );
+
+        let moving = level::moving::MovingWorld::load(&level_config, None);
+        let mut palette = level::palette::Animation::new(&level, &level_config.dynamic_palette);
+        let flood = level::flood::Flood::new(&level, &pending.dest);
+        let cycle = level::cycle::Bunch::load(
+            &pending.dest,
+            &level,
+            &self.db.bunches,
+            &self.db.escaves,
+            |path| {
+                let full = self.data_path.join(path);
+                full.is_file().then(|| std::fs::read(&full).ok()).flatten()
+            },
+        );
+        if let Some(ref bunch) = cycle {
+            level.palette = *bunch.settled_palette();
+            palette.rebase(&level.palette);
+        }
+
+        let beebs = self.life.beebs;
+        let mut life = life::World::spawn(&pending.dest, &level, &self.data_path);
+        life.beebs = beebs;
+
+        let passages: Vec<_> = config::passages::from_world(&self.all_passages, &pending.dest)
+            .into_iter()
+            .cloned()
+            .collect();
+
+        let other_count = self
+            .agents
+            .iter()
+            .filter(|a| matches!(a.spirit, Spirit::Other(_)))
+            .count();
+        let car_names: Vec<_> = self.db.cars.keys().cloned().collect();
+
+        // Discharge only after the dest world is fully built.
+        if !self.spiral.discharge() {
+            self.passage_note = Some("Spiral discharged. Passage closed!".to_string());
+            return;
+        }
+
+        self.level = level;
+        self.render = render;
+        self.moving = moving;
+        self.palette = palette;
+        self.flood = flood;
+        self.cycle = cycle;
+        self.cycle_time = 0.0;
+        self.life = life;
+        self.passages = passages;
+        self.world = pending.dest.clone();
+        self.cave = None;
+        self.ride = None;
+        self.shots.clear();
+        self.approach_cam = None;
+        self.track_regions.clear();
+        self.escave_note = None;
+        self.escave_selected = None;
+
+        {
+            let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
+                return;
+            };
+            let height = self.level.get(arrival).high() + 5.;
+            match player.physics {
+                Physics::Cpu {
+                    ref mut transform,
+                    ref mut dynamo,
+                } => {
+                    transform.disp = Vec3::new(arrival.0 as f32, arrival.1 as f32, height);
+                    *dynamo = physics::Dynamo::default();
+                }
+            }
+            player.jump = None;
+            player.control = Control::default();
+            self.cam.loc = Vec3::new(arrival.0 as f32, arrival.1 as f32, height + 200.0);
+        }
+
+        // Respawn local NPCs on the new torus; keep the player agent.
+        self.agents.retain(|a| a.spirit == Spirit::Player);
+        {
+            use rand::{Rng, prelude::SliceRandom};
+            let mut rng = rand::thread_rng();
+            for i in 0..other_count {
+                let color = match rng.gen_range(0..3) {
+                    0 => BodyColor::Green,
+                    1 => BodyColor::Red,
+                    2 => BodyColor::Blue,
+                    _ => unreachable!(),
+                };
+                let car_id = car_names.choose(&mut rng).unwrap();
+                let (x, y) = (
+                    rng.gen_range(0..self.level.size.0),
+                    rng.gen_range(0..self.level.size.1),
+                );
+                let agent = Agent::spawn(
+                    format!("Other-{}", i),
+                    &self.db.cars[car_id],
+                    car_id.clone(),
+                    color,
+                    (x, y),
+                    rng.gen_range(0.0..std::f32::consts::TAU),
+                    &self.level,
+                );
+                self.agents.push(agent);
+            }
+        }
+
+        self.passage_note = Some(format!("Arrived on {}", pending.dest));
+        log::info!(
+            "Passage {} hop complete: {} -> {} at {:?}; spiral {}/{}",
+            pending.id,
+            old_world,
+            pending.dest,
+            arrival,
+            self.spiral.charge,
+            self.spiral.capacity
+        );
     }
 
     fn draw_spiral_hud(&self, context: &egui::Context) {
@@ -1768,8 +1958,10 @@ impl Application for Game {
         true
     }
 
-    fn update(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, delta: f32) {
+    fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, delta: f32) {
         profiling::scope!("Update");
+
+        self.apply_pending_portal(device, queue);
 
         let focus_point = self
             .cam
@@ -2117,6 +2309,7 @@ impl Application for Game {
         self.cam
             .proj
             .update(extent.width as u16, extent.height as u16);
+        self.cave_boot.screen_size = extent;
         self.render.resize(extent, device);
         if let Some(ref mut cave) = self.cave {
             cave.cam
