@@ -15,6 +15,7 @@ use log::{error, info, warn};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -70,6 +71,16 @@ enum SessionEvent {
     Disconnected {
         conn_id: PlayerId,
     },
+}
+
+/// How long a disconnected player's last pose is kept for same-name reclaim.
+const RECONNECT_POSE_GRACE: Duration = Duration::from_secs(5 * 60);
+
+/// Last WorldState pose for a disconnected `player_id`, restored on reclaim.
+struct LastPose {
+    transform: space::Transform,
+    dynamo: Dynamo,
+    disconnected_at: Instant,
 }
 
 /// Server-side agent with full physics state.
@@ -448,6 +459,8 @@ async fn main() {
     let mut name_ids: HashMap<String, PlayerId> = HashMap::new();
     // Accept-time conn_id → effective player_id (identity after name reclaim).
     let mut conn_to_player: HashMap<PlayerId, PlayerId> = HashMap::new();
+    // Last known pose per player_id after leave/disconnect (grace-window reclaim).
+    let mut last_poses: HashMap<PlayerId, LastPose> = HashMap::new();
     let mut tick: u32 = 0;
     let level_name = cycle_world.clone();
     let max_players = cli.max_players;
@@ -600,7 +613,7 @@ async fn main() {
                     }
                 }
                 for id in disconnected {
-                    remove_player(&mut players, &mut conn_to_player, id);
+                    remove_player(&mut players, &mut conn_to_player, &mut last_poses, id);
                 }
             }
 
@@ -639,10 +652,22 @@ async fn main() {
                                     &mut conn_to_player,
                                 );
 
+                                purge_expired_poses(&mut last_poses);
+                                let restored = last_poses.remove(&player_id).filter(|pose| {
+                                    pose.disconnected_at.elapsed() <= RECONNECT_POSE_GRACE
+                                });
+
                                 let spawn_index = players.values().filter(|a| a.joined).count();
                                 let coords = find_spawn_point(&level, spawn_index);
                                 let height = level.get(coords).high() + 5.0;
 
+                                let pose_note = if restored.is_some() {
+                                    " (restored last pose)"
+                                } else if player_id != conn_id {
+                                    " (reclaimed id, fresh spawn)"
+                                } else {
+                                    ""
+                                };
                                 info!(
                                     "Player {} ({}) joined with car={}, color={}, spawn=({},{}){}",
                                     player_id,
@@ -651,11 +676,7 @@ async fn main() {
                                     color,
                                     coords.0,
                                     coords.1,
-                                    if player_id != conn_id {
-                                        format!(" (reclaimed from conn_id={})", conn_id)
-                                    } else {
-                                        String::new()
-                                    }
+                                    pose_note
                                 );
 
                                 if let Some(agent) = players.get_mut(&player_id) {
@@ -669,15 +690,23 @@ async fn main() {
                                     agent.color = color;
                                     agent.joined = true;
                                     agent.cirtainer = level::cycle::Cirtainer::default();
-                                    agent.transform = space::Transform {
-                                        scale: agent.phys_data.scale,
-                                        disp: Vec3::new(
-                                            coords.0 as f32,
-                                            coords.1 as f32,
-                                            height,
-                                        ),
-                                        rot: glam::Quat::from_rotation_z(std::f32::consts::PI),
-                                    };
+                                    if let Some(pose) = restored {
+                                        agent.transform = pose.transform;
+                                        agent.dynamo = pose.dynamo;
+                                        // Keep model scale in sync with the chosen car.
+                                        agent.transform.scale = agent.phys_data.scale;
+                                    } else {
+                                        agent.dynamo = Dynamo::default();
+                                        agent.transform = space::Transform {
+                                            scale: agent.phys_data.scale,
+                                            disp: Vec3::new(
+                                                coords.0 as f32,
+                                                coords.1 as f32,
+                                                height,
+                                            ),
+                                            rot: glam::Quat::from_rotation_z(std::f32::consts::PI),
+                                        };
+                                    }
 
                                     // Send welcome
                                     let welcome = encode(&ServerMessage::Welcome {
@@ -729,7 +758,7 @@ async fn main() {
                             ClientMessage::Leave => {
                                 let player_id = effective_player_id(&conn_to_player, conn_id);
                                 info!("Player {} leaving", player_id);
-                                remove_player(&mut players, &mut conn_to_player, player_id);
+                                remove_player(&mut players, &mut conn_to_player, &mut last_poses, player_id);
                             }
                         }
                     }
@@ -737,7 +766,7 @@ async fn main() {
                     SessionEvent::Disconnected { conn_id } => {
                         let player_id = effective_player_id(&conn_to_player, conn_id);
                         info!("Player {} disconnected (conn_id={})", player_id, conn_id);
-                        remove_player(&mut players, &mut conn_to_player, player_id);
+                        remove_player(&mut players, &mut conn_to_player, &mut last_poses, player_id);
                     }
                 }
             }
@@ -805,15 +834,30 @@ fn reclaim_player_id(
     effective
 }
 
+fn purge_expired_poses(last_poses: &mut HashMap<PlayerId, LastPose>) {
+    last_poses.retain(|_, pose| pose.disconnected_at.elapsed() <= RECONNECT_POSE_GRACE);
+}
+
 fn remove_player(
     players: &mut HashMap<PlayerId, ServerAgent>,
     conn_to_player: &mut HashMap<PlayerId, PlayerId>,
+    last_poses: &mut HashMap<PlayerId, LastPose>,
     player_id: PlayerId,
 ) {
     conn_to_player.retain(|_, mapped| *mapped != player_id);
     if let Some(removed) = players.remove(&player_id) {
+        // Keep name→id (reclaim) and last pose (grace-window restore).
+        if removed.joined {
+            last_poses.insert(
+                player_id,
+                LastPose {
+                    transform: removed.transform,
+                    dynamo: removed.dynamo,
+                    disconnected_at: Instant::now(),
+                },
+            );
+        }
         info!("Removed player {} ({})", player_id, removed.name);
-        // Keep `name_ids` so a later Join with the same name can reclaim.
         let msg = encode(&ServerMessage::PlayerLeft { player_id });
         for agent in players.values() {
             let _ = agent.sender.send(msg.clone());
