@@ -54,15 +54,18 @@ names still get distinct ids. No protocol change: clients keep sending
 `ClientMessage::Join { player_name, ... }` as today.
 
 For a short **grace window** (currently 5 minutes), the server also keeps that
-player's last `WorldState` transform / dynamo. A same-name reclaim inside the
-window restores that pose instead of a fresh spawn, so leave→rejoin feels
-continuous. After the grace expires (or for a brand-new name), spawn is fresh
+player's last `WorldState` transform / dynamo **and** per-player cycle carry
+(`Cirtainer` / `CycleState.players[].held`). A same-name reclaim inside the
+window restores pose and cirtainer together instead of a fresh spawn, so
+leave→rejoin keeps story progress continuous on a shared world. World-level
+banks / stage / fade stay on the server `Bunch` for everyone either way.
+After the grace expires (or for a brand-new name), spawn and carry are fresh
 as before. Other players are unaffected.
 
 ```bash
-# Terminal B — drive away, leave (Ctrl+C), rerun with the same --name:
+# Terminal B — gather some cirt, leave (Ctrl+C), rerun with the same --name:
 cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
-# Welcome player_id matches the previous session; you reappear near the prior XY.
+# Welcome player_id matches; you reappear near the prior XY with the same held cirt.
 ```
 
 

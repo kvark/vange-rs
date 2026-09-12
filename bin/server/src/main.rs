@@ -73,14 +73,38 @@ enum SessionEvent {
     },
 }
 
-/// How long a disconnected player's last pose is kept for same-name reclaim.
+/// How long a disconnected player's last pose / cycle carry is kept for reclaim.
 const RECONNECT_POSE_GRACE: Duration = Duration::from_secs(5 * 60);
 
-/// Last WorldState pose for a disconnected `player_id`, restored on reclaim.
+/// Last per-player snapshot after leave/disconnect, restored on same-name reclaim.
+///
+/// Holds WorldState pose (transform/dynamo) plus story-cycle carry (`cirtainer`).
+/// Shared world cycle banks stay on the server `Bunch` regardless.
 struct LastPose {
     transform: space::Transform,
     dynamo: Dynamo,
+    cirtainer: level::cycle::Cirtainer,
     disconnected_at: Instant,
+}
+
+/// Optional test-only cirtainer seed (`VANGERS_TEST_SEED_CIRT=7,0,2`).
+///
+/// Applied on **fresh** spawn only so integration tests can prove reclaim
+/// restores `LastPose.cirtainer` rather than re-applying the seed.
+fn test_seed_cirtainer() -> Option<level::cycle::Cirtainer> {
+    let raw = std::env::var("VANGERS_TEST_SEED_CIRT").ok()?;
+    let held: Vec<i32> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<i32>())
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    if held.is_empty() {
+        None
+    } else {
+        Some(level::cycle::Cirtainer::from_held(held))
+    }
 }
 
 /// Server-side agent with full physics state.
@@ -459,7 +483,7 @@ async fn main() {
     let mut name_ids: HashMap<String, PlayerId> = HashMap::new();
     // Accept-time conn_id → effective player_id (identity after name reclaim).
     let mut conn_to_player: HashMap<PlayerId, PlayerId> = HashMap::new();
-    // Last known pose per player_id after leave/disconnect (grace-window reclaim).
+    // Last known pose + cirtainer per player_id after leave (grace-window reclaim).
     let mut last_poses: HashMap<PlayerId, LastPose> = HashMap::new();
     let mut tick: u32 = 0;
     let level_name = cycle_world.clone();
@@ -662,7 +686,7 @@ async fn main() {
                                 let height = level.get(coords).high() + 5.0;
 
                                 let pose_note = if restored.is_some() {
-                                    " (restored last pose)"
+                                    " (restored last pose/cirtainer)"
                                 } else if player_id != conn_id {
                                     " (reclaimed id, fresh spawn)"
                                 } else {
@@ -689,13 +713,20 @@ async fn main() {
                                     agent.car_name = car_name.clone();
                                     agent.color = color;
                                     agent.joined = true;
-                                    agent.cirtainer = level::cycle::Cirtainer::default();
                                     if let Some(pose) = restored {
                                         agent.transform = pose.transform;
                                         agent.dynamo = pose.dynamo;
+                                        agent.cirtainer = pose.cirtainer;
                                         // Keep model scale in sync with the chosen car.
                                         agent.transform.scale = agent.phys_data.scale;
                                     } else {
+                                        // Seed only brand-new ids so reclaim tests
+                                        // cannot false-pass by re-applying the env.
+                                        agent.cirtainer = if player_id == conn_id {
+                                            test_seed_cirtainer().unwrap_or_default()
+                                        } else {
+                                            level::cycle::Cirtainer::default()
+                                        };
                                         agent.dynamo = Dynamo::default();
                                         agent.transform = space::Transform {
                                             scale: agent.phys_data.scale,
@@ -846,13 +877,14 @@ fn remove_player(
 ) {
     conn_to_player.retain(|_, mapped| *mapped != player_id);
     if let Some(removed) = players.remove(&player_id) {
-        // Keep name→id (reclaim) and last pose (grace-window restore).
+        // Keep name→id (reclaim) and last pose/cirtainer (grace-window restore).
         if removed.joined {
             last_poses.insert(
                 player_id,
                 LastPose {
                     transform: removed.transform,
                     dynamo: removed.dynamo,
+                    cirtainer: removed.cirtainer,
                     disconnected_at: Instant::now(),
                 },
             );

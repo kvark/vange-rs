@@ -1,4 +1,5 @@
 use std::io::{Read, Write};
+use std::path::Path;
 use std::net::TcpStream;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -15,23 +16,43 @@ struct ServerProcess {
 
 impl ServerProcess {
     fn start() -> Self {
+        Self::start_with("test", &[])
+    }
+
+    fn start_with(level: &str, extra_env: &[(&str, &str)]) -> Self {
         let port = NEXT_PORT.fetch_add(2, Ordering::Relaxed);
         let ws_port = port + 1;
-        let child = Command::new(env!("CARGO_BIN_EXE_vangers-server"))
-            .args([
-                "--port",
-                &port.to_string(),
-                "--ws-port",
-                &ws_port.to_string(),
-                "--level",
-                "test",
-                "--tick-rate",
-                "20",
-            ])
-            .env("RUST_LOG", "warn")
-            .spawn()
-            .expect("Failed to start server");
-        std::thread::sleep(Duration::from_millis(500));
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_vangers-server"));
+        // Integration tests often run with cwd = bin/server; point at the
+        // workspace settings so bunches/escaves (and CycleState) load.
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let settings = workspace.join("config/settings.ron");
+        cmd.current_dir(&workspace);
+        cmd.args([
+            "--port",
+            &port.to_string(),
+            "--ws-port",
+            &ws_port.to_string(),
+            "--level",
+            level,
+            "--tick-rate",
+            "20",
+        ]);
+        if settings.is_file() {
+            cmd.args(["--settings", settings.to_str().unwrap()]);
+        }
+        cmd.env("RUST_LOG", "warn");
+        for (k, v) in extra_env {
+            cmd.env(k, v);
+        }
+        let child = cmd.spawn().expect("Failed to start server");
+        // Fostral (and other real maps) need longer to load than `test`.
+        let boot = if level == "test" {
+            Duration::from_millis(500)
+        } else {
+            Duration::from_secs(8)
+        };
+        std::thread::sleep(boot);
         ServerProcess { child, port }
     }
 
@@ -421,4 +442,120 @@ fn test_reconnect_restores_last_pose() {
         bob_pos,
         restored_pos
     );
+}
+
+#[test]
+fn test_reconnect_restores_cirtainer() {
+    // Needs game data so WorldState carries CycleState (per-player held).
+    let fostral = std::path::Path::new("/workspace/vange-data/thechain/fostral/world.ini");
+    if !fostral.is_file() {
+        eprintln!("skip test_reconnect_restores_cirtainer: no Fostral data");
+        return;
+    }
+
+    // Seed held only on fresh spawn; reclaim must restore from LastPose, not re-seed.
+    let server = ServerProcess::start_with(
+        fostral.to_str().expect("utf-8 path"),
+        &[("VANGERS_TEST_SEED_CIRT", "7,0,2")],
+    );
+
+    let mut alice = server.connect();
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+    });
+    let mut stash = Vec::new();
+    let first_id = match alice.recv_welcome(&mut stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+
+    stash.extend(alice.recv_for(Duration::from_secs(3)));
+    let held_before = stash
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState {
+                cycle: Some(cycle),
+                ..
+            } => cycle
+                .players
+                .iter()
+                .find(|p| p.player_id == first_id)
+                .map(|p| p.held.clone()),
+            _ => None,
+        })
+        .expect("Alice should appear in CycleState.players before disconnect");
+    assert_eq!(
+        held_before,
+        vec![7, 0, 2],
+        "test seed should populate cirtainer on first join"
+    );
+
+    drop(alice);
+    std::thread::sleep(Duration::from_millis(400));
+
+    let mut alice2 = server.connect();
+    alice2.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+    });
+    let mut stash2 = Vec::new();
+    let second_id = match alice2.recv_welcome(&mut stash2) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    assert_eq!(first_id, second_id, "same name reclaims player_id");
+
+    stash2.extend(alice2.recv_for(Duration::from_secs(3)));
+    let held_after = stash2
+        .iter()
+        .find_map(|m| match m {
+            ServerMessage::WorldState {
+                cycle: Some(cycle),
+                ..
+            } => cycle
+                .players
+                .iter()
+                .find(|p| p.player_id == second_id)
+                .map(|p| p.held.clone()),
+            _ => None,
+        })
+        .expect("Alice should appear in CycleState.players after reconnect");
+    assert_eq!(
+        held_after, held_before,
+        "reclaim should restore cirtainer held, not clear it"
+    );
+
+    // Brand-new name still gets a fresh (seeded) carry, not Alice's.
+    let mut bob = server.connect();
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 7,
+    });
+    let mut bob_stash = Vec::new();
+    let bob_id = match bob.recv_welcome(&mut bob_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    assert_ne!(bob_id, second_id);
+    bob_stash.extend(bob.recv_for(Duration::from_secs(2)));
+    let bob_held = bob_stash
+        .iter()
+        .find_map(|m| match m {
+            ServerMessage::WorldState {
+                cycle: Some(cycle),
+                ..
+            } => cycle
+                .players
+                .iter()
+                .find(|p| p.player_id == bob_id)
+                .map(|p| p.held.clone()),
+            _ => None,
+        })
+        .expect("Bob should appear in CycleState.players");
+    assert_eq!(bob_held, vec![7, 0, 2], "fresh name uses seed, not Alice slot");
 }
