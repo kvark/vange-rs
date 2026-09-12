@@ -8,13 +8,22 @@ for palette fades and apply the snapshot so native TCP and web WS stay aligned.
 
 ## Run
 
-Terminal A — authoritative server (needs `config/settings.ron` + game data for
-real cycles; `--level test` has no story cycle):
+Terminal A — authoritative server. With `config/settings.ron` and game data,
+omitting `--level` loads the same world as clients (`settings.game.level`, e.g.
+Fostral → `thechain/fostral/world.ini`). Use `--level test` for the procedural
+CI / smoke level (no story cycle). Welcome / HUD `level_name` always matches
+the terrain the server actually hosts.
 
 ```bash
+# Shared-world playtest (default when data + settings.game.level are present):
 cargo run -p vangers-server -- --port 7800 --ws-port 7801
-# with Fostral / real data (settings.game.level = "Fostral"):
-# cargo run -p vangers-server -- --port 7800 --ws-port 7801 --level <path-or-test>
+
+# Explicit Fostral (world name or world.ini path):
+cargo run -p vangers-server -- --port 7800 --ws-port 7801 --level Fostral
+# cargo run -p vangers-server -- --port 7800 --ws-port 7801 --level /path/to/thechain/fostral/world.ini
+
+# Procedural test level (CI / integration tests):
+cargo run -p vangers-server -- --port 7800 --ws-port 7801 --level test
 ```
 
 Terminal B — native client:
