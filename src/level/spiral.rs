@@ -84,7 +84,7 @@ pub fn nearest_passage<'a>(
             let d2 = dx * dx + dy * dy;
             (d2 <= reach2).then_some((d2, p))
         })
-        .min_by_key(|(d2, _)| *d2)
+        .min_by_key(|&(d2, _)| d2)
         .map(|(_, p)| p)
 }
 
