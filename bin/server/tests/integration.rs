@@ -306,3 +306,119 @@ fn test_reconnect_same_name_reclaims_player_id() {
     };
     assert_ne!(bob_id, second_id, "different names get distinct player_ids");
 }
+
+#[test]
+fn test_reconnect_restores_last_pose() {
+    let server = ServerProcess::start();
+
+    let mut alice = server.connect();
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+    });
+    let mut stash = Vec::new();
+    let first_id = match alice.recv_welcome(&mut stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+
+    // Drive away from spawn so restored pose is distinguishable.
+    alice.send(&ClientMessage::Input {
+        sequence: 1,
+        control: vangers_net::NetControl {
+            motor: 1.0,
+            rudder: 0.0,
+            roll: 0.0,
+            brake: false,
+            turbo: true,
+            jump: None,
+        },
+    });
+    let mut msgs = stash;
+    msgs.extend(alice.recv_for(Duration::from_secs(2)));
+    let last_pos = msgs
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == first_id)
+                .map(|a| a.transform.position),
+            _ => None,
+        })
+        .expect("Alice should have a WorldState pose before disconnect");
+
+    // Stop input so velocity is whatever the last tick held; then disconnect.
+    drop(alice);
+    std::thread::sleep(Duration::from_millis(400));
+
+    let mut alice2 = server.connect();
+    alice2.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+    });
+    let mut stash2 = Vec::new();
+    let second_id = match alice2.recv_welcome(&mut stash2) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    assert_eq!(first_id, second_id, "same name reclaims player_id");
+
+    stash2.extend(alice2.recv_for(Duration::from_secs(1)));
+    let restored_pos = stash2
+        .iter()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == second_id)
+                .map(|a| a.transform.position),
+            _ => None,
+        })
+        .expect("Alice should receive WorldState after reconnect");
+
+    let dx = (restored_pos[0] - last_pos[0]).abs();
+    let dy = (restored_pos[1] - last_pos[1]).abs();
+    assert!(
+        dx < 80.0 && dy < 80.0,
+        "reclaim should restore near previous XY: before={:?} after={:?} dx={} dy={}",
+        last_pos,
+        restored_pos,
+        dx,
+        dy
+    );
+
+    // Fresh name still gets a distinct id and is not forced onto Alice's pose.
+    let mut bob = server.connect();
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 7,
+    });
+    let mut bob_stash = Vec::new();
+    let bob_id = match bob.recv_welcome(&mut bob_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    assert_ne!(bob_id, second_id);
+    bob_stash.extend(bob.recv_for(Duration::from_secs(1)));
+    let bob_pos = bob_stash
+        .iter()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == bob_id)
+                .map(|a| a.transform.position),
+            _ => None,
+        })
+        .expect("Bob should have a WorldState pose");
+    let bdx = (bob_pos[0] - restored_pos[0]).abs();
+    let bdy = (bob_pos[1] - restored_pos[1]).abs();
+    assert!(
+        bdx > 5.0 || bdy > 5.0,
+        "Bob should fresh-spawn away from Alice's restored pose: bob={:?} alice={:?}",
+        bob_pos,
+        restored_pos
+    );
+}

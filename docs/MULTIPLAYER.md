@@ -53,10 +53,16 @@ or disconnect, joining again with the same name receives the same `player_id` in
 names still get distinct ids. No protocol change: clients keep sending
 `ClientMessage::Join { player_name, ... }` as today.
 
+For a short **grace window** (currently 5 minutes), the server also keeps that
+player's last `WorldState` transform / dynamo. A same-name reclaim inside the
+window restores that pose instead of a fresh spawn, so leave→rejoin feels
+continuous. After the grace expires (or for a brand-new name), spawn is fresh
+as before. Other players are unaffected.
+
 ```bash
-# Terminal B — leave (Ctrl+C) and rerun with the same --name:
+# Terminal B — drive away, leave (Ctrl+C), rerun with the same --name:
 cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
-# Welcome player_id matches the previous session for that name.
+# Welcome player_id matches the previous session; you reappear near the prior XY.
 ```
 
 
