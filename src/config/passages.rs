@@ -59,6 +59,12 @@ pub fn from_world<'a>(all: &'a [Passage], world: &str) -> Vec<&'a Passage> {
         .collect()
 }
 
+/// Look up a passage by `passages.prm` id (case-insensitive).
+pub fn by_id<'a>(list: &'a [Passage], id: &str) -> Option<&'a Passage> {
+    let key = id.to_ascii_lowercase();
+    list.iter().find(|p| p.id.to_ascii_lowercase() == key)
+}
+
 /// Arrival pad on `dest_world` when hopping from `from_world`: the reverse
 /// passage (`from=dest`, `to=old`).
 pub fn arrival_coords(all: &[Passage], dest_world: &str, from_world: &str) -> Option<(i32, i32)> {
@@ -89,6 +95,16 @@ G2F Glorx Fostral 1420 7575
         assert_eq!(list[0].coordinates, (810, 4630));
         let fostral = from_world(&list, "fostral");
         assert_eq!(fostral.len(), 2);
+    }
+
+    #[test]
+    fn finds_passage_by_id() {
+        let src = r#"uniVang-ParametersFile_Ver_1
+F2G Fostral Glorx 810 4630
+"#;
+        let list = load_reader(src.as_bytes());
+        assert_eq!(by_id(&list, "f2g").map(|p| p.to_world.as_str()), Some("Glorx"));
+        assert!(by_id(&list, "nope").is_none());
     }
 
     #[test]

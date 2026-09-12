@@ -6,19 +6,21 @@
 //! a vehicle drives into a sensor the engine sends its location to the active
 //! key phase, and the moving land animates the bridge, door or lift there.
 //!
-//! Four engine types are implemented, the ones whose behaviour is entirely
-//! moving land plus proximity:
+//! Engine types whose behaviour is moving land plus proximity, plus world
+//! passages:
 //!
 //! - [`Kind::Door`] opens while something is standing on a sensor and closes
 //!   again once everything leaves;
 //! - [`Kind::Tiristor`] is a latch - it opens on the first touch and stays
 //!   open;
 //! - [`Kind::Cyclic`] ignores sensors and cycles on a timer;
-//! - [`Kind::Train`] is a one-way secret tunnel between two stations.
+//! - [`Kind::Train`] is a one-way secret tunnel between two stations;
+//! - [`Kind::Passage`] links a `snstable.vlc` `PASSAGE` sensor (`ActionName`)
+//!   to a `passages.prm` id (`PassageName`) for world-to-world hops.
 //!
-//! The rest (escaves, passages, item generators) hang off quest and
-//! inventory systems this port does not have, so they are parsed far enough
-//! to be skipped and reported. Outdoor spiral chargers are the exception:
+//! The rest (escaves, item generators) hang off quest and inventory systems
+//! this port does not have, so they are parsed far enough to be skipped and
+//! reported. Outdoor spiral chargers are the exception:
 //! [`Triggers::spiral_station_at`] reacts to `KEY_UPDATE` sensors directly.
 
 use crate::level::moving::MovingLand;
@@ -30,6 +32,7 @@ use std::path::Path;
 /// `EngineTypeList` of the original.
 mod engine_type {
     pub const DOOR: i32 = 0;
+    pub const PASSAGE: i32 = 3;
     pub const CYCLIC: i32 = 4;
     pub const TRAIN: i32 = 5;
     pub const TIRISTOR: i32 = 7;
@@ -96,6 +99,12 @@ pub enum Kind {
         /// Sensor indices: `[first, second]`.
         stations: [usize; 2],
     },
+    /// World portal. `PassageEngine`: `ActionName` is the `PASSAGE` sensor,
+    /// `PassageName` is the `passages.prm` id (e.g. F2G).
+    Passage {
+        sensor: usize,
+        passage_id: String,
+    },
     /// Parsed but not driven - the engine types that need systems this port
     /// does not have.
     Unsupported(i32),
@@ -121,6 +130,15 @@ pub struct EscaveArrival {
 pub struct ImpulseKick {
     pub direction: (i32, i32, i32),
     pub power: i32,
+}
+
+/// Player is standing on a `PASSAGE` sensor linked by a [`Kind::Passage`] engine.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PassageHit {
+    /// `PassageName` from `location.lst` (e.g. `F2G`).
+    pub passage_id: String,
+    pub sensor_name: String,
+    pub pos: (i32, i32, i32),
 }
 
 /// One entry of `location.lst`.
@@ -161,6 +179,7 @@ impl Engine {
         match self.kind {
             Kind::Door { ref sensors, .. } | Kind::Tiristor { ref sensors, .. } => sensors,
             Kind::Train { ref stations } => stations,
+            Kind::Passage { ref sensor, .. } => std::slice::from_ref(sensor),
             Kind::Cyclic { .. } | Kind::Unsupported(_) => &[],
         }
     }
@@ -193,7 +212,7 @@ impl Engine {
                 self.update_cyclic(&mut land.locations[index]);
                 self.publish_actions(enables);
             }
-            Kind::Train { .. } | Kind::Unsupported(_) => {}
+            Kind::Train { .. } | Kind::Passage { .. } | Kind::Unsupported(_) => {}
         }
         self.touch_count = 0;
     }
@@ -422,6 +441,20 @@ impl Triggers {
                         action_mode: Mode::from_index(raw_mode),
                     }
                 }
+                engine_type::PASSAGE => {
+                    let action = scan.name_after("ActionName");
+                    let passage_id = scan.name_after("PassageName");
+                    match (action, passage_id) {
+                        (Some(a), Some(id)) => match self.link_named_sensor(a, engine_index) {
+                            Some(sensor) => Kind::Passage {
+                                sensor,
+                                passage_id: id.to_string(),
+                            },
+                            None => Kind::Unsupported(engine_type::PASSAGE),
+                        },
+                        _ => Kind::Unsupported(engine_type::PASSAGE),
+                    }
+                }
                 engine_type::TRAIN => {
                     let first = scan.name_after("FirstStationName");
                     let second = scan.name_after("SecondStationName");
@@ -629,6 +662,57 @@ impl Triggers {
         }
         best.map(|(_, index)| &self.sensors[index])
     }
+
+    /// World portal pad: original `SensorTypeList::PASSAGE` via
+    /// `PassageEngine` (`ActionName` + `PassageName` in `location.lst`).
+    /// Touch + altitude band match KranX `VangerUnit::TouchSensor` / escave
+    /// hole checks; remake still gates the hop on Space + spiral charge.
+    pub fn passage_at(
+        &self,
+        pos: (i32, i32, i32),
+        radius: i32,
+        size: (i32, i32),
+    ) -> Option<PassageHit> {
+        let mut best: Option<(i32, usize, &str)> = None;
+        for engine in self.engines.iter() {
+            let &Kind::Passage {
+                sensor: index,
+                ref passage_id,
+            } = &engine.kind
+            else {
+                continue;
+            };
+            if !engine.enabled || !self.enabled[index] {
+                continue;
+            }
+            let sensor = &self.sensors[index];
+            if sensor.kind != vlc::sensor_kind::PASSAGE {
+                continue;
+            }
+            let reach = radius + sensor.radius;
+            let dx = wrap_delta(sensor.pos.0 - pos.0, size.0);
+            if dx.abs() >= reach {
+                continue;
+            }
+            if pos.2 <= sensor.z_range.0 - radius || pos.2 >= sensor.z_range.1 + radius {
+                continue;
+            }
+            let dy = wrap_delta(sensor.pos.1 - pos.1, size.1);
+            let d2 = dx * dx + dy * dy;
+            if d2 < reach * reach && best.is_none_or(|(best_d2, _, _)| d2 < best_d2) {
+                best = Some((d2, index, passage_id.as_str()));
+            }
+        }
+        best.map(|(_, index, passage_id)| {
+            let sensor = &self.sensors[index];
+            PassageHit {
+                passage_id: passage_id.to_string(),
+                sensor_name: sensor.name.clone(),
+                pos: sensor.pos,
+            }
+        })
+    }
+
 
     /// Nearby `IMPULSE` sensor: original `continuous_impulse(vData, Power)`
     /// when leaving an ImpulseEscave.
@@ -1470,6 +1554,46 @@ EffectID 0
         );
         assert!(triggers.spiral_station_at((0, 0, 80), 20, SIZE).is_none());
     }
+
+    #[test]
+    fn passage_sensor_links_passage_name_from_location_lst() {
+        let land = land_with(&["tttttt"]);
+        let mut pad = hole_pad("Passage1", vlc::sensor_kind::PASSAGE, 100, 200);
+        pad.pos = (100, 200, 82);
+        pad.radius = 20;
+        pad.z_range = (62, 102);
+        let text = "\
+Part 0
+EngineType 3
+MLName tttttt
+ActivePhase 0
+DeactivePhase 0
+ActiveTime 120
+DeactiveTime 120
+SoundID 0
+ActionName Passage1
+PassageName F2G
+";
+        let triggers = triggers_with(vec![pad], text, &land);
+        assert!(matches!(
+            triggers.engines[0].kind,
+            Kind::Passage {
+                passage_id: ref id,
+                ..
+            } if id == "F2G"
+        ));
+        let hit = triggers
+            .passage_at((100, 200, 82), 20, SIZE)
+            .expect("on the PASSAGE pad");
+        assert_eq!(hit.passage_id, "F2G");
+        assert_eq!(hit.sensor_name, "Passage1");
+        assert!(
+            triggers.passage_at((100, 200, 200), 20, SIZE).is_none(),
+            "above the altitude band should miss"
+        );
+        assert!(triggers.passage_at((0, 0, 82), 20, SIZE).is_none());
+    }
+
 
     #[test]
     fn leaving_closes_the_hatch_and_finds_the_impulse() {
