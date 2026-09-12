@@ -59,6 +59,29 @@ cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
 # Welcome player_id matches the previous session for that name.
 ```
 
+
+## Tweaks Position (debug hold)
+
+In multiplayer, `WorldState` normally snaps the local player's transform to the
+server each tick. Editing **Player → Position** in the Tweaks panel (egui
+`DragValue`) would otherwise fight that snap. While those X/Y controls are
+focused or being dragged — and for a short hold after — the client skips
+applying the server transform/dynamo to the local agent only. Remote agents and
+normal sync when not editing are unchanged. This is a debug-only local hold, not
+an authoritative teleport; after the hold expires the next `WorldState` snaps
+again.
+
+```bash
+# Terminal A — server (matching level as usual)
+cargo run -p vangers-server -- --port 7800 --ws-port 7801
+
+# Terminal B / C — Alice and Bob
+cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
+cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
+# In Alice Tweaks → Player → Position: drag X/Y; value sticks for the edit
+# session. Bob still sees Alice move when she is not tweaking.
+```
+
 ## Tests
 
 ```bash
