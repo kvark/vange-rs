@@ -1667,7 +1667,7 @@ impl Game {
 
     fn draw_spiral_hud(&self, context: &egui::Context) {
         egui::Area::new(egui::Id::new("spiral-hud"))
-            .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 12.0))
+            .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 120.0))
             .order(egui::Order::Foreground)
             .show(context, |ui| {
                 ui.label(
