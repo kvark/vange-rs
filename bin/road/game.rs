@@ -498,7 +498,8 @@ pub struct Game {
     minimap: minimap::Minimap,
     /// All passages from `passages.prm` (needed for reverse arrival pads).
     all_passages: Vec<config::passages::Passage>,
-    /// World-to-world portals that leave the current level.
+    /// World-to-world portals that leave the current level (`passages.prm`).
+    /// Triggered via `PASSAGE` sensors when `location.lst` links them.
     passages: Vec<config::passages::Passage>,
     /// Charges at an escave or outdoor KEY_UPDATE station; spent to open a passage.
     spiral: level::spiral::Spiral,
@@ -1648,13 +1649,17 @@ impl Game {
             });
         }
         for sensor in &self.moving.triggers.sensors {
-            if sensor.kind != level::vlc::sensor_kind::KEY_UPDATE {
+            let (color, large) = if sensor.kind == level::vlc::sensor_kind::KEY_UPDATE {
+                (egui::Color32::from_rgb(220, 80, 200), true)
+            } else if sensor.kind == level::vlc::sensor_kind::PASSAGE {
+                (egui::Color32::from_rgb(40, 180, 220), false)
+            } else {
                 continue;
-            }
+            };
             marks.push(minimap::Mark {
                 pos: glam::Vec2::new(sensor.pos.0 as f32, sensor.pos.1 as f32),
-                color: egui::Color32::from_rgb(220, 80, 200),
-                large: true,
+                color,
+                large,
             });
         }
         self.minimap
@@ -1690,23 +1695,15 @@ impl Game {
         }
     }
 
-    /// Near a world passage: HUD prompt. Keeps arrival / missing notes until we leave reach.
+    /// Near a world passage: HUD prompt. Prefers original `PASSAGE` sensors
+    /// (`snstable.vlc` + `PassageEngine`); falls back to `passages.prm`
+    /// proximity when this world has no passage engines. Keeps arrival /
+    /// missing notes until we leave reach.
     fn update_passage_proximity(&mut self) {
         if !self.screen.is_world() {
             return;
         }
-        let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) else {
-            return;
-        };
-        let pos = player.position();
-        let at = (pos.x as i32, pos.y as i32);
-        let near = level::spiral::nearest_passage(
-            &self.passages,
-            at,
-            self.level.size,
-            config::passages::Passage::DEFAULT_REACH,
-        );
-        match near {
+        match self.passage_in_reach() {
             Some(passage) => {
                 if self
                     .passage_note
@@ -1735,23 +1732,47 @@ impl Game {
             || note.contains("stubbed for this slice")
     }
 
-    /// Space at a charged passage: queue a dest-world hop (discharged on success).
-    fn try_use_passage(&mut self) -> bool {
-        if !self.screen.is_world() || self.pending_portal.is_some() {
-            return false;
-        }
-        let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) else {
-            return false;
-        };
+    /// Active portal under the player: `PASSAGE` sensor first (KranX), else
+    /// prm proximity when no `PassageEngine`s are loaded for this world.
+    fn passage_in_reach(&self) -> Option<&config::passages::Passage> {
+        let player = self.agents.iter().find(|a| a.spirit == Spirit::Player)?;
         let pos = player.position();
+        let radius = player.touch_radius();
+        let at3 = (pos.x as i32, pos.y as i32, pos.z as i32);
+        if let Some(hit) = self
+            .moving
+            .triggers
+            .passage_at(at3, radius, self.level.size)
+        {
+            return config::passages::by_id(&self.passages, &hit.passage_id);
+        }
+        if self
+            .moving
+            .triggers
+            .engines
+            .iter()
+            .any(|e| matches!(e.kind, level::trigger::Kind::Passage { .. }))
+        {
+            return None;
+        }
         let at = (pos.x as i32, pos.y as i32);
-        let Some((id, dest)) = level::spiral::nearest_passage(
+        level::spiral::nearest_passage(
             &self.passages,
             at,
             self.level.size,
             config::passages::Passage::DEFAULT_REACH,
         )
-        .map(|p| (p.id.clone(), p.to_world.clone())) else {
+    }
+
+    /// Space at a charged passage: queue a dest-world hop (discharged on success).
+    fn try_use_passage(&mut self) -> bool {
+        if !self.screen.is_world() || self.pending_portal.is_some() {
+            return false;
+        }
+        let Some((id, dest)) = self
+            .passage_in_reach()
+            .map(|p| (p.id.clone(), p.to_world.clone()))
+        else {
             return false;
         };
         if !self.spiral.is_ready() {
