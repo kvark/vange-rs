@@ -698,6 +698,18 @@ async fn main() {
                                 let coords = find_spawn_point(&level, spawn_index);
                                 let height = level.get(coords).high() + 5.0;
 
+                                // Log restored map XY when reclaiming; find_spawn_point is
+                                // only used for brand-new / expired-pose joins.
+                                let (log_x, log_y) = restored
+                                    .as_ref()
+                                    .map(|pose| {
+                                        (
+                                            pose.transform.disp.x as i32,
+                                            pose.transform.disp.y as i32,
+                                        )
+                                    })
+                                    .unwrap_or(coords);
+
                                 let pose_note = if restored.is_some() {
                                     " (restored last pose/cirtainer/spiral)"
                                 } else if player_id != conn_id {
@@ -711,8 +723,8 @@ async fn main() {
                                     player_name,
                                     car_name,
                                     color,
-                                    coords.0,
-                                    coords.1,
+                                    log_x,
+                                    log_y,
                                     pose_note
                                 );
 
