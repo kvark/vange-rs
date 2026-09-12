@@ -12,6 +12,7 @@ pub mod effect;
 pub mod flood;
 pub mod moving;
 pub mod palette;
+pub mod spiral;
 pub mod terraform;
 pub mod tin;
 pub mod trigger;

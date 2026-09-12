@@ -496,6 +496,12 @@ pub struct Game {
     shots: Vec<LiveShot>,
     world: String,
     minimap: minimap::Minimap,
+    /// World-to-world portals that leave the current level.
+    passages: Vec<config::passages::Passage>,
+    /// Charges at an escave, spent to open a passage.
+    spiral: level::spiral::Spiral,
+    /// HUD line: charge, proximity prompt, or the dest-load stub.
+    passage_note: Option<String>,
 }
 
 struct CaveBoot {
@@ -820,6 +826,26 @@ impl Game {
             fish: load_listed("FishWarrior"),
             clef: load_listed("WorldLocker"),
         };
+
+        let all_passages = config::passages::load_optional(settings);
+        let passages: Vec<_> = config::passages::from_world(&all_passages, &settings.game.level)
+            .into_iter()
+            .cloned()
+            .collect();
+        let spiral = level::spiral::Spiral::with_capacity(
+            db.cars
+                .get(&settings.car.id)
+                .map(|c| c.stats.max_teleport)
+                .filter(|&t| t > 0)
+                .unwrap_or(level::spiral::DEFAULT_CAPACITY),
+        );
+        log::info!(
+            "Spiral {} slots; {} passage(s) from {}",
+            spiral.capacity,
+            passages.len(),
+            settings.game.level
+        );
+
         Game {
             db,
             render,
@@ -878,6 +904,9 @@ impl Game {
             ride: None,
             world: settings.game.level.clone(),
             minimap: minimap::Minimap::new(),
+            passages,
+            spiral,
+            passage_note: None,
         }
     }
 
@@ -1052,6 +1081,9 @@ impl Game {
         self.approach_cam = Some((self.cam.loc, dest));
         self.escave_note = None;
         self.escave_selected = None;
+        if self.spiral.charge_full() {
+            self.passage_note = Some("Spiral charged.".to_string());
+        }
         self.screen.begin_enter(name);
     }
 
@@ -1245,6 +1277,9 @@ impl Game {
             return;
         }
         if self.screen.blocks_drive() {
+            return;
+        }
+        if self.try_use_passage() {
             return;
         }
         let pos = match self.agents.iter().find(|a| a.spirit == Spirit::Player) {
@@ -1545,8 +1580,107 @@ impl Game {
                 large: true,
             });
         }
+        for passage in &self.passages {
+            marks.push(minimap::Mark {
+                pos: glam::Vec2::new(
+                    passage.coordinates.0 as f32,
+                    passage.coordinates.1 as f32,
+                ),
+                color: egui::Color32::from_rgb(80, 220, 220),
+                large: true,
+            });
+        }
         self.minimap
             .show(context, &self.level, center, heading, &marks);
+    }
+
+    /// Near a world passage: HUD prompt. Keeps a just-used stub until we leave reach.
+    fn update_passage_proximity(&mut self) {
+        if !self.screen.is_world() {
+            return;
+        }
+        let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) else {
+            return;
+        };
+        let pos = player.position();
+        let at = (pos.x as i32, pos.y as i32);
+        let near = level::spiral::nearest_passage(
+            &self.passages,
+            at,
+            self.level.size,
+            config::passages::Passage::DEFAULT_REACH,
+        );
+        match near {
+            Some(passage) => {
+                if self
+                    .passage_note
+                    .as_deref()
+                    .is_some_and(|n| n.contains("stubbed for this slice"))
+                {
+                    return;
+                }
+                self.passage_note = Some(level::spiral::passage_prompt(passage, &self.spiral));
+            }
+            None => {
+                if self
+                    .passage_note
+                    .as_deref()
+                    .is_some_and(|n| n.contains("in sight") || n.contains("Passage closed"))
+                {
+                    self.passage_note = None;
+                }
+            }
+        }
+    }
+
+    /// Space at a charged passage: spend one slot. Dest world load is stubbed.
+    fn try_use_passage(&mut self) -> bool {
+        if !self.screen.is_world() {
+            return false;
+        }
+        let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) else {
+            return false;
+        };
+        let pos = player.position();
+        let at = (pos.x as i32, pos.y as i32);
+        let Some((id, dest)) = level::spiral::nearest_passage(
+            &self.passages,
+            at,
+            self.level.size,
+            config::passages::Passage::DEFAULT_REACH,
+        )
+        .map(|p| (p.id.clone(), p.to_world.clone())) else {
+            return false;
+        };
+        if !self.spiral.is_ready() {
+            return false;
+        }
+        if !self.spiral.discharge() {
+            return false;
+        }
+        self.passage_note = Some(format!(
+            "Portal ride to {dest} ({id}) is stubbed for this slice."
+        ));
+        log::info!("Passage {id} to {dest} used; dest load stubbed");
+        true
+    }
+
+    fn draw_spiral_hud(&self, context: &egui::Context) {
+        egui::Area::new(egui::Id::new("spiral-hud"))
+            .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 12.0))
+            .order(egui::Order::Foreground)
+            .show(context, |ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Spiral {}/{}",
+                        self.spiral.charge, self.spiral.capacity
+                    ))
+                    .strong(),
+                );
+                if let Some(note) = self.passage_note.as_deref() {
+                    ui.label(note);
+                }
+            });
     }
 }
 
@@ -1750,6 +1884,7 @@ impl Application for Game {
         if !riding {
             self.try_begin_escave_visit();
         }
+        self.update_passage_proximity();
 
         if self.flood.step(&mut self.level, delta) {
             self.render.terrain.dirty_flood = true;
@@ -2036,6 +2171,9 @@ impl Application for Game {
         if self.ui.enabled && self.screen.is_world() {
             self.draw_minimap(context);
         }
+        if self.ui.enabled {
+            self.draw_spiral_hud(context);
+        }
 
         if !self.ui.enabled || !self.screen.is_world() {
             if sync_slots || leave_escave {
@@ -2206,7 +2344,14 @@ impl Application for Game {
                             self.life.particles.particles().len(),
                             self.life.swarm.insects().len()
                         ));
-                        ui.label("Space: enter escave / open tunnel");
+                        ui.label(format!(
+                            "Spiral {}/{}",
+                            self.spiral.charge, self.spiral.capacity
+                        ));
+                        if let Some(note) = self.passage_note.as_deref() {
+                            ui.label(note);
+                        }
+                        ui.label("Space: enter escave / open tunnel / use passage");
                         ui.label("F/G: fire bays 0/1");
                         ui.add(
                             egui::Slider::new(&mut player.armor, 0..=player.max_armor.max(1))
