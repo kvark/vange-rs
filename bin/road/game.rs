@@ -318,6 +318,8 @@ struct RemoteAgent {
     render_transform: space::Transform,
     /// Interpolation progress [0..1], advances each frame.
     interp_t: f32,
+    /// False until the first WorldState pose; avoids lerping from IDENTITY.
+    pose_ready: bool,
     /// Last spiral charge from WorldState (for change logs / HUD).
     spiral_charge: u8,
 }
@@ -774,8 +776,17 @@ impl Game {
         let front_face = cam.front_face();
 
         let mut agents = vec![player_agent];
+        // Local NPCs look like other players in MP and were misread as
+        // stale remotes during joint playtests. Skip them when joining a
+        // server from the CLI; the Multiplayer Connect button clears any
+        // that were spawned for offline play.
+        let npc_count = if server_addr.is_some() {
+            0
+        } else {
+            settings.game.other.count
+        };
         // populate with random agents
-        for i in 0..settings.game.other.count {
+        for i in 0..npc_count {
             use rand::{Rng, prelude::SliceRandom};
             let color = match rng.gen_range(0..3) {
                 0 => BodyColor::Green,
@@ -2403,9 +2414,16 @@ impl Application for Game {
                             .or_else(|| self.db.cars.values().next());
                         if let Some(car) = car_info {
                             let body_color = BodyColor::from_value(color);
-                            self.remote_agents.insert(
-                                player_id,
-                                RemoteAgent {
+                            // Keep an existing pose if WorldState already
+                            // arrived (or this is a duplicate Joined).
+                            self.remote_agents
+                                .entry(player_id)
+                                .and_modify(|remote| {
+                                    remote.name = player_name.clone();
+                                    remote.car = car.clone();
+                                    remote.color = body_color;
+                                })
+                                .or_insert_with(|| RemoteAgent {
                                     name: player_name.clone(),
                                     car: car.clone(),
                                     color: body_color,
@@ -2413,9 +2431,9 @@ impl Application for Game {
                                     target_transform: space::Transform::IDENTITY,
                                     render_transform: space::Transform::IDENTITY,
                                     interp_t: 1.0,
+                                    pose_ready: false,
                                     spiral_charge: 0,
-                                },
-                            );
+                                });
                         }
                     }
                     NetEvent::PlayerLeft { player_id } => {
@@ -2472,10 +2490,20 @@ impl Application for Game {
                             } else if let Some(remote) =
                                 self.remote_agents.get_mut(&agent_state.player_id)
                             {
-                                // Push current target to prev, set new target
-                                remote.prev_transform = remote.target_transform;
-                                remote.target_transform = server_transform;
-                                remote.interp_t = 0.0;
+                                if !remote.pose_ready {
+                                    // First snapshot: hard-snap so we never
+                                    // lerp from PlayerJoined's IDENTITY.
+                                    remote.prev_transform = server_transform;
+                                    remote.target_transform = server_transform;
+                                    remote.render_transform = server_transform;
+                                    remote.interp_t = 1.0;
+                                    remote.pose_ready = true;
+                                } else {
+                                    // Push current target to prev, set new target
+                                    remote.prev_transform = remote.target_transform;
+                                    remote.target_transform = server_transform;
+                                    remote.interp_t = 0.0;
+                                }
                             }
                         }
                     }
@@ -2862,6 +2890,19 @@ impl Application for Game {
                         self.spiral.charge, self.spiral.capacity
                     ));
                     for remote in self.remote_agents.values() {
+                        let r = remote.render_transform.disp;
+                        let t = remote.target_transform.disp;
+                        ui.label(format!(
+                            "{} render XY: ({:.2}, {:.2})",
+                            remote.name, r.x, r.y
+                        ));
+                        ui.label(format!(
+                            "{} target XY: ({:.2}, {:.2}){}",
+                            remote.name,
+                            t.x,
+                            t.y,
+                            if remote.pose_ready { "" } else { " (waiting)" }
+                        ));
                         ui.label(format!(
                             "Spiral ({}): {}",
                             remote.name, remote.spiral_charge
@@ -2894,6 +2935,9 @@ impl Application for Game {
                             &player.car_name,
                             player.color as u8,
                         ));
+                        // Drop offline NPCs so they cannot be mistaken for
+                        // remote players (joint playtest false positive).
+                        self.agents.retain(|a| a.spirit == Spirit::Player);
                         self.mp_state.connected = true;
                         self.mp_state.status = "Connecting...".to_string();
                     }
