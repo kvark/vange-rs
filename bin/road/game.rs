@@ -2459,10 +2459,11 @@ impl Application for Game {
 
                             if Some(agent_state.player_id) == my_id {
                                 // Sync local player with server state.
-                                // Both client and server run physics independently,
-                                // so just snap to keep them consistent.
-                                // Skip while Tweaks Position is being edited
-                                // (debug hold); remote agents still update.
+                                // Both sides run physics; a hard snap every
+                                // 20 Hz WorldState fights contact (wedge /
+                                // jump-mass). Blend small pose error; snap
+                                // large desync. Skip while Tweaks Position
+                                // is being edited (debug hold).
                                 let player =
                                     self.agents.iter_mut().find(|a| a.spirit == Spirit::Player);
                                 if let Some(player) = player
@@ -2471,20 +2472,28 @@ impl Application for Game {
                                         ref mut dynamo,
                                     } = player.physics
                                 {
-                                    if !self.server_synced {
+                                    let first_sync = !self.server_synced;
+                                    if first_sync {
                                         // First sync: hard-snap camera to
                                         // avoid slow chase from old spawn.
                                         self.server_synced = true;
                                         self.cam.focus_on(&server_transform);
                                     }
                                     if self.tweaks_pos_hold <= 0.0 {
-                                        *transform = server_transform;
-                                        dynamo.linear_velocity =
-                                            Vec3::from(agent_state.dynamo.linear_velocity);
-                                        dynamo.angular_velocity =
-                                            Vec3::from(agent_state.dynamo.angular_velocity);
-                                        dynamo.traction = agent_state.dynamo.traction;
-                                        dynamo.rudder = agent_state.dynamo.rudder;
+                                        let hard = if first_sync {
+                                            *transform = server_transform;
+                                            true
+                                        } else {
+                                            transform.reconcile_world_state(&server_transform)
+                                        };
+                                        if hard {
+                                            dynamo.linear_velocity =
+                                                Vec3::from(agent_state.dynamo.linear_velocity);
+                                            dynamo.angular_velocity =
+                                                Vec3::from(agent_state.dynamo.angular_velocity);
+                                            dynamo.traction = agent_state.dynamo.traction;
+                                            dynamo.rudder = agent_state.dynamo.rudder;
+                                        }
                                     }
                                 }
                             } else if let Some(remote) =

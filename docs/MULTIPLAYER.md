@@ -92,10 +92,21 @@ cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
 cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
 ```
 
+## Local player pose (blend vs snap)
+
+Client and server both run physics. A hard snap on every 20 Hz `WorldState`
+fights local contact — a wedged car gets slammed back into geometry (jump-mass
+spam). The local player now blends small position/rotation errors toward the
+server and hard-snaps only when `|Δpos|` (or rotation) exceeds a threshold
+sized for 20 Hz authority (`Transform::WORLD_STATE_SNAP_POS` / `_SNAP_ROT` /
+`_BLEND`). The first snapshot still hard-snaps camera and pose. Tweaks
+Position hold / `SetPose` is unchanged.
+
 ## Tweaks Position (debug hold + SetPose)
 
-In multiplayer, `WorldState` normally snaps the local player's transform to the
-server each tick. Editing **Player → Position** in the Tweaks panel (egui
+In multiplayer, `WorldState` corrects the local player's transform toward the
+server each tick (soft blend under a pose-error threshold; hard-snap above it).
+Editing **Player → Position** in the Tweaks panel (egui
 `DragValue`) would otherwise fight that snap. While those X/Y controls are
 focused or being dragged — and for a short hold after — the client skips
 applying the server transform/dynamo to the local agent only.
@@ -123,6 +134,8 @@ cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
 ```bash
 cargo test -p vangers-net
 cargo test --test net_physics
+# local WorldState blend vs snap:
+cargo test --lib space::reconcile_tests
 # cycle unit tests (incl. sync_authority):
 cargo test --lib level::cycle
 # server integration (incl. SetPose / SetSpiral → WorldState, reclaim):
