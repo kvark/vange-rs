@@ -2812,17 +2812,25 @@ impl WebHandler {
                                 scale: me.transform.scale,
                             };
                             if let Some(ref mut agent) = gpu.app.agent {
-                                if !gpu.app.server_synced {
+                                let first_sync = !gpu.app.server_synced;
+                                if first_sync {
                                     gpu.app.server_synced = true;
                                     gpu.app.cam.focus_on(&server_transform);
                                 }
-                                agent.transform = server_transform;
-                                agent.dynamo.linear_velocity =
-                                    glam::Vec3::from(me.dynamo.linear_velocity);
-                                agent.dynamo.angular_velocity =
-                                    glam::Vec3::from(me.dynamo.angular_velocity);
-                                agent.dynamo.traction = me.dynamo.traction;
-                                agent.dynamo.rudder = me.dynamo.rudder;
+                                let hard = if first_sync {
+                                    agent.transform = server_transform;
+                                    true
+                                } else {
+                                    agent.transform.reconcile_world_state(&server_transform)
+                                };
+                                if hard {
+                                    agent.dynamo.linear_velocity =
+                                        glam::Vec3::from(me.dynamo.linear_velocity);
+                                    agent.dynamo.angular_velocity =
+                                        glam::Vec3::from(me.dynamo.angular_velocity);
+                                    agent.dynamo.traction = me.dynamo.traction;
+                                    agent.dynamo.rudder = me.dynamo.rudder;
+                                }
                             } else {
                                 // No local vehicle mesh — at least park the camera.
                                 let pos = server_transform.disp;

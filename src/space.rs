@@ -21,6 +21,17 @@ impl Transform {
         disp: Vec3::ZERO,
     };
 
+    /// Hard-snap `|Δpos|` for 20 Hz `WorldState` (world units).
+    ///
+    /// Open-loop 20-vs-60 Hz driving stays well under 1 unit per tick; a
+    /// mechos is ~20 units long. Contact jitter blends; spawn / teleport snap.
+    pub const WORLD_STATE_SNAP_POS: f32 = 8.0;
+    /// Optional rotation gate (radians, ~29°). Small contact tilt blends;
+    /// a flipped / desynced pose still snaps.
+    pub const WORLD_STATE_SNAP_ROT: f32 = 0.5;
+    /// Blend factor per 20 Hz snapshot (~76% correction in 200 ms).
+    pub const WORLD_STATE_BLEND: f32 = 0.25;
+
     pub fn concat(&self, other: &Transform) -> Transform {
         Transform {
             scale: self.scale * other.scale,
@@ -49,6 +60,27 @@ impl Transform {
 
     pub fn to_mat4(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(Vec3::splat(self.scale), self.rot, self.disp)
+    }
+
+    /// Soft-correct toward `server` for local-player WorldState reconcile.
+    ///
+    /// Blends translation / rotation when the error is small so contact
+    /// physics is not slammed back into geometry every tick. Hard-snaps
+    /// when `|Δpos|` or rotation exceeds the 20 Hz thresholds.
+    /// Returns `true` if a hard snap was applied (caller should copy dynamo).
+    pub fn reconcile_world_state(&mut self, server: &Transform) -> bool {
+        let delta_pos = self.disp.distance(server.disp);
+        let delta_rot = self.rot.angle_between(server.rot);
+        if delta_pos > Self::WORLD_STATE_SNAP_POS || delta_rot > Self::WORLD_STATE_SNAP_ROT {
+            *self = *server;
+            true
+        } else {
+            let t = Self::WORLD_STATE_BLEND;
+            self.disp = self.disp.lerp(server.disp, t);
+            self.rot = self.rot.slerp(server.rot, t);
+            self.scale += (server.scale - self.scale) * t;
+            false
+        }
     }
 }
 
@@ -1000,5 +1032,58 @@ mod ground_tests {
             "should still sit behind the hull, got {dist} at {:?}",
             cam.loc
         );
+    }
+}
+
+#[cfg(test)]
+mod reconcile_tests {
+    use super::*;
+
+    fn at(disp: Vec3, yaw: f32) -> Transform {
+        Transform {
+            disp,
+            rot: Quat::from_rotation_z(yaw),
+            scale: 1.0,
+        }
+    }
+
+    #[test]
+    fn blends_small_position_error() {
+        let server = at(Vec3::new(10.0, 0.0, 0.0), 0.0);
+        let mut local = at(Vec3::new(10.0 + 2.0, 0.0, 0.0), 0.0);
+        assert!(
+            !local.reconcile_world_state(&server),
+            "2u is under SNAP_POS"
+        );
+        let expected = 2.0 * (1.0 - Transform::WORLD_STATE_BLEND);
+        assert!((local.disp.x - (10.0 + expected)).abs() < 1e-5);
+        assert_eq!(local.disp.y, 0.0);
+    }
+
+    #[test]
+    fn snaps_large_position_error() {
+        let server = at(Vec3::new(10.0, 0.0, 0.0), 0.0);
+        let mut local = at(Vec3::new(10.0 + 20.0, 0.0, 0.0), 0.0);
+        assert!(local.reconcile_world_state(&server));
+        assert_eq!(local, server);
+    }
+
+    #[test]
+    fn snaps_large_rotation_error() {
+        let server = at(Vec3::ZERO, 0.0);
+        let mut local = at(Vec3::ZERO, 1.2); // ~69°
+        assert!(local.reconcile_world_state(&server));
+        assert_eq!(local, server);
+    }
+
+    #[test]
+    fn blends_small_rotation_error() {
+        let server = at(Vec3::ZERO, 0.0);
+        let yaw = 0.2; // ~11°
+        let mut local = at(Vec3::ZERO, yaw);
+        assert!(!local.reconcile_world_state(&server));
+        let got = local.rot.angle_between(server.rot);
+        let expect = yaw * (1.0 - Transform::WORLD_STATE_BLEND);
+        assert!((got - expect).abs() < 1e-4, "got {got}, expect {expect}");
     }
 }
