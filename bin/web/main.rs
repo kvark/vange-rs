@@ -30,6 +30,29 @@ const DEFAULT_LEVEL: &str = "fostral";
 /// plane does not clip into the surface on a slope.
 const CAMERA_CLEARANCE: f32 = 4.0;
 
+/// Chase-camera settle: pull out of hills toward the car, then re-aim
+/// look-ahead so a collision move does not leave a stale rotation that
+/// fights the see-through veil. Matches `bin/road/game.rs`.
+fn chase_cam_avoid_and_reaim(
+    cam: &mut space::Camera,
+    level: &level::Level,
+    target: &space::Transform,
+    look_ahead: f32,
+) {
+    cam.avoid_terrain(level, target.disp, CAMERA_CLEARANCE);
+    if look_ahead.abs() > 1e-4 {
+        let mut front = target.rot * glam::Vec3::Y;
+        front.z = 0.0;
+        let twist = if front.length_squared() > 1e-8 {
+            glam::Quat::from_rotation_arc(glam::Vec3::Y, front.normalize())
+        } else {
+            glam::Quat::IDENTITY
+        };
+        let look_at = target.disp + twist * glam::Vec3::new(0.0, look_ahead, 0.0);
+        cam.rot = space::Camera::look_rotation(look_at - cam.loc);
+    }
+}
+
 /// INI path inside the per-level zip. Each `<id>.zip` stores the level
 /// files at the archive root (no `<id>/` prefix), so the INI key is
 /// just `"world.ini"`.
@@ -795,7 +818,7 @@ impl WebApp {
             cam.loc = a.transform.disp + glam::vec3(0.0, 0.0, 200.0);
             for _ in 0..120 {
                 cam.follow(&a.transform, 1.0 / 60.0, &follow);
-                cam.keep_above_ground(&level, CAMERA_CLEARANCE);
+                chase_cam_avoid_and_reaim(&mut cam, &level, &a.transform, follow.look_ahead);
             }
         }
 
@@ -1487,7 +1510,15 @@ impl WebApp {
                 .add_model(&agent.car.model, &agent.transform, None, agent.color);
             let r = (agent.phys_data.bbox.radius * agent.car.scale).max(8.0);
             let p = self.level.display_pos(agent.transform.disp, self.cam.loc);
-            self.render.set_focus(p, r * 1.4);
+            // Only punch the see-through cone when terrain still blocks
+            // the car after camera avoidance — otherwise solid ground
+            // (especially the long cam→car strip at turbo pullback).
+            if space::Camera::terrain_blocks_view(&self.level, self.cam.loc, p, CAMERA_CLEARANCE)
+            {
+                self.render.set_focus(p, r * 1.15);
+            } else {
+                self.render.clear_focus();
+            }
         } else {
             self.render.clear_focus();
         }
@@ -2651,10 +2682,14 @@ impl WebHandler {
                 && let Some(ref agent) = gpu.app.agent
             {
                 let follow = gpu.app.follow;
-                gpu.app.cam.follow(&agent.transform, dt, &follow);
-                gpu.app
-                    .cam
-                    .keep_above_ground(&gpu.app.level, CAMERA_CLEARANCE);
+                let target = agent.transform;
+                gpu.app.cam.follow(&target, dt, &follow);
+                chase_cam_avoid_and_reaim(
+                    &mut gpu.app.cam,
+                    &gpu.app.level,
+                    &target,
+                    follow.look_ahead,
+                );
             }
         } else {
             let riding = gpu.app.step_ride(dt);
@@ -2715,8 +2750,14 @@ impl WebHandler {
                     };
                     follow.offset.y += (speed_xy * 0.03).min(3.0);
                     follow.look_ahead += (speed_xy * 0.04).min(4.0);
-                    gpu.app.cam.follow(&agent.transform, dt, &follow);
-                    gpu.app.cam.keep_above_ground(level_ref, CAMERA_CLEARANCE);
+                    let target = agent.transform;
+                    gpu.app.cam.follow(&target, dt, &follow);
+                    chase_cam_avoid_and_reaim(
+                        &mut gpu.app.cam,
+                        level_ref,
+                        &target,
+                        follow.look_ahead,
+                    );
                 }
             } else if !connected {
                 // No vehicle loaded — fall back to the free camera. Same
