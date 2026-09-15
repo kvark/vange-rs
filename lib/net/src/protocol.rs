@@ -53,6 +53,9 @@ pub enum ServerMessage {
         /// Story-cycle snapshot when the hosted world runs cycles.
         /// `None` for test / bonus worlds with no bunch.
         cycle: Option<CycleState>,
+        /// Moving-land playback when the hosted world has `*.vot` locations.
+        /// `None` when empty / unloaded. Server owns phase; clients apply.
+        moving: Option<MovingLandState>,
     },
 }
 
@@ -86,6 +89,28 @@ pub struct CycleFade {
 pub struct PlayerCirt {
     pub player_id: PlayerId,
     pub held: Vec<i32>,
+}
+
+/// Authoritative moving-land playback snapshot (frame / phase per location).
+///
+/// Clients connected to a multiplayer server apply this instead of advancing
+/// `MovingWorld` locally, so Tweaks frame/phase and terrain stay aligned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MovingLandState {
+    pub locations: Vec<LocationPhase>,
+}
+
+/// Playback state of one moving-land location instance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LocationPhase {
+    /// Index of the frame currently being played.
+    pub frame: u16,
+    /// `cStage` — quants elapsed in this loop (`-1` before the first).
+    pub stage: i32,
+    /// `goPh` — park target, or `-1` (`FREE_RUNNING`).
+    pub go_phase: i32,
+    /// Per-frame quant counter for `frame` (progress within the period).
+    pub step: i32,
 }
 
 /// Player control input, sent from client to server.
@@ -198,17 +223,19 @@ mod tests {
                 spiral_charge: 3,
             }],
             cycle: None,
+            moving: None,
         };
         let encoded = encode(&msg);
         let (decoded, consumed): (ServerMessage, _) = decode(&encoded).unwrap();
         assert_eq!(consumed, encoded.len());
         match decoded {
-            ServerMessage::WorldState { tick, agents, cycle } => {
+            ServerMessage::WorldState { tick, agents, cycle, moving } => {
                 assert_eq!(tick, 42);
                 assert_eq!(agents.len(), 1);
                 assert_eq!(agents[0].player_id, 1);
                 assert_eq!(agents[0].spiral_charge, 3);
                 assert!(cycle.is_none());
+                assert!(moving.is_none());
             }
             _ => panic!("wrong variant"),
         }
@@ -232,6 +259,14 @@ mod tests {
                     held: vec![7, 0, 2],
                 }],
             }),
+            moving: Some(MovingLandState {
+                locations: vec![LocationPhase {
+                    frame: 2,
+                    stage: 5,
+                    go_phase: -1,
+                    step: 3,
+                }],
+            }),
         };
         let encoded = encode(&msg);
         let (decoded, consumed): (ServerMessage, _) = decode(&encoded).unwrap();
@@ -239,6 +274,7 @@ mod tests {
         match decoded {
             ServerMessage::WorldState {
                 cycle: Some(cycle),
+                moving: Some(moving),
                 ..
             } => {
                 assert_eq!(cycle.current, 1);
@@ -249,8 +285,13 @@ mod tests {
                 assert_eq!(fade.left, 40);
                 assert_eq!(cycle.players.len(), 1);
                 assert_eq!(cycle.players[0].held, vec![7, 0, 2]);
+                assert_eq!(moving.locations.len(), 1);
+                assert_eq!(moving.locations[0].frame, 2);
+                assert_eq!(moving.locations[0].stage, 5);
+                assert_eq!(moving.locations[0].go_phase, -1);
+                assert_eq!(moving.locations[0].step, 3);
             }
-            _ => panic!("expected WorldState with cycle"),
+            _ => panic!("expected WorldState with cycle and moving"),
         }
     }
 

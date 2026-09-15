@@ -964,6 +964,10 @@ impl Game {
     /// Advances the moving land and hands the touched rectangles to the
     /// renderer. Same [`level::moving::MovingWorld::step`] the web build uses.
     fn step_moving_land(&mut self, delta: f32) {
+        // Multiplayer: server owns playback via `MovingLandState` on WorldState.
+        if self.mp_state.connected {
+            return;
+        }
         let height = self.level.geometry.height as u16;
         let touches = self.agents.iter().map(|a| {
             let pos = a.position();
@@ -973,6 +977,23 @@ impl Game {
             }
         });
         let regions = self.moving.step(&mut self.level, delta, touches);
+        self.render.dirty_terrain(regions, height);
+    }
+
+    /// Apply server moving-land playback (frame / phase / step per location).
+    fn apply_moving_land_state(&mut self, state: &vangers_net::MovingLandState) {
+        let height = self.level.geometry.height as u16;
+        let playback: Vec<level::moving::PlaybackState> = state
+            .locations
+            .iter()
+            .map(|p| level::moving::PlaybackState {
+                frame: p.frame as usize,
+                stage: p.stage,
+                go_phase: p.go_phase,
+                step: p.step,
+            })
+            .collect();
+        let regions = self.moving.sync_authority(&playback, &mut self.level);
         self.render.dirty_terrain(regions, height);
     }
 
@@ -2440,9 +2461,17 @@ impl Application for Game {
                         log::info!("Remote player {} left", player_id);
                         self.remote_agents.remove(&player_id);
                     }
-                    NetEvent::WorldState { agents, cycle, .. } => {
+                    NetEvent::WorldState {
+                        agents,
+                        cycle,
+                        moving,
+                        ..
+                    } => {
                         if let Some(ref cycle_state) = cycle {
                             self.apply_cycle_state(cycle_state);
+                        }
+                        if let Some(ref moving_state) = moving {
+                            self.apply_moving_land_state(moving_state);
                         }
                         self.apply_spiral_from_world(&agents, my_id);
                         for agent_state in &agents {

@@ -1117,7 +1117,11 @@ impl WebApp {
         }
     }
 
-    fn step_moving_land(&mut self, delta: f32) {
+    fn step_moving_land(&mut self, delta: f32, networked: bool) {
+        // Multiplayer: server owns playback via `MovingLandState` on WorldState.
+        if networked {
+            return;
+        }
         let height = self.level.geometry.height as u16;
         let touches = self.agent.as_ref().map(|a| {
             let pos = a.transform.disp;
@@ -1127,6 +1131,23 @@ impl WebApp {
             }
         });
         let regions = self.moving.step(&mut self.level, delta, touches);
+        self.render.dirty_terrain(regions, height);
+    }
+
+    /// Apply server moving-land playback (frame / phase / step per location).
+    fn apply_moving_land_state(&mut self, state: &vangers_net::MovingLandState) {
+        let height = self.level.geometry.height as u16;
+        let playback: Vec<level::moving::PlaybackState> = state
+            .locations
+            .iter()
+            .map(|p| level::moving::PlaybackState {
+                frame: p.frame as usize,
+                stage: p.stage,
+                go_phase: p.go_phase,
+                step: p.step,
+            })
+            .collect();
+        let regions = self.moving.sync_authority(&playback, &mut self.level);
         self.render.dirty_terrain(regions, height);
     }
 
@@ -2669,7 +2690,7 @@ impl WebHandler {
 
         // Moving land first, so the car drives on this quant's surface
         // (same order as the native game).
-        gpu.app.step_moving_land(dt);
+        gpu.app.step_moving_land(dt, connected);
         if space && !gpu.app.space_held {
             gpu.app.try_use();
         }
@@ -2834,10 +2855,18 @@ impl WebHandler {
                     vangers_net::ServerMessage::PlayerLeft { player_id } => {
                         log::info!("Player {} left", player_id);
                     }
-                    vangers_net::ServerMessage::WorldState { agents, cycle, .. } => {
+                    vangers_net::ServerMessage::WorldState {
+                        agents,
+                        cycle,
+                        moving,
+                        ..
+                    } => {
                         if let Some(ref cycle_state) = cycle {
                             gpu.app.apply_cycle_state(cycle_state);
                             gpu.app.apply_player_cirt(ws.player_id, cycle_state);
+                        }
+                        if let Some(ref moving_state) = moving {
+                            gpu.app.apply_moving_land_state(moving_state);
                         }
                         if let Some(my_id) = ws.player_id
                             && let Some(me) = agents.iter().find(|a| a.player_id == my_id)

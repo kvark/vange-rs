@@ -4,8 +4,8 @@ use vangers::{
     space,
 };
 use vangers_net::{
-    decode, encode, AgentState, ClientMessage, CycleFade, CycleState, NetControl, NetDynamo,
-    NetTransform, PlayerCirt, PlayerId, ServerMessage,
+    decode, encode, AgentState, ClientMessage, CycleFade, CycleState, LocationPhase,
+    MovingLandState, NetControl, NetDynamo, NetTransform, PlayerCirt, PlayerId, ServerMessage,
 };
 
 use clap::Parser;
@@ -404,6 +404,20 @@ async fn main() {
         info!("No story cycle for '{}' (test/bonus world or missing data)", cycle_world);
     }
 
+    // Moving land (animated *.vot patches). Server owns playback so clients
+    // share the same frame / phase instead of free-running independently.
+    let mut moving = level::moving::MovingWorld::load(&level_config, None);
+    if moving.is_empty() {
+        info!("No moving land for '{}'", cycle_world);
+    } else {
+        info!(
+            "Moving land loaded for '{}': {} locations, {} engines",
+            cycle_world,
+            moving.land.locations.len(),
+            moving.triggers.engines.len()
+        );
+    }
+
     // Load physics constants and car data from game files when available.
     let (common, car_physics) = if let Some(ref settings) = settings {
         let common = config::common::load(settings.open_relative("common.prm"));
@@ -629,6 +643,37 @@ async fn main() {
                     None
                 };
 
+                // Moving land: one quant per tick with all joined players as
+                // sensor touches (doors / cyclics see everyone).
+                let moving_state = if moving.is_empty() {
+                    None
+                } else {
+                    let touches: Vec<level::moving::Touch> = players
+                        .values()
+                        .filter(|a| a.joined)
+                        .map(|a| {
+                            let pos = a.transform.disp;
+                            level::moving::Touch {
+                                pos: (pos.x as i32, pos.y as i32, pos.z as i32),
+                                radius: (a.phys_data.bbox.radius * a.transform.scale) as i32,
+                            }
+                        })
+                        .collect();
+                    let _ = moving.run_quants(&mut level, 1, touches);
+                    Some(MovingLandState {
+                        locations: moving
+                            .playback_states()
+                            .into_iter()
+                            .map(|p| LocationPhase {
+                                frame: p.frame.min(u16::MAX as usize) as u16,
+                                stage: p.stage,
+                                go_phase: p.go_phase,
+                                step: p.step,
+                            })
+                            .collect(),
+                    })
+                };
+
                 // Collect agent states and broadcast
                 let agents: Vec<AgentState> = players
                     .iter()
@@ -640,6 +685,7 @@ async fn main() {
                     tick,
                     agents,
                     cycle: cycle_state,
+                    moving: moving_state,
                 });
 
                 let mut disconnected = Vec::new();
