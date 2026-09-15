@@ -1,4 +1,4 @@
-use vangers_net::{AgentState, ClientMessage, CycleState, NetControl, NetTransform, PlayerId, ServerMessage, decode, encode};
+use vangers_net::{AgentState, ClientMessage, CycleState, MovingLandState, NetControl, NetTransform, PlayerId, ServerMessage, decode, encode};
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -24,6 +24,7 @@ pub enum NetEvent {
         _tick: u32,
         agents: Vec<AgentState>,
         cycle: Option<CycleState>,
+        moving: Option<MovingLandState>,
     },
     Disconnected,
 }
@@ -104,13 +105,17 @@ impl NetworkClient {
                                 ServerMessage::PlayerLeft { player_id } => {
                                     NetEvent::PlayerLeft { player_id }
                                 }
-                                ServerMessage::WorldState { tick, agents, cycle } => {
-                                    NetEvent::WorldState {
-                                        _tick: tick,
-                                        agents,
-                                        cycle,
-                                    }
-                                }
+                                ServerMessage::WorldState {
+                                    tick,
+                                    agents,
+                                    cycle,
+                                    moving,
+                                } => NetEvent::WorldState {
+                                    _tick: tick,
+                                    agents,
+                                    cycle,
+                                    moving,
+                                },
                             };
                             if recv_tx.send(event).is_err() {
                                 return;

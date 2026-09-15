@@ -27,6 +27,15 @@ const PRECISION: u32 = 16;
 /// stopping at a phase.
 pub const FREE_RUNNING: i32 = -1;
 
+/// Compact playback snapshot of one [`Location`] for multiplayer sync.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlaybackState {
+    pub frame: usize,
+    pub stage: i32,
+    pub go_phase: i32,
+    pub step: i32,
+}
+
 /// A single moving-land instance: the shared frame data plus the playback
 /// state (`cFrame`/`cStage`/`steps`/`alt` of the original).
 ///
@@ -106,6 +115,91 @@ impl Location {
     pub fn go_phase(&self) -> i32 {
         self.go_phase
     }
+
+    /// Compact playback fields for multiplayer `MovingLandState`.
+    pub fn playback_state(&self) -> PlaybackState {
+        PlaybackState {
+            frame: self.frame,
+            stage: self.stage,
+            go_phase: self.go_phase,
+            step: self.steps.get(self.frame).copied().unwrap_or(0),
+        }
+    }
+
+    /// Apply a server playback snapshot: match frame / phase / step on the
+    /// level instead of free-running locally.
+    ///
+    /// Same frame with a small step advance applies quants incrementally;
+    /// larger jumps rebuild via [`Self::set_phase`].
+    pub fn sync_authority(
+        &mut self,
+        target: &PlaybackState,
+        level: &mut Level,
+        regions: &mut Vec<Region>,
+    ) {
+        if self.source.frames.is_empty() {
+            self.go_phase = target.go_phase;
+            self.stage = target.stage;
+            return;
+        }
+        let frame = target.frame.min(self.source.frames.len().saturating_sub(1));
+        let step = target.step.max(0);
+        let cur_step = self.steps.get(self.frame).copied().unwrap_or(0);
+
+        if self.frame == frame && cur_step == step && self.stage == target.stage {
+            self.go_phase = target.go_phase;
+            return;
+        }
+
+        // Common 20 Hz path: one (or a few) quants ahead on the same frame.
+        if self.frame == frame && cur_step < step && step - cur_step <= Self::SYNC_CATCH_UP {
+            let saved = target.go_phase;
+            self.go_phase = FREE_RUNNING;
+            while self.frame == frame && self.steps[self.frame] < step {
+                if self.step_frame(level, regions, false) {
+                    self.advance_frame();
+                    break;
+                }
+            }
+            self.stage = target.stage;
+            self.go_phase = saved;
+            if self.frame == frame {
+                self.steps[self.frame] = step;
+            }
+            return;
+        }
+
+        // Full rebuild to the server frame, then catch mid-frame step.
+        // Start "behind" frame 0 so [`Self::set_phase`] still walks the loop
+        // when the target is the first frame (join mid-session / wrap).
+        self.reset();
+        self.go_phase = FREE_RUNNING;
+        if !self.source.frames.is_empty() {
+            if frame == 0 {
+                let last = self.source.frames.len() - 1;
+                self.frame = last;
+                self.steps[last] = self.source.frames[last].period.max(1);
+            }
+            self.set_phase(frame, level, regions);
+            for _ in 0..step {
+                if self.frame != frame {
+                    break;
+                }
+                if self.step_frame(level, regions, false) {
+                    self.advance_frame();
+                    break;
+                }
+            }
+        }
+        if self.frame == frame && frame < self.steps.len() {
+            self.steps[frame] = step;
+        }
+        self.stage = target.stage;
+        self.go_phase = target.go_phase;
+    }
+
+    /// Max quants to catch up incrementally before a full `set_phase` rebuild.
+    const SYNC_CATCH_UP: i32 = 4;
 
     /// Park right where the location is, whatever phase that happens to be.
     pub fn park(&mut self) {
@@ -556,6 +650,26 @@ impl MovingLand {
             location.update(level, regions);
         }
     }
+
+    /// Playback snapshot of every location (server → `MovingLandState`).
+    pub fn playback_states(&self) -> Vec<PlaybackState> {
+        self.locations
+            .iter()
+            .map(Location::playback_state)
+            .collect()
+    }
+
+    /// Apply server playback to every location, collecting dirty regions.
+    pub fn sync_authority(
+        &mut self,
+        states: &[PlaybackState],
+        level: &mut Level,
+        regions: &mut Vec<Region>,
+    ) {
+        for (location, state) in self.locations.iter_mut().zip(states.iter()) {
+            location.sync_authority(state, level, regions);
+        }
+    }
 }
 
 /// A vehicle (or tool) standing on the land this quant.
@@ -682,6 +796,29 @@ impl MovingWorld {
         }
         self.time -= quants as f32 * MAIN_LOOP_TIME;
         self.run_quants(level, quants.min(Self::MAX_CATCH_UP), touches)
+    }
+
+    /// Snapshot for `WorldState.moving` (empty land → empty vec).
+    pub fn playback_states(&self) -> Vec<PlaybackState> {
+        self.land.playback_states()
+    }
+
+    /// Apply a server playback snapshot and return dirty terrain regions.
+    ///
+    /// Does not run sensors / engines — those stay server-owned in MP.
+    pub fn sync_authority(
+        &mut self,
+        states: &[PlaybackState],
+        level: &mut Level,
+    ) -> &[Region] {
+        self.regions.clear();
+        if self.land.is_empty() || states.is_empty() {
+            return &self.regions;
+        }
+        self.land.sync_authority(states, level, &mut self.regions);
+        self.regions.sort_unstable();
+        self.regions.dedup();
+        &self.regions
     }
 }
 
@@ -1232,5 +1369,35 @@ mod tests {
         ));
         assert_eq!(land.find("test"), Some(0));
         assert_eq!(land.find("absent"), None);
+    }
+
+    #[test]
+    fn sync_authority_matches_free_running_peer() {
+        let mut level_a = test_level();
+        let mut level_b = test_level();
+        let mut a = three_step_stairs();
+        let mut b = three_step_stairs();
+        let mut regions = Vec::new();
+
+        // Advance A a few quants; B stays behind, then snaps via sync.
+        for _ in 0..4 {
+            a.update(&mut level_a, &mut regions);
+        }
+        let snap = a.playback_state();
+        b.sync_authority(&snap, &mut level_b, &mut regions);
+
+        assert_eq!(b.current_frame(), a.current_frame());
+        assert_eq!(b.current_phase(), a.current_phase());
+        assert_eq!(b.go_phase(), a.go_phase());
+        assert_eq!(b.playback_state(), snap);
+        assert_eq!(level_b.height[0], level_a.height[0]);
+
+        // Incremental: one more quant on A, B catches up without full rebuild path.
+        regions.clear();
+        a.update(&mut level_a, &mut regions);
+        let snap = a.playback_state();
+        b.sync_authority(&snap, &mut level_b, &mut regions);
+        assert_eq!(b.playback_state(), snap);
+        assert_eq!(level_b.height[0], level_a.height[0]);
     }
 }

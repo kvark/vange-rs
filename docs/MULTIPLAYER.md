@@ -1,10 +1,12 @@
 # Multiplayer (native + web)
 
 Story in vange-rs is the world **cycle** (cirt gather → escave delivery →
-palette / light change), implemented in `src/level/cycle.rs`. In multiplayer
-the **server** owns gather / deliver / bank decay / stage advance and
-broadcasts a `CycleState` on every `WorldState`. Clients keep a local `Bunch`
-for palette fades and apply the snapshot so native TCP and web WS stay aligned.
+palette / light change), implemented in `src/level/cycle.rs`, plus **moving
+land** (`*.vot` patches in `src/level/moving.rs`). In multiplayer the
+**server** owns gather / deliver / bank decay / stage advance and moving-land
+playback, and broadcasts `CycleState` / `MovingLandState` on every
+`WorldState`. Clients apply those snapshots so native TCP and web WS stay
+aligned (solo still advances locally).
 
 ## Run
 
@@ -44,7 +46,8 @@ Protocol: TCP `7800` (native), WebSocket `7801` (wasm). Messages live in
 `lib/net` (`ClientMessage` / `ServerMessage`). `WorldState` carries
 `agents` (pose, dynamo, **`spiral_charge`**) plus optional
 `cycle: Option<CycleState>` (stage index, banks, light, fade progress,
-per-player cirtainer).
+per-player cirtainer) and optional `moving: Option<MovingLandState>`
+(per-location frame / stage / go_phase / step).
 
 ## Player identity on reconnect
 
@@ -88,6 +91,25 @@ cargo run -p vangers-server -- --port 7800 --ws-port 7801
 # Terminal B / C — Alice charges at a spiral station or escave; Bob watches
 # Multiplayer panel / logs for Alice’s spiral_charge. Alice Ctrl+C and reconnects
 # with the same --name → spiral still charged.
+cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
+cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
+```
+
+
+## Moving land (WorldState phase sync)
+
+Animated terrain patches (`*.vot` / `MovingWorld`) are **server-owned** in
+multiplayer. Each tick the server runs one moving-land quant (sensors see all
+joined players) and broadcasts `MovingLandState` on `WorldState`. Connected
+clients **apply** that snapshot instead of calling `MovingWorld::step` locally,
+so Tweaks “Moving land frame/phase” matches across Alice/Bob and joiners catch
+up immediately. Solo / offline still free-runs locally as before.
+
+```bash
+# Terminal A — server (world with moving land, e.g. Fostral)
+cargo run -p vangers-server -- --port 7800 --ws-port 7801
+
+# Terminal B / C — compare Tweaks → Moving land frame/phase
 cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
 cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
 ```
@@ -138,9 +160,11 @@ cargo test --test net_physics
 cargo test --lib space::reconcile_tests
 # cycle unit tests (incl. sync_authority):
 cargo test --lib level::cycle
+# moving-land sync_authority:
+cargo test --lib level::moving::tests::sync_authority_matches_free_running_peer
 # server integration (incl. SetPose / SetSpiral → WorldState, reclaim):
 cargo test -p vangers-server --test integration
 ```
 
 See the header comment in `tests/net_physics.rs` for how to extend that
-integration test with `CycleState` round-trips.
+integration test with `CycleState` / `MovingLandState` round-trips.
