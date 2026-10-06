@@ -3,6 +3,7 @@
 
 import argparse
 import pathlib
+import re
 import shutil
 import zipfile
 
@@ -18,6 +19,7 @@ INCLUDE = [
     "jcgt.bst",
     "ORCIDlogo.pdf",
     "CC-BY-ND.png",
+    "DATA-LICENSE.md",
 ]
 
 
@@ -25,6 +27,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="work/arxiv")
     parser.add_argument("--video", default="work/paper-video/terrain-methods.mp4")
+    parser.add_argument("--without-video", action="store_true",
+                        help="make a source-only review archive")
     args = parser.parse_args()
 
     destination = (ROOT / args.out).resolve()
@@ -40,17 +44,22 @@ def main():
             raise SystemExit(f"missing {path}; compile paper/paper.tex first")
         shutil.copy2(path, source / name)
 
-    for pdf in sorted((PAPER / "figures").glob("*.pdf")):
+    # Package only the figures used by the current manuscript. In particular,
+    # do not silently include obsolete analysis charts or old schematics.
+    manuscript = (PAPER / "paper.tex").read_text()
+    names = re.findall(r"\\methodfigure\{([^}]+)\}", manuscript)
+    for name in sorted(set(names)):
+        pdf = PAPER / "figures" / (name + ".pdf")
+        if not pdf.is_file():
+            raise SystemExit(f"missing manuscript figure: {pdf}")
         shutil.copy2(pdf, source / "figures" / pdf.name)
-    original = PAPER / "figures" / "original.jpg"
-    if not original.is_file():
-        raise SystemExit("missing paper/figures/original.jpg")
-    shutil.copy2(original, source / "figures" / "original.jpg")
 
     video = ROOT / args.video
-    if not video.is_file():
-        raise SystemExit(f"missing supplemental video: {video}")
-    shutil.copy2(video, source / "anc" / "terrain-methods.mp4")
+    if not args.without_video:
+        if not video.is_file():
+            raise SystemExit(f"missing supplemental video: {video}; "
+                             "use --without-video for a source-only review")
+        shutil.copy2(video, source / "anc" / "terrain-methods.mp4")
 
     metadata = PAPER / "arxiv-metadata.txt"
     if metadata.is_file():
