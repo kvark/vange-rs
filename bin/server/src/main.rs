@@ -185,6 +185,71 @@ struct ServerAgent {
     bumps: u32,
     /// Follow-up pose logs after the last jump.
     jump_trace: Option<JumpTrace>,
+    /// Throttled log of the brake/turbo/jump the client sends.
+    input_log: InputLog,
+    /// When this car's last `Pose` line went out.
+    pose_logged: Option<Instant>,
+    /// Quanta this car was driven on with its held control since its
+    /// client went quiet (`InputQueue::STARVE_TICKS`), unacked: motion the
+    /// client never predicted. `None` while its inputs arrive.
+    starved: Option<u32>,
+}
+
+/// Diagnostic: the brake, turbo and jump a client sends, logged at info so
+/// a session can be checked from the server log alone. A jump is logged
+/// every time; held brake/turbo at most once per [`INPUT_LOG_EVERY`].
+#[derive(Default)]
+struct InputLog {
+    last: Option<Instant>,
+    brake: u32,
+    turbo: u32,
+}
+
+const INPUT_LOG_EVERY: Duration = Duration::from_secs(1);
+/// Between `Pose` lines of a car (its server pose, to compare with what a
+/// client shows).
+const POSE_LOG_EVERY: Duration = Duration::from_secs(5);
+
+impl InputLog {
+    fn note(
+        &mut self,
+        player_id: PlayerId,
+        name: &str,
+        first_quant: u32,
+        quanta: u16,
+        control: &NetControl,
+    ) {
+        if let Some(power) = control.jump {
+            info!(
+                "Input p{} ({}) jump power={:.1} at quant {}",
+                player_id,
+                name,
+                power,
+                first_quant.wrapping_add(quanta.saturating_sub(1) as u32)
+            );
+        }
+        if !control.brake && !control.turbo {
+            return;
+        }
+        if control.brake {
+            self.brake += quanta as u32;
+        }
+        if control.turbo {
+            self.turbo += quanta as u32;
+        }
+        let now = Instant::now();
+        if self.last.is_some_and(|t| now - t < INPUT_LOG_EVERY) {
+            return;
+        }
+        info!(
+            "Input p{} ({}) brake={} turbo={} (quanta held since the last line)",
+            player_id, name, self.brake, self.turbo
+        );
+        *self = InputLog {
+            last: Some(now),
+            ..InputLog::default()
+        };
+    }
 }
 
 /// Diagnostic: where a jump took the car, logged at info.
@@ -242,6 +307,57 @@ impl ServerAgent {
             tick,
             start: before,
         });
+    }
+
+    /// Log when the server starts driving this car on without its client's
+    /// input (the client went quiet for `InputQueue::STARVE_TICKS`), and
+    /// how far that went once input is back: the client did not predict
+    /// those quanta, so its next snapshot corrects it.
+    fn note_budget(&mut self, player_id: PlayerId, budget: &TickBudget) {
+        match self.starved {
+            None if budget.held > 0 => {
+                info!(
+                    "Input p{} ({}) starved: no input for {} ticks, driving on with the held control",
+                    player_id,
+                    self.name,
+                    InputQueue::STARVE_TICKS
+                );
+                self.starved = Some(budget.held);
+            }
+            Some(ref mut held) if budget.real == 0 => *held += budget.held,
+            Some(held) => {
+                info!(
+                    "Input p{} ({}) resumed after {} unacked held quanta",
+                    player_id, self.name, held
+                );
+                self.starved = None;
+            }
+            None => {}
+        }
+    }
+
+    /// A `Pose` line every [`POSE_LOG_EVERY`] while joined: the server's
+    /// pose of the car, to hold against a client's HUD or debug overlay.
+    fn log_pose(&mut self, player_id: PlayerId) {
+        if !self.joined {
+            return;
+        }
+        let now = Instant::now();
+        if self.pose_logged.is_some_and(|t| now - t < POSE_LOG_EVERY) {
+            return;
+        }
+        self.pose_logged = Some(now);
+        let p = self.transform.disp;
+        info!(
+            "Pose p{} ({}) pos=({:.1},{:.1},{:.1}) speed={:.1} ack={}",
+            player_id,
+            self.name,
+            p.x,
+            p.y,
+            p.z,
+            self.dynamo.linear_velocity.length(),
+            self.inputs.ack()
+        );
     }
 
     /// `Jump trace` lines every second after a jump: at +1 s, +2 s, then
@@ -737,6 +853,11 @@ async fn main() {
                     .filter(|(_, a)| a.joined)
                     .map(|(&id, a)| (id, a.inputs.budget(quanta)))
                     .collect();
+                for (id, budget) in budgets.iter() {
+                    if let Some(agent) = players.get_mut(id) {
+                        agent.note_budget(*id, budget);
+                    }
+                }
                 let slots = budgets.values().map(TickBudget::total).max().unwrap_or(0);
                 for i in 0..slots {
                     let last = i + 1 == slots;
@@ -781,6 +902,7 @@ async fn main() {
                 let wrap = (level.size.0 as f32, level.size.1 as f32);
                 for (&player_id, agent) in players.iter_mut() {
                     agent.trace_jump(player_id, tick, wrap);
+                    agent.log_pose(player_id);
                 }
 
                 // Story cycle: one quant per server tick (tick_rate 20 Hz
@@ -901,6 +1023,9 @@ async fn main() {
                             joined: false,
                             bumps: 0,
                             jump_trace: None,
+                            input_log: InputLog::default(),
+                            pose_logged: None,
+                            starved: None,
                         });
                     }
 
@@ -1049,6 +1174,13 @@ async fn main() {
                             ClientMessage::Input { first_quant, quanta, control } => {
                                 let player_id = effective_player_id(&conn_to_player, conn_id);
                                 if let Some(agent) = players.get_mut(&player_id) {
+                                    agent.input_log.note(
+                                        player_id,
+                                        &agent.name,
+                                        first_quant,
+                                        quanta,
+                                        &control,
+                                    );
                                     agent.inputs.push(
                                         first_quant,
                                         quanta as u32,
