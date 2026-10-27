@@ -477,17 +477,31 @@ impl ClientSync {
             .is_some_and(|seen| seen != bumps);
         let server = ServerCar { bumped, ..snap.car };
 
-        if !self.synced {
+        // The first snapshot is the server's car at its ack, and the
+        // quanta we stepped since have reached the server too (they went
+        // out after the join): the car goes to the snapshot and replays
+        // them, so it stands where the server will have it at our next
+        // quantum. Taking the snapshot pose as is put the car a round trip
+        // behind (the landing from the spawn drop, the first metres of a
+        // drive), and the first reconcile corrected all of that.
+        let first = !self.synced;
+        if first {
             self.synced = true;
+        }
+        let snap_to_server = |car: LocalCar<'_>| {
             *car.transform = server.transform;
             car.dynamo.linear_velocity = server.linear_velocity;
             car.dynamo.angular_velocity = server.angular_velocity;
             car.dynamo.traction = server.traction;
             car.dynamo.rudder = server.rudder;
-            self.reset();
-            return (SyncEvent::FirstSync, bumped);
-        }
+        };
         if held {
+            if first {
+                // Nothing of ours to replay while the car is held.
+                snap_to_server(car);
+                self.reset();
+                return (SyncEvent::FirstSync, bumped);
+            }
             return (SyncEvent::Held, bumped);
         }
 
@@ -516,7 +530,7 @@ impl ClientSync {
         let phys = car.phys;
         let outcome = self.prediction.reconcile(
             &ServerSnapshot { car: server, ack },
-            force,
+            force || first,
             period,
             car.transform,
             car.dynamo,
@@ -545,6 +559,20 @@ impl ClientSync {
             if replay_contact.is_some() {
                 self.contact_at = replay_contact;
             }
+        }
+        if first {
+            if outcome == Reconciled::Stale {
+                // The snapshot predates what we kept: take it as is.
+                snap_to_server(LocalCar {
+                    transform: car.transform,
+                    dynamo: car.dynamo,
+                    phys: car.phys,
+                });
+                self.prediction.clear();
+            }
+            // From wherever the car stood before the join: a teleport.
+            self.render_offset = RenderOffset::default();
+            return (SyncEvent::FirstSync, bumped);
         }
         let contact = bumped || touching || recent || replay_contact.is_some();
         // A replay that crossed a fold moved the car by whole periods too;

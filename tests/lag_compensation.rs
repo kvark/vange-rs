@@ -496,6 +496,9 @@ struct Outcome {
     bumps: u32,
     /// Old: the physics went non-finite and the run stopped there.
     blew_up: bool,
+    /// Shared: how far the first reconcile after the first sync moved the
+    /// car (0 when it agreed).
+    first_moved: Option<f32>,
 }
 
 fn wrapped_distance(world: &World, a: Vec3, b: Vec3) -> f32 {
@@ -538,7 +541,17 @@ fn run(
         }
     });
     let mut server = Server {
-        a: start,
+        // A cold start joins a real server, which drops the car 5u above
+        // the ground: it lands and settles after the join. (Not for the
+        // ram: the other car is parked on the settled car's path.)
+        a: if mode == Mode::SharedCold && b.is_none() {
+            Car {
+                transform: world.spawn,
+                dynamo: Dynamo::default(),
+            }
+        } else {
+            start
+        },
         queue: InputQueue::default(),
         control: QuantInput::default(),
         b,
@@ -739,6 +752,12 @@ fn run(
                             shown_at_once,
                             ..
                         } => {
+                            if outcome != Reconciled::Stale {
+                                out.first_moved.get_or_insert(match outcome {
+                                    Reconciled::InSync => 0.0,
+                                    _ => moved,
+                                });
+                            }
                             if matches!(outcome, Reconciled::Replayed(_) | Reconciled::Ahead) {
                                 if moved > 0.01 {
                                     out.corrections += 1;
@@ -917,6 +936,13 @@ fn sweep(world: &World, mode: Mode, scenario: Scenario) -> Outcome {
             worst.travelled = worst.travelled.max(o.travelled);
             worst.bumps = worst.bumps.max(o.bumps);
             worst.blew_up |= o.blew_up;
+            if let Some(first) = o.first_moved {
+                println!("  first correction after the first sync {first:.3}u");
+                worst.first_moved = Some(worst.first_moved.unwrap_or(0.0).max(first));
+            } else if mode == Mode::SharedCold {
+                // Every run has to get there for the test to say anything.
+                worst.first_moved = Some(f32::INFINITY);
+            }
         }
     }
     worst
@@ -1080,5 +1106,13 @@ fn shared_client_first_sync_from_a_cold_start() {
         let cold = sweep(&world, Mode::SharedCold, scenario);
         let new = sweep(&world, Mode::New, scenario);
         check_shared(scenario, &cold, &new, true);
+        // The first sync puts the car where the server has it at the
+        // client's own quantum, not at the snapshot's: the next reconcile
+        // finds nothing to correct.
+        let first = cold.first_moved.expect("no reconcile after the first sync");
+        assert!(
+            first < 1.0,
+            "{scenario:?}: first correction after join {first:.2}u"
+        );
     }
 }

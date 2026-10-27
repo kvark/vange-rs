@@ -3428,7 +3428,9 @@ impl WebHandler {
                             let debug = &mut gpu.app.net_debug;
                             match event {
                                 physics::client::SyncEvent::FirstSync => {
-                                    gpu.app.cam.focus_on(&snap.car.transform);
+                                    // The car replayed its quanta since
+                                    // the snapshot: focus there.
+                                    gpu.app.cam.focus_on(&agent.transform);
                                     debug.outcome = "first sync".to_string();
                                 }
                                 physics::client::SyncEvent::Reconciled {

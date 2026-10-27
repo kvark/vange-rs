@@ -223,6 +223,12 @@ build (`bin/web/main.rs`) both run it.
   does the same (`fold_home`) so both run the physics on identical float
   coordinates. Terrain lookups floor (not truncate) coordinates, so a car at
   a negative coordinate samples the right cell.
+- **First sync.** The first snapshot of the local car rewinds it to the
+  server's pose at the ack and replays the quanta stepped since (they all
+  reached the server after the `Join`), so the car stands where the server
+  will have it and the first reconcile finds ~0u to correct. Taking the
+  snapshot as is left the car a round trip behind (the landing from the
+  spawn drop, the start of a drive). The camera jumps there; no fade.
 - **Render offset.** What a replay moves the car by goes into
   `RenderOffset`, drawn on top of the physics pose and decayed (time
   constant 0.1 s, at most 30 u/s and 1.5u per frame). Past 50u it fades
