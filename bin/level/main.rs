@@ -74,6 +74,10 @@ struct Cli {
     /// uses 1; a snapshot wants it exaggerated to be legible.
     #[arg(long, default_value_t = 8)]
     tracks_depth: i32,
+    /// Cut the `--tracks` into the cosmetic track overlay, as an online
+    /// client does, leaving the level alone.
+    #[arg(long, default_value_t = false)]
+    tracks_overlay: bool,
     /// Drive the grader blade along the `--tracks-line` instead of a
     /// wheel, so the trench and the windrows it leaves can be looked at.
     #[arg(long, default_value_t = false)]
@@ -409,6 +413,7 @@ fn main() {
             }),
             tracks_passes: cli.tracks_passes,
             tracks_depth: cli.tracks_depth,
+            tracks_overlay: cli.tracks_overlay,
             ml_quants: cli.ml_quants,
             ml_frame: cli.ml_frame,
             ml_touch: cli.ml_touch.as_deref().map(|s| {

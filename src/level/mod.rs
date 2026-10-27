@@ -11,6 +11,7 @@ pub mod cycle;
 pub mod effect;
 pub mod flood;
 pub mod moving;
+pub mod overlay;
 pub mod palette;
 pub mod spiral;
 pub mod terraform;

@@ -240,6 +240,24 @@ build (`bin/web/main.rs`) both run it.
   was predicted over different ground. The original game does deform the
   collision height map with tracks, in multiplayer too, but each of its
   clients was authoritative for its own car. Dust still flies.
+- **Cosmetic tracks.** The treads are cut into a track overlay instead
+  (`level::overlay::TrackOverlay`, held by the terrain renderer): sparse
+  64x64 tiles of drawn height and meta. Each frame the overlay's texels
+  around a wheel stretch are swapped into the level, the tread is cut there
+  with the offline code (so passes stack), the result is copied back into
+  the overlay and the level is restored, so the physics heights stay bit
+  for bit the server's (`tests/track_overlay.rs`). The terrain upload
+  composites the overlay over the level, and since every renderer (ray,
+  voxel, slice, paint, scatter, mesh) reads its heights from that texture,
+  the tracks show everywhere, natively and on the web. Tiles the tread made
+  but did not bite into are dropped. The overlay is capped at 4 MiB (512
+  tiles); past that the tiles cut into longest ago go and the level shows
+  through there again. A real edit of the level (moving land) drops the
+  tiles under it, and so does going offline, where tracks are real again.
+  Ten minutes of the scripted drive leave 212 tiles (1.7 MiB) on Khox and
+  257 (2.0 MiB) on Fostral. `level --tracks --tracks-overlay` renders it. No protocol change; the server is untouched. Only the local car's
+  tracks are drawn: remote cars' (from their interpolated poses) are a
+  follow-up, server-broadcast tracks are parked.
 - **Bumps.** A `bumps` change still makes the reconcile take the server's
   velocities (the replay starts from them anyway).
 - **Protocol 2** (`PROTOCOL_VERSION`): `Join::protocol`,

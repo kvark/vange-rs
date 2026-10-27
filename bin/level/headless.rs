@@ -101,6 +101,49 @@ fn drive_wheel(
     regions
 }
 
+/// `drive_wheel`, but into the renderer's track overlay the way an online
+/// client cuts its tracks, frame by frame in short stretches, leaving the
+/// level alone. Used by `--tracks --tracks-overlay`.
+fn overlay_wheel(
+    render: &mut Render,
+    level: &mut level::Level,
+    line: Option<(i32, i32, i32, i32)>,
+    passes: u32,
+    depth: i32,
+) {
+    let (x0, y0, x1, y1) = line.unwrap_or((
+        level.size.0 / 2 - level.size.0 / 8,
+        level.size.1 / 2,
+        level.size.0 / 2 + level.size.0 / 8,
+        level.size.1 / 2,
+    ));
+    let (dx, dy) = ((x1 - x0) as f32, (y1 - y0) as f32);
+    let len = (dx * dx + dy * dy).sqrt().max(1.0);
+    let across = (-dy / len, dx / len);
+    let config = level::terraform::Config {
+        tread: level::terraform::Tread {
+            depth,
+            ..level::terraform::Tread::default()
+        },
+        ..level::terraform::Config::default()
+    };
+    // A few texels a frame, as a car at speed covers.
+    let steps = (len / 4.0).ceil() as i32;
+    let mut tracks = level::terraform::Tracks::default();
+    for _ in 0..passes.max(1) {
+        tracks.lift(0);
+        for k in 0..=steps {
+            let t = k as f32 / steps as f32;
+            let at = (
+                (x0 as f32 + dx * t).round() as i32,
+                (y0 as f32 + dy * t).round() as i32,
+            );
+            tracks.touch(0, at, across);
+            render.cut_tracks(level, &config, &mut tracks);
+        }
+    }
+}
+
 /// Drag a grader blade along a straight line, riding `depth` below the
 /// surface it starts from. Used by `--grader` to see what the blade leaves.
 fn drag_blade(
@@ -209,6 +252,9 @@ pub struct SnapshotOptions {
     pub tracks_passes: u32,
     /// Altitude units one stamp moves the ground.
     pub tracks_depth: i32,
+    /// Cut the tracks into the renderer's cosmetic track overlay, as an
+    /// online client does, rather than into the level.
+    pub tracks_overlay: bool,
     /// Drive the grader blade along `tracks_line` rather than a wheel.
     pub grader: bool,
     /// How far below the surface the blade rides.
@@ -307,6 +353,7 @@ impl Default for SnapshotOptions {
             tracks_line: None,
             tracks_passes: 1,
             tracks_depth: 8,
+            tracks_overlay: false,
             grader: false,
             grader_depth: 30,
             grader_width: 40.0,
@@ -983,7 +1030,25 @@ pub fn render_snapshot(opts: SnapshotOptions) {
             );
             render.dirty_terrain(&regions, 0x100);
         }
-        if opts.tracks && frame_index == opts.dig_frame {
+        if opts.tracks && opts.tracks_overlay && frame_index == opts.dig_frame {
+            let before = (lvl.height.clone(), lvl.meta.clone());
+            overlay_wheel(
+                &mut render,
+                &mut lvl,
+                opts.tracks_line,
+                opts.tracks_passes,
+                opts.tracks_depth,
+            );
+            let overlay = render.tracks();
+            info!(
+                "Drove {} pass(es) into the track overlay: {} track texels in {} tiles, {} KiB; level untouched: {}",
+                opts.tracks_passes.max(1),
+                overlay.changed_texels(&lvl),
+                overlay.len(),
+                overlay.bytes() / 1024,
+                before == (lvl.height.clone(), lvl.meta.clone()),
+            );
+        } else if opts.tracks && frame_index == opts.dig_frame {
             let regions = drive_wheel(
                 &mut lvl,
                 opts.tracks_line,

@@ -1483,15 +1483,21 @@ impl WebApp {
     /// runs where the level can be borrowed mutably.
     ///
     /// `online`: the level is left alone, as the server's is (see
-    /// `terraform::drain_vehicle`); the dust still flies.
+    /// `terraform::drain_vehicle`); the treads go into the renderer's
+    /// cosmetic track overlay (`level::overlay`) instead, and the dust
+    /// still flies.
     fn step_tracks(&mut self, online: bool) {
+        if !online {
+            self.render.clear_tracks(&self.level);
+        }
         let Some(agent) = self.agent.as_mut() else {
             return;
         };
         let mut regions = Vec::new();
         let reach = (agent.phys_data.bbox.radius * agent.car.scale).max(8.0) as i32;
         let treads = if online {
-            level::terraform::drain_vehicle(&mut agent.tracks)
+            self.render
+                .cut_tracks(&mut self.level, &self.terraform, &mut agent.tracks)
         } else {
             level::terraform::apply_vehicle(
                 &mut self.level,

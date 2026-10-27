@@ -537,7 +537,57 @@ impl Render {
     /// Marks every texel of `regions` for re-upload. Both the moving land
     /// and the deformation the cars leave behind report what they touched
     /// this way.
+    ///
+    /// These are real edits of the level, so the tiles of the multiplayer
+    /// track overlay under them go: their copy of the ground is stale.
     pub fn dirty_terrain(&mut self, regions: &[level::Region], height: u16) {
+        if !self.terrain.tracks.is_empty() {
+            let mut dropped = Vec::new();
+            self.terrain.tracks.invalidate(regions, &mut dropped);
+            self.mark_dirty(&dropped, height);
+        }
+        self.mark_dirty(regions, height);
+    }
+
+    /// Cuts the treads `tracks` recorded into the track overlay rather
+    /// than the level, which is left exactly as it was (multiplayer: the
+    /// level is the server's), and marks what changed for re-upload.
+    /// Returns the wheel stretches, for the dust.
+    pub fn cut_tracks(
+        &mut self,
+        level: &mut level::Level,
+        config: &level::terraform::Config,
+        tracks: &mut level::terraform::Tracks,
+    ) -> Vec<level::terraform::Track> {
+        let mut regions = Vec::new();
+        let treads = self
+            .terrain
+            .tracks
+            .cut_vehicle(level, config, tracks, &mut regions);
+        regions.sort_unstable();
+        regions.dedup();
+        self.mark_dirty(&regions, level.geometry.height as u16);
+        treads
+    }
+
+    /// Drops the track overlay, putting the level's own ground back on
+    /// screen.
+    pub fn clear_tracks(&mut self, level: &level::Level) {
+        if self.terrain.tracks.is_empty() {
+            return;
+        }
+        let mut dropped = Vec::new();
+        self.terrain.tracks.clear(&mut dropped);
+        self.mark_dirty(&dropped, level.geometry.height as u16);
+    }
+
+    /// The track overlay, for inspection.
+    pub fn tracks(&self) -> &level::overlay::TrackOverlay {
+        &self.terrain.tracks
+    }
+
+    /// Marks `regions` for re-upload without touching the track overlay.
+    fn mark_dirty(&mut self, regions: &[level::Region], height: u16) {
         let z_range = 0..height;
         for r in regions {
             let mut rect = Rect {
