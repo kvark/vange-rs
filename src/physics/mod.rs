@@ -7,8 +7,11 @@ use glam::{Mat3, Quat, Vec3};
 
 const EPSILON: f32 = f32::EPSILON;
 
+mod collision;
 mod rigid;
 pub mod terrain;
+
+pub use collision::{CarBody, CarContact, collide_cars};
 
 const MAX_TRACTION: config::common::Traction = 4.0;
 
@@ -340,8 +343,7 @@ pub fn step(
     };
 
     if let Some(power) = jump {
-        let mass =
-            common.nature.density * car.body_physics.volume * transform.scale * transform.scale;
+        let mass = collision::body_mass(car, transform.scale, common);
         let f = device_modulation * common.force.k_distance_to_force * dt_impulse / mass.powf(0.3);
         log::info!("jump mass {:?}, f {:?}", mass, f);
         rigid.vel += f * jump_dir(power);

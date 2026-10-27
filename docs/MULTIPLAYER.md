@@ -126,9 +126,10 @@ Position hold / `SetPose` is unchanged.
 
 ## Duel spawn (ram / bump tests)
 
-`--duel-spawn` places the first two **fresh** joiners 30u apart, facing each
+`--duel-spawn` places the first two **fresh** joiners 70u apart (centre to
+centre; a ~30u gap between the bumpers of ~40u-long mechos), facing each
 other along X, so collision / bump tests need no long drive. Joiner 0 spawns
-15u west of `--duel-center` facing east (+X); joiner 1 spawns 15u east facing
+35u west of `--duel-center` facing east (+X); joiner 1 spawns 35u east facing
 west (−X). Later joiners use the regular spawn grid, and a reconnect within the
 grace window still restores its last pose. Without the flag spawning is
 unchanged.
@@ -147,6 +148,29 @@ cargo run -p vangers-server -- --port 7800 --ws-port 7801 --level Fostral --duel
 cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
 cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
 ```
+
+## Car-vs-car contact (server-authoritative)
+
+Each tick, after stepping every joined player's physics, the server runs
+`physics::collide_cars` over every pair of players (in player-id order). It is
+a port of the original `Object::test_object_to_baseobject`: a bounding-sphere
+precheck, an oriented-box test on the `scale_box`-shrunk model bounds, the
+original `box_to_box_intersection` contact point, and the original's fully
+elastic impulse `P = -2 K⁻¹ u0` along the line between the centres, using both
+cars' masses and inertia. The port also pushes overlapping cars apart by half
+the overlap (beyond 0.1u) so traction cannot press one car into another. The
+new velocities and poses reach both clients through `WorldState`. Bumps at or
+above `strong_double_collision_threshould` from `common.prm` log
+`Car contact tick … impulse=…` at info; resting contact logs at debug.
+
+The native client predicts the same contact for its own car against each
+remote ghost (`render_transform` plus the last `WorldState` velocities), so
+the rammer bounces and the rammed car moves right away rather than passing
+through the ghost until reconcile pulls it back. The ghost itself is never
+moved locally.
+
+Tuning: `RESTITUTION` (1.0 = original) and `SEPARATION` in
+`src/physics/collision.rs`.
 
 ## Tweaks Position (debug hold + SetPose)
 

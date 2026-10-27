@@ -346,8 +346,11 @@ fn paths_equal(a: &std::path::Path, b: &std::path::Path) -> bool {
     }
 }
 
-/// Distance between the two `--duel-spawn` cars.
-const DUEL_SPACING: i32 = 30;
+/// Distance between the two `--duel-spawn` car centres. A mechos contact
+/// box is ~40u long (OxidizeMonk: 224 model units x 0.227 x `scale_box`
+/// 0.8), so 70 leaves a ~30u gap between the bumpers; the old 30 had the
+/// noses overlapping once car-car contact exists.
+const DUEL_SPACING: i32 = 70;
 
 /// Map XY and yaw (radians about Z) for a fresh join.
 ///
@@ -673,6 +676,11 @@ async fn main() {
                         agent.transform.disp.y.rem_euclid(size.1 as f32);
                 }
 
+                // Car-vs-car contact, server-authoritative. Each agent's
+                // `physics::step` only sees the terrain, so without this
+                // pass players drive straight through each other.
+                collide_players(&mut players, level.size, &common, tick);
+
                 // Story cycle: one quant per server tick (tick_rate 20 Hz
                 // matches MAIN_LOOP_TIME = 0.05). All joined players
                 // gather/deliver — including those that clients only
@@ -996,6 +1004,71 @@ fn merge_input(current: &mut NetControl, incoming: NetControl) {
 const DEFAULT_MAX_QUANT: f32 = 0.1;
 
 /// Physics sub-step size: the clients' `game.physics.max_quant`.
+/// Pairwise car-car contact across joined players, in player-id order so the
+/// result does not depend on `HashMap` iteration. Re-wraps moved cars.
+fn collide_players(
+    players: &mut HashMap<PlayerId, ServerAgent>,
+    size: (i32, i32),
+    common: &config::common::Common,
+    tick: u32,
+) {
+    let mut joined: Vec<(PlayerId, &mut ServerAgent)> = players
+        .iter_mut()
+        .filter(|(_, a)| a.joined)
+        .map(|(id, a)| (*id, a))
+        .collect();
+    if joined.len() < 2 {
+        return;
+    }
+    joined.sort_unstable_by_key(|(id, _)| *id);
+    let wrap = (size.0 as f32, size.1 as f32);
+    for i in 0..joined.len() {
+        let (head, tail) = joined.split_at_mut(i + 1);
+        let (id_a, ref mut a) = head[i];
+        for (id_b, b) in tail.iter_mut() {
+            let contact = physics::collide_cars(
+                physics::CarBody {
+                    dynamo: &mut a.dynamo,
+                    transform: &mut a.transform,
+                    car: &a.phys_data,
+                },
+                physics::CarBody {
+                    dynamo: &mut b.dynamo,
+                    transform: &mut b.transform,
+                    car: &b.phys_data,
+                },
+                Some(wrap),
+                common,
+            );
+            // Resting contact trickles tiny impulses every tick; only
+            // the original's "strong" collisions (sound / ram damage
+            // there) are worth an info line.
+            if let Some(c) = contact.filter(|c| c.impulse > 0.0) {
+                let level = if c.impulse >= common.contact.strong_double_collision_threshold {
+                    log::Level::Info
+                } else {
+                    log::Level::Debug
+                };
+                log::log!(
+                    level,
+                    "Car contact tick {} p{}<->p{} at ({:.1},{:.1}) impulse={:.3} depth={:.2}",
+                    tick,
+                    id_a,
+                    id_b,
+                    c.point.x,
+                    c.point.y,
+                    c.impulse,
+                    c.depth
+                );
+            }
+        }
+    }
+    for (_, agent) in joined {
+        agent.transform.disp.x = agent.transform.disp.x.rem_euclid(wrap.0);
+        agent.transform.disp.y = agent.transform.disp.y.rem_euclid(wrap.1);
+    }
+}
+
 fn physics_max_quant(settings: Option<&config::Settings>) -> f32 {
     settings
         .map(|s| s.game.physics.max_quant)
