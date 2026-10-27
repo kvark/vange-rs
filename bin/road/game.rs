@@ -2127,7 +2127,11 @@ impl Game {
                 {
                     return;
                 }
-                self.passage_note = Some(level::spiral::passage_prompt(passage, &self.spiral));
+                self.passage_note = Some(level::spiral::passage_prompt(
+                    passage,
+                    &self.spiral,
+                    self.net.is_some(),
+                ));
             }
             None => {
                 if self.passage_note.as_deref().is_some_and(|n| {
@@ -2180,17 +2184,28 @@ impl Game {
     }
 
     /// Space at a charged passage: queue a dest-world hop (discharged on success).
+    /// Online the passage stays shut (`spiral::passage_open`): Space is taken
+    /// with a note, and the spiral keeps its charge.
     fn try_use_passage(&mut self) -> bool {
         if !self.screen.is_world() || self.pending_portal.is_some() {
             return false;
         }
-        let Some((id, dest)) = self
-            .passage_in_reach()
-            .map(|p| (p.id.clone(), p.to_world.clone()))
-        else {
+        let online = self.net.is_some();
+        let Some((id, dest, note)) = self.passage_in_reach().map(|p| {
+            (
+                p.id.clone(),
+                p.to_world.clone(),
+                level::spiral::passage_prompt(p, &self.spiral, online),
+            )
+        }) else {
             return false;
         };
-        if !self.spiral.is_ready() {
+        if online {
+            log::info!("Passage {id} to {dest}: closed in multiplayer");
+            self.passage_note = Some(note);
+            return true;
+        }
+        if !level::spiral::passage_open(&self.spiral, online) {
             return false;
         }
         log::info!("Passage {id} to {dest}: queueing dest load");

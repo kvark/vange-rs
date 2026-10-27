@@ -67,13 +67,27 @@ impl Spiral {
     }
 }
 
-/// Status line when the player is near a passage.
-pub fn passage_prompt(passage: &Passage, spiral: &Spiral) -> String {
-    if spiral.is_ready() {
+/// Status line when the player is near a passage. `online`: connected to a
+/// multiplayer server, which hosts a single world (see [`passage_open`]).
+pub fn passage_prompt(passage: &Passage, spiral: &Spiral, online: bool) -> String {
+    if online {
+        format!(
+            "Passage closed: {} is offline-only (the server hosts one world).",
+            passage.to_world
+        )
+    } else if spiral.is_ready() {
         format!("Passage to {} in sight...", passage.to_world)
     } else {
         "Spiral discharged. Passage closed!".to_string()
     }
+}
+
+/// Whether a passage hop may start. Online it never may: a multiplayer
+/// server simulates one world, so a hop would load the next world on this
+/// client only while the server kept the car - and every other player's view
+/// of it - in the old one, snapping it back across worlds from then on.
+pub fn passage_open(spiral: &Spiral, online: bool) -> bool {
+    !online && spiral.is_ready()
 }
 
 /// Nearest passage within `reach`, using wrap-aware XY on a torus of `size`.
@@ -133,9 +147,26 @@ mod tests {
     fn prompts_depend_on_charge() {
         let p = passage("F2G", 0, 0);
         let mut s = Spiral::default();
-        assert!(passage_prompt(&p, &s).contains("discharged"));
+        assert!(passage_prompt(&p, &s, false).contains("discharged"));
         s.charge_full();
-        assert!(passage_prompt(&p, &s).contains("Glorx"));
+        assert!(passage_prompt(&p, &s, false).contains("Glorx"));
+    }
+
+    #[test]
+    fn passages_stay_closed_online() {
+        let p = passage("F2G", 0, 0);
+        let mut s = Spiral::default();
+        assert!(!passage_open(&s, false));
+        assert!(!passage_open(&s, true));
+        s.charge_full();
+        assert!(passage_open(&s, false));
+        // Charged, but connected to a one-world server: no hop, and the
+        // prompt says why instead of "in sight".
+        assert!(!passage_open(&s, true));
+        let note = passage_prompt(&p, &s, true);
+        assert!(note.starts_with("Passage closed"), "{note}");
+        assert!(note.contains("Glorx"), "{note}");
+        assert!(!note.contains("in sight"), "{note}");
     }
 
     #[test]
