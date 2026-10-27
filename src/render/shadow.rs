@@ -34,6 +34,7 @@ impl Shadow {
         Shadow {
             view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
             cam: Camera {
+                chase_yaw: None,
                 loc: Vec3::ZERO,
                 rot: Quat::IDENTITY,
                 scale: Vec3::new(1.0, 1.0, 1.0),
@@ -160,6 +161,7 @@ mod tests {
         let right = forward.cross(Vec3::Z).normalize();
         let up = right.cross(forward);
         Camera {
+            chase_yaw: None,
             loc: Vec3::new(1024.0, 1024.0, 120.0),
             rot: Quat::from_mat3(&glam::Mat3::from_cols(right, up, -forward)),
             scale: Vec3::ONE,
@@ -235,6 +237,7 @@ mod tests {
             let cam = chase_cam(yaw, -16.0);
             let (rot, loc, p) = shadow_view(&LIGHT, &cam, 256.0);
             let shadow_cam = Camera {
+                chase_yaw: None,
                 loc,
                 rot,
                 scale: Vec3::ONE,

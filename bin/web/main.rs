@@ -41,13 +41,9 @@ fn chase_cam_avoid_and_reaim(
 ) {
     cam.avoid_terrain(level, target.disp, CAMERA_CLEARANCE);
     if look_ahead.abs() > 1e-4 {
-        let mut front = target.rot * glam::Vec3::Y;
-        front.z = 0.0;
-        let twist = if front.length_squared() > 1e-8 {
-            glam::Quat::from_rotation_arc(glam::Vec3::Y, front.normalize())
-        } else {
-            glam::Quat::IDENTITY
-        };
+        // Same damped heading `follow` used, not the raw car yaw,
+        // which flips while the car tumbles.
+        let twist = cam.chase_twist();
         let look_at = target.disp + twist * glam::Vec3::new(0.0, look_ahead, 0.0);
         cam.rot = space::Camera::look_rotation(look_at - cam.loc);
     }
@@ -690,6 +686,7 @@ impl WebApp {
         // (0, 0, 200) is just a sane starting placeholder for the
         // free-camera fallback.
         let mut cam = space::Camera {
+            chase_yaw: None,
             loc: glam::vec3(0.0, 0.0, 200.0),
             rot: glam::Quat::IDENTITY,
             scale: glam::vec3(1.0, -1.0, 1.0),
