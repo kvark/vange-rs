@@ -1138,14 +1138,21 @@ impl Game {
     ///
     /// Online the level is left alone: the server never edits its copy,
     /// and the car has to be predicted over the same ground (see
-    /// `terraform::drain_vehicle`). The dust still flies.
+    /// `terraform::drain_vehicle`). The treads are cut into the renderer's
+    /// cosmetic track overlay instead (`level::overlay`), and the dust
+    /// still flies.
     fn step_tracks(&mut self) {
         self.track_regions.clear();
         let online = self.net.is_some();
+        if !online {
+            // Back offline the tracks are real again; the overlay's are not.
+            self.render.clear_tracks(&self.level);
+        }
         for agent in self.agents.iter_mut() {
             let reach = (agent.phys_data.bbox.radius * agent.car.scale).max(8.0) as i32;
             let treads = if online {
-                level::terraform::drain_vehicle(&mut agent.tracks)
+                self.render
+                    .cut_tracks(&mut self.level, &self.terraform, &mut agent.tracks)
             } else {
                 level::terraform::apply_vehicle(
                     &mut self.level,

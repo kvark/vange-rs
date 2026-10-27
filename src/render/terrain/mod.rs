@@ -684,6 +684,8 @@ pub struct Context {
     pub dirty_rects: Vec<super::DirtyRect>,
     /// Reused CPU packing space for partial terrain-texture uploads.
     upload_scratch: Vec<u8>,
+    /// Multiplayer tyre tracks, drawn over the level on upload.
+    pub tracks: crate::level::overlay::TrackOverlay,
     pub dirty_flood: bool,
     pub dirty_palette: Range<u32>,
     active_surface_constants: SurfaceConstants,
@@ -1997,6 +1999,7 @@ impl Context {
                 need_upload: true,
             }],
             upload_scratch: Vec::new(),
+            tracks: Default::default(),
             dirty_flood: true,
             dirty_palette: 0..0x100,
             active_surface_constants: SurfaceConstants {
@@ -2304,6 +2307,7 @@ impl Context {
                         line[2 * i] = h;
                         line[2 * i + 1] = m;
                     }
+                    self.tracks.patch_row(y0 + y_off, x0, line);
                 }
 
                 queue.write_texture(
