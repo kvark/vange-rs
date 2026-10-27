@@ -675,6 +675,9 @@ pub struct Game {
     spiral: level::spiral::Spiral,
     /// HUD line: charge, proximity prompt, arrival, or missing-data note.
     passage_note: Option<String>,
+    /// Newest `WorldState` tick applied and when: the view a `Fire` was
+    /// aimed in, for the server's lag compensation.
+    world_view: Option<(u32, std::time::Instant)>,
     /// Space queued a portal hop; applied on the next `update` with GPU handles.
     pending_portal: Option<PendingPortal>,
     /// After a world hop: hold XY on the reverse-passage pad while physics settles.
@@ -1119,6 +1122,7 @@ impl Game {
             passages,
             spiral,
             passage_note: None,
+            world_view: None,
             pending_portal: None,
             portal_pad_lock: None,
         }
@@ -1253,6 +1257,30 @@ impl Game {
             && net.player_id.is_some()
         {
             net.send_set_spiral(self.spiral.charge);
+        }
+    }
+
+    /// Online the server owns our armour (it resolves the shots): take it
+    /// from the `WorldState`.
+    fn apply_armor_from_world(
+        &mut self,
+        agents: &[vangers_net::AgentState],
+        my_id: Option<PlayerId>,
+    ) {
+        let Some(state) = agents.iter().find(|a| Some(a.player_id) == my_id) else {
+            return;
+        };
+        let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
+            return;
+        };
+        if (player.armor, player.max_armor) != (state.armor, state.max_armor) {
+            if state.armor == 0 && player.armor > 0 {
+                log::info!("Armour from server: 0/{}", state.max_armor);
+            } else {
+                log::debug!("Armour from server: {}/{}", state.armor, state.max_armor);
+            }
+            player.armor = state.armor;
+            player.max_armor = state.max_armor;
         }
     }
 
@@ -1495,7 +1523,8 @@ impl Game {
             .map(|s| s.shot.pos)
             .collect();
         let nibble = self.life.step(&self.level, delta, contact, &shots);
-        if nibble != 0 {
+        // Online the server owns the armour: wildlife bites stay cosmetic.
+        if nibble != 0 && self.net.is_none() {
             let player = self
                 .agents
                 .iter_mut()
@@ -2447,6 +2476,15 @@ impl Game {
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 120.0))
             .order(egui::Order::Foreground)
             .show(context, |ui| {
+                if let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Armour {}/{}",
+                            player.armor, player.max_armor
+                        ))
+                        .strong(),
+                    );
+                }
                 ui.label(
                     egui::RichText::new(format!(
                         "Spiral {}/{}",
@@ -2884,11 +2922,15 @@ impl Application for Game {
                     // Lined up with our inputs: the shot happens before
                     // the next quantum we send.
                     let dir = shot.vel.normalize();
+                    let view = self.world_view.map_or((0, 0), |(tick, at)| {
+                        (tick, at.elapsed().as_millis().min(u16::MAX as u128) as u16)
+                    });
                     net.send_fire(
                         self.sync.prediction.next(),
                         bay as u8,
                         shot.pos.to_array(),
                         dir.to_array(),
+                        view,
                     );
                 }
                 self.shots.push(LiveShot {
@@ -3107,6 +3149,8 @@ impl Application for Game {
                             self.apply_moving_land_state(moving_state);
                         }
                         self.apply_spiral_from_world(&agents, my_id);
+                        self.apply_armor_from_world(&agents, my_id);
+                        self.world_view = Some((tick, std::time::Instant::now()));
                         // Remote cars first, so a replay of our inputs
                         // bumps against the ghosts of this same snapshot.
                         let mut ordered: Vec<_> = agents.iter().collect();
@@ -3239,7 +3283,7 @@ impl Application for Game {
                             drawn,
                             (span.x, span.y),
                         );
-                        log::info!(
+                        log::debug!(
                             "Remote shot: {} bay {bay} from {:?} dir {:?} (reported {:?})",
                             remote.map_or("?", |r| r.name.as_str()),
                             shot.pos,

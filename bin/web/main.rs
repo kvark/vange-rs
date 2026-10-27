@@ -1568,7 +1568,9 @@ impl WebApp {
         self.remote_shots.retain(|(_, age)| *age < weapon::SHOT_LIFE);
     }
 
-    fn step_life(&mut self, delta: f32) {
+    /// `online`: the server owns the armour, so wildlife bites stay
+    /// cosmetic.
+    fn step_life(&mut self, delta: f32, online: bool) {
         let Some(ref agent) = self.agent else {
             return;
         };
@@ -1582,6 +1584,7 @@ impl WebApp {
         };
         let nibble = self.life.step(&self.level, delta, contact, &[]);
         if nibble != 0
+            && !online
             && let Some(ref mut agent) = self.agent
         {
             agent.armor = agent.armor.saturating_sub(nibble);
@@ -3310,7 +3313,7 @@ impl WebHandler {
             // Cut the wheels' tracks into the level after the physics ran
             // (offline only).
             gpu.app.step_tracks(online);
-            gpu.app.step_life(dt);
+            gpu.app.step_life(dt, online);
             gpu.app.step_remote_shots(dt);
         }
 
@@ -3483,6 +3486,11 @@ impl WebHandler {
                         else {
                             continue;
                         };
+                        // The server owns our armour (it resolves shots).
+                        if let Some(ref mut agent) = gpu.app.agent {
+                            agent.armor = me.armor;
+                            agent.max_armor = me.max_armor;
+                        }
                         let snap = physics::client::LocalSnapshot::from_agent(me);
                         let lead = gpu.app.mp.prediction.next().wrapping_sub(snap.ack);
                         let quanta_per_sec = {

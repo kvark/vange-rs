@@ -10,7 +10,9 @@ pub type PlayerId = u32;
 /// input ack in `AgentState::ack`, `SetPose::next_quant`.
 /// 3: the held control in `AgentState::control`.
 /// 4: `ClientMessage::Fire` and `ServerMessage::Shot`.
-pub const PROTOCOL_VERSION: u32 = 4;
+/// 5: server-owned armour in `AgentState::armor` / `max_armor`; the
+/// shooter's view of the world in `Fire::view_tick` / `view_ms`.
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Client-to-server messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,11 +61,18 @@ pub enum ClientMessage {
     /// happened once `AgentState::ack` reaches it). The server checks it
     /// against its pose of the car and relays it to the other players as
     /// `ServerMessage::Shot`; the shooter draws its own shot at once.
+    ///
+    /// `view_tick` is the newest `WorldState` tick the client had, and
+    /// `view_ms` how long before firing it arrived: the other cars were
+    /// drawn carried on from that snapshot. The server flies the shot and
+    /// tests it against the other cars rewound to that view (capped).
     Fire {
         quant: u32,
         bay: u8,
         origin: [f32; 3],
         dir: [f32; 3],
+        view_tick: u32,
+        view_ms: u16,
     },
 }
 
@@ -194,6 +203,11 @@ pub struct AgentState {
     /// roll). Other clients carry the car's contact ghost on with it: a
     /// car pushing with turbo keeps pushing with turbo.
     pub control: NetControl,
+    /// Armour left, as the server keeps it: shots it resolved take it
+    /// down, stopping at 0. The owning client shows this one.
+    pub armor: u16,
+    /// Armour of the car undamaged (`car.prm`).
+    pub max_armor: u16,
 }
 
 /// Network-serializable transform (position + rotation + scale).
@@ -293,6 +307,8 @@ mod tests {
                     turbo: true,
                     ..NetControl::default()
                 },
+                armor: 35,
+                max_armor: 120,
             }],
             cycle: None,
             moving: None,
@@ -307,6 +323,7 @@ mod tests {
                 assert_eq!(agents[0].player_id, 1);
                 assert_eq!(agents[0].spiral_charge, 3);
                 assert_eq!(agents[0].ack, 1234);
+                assert_eq!((agents[0].armor, agents[0].max_armor), (35, 120));
                 assert!(cycle.is_none());
                 assert!(moving.is_none());
             }
@@ -440,6 +457,8 @@ mod tests {
             bay: 1,
             origin: [1.0, 2.0, 3.0],
             dir: [0.0, 1.0, 0.0],
+            view_tick: 500,
+            view_ms: 30,
         };
         let encoded = encode(&msg);
         let (decoded, consumed): (ClientMessage, _) = decode(&encoded).unwrap();
@@ -450,8 +469,11 @@ mod tests {
                 bay,
                 origin,
                 dir,
+                view_tick,
+                view_ms,
             } => {
                 assert_eq!((quant, bay), (77, 1));
+                assert_eq!((view_tick, view_ms), (500, 30));
                 assert_eq!(origin, [1.0, 2.0, 3.0]);
                 assert_eq!(dir, [0.0, 1.0, 0.0]);
             }

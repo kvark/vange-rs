@@ -33,6 +33,7 @@ extern crate log;
 #[macro_use]
 extern crate serde_derive;
 
+pub mod combat;
 pub mod config;
 pub mod creature;
 pub mod escave;
