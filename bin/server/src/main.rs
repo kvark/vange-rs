@@ -52,6 +52,31 @@ struct Cli {
     /// Path to settings file (default: config/settings.ron)
     #[arg(short, long, default_value = "config/settings.ron")]
     settings: String,
+
+    /// Dev / ram-test affordance: place the first two fresh joiners
+    /// `DUEL_SPACING` apart on `--duel-center`, facing each other along X
+    /// (west car faces east, east car faces west). Later joiners and
+    /// reclaimed poses are unaffected. Off by default.
+    #[arg(long)]
+    duel_spawn: bool,
+
+    /// Map XY midpoint for `--duel-spawn`. The default is open flat sand on
+    /// Fostral (terrain height 0-2, no slabs across a 50x16 box).
+    #[arg(long, value_parser = parse_xy, default_value = "590,4151")]
+    duel_center: (i32, i32),
+}
+
+/// Parse `X,Y` map coordinates.
+fn parse_xy(s: &str) -> Result<(i32, i32), String> {
+    let (x, y) = s
+        .split_once(',')
+        .ok_or_else(|| format!("expected X,Y, got {:?}", s))?;
+    let parse = |v: &str| {
+        v.trim()
+            .parse::<i32>()
+            .map_err(|e| format!("{:?}: {}", v, e))
+    };
+    Ok((parse(x)?, parse(y)?))
 }
 
 /// Events from client connection tasks to the main game loop.
@@ -321,6 +346,35 @@ fn paths_equal(a: &std::path::Path, b: &std::path::Path) -> bool {
     }
 }
 
+/// Distance between the two `--duel-spawn` cars.
+const DUEL_SPACING: i32 = 30;
+
+/// Map XY and yaw (radians about Z) for a fresh join.
+///
+/// Default: `find_spawn_point` grid, yaw PI (facing -Y). With `duel`, joiner
+/// 0 sits west of the center facing +X and joiner 1 east facing -X, so a ram
+/// test needs no long drive. The car's forward axis is local +Y.
+fn spawn_pose(level: &level::Level, index: usize, duel: Option<(i32, i32)>) -> ((i32, i32), f32) {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    match (duel, index) {
+        (Some((cx, cy)), 0 | 1) => {
+            let (dx, yaw) = if index == 0 {
+                (-DUEL_SPACING / 2, -FRAC_PI_2)
+            } else {
+                (DUEL_SPACING / 2, FRAC_PI_2)
+            };
+            (
+                (
+                    (cx + dx).rem_euclid(level.size.0),
+                    cy.rem_euclid(level.size.1),
+                ),
+                yaw,
+            )
+        }
+        _ => (find_spawn_point(level, index), PI),
+    }
+}
+
 /// Find a spawn point on the level terrain.
 fn find_spawn_point(level: &level::Level, index: usize) -> (i32, i32) {
     let spacing = 30;
@@ -514,6 +568,13 @@ async fn main() {
     let mut tick: u32 = 0;
     let level_name = cycle_world.clone();
     let max_players = cli.max_players;
+    let duel = cli.duel_spawn.then_some(cli.duel_center);
+    if let Some((x, y)) = duel {
+        info!(
+            "Duel spawn: first two joiners {}u apart around ({},{}), facing each other",
+            DUEL_SPACING, x, y
+        );
+    }
     // Same sub-step as the clients. `physics::step` applies contact impulses
     // and the rest threshold once per call, so a finer quant than the
     // client's makes the server car far stickier against terrain: a car
@@ -748,7 +809,7 @@ async fn main() {
                                 });
 
                                 let spawn_index = players.values().filter(|a| a.joined).count();
-                                let coords = find_spawn_point(&level, spawn_index);
+                                let (coords, spawn_yaw) = spawn_pose(&level, spawn_index, duel);
                                 let height = level.get(coords).high() + 5.0;
 
                                 // Log restored map XY when reclaiming; find_spawn_point is
@@ -819,7 +880,7 @@ async fn main() {
                                                 coords.1 as f32,
                                                 height,
                                             ),
-                                            rot: glam::Quat::from_rotation_z(std::f32::consts::PI),
+                                            rot: glam::Quat::from_rotation_z(spawn_yaw),
                                         };
                                     }
 
@@ -1196,5 +1257,50 @@ mod tests {
         assert_eq!(control.jump.take(), Some(4.0));
         merge_input(&mut control, NetControl::default());
         assert_eq!(control.jump, None);
+    }
+
+    fn test_level() -> level::Level {
+        level::load(&level::LevelConfig::new_test(), &Default::default())
+    }
+
+    fn forward(yaw: f32) -> Vec3 {
+        glam::Quat::from_rotation_z(yaw) * Vec3::Y
+    }
+
+    #[test]
+    fn duel_spawn_faces_each_other() {
+        let level = test_level();
+        let center = (100, 120);
+        let (a, yaw_a) = spawn_pose(&level, 0, Some(center));
+        let (b, yaw_b) = spawn_pose(&level, 1, Some(center));
+        assert_eq!(b.0 - a.0, DUEL_SPACING);
+        assert_eq!((a.1, b.1), (center.1, center.1));
+        let a_to_b = Vec3::X;
+        assert!(forward(yaw_a).dot(a_to_b) > 0.999, "west car faces east");
+        assert!(forward(yaw_b).dot(-a_to_b) > 0.999, "east car faces west");
+        // A third joiner falls back to the regular grid.
+        assert_eq!(
+            spawn_pose(&level, 2, Some(center)),
+            (find_spawn_point(&level, 2), std::f32::consts::PI)
+        );
+    }
+
+    #[test]
+    fn default_spawn_unchanged() {
+        let level = test_level();
+        for index in 0..5 {
+            assert_eq!(
+                spawn_pose(&level, index, None),
+                (find_spawn_point(&level, index), std::f32::consts::PI)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_xy_accepts_pairs() {
+        assert_eq!(parse_xy("590,4151"), Ok((590, 4151)));
+        assert_eq!(parse_xy(" 1 , -2 "), Ok((1, -2)));
+        assert!(parse_xy("590").is_err());
+        assert!(parse_xy("a,1").is_err());
     }
 }
