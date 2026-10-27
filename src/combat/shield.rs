@@ -51,16 +51,10 @@ impl Shield {
         }
     }
 
-    /// No shield: every hit goes to the armour.
+    /// No shield: every hit goes to the armour. A car whose `car.prm`
+    /// stats the server does not have (the test cars) gets this.
     pub const NONE: Shield = Shield { max: 0, regen: 0 };
 }
-
-/// Shield of a car whose `car.prm` stats the server does not have (the
-/// OxidizeMonk's: 120 points, `DeltaEnergy` 40).
-pub const DEFAULT_SHIELD: Shield = Shield {
-    max: 120 * ARMOR_UNIT,
-    regen: 24,
-};
 
 /// `dEnergy` in [`ARMOR_UNIT`]s a quant: `MaxEnergy * DeltaEnergy /
 /// (10 * UnitGlobalTime * 100)` points, to the nearest hundredth (the
@@ -93,9 +87,21 @@ pub fn regenerate(energy: &mut u32, armor: u32, shield: Shield, frame_normal: f3
     *energy = (*energy + step).min(shield.max);
 }
 
+/// The HUD line, on the original's scale: whole `car.prm` points, as
+/// `aciCurEnergy = Energy >> 16` (the bar's `aciMaxEnergy` is that `+ 1`).
+pub fn hud_line(energy: u32, max_energy: u32) -> String {
+    format!("Energy {}/{}", energy / ARMOR_UNIT, max_energy / ARMOR_UNIT)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The OxidizeMonk's (`car.prm`: MaxEnergy 120, DeltaEnergy 40).
+    const OXIDIZE_MONK: Shield = Shield {
+        max: 120 * ARMOR_UNIT,
+        regen: 24,
+    };
 
     /// The original's `dEnergy`, 16.16, as `mechos.cpp:7986` computes it.
     fn original_d_energy(max_energy: u16, delta_energy: u16) -> i64 {
@@ -108,7 +114,7 @@ mod tests {
         // car.prm: OxidizeMonk ... MaxArmor 100, MaxEnergy 120, DeltaEnergy 40.
         let shield = Shield::new(120, 40);
         assert_eq!(shield.max, 12_000);
-        assert_eq!(shield, DEFAULT_SHIELD);
+        assert_eq!(shield, OXIDIZE_MONK);
         // 0.24 points a quant, 4.8 a second; the original: 15728 / 65536.
         assert_eq!(shield.regen, 24);
         assert_eq!(original_d_energy(120, 40), 15728);
@@ -158,7 +164,7 @@ mod tests {
 
     #[test]
     fn regen_fills_to_max_only_with_armour_left() {
-        let shield = DEFAULT_SHIELD;
+        let shield = OXIDIZE_MONK;
         let mut energy = 0;
         regenerate(&mut energy, 0, shield, 1.0);
         assert_eq!(energy, 0, "a wreck does not refill");
@@ -175,5 +181,15 @@ mod tests {
         let mut energy = 0;
         regenerate(&mut energy, 100, shield, 20.0 / 30.0);
         assert_eq!(energy, 16);
+    }
+
+    #[test]
+    fn hud_shows_whole_points() {
+        assert_eq!(
+            hud_line(OXIDIZE_MONK.max, OXIDIZE_MONK.max),
+            "Energy 120/120"
+        );
+        // 87.99 points show as 87, as Energy >> 16 does.
+        assert_eq!(hud_line(8_799, 12_000), "Energy 87/120");
     }
 }

@@ -151,6 +151,21 @@ struct LastPose {
     disconnected_at: Instant,
 }
 
+/// Shield of a car `car.prm` does not list: none, or a test-only one
+/// (`VANGERS_TEST_SHIELD=120:40`, `MaxEnergy:DeltaEnergy`).
+fn unknown_car_shield() -> combat::shield::Shield {
+    std::env::var("VANGERS_TEST_SHIELD")
+        .ok()
+        .and_then(|raw| {
+            let (max, delta) = raw.trim().split_once(':')?;
+            Some(combat::shield::Shield::new(
+                max.parse().ok()?,
+                delta.parse().ok()?,
+            ))
+        })
+        .unwrap_or(combat::shield::Shield::NONE)
+}
+
 /// Optional test-only spiral charge (`VANGERS_TEST_SEED_SPIRAL=3`).
 ///
 /// Fresh spawn only — reclaim must restore `LastPose.spiral_charge`.
@@ -955,6 +970,7 @@ async fn main() {
         (common, std::collections::HashMap::new())
     };
 
+    let unknown_shield = unknown_car_shield();
     // Undamaged armour (in `combat::ARMOR_UNIT`s) and energy shield per
     // car, from `car.prm`.
     let car_hull: HashMap<String, (u32, combat::shield::Shield)> = settings
@@ -965,8 +981,7 @@ async fn main() {
                 .map(|(name, _, data)| {
                     let stats = config::car::CarStats::new(&data);
                     let armor = stats.max_armor as u32 * combat::ARMOR_UNIT;
-                    let shield =
-                        combat::shield::Shield::new(stats.shield_max, stats.shield_regen);
+                    let shield = combat::shield::Shield::new(stats.shield_max, stats.shield_regen);
                     (name, (armor, shield))
                 })
                 .collect()
@@ -1370,8 +1385,8 @@ async fn main() {
                             fires: 0,
                             armor: combat::DEFAULT_MAX_ARMOR,
                             max_armor: combat::DEFAULT_MAX_ARMOR,
-                            energy: combat::shield::DEFAULT_SHIELD.max,
-                            shield: combat::shield::DEFAULT_SHIELD,
+                            energy: 0,
+                            shield: combat::shield::Shield::NONE,
                             guns: Default::default(),
                             reload: weapon::Reload::default(),
                             history: combat::PoseHistory::default(),
@@ -1462,10 +1477,7 @@ async fn main() {
                                     (agent.max_armor, agent.shield) = car_hull
                                         .get(&car_name)
                                         .copied()
-                                        .unwrap_or((
-                                            combat::DEFAULT_MAX_ARMOR,
-                                            combat::shield::DEFAULT_SHIELD,
-                                        ));
+                                        .unwrap_or((combat::DEFAULT_MAX_ARMOR, unknown_shield));
                                     agent.armor = agent.max_armor;
                                     agent.energy = agent.shield.max;
                                     agent.dead = None;

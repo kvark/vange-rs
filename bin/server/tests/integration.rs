@@ -1022,6 +1022,143 @@ fn test_shot_takes_armor_off_the_target_only() {
     assert_eq!(a_armor, a_max, "the shooter is not hit by its own shots");
 }
 
+/// `(tick, energy, max_energy, armor)` of `id` in every `WorldState` of
+/// `msgs`, in order.
+fn hull_track(msgs: &[ServerMessage], id: u32) -> Vec<(u32, u32, u32, u32)> {
+    msgs.iter()
+        .filter_map(|m| match m {
+            ServerMessage::WorldState { tick, agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == id)
+                .map(|a| (*tick, a.energy, a.max_energy, a.armor)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn test_hits_drain_the_shield_before_the_armour_and_it_refills() {
+    // TestCar is not in a car.prm: give it the OxidizeMonk's shield
+    // (MaxEnergy 120, DeltaEnergy 40), 0.24 points a quant.
+    let server = ServerProcess::start_with("test", &[("VANGERS_TEST_SHIELD", "120:40")]);
+    let regen = vangers::combat::shield::regen_per_quant(120, 40);
+    assert_eq!(regen, 24);
+    let mut alice = server.connect();
+    let mut bob = server.connect();
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
+    });
+    let mut alice_stash = Vec::new();
+    let alice_id = match alice.recv_welcome(&mut alice_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
+    });
+    let mut bob_stash = Vec::new();
+    let bob_id = match bob.recv_welcome(&mut bob_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+
+    alice_stash.extend(alice.recv_for(Duration::from_secs(2)));
+    let (tick, agents) = latest_world(&alice_stash).expect("Alice should get a WorldState");
+    let find = |id| *agents.iter().find(|a| a.0 == id).expect("both cars");
+    let (_, a_pos, _, _) = find(alice_id);
+    let (_, b_pos, _, b_max) = find(bob_id);
+    let &(_, energy, max_energy, armor) = hull_track(&alice_stash, bob_id).last().unwrap();
+    assert_eq!(max_energy, 12_000, "120 points of shield");
+    assert_eq!(
+        (energy, armor),
+        (max_energy, b_max),
+        "both full at the start"
+    );
+
+    // Heavy Ghorb shots (bay 2, 25 points each) from high over Alice's
+    // car down onto Bob's, one a reload (0.55 s).
+    let muzzle = [a_pos[0], a_pos[1], a_pos[2] + 120.0];
+    let at_bob = [
+        b_pos[0] - muzzle[0],
+        b_pos[1] - muzzle[1],
+        b_pos[2] - muzzle[2],
+    ];
+    let hit = bay_damage(2);
+    assert_eq!(hit, 2500);
+    let mut track = Vec::new();
+    for quant in 0..8 {
+        alice.send(&ClientMessage::Fire {
+            quant: 20 + quant,
+            bay: 2,
+            origin: muzzle,
+            dir: at_bob,
+            view_tick: tick,
+            view_ms: 0,
+        });
+        track.extend(hull_track(
+            &bob.recv_for(Duration::from_millis(600)),
+            bob_id,
+        ));
+        if track.last().is_some_and(|t| t.3 < b_max) {
+            break;
+        }
+    }
+    track.extend(hull_track(
+        &bob.recv_for(Duration::from_millis(600)),
+        bob_id,
+    ));
+
+    // Each hit a tick: the shield takes it whole while it lasts, the
+    // armour untouched; the tick after, the shield refills by `regen`.
+    let hits: Vec<_> = track
+        .windows(2)
+        .filter(|w| w[1].1 < w[0].1 || w[1].3 < w[0].3)
+        .map(|w| (w[0], w[1]))
+        .collect();
+    assert!(
+        hits.len() >= 5,
+        "five hits to get through 120 points: {hits:?}"
+    );
+    let (last_before, last_after) = *hits.last().unwrap();
+    for &(before, after) in &hits[..hits.len() - 1] {
+        assert_eq!(
+            after.0,
+            before.0 + 1,
+            "consecutive snapshots: {before:?} {after:?}"
+        );
+        assert_eq!(after.3, b_max, "the shield takes it: {after:?}");
+        let refilled = (before.1 + regen).min(max_energy);
+        assert_eq!(after.1, refilled - hit, "the whole hit off the shield");
+    }
+    // The hit the shield could not hold: it empties, and only the rest
+    // comes off the armour.
+    assert_eq!(last_after.0, last_before.0 + 1);
+    assert_eq!(last_after.1, 0, "the shield is empty: {last_after:?}");
+    let through = hit - (last_before.1 + regen).min(max_energy);
+    assert!(through > 0 && through < hit, "part of the hit: {through}");
+    assert_eq!(last_after.3, b_max - through, "the rest off the armour");
+
+    // No more shots: the shield refills at the original's rate, 0.24
+    // points a quant (4.8 a second), and the armour does not.
+    let refill = hull_track(&bob.recv_for(Duration::from_secs(2)), bob_id);
+    let (first, last) = (refill[0], *refill.last().unwrap());
+    assert!(
+        last.0 - first.0 >= 30,
+        "two seconds of snapshots: {first:?} {last:?}"
+    );
+    assert!(last.1 < max_energy, "not full yet: {last:?}");
+    assert_eq!(last.1 - first.1, (last.0 - first.0) * regen, "24 a tick");
+    assert_eq!((first.3, last.3), (b_max - through, b_max - through));
+}
+
 #[test]
 fn test_set_spiral_broadcasts_to_peers() {
     let server = ServerProcess::start();

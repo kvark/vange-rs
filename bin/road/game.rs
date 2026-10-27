@@ -733,6 +733,9 @@ pub struct Game {
     /// Online: the bullet of the gun the server took in each of our bays
     /// (`AgentState::guns`); a bay fires only the gun the server has.
     my_guns: [Option<u8>; weapons::BAYS],
+    /// Online: our energy shield and its max (`AgentState::energy`,
+    /// `combat::ARMOR_UNIT`s), the server's. Offline there is none.
+    my_energy: Option<(u32, u32)>,
     /// Online: whether the server was last told we are in an escave
     /// (`ClientMessage::Escave`), sent when the escave screen takes over
     /// the drive (`Screen::blocks_drive`) and when it gives it back.
@@ -1217,6 +1220,7 @@ impl Game {
             reload: weapon::Reload::default(),
             clock: std::time::Instant::now(),
             my_guns: [None; weapons::BAYS],
+            my_energy: None,
             death_note: None,
             pending_portal: None,
             portal_pad_lock: None,
@@ -1376,6 +1380,18 @@ impl Game {
             log::info!("Guns taken by the server: {:?}", state.guns);
             self.my_guns = state.guns;
         }
+        let energy = (state.energy, state.max_energy);
+        if let Some((before, _)) = self.my_energy
+            && state.energy < before
+        {
+            // A hit (it only refills otherwise).
+            log::info!(
+                "Energy from server: {}/{}",
+                weapons::points(state.energy),
+                weapons::points(state.max_energy)
+            );
+        }
+        self.my_energy = Some(energy);
         let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
             return;
         };
@@ -2761,6 +2777,12 @@ impl Game {
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 120.0))
             .order(egui::Order::Foreground)
             .show(context, |ui| {
+                if let Some((energy, max)) = self.my_energy {
+                    ui.label(
+                        egui::RichText::new(vangers::combat::shield::hud_line(energy, max))
+                            .strong(),
+                    );
+                }
                 if let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) {
                     ui.label(
                         // The original's scale: whole `car.prm` points.
@@ -2911,10 +2933,11 @@ impl Game {
                 .find(|a| a.spirit == Spirit::Player)
                 .map(|a| (a.armor, a.max_armor));
             log::info!(
-                "Autodrive t={:.1}s pos={:?} armor={:?} spiral={}/{} shots={} remote_shots={} world={} remotes={}",
+                "Autodrive t={:.1}s pos={:?} armor={:?} energy={:?} spiral={}/{} shots={} remote_shots={} world={} remotes={}",
                 ad.time + delta,
                 pose.map(|t| t.disp),
                 armor,
+                self.my_energy,
                 self.spiral.charge,
                 self.spiral.capacity,
                 self.shots.iter().filter(|l| !l.remote).count(),
@@ -3701,6 +3724,7 @@ impl Application for Game {
                     } => self.on_respawned(player_id, &transform, next_quant, my_id),
                     NetEvent::Disconnected => {
                         self.wrecked = None;
+                        self.my_energy = None;
                         self.escave_sent = false;
                         self.spiral_sync.reset();
                         log::warn!("Disconnected from server");

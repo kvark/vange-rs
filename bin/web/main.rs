@@ -684,6 +684,9 @@ struct WebApp {
     /// numbered history, remote ghosts, render offset), shared with the
     /// native game (`physics::client`).
     mp: physics::client::ClientSync,
+    /// Online: our energy shield and its max (`AgentState::energy`), the
+    /// server's. Offline there is none.
+    energy: Option<(u32, u32)>,
     /// Other players of the multiplayer session.
     remotes: HashMap<vangers_net::PlayerId, WebRemote>,
     /// Our car is a wreck (`ServerMessage::Died`): no control until the
@@ -1102,6 +1105,7 @@ impl WebApp {
             cycle,
             cycle_time: 0.0,
             mp: Default::default(),
+            energy: None,
             remotes: HashMap::new(),
             wrecked: false,
             net_debug: NetDebug::new(),
@@ -1234,6 +1238,7 @@ impl WebApp {
         }
 
         self.draw_minimap(ctx);
+        self.draw_hull_hud(ctx);
         self.draw_net_debug(ctx);
 
         if self.touch_stick {
@@ -1314,6 +1319,31 @@ impl WebApp {
             });
         }
         self.minimap.show(ctx, &self.level, center, heading, &marks);
+    }
+
+    /// Online: the energy shield and armour, in whole `car.prm` points
+    /// (the original's scale), as the native HUD shows them.
+    fn draw_hull_hud(&self, ctx: &egui::Context) {
+        let (Some((energy, max_energy)), Some(agent)) = (self.energy, self.agent.as_ref()) else {
+            return;
+        };
+        egui::Area::new(egui::Id::new("hull-hud"))
+            .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(vangers::combat::shield::hud_line(energy, max_energy))
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Armour {}/{}",
+                        agent.armor / vangers::combat::ARMOR_UNIT,
+                        agent.max_armor / vangers::combat::ARMOR_UNIT
+                    ))
+                    .strong(),
+                );
+            });
     }
 
     fn draw_net_debug(&mut self, ctx: &egui::Context) {
@@ -3607,7 +3637,9 @@ impl WebHandler {
                         else {
                             continue;
                         };
-                        // The server owns our armour (it resolves shots).
+                        // The server owns our armour and shield (it
+                        // resolves shots).
+                        gpu.app.energy = Some((me.energy, me.max_energy));
                         if let Some(ref mut agent) = gpu.app.agent {
                             agent.armor = me.armor;
                             agent.max_armor = me.max_armor;
