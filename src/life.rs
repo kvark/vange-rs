@@ -26,6 +26,9 @@ pub struct World {
     pub swarm: Swarm,
     pub fauna: Fauna,
     pub particles: System,
+    /// Destroyed cars (multiplayer wrecks waiting to respawn), smoking
+    /// every quant. The game sets these each frame.
+    pub wrecks: Vec<Vec3>,
     time: f32,
     pub beebs: i32,
 }
@@ -38,6 +41,7 @@ impl World {
             swarm,
             fauna: Fauna::spawn(world, level, data_path),
             particles: System::new(),
+            wrecks: Vec::new(),
             time: 0.0,
             beebs: 0,
         }
@@ -64,6 +68,9 @@ impl World {
         self.swarm.quant(level, Some(player.pos));
         self.particles
             .from_hull(player.pos, player.armor, player.max_armor);
+        for &at in &self.wrecks {
+            self.particles.emit_smoke(at);
+        }
         let crush = self.swarm.crush(player.wheels, 8.0);
         if crush.awarded != 0 {
             self.beebs += crush.awarded;

@@ -432,6 +432,34 @@ impl RemoteCar {
         })
     }
 
+    /// The server put the car back at `at`, standing still
+    /// (`ServerMessage::Respawned`): drawn there at once, and the input
+    /// timeline and its lag are pinned again by the next snapshot rather
+    /// than carried over from the wreck.
+    pub fn respawn_at(&mut self, at: space::Transform) {
+        self.prev_transform = at;
+        self.target_transform = at;
+        self.render_transform = at;
+        self.interp_t = 0.0;
+        self.blend = 1.0;
+        self.lead = 0.0;
+        self.pose_ready = true;
+        for v in [
+            &mut self.linear_velocity,
+            &mut self.angular_velocity,
+            &mut self.reckon_velocity,
+            &mut self.reckon_spin,
+            &mut self.prev_velocity,
+            &mut self.prev_spin,
+        ] {
+            *v = Vec3::ZERO;
+        }
+        self.ack_base = None;
+        self.last_tick = None;
+        self.last_time = None;
+        self.lags.clear();
+    }
+
     /// The client moved its coordinates by `-by` (a torus rebase).
     pub fn shift(&mut self, by: Vec3) {
         self.prev_transform.disp -= by;
@@ -1198,6 +1226,30 @@ mod tests {
         assert_eq!(r.render_transform.disp, at);
         r.interpolate(0.3);
         assert!((r.render_transform.disp - at).length() < 1e-3);
+    }
+
+    #[test]
+    fn a_respawn_is_drawn_at_once_and_repins_the_timeline() {
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        r.on_snapshot(&moving(0, 40.0, 0.0), None);
+        r.on_snapshot(&moving(1, 40.0, 0.0), None);
+        let _ = r.agent_time(1000, 100, QPS);
+        r.interpolate(0.1);
+        // The wreck is put back 20u off: closer than `TELEPORT`, still
+        // drawn there at once, standing, with no reckoning on.
+        let at = space::Transform {
+            disp: Vec3::new(20.0, 0.0, 10.0),
+            rot: Quat::from_rotation_z(std::f32::consts::PI),
+            scale: 1.0,
+        };
+        r.respawn_at(at);
+        assert_eq!(r.render_transform.disp, at.disp);
+        r.interpolate(0.3);
+        assert!((r.render_transform.disp - at.disp).length() < 1e-3);
+        assert_eq!(r.ghost().unwrap().dynamo.linear_velocity, Vec3::ZERO);
+        // Its next snapshot pins the input timeline again by the tick.
+        let (_, _, pinned) = r.agent_time(1004, 101, QPS);
+        assert!(pinned);
     }
 
     #[test]

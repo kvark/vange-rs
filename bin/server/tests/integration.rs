@@ -1296,3 +1296,156 @@ fn test_duel_slow_ram_shoves_parked_car() {
     assert!(closest > 30.0, "Alice drove into / through Bob: centres {closest:.1}u apart");
     assert!(bob_end - bob_start > 20.0, "Bob was not shoved: {bob_start:.1} -> {bob_end:.1}");
 }
+
+/// Bob's `(position, armor, max_armor, dead)` in the newest `WorldState`.
+fn bob_in_world(msgs: &[ServerMessage], bob_id: u32) -> Option<([f32; 3], u16, u16, bool)> {
+    msgs.iter().rev().find_map(|m| match m {
+        ServerMessage::WorldState { agents, .. } => agents
+            .iter()
+            .find(|a| a.player_id == bob_id)
+            .map(|a| (a.transform.position, a.armor, a.max_armor, a.dead)),
+        _ => None,
+    })
+}
+
+#[test]
+fn test_a_kill_respawns_the_wreck_at_the_nearest_escave() {
+    // Two escaves: one ~50u from where Bob's car stands, one ~150u off
+    // (across the seams).
+    let near = (130, 90);
+    let far = (220, 220);
+    let server =
+        ServerProcess::start_with_args("test", &[], &["--escave", "130,90", "--escave", "220,220"]);
+    let mut alice = server.connect();
+    let mut bob = server.connect();
+    let mut join = |client: &mut Client, name: &str, color| {
+        client.send(&ClientMessage::Join {
+            player_name: name.into(),
+            car_name: "TestCar".into(),
+            color,
+            protocol: vangers_net::PROTOCOL_VERSION,
+        });
+        let mut stash = Vec::new();
+        match client.recv_welcome(&mut stash) {
+            ServerMessage::Welcome { player_id, .. } => (player_id, stash),
+            _ => unreachable!(),
+        }
+    };
+    let (alice_id, mut alice_stash) = join(&mut alice, "Alice", 21);
+    let (bob_id, _) = join(&mut bob, "Bob", 7);
+
+    alice_stash.extend(alice.recv_for(Duration::from_secs(2)));
+    let (tick, agents) = latest_world(&alice_stash).expect("Alice should get a WorldState");
+    let pos = |id| agents.iter().find(|a| a.0 == id).expect("both cars").1;
+    let (a_pos, b_pos) = (pos(alice_id), pos(bob_id));
+    let b_max = agents.iter().find(|a| a.0 == bob_id).unwrap().3;
+    let level = vangers::level::load(
+        &vangers::level::LevelConfig::new_test(),
+        &Default::default(),
+    );
+    let flat_gap = |a: [f32; 3], b: (i32, i32)| {
+        level
+            .shortest_xy(
+                glam::Vec3::from(a),
+                glam::Vec3::new(b.0 as f32, b.1 as f32, 0.0),
+            )
+            .length()
+    };
+    assert!(
+        flat_gap(b_pos, near) + 50.0 < flat_gap(b_pos, far),
+        "spawns moved: Bob at {b_pos:?}"
+    );
+
+    // Bay 2 takes 20 a hit: enough shots to finish Bob, two a tick at
+    // most, from high over Alice's car down onto his.
+    let muzzle = [a_pos[0], a_pos[1], a_pos[2] + 120.0];
+    let at_bob = [
+        b_pos[0] - muzzle[0],
+        b_pos[1] - muzzle[1],
+        b_pos[2] - muzzle[2],
+    ];
+    let shots = (b_max as u32).div_ceil(vangers::combat::bay_damage(2) as u32);
+    let fire = |client: &mut Client, quant| {
+        client.send(&ClientMessage::Fire {
+            quant,
+            bay: 2,
+            origin: muzzle,
+            dir: at_bob,
+            view_tick: tick,
+            view_ms: 0,
+        });
+    };
+    for quant in 0..shots {
+        fire(&mut alice, 20 + quant);
+        std::thread::sleep(Duration::from_millis(120));
+    }
+
+    // Everyone hears of the death, with the killer.
+    let mut bob_msgs = bob.recv_for(Duration::from_millis(1500));
+    let died = |msgs: &[ServerMessage]| {
+        msgs.iter()
+            .filter_map(|m| match m {
+                ServerMessage::Died {
+                    player_id,
+                    killer,
+                    position,
+                } => Some((*player_id, *killer, *position)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let deaths = died(&bob_msgs);
+    assert_eq!(deaths.len(), 1, "one death: {deaths:?}");
+    assert_eq!((deaths[0].0, deaths[0].1), (bob_id, Some(alice_id)));
+    assert!(
+        flat_gap(deaths[0].2, (b_pos[0] as i32, b_pos[1] as i32)) < 20.0,
+        "died where it stood: {:?}",
+        deaths[0].2
+    );
+    let (_, armor, _, dead) = bob_in_world(&bob_msgs, bob_id).expect("WorldState");
+    assert_eq!((armor, dead), (0, true), "a wreck in the WorldState");
+
+    // A shot at the wreck does nothing (no second death).
+    fire(&mut alice, 40);
+    let more = bob.recv_for(Duration::from_millis(600));
+    assert!(died(&more).is_empty(), "a wreck dies once");
+    bob_msgs.extend(more);
+
+    // About `RESPAWN_SECS` after the death: back at the near escave, whole.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let respawn = loop {
+        let msgs = bob.recv_for(Duration::from_millis(200));
+        let found = msgs.iter().find_map(|m| match m {
+            ServerMessage::Respawned {
+                player_id,
+                transform,
+            } if *player_id == bob_id => Some(transform.position),
+            _ => None,
+        });
+        bob_msgs.extend(msgs);
+        if let Some(at) = found {
+            break at;
+        }
+        assert!(Instant::now() < deadline, "no respawn");
+    };
+    assert!(
+        flat_gap(respawn, near) <= 40.0,
+        "respawned {respawn:?}, not by the escave at {near:?}"
+    );
+    let msgs = bob.recv_for(Duration::from_millis(500));
+    let (at, armor, max, dead) = bob_in_world(&msgs, bob_id).expect("WorldState");
+    assert_eq!((armor, dead), (max, false), "whole again");
+    assert!(flat_gap(at, near) <= 50.0, "stays by the escave: {at:?}");
+
+    // Alice saw both, in that order.
+    alice_stash.extend(alice.recv_for(Duration::from_secs(1)));
+    let seen: Vec<&str> = alice_stash
+        .iter()
+        .filter_map(|m| match m {
+            ServerMessage::Died { player_id, .. } if *player_id == bob_id => Some("died"),
+            ServerMessage::Respawned { player_id, .. } if *player_id == bob_id => Some("respawned"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(seen, ["died", "respawned"]);
+}

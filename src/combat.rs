@@ -7,6 +7,11 @@
 //! far the shooter's view of the world was behind the server
 //! ([`rewind_ticks`]), at most [`REWIND_CAP_SECS`]. The terrain stops it
 //! ([`Level::segment_hits_terrain`]).
+//!
+//! A car whose armour runs out is a wreck ([`Wreck`]) for [`RESPAWN_SECS`]:
+//! shots pass it and it fires none ([`fly_shots`]). Then the server puts it
+//! back, undamaged, by the escave entrance nearest to where it died
+//! ([`nearest_escave`]).
 
 use crate::{level::Level, weapon};
 use glam::Vec3;
@@ -19,6 +24,9 @@ pub const DEFAULT_MAX_ARMOR: u16 = 100;
 pub const REWIND_CAP_SECS: f32 = 0.2;
 /// Pose history kept per car, seconds.
 pub const HISTORY_SECS: f32 = 1.0;
+
+/// How long a wreck waits before the server respawns it, seconds.
+pub const RESPAWN_SECS: f32 = 3.0;
 
 /// Armour a hit from weapon bay `bay` takes off.
 ///
@@ -131,6 +139,79 @@ impl PoseHistory {
         }
         self.entries.back().map(|&(_, p)| p)
     }
+}
+
+/// A car that ran out of armour, waiting to respawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Wreck<Id> {
+    /// Where it died.
+    pub at: Vec3,
+    /// Whose shot emptied its armour.
+    pub killer: Option<Id>,
+    /// The server tick it respawns in ([`respawn_tick`]).
+    pub respawn: u32,
+}
+
+/// The tick a car that died in tick `now` respawns in: [`RESPAWN_SECS`]
+/// on, at least one tick. Wraps with the tick counter.
+pub fn respawn_tick(now: u32, tick_secs: f32) -> u32 {
+    let wait = if tick_secs > 0.0 {
+        (RESPAWN_SECS / tick_secs).round().max(1.0) as u32
+    } else {
+        1
+    };
+    now.wrapping_add(wait)
+}
+
+/// Whether tick `now` has reached `due`, across the tick counter's wrap
+/// (`due` less than half the counter's range away).
+pub fn respawn_due(now: u32, due: u32) -> bool {
+    now.wrapping_sub(due) as i32 >= 0
+}
+
+/// The escave entrance (map XY) nearest to `pos`, measured the short way
+/// around a torus of `period`; the first listed on a tie, `None` with no
+/// escaves.
+pub fn nearest_escave(pos: Vec3, escaves: &[(i32, i32)], period: (f32, f32)) -> Option<(i32, i32)> {
+    let dist = |&(x, y): &(i32, i32)| {
+        let d = torus_delta(pos, Vec3::new(x as f32, y as f32, pos.z), period);
+        d.x * d.x + d.y * d.y
+    };
+    escaves
+        .iter()
+        .min_by(|a, b| dist(a).total_cmp(&dist(b)))
+        .copied()
+}
+
+/// Fly every shot one tick of `dt` on and return its hits as
+/// `(shooter, bay, target)`; a shot that hit or is spent is removed.
+/// `targets(rewind)` lists the cars as a shot rewound by `rewind` ticks
+/// sees them. `dead` tells the wrecks apart: a wreck's shots are dropped
+/// (even those it fired before it died) and shots fly through a wreck.
+pub fn fly_shots<Id: Copy + PartialEq>(
+    shots: &mut Vec<ServerShot<Id>>,
+    dt: f32,
+    period: (f32, f32),
+    level: Option<&Level>,
+    targets: impl Fn(f32) -> Vec<Target<Id>>,
+    dead: impl Fn(Id) -> bool,
+) -> Vec<(Id, u8, Id)> {
+    let mut hits = Vec::new();
+    shots.retain_mut(|shot| {
+        if dead(shot.shooter) {
+            return false;
+        }
+        let mut targets = targets(shot.rewind);
+        targets.retain(|t| !dead(t.id));
+        match shot.step(dt, &targets, period, level) {
+            Some(target) => {
+                hits.push((shot.shooter, shot.bay, target));
+                false
+            }
+            None => !shot.is_spent(),
+        }
+    });
+    hits
 }
 
 /// A shot the server is flying.
@@ -279,6 +360,99 @@ mod tests {
             assert_eq!(shot.step(0.05, &targets[..1], PERIOD, None), None);
         }
         assert!(shot.is_spent());
+    }
+
+    #[test]
+    fn the_nearest_escave_is_picked_the_short_way_round() {
+        // Fostral's two: Incubator and Podish.
+        let escaves = [(1657, 353), (1500, 15879)];
+        let pos = |x, y| Vec3::new(x, y, 10.0);
+        assert_eq!(
+            nearest_escave(pos(590.0, 4140.0), &escaves, PERIOD),
+            Some((1657, 353))
+        );
+        assert_eq!(
+            nearest_escave(pos(1500.0, 14000.0), &escaves, PERIOD),
+            Some((1500, 15879))
+        );
+        // Just under the Y seam, Incubator (357 on across it) beats
+        // Podish (501 back), though it is 16000 off the naive way.
+        assert_eq!(
+            nearest_escave(pos(1660.0, 16380.0), &escaves, PERIOD),
+            Some((1657, 353))
+        );
+        // And across the X seam: x=2040 is 17 from x=9.
+        let near_seam = [(1000, 500), (9, 500)];
+        assert_eq!(
+            nearest_escave(pos(2040.0, 500.0), &near_seam, PERIOD),
+            Some((9, 500))
+        );
+        assert_eq!(nearest_escave(pos(0.0, 0.0), &[], PERIOD), None);
+    }
+
+    #[test]
+    fn a_wreck_respawns_after_the_delay_across_the_wrap() {
+        let tick = 0.05; // 20 Hz
+        let due = respawn_tick(100, tick);
+        assert_eq!(due, 100 + (RESPAWN_SECS / tick).round() as u32);
+        assert!(!respawn_due(100, due));
+        assert!(!respawn_due(due - 1, due));
+        assert!(respawn_due(due, due));
+        assert!(respawn_due(due + 5, due));
+        // The tick counter wraps while the wreck waits.
+        let due = respawn_tick(u32::MAX - 10, tick);
+        assert!(due < 100, "{due}");
+        assert!(!respawn_due(u32::MAX - 1, due));
+        assert!(respawn_due(due, due));
+        // A degenerate tick still waits a tick.
+        assert_eq!(respawn_tick(7, 0.0), 8);
+        assert_eq!(respawn_tick(7, 10.0), 8);
+    }
+
+    #[test]
+    fn wrecks_take_no_hits_and_fire_no_shots() {
+        let targets = |_: f32| {
+            vec![
+                Target {
+                    id: 1,
+                    center: Vec3::ZERO,
+                    radius: 15.0,
+                },
+                Target {
+                    id: 2,
+                    center: Vec3::new(0.0, 30.0, 0.0),
+                    radius: 15.0,
+                },
+                Target {
+                    id: 3,
+                    center: Vec3::new(0.0, 60.0, 0.0),
+                    radius: 15.0,
+                },
+            ]
+        };
+        let fly = |dead: &[u32]| {
+            let mut shots = vec![
+                // 1 fires up +Y through 2's sphere to 3.
+                ServerShot::new(1, 0, Vec3::ZERO, Vec3::Y, 0.0),
+                // 3 fires back down -Y at 2.
+                ServerShot::new(3, 1, Vec3::new(0.0, 60.0, 0.0), -Vec3::Y, 0.0),
+            ];
+            let mut hits = Vec::new();
+            for _ in 0..40 {
+                hits.extend(fly_shots(&mut shots, 0.05, PERIOD, None, targets, |id| {
+                    dead.contains(&id)
+                }));
+            }
+            assert!(shots.is_empty(), "every shot hit or was spent");
+            hits
+        };
+        // All alive: both shots hit 2, the car between them.
+        assert_eq!(fly(&[]), vec![(1, 0, 2), (3, 1, 2)]);
+        // 2 is a wreck: 1's shot flies through it into 3; 3's flies
+        // through it into 1.
+        assert_eq!(fly(&[2]), vec![(1, 0, 3), (3, 1, 1)]);
+        // 3 is a wreck: its shot is dropped, and 1's still stops at 2.
+        assert_eq!(fly(&[3]), vec![(1, 0, 2)]);
     }
 
     #[test]

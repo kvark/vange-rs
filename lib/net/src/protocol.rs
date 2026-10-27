@@ -12,7 +12,8 @@ pub type PlayerId = u32;
 /// 4: `ClientMessage::Fire` and `ServerMessage::Shot`.
 /// 5: server-owned armour in `AgentState::armor` / `max_armor`; the
 /// shooter's view of the world in `Fire::view_tick` / `view_ms`.
-pub const PROTOCOL_VERSION: u32 = 5;
+/// 6: `ServerMessage::Died` / `Respawned` and `AgentState::dead`.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Client-to-server messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +117,22 @@ pub enum ServerMessage {
         origin: [f32; 3],
         dir: [f32; 3],
     },
+    /// Player `player_id`'s armour ran out at `position`: the car is a
+    /// wreck until `Respawned`. `killer`: whose shot did it, if the server
+    /// knows. Sent to everyone, the dead player included.
+    Died {
+        player_id: PlayerId,
+        killer: Option<PlayerId>,
+        position: [f32; 3],
+    },
+    /// Player `player_id` is back, undamaged, at `transform` (near an
+    /// escave), standing still. Sent to everyone. The owning client snaps
+    /// its car there and answers with `ClientMessage::SetPose`, which
+    /// lines its inputs up again; the others snap their copy of the car.
+    Respawned {
+        player_id: PlayerId,
+        transform: NetTransform,
+    },
 }
 
 /// Authoritative story-cycle snapshot (cirt banks, palette stage, carry).
@@ -208,6 +225,9 @@ pub struct AgentState {
     pub armor: u16,
     /// Armour of the car undamaged (`car.prm`).
     pub max_armor: u16,
+    /// A wreck waiting to respawn (between `Died` and `Respawned`): it
+    /// drives with no control, takes no hits and fires no shots.
+    pub dead: bool,
 }
 
 /// Network-serializable transform (position + rotation + scale).
@@ -309,6 +329,7 @@ mod tests {
                 },
                 armor: 35,
                 max_armor: 120,
+                dead: true,
             }],
             cycle: None,
             moving: None,
@@ -324,6 +345,7 @@ mod tests {
                 assert_eq!(agents[0].spiral_charge, 3);
                 assert_eq!(agents[0].ack, 1234);
                 assert_eq!((agents[0].armor, agents[0].max_armor), (35, 120));
+                assert!(agents[0].dead);
                 assert!(cycle.is_none());
                 assert!(moving.is_none());
             }
@@ -503,6 +525,47 @@ mod tests {
                 assert_eq!((shooter, tick, quant, bay), (3, 900, 77, 0));
                 assert_eq!(origin, [4.0, 5.0, 6.0]);
                 assert_eq!(dir, [1.0, 0.0, 0.0]);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn round_trip_died_and_respawned() {
+        let msg = ServerMessage::Died {
+            player_id: 2,
+            killer: Some(1),
+            position: [7.0, 8.0, 9.0],
+        };
+        let (decoded, _): (ServerMessage, _) = decode(&encode(&msg)).unwrap();
+        match decoded {
+            ServerMessage::Died {
+                player_id,
+                killer,
+                position,
+            } => {
+                assert_eq!((player_id, killer), (2, Some(1)));
+                assert_eq!(position, [7.0, 8.0, 9.0]);
+            }
+            _ => panic!("wrong variant"),
+        }
+
+        let msg = ServerMessage::Respawned {
+            player_id: 2,
+            transform: NetTransform {
+                position: [1657.0, 353.0, 40.0],
+                rotation: [0.0, 0.0, 1.0, 0.0],
+                scale: 1.0,
+            },
+        };
+        let (decoded, _): (ServerMessage, _) = decode(&encode(&msg)).unwrap();
+        match decoded {
+            ServerMessage::Respawned {
+                player_id,
+                transform,
+            } => {
+                assert_eq!(player_id, 2);
+                assert_eq!(transform.position, [1657.0, 353.0, 40.0]);
             }
             _ => panic!("wrong variant"),
         }

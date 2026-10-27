@@ -1,5 +1,6 @@
 //! World-space particles: dust from wheels, smoke from a damaged hull,
-//! and a burst when something is crushed or a crater is blown.
+//! a burst when something is crushed or a crater is blown, and an
+//! explosion when a car is destroyed.
 //!
 //! Port of the spawn *rules* of `DrawMechosParticle` (`src/units/hobj.cpp`)
 //! and the motion of `SimpleParticleType::Quant` (`src/units/effect.cpp`).
@@ -19,10 +20,14 @@ const DUST_LIFE: i32 = 8;
 const SMOKE_LIFE: i32 = 16;
 /// A crush / crater burst.
 const BURST_LIFE: i32 = 12;
+/// A car blowing up: fire flung out, then a cloud of smoke.
+const EXPLOSION_LIFE: i32 = 16;
 
 const DUST_COUNT: usize = 4;
 const SMOKE_COUNT: usize = 2;
 const BURST_COUNT: usize = 16;
+const EXPLOSION_COUNT: usize = 48;
+const EXPLOSION_SMOKE: usize = 24;
 
 /// A hair above the terrain so a LessEqual depth test does not bury the
 /// puff in the ground it just left. Larger values read as floating dust.
@@ -33,6 +38,7 @@ const SMOKE_TICK: f32 = 6.0;
 const DUST_COLOR: u32 = 0xFF88_AACC;
 const SMOKE_COLOR: u32 = 0xFFAA_AAAA;
 const BURST_COLOR: u32 = 0xFF44_88FF;
+const FIRE_COLOR: u32 = 0xFF20_A0FF;
 
 /// What kind of puff this is, which only changes how it is spawned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +168,19 @@ impl System {
         for _ in 0..BURST_COUNT {
             let vel = Vec3::new(self.signed(3.0), self.signed(3.0), 1.0 + self.unit() * 3.0);
             self.push(pos, vel, BURST_COLOR, BURST_LIFE, Kind::Burst);
+        }
+    }
+
+    /// A destroyed car: fire flung out all round and up, and a cloud of
+    /// smoke rising from it that outlasts the fire.
+    pub fn emit_explosion(&mut self, pos: Vec3) {
+        for _ in 0..EXPLOSION_COUNT {
+            let vel = Vec3::new(self.signed(4.0), self.signed(4.0), 1.0 + self.unit() * 4.0);
+            self.push(pos, vel, FIRE_COLOR, EXPLOSION_LIFE, Kind::Burst);
+        }
+        for _ in 0..EXPLOSION_SMOKE {
+            let vel = Vec3::new(self.signed(1.5), self.signed(1.5), 1.5 + self.unit() * 2.0);
+            self.push(pos, vel, SMOKE_COLOR, SMOKE_LIFE * 2, Kind::Smoke);
         }
     }
 
@@ -309,6 +328,26 @@ mod tests {
         assert!(sys.particles().iter().all(|p| p.kind == Kind::Burst));
         sys.from_crater(Vec3::new(8.0, 8.0, 5.0));
         assert!(sys.particles().len() > n, "crater made no extra burst");
+    }
+
+    #[test]
+    fn an_explosion_is_fire_and_lasting_smoke() {
+        let mut sys = System::new();
+        sys.from_crush(Vec3::ZERO);
+        let crush = sys.particles().len();
+        let mut sys = System::new();
+        let at = Vec3::new(3.0, 4.0, 5.0);
+        sys.emit_explosion(at);
+        assert!(sys.particles().len() > 2 * crush, "smaller than a crush");
+        assert!(sys.particles().iter().any(|p| p.kind == Kind::Burst));
+        assert!(sys.particles().iter().any(|p| p.kind == Kind::Smoke));
+        for _ in 0..EXPLOSION_LIFE {
+            sys.quant();
+        }
+        // The fire is gone; the smoke still hangs over the wreck, above it.
+        assert!(sys.particles().iter().all(|p| p.kind == Kind::Smoke));
+        assert!(!sys.is_empty());
+        assert!(sys.particles().iter().all(|p| p.pos.z > at.z));
     }
 
     #[test]
