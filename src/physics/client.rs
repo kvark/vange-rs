@@ -3,7 +3,8 @@
 //!
 //! - [`RemoteCar`]: another player's car as the client sees it: the latest
 //!   server state (the source of its contact [`Ghost`]) and the pose drawn
-//!   between the last two snapshots.
+//!   from it: each snapshot blended in from the drawn pose, then dead
+//!   reckoned through gaps.
 //! - [`ClientSync`]: the local car's side of [`super::prediction`]: the
 //!   quantum clock, the numbered prediction history, the remote ghosts and
 //!   the render offset, plus the per-quantum step and the snapshot handling
@@ -93,19 +94,28 @@ pub fn net_control(input: &QuantInput) -> vangers_net::NetControl {
 }
 
 /// Another player's car.
+///
+/// Drawn by dead reckoning with a blend: from each snapshot the car is
+/// carried on at the motion of its last two snapshots, and a new snapshot
+/// is blended in from wherever the car is drawn when it arrives, both
+/// moving on while they blend, over [`Self::BLEND`]. Past
+/// [`Self::DEAD_RECKON_MAX`] without a snapshot the car holds. Over TCP a
+/// lost segment stalls every snapshot behind it for a retransmit (~RTT +
+/// 200 ms); drawn between the last two snapshots instead, the car stood
+/// still for the stall and then jumped the whole way at once.
 #[derive(Clone)]
 pub struct RemoteCar {
     /// Contact shape for the ghost.
     pub phys_data: CarPhysicsData,
-    /// Previous snapshot pose (interpolation source).
+    /// The pose drawn when the latest snapshot arrived (blend source).
     pub prev_transform: space::Transform,
-    /// Latest snapshot pose (interpolation target, ghost start).
+    /// Latest snapshot pose (blend target, ghost start).
     pub target_transform: space::Transform,
     /// The pose drawn this frame.
     pub render_transform: space::Transform,
-    /// Interpolation progress, 0..=1.
+    /// Snapshot intervals since the latest snapshot arrived.
     pub interp_t: f32,
-    /// False until the first snapshot pose: nothing to lerp from yet.
+    /// False until the first snapshot pose: nothing to blend from yet.
     pub pose_ready: bool,
     /// Car-local velocities, traction and rudder of the latest snapshot.
     pub linear_velocity: Vec3,
@@ -115,12 +125,32 @@ pub struct RemoteCar {
     /// The held control the server last ran the car with: its ghost is
     /// driven on with it.
     pub control: QuantInput,
+    /// World motion between the last two snapshots, per second: the dead
+    /// reckoning velocity, and spin as a scaled axis (radians per second).
+    /// Taken from the poses rather than `linear_velocity`, which is in
+    /// physics time, so it carries on exactly what the snapshots showed.
+    pub reckon_velocity: Vec3,
+    pub reckon_spin: Vec3,
+    /// The motion the blend source carries on with: the one the car was
+    /// drawn with when the latest snapshot arrived.
+    prev_velocity: Vec3,
+    prev_spin: Vec3,
 }
 
 impl RemoteCar {
-    /// Snapshots a second (the server tick), the rate the drawn pose
-    /// moves from one snapshot to the next.
+    /// Snapshots a second (the server tick).
     pub const SNAPSHOT_RATE: f32 = 20.0;
+    /// Seconds a new snapshot takes to blend in. Two intervals rather than
+    /// one: with ±20 ms of jitter the drawn car peaks at 1.3x its speed
+    /// instead of 1.7x, for a few frames more to settle from rest.
+    pub const BLEND: f32 = 2.0 / Self::SNAPSHOT_RATE;
+    /// Longest the drawn car is carried on past a snapshot's arrival
+    /// before it holds: covers a retransmit stall at a 250 ms RTT (~0.45
+    /// s) plus the interval, not a dropped connection.
+    pub const DEAD_RECKON_MAX: f32 = 0.7;
+    /// A snapshot this far from the last one, or from the drawn car, is a
+    /// respawn or teleport: drawn there at once, not slid to.
+    pub const TELEPORT: f32 = 64.0;
 
     pub fn new(phys_data: CarPhysicsData) -> Self {
         RemoteCar {
@@ -128,62 +158,103 @@ impl RemoteCar {
             prev_transform: space::Transform::IDENTITY,
             target_transform: space::Transform::IDENTITY,
             render_transform: space::Transform::IDENTITY,
-            interp_t: 1.0,
+            interp_t: 0.0,
             pose_ready: false,
             linear_velocity: Vec3::ZERO,
             angular_velocity: Vec3::ZERO,
             traction: 0.0,
             rudder: 0.0,
             control: QuantInput::default(),
+            reckon_velocity: Vec3::ZERO,
+            reckon_spin: Vec3::ZERO,
+            prev_velocity: Vec3::ZERO,
+            prev_spin: Vec3::ZERO,
         }
     }
 
-    /// Take a `WorldState` entry of this car: its pose and dynamics
-    /// ([`Self::on_snapshot`]) and its held control.
+    /// Take a server snapshot of this car (see `on_snapshot`).
     pub fn on_agent(&mut self, agent: &vangers_net::AgentState, period: Option<Vec2>) {
         self.control = agent_control(agent);
         self.on_snapshot(&server_car(agent), period);
     }
 
-    /// Take a snapshot of this car. The first one is shown at once; later
-    /// ones become the new interpolation target, on the replica nearest
-    /// the last one (the server folds every car onto the home tile, so a
-    /// car crossing the seam would otherwise be drawn sweeping across the
-    /// whole world for a tick).
+    /// Take a snapshot of this car. The first one (and a teleport) is
+    /// shown at once; later ones are blended in from the pose drawn now,
+    /// on the replica nearest the last one (the server folds every car
+    /// onto the home tile, so a car crossing the seam would otherwise be
+    /// drawn sweeping across the whole world).
     pub fn on_snapshot(&mut self, car: &ServerCar, period: Option<Vec2>) {
         self.linear_velocity = car.linear_velocity;
         self.angular_velocity = car.angular_velocity;
         self.traction = car.traction;
         self.rudder = car.rudder;
-        if !self.pose_ready {
-            self.prev_transform = car.transform;
-            self.target_transform = car.transform;
-            self.render_transform = car.transform;
-            self.interp_t = 1.0;
+        let mut target = car.transform;
+        if self.pose_ready
+            && let Some(p) = period
+        {
+            let d = target.disp.truncate() - self.target_transform.disp.truncate();
+            let fold = |d: f32, p: f32| if p > 0.0 { (d / p).round() * p } else { 0.0 };
+            target.disp.x -= fold(d.x, p.x);
+            target.disp.y -= fold(d.y, p.y);
+        }
+        let step = target.disp - self.target_transform.disp;
+        if !self.pose_ready
+            || step.length() > Self::TELEPORT
+            || (target.disp - self.render_transform.disp).length() > Self::TELEPORT
+        {
+            self.prev_transform = target;
+            self.render_transform = target;
+            self.prev_velocity = Vec3::ZERO;
+            self.prev_spin = Vec3::ZERO;
+            self.reckon_velocity = Vec3::ZERO;
+            self.reckon_spin = Vec3::ZERO;
             self.pose_ready = true;
         } else {
-            let mut target = car.transform;
-            if let Some(p) = period {
-                let d = target.disp.truncate() - self.target_transform.disp.truncate();
-                let fold = |d: f32, p: f32| if p > 0.0 { (d / p).round() * p } else { 0.0 };
-                target.disp.x -= fold(d.x, p.x);
-                target.disp.y -= fold(d.y, p.y);
+            let mut turn = target.rot * self.target_transform.rot.inverse();
+            if turn.w < 0.0 {
+                turn = -turn;
             }
-            self.prev_transform = self.target_transform;
-            self.target_transform = target;
-            self.interp_t = 0.0;
+            // The blend source carries on as the drawn car was carried
+            // (still, once held past the cap).
+            let since = self.interp_t / Self::SNAPSHOT_RATE;
+            let blend = (since / Self::BLEND).min(1.0);
+            (self.prev_velocity, self.prev_spin) = if since < Self::DEAD_RECKON_MAX {
+                (
+                    self.prev_velocity.lerp(self.reckon_velocity, blend),
+                    self.prev_spin.lerp(self.reckon_spin, blend),
+                )
+            } else {
+                (Vec3::ZERO, Vec3::ZERO)
+            };
+            self.prev_transform = self.render_transform;
+            self.reckon_velocity = step * Self::SNAPSHOT_RATE;
+            self.reckon_spin = turn.to_scaled_axis() * Self::SNAPSHOT_RATE;
         }
+        self.target_transform = target;
+        self.interp_t = 0.0;
     }
 
-    /// Move the drawn pose `delta` seconds on toward the latest snapshot.
+    /// Move the drawn pose `delta` seconds on.
     pub fn interpolate(&mut self, delta: f32) {
-        self.interp_t = (self.interp_t + delta * Self::SNAPSHOT_RATE).min(1.0);
-        let t = self.interp_t;
-        let (a, b) = (&self.prev_transform, &self.target_transform);
+        self.interp_t += delta * Self::SNAPSHOT_RATE;
+        let since = self.interp_t / Self::SNAPSHOT_RATE;
+        let ahead = since.min(Self::DEAD_RECKON_MAX);
+        let blend = (since / Self::BLEND).min(1.0);
+        let carry = |t: &space::Transform, v: Vec3, w: Vec3| space::Transform {
+            disp: t.disp + v * ahead,
+            rot: (Quat::from_scaled_axis(w * ahead) * t.rot).normalize(),
+            scale: t.scale,
+        };
+        let a = carry(&self.prev_transform, self.prev_velocity, self.prev_spin);
+        let b = carry(
+            &self.target_transform,
+            self.reckon_velocity,
+            self.reckon_spin,
+        );
         self.render_transform = space::Transform {
-            disp: a.disp.lerp(b.disp, t),
-            rot: a.rot.slerp(b.rot, t),
-            scale: a.scale + (b.scale - a.scale) * t,
+            disp: a.disp.lerp(b.disp, blend),
+            rot: a.rot.slerp(b.rot, blend),
+            scale: a.scale + (b.scale - a.scale) * blend,
         };
     }
 
@@ -644,20 +715,28 @@ mod tests {
     }
 
     #[test]
-    fn remote_snaps_first_then_interpolates() {
+    fn remote_snaps_first_then_blends() {
         let mut r = RemoteCar::new(CarPhysicsData::test_default());
         assert!(r.ghost().is_none(), "no ghost before a pose");
         r.on_snapshot(&server(10.0, 10.0), None);
         assert_eq!(r.render_transform.disp, Vec3::new(10.0, 10.0, 10.0));
-        r.on_snapshot(&server(20.0, 10.0), None);
-        r.interpolate(0.025);
-        assert!((r.render_transform.disp.x - 15.0).abs() < 1e-4);
-        r.interpolate(1.0);
-        assert_eq!(r.render_transform.disp.x, 20.0);
+        r.on_snapshot(&server(11.0, 10.0), None);
+        // Not moved by the arrival, only by the frames after it.
+        assert_eq!(r.render_transform.disp.x, 10.0);
+        r.interpolate(0.05);
+        // Half blended between standing at 10 and 11 carried on at 20 u/s.
+        assert!((r.render_transform.disp.x - 11.0).abs() < 1e-4);
+        r.interpolate(0.05);
+        assert!((r.render_transform.disp.x - 13.0).abs() < 1e-4);
         let g = r.ghost().unwrap();
-        assert_eq!(g.transform.disp.x, 20.0);
+        assert_eq!(g.transform.disp.x, 11.0);
         assert_eq!(g.dynamo.traction, 0.5);
         assert_eq!(g.dynamo.linear_velocity, Vec3::new(0.0, 3.0, 0.0));
+        // Drawn a unit ahead at 20 u/s: the next snapshot blends in from
+        // there, both carried on.
+        r.on_snapshot(&server(12.0, 10.0), None);
+        r.interpolate(0.05);
+        assert!((r.render_transform.disp.x - 13.5).abs() < 1e-4);
     }
 
     #[test]
@@ -668,8 +747,144 @@ mod tests {
         // The server folded it onto the home tile at x=2: drawn at 258.
         r.on_snapshot(&server(2.0, 100.0), period);
         assert_eq!(r.target_transform.disp.x, 258.0);
-        r.interpolate(0.025);
-        assert!((r.render_transform.disp.x - 256.0).abs() < 1e-3);
+        r.interpolate(0.05);
+        let x = r.render_transform.disp.x;
+        assert!(x > 254.0 && x < 262.0, "drawn at {x}");
+    }
+
+    /// A remote driving along +X at `speed` u/s, at snapshot tick `n`,
+    /// turning at `turn` rad/s about Z.
+    fn moving(n: u32, speed: f32, turn: f32) -> ServerCar {
+        let t = n as f32 / RemoteCar::SNAPSHOT_RATE;
+        let mut car = server(100.0 + speed * t, 50.0);
+        car.transform.rot = Quat::from_rotation_z(turn * t);
+        car
+    }
+
+    const FPS: u32 = 60;
+
+    /// Drive `r` at 60 fps through snapshot ticks `0..ticks`, each sent on
+    /// the frame it is due, except that none arrive in frames `stall`
+    /// (the held ones all arrive on the frame after). Returns the drawn
+    /// move of every frame, with the frame's time.
+    fn drive(
+        r: &mut RemoteCar,
+        ticks: u32,
+        speed: f32,
+        stall: std::ops::Range<u32>,
+    ) -> Vec<(f32, f32)> {
+        let per_tick = FPS / RemoteCar::SNAPSHOT_RATE as u32;
+        let mut sent = 0;
+        let mut moves = Vec::new();
+        let mut last = r.render_transform.disp;
+        for frame in 0.. {
+            if sent == ticks {
+                break;
+            }
+            if !stall.contains(&frame) {
+                while sent <= frame / per_tick && sent < ticks {
+                    r.on_snapshot(&moving(sent, speed, 0.0), None);
+                    sent += 1;
+                }
+            }
+            r.interpolate(1.0 / FPS as f32);
+            let d = r.render_transform.disp;
+            moves.push((frame as f32 / FPS as f32, (d - last).length()));
+            last = d;
+        }
+        moves
+    }
+
+    #[test]
+    fn remote_dead_reckons_steady_motion_through_a_gap() {
+        let speed = 40.0;
+        let per_frame = speed / FPS as f32;
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        // 0.6 s without a snapshot from t=1 s, then 12 at once.
+        let moves = drive(&mut r, 60, speed, FPS..FPS * 8 / 5);
+        // Once settled from the start at rest (overlapping blends take a
+        // few snapshots), every frame moves the car by its speed: through
+        // the gap and out of it.
+        for &(t, m) in moves.iter().filter(|&&(t, _)| t > 0.75) {
+            assert!(
+                (m - per_frame).abs() < 0.02,
+                "drawn moved {m:.3}u at t={t:.3}, speed x dt is {per_frame:.3}"
+            );
+        }
+        // On the last snapshot's line, carried on by less than a snapshot.
+        let last = moving(59, speed, 0.0).transform.disp;
+        let ahead = r.render_transform.disp - last;
+        assert!(ahead.y.abs() < 1e-3 && ahead.x >= 0.0 && ahead.x < speed / 20.0);
+    }
+
+    #[test]
+    fn remote_resumes_after_a_gap_without_a_jump() {
+        let speed = 40.0;
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        drive(&mut r, 11, speed, 0..0);
+        // The car stopped where its last snapshot (tick 10) showed it, and
+        // a 0.8 s stall followed: drawn on to the cap, then held.
+        let held = moving(10, speed, 0.0);
+        for _ in 0..48 {
+            r.interpolate(1.0 / FPS as f32);
+        }
+        let ahead = r.render_transform.disp.x - held.transform.disp.x;
+        assert!(ahead > 0.0 && ahead <= speed * RemoteCar::DEAD_RECKON_MAX + 0.1);
+        let before = r.render_transform.disp;
+        // The stall ends: it was standing there all along.
+        for _ in 0..16 {
+            r.on_snapshot(&held, None);
+        }
+        assert_eq!(r.render_transform.disp, before, "no jump on arrival");
+        let frames = (RemoteCar::BLEND * FPS as f32).round() as usize;
+        let mut last = before;
+        for _ in 0..frames {
+            r.interpolate(1.0 / FPS as f32);
+            let step = (r.render_transform.disp - last).length();
+            assert!(
+                step <= ahead / frames as f32 * 2.0,
+                "slid {step:.2}u in a frame"
+            );
+            last = r.render_transform.disp;
+        }
+        assert!((r.render_transform.disp - held.transform.disp).length() < 1e-3);
+        // Standing still: nothing to reckon on.
+        r.interpolate(0.5);
+        assert!((r.render_transform.disp - held.transform.disp).length() < 1e-3);
+    }
+
+    #[test]
+    fn remote_dead_reckoning_turns_and_holds() {
+        let (speed, turn) = (40.0, 1.0);
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        for n in 0..4 {
+            r.on_snapshot(&moving(n, speed, turn), None);
+            r.interpolate(0.05);
+        }
+        // 0.3 s later in all: turned on by 0.3 rad from tick 3.
+        r.interpolate(0.25);
+        let yaw = r.render_transform.rot.to_euler(glam::EulerRot::ZYX).0;
+        assert!((yaw - turn * 0.45).abs() < 1e-3, "yaw {yaw}");
+        // Past the cap it holds.
+        r.interpolate(1.0);
+        let held = r.render_transform;
+        r.interpolate(1.0);
+        assert_eq!(r.render_transform.disp, held.disp);
+        let reckoned = held.disp.x - moving(3, speed, turn).transform.disp.x;
+        assert!((reckoned - speed * RemoteCar::DEAD_RECKON_MAX).abs() < 1e-3);
+    }
+
+    #[test]
+    fn remote_teleport_is_shown_at_once() {
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        r.on_snapshot(&moving(0, 40.0, 0.0), None);
+        r.on_snapshot(&moving(1, 40.0, 0.0), None);
+        r.interpolate(0.2);
+        // Respawned far away: no slide across the map, no reckoning on.
+        r.on_snapshot(&server(900.0, 900.0), None);
+        assert_eq!(r.render_transform.disp, Vec3::new(900.0, 900.0, 10.0));
+        r.interpolate(0.3);
+        assert_eq!(r.render_transform.disp, Vec3::new(900.0, 900.0, 10.0));
     }
 
     #[test]
