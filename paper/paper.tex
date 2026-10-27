@@ -1,638 +1,583 @@
 \documentclass{jcgt}
+\pdfminorversion=7
 
 \setciteauthor{Malyshau}
-\setcitetitle{Six Ways to Draw Vangers with WebGPU: Real-Time Rendering of Editable Multi-Layer Height Fields}
-\setheadtitle{Six Ways to Draw Vangers with WebGPU}
+\setcitetitle{Rendering Editable Layered Terrain with WebGPU: A Comparison of Six Methods}
+\setheadtitle{Rendering Editable Layered Terrain with WebGPU}
 \submitted{2026-08-17}
+\lhead{\small Manuscript for the \textit{Journal of Computer Graphics Techniques}}
+\rhead{\small Revised draft: 2026-10-05}
 
-\usepackage{longtable}
 \usepackage{booktabs}
 \usepackage{array}
 \usepackage{tabularx}
+\usepackage{placeins}
+\usepackage{flafter}
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
-\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
-\providecommand{\pandocbounded}[1]{#1}
-\providecommand{\passthrough}[1]{#1}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\methodfigure}[3]{%
+  \begin{figure}[tbp]\centering
+  \includegraphics[width=\linewidth]{figures/#1.pdf}
+  \caption{#2}\label{#3}
+  \end{figure}}
+\captionsetup{font=small,skip=6pt}
+\lstset{basicstyle=\small\ttfamily,columns=fullflexible,
+  showstringspaces=false,breaklines=true,frame=single,language=}
+\setlength{\emergencystretch}{1em}
 
 \begin{document}
 
-\title{Six Ways to Draw Vangers with WebGPU:\\Real-Time Rendering of Editable Multi-Layer Height Fields}
-
+\title{Rendering Editable Layered Terrain with WebGPU:\\A Comparison of Six Methods}
 \author{Dzmitry Malyshau~\href{https://orcid.org/0009-0005-6410-4276}{\includegraphics[width=8pt]{ORCIDlogo}}\\Independent Researcher}
-
-\teaser{
-  \includegraphics[width=\columnwidth]{figures/teaser.pdf}
-  \caption{The six selected methods at the hangar horizon scene. Scattered loses coverage; slicing shows grazing bands; the selected mesh keeps the wall.}
-  \label{fig:teaser}
-}
-
 \maketitle
 
 \begin{abstract}
-\small
-Terrain level-of-detail is measured almost exclusively on digital elevation models: single-valued, smooth at the sampling scale, sampled from real topography. Game terrain is often none of these. We compare six rendering methods --- height-field ray marching, voxel-accelerated ray marching, sliced proxy geometry, per-sample bar rasterization, compute scattering, and a fitted triangle mesh --- implemented in a single engine over a single data path, on the hand-authored multi-layer terrain of \emph{Vangers} (1998), scored against a CPU ray cast of the same source data. Every method must preserve the two solid intervals available at a ground sample, render at interactive rates, and reflect local terrain destruction without reloading the level. These constraints rule out treating caves as decoration or amortising a static preprocessing step over an immutable map.
+Terrain with caves and destructible ground needs more than a single height per map location. We compare six ways to render the layered terrain of \emph{Vangers}: height-field ray marching, voxel-assisted ray marching, horizontal slices, per-sample bars, point scattering, and a fitted triangle mesh. All six run in one engine through wgpu, using the same terrain data, camera, and shared shading code. We measure image quality, frame time, preparation, memory, and local edits on five devices.
 
-From the original game\textquotesingle s top-down camera the six methods look interchangeable. At eye-level horizons they do not: point scattering loses coverage, slicing bands, and an over-simplified mesh can miss a wall. At the selected quality settings a greedy triangulated irregular network (TIN) has the lowest mean frame time on every device we measured, but the fit cost is set by the second layer rather than by floor relief, and making that mesh editable retains 319 MiB of GPU geometry and 535 MiB of CPU triangulation. All six implementations use the same native wgpu / WebGPU API and canonical WGSL. We release the engine, the harness, and a one-command measurement protocol.
+Camera angle changes the tradeoffs. Point scattering leaves large gaps near the horizon, and horizontal slices produce bands. At the selected settings, the mesh has the lowest mean frame time on every measured device. It also retains 319 MiB of GPU geometry and 535 MiB of CPU triangulation. The direct ray marcher uses no extra persistent method data and reads edits on the next draw. A survey of ten worlds links poor mesh reduction to the second terrain layer; an insertion count shows that layer boundaries account for 23\% of vertex insertions in one Fostral fit. These results help choose a renderer for this terrain format and show why frame time alone is not enough. The engine and measurement tools are open source.
 \end{abstract}
 
-\section{Introduction}\label{sec:introduction}\label{introduction}
+\section{Introduction}\label{sec:introduction}
 
-Terrain rendering research usually starts with a digital elevation model: a single-valued surface whose resolution can be traded against screen-space error. Authored game terrain can violate each part of that model. It may be quantised, intentionally discontinuous, and multi-layered, and it is judged from cameras that the original authoring tool never showed. Those differences make familiar reduction ratios and quality settings poor predictors until they are measured on the actual data.
+A height field stores one surface height at each horizontal location. It is a useful model for terrain, but it cannot describe a cave beneath a solid roof. The terrain in \emph{Vangers} (1998) adds a second solid interval to each column. Players can also change the terrain during play. A renderer must therefore handle floors, roofs, and their boundary walls, then update them after an edit.
 
-The historical baseline deserves emphasis. Almost three decades ago, \emph{Vangers} rendered this destructible, multi-layer world in software on consumer CPUs while fitting the game and its streamed terrain into a 16 MB-era memory budget \citep{vangerssource}. It succeeded by co-designing the encoding, renderer, and modestly angled oblique top-down views. Its software renderer used a painter\textquotesingle s algorithm, traversing terrain line by line from back to front; that object-order projection later inspired the Scattered method (Section~\ref{sec:scattered}). The distance since then is simultaneously large and small: modern GPUs make arbitrary cameras, common shadowing, and portable programmable shading practical, yet the horizon and cave cases below still punish a representation that is not matched to the data.
+Several GPU methods can draw this data. Their tradeoffs are hard to judge from a single screenshot or timing result. A method that looks complete from above can leave holes at eye level. A mesh can draw quickly while taking time and memory to build. An acceleration structure can speed up a ray query while adding work after each edit.
 
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/original.jpg}}
+We study these choices in vange-rs, an open-source engine for the Vangers terrain format. It contains six rendering methods built over a common data path. We ask three questions. How does the view direction affect image quality and frame time? What does each method retain and update? Why does a fitted mesh reduce some worlds much more than others?
 
-This study has three non-negotiable system constraints. First, the renderer must preserve multiple vertical solid intervals, including the underside of an upper slab. Second, it must run inside an interactive frame budget rather than produce an offline conversion. Third, a bounded edit to height and layer metadata must become visible without a level reload or a full rebuild. The last constraint is inherited from the 1998 engine: deformation and terrain destruction are gameplay operations, not authoring-time exceptions; the source release is the primary implementation record \citep{vangerssource}. We report frame latency rather than assigning a hardware-independent meaning to "real-time", and separate steady-state rendering from post-edit maintenance.
+The main result is a practical tradeoff between a fitted mesh and a direct ray marcher. The selected mesh is the fastest on average on all five tested devices, but needs a blocking initial fit, substantial retained data, and local refits. The ray marcher is slower at these settings, but adds no persistent acceleration data and reads terrain edits directly. Slices and points have more visible sampling failures near the horizon (Figure~\ref{fig:teaser}).
 
-\subsection{Related work and scope}\label{sec:related}\label{related-work-and-scope}
+Our contribution is a comparison of six implementations under a shared workload, together with an analysis of their failure modes and update costs. We also study the cost of fitting a shared mesh to three altitude fields. The rendering families themselves are established techniques. We do not claim a new ray marcher, voxel hierarchy, splat method, or terrain triangulator.
 
-The closest published representation is not a conventional height field. \citet{benes2001layered} store a 2D grid of vertical material intervals and edit it with erosion; this is the same broad height-column/voxel compromise as the shipped Vangers data, though with variable geological strata rather than a fixed pair of solids. Their visualization converts the data to height fields or triangles and does not preserve caves interactively. Grounded Heightmap Trees \citep{alonso2008grounded} go further by attaching locally oriented height maps to represent overhangs, tunnels, and large editing events. They are more general than the fixed vertical Vangers encoding but require a changing tree of local parameterizations. QuadStack \citep{graciano2021quadstack} is the closest direct-rendering system: it run-length encodes vertical stacks, compresses coherent neighbours in a quadtree, and ray casts the compressed layers on the GPU. Its published construction and evaluation target compressed volumes and provide no local edit algorithm; modifying a compressed region can require recalculating the representation. Our source is already compact and gameplay edits are required, so we retain direct random access and update only method-specific dirty regions.
+Section~\ref{sec:data} defines the terrain and edit model. Section~\ref{sec:methods} explains the methods. Sections~\ref{sec:eval} and~\ref{sec:results} describe the study and its results. Section~\ref{sec:fit} examines mesh size, and Section~\ref{sec:choice} draws out the choice between methods.
 
-Layered Depth Images also store several samples along a ray \citep{shade1998ldi}, but those samples belong to one input camera and are splatted into nearby views. Vangers layers instead live in world-space vertical columns; they survive arbitrary camera motion and are the editable simulation state. The similarity is therefore depth complexity, not representation semantics.
+\methodfigure{teaser}{The six selected configurations at the same eye-level hangar view. Scattered leaves gaps, and Sliced shows bands. The selected Mesh configuration preserves the wall. These images share the camera, palette, fog, and shadow pass.}{fig:teaser}
 
-The rendering families themselves are established. Relief mapping uses a linear search followed by refinement through a single height texture \citep{policarpo2005relief}, and GPU landscape ray casting makes the cost output-sensitive \citep{mantler2006landscape}. Maximum mipmaps add conservative hierarchical skipping while remaining cheap enough to update for dynamic, single-valued height fields \citep{tevs2008maximum}. Our first marcher keeps the linear/refinement structure but evaluates two solid intervals; our voxel path generalises the hierarchy to 3D occupancy so it can skip empty caves as well as air. This is deliberately simpler and more updateable than a compressed sparse voxel scene \citep{laine2010svo}.
+\section{Terrain and Edits}\label{sec:data}
 
-The three forward methods likewise have clear precedents. Texture-based volume rendering accumulates view-aligned slices \citep{cabral1994volume}, while volume and surface splatting spread each sample over a reconstruction footprint \citep{westover1990footprint,zwicker2001splatting}. Our slicer uses horizontal planes because membership in a vertical interval is then a direct texture test; the resulting grazing-angle bands are the price. Our scatterer writes one nearest-depth pixel per sample rather than a filtered footprint, which explains its holes and temporal speckle. A multi-pixel splat is promising, but it also multiplies contended atomic writes and is left as a measured follow-up rather than folded into this comparison without tuning.
+The decoded terrain is a two-dimensional grid of vertical columns. A column contains ground up to an altitude \code{low}. It may also contain an upper slab, whose underside is \code{mid} and whose top is \code{high}. Thus a point in a dual-level column is solid when
+\begin{equation}
+  z \leq \code{low}(x,y)
+  \quad\hbox{or}\quad
+  \code{mid}(x,y) \leq z \leq \code{high}(x,y).
+  \label{eq:solid}
+\end{equation}
+For a single-level column, \code{low = mid = high}, so the same test reduces to one solid interval. Figure~\ref{fig:encoding} shows the two cases.
 
-Finally, triangulated irregular network (TIN) fitting and terrain LOD provide the mesh lineage \citep{fowler1979tin,garland1995terrain,duchaineau1997roam,losasso2004clipmaps}. Those systems approximate a single-valued surface. Our mesh shares one topology across three discontinuous altitude fields and locally refits dirty chunks after edits, which is the source of both its unusual fit cost and its update burden.
+The stored format packs a dual-level column into a pair of horizontal texels. The even texel stores the floor height, the odd texel stores the slab top, and metadata bits in both encode the ceiling offset. All methods use the same decoder. Heights have 8-bit precision. Fostral, the world used for the rendering comparison, has $2048\times16384$ texels; 10.9\% use the dual-level encoding.
 
-The implementations in this repository were developed from first principles before this literature audit. That history is not an algorithmic priority claim. The contribution is the controlled comparison under the three constraints above, plus the resulting failure analysis, rather than a claim that ray marching, interval terrain, splatting, slicing, voxels, or greedy TINs are new.
+\methodfigure{encoding}{Decoded terrain columns. A single-level column has one solid interval. A dual-level column adds a slab above the floor. The gap between \code{low} and \code{mid} is empty. Heights and layer presence can both change during play.}{fig:encoding}
 
-Contributions:
+This terrain is hand-authored. Adjacent columns can have large height jumps, and a slab can begin or end at a column boundary. Interpolating across such a boundary can create a sloping surface where the encoded terrain has a wall. This matters both when rendering the terrain and when fitting it with triangles.
 
-\begin{enumerate}
-\def\labelenumi{\arabic{enumi}.}
-\tightlist
-\item
-  A controlled comparison of six terrain rendering methods sharing one engine, one data path, one camera and one fragment-stage shading path, so differences are attributable to the method rather than the surrounding system.
-\item
-  An evaluation methodology scoring against a CPU ray cast of the source data, decomposed into coverage, geometric and coherence error, with the failure mode of the naive version documented.
-\item
-  The engine, the harness and the measurement protocol, released under a permissive license (see \emph{Data availability} below).
-\item
-  A ten-world survey isolating what actually drives fit cost, and the mechanism behind it.
-\item
-  An edit-path audit showing which methods consume the live interval field directly and which must maintain derived acceleration or mesh data.
-\item
-  A five-device portability check across Vulkan and Metal using the same validated WGSL shaders and renderer configuration.
-\end{enumerate}
+A local edit changes heights or layer metadata in a dirty rectangle. The engine uploads the changed texture rows. Ray, Sliced, Painted, and Scattered then read the new values during their next draw. Voxel updates the affected occupancy cells and their ancestors. Mesh refits the affected chunks and replaces their GPU buffers. We measure these update costs separately from ordinary frames.
 
-\subsection{A decade-long WebGPU testbed}\label{sec:webgpu}\label{a-decade-long-webgpu-testbed}
+The workload requires all methods to represent both solid intervals, support local changes without a full level reload, and run within an interactive application. These are design requirements, not claims that every configuration meets every frame budget or image-quality target. We report the measured costs and failures.
 
-This comparison is also the record of a long-running implementation, not six algorithms written for one benchmark. vange-rs began in June 2016 and passed its tenth anniversary while this study was being prepared. The basic ray path dates to that first month; the move to the pre-release native wgpu stack and the sliced and scattered paths followed in 2019, Painted in 2020, the complete WGSL migration in 2021, RayVoxel in 2022, and the current fitted mesh in 2026. The techniques therefore accumulated gradually as the engine, API, shader language, and available hardware matured.
+\section{Rendering Methods}\label{sec:methods}
 
-The comparison vehicle is the \emph{native} WebGPU API as implemented by wgpu: one validated WGSL source, no backend-specific shaders, no unchecked native commands. Firefox uses wgpu-core to validate WebGPU operations and route them through native graphics APIs, while Naga validates and translates WGSL \citep{malyshau2020webgpu,wgpu,w3cwebgpu,w3cwgsl}. vange-rs moved to wgpu 0.2 in March 2019 and migrated all terrain, object, and debug shaders to WGSL in 2021 \citep{malyshau2021rust}. The same source can be compiled to the web; that is a path-to-the-web proof, not a second evaluation. The numbers in this paper are native Vulkan and Metal runs of that API.
+All methods share the decoded height and material data, camera, palette, fog, diffuse-lighting function, and shadow map. They differ in how they find visible terrain samples. Mesh also differs in its normal input: it can use the triangle normal on walls and ceilings, while the other methods use a height-field gradient. The comparison therefore includes this representation-dependent shading difference.
 
-No method bypasses the stack. The comparison therefore asks what quality and performance these unusual terrain techniques achieve \emph{inside} WebGPU\textquotesingle s portable, validated programming model, rather than how far one backend can be special-cased. Agreement of the five result grids across four Vulkan adapters and Apple Metal is the direct portability result; timing remains backend- and device-specific, and Section~\ref{sec:timing} keeps unlike timing mechanisms separate.
+Table~\ref{tab:methods} groups the methods by the work they generate. Ray and Voxel start from screen pixels. Sliced, Painted, and Scattered generate terrain samples and project them to the screen. Mesh first builds a triangle surface, then draws it with ordinary rasterization. We use these short names throughout; the harness calls Ray \code{RayTraced} and Voxel \code{RayVoxel}.
 
-A browser smoke test builds the same source for \passthrough{\lstinline!wasm32-unknown-unknown!} and runs the WebGPU-only voxel route in Firefox 152. On a Radeon 890M, Firefox selected its Vulkan WebGPU backend, accepted the canonical WGSL, loaded Fostral, and rendered a 1280$\times$714 canvas. This establishes that a web path exists and looks right; it is not a browser performance result. Commands, versions, and artifact hashes are in \passthrough{\lstinline!paper/browser-smoke.md!}.
-
-\textbf{Data availability.} The engine and evaluation tools are Apache-2.0. The five-device publication batch is pinned at \href{https://github.com/kvark/vange-rs/tree/terrain-paper}{\passthrough{\lstinline!terrain-paper!}}. Fostral world data is published by Association K-D Lab under \href{https://creativecommons.org/licenses/by-sa/4.0/}{CC BY-SA 4.0}; the canonical tree is \href{https://github.com/KranX/Vangers/tree/master/data/thechain/fostral}{\passthrough{\lstinline!KranX/Vangers!} \passthrough{\lstinline!data/thechain/fostral!}} at commit \passthrough{\lstinline!f1ad7d7!}. The harness fetches that commit; we do not redistribute a second archive. The ten-world fit survey also uses nine other shipped levels that are not in that grant --- those rows require a lawfully obtained game copy. Derived figures and the supplemental video use Fostral and carry the same attribution.
-
-\section{The Data}\label{sec:data}\label{the-data}
-
-Vangers terrain is a height map with a per-texel-\emph{pair} dual encoding. A texel is either single-valued, or carries three altitudes: a floor (\passthrough{\lstinline!low!}), a cave ceiling (\passthrough{\lstinline!mid!}) and a slab top (\passthrough{\lstinline!high!}), with the even texel of a pair storing \passthrough{\lstinline!low!}, the odd one \passthrough{\lstinline!high!}, and \passthrough{\lstinline!mid!} derived from delta bits in both. Fostral, the level used throughout, is 2048$\times$16384 and 10.9\% double-level.
-
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/encoding.pdf}}
-
-Two properties matter for everything that follows. The surface is \textbf{authored, not sampled}: cliffs are vertical by construction rather than by steep gradient, and adjacent texels routinely differ by tens of units. And \passthrough{\lstinline!mid!}/\passthrough{\lstinline!high!} are \textbf{structural, not fields}: they describe where a slab is, and interpolating them across the region boundary produces geometry that exists nowhere. Section 6.3 is about what that costs.
-
-The height and metadata arrays are also mutable simulation state. A local gameplay event may change both altitude and whether the upper interval exists. The renderer receives a dirty rectangle, uploads the modified rows, and must make that edit visible. Ray, Sliced, Painted, and Scattered read the updated texture directly. RayVoxel incrementally rebuilds affected occupancy cells and their ancestors; Mesh locally refines affected chunks and replaces their GPU buffers. Thus all six support edits, but their time-to-consistency and update cost are different quantities that steady-state frame time does not capture. Section~\ref{sec:edit} shows the same crater before and after on a direct reader, an incremental occupancy rebuild, and a local mesh refit, and reports both CPU submit-and-wait and GPU draw cost for the first updated frame.
-
-\section{Methods Compared}\label{sec:methods}\label{methods-compared}
-
-All methods use the same decoded height and material data, camera, palette, fog, diffuse-lighting function, and shadow map. The method under test is the way visible surface samples reach the framebuffer. The mesh alone supplies a geometric normal; the other five estimate a height-field gradient in the shared shading function.
-
-Scattered stores 24 bits of depth and 8 bits of terrain type in its intermediate buffer, then reconstructs world position and applies the same diffuse and shadow evaluation in its resolve pass as the other five methods.
-
-The methods fall into three groups. The two image-order methods cast one ray per pixel. Sliced, Painted, and Scattered enumerate samples of the encoded volume and project them forward. Mesh performs an offline fit and rasterizes the resulting explicit surface.
-
-{\small
-\begin{tabularx}{\columnwidth}{@{}l l Y Y@{}}
+\begin{table}[tbp]\centering\small
+\caption{How each method draws the terrain and responds to an edit.}\label{tab:methods}
+\begin{tabularx}{\linewidth}{@{}l Y Y@{}}
 \toprule
-method & order & primitive & edit response \\
+Method & Work sent to the GPU & Work after a local edit \\
 \midrule
-Height-field ray march & image & per-pixel ray & direct texture read \\
-Voxel-accelerated ray march & image & per-pixel ray & incremental occupancy rebuild \\
-Sliced & object & horizontal proxy quads & direct texture read \\
-Painted & object & bars per ground sample & direct texture read \\
-Scattered & object & compute-scattered points & direct texture read \\
-\textbf{Mesh (TIN)} & object & fitted triangles & local chunk refit \\
+Ray & One ray per pixel & Read changed texture \\
+Voxel & One ray per pixel, occupancy hierarchy & Update occupancy hierarchy \\
+Sliced & Horizontal planes & Read changed texture \\
+Painted & Bars at ground samples & Read changed texture \\
+Scattered & Points from a compute grid & Read changed texture \\
+Mesh & Fitted triangles & Refit changed chunks \\
 \bottomrule
 \end{tabularx}
-}
+\end{table}
 
-Every row evaluates both encoded solid intervals. "Direct" means the next draw after the dirty texture upload sees the edit; it does not mean the CPU upload itself is free. Derived rows can remain interactive only if the dirty work is bounded or spread across frames.
+\subsection{Ray: sample the height field directly}\label{sec:ray}
 
-\subsection{Height-field ray march}\label{sec:ray}\label{height-field-ray-march}
+A full-screen pass reconstructs a ray for each pixel. It clips the segment at the far plane or, for a downward ray, at $z=0$. It then advances with a fixed step and applies Equation~\ref{eq:solid}. The first solid sample brackets a crossing with the preceding sample. Four bisection steps refine that bracket. A miss leaves the cleared depth; a hit writes depth so that terrain composes with other geometry.
 
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/ray.pdf}}
+The selected setting uses 128 forward samples. A step can skip a feature thinner than the distance between samples, especially along a long, grazing ray. Bisection improves a detected crossing but cannot recover a feature that the forward pass skipped. Figure~\ref{fig:sampling} illustrates this distinction. The method has no acceleration structure to prepare or maintain. Appendix~\ref{sec:ray-code} gives pseudocode with the endpoint and miss handling used by the shader.
 
-A full-screen pass reconstructs the near and far world-space point for each pixel. The segment is sampled uniformly until it enters the encoded solid, then four binary-search iterations refine the first crossing. For a single-level texel, points at or below \passthrough{\lstinline!high!} are solid. For a dual-level texel, \passthrough{\lstinline!z <= low!} and \passthrough{\lstinline!mid <= z <= high!} are solid. Testing this predicate directly is important: it detects floors, slab tops, and cave ceilings for rays travelling in either vertical direction.
+\subsection{Voxel: skip empty regions}\label{sec:voxel}
 
-\begin{lstlisting}[float=false,language=]
-function RAYMARCH(o, d, steps):
-    a, b $\leftarrow$ o, clip(o, d)                 // far plane or z = 0
-    for i $\leftarrow$ 1 to steps:
-        c $\leftarrow$ a + (b -- a) / (steps + 1)
-        if SOLID(c): b $\leftarrow$ c; break
-        else a $\leftarrow$ c
-    for i $\leftarrow$ 1 to 4:                      // bisection
-        c $\leftarrow$ (a + b) / 2
-        if SOLID(c): b $\leftarrow$ c else a $\leftarrow$ c
-    return b if hit else MISS
+Voxel adds a conservative occupancy pyramid to the same terrain. The finest level stores occupancy bits in Morton-ordered $8\times8\times8$ tiles. Each coarser cell is the union of eight children. A hierarchical grid traversal skips an empty cell, descends into an occupied cell, and samples the original height field inside an occupied leaf. The hierarchy identifies empty space; it does not replace the surface with voxel faces.
 
-SOLID(p) := p.z $\leq$ low(p.xy)  $\lor$  mid(p.xy) $\leq$ p.z $\leq$ high(p.xy)
-\end{lstlisting}
+The selected cell dimensions are $(4,8,2)$ world units. The outer traversal and inner sampling loops each have a budget of 100 steps, so dense or long rays can exhaust a budget. The hierarchy takes 18.29 MiB. The GPU builds it in batches and updates cells touched by an edit. This saves empty-space tests but adds memory and preparation work.
 
-The publication setting uses 128 forward samples over the clipped ray segment. The budget is exposed as \passthrough{\lstinline!--ray-steps!} and is included in the uniform tuning sweep. A sample interval can still skip a thinner feature; that is the method\textquotesingle s characteristic quality/performance tradeoff. Misses return the cleared far depth instead of manufacturing a hit at the ground plane. Hits write the reconstructed depth and therefore compose normally with rasterized objects. The method needs no preprocessing or auxiliary storage and remains the WebGL2 fallback.
+\subsection{Sliced: intersect horizontal planes}\label{sec:sliced}
 
-\subsection{Voxel-accelerated ray march}\label{sec:voxel}\label{voxel-accelerated-ray-march}
+Sliced draws horizontal quads over the camera's terrain footprint. A fragment survives only if its height lies inside a solid interval. Reducing the slice count increases the spacing over the same full altitude range. The selected setting uses 512 slices over 256 quantized height levels.
 
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/voxel.pdf}}
+This method reads edits directly and needs no stored geometry. Its weakness is the gap between planes. At grazing angles, the gaps become visible as bands (Figure~\ref{fig:sampling}). Increasing the slice count reduces this error but also increases fragment work.
 
-This path accelerates the same per-pixel query with a conservative occupancy pyramid. The finest level stores one occupancy bit per voxel in Morton-coded 8$\times$8$\times$8 tiles; each higher level is the union of eight children. Traversal uses a hierarchical DDA: an empty cell advances directly to its exit plane, while an occupied cell descends until the leaf level, where fixed sampling tests the original height data. The structure skips only known-empty space; it does not replace the source surface with cubes.
+\methodfigure{sampling}{Sampling in a vertical cross-section. Top: a fixed-step ray first brackets the surface between an empty and a solid sample; bisection refines only that bracket. A thinner feature between forward samples could be missed. Bottom: slices retain fragments only inside the solids. The vertical space between slices can appear as bands from a grazing view.}{fig:sampling}
 
-\begin{lstlisting}[float=false,language=]
-function RAYVOXEL(o, d):
-    lod $\leftarrow$ coarsest
-    while outer steps remain:
-        if occupied(cell, lod) and lod > 0:
-            lod $\leftarrow$ lod -- 1; continue      // descend into a child
-        advance o to the cell exit
-        if occupied and lod = 0:
-            if a linear sample in the cell is SOLID: return hit
-        else if the exit allows it: lod $\leftarrow$ lod + 1
-    return MISS
-\end{lstlisting}
+\subsection{Painted: draw a bar at each sample}\label{sec:painted}
 
-The publication comparison uses the coarse \passthrough{\lstinline!(4,8,2)!} occupancy grid (18.29 MiB). The renderer\textquotesingle s shipping \passthrough{\lstinline!(2,4,1)!} grid needs 153 MiB and did not fit the software rasterizer used for tuning; Section~\ref{sec:tuning} records that choice. Every RayVoxel number in this paper is the coarse configuration.
+Painted creates column geometry in the vertex shader. Each ground sample produces a bar from zero to \code{low}; a dual-level sample adds a bar from \code{mid} to \code{high}. The shader emits the three faces oriented toward the camera. Positions come from the instance index, so the CPU does not upload a vertex stream for each bar.
 
-The GPU builds the hierarchy incrementally because a whole-level dispatch can exceed driver watchdog limits. Preparation therefore appears separately in Section~\ref{sec:prep}. Runtime traversal has outer- and inner-step budgets. Dense vertical variation can exhaust them, and the storage-buffer requirement excludes the WebGL2 path.
+The draw covers an axis-aligned bound of the camera footprint. Samples are ordered from front to back so that early depth tests can reject covered fragments. Work still grows with the number of ground samples in the footprint. Edits need only the shared terrain upload.
 
-\subsection{Sliced}\label{sec:sliced}\label{sliced}
+\subsection{Scattered: project points with compute}\label{sec:scattered}
 
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/slice.pdf}}
+Scattered uses a compute grid over a camera-aligned ground footprint. The sampling grid is denser near the camera. Each invocation samples both solid intervals and projects the points into a screen buffer. A 32-bit \code{atomicMin} keeps the nearest packed value: 24 bits of depth and 8 bits of terrain type. A full-screen pass reconstructs the position and applies the shared shading code.
 
-The renderer draws \passthrough{\lstinline!N!} horizontal quads across the visible terrain bounds. For each fragment, the surface decoder keeps the sample when its altitude is inside the floor column or upper slab and discards it in empty space. The slices are spread over the full altitude range; reducing \passthrough{\lstinline!N!} therefore coarsens the representation rather than deleting the lowest part of it.
+This approach follows the object-order projection of the original Vangers software renderer, with atomics replacing its painter ordering. Each sample writes one pixel. It has no filtered footprint, so projection does not guarantee coverage. Too few samples leave gaps; changes in which point wins can produce speckle. We evaluate this point scatterer, not a general surface-splatting system.
 
-\begin{lstlisting}[float=false,language=]
-for k $\leftarrow$ 1 to N:
-    z $\leftarrow$ z_max -- k $\cdot$ (z_max / N)
-    draw a horizontal quad at z over the camera footprint
-    for each fragment p:
-        if p.z $\leq$ low(p.xy) or mid $\leq$ p.z $\leq$ high: shade(p)
-        else discard
-\end{lstlisting}
+\subsection{Mesh: fit and retain triangles}\label{sec:mesh}
 
-At the 256 quantized altitude levels, one slice per unit samples every representable height. The tuned setting uses 512 slices. At grazing angles, however, discrete planes remain visible as coherent horizontal bands and can repeatedly cover a silhouette. This pattern can resemble a cast shadow in a comparison image, but it is slice quantization; the shadow lookup is the same one used by every other method.
+Mesh fits a triangulated irregular network (TIN) by greedy point insertion, following \citet{garland1995terrain}. Each triangle tracks the source sample with the largest vertical error. The fitter inserts that sample and restores the Delaunay triangulation. It repeats until the error falls below a tolerance. Integer grid coordinates allow exact orientation and incircle predicates for this data.
 
-\subsection{Painted}\label{sec:painted}\label{painted}
+One planar topology serves the \code{low}, \code{mid}, and \code{high} fields. Any of the three can trigger an insertion. The renderer emits the floor, slab surfaces, and walls at dual-region edges. The fit is split into $128\times128$ chunks, with three levels of detail (LODs). The draw selects an LOD by distance and culls chunks outside the view. Shared chunk borders use a stable vertex sequence to avoid cracks.
 
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/paint.pdf}}
+The quality parameter $q$ sets the vertical tolerance to $16\,2^{-4q}$ height-quantization steps. One step is one world unit in this study, so $q=0.5$ gives a tolerance of 4 units. The renderer retains all three GPU LODs and the CPU triangulations used for local edits. A refit inserts vertices into the existing triangulation. Its result can therefore depend on earlier edits, unlike a fresh fit of the same final terrain.
 
-Painted turns each ground sample into explicit column geometry. One bar extends from zero to the floor; a dual-level sample adds a bar from cave ceiling to slab top. The vertex shader emits only the three faces oriented toward the camera. It derives every position from the instance index, so no per-column vertex stream is uploaded.
+\subsection{Relation to earlier methods}\label{sec:related}
 
-\begin{lstlisting}[float=false,language=]
-for each ground sample (x, y) in the camera footprint, front to back:
-    emit a bar [0, low] with the three camera-facing faces
-    if dual: emit a bar [mid, high]
-rasterize with the ordinary depth test
-\end{lstlisting}
+Layered terrain models occupy the space between a single height field and a full volume. \citet{benes2001layered} use vertical material intervals for erosion. Grounded Heightmap Trees use locally oriented height maps to represent more general overhangs and tunnels \citep{alonso2008grounded}. QuadStack compresses layered data and ray casts it on the GPU \citep{graciano2021quadstack}. Here we keep the game's fixed two-interval format and require local gameplay edits. Layered Depth Images also store multiple depths, but along an input camera's rays rather than along world-space vertical columns \citep{shade1998ldi}.
 
-The instance range is an axis-aligned bound of the camera footprint on the terrain. Ordering the generated samples front-to-back lets early depth tests remove most covered fragments; the original implementation measured 96\% early-Z rejection for its test view. Cost still scales with ground samples inside the footprint rather than with visible pixels, which explains its poor downward-looking timings. Although it also processes terrain in object order, its explicit bar geometry is not a reconstruction of the original software renderer.
+The ray methods build on linear search and refinement in relief mapping, landscape ray casting, and conservative skipping \citep{policarpo2005relief,mantler2006landscape,tevs2008maximum}. Our occupancy pyramid uses a regular hierarchy rather than a compressed sparse voxel scene \citep{laine2010svo}. Sliced is related to plane-based volume rendering \citep{cabral1994volume}; Scattered is simpler than footprint-based volume or surface splatting \citep{westover1990footprint,zwicker2001splatting}.
 
-\subsection{Scattered}\label{sec:scattered}\label{scattered}
+TIN fitting and terrain LOD are well studied for single-valued height fields \citep{fowler1979tin,garland1995terrain,duchaineau1997roam,losasso2004clipmaps}. Our mesh uses one topology for three altitude fields, including sharp transitions where a slab ends. Section~\ref{sec:fit} measures the cost of that choice. This study compares the implementations described above; it does not rank the best possible implementation of each family.
 
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/scatter.pdf}}
+\FloatBarrier
+\section{Evaluation}\label{sec:eval}
 
-Scattered is the method that inherits the original engine\textquotesingle s object-order, line-by-line painter (Section~\ref{sec:introduction}) and recasts it as a parallel atomic scatter. A compute grid samples a camera-aligned ground footprint whose longitudinal coordinate is warped to spend more samples nearby. Each invocation walks both encoded vertical intervals and projects point samples into a screen buffer. Parallel GPU work cannot rely on painter ordering, so a 32-bit \passthrough{\lstinline!atomicMin!} selects the nearest result while retaining 24 bits of depth and 8 bits of terrain type. A full-screen resolve reconstructs world position and performs material, diffuse, fog, cave-ambient, and shadow evaluation.
+The study has three parts: a twelve-view rendering comparison on Fostral, a local-edit experiment on the same world, and a ten-world survey of mesh fitting. This section defines the rendering and edit tests. Section~\ref{sec:fit} defines the fit survey.
 
-\begin{lstlisting}[float=false,language=]
-clear the screen buffer to $\infty$
-for each warped footprint sample (x, y), in parallel:
-    scatter (x, y, mix(low, 0, t)) for t $\in$ [0, 1]
-    if dual: scatter (x, y, mix(high, mid, t))
-scatter(p): atomicMin(buf[project(p)], pack(depth(p), type))
-resolve: reconstruct world position from the packed depth and shade
-\end{lstlisting}
+\subsection{Scenes, devices, and timing}\label{sec:protocol}
 
-The density vector controls the compute grid. Unlike rasterization, point projection does not guarantee pixel coverage; undersampling appears as isolated gaps and unstable pixels, especially near the horizon. The coherence metric in Section~\ref{sec:metrics} is intended to expose exactly this failure.
+The rendering test uses twelve fixed camera records: three views at each pitch of $0^\circ$, $-30^\circ$, $-60^\circ$, and $-90^\circ$. Zero pitch looks toward the horizon; $-90^\circ$ looks straight down. Each image is $1280\times800$ pixels, with a near distance of 1 and a far distance of 600 world units. Every method renders the same $1024\times1024$ height-field shadow map.
 
-\subsection{Mesh}\label{sec:mesh}\label{mesh}
+The five devices are an AMD Radeon 780M, AMD Radeon RX 7900 XT, Intel RPL-U GPU, NVIDIA GeForce RTX 5070, and Apple M3. All runs use native wgpu and the same WGSL shader sources \citep{wgpu,w3cwebgpu,w3cwgsl}. The first four use Vulkan; the M3 uses Metal. The measured code is pinned at commit \code{5586e2a}, tagged \code{terrain-paper}. Device and driver records are in \path{paper/results.md}.
 
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/mesh.pdf}}
+After method-specific warmup, we time 40 frames per view. Each frame is submitted and awaited on its own. Vulkan times come from GPU timestamps. On Metal, the encoder-level timestamps did not reliably enclose the multipass workload, so we use CPU submit-and-wait times. The M3 results support comparisons between methods on that device; they are not directly comparable with the Vulkan GPU times. These isolated-frame measurements are latency measurements, not pipelined game frame rates.
 
-The mesh path fits an explicit surface with greedy point insertion following \citet{garland1995terrain}. Each triangle tracks the source sample with the largest vertical error; the globally worst sample is inserted until the tolerance is met. Integer grid coordinates allow orientation and incircle predicates to remain exact on the many cocircular cells.
+We report the mean over the twelve views. Within-session 95\% intervals use the recorded frame samples, as described in Appendix~\ref{sec:timing-detail}. They do not measure variation between sessions or drivers. Preparation, memory, and edits are measured separately.
 
-One planar triangulation is shared by \passthrough{\lstinline!low!}, \passthrough{\lstinline!mid!}, and \passthrough{\lstinline!high!}. A sample is inserted when any of the three fields exceeds tolerance, and boundary walls close the upper slab where dual-level encoding begins or ends. This coupling is the source of the fit-cost result in Section~\ref{sec:findings}.
+\subsection{Image-quality measures}\label{sec:metrics}
 
-\begin{lstlisting}[float=false,language=]
-for each 128$\times$128 chunk:
-    T $\leftarrow$ Delaunay of the four corners
-    while max vertical error of T over {low, mid, high} > $\tau$:
-        insert the worst sample and restore Delaunay
-    emit floor triangles; emit slab + walls on dual-region edges
-draw the selected LOD with ordinary rasterization
-\end{lstlisting}
+A CPU ray cast of the decoded terrain supplies a hit mask and a distance along each camera ray. It searches the segment with coarse samples and refines detected crossings by bisection. This is a sampled reference, not an exact ray--column intersection oracle. Its remaining limitations are stated below.
 
-The level is partitioned into 128$\times$128 chunks with three fitted detail levels. Chunks are frustum culled and selected by camera distance. Boundaries use a stable finest-level vertex sequence so neighbouring LODs do not crack. The tradeoff moves out of the frame loop: fitting is a blocking CPU cost, the full-level renderer retains all three GPU LODs plus the editable CPU triangulation, and edits require local refinement. At the selected q=0.5 those explicit method-specific allocations are reported in Section~\ref{sec:edit}; they are substantially more than counting only the finest LOD. Once present, the geometry uses the conventional raster pipeline and supplies the triangle\textquotesingle s own geometric normal for lighting, which is defined on vertical walls and cave ceilings where a height-field gradient is not.
+We use three measures:
+\begin{itemize}
+\item \textbf{Coverage.} Missing terrain is the fraction of all image pixels where the reference hits terrain but the renderer leaves the background. Added terrain is the fraction where the renderer hits but the reference sees background. The harness calls these \code{see\_through} and \code{covers\_sky}. Both use the full image as the denominator.
+\item \textbf{Distance error.} Where both images hit terrain, we report the median and 95th percentile of the absolute difference in ray distance, in world units.
+\item \textbf{Local incoherence.} We flag a hit pixel when its distance differs from the median of its $3\times3$ neighborhood by more than $0.04\max(d,1)$, where $d$ is that pixel's distance. Cleared pixels have undefined distance; if the neighborhood median is undefined, the comparison does not flag the pixel. We count a renderer flag only where the reference hits terrain and does not have its own flag. The result is a percentage of all image pixels, not the difference between two total flag counts.
+\end{itemize}
 
-The explicit mesh can be reused as a conventional triangle collider, which mainstream rigid-body libraries accept and the original two-interval height map is not. That reuse is a system-level consequence, not a measurement here. It also widens the edit obligation: a refitted visual chunk would need its collider replaced on the same consistency boundary.
+Coverage detects gaps and added silhouettes. It cannot detect a wrong surface in front of another surface if both occupy the same pixel. Distance error helps with that case. Local incoherence detects abrupt pixel-scale distance changes, such as bands and speckle. It is a spatial measure; it does not measure temporal flicker.
 
-\section{Evaluation}\label{sec:eval}\label{evaluation}
+The reference still differs from otherwise agreeing renderers by roughly 8--14 world units in some wide, off-axis top-down views. Halving its step did not remove that offset. The cause is not fully resolved, so we do not use absolute distance error to claim sub-unit accuracy or rank closely agreeing methods. The quality conclusions also use coverage, local incoherence, visual inspection, and agreement between independent renderers.
 
-\subsection{Reference}\label{sec:reference}\label{reference}
+\subsection{Selecting the configurations}\label{sec:tuning}
 
-A CPU ray cast of the same height data with the same camera, marching coarsely and bisecting within the bracketing interval. It yields a sky mask and a distance field.
+We sweep each method's available quality controls on three horizon views at $400\times260$ pixels. The tuning score is missing terrain plus local incoherence. The default rule chooses the cheapest setting within one percentage point of that method's lowest score. This gives each method a useful point on its own curve; it does not give all methods equal image quality.
 
-Two mistakes in building this are worth recording because both produced plausible, wrong numbers for some time.
+Table~\ref{tab:settings} lists the selected settings. Mesh receives one explicit exception. At publication resolution, the one-point rule would choose $q=0.25$, with 0.8\% combined error. We use $q=0.5$, the coarsest tested setting at the 0.3\% error floor. All reported mesh frames, memory costs, edit costs, and comparison images use that setting unless another $q$ is stated. Appendix~\ref{sec:tuning-detail} gives the sweep results and scope.
 
-The reference camera\textquotesingle s focal length was scaled by render height while the renderer\textquotesingle s is fixed in pixels. The two agree only at one resolution; at 1080p the reference would have had a 3.6$\times$ wider field of view than the image it was scoring.
+\begin{table}[tbp]\centering\small
+\caption{Selected configurations. The reported comparison uses these settings throughout.}\label{tab:settings}
+\begin{tabularx}{\linewidth}{@{}l Y@{}}
+\toprule
+Method & Setting \\
+\midrule
+Ray & 128 forward samples, 4 bisection steps \\
+Voxel & Cell dimensions $(4,8,2)$; 100 outer and 100 inner steps \\
+Sliced & 512 horizontal planes \\
+Painted & No method-specific quality control \\
+Scattered & Density vector $(4,4,4)$ \\
+Mesh & $q=0.5$: vertical tolerance 4 world units \\
+\bottomrule
+\end{tabularx}
+\end{table}
 
-The solidity test guarded the floor comparison with \passthrough{\lstinline!z >= 0!}, which makes a texel of height zero unhittable --- no \passthrough{\lstinline!z!} satisfies both \passthrough{\lstinline!z >= 0!} and \passthrough{\lstinline!z < 0!}. Sea level is a real height on these maps, so every downward ray over water was classified as sky. It cost 23\% of a straight-down frame.
+\subsection{Preparation, memory, and edits}\label{sec:edit-protocol}
 
-\subsection{Metrics}\label{sec:metrics}\label{metrics}
+Preparation has three CPU wall-time measures. Setup creates pipelines and uploads shared terrain data. First frame measures the first rendered frame, including work built lazily. Warmup is the total over all pre-timing frames, including the first frame. These are overlapping stages and must not be added together.
 
-\textbf{Coverage}, decomposed. \passthrough{\lstinline!see-through!} is solid terrain the renderer left as background; \passthrough{\lstinline!covers-sky!} is background it filled in. The decomposition is what makes them diagnostic: only the first moves when a renderer is genuinely missing geometry, and both move together when the reference is the one disagreeing about a silhouette.
+Memory accounting covers persistent data owned by each method: GPU buffers and retained CPU acceleration or fitting state. It excludes shared terrain, palette, color, depth, and shadow resources, pipelines, staging allocations, and opaque driver memory. A zero entry means no extra persistent method data, not a zero-memory renderer.
 
-\textbf{Geometry.} Median and 95th-percentile distance error where renderer and reference agree something is present. This must be read comparatively: its floor is set by grazing incidence and by the scene\textquotesingle s sampling discontinuities (Section~\ref{sec:offset}).
+The edit removes height and upper-layer metadata in a radius-48 crater centered at $(1024,8192)$. It uses the same dirty-rectangle path as gameplay. The timing camera is at $(1024,8350)$, 40 units above the original surface, with yaw $180^\circ$ and pitch $-30^\circ$. The before/after figure uses a closer, higher view so that the crater is visible.
 
-\textbf{Coherence.} The fraction of pixels whose distance disagrees with their own 3$\times$3 neighbourhood, in excess of the reference doing the same.
+For each method, we construct five independent runs and take the median first post-edit frame time. We record CPU submit-and-wait time and, where available, GPU time. We compare these with ten steady frames from a fresh renderer built from the already-edited terrain.
 
-Coverage alone cannot detect over-drawing: a renderer that interpolates a slab across region boundaries covers every pixel that should be covered. Comparing depth found that class of defect; coherence finds striping, speckle, and cracks that correct-on-average depth still misses.
+A second check compares the updated renderer with that fresh build after 1, 2, 4, 8, and 16 frames. We call it consistent when hit/miss disagreement is at most 0.01\% of the image and the 95th-percentile distance difference is at most 0.1 world unit on shared hit pixels. This is a tolerance-based test, not a test of bitwise equality. It also reports color mean absolute error, which is not part of the pass condition.
 
-\subsection{Protocol}\label{sec:protocol}\label{protocol}
+\FloatBarrier
+\section{Rendering and Editing Results}\label{sec:results}
 
-Every number in this paper is produced by one command with no arguments (\passthrough{\lstinline!tools/compare-terrain.py!}), whose defaults \emph{are} the publication configuration: every method, twelve viewpoints (three per pitch, at 0°, --30°, --60°, --90°), 1280$\times$800, 40 timed frames after per-method warmup. The harness builds the binaries, fetches and converts the level on first run, and names its output after the adapter wgpu selected, so runs collected from different machines merge without hand-labelling (\passthrough{\lstinline!tools/merge-bench.py!}). The design goal is that a measurement session on a new device costs its owner one invocation and about an hour --- the protocol is only as reproducible as it is cheap to follow.
+\subsection{Views near the horizon expose sampling failures}\label{sec:pitch}
 
-On Vulkan, frame times come from GPU timestamp queries around the frame\textquotesingle s command encoder. Encoder-level timestamps did not reliably bracket this multipass workload on Metal: the returned intervals were quantised, nearly method-independent, and much shorter than submit-to-completion. This is a measurement failure, not evidence that Metal rendered incorrectly. wgpu explicitly does not guarantee strict ordering for arbitrary command-encoder timestamps, and its Metal backend may defer such a write to the next native pass. We treated the pair as a guaranteed enclosing interval, which the API does not promise. A future GPU-only measurement must timestamp each render and compute pass and sum those intervals; the present Apple run conservatively uses the retained CPU submit-and-wait average instead. Each row records its timing source because the two mechanisms are not directly comparable (Section~\ref{sec:timing}). The publication configuration renders the same 1024² height-field shadow map for every method. This deliberately measures a complete, visually comparable terrain frame rather than an isolated discovery pass. The JSON records the shadow mode, and \passthrough{\lstinline!--no-shadows!} is available for a separate method-only diagnostic run. The final hardware batch uses this protocol; visual review of all five grids confirms that the common pass reaches every column. One-time costs are recorded separately as setup / first frame / warmup (Section~\ref{sec:prep}), since per-frame figures structurally exclude them. Accuracy is expected to be device-independent; the merge tool reports a baseline once and cross-checks every field from the other devices, because an adapter that disagrees about geometry is a finding, not noise.
+Figure~\ref{fig:quality} shows the mean quality measures at each pitch. These values come from the 780M run and were checked against the other four devices. The table in Appendix~\ref{sec:quality-detail} gives the values. Added-terrain error is small in this batch: its pitch mean is at most 0.2\% for every selected configuration.
 
-\subsection{Dynamic-edit protocol}\label{sec:edit-protocol}\label{dynamic-edit-protocol}
+\methodfigure{quality-pitch}{Image-quality measures by pitch on the Radeon 780M. Each value averages three scenes and is a percentage of the full image. Zero pitch looks toward the horizon. The axes use logarithmic scales; zero values are placed at 0.05\%.}{fig:quality}
 
-The headless runner\textquotesingle s \passthrough{\lstinline!--dig!} path removes altitude and upper-layer metadata inside a radius-48 crater centred at (1024, 8192) and submits the same dirty rectangle used by the interactive game. The timing camera is at (1024, 8350), 40 units above the original surface, yaw 180°, pitch --30°. For each method the protocol records (1) the median of five independently constructed first post-edit frames, both as CPU submit-and-wait and as GPU timestamps when the adapter provides them, (2) consistency after 1, 2, 4, 8, or 16 frames, and (3) colour and depth agreement with a fresh renderer constructed from the already-edited level. Consistency means at most 0.01\% hit/miss disagreement and p95 depth difference at most 0.1 world unit. The Section~\ref{sec:edit} figure uses a closer, higher view of the same crater so the bowl is readable; the numbers always come from the timing camera.
+Scattered has the largest coverage loss at the horizon. Its missing-terrain mean is 40.4\% of the image at $0^\circ$, compared with 0.0--0.9\% for the other methods. The three individual views range from 19.1\% to 73.2\%. Looking down reduces its coverage loss, but it still has local incoherence of 3.7\% at $-90^\circ$.
 
-The same run reports explicit persistent method data: renderer-owned GPU buffers and retained CPU acceleration or fitting structures. Shared terrain, palette, color/depth and shadow textures, pipelines, staging allocations, and opaque driver memory are excluded. This narrower measure is portable and auditable through wgpu; whole-process RSS or backend heap telemetry is not. The edit test remains separate from the steady-state protocol because averaging an update into 40 ordinary frames would hide the cost that the constraint exists to expose.
+Sliced has a different failure. Its horizon coverage loss is 0.9\%, but its 2.7\% local incoherence reflects visible bands. Ray, Voxel, Painted, and the selected Mesh have much lower horizon incoherence, at 0.1--0.4\%. Painted also has a coverage loss at steeper views: 2.7\% at $-60^\circ$.
 
-\section{Results}\label{sec:results}\label{results}
+Mesh quality depends on the fit setting. In the hangar view, $q=0.0$ leaves 11.0\% of the image missing, while $q=0.5$ reduces this to about 0.5\% and restores the wall. All five devices report 0.519\% for the selected mesh in that view. The largest reported coverage spread between devices occurs in the already poor Scattered hangar result: 73.2\% on the 780M and 74.0\% on the M3.
 
-The publication comparison uses one six-method set throughout: RayTraced 128, RayVoxel 100, Sliced 512, Scattered 4,4,4, Painted, and Mesh q=0.5. Every run is 1280$\times$800 with far distance 600, 40 timed frames, a common 1024² ray-traced shadow pass, and the same twelve camera records. The five-device batch is AMD Radeon 780M, AMD Radeon RX 7900 XT, Intel RPL-U, NVIDIA GeForce RTX 5070, and Apple M3. Vulkan rows use GPU timestamps; the M3 uses CPU submit-and-wait. Complete per-view tables and driver versions are in \passthrough{\lstinline!paper/results.md!}.
+These results show why a top-down view is an incomplete test. It hides large coverage failures in the point method and reduces the visibility of slice bands. Even at a fixed view, a method's name is not enough to describe its quality; the mesh fit setting changes whether an important wall survives.
 
-\subsection{Pitch is the axis that separates them}\label{sec:pitch}\label{pitch-is-the-axis-that-separates-them}
+\subsection{Mesh has the lowest mean frame time at these settings}\label{sec:timing}
 
-Values below are arithmetic means over the three views at each pitch, reported as see-through / coherence error (\%), from the Radeon 780M run and cross-checked on the other four adapters. \passthrough{\lstinline!covers-sky!} is omitted because its pitch mean is at most 0.2\% for every selected configuration (Section~\ref{sec:offset}).
+Table~\ref{tab:timing} gives the mean over all twelve views. Mesh has the lowest mean on every tested device, followed by Ray. The within-session mesh and ray intervals do not overlap (Appendix~\ref{sec:timing-detail}). This ranking applies to these configurations and scenes; the methods do not all produce equal-quality images.
 
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/quality-pitch.pdf}}
-
-{\footnotesize\setlength{\tabcolsep}{3.5pt}
+\begin{table}[tbp]\centering\small
+\caption{Mean frame latency over twelve views, in milliseconds. Vulkan rows use GPU timestamps. The M3 row uses CPU submit-and-wait and must be read separately. Values are rounded to two decimals.}\label{tab:timing}
+\setlength{\tabcolsep}{3pt}
 \begin{tabular}{@{}lrrrrrr@{}}
 \toprule
-pitch & Ray 128 & Voxel 100 & Sliced & Scattered & Painted & Mesh .5 \\
+Device & Ray & Voxel & Sliced & Scattered & Painted & Mesh \\
 \midrule
-0° & 0.6 / 0.4 & 0.0 / 0.2 & 0.9 / 2.7 & \textbf{40.4 / 1.8} & 0.0 / 0.1 & 0.3 / 0.1 \\
---30° & 0.6 / 0.9 & 0.0 / 0.2 & 2.3 / 1.4 & \textbf{15.4 / 3.5} & 0.3 / 0.1 & 0.4 / 0.1 \\
---60° & 0.1 / 0.7 & 0.0 / 0.3 & 0.0 / 0.2 & 0.3 / \textbf{5.7} & 2.7 / 0.1 & 0.0 / 0.1 \\
---90° & 0.1 / 0.5 & 0.0 / 0.3 & 0.0 / 0.2 & 0.1 / \textbf{3.7} & 0.8 / 0.2 & 0.0 / 0.1 \\
+780M & 4.83 & 8.32 & 9.34 & 9.22 & 15.84 & \textbf{4.07} \\
+7900 XT & 0.65 & 1.40 & 1.63 & 2.79 & 5.22 & \textbf{0.39} \\
+Intel & 18.17 & 35.57 & 41.69 & 88.20 & 79.63 & \textbf{11.45} \\
+RTX 5070 & 0.79 & 1.26 & 1.90 & 1.47 & 4.69 & \textbf{0.50} \\
+\midrule
+M3 (CPU) & 8.34 & 12.49 & 12.13 & 18.45 & 32.72 & \textbf{5.92} \\
 \bottomrule
 \end{tabular}
-}
+\end{table}
 
-The image-order methods join the coherent group. Scattering is the horizon outlier: its three scenes leave 19.1--73.2\% of reference terrain uncovered, while the other methods\textquotesingle{} pitch means lie between 0.0\% and 0.9\%. Looking down removes its coverage deficit but not its point-scale incoherence. Slicing shows the complementary signature: good coverage but visible horizontal bands, measured as 2.7\% coherence error at 0°.
+Voxel costs more than Ray on every device in this batch. Its empty-space skipping does not repay the hierarchy traversal and sampling costs at the selected settings. This is a result for the tested grid and views, not a general limit on voxel acceleration.
 
-The selected mesh sits with the coherent group. At the hangar view q=0.0 left 11.0\% uncovered; q=0.5 leaves 0.5\% and recovers the wall. The five image grids agree on that geometry: hangar Mesh see-through is 0.519\% on every adapter. The only material cross-device spread is inside the already failing Scattered hangar row (73.2\% on the 780M versus 74.0\% on the M3).
+Painted becomes more expensive as the view turns down and its ground footprint grows. On Intel, its pitch mean rises from 45.6 ms at the horizon to 124.0 ms looking straight down. Scattered is sensitive to both scene and device. The hangar view takes 29.3 ms on the 780M, 21.8 ms on the 7900 XT, and 148.9 ms on Intel, but 2.5 ms on the RTX 5070. Its mean should therefore not be treated as a stable cost for all horizon views.
 
-\textbf{Methods developed from top-down screenshots can conceal failure modes that become dominant at eye level.} Point scattering loses coverage, slicing bands, and an aggressively simplified mesh can miss a scene-specific wall; the image-order methods, Painted, and the selected mesh remain mutually coherent.
+\subsection{Fast draws can require expensive preparation}\label{sec:prep}
 
-\subsection{Frame time}\label{sec:timing}\label{frame-time}
+Table~\ref{tab:prep} separates preparation from timed rendering. Mesh fits the terrain on the CPU in a blocking first frame of about 2.5 s on the 780M system. Voxel spreads its initial occupancy build over several frames; the warmup totals about 3.2 s. Terrain in regions that have not yet been baked may be missing during that process.
 
-The timing table uses the same six configurations as Section~\ref{sec:pitch}. Vulkan rows use GPU timestamps; Apple M3 rows marked \passthrough{\lstinline!*!} use CPU submit-and-wait because encoder-level timestamps do not enclose the Metal workload (Section~\ref{sec:protocol}).
-
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/performance.pdf}}
-
-{\footnotesize\setlength{\tabcolsep}{3.2pt}
-\begin{tabular}{@{}lrrrrrr@{}}
+\begin{table}[tbp]\centering\small
+\caption{Preparation wall time on the 780M system, in milliseconds. Each entry is the maximum over twelve scenes. Warmup includes the first frame.}\label{tab:prep}
+\begin{tabular}{@{}lrrr@{}}
 \toprule
-device / pitch & Ray 128 & Voxel & Sliced & Scat.$^\dagger$ & Painted & Mesh .5 \\
+Method & Setup & First frame & All warmup \\
 \midrule
-780M / 0° & 4.562 & 8.143 & 10.437 & 14.179 & 8.441 & \textbf{4.072} \\
-780M / --30° & 4.871 & 9.123 & 7.809 & 8.658 & 12.853 & \textbf{4.152} \\
-780M / --60° & 4.838 & 8.254 & 8.974 & 6.970 & 20.058 & \textbf{3.974} \\
-780M / --90° & 5.044 & 7.762 & 10.142 & 7.072 & 22.005 & \textbf{4.081} \\
-7900 XT / 0° & 0.574 & 1.365 & 1.781 & 7.897 & 3.035 & \textbf{0.384} \\
-7900 XT / --30° & 0.660 & 1.522 & 1.343 & 1.315 & 4.658 & \textbf{0.395} \\
-7900 XT / --60° & 0.658 & 1.415 & 1.604 & 0.991 & 6.837 & \textbf{0.385} \\
-7900 XT / --90° & 0.693 & 1.308 & 1.790 & 0.974 & 6.332 & \textbf{0.383} \\
-Intel / 0° & 15.751 & 34.681 & 54.498 & 104.370 & 45.628 & \textbf{11.745} \\
-Intel / --30° & 18.106 & 39.596 & 34.730 & 89.523 & 62.300 & \textbf{11.426} \\
-Intel / --60° & 17.591 & 34.433 & 34.862 & 87.927 & 86.566 & \textbf{11.256} \\
-Intel / --90° & 21.227 & 33.561 & 42.657 & 70.993 & 124.020 & \textbf{11.388} \\
-RTX 5070 / 0° & 0.722 & 1.251 & 2.259 & 1.721 & 3.258 & \textbf{0.503} \\
-RTX 5070 / --30° & 0.809 & 1.419 & 1.544 & 1.532 & 4.155 & \textbf{0.501} \\
-RTX 5070 / --60° & 0.782 & 1.226 & 1.774 & 1.327 & 5.676 & \textbf{0.493} \\
-RTX 5070 / --90° & 0.845 & 1.146 & 2.018 & 1.304 & 5.679 & \textbf{0.496} \\
-M3* / 0° & 8.219 & 12.378 & 12.284 & 40.524 & 16.944 & \textbf{5.307} \\
-M3* / --30° & 8.057 & 13.551 & 11.017 & 11.443 & 32.664 & \textbf{5.936} \\
-M3* / --60° & 8.172 & 12.173 & 12.110 & 10.681 & 49.750 & \textbf{6.302} \\
-M3* / --90° & 8.915 & 11.862 & 13.124 & 11.161 & 31.530 & \textbf{6.135} \\
-\bottomrule
-\end{tabular}
-}
-
-\textbf{* Apple M3 values are CPU submit-and-wait means.} They include command submission and the completion round trip, so they support comparisons among methods on that device but not absolute comparisons with the Vulkan GPU rows.
-
-At the selected quality point Mesh q=0.5 has the lowest twelve-scene mean on every adapter: 4.070 ms on the 780M, 0.387 ms on the 7900 XT, 11.454 ms on Intel, 0.498 ms on the RTX 5070, and 5.920 ms CPU on the M3. RayTraced 128 is second on four of the five; the 7900 XT and 5070 put the two within 0.3 ms, while Intel and the M3 open a larger gap. RayVoxel is consistently about 1.6--2$\times$ RayTraced. Portability of an API and shader does not imply portability of a performance ranking among the slower methods, but it does not disturb this mesh-versus-ray order.
-
-Painted has the clearest orientation dependence on every adapter, becoming progressively slower as more ground samples enter its emitted footprint. Scattered is less orderly: the hangar takes 29.3 ms on the 780M, 21.8 ms on the 7900 XT, 148.9 ms on Intel, and 99.8 ms CPU time on Apple, but only 2.5 ms on NVIDIA. $^\dagger$The pitch-0 arithmetic mean is therefore dominated by a scene-and-adapter interaction and is not a general horizon cost. On Intel the derived-volume and forward methods cost 34--124 ms while RayTraced and Mesh stay near 11--21 ms.
-
-Within-session 95\% intervals from the 40 frame samples, over the twelve-scene mean:
-
-{\footnotesize\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}lrrrrrr@{}}
-\toprule
-device & Ray 128 & Voxel & Sliced & Scat. & Paint & Mesh \\
-\midrule
-780M & 4.83$\pm$0.12 & 8.32$\pm$0.01 & 9.34$\pm$0.12 & 9.22$\pm$0.04 & 15.84$\pm$0.09 & 4.07$\pm$0.05 \\
-7900 XT & 0.65$\pm$0.01 & 1.40$\pm$0.00 & 1.63$\pm$0.01 & 2.79$\pm$0.00 & 5.22$\pm$0.00 & 0.39$\pm$0.00 \\
-Intel & 18.17$\pm$0.10 & 35.57$\pm$0.06 & 41.69$\pm$0.42 & 88.20$\pm$0.16 & 79.63$\pm$0.44 & 11.45$\pm$0.04 \\
-RTX 5070 & 0.79$\pm$0.00 & 1.26$\pm$0.00 & 1.90$\pm$0.00 & 1.47$\pm$0.00 & 4.69$\pm$0.00 & 0.50$\pm$0.00 \\
-M3* & 8.34$\pm$0.03 & 12.49$\pm$0.01 & 12.13$\pm$0.02 & 18.45$\pm$0.02 & 32.72$\pm$0.04 & 5.92$\pm$0.07 \\
-\bottomrule
-\end{tabular}
-}
-
-The mesh--ray intervals do not overlap on any device. The M3 interval is now honest: this collector kept the CPU sample arrays.
-
-\subsection{Preparation cost}\label{sec:prep}\label{preparation-cost}
-
-Per-frame numbers exclude one-time work. The 780M run gives the following CPU wall times in milliseconds (maximum over its twelve scenes):
-
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/preparation.pdf}}
-
-\begin{longtable}[]{@{}llll@{}}
-\toprule\noalign{}
-method & setup & first frame & warmup \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
-RayTraced & 9 & 60 & 101 \\
-RayVoxel & 12 & 124 & \textbf{3163} \\
+Ray & 9 & 60 & 101 \\
+Voxel & 12 & 124 & 3163 \\
 Sliced & 17 & 88 & 144 \\
 Scattered & 10 & 127 & 362 \\
 Painted & 18 & 119 & 200 \\
-Mesh q=0.5 & 10 & \textbf{2464} & 2488 \\
-\end{longtable}
-
-\passthrough{\lstinline!setup!} builds pipelines and uploads the terrain texture; \passthrough{\lstinline!first frame!} adds whatever the method builds lazily; \passthrough{\lstinline!warmup!} covers every pre-timing frame. The two methods that pay anything substantial pay it differently. The mesh fits its triangulation once, on the CPU, in a single blocking 2.5 s at q=0.5 --- a load-time cost that a level cannot be entered without. The voxel grid bakes incrementally under a per-frame texel budget, spreading 3.2 s across frames that are individually playable but render through terrain the bake has not reached yet.
-
-Neither is visible in a steady-state frame time, and for a level-loading budget the difference between them matters more than the per-frame gap.
-
-\subsection{Editing and retained method data}\label{sec:edit}\label{editing-and-retained-method-data}
-
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/edit.pdf}}
-
-The headless \passthrough{\lstinline!--dig!} path removes altitude and upper-layer metadata inside a radius-48 crater and submits the same dirty rectangle the interactive game would. The camera stands south of the crater at pitch --30° (Section~\ref{sec:edit-protocol}). Figure 5.4 shows the unedited view and the first updated frame for the three update classes: RayTraced reads the new texture directly, RayVoxel rebuilds affected occupancy, and Mesh refits dirty chunks. All six methods receive the same edit; the figure shows one of each class.
-
-Times below are medians on the Radeon 780M. \passthrough{\lstinline!first edit!} has five independent samples of the first post-edit frame. CPU is submit-and-wait (upload + any refine + GPU work + round trip): that is the latency a player waits. GPU is the timestamped draw of that same frame. \passthrough{\lstinline!steady!} is the median of ten frames from a fresh build of the already-edited level.
-
-{\footnotesize\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}lrrrrrrl@{}}
-\toprule
-method & CPU$_0$ & CPU$_1$ & $\Delta$C & GPU$_0$ & GPU$_1$ & $\Delta$G & match \\
-\midrule
-Ray 128 & 6.51 & 8.70 & +2.19 & 5.59 & 7.45 & +1.86 & 1 frame \\
-Voxel 100 & 7.54 & 9.00 & +1.46 & 6.60 & 6.97 & +0.37 & 1 frame \\
-Sliced & 7.79 & 10.97 & +3.18 & 6.91 & 9.60 & +2.69 & 1 frame \\
-Scattered & 8.41 & 10.16 & +1.75 & 7.37 & 8.65 & +1.28 & 1 frame \\
-Painted & 17.89 & 22.72 & +4.83 & 16.87 & 21.04 & +4.17 & 1 frame \\
-Mesh .5 & 6.07 & 15.94 & +9.88 & 4.77 & 6.07 & +1.30 & not by 16 \\
+Mesh & 10 & 2464 & 2488 \\
 \bottomrule
 \end{tabular}
-}
+\end{table}
 
-On this integrated GPU the first updated frame also costs extra GPU time for the methods that upload or rebuild, because the dirty work is not hidden behind a fast discrete queue. The mesh is still the outlier: its CPU $\Delta$ is 9.88 ms while its extra GPU time is only 1.30 ms. Across the five devices Mesh CPU $\Delta$ is 5.0--9.9 ms (7900 XT 5.03, M3 5.98, RTX 5070 7.31, Intel 9.83, 780M 9.88). The five direct or regularly rebuilt methods match a fresh edited build on the first updated frame on every adapter. The mesh does not: at 16 frames it still differs by 0.0016\% hit/miss classification, 0.22 u p95 depth, and 0.78--0.80 levels of 8-bit color MAE, identically on all five devices. That remainder sits inside the q=0.5 tolerance; exact rebuild equivalence is nevertheless a stronger property than this implementation provides.
+The initial build is a separate application cost. A steady-state timing table hides both the mesh's blocking fit and the voxel method's incomplete first frames. The best choice can change when a short level-load time matters more than a small saving on each later frame.
 
-The publication batch is a clean checkout of \passthrough{\lstinline!5586e2a!} (\passthrough{\lstinline!terrain-paper!}) on all five machines.
+\subsection{Edits reveal the cost of retained state}\label{sec:edit}
 
-At 1280$\times$800 the same run reports explicit, persistent, method-specific allocation. Zero means the method adds no persistent data beyond the shared renderer resources excluded in Section~\ref{sec:edit-protocol}.
+All six methods accept the same crater edit without reloading the level. Figure~\ref{fig:edit} shows the three update paths: a direct texture reader, an occupancy update, and a mesh refit. Table~\ref{tab:edit} reports the first updated frame on the 780M.
 
-\begin{longtable}[]{@{}lrr@{}}
-\toprule\noalign{}
-method & GPU data (MiB) & CPU data (MiB) \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
-RayTraced 128 & 0 & 0 \\
-RayVoxel (4,8,2) & 18.29 & \textless0.01 \\
+\methodfigure{edit}{The same crater before the edit (top) and on the first updated frame (bottom). Ray reads the edited texture, Voxel updates occupancy, and Mesh refits chunks. These views show the shape of the edit; timing uses the camera defined in Section~\ref{sec:edit-protocol}.}{fig:edit}
+
+\begin{table}[tbp]\centering\small
+\caption{Edit latency on the 780M, in milliseconds. Steady is a fresh build of the edited terrain; edit is the first post-edit frame. CPU time includes upload, CPU update work, submission, and waiting. Consistency uses the thresholds in Section~\ref{sec:edit-protocol}.}\label{tab:edit}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrrrrl@{}}
+\toprule
+& \multicolumn{2}{c}{CPU time} & \multicolumn{2}{c}{GPU time} & Consistent \\
+Method & Steady & Edit & Steady & Edit & after \\
+\midrule
+Ray & 6.51 & 8.70 & 5.59 & 7.45 & 1 frame \\
+Voxel & 7.54 & 9.00 & 6.60 & 6.97 & 1 frame \\
+Sliced & 7.79 & 10.97 & 6.91 & 9.60 & 1 frame \\
+Scattered & 8.41 & 10.16 & 7.37 & 8.65 & 1 frame \\
+Painted & 17.89 & 22.72 & 16.87 & 21.04 & 1 frame \\
+Mesh & 6.07 & 15.94 & 4.77 & 6.07 & Not by 16 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Mesh has the largest measured CPU increase on the 780M: 9.88 ms, compared with a GPU increase of 1.30 ms. The CPU increase ranges from 5.0 to 9.9 ms across the five devices. The delta uses the unrounded measurements, so it can differ slightly from subtracting displayed values.
+
+The five other methods pass the fresh-build consistency test on the first updated frame on every device. Mesh does not pass by frame 16. It differs by 0.0016\% in hit/miss classification and by 0.22 world unit at the 95th percentile of distance error. Color mean absolute error is 0.78--0.80 levels on an 8-bit scale. Its hit/miss difference passes the chosen threshold, but its distance difference does not. Retaining and refining the old triangulation leaves a small, persistent difference from a fresh fit.
+
+Table~\ref{tab:memory} shows the retained data that makes these update paths possible. The selected mesh holds 318.7 MiB of GPU geometry and 534.7 MiB of CPU triangulation. These totals include three LODs and the live fitting structures. Counting only the finest mesh would understate the cost of this editable renderer.
+
+\begin{table}[tbp]\centering\small
+\caption{Persistent method-specific data at $1280\times800$, in MiB. Shared resources, transient allocations, and driver memory are excluded.}\label{tab:memory}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Method & GPU data & CPU data \\
+\midrule
+Ray & 0 & 0 \\
+Voxel & 18.29 & $<0.01$ \\
 Sliced & 0 & 0 \\
 Scattered & 3.91 & 0 \\
-Painted & \textless0.01 & 0 \\
-Mesh q=0.5 & 318.7 & 534.7 \\
-\end{longtable}
-
-RayVoxel\textquotesingle s tuned coarse grid is only 18.29 MiB; its 153 MiB production grid remains a distinct, disclosed configuration (Section~\ref{sec:tuning}). Scattered\textquotesingle s 3.91 MiB is one 32-bit value per output pixel and therefore scales with resolution. The mesh retains three LODs plus every chunk\textquotesingle s live triangulation. These figures are explicit payload sizes, not peak process or driver memory.
-
-\subsection{Fit cost}\label{sec:fit}\label{fit-cost}
-
-Fostral, triangles against a full grid mesh:
-
-\begin{longtable}[]{@{}lllll@{}}
-\toprule\noalign{}
-quality & max error & vertices & triangles & reduction \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
-0.0 & 16 & 1.74 M & 3.39 M & 19.8$\times$ \\
-0.25 & 8 & 2.31 M & 4.50 M & 14.9$\times$ \\
-0.5 & 4 & 4.28 M & 8.47 M & 7.9$\times$ \\
-0.75 & 2 & 7.14 M & 14.1 M & 4.7$\times$ \\
-1.0 & 1 & 11.3 M & 22.4 M & 3.0$\times$ \\
-\end{longtable}
-
-Against roughly 80$\times$ for a smooth synthetic surface at comparable tolerance (our own control, not a literature figure), and 45--182$\times$ for the single-layer stock worlds (Section~\ref{sec:survey}). The stock worlds are the better control than an external elevation model would be: they vary only content, holding encoding, quantisation, texel scale and authoring pipeline fixed, so the comparison isolates one variable rather than four.
-
-\subsection{Tuning}\label{sec:tuning}\label{tuning}
-
-Each method was swept over its own quality knob and given the cheapest setting within one percentage point of its own best error, so no method is charged for a setting that buys nothing or credited with speed it reaches only by being wrong. Fostral, three viewpoints at the horizon, 400x260, view distance 600. The CPU reference was re-swept after correcting its screen-X basis and far-plane convention. The mesh received an additional 1280$\times$800 pass because its wall coverage was not resolved at tuning resolution. The complete sweeps are recorded in \passthrough{\lstinline!paper/tuning.md!}.
-
-{\small\setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}lllll@{}}
-\toprule
-method & knob & swept & chosen & error \\
-\midrule
-RayTraced & steps & 16--256 & \textbf{128} & 1.2\% \\
-Painted & --- & --- & --- & 0.1\% \\
-Sliced & slices & 32--512 & \textbf{512} & 6.5\% \\
-Scattered & density & 1--4 & \textbf{4,4,4} & 39.2\% \\
-RayVoxel & grid, steps & 2 grids $\times$ 40--400 & \textbf{4,8,2 / 100} & 0.3\% \\
-Mesh & tolerance & q 0.0--1.0 & \textbf{q=0.5} & 0.3\% at 1280$\times$800 \\
+Painted & $<0.01$ & 0 \\
+Mesh & 318.7 & 534.7 \\
 \bottomrule
 \end{tabular}
-}
+\end{table}
 
-Four of the results are worth stating.
+\FloatBarrier
+\section{Why the Mesh Stays Large}\label{sec:fit}
 
-\textbf{The slicer knob changes the error\textquotesingle s kind.} From 32 to 512 slices, cost rises 0.31 → 1.54 ms while see-through falls 15.5\% → 3.0\%. Speckle is non-monotonic because additional slices convert missing spans into isolated wrong pixels before coverage becomes dense enough; the combined error falls 16.7\% → 6.5\%, so the rule selects 512.
+The selected mesh draws quickly but retains substantial data. We next ask what makes the fit large. Is it the rough floor, the upper layer, or both? We use two forms of evidence: a survey across worlds and a count of the samples that trigger insertion in one world.
 
-\textbf{The voxel step budget is a property of the fixture, not the method.} 40 steps leaves 2.5\% combined error, while 100 reaches 0.3\%; 200 and 400 remain at 0.3\% and only add work. The rule therefore selects 100. A step budget tunes the longest sightline the viewpoints put in frame; change the viewpoints and it needs re-tuning, which is what the protocol\textquotesingle s tuning pass is for.
+\subsection{Quality and output size}\label{sec:fit-quality}
 
-\textbf{Resolution changes whether the reference can resolve mesh quality.} At 400$\times$260 q=0.0 and q=0.25 both have 1.8\% combined error, so the rule initially chooses q=0.5 as the first point within one point of the 0.7\% best. At 1280$\times$800, q=0.0 leaves 3.9\%, q=0.25 leaves 0.8\%, and q=0.5--1.0 leave 0.3\%. The one-point rule would pick q=0.25. We publish \textbf{q=0.5} instead: it is the coarsest setting that matches the full-resolution error floor, and it lets the comparison, teaser, and video share one mesh. The hangar wall that q=0.0 drops is recovered at this setting.
+Table~\ref{tab:fit-quality} shows the size of the Fostral fit as its tolerance changes. The reduction ratio is $2N/T$, where $N$ is the number of source texels and $T$ is the emitted triangle count. The baseline is a grid with two triangles per source texel. This is a triangle-count ratio, not a ratio of stored bytes. Counts in the table are rounded; ratios use the unrounded counts.
 
-\textbf{The ray marcher selects 128 steps.} Across the final horizon scenes, 16 → 256 steps costs 0.24 → 1.29 ms while total error falls 6.9\% → 0.6\%. The 128-step setting is the cheapest within one point of the best (1.2\%). A cheaper 64-step setting is not substituted for the selected one.
-
-A fifth result is about configuration rather than the method: the voxel tracer\textquotesingle s production grid (2,4,1) needs 153 MB of storage buffer and did not fit the software rasterizer used for tuning. The selected comparison runs the (4,8,2) grid even though all five hardware devices can accommodate the production grid. The reported comparison therefore characterises the tuned coarse configuration, not the renderer\textquotesingle s shipping configuration; the memory requirement is part of the configuration disclosure rather than an unreported advantage.
-
-\subsection{Fastest is not free}\label{sec:choice}\label{fastest-is-not-free}
-
-At the selected quality point Mesh q=0.5 is the lowest mean on every device, and it is also in the coherent group of Section~\ref{sec:pitch}. Frame time is therefore not the remaining argument against it. The remaining costs are the ones the timing table hides: 2.5 s of blocking fit, 319 MiB of GPU buffers and 535 MiB of CPU triangulation, and a 5--10 ms history-dependent refit that never quite matches a fresh build.
-
-RayTraced 128 is the other production-shaped choice. It is second in the timing table, needs no extra memory, and sees a crater on the next draw. Its fixed sampling budget is still visible as blocky close-up detail, and grazing rays remain the worst possible workload. The selected 128-step setting is the cheapest point within the tuning rule, not a quality match for interpolated triangles.
-
-The choice is consequently workload-level. RayTraced is compelling when load time, memory, and exact first-frame edits dominate. Mesh is the stronger candidate when close-range quality, grazing views, or a triangle-mesh collider matter enough to amortise fitting and local refits. The new measurement is that those mesh advantages no longer have to be bought with a slower frame.
-
-\section{Findings}\label{sec:findings}\label{findings}
-
-\subsection{The remaining depth offset}\label{sec:offset}\label{the-remaining-depth-offset}
-
-After the reference corrections in Section~\ref{sec:reference}, \passthrough{\lstinline!covers-sky!} at all three --90° scenes is exactly 0.0\% for every method, and the pitch means remain at or below 0.2\%. The selected coherent methods leave at most 0.9\% uncovered at the horizon.
-
-One limitation stays visible in the numbers. In extremely wide off-axis top-down pixels, otherwise agreeing methods share median absolute offsets of roughly 8--14 world units against the CPU point marcher. Halving its step did not remove the offset, so this is a point-sampling or cell-boundary convention rather than insufficient convergence. Absolute depth is therefore a diagnostic, not evidence for sub-unit ranking. Quality claims rest on bidirectional coverage, coherence, visual agreement, and relative agreement between independent renderers.
-
-\subsection{The multi-layer encoding, not the terrain, sets the fit cost}\label{sec:survey}\label{the-multi-layer-encoding-not-the-terrain-sets-the-fit-cost}
-
-The obvious reading of a 14.9$\times$ reduction where a smooth surface gives \textasciitilde80$\times$ is that hand-authored terrain is simply harder to fit. The ten shipped worlds let us test that directly: same engine, same encoding, same 8-bit quantisation, same texel scale, same authoring tools, varying only content. Fitted at identical tolerance:
-
-\pandocbounded{\includegraphics[width=\columnwidth]{figures/fit-survey.pdf}}
-
-{\footnotesize\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}lrrrrrrr@{}}
+\begin{table}[tbp]\centering\small
+\caption{Fostral mesh size at five quality settings. The rendering comparison uses $q=0.5$; the world survey below uses $q=0.25$.}\label{tab:fit-quality}
+\begin{tabular}{@{}rrrrr@{}}
 \toprule
-level & texels & tris & red. & slab & dual & $r_f$ & $r_s$ \\
+$q$ & Tolerance & Vertices & Triangles & Reduction \\
 \midrule
-weexow & 4.2\,M & 0.05\,M & 182.0$\times$ & 0.0\% & 0.0\% & 1.84 & 1.84 \\
-ark-a-znoy & 4.2\,M & 0.05\,M & 154.8$\times$ & 0.0\% & 0.0\% & 5.52 & 5.52 \\
-threall & 4.2\,M & 0.19\,M & 45.3$\times$ & 0.0\% & 0.0\% & 2.85 & 2.85 \\
-xplo & 8.4\,M & 0.87\,M & 19.4$\times$ & 17.0\% & 1.4\% & 7.54 & 8.80 \\
-khox & 4.2\,M & 0.52\,M & 16.1$\times$ & 9.3\% & 4.8\% & 6.94 & 7.71 \\
-fostral & 33.6\,M & 4.50\,M & 14.9$\times$ & 35.6\% & 10.9\% & 3.44 & 6.54 \\
-necross & 33.6\,M & 8.41\,M & 8.0$\times$ & 42.5\% & 17.0\% & 4.41 & 14.43 \\
-glorx & 33.6\,M & 10.97\,M & 6.1$\times$ & 37.2\% & 30.0\% & 6.53 & 14.66 \\
-boozeena & 4.2\,M & 1.46\,M & 5.7$\times$ & 41.5\% & 13.3\% & 3.44 & 25.15 \\
-hmok & 4.2\,M & 1.61\,M & 5.2$\times$ & 47.2\% & 38.0\% & 2.71 & 18.77 \\
+0.0 & 16 & 1.74 M & 3.39 M & $19.8\times$ \\
+0.25 & 8 & 2.31 M & 4.50 M & $14.9\times$ \\
+0.5 & 4 & 4.28 M & 8.47 M & $7.9\times$ \\
+0.75 & 2 & 7.14 M & 14.1 M & $4.7\times$ \\
+1.0 & 1 & 11.3 M & 22.4 M & $3.0\times$ \\
 \bottomrule
 \end{tabular}
-}
+\end{table}
 
-{\footnotesize $r_f$ is \texttt{rough(floor)}; $r_s$ is \texttt{rough(surface)}.}
+A tighter fit needs more vertices, as expected. The question is why some worlds need many more than others at the same tolerance.
 
-\passthrough{\lstinline!rough(floor)!} is the mean absolute discrete Laplacian of the \passthrough{\lstinline!low!} layer alone --- the terrain\textquotesingle s own curvature, blind to the second layer. \passthrough{\lstinline!rough(surface)!} is the same measure on the composite surface the fitter sees.
+\subsection{A ten-world survey}\label{sec:survey}
 
-The hypothesis fails. Across all ten worlds, correlation of log reduction against \passthrough{\lstinline!rough(floor)!} is \textbf{--0.17}; against the double-level texel fraction it is \textbf{--0.77}, and against \passthrough{\lstinline!rough(surface)!} --- the data the fitter actually sees, curvature the slab edges put there --- it is \textbf{--0.82}. (The share of the fitted triangles that end up on slab surfaces correlates at --0.89, which is the fit\textquotesingle s own account of where its budget went rather than an independent predictor.) Relief does not predict the fit cost; the second layer does. \passthrough{\lstinline!ark-a-znoy!} makes the floor-relief hypothesis fail in the other direction too: it is \emph{three} times as rough as \passthrough{\lstinline!weexow!} on the floor (5.52 against 1.84) and compresses essentially as well (154.8$\times$ against 182.0$\times$), because neither world has a slab.
+We fit all ten stock worlds at $q=0.25$, or an 8-unit vertical tolerance. They share the terrain encoding, height precision, texel scale, and authoring tools, but differ in content. The three worlds without an upper layer reduce by $45.3$--$182.0\times$. The seven worlds with upper layers reduce by $5.2$--$19.4\times$ (Table~\ref{tab:survey}).
 
-The clearest case is \passthrough{\lstinline!hmok!}. Its floor is \emph{smoother} than \passthrough{\lstinline!threall!}\textquotesingle s (2.71 against 2.85), and \passthrough{\lstinline!threall!} compresses 45.3$\times$. \passthrough{\lstinline!hmok!} manages 5.2$\times$ --- nine times worse on flatter ground --- because 47\% of its triangles are slab. Its composite roughness is seven times its floor roughness, and all of that excess is the encoding.
+\begin{table}[tbp]\centering\small
+\caption{Mesh reduction at $q=0.25$ across ten worlds. Dual is the percentage of dual-level texels. Roughness is the mean absolute discrete Laplacian of the floor or topmost surface.}\label{tab:survey}
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+World & Dual (\%) & Reduction & Floor rough. & Surface rough. \\
+\midrule
+weexow & 0.0 & $182.0\times$ & 1.84 & 1.84 \\
+ark-a-znoy & 0.0 & $154.8\times$ & 5.52 & 5.52 \\
+threall & 0.0 & $45.3\times$ & 2.85 & 2.85 \\
+xplo & 1.4 & $19.4\times$ & 7.54 & 8.80 \\
+khox & 4.8 & $16.1\times$ & 6.94 & 7.71 \\
+fostral & 10.9 & $14.9\times$ & 3.44 & 6.54 \\
+necross & 17.0 & $8.0\times$ & 4.41 & 14.43 \\
+glorx & 30.0 & $6.1\times$ & 6.53 & 14.66 \\
+boozeena & 13.3 & $5.7\times$ & 3.44 & 25.15 \\
+hmok & 38.0 & $5.2\times$ & 2.71 & 18.77 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-So the honest claim is not that authored terrain defeats greedy TIN. Single-layer authored terrain compresses 45--182$\times$ in our own controls, which confirms the fitter itself is not the weak link without importing a ratio from a differently sampled elevation model. What defeats it is a second layer whose altitudes are structural rather than continuous. Section~\ref{sec:boundary} is the mechanism.
+We measure roughness as the mean of the absolute four-neighbor discrete Laplacian:
+\begin{equation}
+R(f)=\operatorname{mean}_{i,j}
+\left|4f_{i,j}-f_{i-1,j}-f_{i+1,j}-f_{i,j-1}-f_{i,j+1}\right|.
+\end{equation}
+The mean excludes the outer row and column. Floor roughness uses \code{low}. Surface roughness uses \code{high} in a dual-level column and \code{low} elsewhere. It measures the topmost surface, not all three fields used by the fitter.
 
-\subsection{A quarter of the vertex budget goes to one discontinuity}\label{sec:boundary}\label{a-quarter-of-the-vertex-budget-goes-to-one-discontinuity}
+Across these worlds, the correlation between log reduction and floor roughness is $-0.17$. It is $-0.77$ for the dual-level fraction and $-0.82$ for topmost-surface roughness. For example, hmok has a slightly smoother floor than threall by this measure (2.71 versus 2.85), yet reduces by $5.2\times$ rather than $45.3\times$.
 
-Counting what drove each insertion, Fostral at quality 0.25:
+The survey links poor reduction more strongly to layered content than to floor roughness. It does not isolate a causal effect by adding and removing slabs in the same world: other content also changes between worlds. The insertion count below gives more direct evidence of where this fitter spends vertices.
 
-\begin{longtable}[]{@{}ll@{}}
-\toprule\noalign{}
-driver & share \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
-\passthrough{\lstinline!low!} (the floor) & 53.5\% \\
-slab interior & 18.8\% \\
-\textbf{single/double-level boundary} & \textbf{23.3\%} \\
-chunk-border simplification & 4.4\% \\
-\end{longtable}
+\subsection{Layer boundaries drive extra insertions}\label{sec:boundary}
 
-A single-level texel reports \passthrough{\lstinline!mid = high = low!}, so both step by the full slab thickness across a region edge, and the error metric chases a discontinuity no tolerance can satisfy --- it only shrinks triangles toward texel size along every boundary. The absolute cost is near-constant in quality (338 k insertions at q=0, 396 k at q=1) while the floor\textquotesingle s grows 444 k → 6.1 M. That signature --- flat in tolerance --- distinguishes a geometric feature from a fit converging, and generalises to any error-driven fit over a field with embedded discontinuities.
+For Fostral at $q=0.25$, we classify each vertex insertion by its cause (Table~\ref{tab:insertions}). The boundary between single- and dual-level terrain accounts for 23.3\% of insertions.
 
-Constraining the triangulation to the region outline would remove it, and is the same change that would stop straddling triangles dropping the slab.
+\begin{table}[tbp]\centering\small
+\caption{Causes of vertex insertion in the Fostral fit at $q=0.25$.}\label{tab:insertions}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Cause & Share \\
+\midrule
+Floor field & 53.5\% \\
+Slab interior & 18.8\% \\
+Single-/dual-level boundary & 23.3\% \\
+Chunk-border simplification & 4.4\% \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\subsection{Coverage metrics cannot see over-drawing}\label{sec:overdraw}\label{coverage-metrics-cannot-see-over-drawing}
+At a single-level sample, both \code{mid} and \code{high} equal the floor height. At a neighboring dual-level sample, they describe a ceiling and a slab top. A triangle crossing that boundary interpolates between different structural roles. The fitter reduces the resulting vertical error by inserting more points near the boundary.
 
-Coverage alone cannot fail a renderer that draws too much. A mesh that interpolates a slab across region boundaries covers every pixel that should be covered, and a see-through score treats that invented roof as correct. That is why Section~\ref{sec:metrics} splits coverage into see-through and covers-sky and adds a depth-coherence score: the hangar wall dropped at q=0.0 is recovered by comparing depth and by looking at the image, not by counting covered pixels.
+Boundary insertions change relatively little across quality settings: from 338 thousand at $q=0$ to 396 thousand at $q=1$. Floor-driven insertions grow from 444 thousand to 6.1 million over the same range. For this fitter and world, the boundary creates a substantial cost even at a loose tolerance.
 
-\section{Limitations}\label{sec:limits}\label{limitations}
+A triangulation constrained to the slab outline could represent that boundary more directly. It could also avoid triangles that cross between incompatible layer states. We have not implemented or measured that alternative. The result here concerns the shared, unconstrained topology used by this mesh, rather than an unavoidable cost of every layered-terrain mesh.
 
-\begin{itemize}
-\tightlist
-\item
-  One engine and one terrain format. The ten stock worlds span a factor of 35 in fit cost and isolate the multi-layer variable cleanly, but every one of them is Vangers data. Whether the mechanism in Section~\ref{sec:boundary} generalises to other discontinuous auxiliary fields is argued, not measured.
-\item
-  All rendering comparisons use Fostral, published under CC BY-SA 4.0 by Association K-D Lab. The nine additional survey worlds are not in that grant; those rows require a lawfully obtained game copy.
-\item
-  The hardware batch covers four Vulkan devices and one Metal device, but not D3D12, WebGL2, mobile-class adapters, or multiple driver versions per adapter. It establishes native WebGPU execution and image agreement across those backends, not a survey of every WebGPU implementation. The browser smoke test is a path-to-the-web check of one route, not a six-method web comparison.
-\item
-  Frame timing is per-frame latency, not pipelined throughput: each frame is submitted and awaited in isolation, so nothing overlaps. The Vulkan timestamps make those numbers GPU work rather than round trip, but they do not make them a frame rate. Metal uses CPU submit-and-wait because its encoder timestamps failed the bracketing sanity check; those values are useful within the M3 rows but cannot be compared directly with Vulkan.
-\item
-  Tuning uses one fixed three-scene horizon fixture. It selects 128 height-field steps, 100 voxel steps, and q=0.5 at publication resolution; changing the view-distance or scene distribution can select another operating point (Section~\ref{sec:tuning}).
-\item
-  The edit experiment covers one crater shape and one location on all five publication adapters. It establishes first-frame visibility, CPU and GPU update cost, and mesh history dependence. A different crater or a gameplay-shaped destruction pattern is not measured.
-\item
-  Explicit method payloads are accounted for, but portable wgpu does not expose opaque driver allocations or a backend-independent peak heap. Chunk streaming is not implemented, so "runs on low-end devices" describes the pipeline, not its memory budget.
-\end{itemize}
+\FloatBarrier
+\section{Choosing a Method}\label{sec:choice}
 
-\section{Conclusion}\label{sec:conclusion}\label{conclusion}
+For the tested workload, Mesh and Ray offer the clearest choices. Mesh combines the lowest mean frame time with low measured horizon error at $q=0.5$. Its costs occur outside the ordinary draw: a blocking initial fit, 319 MiB of GPU geometry, 535 MiB of CPU triangulation, and local CPU refits. Its edited output also depends on the retained triangulation.
 
-Six terrain renderers that look interchangeable from the original game\textquotesingle s top-down camera behave differently once the same authored data is viewed at eye level. Horizontal slices expose bands and point scattering exposes incoherent pixels. At the selected quality point the mesh has the lowest mean frame time on every measured adapter, and it stays in the coherent group at the horizon. Close detail remains blocky on the marchers. The mesh\textquotesingle s remaining cost is memory, a 2.5 s fit, and a history-dependent refit --- not the frame.
+Ray is useful when memory, load time, and immediate access to edited terrain matter more than the measured frame-time gap. It keeps no derived terrain representation. Its main weakness is sampling: a fixed step budget can miss thin features along long rays. Increasing that budget trades frame time for better coverage.
 
-The larger result is about the data and the measurement. Single-layer worlds fit by 45--182$\times$, while the structural second layer, not floor relief, predicts the collapse in reduction; nearly a quarter of Fostral\textquotesingle s vertex insertions serve one layer-boundary discontinuity. The five direct or regularly rebuilt methods reproduce a fresh edited build on their first updated frame, but the selected insertion-only mesh retains a small history-dependent difference. Making that mesh editable also exposes its retained cost: 319 MiB of explicit GPU geometry and 535 MiB of CPU triangulation. A credible comparison needs bidirectional coverage, coherence, inter-method agreement, equal tuning, explicit preparation costs, and visual parity checks in addition to a timing table. It also needs to treat post-edit maintenance as a first-class result: a static hierarchy can win a frame and still fail the workload if terrain destruction forces a reload. Conversely, a method can win the timing table and still lose the application if its quality budget is view-dependent or its representation cannot be reused by the rest of the engine.
+Voxel has lower missing-terrain error than Ray in the selected views, but costs more frame time and needs an occupancy build. It may be useful for a different balance of empty space and surface detail; this experiment does not establish such a case. Sliced is simple to update but shows grazing bands. Painted avoids a stored mesh but becomes expensive for large ground footprints. Scattered reads edits directly, yet its single-pixel point writes leave large gaps in the horizon scenes.
+
+An explicit mesh may also serve other parts of an engine. For example, a rigid-body system that accepts triangle colliders could reuse it. We did not measure collision quality or collider rebuild cost. Reusing a visual mesh would add a requirement to update the collider when the corresponding terrain chunk changes.
+
+The general lesson is to choose a method using the full workload. View direction and feature size determine whether a sampling scheme is adequate. Preparation, retained memory, and edit latency determine whether the representation fits the application. A faster ordinary frame does not settle those questions.
+
+\section{Limitations}\label{sec:limits}
+
+The rendering comparison uses one world and one terrain format. The ten-world survey broadens the mesh-size evidence, but all ten worlds come from Vangers. The results support decisions for this data and these implementations; broader claims need other terrain sets and stronger implementations of each method family.
+
+The quality settings are not equal-quality operating points. The sweeps use three horizon views, mostly at a smaller resolution, and Mesh has an explicit selection exception. The point scatterer has no filtered footprint. The mesh supplies a different normal input. Each choice limits how far the measured rankings can be generalized.
+
+The CPU reference has an unresolved distance offset in some views. Coverage and local incoherence provide useful checks, but neither is a complete perceptual metric. Static images and a supplemental flythrough do not replace a quantitative temporal-stability test.
+
+The edit experiment uses one crater shape at one location. It measures the first update and agreement with a fresh build, not sustained destruction, long edit histories, or collider maintenance. The memory totals cover known persistent payloads rather than total process or driver memory.
+
+The hardware study covers four Vulkan devices and one Metal device. It does not cover D3D12, mobile GPUs, or multiple driver versions per device. A separate browser smoke test demonstrates execution of the Voxel route in Firefox; it is not a six-method browser benchmark. The frame intervals describe isolated frames within one session, and the M3 uses a different timing mechanism.
+
+\section{Conclusion}\label{sec:conclusion}
+
+The six methods expose different tradeoffs when they render the same editable layered terrain. Horizon views reveal large gaps in point scattering and bands in horizontal slicing. At the selected settings, Mesh has the lowest mean frame time on all five tested devices. Ray gives up some speed while avoiding a retained acceleration structure and reading edits on the next draw.
+
+The mesh's main costs are its initial fit, retained state, and local refits. A survey across ten worlds links poor reduction to layered content, and the Fostral insertion count identifies slab boundaries as a major cost for the shared topology. These results point toward better boundary handling as future work.
+
+A useful terrain comparison must report more than ordinary frame time. It should state the view and quality settings, show the resulting images, and measure the preparation, memory, and edit costs that the application will pay.
+
+\section*{Code, Data, and Supplemental Material}\label{sec:availability}
+
+The engine and evaluation tools are Apache-2.0 and are available from the \href{https://github.com/kvark/vange-rs}{vange-rs repository}. The measurements use tag \code{terrain-paper}, commit \code{5586e2a}. From that revision, \path{tools/compare-terrain.py} runs the default rendering and edit protocol. Separate commands run the tuning sweeps and the world survey; \path{paper/README.md} records them. The reported tables are in \path{paper/results.md}, \path{paper/tuning.md}, and \path{paper/survey.json}.
+
+Fostral data is published by Association K-D Lab under CC BY-SA 4.0 in \href{https://github.com/KranX/Vangers/tree/f1ad7d7/data/thechain/fostral}{the Vangers source tree}, at commit \code{f1ad7d7} \citep{vangerssource}. The harness fetches that version. The nine other survey worlds require a lawfully obtained game copy. Figures derived from Fostral and the supplemental video carry the same data attribution.
+
+The supplemental flythrough shows the six selected methods along one camera path. It is generated by \path{tools/render-paper-video.py} and is packaged as \path{anc/terrain-methods.mp4} when the video is supplied. It does not show the crater experiment.
 
 \subsection*{Acknowledgements}
 
-I thank Association K-D Lab for \textit{Vangers} and for publishing the Fostral
-world data that this comparison uses; Yury Zhuravlev for maintaining the
-open-source Vangers tree; and the players and other maintainers who have
-kept the game alive for nearly three decades.
+I thank Association K-D Lab for \emph{Vangers} and the published Fostral data, Yury Zhuravlev for maintaining the open-source Vangers tree, and the players and maintainers who have kept the game alive.
 
-Large language models --- OpenAI Codex, Anthropic Claude, and xAI Grok ---
-assisted with drafting, editing, literature search, and work on the
-evaluation harness. I reviewed every claim, number, and citation; the
-remaining errors are mine.
+OpenAI Codex, Anthropic Claude, and xAI Grok assisted with drafting, editing, literature search, and the evaluation tools. The author is responsible for the manuscript and its results.
 
-\small
+\FloatBarrier
+\clearpage
+\appendix
+\section{Ray-March Pseudocode}\label{sec:ray-code}
+
+Listing~\ref{lst:ray} expands the direct marcher in Section~\ref{sec:ray}. The step is computed once from the original endpoints. The endpoint test covers the final part of the clipped segment. Refinement runs only after a solid sample has been found. This still does not guarantee the first geometric intersection when a forward step crosses several solid and empty intervals.
+
+\noindent\begin{minipage}{\linewidth}
+\begin{lstlisting}[float=false,caption={Direct height-field ray marching over a clipped segment. SOLID is Equation~\ref{eq:solid}.},label={lst:ray}]
+function RAY(a0, b0, steps):
+    delta = (b0 - a0) / (steps + 1)
+    a = a0; b = b0; hit = false
+    for i = 1 to steps:
+        c = a + delta
+        if SOLID(c):
+            b = c; hit = true; break
+        a = c
+    if not hit:
+        hit = SOLID(b0)
+    if not hit:
+        return MISS
+    for i = 1 to 4:
+        c = (a + b) / 2
+        if SOLID(c): b = c
+        else: a = c
+    return b
+\end{lstlisting}
+\end{minipage}
+
+\section{Configuration Selection}\label{sec:tuning-detail}
+
+The sweep score is the sum of missing terrain and local incoherence, in percentage points of the image. It excludes added-terrain and absolute distance error. Table~\ref{tab:sweeps} summarizes the small-resolution sweeps. Their times choose among settings in that sweep; they are not the five-device publication timings.
+
+\begin{table}[tbp]\centering\small
+\caption{Quality sweeps on three horizon views at $400\times260$. The rule selects the cheapest setting within one point of the method's best score.}\label{tab:sweeps}
+\setlength{\tabcolsep}{4pt}
+\begin{tabularx}{\linewidth}{@{}l Y l r@{}}
+\toprule
+Method & Values tested & Selected & Score (\%) \\
+\midrule
+Ray & 16--256 steps & 128 & 1.2 \\
+Voxel & Two grids; 40--400 steps & $(4,8,2)$; 100 & 0.3 \\
+Sliced & 32--512 planes & 512 & 6.5 \\
+Painted & No quality control & Default & 0.1 \\
+Scattered & Density 1--4 per axis & $(4,4,4)$ & 39.2 \\
+Mesh & $q=0.0$--$1.0$ & $q=0.5$ & 1.0 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Ray's score falls from 6.9\% at 16 steps to 0.6\% at 256. The 128-step setting reaches 1.2\%, within one point of the best. Voxel reaches 0.3\% with both step budgets set to 100; 200 and 400 do not improve the reported score. Sliced improves from 16.7\% at 32 planes to 6.5\% at 512. Scattered still has a 39.2\% score at the highest tested density. Selecting its best tested point does not make it an adequate horizon renderer.
+
+Mesh was also swept at $1280\times800$. The scores for $q=0.0$, $0.25$, and $0.5$ are 3.9\%, 0.8\%, and 0.3\%; $q=0.75$ and $1.0$ also report 0.3\%. The one-point rule would select $q=0.25$. The publication instead uses $q=0.5$ to reach the observed error floor. This is a stricter mesh quality choice, not an application of the same rule.
+
+The selected Voxel grid uses 18.29 MiB. The production $(2,4,1)$ grid uses about 153 MiB. The comparison characterizes the coarse grid; it does not establish the best setting for every device. Changes to resolution, view distance, or scene distribution can change the selected settings.
+
+\section{Quality Values by Pitch}\label{sec:quality-detail}
+
+Table~\ref{tab:quality} supplies the values behind Figure~\ref{fig:quality}. Missing-terrain and incoherence percentages both use the full image as the denominator. Values are means over the three views at each pitch.
+
+\begin{table}[htbp]\centering\small
+\caption{Missing terrain / local incoherence (\%) on the 780M.}\label{tab:quality}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Pitch & Ray & Voxel & Sliced & Scattered & Painted & Mesh \\
+\midrule
+$0^\circ$ & 0.6 / 0.4 & 0.0 / 0.2 & 0.9 / 2.7 & 40.4 / 1.8 & 0.0 / 0.1 & 0.3 / 0.1 \\
+$-30^\circ$ & 0.6 / 0.9 & 0.0 / 0.2 & 2.3 / 1.4 & 15.4 / 3.5 & 0.3 / 0.1 & 0.4 / 0.1 \\
+$-60^\circ$ & 0.1 / 0.7 & 0.0 / 0.3 & 0.0 / 0.2 & 0.3 / 5.7 & 2.7 / 0.1 & 0.0 / 0.1 \\
+$-90^\circ$ & 0.1 / 0.5 & 0.0 / 0.3 & 0.0 / 0.2 & 0.1 / 3.7 & 0.8 / 0.2 & 0.0 / 0.1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Timing Uncertainty}\label{sec:timing-detail}
+
+Table~\ref{tab:intervals} gives approximate within-session 95\% intervals for the twelve-view mean. For scene $j$, let $s_j$ be the sample standard deviation of its $n_j=40$ frame times. The reported half-width is $1.96\sqrt{\sum_j s_j^2/n_j}/12$. This calculation treats the samples as independent; it does not model temporal correlation. Scenes are fixed, so the intervals do not estimate uncertainty over all possible scenes. The displayed $0.00$ half-widths are values rounded below 0.005 ms, not zero uncertainty. Per-view times and device records are retained in \path{paper/results.md}.
+
+\begin{table}[htbp]\centering\small
+\caption{Mean frame latency $\pm$ within-session 95\% interval half-width, in milliseconds. M3 uses CPU timing; the other rows use GPU timing.}\label{tab:intervals}
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Device & Ray & Voxel & Sliced & Scattered & Painted & Mesh \\
+\midrule
+780M & $4.83\pm.12$ & $8.32\pm.01$ & $9.34\pm.12$ & $9.22\pm.04$ & $15.84\pm.09$ & $4.07\pm.05$ \\
+7900 XT & $.65\pm.01$ & $1.40\pm.00$ & $1.63\pm.01$ & $2.79\pm.00$ & $5.22\pm.00$ & $.39\pm.00$ \\
+Intel & $18.17\pm.10$ & $35.57\pm.06$ & $41.69\pm.42$ & $88.20\pm.16$ & $79.63\pm.44$ & $11.45\pm.04$ \\
+RTX 5070 & $.79\pm.00$ & $1.26\pm.00$ & $1.90\pm.00$ & $1.47\pm.00$ & $4.69\pm.00$ & $.50\pm.00$ \\
+\midrule
+M3 (CPU) & $8.34\pm.03$ & $12.49\pm.01$ & $12.13\pm.02$ & $18.45\pm.02$ & $32.72\pm.04$ & $5.92\pm.07$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Implementation and Validation Notes}\label{sec:implementation}
+
+The original Vangers software renderer projected terrain in object order using a painter's algorithm \citep{vangerssource}. The vange-rs project began in 2016 and added the GPU methods over several years. It adopted native wgpu in 2019 and moved its shaders to WGSL in 2021 \citep{malyshau2020webgpu,malyshau2021rust}. This history explains the range of methods; it is not evidence of algorithmic novelty.
+
+A separate browser test compiled the same source to WebAssembly and ran the Voxel route in Firefox 152 on a Radeon 890M. It loaded Fostral and rendered a $1280\times714$ canvas through WebGPU. This checks that a browser path exists. The five-device measurements in this paper remain native Vulkan and Metal runs. Commands, versions, and hashes for the browser test are in \path{paper/browser-smoke.md}.
+
+During harness development, we corrected reference-camera focal scaling, the horizontal camera basis, the far-plane convention, and the test for terrain at height zero. These faults could produce plausible images or scores, so visual agreement and camera checks were necessary before collecting the final batch. The remaining reference-distance limitation is stated in Section~\ref{sec:metrics}. Resolved harness faults are not additional rendering results.
+
+\FloatBarrier
+{\footnotesize
 \bibliographystyle{jcgt}
 \bibliography{references}
+}
 
-\section*{Index of Supplemental Materials}
-Supplemental video: \texttt{anc/terrain-methods.mp4}
-(\texttt{tools/render-paper-video.py}; portal $(1176,11567)$,
-eye height 180, yaw $308^\circ$, 520 units).
-Engine and harness: \href{https://github.com/kvark/vange-rs}{https://github.com/kvark/vange-rs},
-tag \texttt{terrain-paper}.
-Fostral is not redistributed; the harness fetches Association K-D Lab's
-CC~BY-SA~4.0 tree at commit \texttt{f1ad7d7}.
-
+\noindent\begin{minipage}{\linewidth}
 \section*{Author Contact Information}
-
 Dzmitry Malyshau\\
 Independent Researcher\\
 \href{mailto:kvark@fastmail.com}{kvark@fastmail.com}\\
 ORCID \href{https://orcid.org/0009-0005-6410-4276}{0009-0005-6410-4276}
 
-% The class \afterdoc block is for the accepted version (volume/page
-% placeholders and extra vspace). For submission, keep the license on
-% the last content page.
 \vspace{2mm}\hrule\vspace{2mm}
 {\small
-\noindent Malyshau, Six Ways to Draw Vangers with WebGPU: Real-Time Rendering of Editable Multi-Layer Height Fields, submitted to \textit{Journal of Computer Graphics Techniques (JCGT)}.
-
-\vspace{1.5mm}
-\noindent \copyright~2026~Malyshau (the Authors).
-The Authors provide this document (the Work) under the Creative Commons CC~BY-ND~4.0 license available online at \href{http://creativecommons.org/licenses/by-nd/4.0/}{http://creativecommons.org/licenses/by-nd/4.0/}.
-The Authors further grant permission for reuse of images and text from the first page of the Work, provided that the reuse is for the purpose of promoting and/or summarizing the Work in scholarly venues and that any reuse is accompanied by a scientific citation to the Work.
+\noindent \copyright~2026~Malyshau (the Author).
+This manuscript is provided under the Creative Commons CC BY-ND 4.0 license:
+\url{https://creativecommons.org/licenses/by-nd/4.0/}.
+The Author also permits reuse of images and text from the first page to promote or summarize the work in scholarly venues, with a scientific citation to the work.
 
 \vspace{1mm}
 \noindent\includegraphics[width=2.0cm]{CC-BY-ND.png}
 }
+\end{minipage}
 
 \end{document}

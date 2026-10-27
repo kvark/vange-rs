@@ -1,17 +1,137 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 360" role="img" aria-labelledby="title desc">
-  <title id="title">Horizontal terrain slicing</title>
-  <desc id="desc">Horizontal proxy planes are retained where they lie inside either encoded solid interval, producing discrete bands at grazing angles.</desc>
-  <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#e76f51"/></marker>
-    <style>.ink{stroke:#24324a;stroke-width:2;fill:none}.slice{stroke:#49a078;stroke-width:2;stroke-dasharray:8 5}.label{font:14px system-ui,sans-serif;fill:#24324a}.small{font:12px system-ui,sans-serif;fill:#5f6b7a}.floor{fill:#e7c98d;stroke:#9a6f2f;stroke-width:2}.slab{fill:#8db8df;stroke:#477aa8;stroke-width:2}.accent{stroke:#e76f51;stroke-width:3;fill:none}</style>
-  </defs>
-  <rect width="760" height="360" fill="#fff"/><rect x="24" y="22" width="122" height="25" rx="12" fill="#edf6f1"/><text x="85" y="39" text-anchor="middle" class="small">OBJECT ORDER</text>
-  <path d="M55 290L115 270L175 281L235 235L295 248L355 218L415 230L475 196L525 205V330H55Z" class="floor"/>
-  <path d="M245 151L315 143L380 158L445 130L500 143V183L445 170L380 198L315 183L245 191Z" class="slab"/>
-  <g class="slice"><path d="M35 90H540"/><path d="M35 120H540"/><path d="M35 150H540"/><path d="M35 180H540"/><path d="M35 210H540"/><path d="M35 240H540"/><path d="M35 270H540"/><path d="M35 300H540"/></g>
-  <g fill="#49a078"><circle cx="263" cy="150" r="5"/><circle cx="354" cy="150" r="5"/><circle cx="462" cy="150" r="5"/><circle cx="251" cy="180" r="5"/><circle cx="421" cy="180" r="5"/><circle cx="377" cy="210" r="5"/><circle cx="265" cy="240" r="5"/><circle cx="144" cy="270" r="5"/><circle cx="102" cy="300" r="5"/><circle cx="469" cy="210" r="5"/></g>
-  <text x="55" y="77" class="label">N horizontal proxy planes</text><text x="272" y="118" class="small">keep fragments inside either solid</text><text x="328" y="210" class="small">discard cave air</text>
-  <path d="M512 182L600 154" class="accent" marker-end="url(#arrow)"/><path d="M500 213L600 182" class="accent" marker-end="url(#arrow)"/><path d="M472 245L600 210" class="accent" marker-end="url(#arrow)"/>
-  <g transform="translate(610 82)"><rect width="76" height="210" rx="4" fill="#f5f7fa" stroke="#24324a" stroke-width="2"/><g fill="#d9e0e8"><rect x="10" y="15" width="56" height="18"/><rect x="10" y="41" width="56" height="18"/><rect x="10" y="67" width="56" height="18"/><rect x="10" y="93" width="56" height="18"/><rect x="10" y="119" width="56" height="18"/><rect x="10" y="145" width="56" height="18"/><rect x="10" y="171" width="56" height="18"/></g><g fill="#49a078"><rect x="10" y="67" width="56" height="8"/><rect x="10" y="93" width="56" height="8"/><rect x="10" y="119" width="56" height="8"/></g></g>
-  <text x="648" y="314" text-anchor="middle" class="label">screen bands</text><path d="M569 322H686" stroke="#e76f51" stroke-width="3"/><text x="648" y="341" text-anchor="middle" class="small">spacing trades gaps for overdraw</text>
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="370.610212pt" height="122.4pt" viewBox="0 0 370.610212 122.4" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.8, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 122.4
+L 370.610212 122.4
+L 370.610212 0
+L 0 0
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 10.970062 113.055484
+L 356.008169 113.055484
+L 356.008169 99.229548
+L 10.970062 99.229548
+z
+" clip-path="url(#p4dcb8548fb)" style="fill: #dfc49a; stroke: #796146; stroke-width: 0.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 185.305106 71.577677
+L 305.160448 71.577677
+L 305.160448 48.953419
+L 185.305106 48.953419
+z
+" clip-path="url(#p4dcb8548fb)" style="fill: #afcbdc; stroke: #496d83; stroke-width: 0.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="line2d_1">
+    <path d="M 10.970062 106.770968
+L 356.008169 106.770968
+" clip-path="url(#p4dcb8548fb)" style="fill: none; stroke-dasharray: 2.1,2.1; stroke-dashoffset: 0; stroke: #aab2b7; stroke-width: 0.7"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 10.970062 92.945032
+L 356.008169 92.945032
+" clip-path="url(#p4dcb8548fb)" style="fill: none; stroke-dasharray: 2.1,2.1; stroke-dashoffset: 0; stroke: #aab2b7; stroke-width: 0.7"/>
+   </g>
+   <g id="line2d_3">
+    <path d="M 10.970062 79.119097
+L 356.008169 79.119097
+" clip-path="url(#p4dcb8548fb)" style="fill: none; stroke-dasharray: 2.1,2.1; stroke-dashoffset: 0; stroke: #aab2b7; stroke-width: 0.7"/>
+   </g>
+   <g id="line2d_4">
+    <path d="M 10.970062 65.293161
+L 356.008169 65.293161
+" clip-path="url(#p4dcb8548fb)" style="fill: none; stroke-dasharray: 2.1,2.1; stroke-dashoffset: 0; stroke: #aab2b7; stroke-width: 0.7"/>
+   </g>
+   <g id="line2d_5">
+    <path d="M 10.970062 51.467226
+L 356.008169 51.467226
+" clip-path="url(#p4dcb8548fb)" style="fill: none; stroke-dasharray: 2.1,2.1; stroke-dashoffset: 0; stroke: #aab2b7; stroke-width: 0.7"/>
+   </g>
+   <g id="line2d_6">
+    <path d="M 10.970062 37.64129
+L 356.008169 37.64129
+" clip-path="url(#p4dcb8548fb)" style="fill: none; stroke-dasharray: 2.1,2.1; stroke-dashoffset: 0; stroke: #aab2b7; stroke-width: 0.7"/>
+   </g>
+   <g id="line2d_7">
+    <path d="M 10.970062 23.815355
+L 356.008169 23.815355
+" clip-path="url(#p4dcb8548fb)" style="fill: none; stroke-dasharray: 2.1,2.1; stroke-dashoffset: 0; stroke: #aab2b7; stroke-width: 0.7"/>
+   </g>
+   <g id="text_1">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: start" x="314.240399" y="96.912197" transform="rotate(-0 314.240399 96.912197)">Floor</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: middle" x="245.232777" y="61.718906" transform="rotate(-0 245.232777 61.718906)">Slab</text>
+   </g>
+   <g id="line2d_8">
+    <path d="M 10.970062 106.770968
+L 356.008169 106.770968
+" clip-path="url(#p4dcb8548fb)" style="fill: none; stroke: #20683c; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_9">
+    <path d="M 185.305106 65.293161
+L 305.160448 65.293161
+" clip-path="url(#p4dcb8548fb)" style="fill: none; stroke: #20683c; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_10">
+    <path d="M 185.305106 51.467226
+L 305.160448 51.467226
+" clip-path="url(#p4dcb8548fb)" style="fill: none; stroke: #20683c; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="text_3">
+    <g id="patch_4">
+     <path d="M 19.060012 22.906364
+L 129.70095 22.906364
+L 129.70095 12.216051
+L 19.060012 12.216051
+z
+" style="fill: #ffffff"/>
+    </g>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start" x="20.050012" y="20.044645" transform="rotate(-0 20.050012 20.044645)">Discard fragments in air</text>
+   </g>
+   <g id="patch_5">
+    <path d="M 146.963153 77.39846
+Q 214.168879 71.434288 281.374604 65.470116
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: round"/>
+   </g>
+   <g id="text_4">
+    <g id="patch_6">
+     <path d="M 19.060012 88.265332
+L 150.426262 88.265332
+L 150.426262 77.575019
+L 19.060012 77.575019
+z
+" style="fill: #ffffff"/>
+    </g>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start" x="20.050012" y="85.403613" transform="rotate(-0 20.050012 85.403613)">Keep fragments inside solids</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p4dcb8548fb">
+   <rect x="3.706102" y="2.448" width="363.198007" height="116.892"/>
+  </clipPath>
+ </defs>
 </svg>

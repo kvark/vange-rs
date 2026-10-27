@@ -1,47 +1,131 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="500" viewBox="0 0 1080 500" role="img" aria-label="Vangers dual-layer terrain encoding">
-<style>text{font-family:Inter,DejaVu Sans,sans-serif;fill:#20252b}.title{font-size:23px;font-weight:700}.subtitle{font-size:13px;fill:#68717b}.panel-title{font-size:15px;font-weight:700}.axis{font-size:11px;fill:#68717b}.label{font-size:12px}.value{font-size:10px;font-weight:700}.light{fill:#f8fafc}</style>
-<rect width="1080" height="500" fill="#fbfaf7" rx="14"/>
-<text x="34.0" y="38.0" class="title" text-anchor="start" >Two texels encode two vertical solids</text>
-<text x="34.0" y="61.0" class="subtitle" text-anchor="start" >The compact simulation state stores a floor, a cave ceiling, and a slab top</text>
-<text x="160.0" y="104.0" class="panel-title" text-anchor="middle" >paired source samples</text>
-<rect x="55" y="130" width="175" height="230" rx="12" fill="white" stroke="#168c9e" stroke-width="3"/>
-<text x="142.5" y="160.0" class="panel-title" text-anchor="middle" >even texel</text>
-<rect x="73" y="185" width="139" height="38" rx="5" fill="#168c9e" opacity="0.16"/>
-<text x="83.0" y="201.0" class="axis" text-anchor="start" >height byte</text>
-<text x="202.0" y="212.0" class="value" text-anchor="end" >low</text>
-<rect x="73" y="237" width="139" height="38" rx="5" fill="#168c9e" opacity="0.2"/>
-<text x="83.0" y="253.0" class="axis" text-anchor="start" >delta bits</text>
-<text x="202.0" y="264.0" class="value" text-anchor="end" >part of mid</text>
-<rect x="73" y="289" width="139" height="38" rx="5" fill="#168c9e" opacity="0.24"/>
-<text x="83.0" y="305.0" class="axis" text-anchor="start" >material</text>
-<text x="202.0" y="316.0" class="value" text-anchor="end" >surface type</text>
-<rect x="265" y="130" width="175" height="230" rx="12" fill="white" stroke="#8b62c6" stroke-width="3"/>
-<text x="352.5" y="160.0" class="panel-title" text-anchor="middle" >odd texel</text>
-<rect x="283" y="185" width="139" height="38" rx="5" fill="#8b62c6" opacity="0.16"/>
-<text x="293.0" y="201.0" class="axis" text-anchor="start" >height byte</text>
-<text x="412.0" y="212.0" class="value" text-anchor="end" >high</text>
-<rect x="283" y="237" width="139" height="38" rx="5" fill="#8b62c6" opacity="0.2"/>
-<text x="293.0" y="253.0" class="axis" text-anchor="start" >delta bits</text>
-<text x="412.0" y="264.0" class="value" text-anchor="end" >part of mid</text>
-<rect x="283" y="289" width="139" height="38" rx="5" fill="#8b62c6" opacity="0.24"/>
-<text x="293.0" y="305.0" class="axis" text-anchor="start" >material</text>
-<text x="412.0" y="316.0" class="value" text-anchor="end" >surface type</text>
-<path d="M 440 244 C 485 244, 500 244, 545 244" fill="none" stroke="#68717b" stroke-width="3" marker-end="url(#arrow)"/>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#68717b"/></marker></defs>
-<text x="492.0" y="224.0" class="axis" text-anchor="middle" >decode</text>
-<text x="790.0" y="104.0" class="panel-title" text-anchor="middle" >one vertical terrain column</text>
-<rect x="660" y="130" width="265" height="275" rx="10" fill="#e7f0f7" stroke="#d9dde1"/>
-<rect x="660" y="315" width="265" height="90" fill="#776858"/>
-<rect x="660" y="175" width="265" height="58" fill="#8d8171"/>
-<rect x="660" y="233" width="265" height="82" fill="#283643"/>
-<line x1="642" y1="175" x2="943" y2="175" stroke="#8b62c6" stroke-width="3"/>
-<text x="955.0" y="179.0" class="label" text-anchor="start" >high · slab top</text>
-<line x1="642" y1="233" x2="943" y2="233" stroke="#d99125" stroke-width="3"/>
-<text x="955.0" y="237.0" class="label" text-anchor="start" >mid · cave ceiling</text>
-<line x1="642" y1="315" x2="943" y2="315" stroke="#168c9e" stroke-width="3"/>
-<text x="955.0" y="319.0" class="label" text-anchor="start" >low · floor</text>
-<text x="792.5" y="208.0" class="label light" text-anchor="middle" >upper solid</text>
-<text x="792.5" y="279.0" class="label light" text-anchor="middle" >cave / empty</text>
-<text x="792.5" y="367.0" class="label light" text-anchor="middle" >lower solid</text>
-<text x="540.0" y="462.0" class="subtitle" text-anchor="middle" >A renderer must preserve both intervals and their vertical boundary walls.</text>
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="370.610212pt" height="154.8pt" viewBox="0 0 370.610212 154.8" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.8, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 154.8
+L 370.610212 154.8
+L 370.610212 0
+L 0 0
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 19.994421 138.172659
+L 99.08264 138.172659
+L 99.08264 28.610682
+L 19.994421 28.610682
+z
+" clip-path="url(#p6518501958)" style="fill: #f1f5f7; stroke: #b9c2c7; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 19.994421 138.172659
+L 99.08264 138.172659
+L 99.08264 105.646447
+L 19.994421 105.646447
+z
+" clip-path="url(#p6518501958)" style="fill: #dfc49a; stroke: #796146; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 199.740374 138.172659
+L 278.828593 138.172659
+L 278.828593 28.610682
+L 199.740374 28.610682
+z
+" clip-path="url(#p6518501958)" style="fill: #f1f5f7; stroke: #b9c2c7; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 199.740374 138.172659
+L 278.828593 138.172659
+L 278.828593 105.646447
+L 199.740374 105.646447
+z
+" clip-path="url(#p6518501958)" style="fill: #dfc49a; stroke: #796146; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 199.740374 69.696424
+L 278.828593 69.696424
+L 278.828593 45.729741
+L 199.740374 45.729741
+z
+" clip-path="url(#p6518501958)" style="fill: #afcbdc; stroke: #496d83; stroke-linejoin: miter"/>
+   </g>
+   <g id="line2d_1">
+    <path d="M 99.08264 105.646447
+L 108.069938 105.646447
+" clip-path="url(#p6518501958)" style="fill: none; stroke: #444444; stroke-width: 0.8; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 278.828593 105.646447
+L 287.81589 105.646447
+" clip-path="url(#p6518501958)" style="fill: none; stroke: #444444; stroke-width: 0.8; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_3">
+    <path d="M 278.828593 69.696424
+L 287.81589 69.696424
+" clip-path="url(#p6518501958)" style="fill: none; stroke: #444444; stroke-width: 0.8; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_4">
+    <path d="M 278.828593 45.729741
+L 287.81589 45.729741
+" clip-path="url(#p6518501958)" style="fill: none; stroke: #444444; stroke-width: 0.8; stroke-linecap: square"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle" x="59.538531" y="14.915435" transform="rotate(-0 59.538531 14.915435)">Single level</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle" x="59.538531" y="123.792649" transform="rotate(-0 59.538531 123.792649)">Ground</text>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', 'Computer Modern Typewriter', 'Andale Mono', 'Nimbus Mono L', 'Courier New', 'Courier', 'Fixed', 'Terminal', monospace; text-anchor: start" x="110.945873" y="108.153791" transform="rotate(-0 110.945873 108.153791)">low</text>
+   </g>
+   <g id="text_4">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle" x="239.284483" y="14.915435" transform="rotate(-0 239.284483 14.915435)">Dual level</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle" x="239.284483" y="123.792649" transform="rotate(-0 239.284483 123.792649)">Ground</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', 'Computer Modern Typewriter', 'Andale Mono', 'Nimbus Mono L', 'Courier New', 'Courier', 'Fixed', 'Terminal', monospace; text-anchor: start" x="290.691826" y="108.153791" transform="rotate(-0 290.691826 108.153791)">low</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle" x="59.538531" y="61.136894" transform="rotate(-0 59.538531 61.136894)">Air</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle" x="239.284483" y="60.19652" transform="rotate(-0 239.284483 60.19652)">Upper slab</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle" x="239.284483" y="90.326063" transform="rotate(-0 239.284483 90.326063)">Cave / air</text>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', 'Computer Modern Typewriter', 'Andale Mono', 'Nimbus Mono L', 'Courier New', 'Courier', 'Fixed', 'Terminal', monospace; text-anchor: start" x="290.691826" y="72.203767" transform="rotate(-0 290.691826 72.203767)">mid</text>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', 'Computer Modern Typewriter', 'Andale Mono', 'Nimbus Mono L', 'Courier New', 'Courier', 'Fixed', 'Terminal', monospace; text-anchor: start" x="290.691826" y="48.182241" transform="rotate(-0 290.691826 48.182241)">high</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p6518501958">
+   <rect x="7.412204" y="4.644" width="359.491905" height="145.512"/>
+  </clipPath>
+ </defs>
 </svg>
