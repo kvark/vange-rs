@@ -43,6 +43,11 @@ struct World {
     /// (the test level's hills and bridges make "straight ahead" miss);
     /// `None`: 70u straight ahead.
     ram_at: Option<f32>,
+    /// Drive: a turbo weave (Fostral), or straight on at full motor (the
+    /// test level: its steep sine hills fling a weaving car into the air,
+    /// where its speed runs away and the physics turns chaotic enough to
+    /// go non-finite on another platform's float library).
+    hard_drive: bool,
 }
 
 impl World {
@@ -132,6 +137,7 @@ fn test_world() -> World {
         max_quant: 0.1,
         spawn,
         ram_at: Some(1.6),
+        hard_drive: false,
     }
 }
 
@@ -165,6 +171,7 @@ fn fostral_world() -> Option<World> {
         max_quant: settings.game.physics.max_quant,
         spawn,
         ram_at: None,
+        hard_drive: true,
     })
 }
 
@@ -211,7 +218,7 @@ impl Scenario {
     /// Input stops here; the rest is for settling and convergence.
     const DRIVE_UNTIL: f32 = 4.5;
 
-    fn input(self, t: f32) -> QuantInput {
+    fn input(self, t: f32, hard: bool) -> QuantInput {
         if t >= Self::DRIVE_UNTIL {
             return QuantInput {
                 brake: true,
@@ -219,10 +226,15 @@ impl Scenario {
             };
         }
         match self {
-            Scenario::Drive => QuantInput {
+            // A weave with turbo, or (test level) straight on at full motor.
+            Scenario::Drive if hard => QuantInput {
                 motor: 1.0,
                 turbo: true,
                 rudder: if (t * 0.8).fract() < 0.5 { 1.0 } else { -1.0 },
+                ..QuantInput::default()
+            },
+            Scenario::Drive => QuantInput {
+                motor: 1.0,
                 ..QuantInput::default()
             },
             Scenario::Jump | Scenario::Ram => QuantInput {
@@ -484,7 +496,7 @@ fn run(
             let quanta = (at * world.physics_per_sec() / world.max_quant) as u32;
             for i in 0..quanta {
                 let t = i as f32 * world.max_quant / world.physics_per_sec();
-                world.step(&mut solo, &scenario.input(t));
+                world.step(&mut solo, &scenario.input(t, world.hard_drive));
                 fold_home(&mut solo.transform.disp, world.level.period());
             }
             let mut spawn = solo.transform;
@@ -546,7 +558,7 @@ fn run(
         now = frame_end;
 
         // Client frame: input, quanta, send, reconcile, draw.
-        let held = scenario.input(now);
+        let held = scenario.input(now, world.hard_drive);
         if let Some(at) = scenario.jump_at()
             && !jumped
             && now >= at
