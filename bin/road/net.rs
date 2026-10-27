@@ -29,6 +29,8 @@ pub enum NetEvent {
     /// Another player fired (`ServerMessage::Shot`).
     Shot {
         shooter: PlayerId,
+        /// The server tick it was taken in.
+        tick: u32,
         bay: u8,
         origin: [f32; 3],
         dir: [f32; 3],
@@ -145,12 +147,14 @@ impl NetworkClient {
                                 },
                                 ServerMessage::Shot {
                                     shooter,
+                                    tick,
                                     bay,
                                     origin,
                                     dir,
                                     ..
                                 } => NetEvent::Shot {
                                     shooter,
+                                    tick,
                                     bay,
                                     origin,
                                     dir,

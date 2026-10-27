@@ -767,6 +767,16 @@ struct CaveView {
     yaw: f32,
 }
 
+/// One server tick at its default `--tick-rate` of 20 Hz.
+const SERVER_TICK_SECS: f32 = 1.0 / 20.0;
+
+/// How long ago, by the newest snapshot in hand, the server took a shot.
+fn shot_lateness(newest_tick: Option<u32>, shot_tick: u32) -> f32 {
+    newest_tick.map_or(0.0, |newest| {
+        newest.saturating_sub(shot_tick) as f32 * SERVER_TICK_SECS
+    })
+}
+
 struct LiveShot {
     shot: weapon::Shot,
     age: f32,
@@ -3389,6 +3399,15 @@ impl Application for Game {
             let newest_world = events
                 .iter()
                 .rposition(|e| matches!(e, NetEvent::WorldState { .. }));
+            // After the escave screen (no net block runs there) the whole
+            // visit arrives in one batch; shots from it are long over.
+            let newest_tick = events
+                .iter()
+                .filter_map(|e| match *e {
+                    NetEvent::WorldState { tick, .. } => Some(tick),
+                    _ => None,
+                })
+                .max();
             for (event_index, event) in events.into_iter().enumerate() {
                 match event {
                     NetEvent::Welcome {
@@ -3593,6 +3612,7 @@ impl Application for Game {
                     }
                     NetEvent::Shot {
                         shooter,
+                        tick,
                         bay,
                         origin,
                         dir,
@@ -3623,8 +3643,14 @@ impl Application for Game {
                             Vec3::from(dir),
                             Vec3::from(origin),
                         );
+                        let life = shot.flight_time(&self.level);
+                        let late = shot_lateness(newest_tick, tick);
+                        if late >= life {
+                            log::debug!("Remote shot dropped: {late:.2}s late, flight {life:.2}s");
+                            continue;
+                        }
                         self.shots.push(LiveShot {
-                            life: shot.flight_time(&self.level),
+                            life,
                             shot,
                             age: 0.0,
                             remote: true,
@@ -4293,8 +4319,21 @@ impl Application for Game {
 
 #[cfg(test)]
 mod tests {
-    use super::{AutoDrive, AutoStep};
+    use super::{AutoDrive, AutoStep, SERVER_TICK_SECS, shot_lateness};
     use glam::Vec3;
+
+    #[test]
+    fn shots_from_an_escave_visit_are_late() {
+        // No snapshot in the batch, or the shot's own tick: fresh.
+        assert_eq!(shot_lateness(None, 500), 0.0);
+        assert_eq!(shot_lateness(Some(500), 500), 0.0);
+        // A shot sent ahead of its tick's snapshot is not early.
+        assert_eq!(shot_lateness(Some(499), 500), 0.0);
+        // 10 s of snapshots drained at once after an escave visit.
+        let late = shot_lateness(Some(700), 500);
+        assert!((late - 200.0 * SERVER_TICK_SECS).abs() < 1e-4);
+        assert!(late > 5.0);
+    }
 
     #[test]
     fn autodrive_parses_segments_and_actions() {
