@@ -206,6 +206,9 @@ impl Projection {
     }
 }
 
+/// How far under a ledge top a car straddling it can sag, for
+/// [`Camera::ground_under`].
+const GROUND_LEDGE_SAG: f32 = 4.0;
 /// How far from a slab's edge [`Camera::chase`] starts dropping toward
 /// its under-slab pose, world units.
 pub const UNDER_SLAB_REACH: f32 = 96.0;
@@ -687,6 +690,30 @@ impl Camera {
             }
             _ => None,
         }
+    }
+
+    /// The ground a car at `p` rests on, for the native chase's
+    /// ground anchor: the highest floor at or below the car within a
+    /// few units, not just under its centre. Fostral's underpass floor
+    /// (10) is pitted with single texels down at 0-4 that the hull rides
+    /// straight over; anchored in one, the camera's arm started below
+    /// the surrounding floor, its first sample hit that floor, and the
+    /// arm collapsed onto the car with the near plane in the rock.
+    pub fn ground_under(level: &crate::level::Level, p: Vec3) -> f32 {
+        let mut ground = level.floor_below(p);
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let q = Vec3::new(p.x + dx as f32 * 4.0, p.y + dy as f32 * 4.0, p.z);
+                let floor = level.floor_below(q);
+                // A hull straddling a ledge can sag with its centre a
+                // little under the ledge top; a roof hole's slab top is
+                // far above.
+                if floor <= p.z + GROUND_LEDGE_SAG {
+                    ground = ground.max(floor);
+                }
+            }
+        }
+        ground
     }
 
     /// The car's own column, or any within a few units, is under a slab.

@@ -701,3 +701,72 @@ fn chase_camera_reverses_toward_the_wall() {
         assert!(lurch < 12.0, "camera lurched {lurch:.1}u in one frame");
     }
 }
+
+/// Where the underpass floor (10) is pitted with single texels down at
+/// 0-4, or ends in the 10u drop of its west mouth: car centres the
+/// OxidizeMonk's hull came to rest over near (706.2, 4147.6), and pits
+/// across the floor further north. Resting heights are the replayed ones.
+const OVER_A_FLOOR_PIT: [(f32, f32, f32); 6] = [
+    (683.3, 4152.2, 10.2),
+    (682.9, 4149.0, 9.9),
+    (681.1, 4153.2, 10.2),
+    (780.0, 3998.0, 11.6),
+    (668.0, 4002.0, 13.6),
+    (764.0, 4010.0, 13.6),
+];
+
+/// `road`'s ground-anchored chase (the settings.ron 60° 240u follow,
+/// target dropped to the ground under the car). Anchored to the pit
+/// under the hull's centre, the arm started below the surrounding floor,
+/// its first sample hit that floor, and the camera sat 3-10u from the
+/// car with its near plane in the rock, for as long as the car stayed
+/// there.
+#[test]
+fn chase_camera_rides_over_a_floor_pit() {
+    let Some(f) = fostral() else { return };
+    let level = &f.level;
+    let follow = chase_follows()[0];
+    let yaws = [
+        0.0f32,
+        std::f32::consts::FRAC_PI_4,
+        std::f32::consts::FRAC_PI_2,
+        std::f32::consts::PI,
+        -std::f32::consts::FRAC_PI_2,
+    ];
+    for &(x, y, z) in &OVER_A_FLOOR_PIT {
+        let car = Vec3::new(x, y, z);
+        let ground = space::Camera::ground_under(level, car);
+        assert!(
+            ground >= level.floor_below(car) + 4.0,
+            "({x}, {y}) should be over a pit: ground {ground}"
+        );
+        let mut nearest = f32::INFINITY;
+        for &yaw in &yaws {
+            let mut target = space::Transform {
+                disp: car,
+                rot: Quat::from_rotation_z(yaw),
+                scale: 1.0,
+            };
+            target.disp.z = ground;
+            let mut cam = camera_at(car + Vec3::new(0.0, 0.0, 240.0));
+            for frame in 0..180 {
+                cam.chase(level, &target, 1.0 / 60.0, &follow, CLEARANCE);
+                if frame < 120 {
+                    continue;
+                }
+                let at = format!(
+                    "({x}, {y}) yaw {yaw:.2} frame {frame}: camera {:?}",
+                    cam.loc
+                );
+                let dist = (cam.loc - car).length();
+                nearest = nearest.min(dist);
+                assert!(dist >= 25.0, "{at} collapsed to {dist:.1} from the car");
+                assert!(in_air(level, cam.loc, CLEARANCE - 0.01), "{at} is in rock");
+                assert!(cam.loc.z > car.z, "{at} is below the car");
+                let roof = car + Vec3::new(0.0, 0.0, CLEARANCE);
+                assert!(clear_sight(level, cam.loc, roof), "{at} cannot see the car");
+            }
+        }
+        println!("over the pit at ({x}, {y}): nearest {nearest:.1}");
+    }
+}
