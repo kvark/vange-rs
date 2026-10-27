@@ -288,6 +288,7 @@ impl ServerAgent {
             spiral_charge: self.spiral_charge,
             bumps: self.bumps,
             ack: self.inputs.ack(),
+            control: net_control_of(&self.inputs.last()),
         }
     }
 
@@ -1252,6 +1253,18 @@ fn quant_input(control: &NetControl) -> QuantInput {
         turbo: control.turbo,
         jump: control.jump,
         roll: control.roll,
+    }
+}
+
+/// The wire form of the held control a car last ran with.
+fn net_control_of(input: &QuantInput) -> NetControl {
+    NetControl {
+        motor: input.motor,
+        rudder: input.rudder,
+        roll: 0.0,
+        brake: input.brake,
+        turbo: input.turbo,
+        jump: None,
     }
 }
 

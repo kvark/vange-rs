@@ -2687,10 +2687,18 @@ impl Application for Game {
                                             outcome,
                                             moved,
                                             shown_at_once,
+                                            contact,
                                         } => {
                                             if shown_at_once {
                                                 log::warn!(
                                                     "Server correction {:.1}u: shown at once",
+                                                    moved
+                                                );
+                                            } else if contact
+                                                && moved > physics::client::ClientSync::CONTACT_LOG
+                                            {
+                                                log::info!(
+                                                    "Server correction {:.1}u in contact: faded",
                                                     moved
                                                 );
                                             } else if matches!(
@@ -2722,10 +2730,7 @@ impl Application for Game {
                             } else if let Some(remote) =
                                 self.remote_agents.get_mut(&agent_state.player_id)
                             {
-                                remote.net.on_snapshot(
-                                    &physics::client::server_car(agent_state),
-                                    Some(self.level.period()),
-                                );
+                                remote.net.on_agent(agent_state, Some(self.level.period()));
                             }
                         }
                     }

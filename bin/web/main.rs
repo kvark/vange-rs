@@ -3331,9 +3331,7 @@ impl WebHandler {
                                 continue;
                             }
                             if let Some(remote) = gpu.app.remotes.get_mut(&agent_state.player_id) {
-                                remote
-                                    .net
-                                    .on_snapshot(&physics::client::server_car(agent_state), period);
+                                remote.net.on_agent(agent_state, period);
                             }
                         }
                         if Some(index) != newest_world {
@@ -3380,6 +3378,7 @@ impl WebHandler {
                                     outcome,
                                     moved,
                                     shown_at_once,
+                                    contact,
                                 } => {
                                     debug.outcome = format!("{:?}, moved {:.1}u", outcome, moved);
                                     if shown_at_once {
@@ -3387,6 +3386,16 @@ impl WebHandler {
                                             log::Level::Warn,
                                             format!(
                                                 "Server correction {:.1}u: shown at once",
+                                                moved
+                                            ),
+                                        );
+                                    } else if contact
+                                        && moved > physics::client::ClientSync::CONTACT_LOG
+                                    {
+                                        debug.note(
+                                            log::Level::Info,
+                                            format!(
+                                                "Server correction {:.1}u in contact: faded",
                                                 moved
                                             ),
                                         );

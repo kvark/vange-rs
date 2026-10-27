@@ -8,7 +8,8 @@ pub type PlayerId = u32;
 ///
 /// 2: per-quantum input batches (`Input::first_quant` / `quanta`), the
 /// input ack in `AgentState::ack`, `SetPose::next_quant`.
-pub const PROTOCOL_VERSION: u32 = 2;
+/// 3: the held control in `AgentState::control`.
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Client-to-server messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +164,10 @@ pub struct AgentState {
     /// `Input::first_quant` it expects). The owning client compares its
     /// prediction at this quantum, not its present pose.
     pub ack: u32,
+    /// The held control the server last ran this car with (no jump or
+    /// roll). Other clients carry the car's contact ghost on with it: a
+    /// car pushing with turbo keeps pushing with turbo.
+    pub control: NetControl,
 }
 
 /// Network-serializable transform (position + rotation + scale).
@@ -257,6 +262,11 @@ mod tests {
                 spiral_charge: 3,
                 bumps: 7,
                 ack: 1234,
+                control: NetControl {
+                    motor: 1.0,
+                    turbo: true,
+                    ..NetControl::default()
+                },
             }],
             cycle: None,
             moving: None,
