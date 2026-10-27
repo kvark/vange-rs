@@ -848,25 +848,46 @@ fn test_shot_takes_armor_off_the_target_only() {
     assert!(a_max > 0 && b_max > 0, "armour comes with the car");
     assert_eq!((a_armor, b_armor), (a_max, b_max), "both start undamaged");
 
-    // Bob's car sits ~100u up the hill from Alice's: a shot from her car
-    // straight at his goes into the slope and does nothing.
-    let into_hill = [
-        b_pos[0] - a_pos[0],
-        b_pos[1] - a_pos[1],
-        b_pos[2] - a_pos[2],
+    // Bob's car sits ~90u up the slope from Alice's, just under the crest
+    // of a ridge. Her muzzle is raised over the ridge's far side (within
+    // `weapon::FIRE_REACH` of her car): a shot from there straight at his
+    // car has to go through the ridge, and does nothing.
+    let muzzle = [a_pos[0] + 64.0, a_pos[1] - 28.0, a_pos[2] + 72.0];
+    let through_ridge = [
+        b_pos[0] - muzzle[0],
+        b_pos[1] - muzzle[1],
+        b_pos[2] - muzzle[2],
     ];
-    assert!(into_hill[2] > 50.0, "spawns moved: {a_pos:?} {b_pos:?}");
+    // Check the ridge is really there (the server's level, read point by
+    // point): the line is deep in the rock along its middle, not grazing
+    // it, and clear at both ends.
+    let level = vangers::level::load(
+        &vangers::level::LevelConfig::new_test(),
+        &Default::default(),
+    );
+    let along = |f: f32| glam::Vec3::from(muzzle) + glam::Vec3::from(through_ridge) * f;
+    assert!(
+        !level.solid_at(along(0.0)) && !level.solid_at(along(1.0)),
+        "spawns moved: {a_pos:?} {b_pos:?}"
+    );
+    for f in [0.3, 0.4, 0.5, 0.6] {
+        let p = along(f);
+        assert!(
+            level.solid_at(p + glam::Vec3::Z * 5.0),
+            "the ridge is not 5 deep over {p:?}; spawns moved: {a_pos:?} {b_pos:?}"
+        );
+    }
     alice.send(&ClientMessage::Fire {
         quant: 9,
         bay: 2,
-        origin: a_pos,
-        dir: into_hill,
+        origin: muzzle,
+        dir: through_ridge,
         view_tick: tick,
         view_ms: 0,
     });
     let msgs = bob.recv_for(Duration::from_millis(500));
     let (tick, agents) = latest_world(&msgs).expect("Bob should keep getting WorldState");
-    assert_eq!(find(&agents, bob_id).2, b_max, "the hill takes the shot");
+    assert_eq!(find(&agents, bob_id).2, b_max, "the ridge takes the shot");
 
     // Two shots at Bob's car (one bay 1, one bay 0), aimed in the view of
     // the snapshot just received; one aimed away. They leave from a muzzle
