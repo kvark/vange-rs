@@ -3710,7 +3710,11 @@ impl WebHandler {
                         let name = gpu.app.remotes.remove(&player_id).map(|r| r.name);
                         gpu.app.net_debug.note(
                             log::Level::Info,
-                            format!("Player {} ({:?}) left", player_id, name),
+                            format!(
+                                "Player {} ({}) left",
+                                player_id,
+                                name.as_deref().unwrap_or("?")
+                            ),
                         );
                     }
                     vangers_net::ServerMessage::WorldState {
