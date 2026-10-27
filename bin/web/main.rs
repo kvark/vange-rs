@@ -1996,6 +1996,8 @@ fn key_from_code(code: &str) -> Option<KeyCode> {
         "ControlLeft" | "ControlRight" => KeyCode::ControlLeft,
         "ShiftLeft" | "ShiftRight" => KeyCode::ShiftLeft,
         "AltLeft" | "AltRight" => KeyCode::AltLeft,
+        "KeyJ" => KeyCode::KeyJ,
+        "F2" => KeyCode::F2,
         _ => return None,
     })
 }
@@ -2151,6 +2153,10 @@ struct WebHandler {
     gpu_pending: std::rc::Rc<std::cell::RefCell<Option<GpuState>>>,
     screen_size: wgpu::Extent3d,
     keys_pressed: std::rc::Rc<std::cell::RefCell<std::collections::HashSet<KeyCode>>>,
+    /// Keys pressed since the last frame, even if already released: on a
+    /// slow page (software WebGL runs at about 1 fps) a tap of Alt starts
+    /// and ends between two frames and never shows in `keys_pressed`.
+    keys_tapped: std::rc::Rc<std::cell::RefCell<std::collections::HashSet<KeyCode>>>,
     ui_pointer: std::rc::Rc<std::cell::RefCell<Vec<UiPointer>>>,
     /// Document-level input listeners. itch.io hosts us in an iframe and
     /// winit only hears keys/clicks on the canvas, so we take them from
@@ -2213,6 +2219,9 @@ impl WebHandler {
             keys_pressed: std::rc::Rc::new(std::cell::RefCell::new(
                 std::collections::HashSet::new(),
             )),
+            keys_tapped: std::rc::Rc::new(
+                std::cell::RefCell::new(std::collections::HashSet::new()),
+            ),
             ui_pointer: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             _dom_input: None,
             last_frame: None,
@@ -2233,12 +2242,15 @@ impl WebHandler {
             .expect("no document");
 
         let keys = self.keys_pressed.clone();
+        let taps = self.keys_tapped.clone();
         let on_keydown = Closure::wrap(Box::new(move |event: web_sys::KeyboardEvent| {
             if let Some(key) = key_from_code(&event.code()) {
                 keys.borrow_mut().insert(key);
+                if !event.repeat() {
+                    taps.borrow_mut().insert(key);
+                }
             }
-            let code = event.code();
-            if code == "Space" || code.starts_with("Arrow") {
+            if browser_eats(&event.code()) {
                 event.prevent_default();
             }
         }) as Box<dyn FnMut(web_sys::KeyboardEvent)>);
@@ -2247,6 +2259,9 @@ impl WebHandler {
         let on_keyup = Closure::wrap(Box::new(move |event: web_sys::KeyboardEvent| {
             if let Some(key) = key_from_code(&event.code()) {
                 keys.borrow_mut().remove(&key);
+            }
+            if browser_eats(&event.code()) {
+                event.prevent_default();
             }
         }) as Box<dyn FnMut(web_sys::KeyboardEvent)>);
 
@@ -2353,6 +2368,13 @@ impl WebHandler {
             _visibility: on_visibility,
         });
     }
+}
+
+/// Keys the browser acts on by default: Space scrolls, the arrows scroll,
+/// and a lone Alt (jump) moves focus to the browser's menu on Windows and
+/// some Linux desktops, after which the page hears no keys at all.
+fn browser_eats(code: &str) -> bool {
+    matches!(code, "Space" | "AltLeft" | "AltRight" | "F2") || code.starts_with("Arrow")
 }
 
 /// Ctrl+Tab (and any other chord the browser eats) never delivers keyup.
@@ -2766,12 +2788,16 @@ impl ApplicationHandler for WebHandler {
                     event::KeyEvent {
                         physical_key: PhysicalKey::Code(key),
                         state,
+                        repeat,
                         ..
                     },
                 ..
             } => match state {
                 event::ElementState::Pressed => {
                     self.keys_pressed.borrow_mut().insert(key);
+                    if !repeat {
+                        self.keys_tapped.borrow_mut().insert(key);
+                    }
                     if key == KeyCode::KeyC
                         && let Some(ref mut gpu) = self.gpu
                         && let Some(ref mut agent) = gpu.app.agent
@@ -2911,6 +2937,7 @@ impl WebHandler {
         // axis mapping in both "driving a vehicle" and "server input"
         // modes, so the multiplayer branch below can use them too.
         let keys = self.keys_pressed.borrow();
+        let taps = std::mem::take(&mut *self.keys_tapped.borrow_mut());
         let mut motor = 0.0f32;
         let mut rudder = 0.0f32;
         if keys.contains(&KeyCode::KeyW) {
@@ -2934,9 +2961,11 @@ impl WebHandler {
                 rudder = sr;
             }
         }
-        let brake = keys.contains(&KeyCode::ControlLeft);
+        // A tap shorter than a frame still counts for this frame.
+        let down = |key: KeyCode| keys.contains(&key) || taps.contains(&key);
+        let brake = down(KeyCode::ControlLeft);
         let space = keys.contains(&KeyCode::Space) || gpu.app.use_held;
-        let turbo = keys.contains(&KeyCode::ShiftLeft);
+        let turbo = down(KeyCode::ShiftLeft);
         // Roll direction matches native: Q/E are scaled by cam.scale.y
         // (which is -1) so Q → +1, E → -1.
         let mut roll = 0.0f32;
@@ -2946,7 +2975,12 @@ impl WebHandler {
         if keys.contains(&KeyCode::KeyE) {
             roll = gpu.app.cam.scale.y;
         }
-        let jump_held = keys.contains(&KeyCode::AltLeft);
+        // Jump: Alt as in the native game, or J.
+        let jump_held = keys.contains(&KeyCode::AltLeft) || keys.contains(&KeyCode::KeyJ);
+        let jump_tapped = taps.contains(&KeyCode::AltLeft) || taps.contains(&KeyCode::KeyJ);
+        if taps.contains(&KeyCode::F2) {
+            gpu.app.net_debug.visible = !gpu.app.net_debug.visible;
+        }
         let free_z_up = keys.contains(&KeyCode::KeyZ);
         let free_z_down = keys.contains(&KeyCode::KeyX);
         let free_q = keys.contains(&KeyCode::KeyQ);
@@ -3048,13 +3082,16 @@ impl WebHandler {
                     agent.control.brake = brake;
                     agent.control.turbo = turbo;
                     agent.control.roll = roll;
-                    // Jump: charge while Alt is held, fire on release
+                    // Jump: charge while Alt is held, fire on release. A
+                    // tap within one frame fires with one frame's charge.
+                    let frame_power = dt * common.speed.standard_frame_rate as f32;
                     if jump_held {
-                        let power = dt * common.speed.standard_frame_rate as f32;
                         let charge = agent.control.jump_charge.get_or_insert(0.0);
-                        *charge = (*charge + power).min(common.force.max_jump_power);
+                        *charge = (*charge + frame_power).min(common.force.max_jump_power);
                     } else if let Some(power) = agent.control.jump_charge.take() {
                         agent.control.jump = Some(power);
+                    } else if jump_tapped {
+                        agent.control.jump = Some(frame_power.min(common.force.max_jump_power));
                     }
                     // Match the native build's time scaling (see bin/road/game.rs):
                     //   input_factor = delta / MAIN_LOOP_TIME
