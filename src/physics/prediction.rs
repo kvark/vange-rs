@@ -143,7 +143,11 @@ pub struct InputQueue {
 
 impl InputQueue {
     /// Ticks (at 20 Hz) without input before the server drives the car on.
-    pub const STARVE_TICKS: u32 = 10;
+    /// Longer than the slowest frame a real client sends a batch per: a
+    /// browser on software WebGL draws about one frame a second, and a
+    /// car driven on between its batches runs quanta the client never
+    /// predicted (corrections of 50-200u every snapshot).
+    pub const STARVE_TICKS: u32 = 60;
     /// Ticks of backlog past which the car catches up at double rate.
     pub const CATCHUP_TICKS: u32 = 8;
     /// Backlog cap; a client further ahead than this loses the oldest.
