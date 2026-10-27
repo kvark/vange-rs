@@ -296,6 +296,7 @@ pub extern "C" fn rv_init(desc: InitDescriptor) -> Option<ptr::NonNull<Context>>
         _instance: instance,
         camera: vangers::space::Camera {
             chase_yaw: None,
+            under_slab: 0.0,
             loc: glam::Vec3::ZERO,
             rot: glam::Quat::IDENTITY,
             scale: glam::Vec3::new(1.0, 1.0, 1.0),

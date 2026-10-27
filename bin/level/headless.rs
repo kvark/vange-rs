@@ -457,6 +457,7 @@ fn make_camera(opts: &SnapshotOptions, lvl: &level::Level) -> space::Camera {
 
     space::Camera {
         chase_yaw: None,
+        under_slab: 0.0,
         loc: cam_loc,
         rot,
         scale: Vec3::new(1.0, -1.0, 1.0),
