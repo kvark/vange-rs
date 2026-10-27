@@ -770,6 +770,11 @@ struct CaveView {
 /// One server tick at its default `--tick-rate` of 20 Hz.
 const SERVER_TICK_SECS: f32 = 1.0 / 20.0;
 
+/// Slack past a shot's flight before it counts as over: a lossy link
+/// delivers snapshots in bursts a few hundred ms late, and remote cars are
+/// drawn that far behind anyway. Only a backlog (an escave visit) is older.
+const STALE_SHOT_MARGIN_SECS: f32 = 1.0;
+
 /// How long ago, by the newest snapshot in hand, the server took a shot.
 fn shot_lateness(newest_tick: Option<u32>, shot_tick: u32) -> f32 {
     newest_tick.map_or(0.0, |newest| {
@@ -3645,7 +3650,7 @@ impl Application for Game {
                         );
                         let life = shot.flight_time(&self.level);
                         let late = shot_lateness(newest_tick, tick);
-                        if late >= life {
+                        if late >= life + STALE_SHOT_MARGIN_SECS {
                             log::debug!("Remote shot dropped: {late:.2}s late, flight {life:.2}s");
                             continue;
                         }
