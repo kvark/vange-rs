@@ -2688,8 +2688,10 @@ impl Application for Game {
                                     match event {
                                         physics::client::SyncEvent::FirstSync => {
                                             // First sync: hard-snap camera to
-                                            // avoid slow chase from old spawn.
-                                            self.cam.focus_on(&snap.car.transform);
+                                            // avoid slow chase from old spawn
+                                            // (onto the car, which replayed
+                                            // its quanta since the snapshot).
+                                            self.cam.focus_on(transform);
                                         }
                                         physics::client::SyncEvent::Held => {}
                                         physics::client::SyncEvent::Reconciled {
