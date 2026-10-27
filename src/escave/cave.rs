@@ -264,6 +264,7 @@ pub fn camera(
     let distance = look_distance(situation);
     let mut cam = Camera {
         chase_yaw: None,
+        under_slab: 0.0,
         loc: target,
         rot: Quat::IDENTITY,
         scale: Vec3::new(1.0, -1.0, 1.0),

@@ -639,6 +639,7 @@ impl Game {
         let depth = settings.game.camera.depth_range;
         let cam = space::Camera {
             chase_yaw: None,
+            under_slab: 0.0,
             loc: Vec3::new(coords.0 as f32, coords.1 as f32, 200.0),
             rot: glam::Quat::IDENTITY,
             scale: Vec3::new(1.0, -1.0, 1.0),
@@ -1398,25 +1399,14 @@ impl Game {
                 ground_anchor,
             } => {
                 if ground_anchor {
-                    target.disp.z = self
-                        .level
-                        .get((target.disp.x as i32, target.disp.y as i32))
-                        .high();
+                    // The surface under the car: the cave floor beneath a
+                    // slab, not the slab top.
+                    target.disp.z = self.level.floor_below(target.disp);
                 }
-                let look_ahead = follow.look_ahead;
-                self.cam.follow(&target, delta, follow);
-                // Pull out of hills toward the car, then re-aim so the
-                // collision move does not leave a stale look-ahead rotation
-                // fighting the see-through veil.
+                // Follow, pull out of hills toward the car, re-aim the
+                // look-ahead, and drop under overhanging slabs.
                 self.cam
-                    .avoid_terrain(&self.level, target.disp, CAMERA_CLEARANCE);
-                if look_ahead.abs() > 1e-4 {
-                    // Same damped heading `follow` used, not the raw car yaw,
-                    // which flips while the car tumbles.
-                    let twist = self.cam.chase_twist();
-                    let look_at = target.disp + twist * Vec3::new(0.0, look_ahead, 0.0);
-                    self.cam.rot = space::Camera::look_rotation(look_at - self.cam.loc);
-                }
+                    .chase(&self.level, &target, delta, follow, CAMERA_CLEARANCE);
             }
         }
         self.rebase_torus();

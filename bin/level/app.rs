@@ -173,6 +173,7 @@ impl LevelView {
         let depth = settings.game.camera.depth_range;
         let cam = space::Camera {
             chase_yaw: None,
+            under_slab: 0.0,
             loc: glam::Vec3::new(0.0, 0.0, 400.0),
             rot: glam::Quat::IDENTITY,
             scale: glam::Vec3::new(1.0, -1.0, 1.0),

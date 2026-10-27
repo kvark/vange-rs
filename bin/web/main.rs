@@ -30,25 +30,6 @@ const DEFAULT_LEVEL: &str = "fostral";
 /// plane does not clip into the surface on a slope.
 const CAMERA_CLEARANCE: f32 = 4.0;
 
-/// Chase-camera settle: pull out of hills toward the car, then re-aim
-/// look-ahead so a collision move does not leave a stale rotation that
-/// fights the see-through veil. Matches `bin/road/game.rs`.
-fn chase_cam_avoid_and_reaim(
-    cam: &mut space::Camera,
-    level: &level::Level,
-    target: &space::Transform,
-    look_ahead: f32,
-) {
-    cam.avoid_terrain(level, target.disp, CAMERA_CLEARANCE);
-    if look_ahead.abs() > 1e-4 {
-        // Same damped heading `follow` used, not the raw car yaw,
-        // which flips while the car tumbles.
-        let twist = cam.chase_twist();
-        let look_at = target.disp + twist * glam::Vec3::new(0.0, look_ahead, 0.0);
-        cam.rot = space::Camera::look_rotation(look_at - cam.loc);
-    }
-}
-
 /// INI path inside the per-level zip. Each `<id>.zip` stores the level
 /// files at the archive root (no `<id>/` prefix), so the INI key is
 /// just `"world.ini"`.
@@ -687,6 +668,7 @@ impl WebApp {
         // free-camera fallback.
         let mut cam = space::Camera {
             chase_yaw: None,
+            under_slab: 0.0,
             loc: glam::vec3(0.0, 0.0, 200.0),
             rot: glam::Quat::IDENTITY,
             scale: glam::vec3(1.0, -1.0, 1.0),
@@ -817,8 +799,7 @@ impl WebApp {
         if let Some(ref a) = agent {
             cam.loc = a.transform.disp + glam::vec3(0.0, 0.0, 200.0);
             for _ in 0..120 {
-                cam.follow(&a.transform, 1.0 / 60.0, &follow);
-                chase_cam_avoid_and_reaim(&mut cam, &level, &a.transform, follow.look_ahead);
+                cam.chase(&level, &a.transform, 1.0 / 60.0, &follow, CAMERA_CLEARANCE);
             }
         }
 
@@ -2705,13 +2686,9 @@ impl WebHandler {
             {
                 let follow = gpu.app.follow;
                 let target = agent.transform;
-                gpu.app.cam.follow(&target, dt, &follow);
-                chase_cam_avoid_and_reaim(
-                    &mut gpu.app.cam,
-                    &gpu.app.level,
-                    &target,
-                    follow.look_ahead,
-                );
+                gpu.app
+                    .cam
+                    .chase(&gpu.app.level, &target, dt, &follow, CAMERA_CLEARANCE);
             }
         } else {
             let riding = gpu.app.step_ride(dt);
@@ -2773,13 +2750,9 @@ impl WebHandler {
                     follow.offset.y += (speed_xy * 0.03).min(3.0);
                     follow.look_ahead += (speed_xy * 0.04).min(4.0);
                     let target = agent.transform;
-                    gpu.app.cam.follow(&target, dt, &follow);
-                    chase_cam_avoid_and_reaim(
-                        &mut gpu.app.cam,
-                        level_ref,
-                        &target,
-                        follow.look_ahead,
-                    );
+                    gpu.app
+                        .cam
+                        .chase(level_ref, &target, dt, &follow, CAMERA_CLEARANCE);
                 }
             } else if !connected {
                 // No vehicle loaded — fall back to the free camera. Same
