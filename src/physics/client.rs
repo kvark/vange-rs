@@ -152,6 +152,21 @@ pub struct RemoteCar {
     prev_spin: Vec3,
     /// Progress of the blend into the latest snapshot, 0..=1.
     blend: f32,
+    /// Seconds the latest snapshot is carried on beyond the time since it
+    /// arrived: how much further behind its usual timing it was sent.
+    lead: f32,
+    /// Where `on_agent` pinned the car's input timeline: an ack and its
+    /// time, seconds.
+    ack_base: Option<(u32, f64)>,
+    /// Server tick of the latest `on_agent` snapshot and its time by the
+    /// ticks, seconds.
+    last_tick: Option<(u32, f64)>,
+    /// Input time of the latest `on_agent` pose, seconds.
+    last_time: Option<f64>,
+    /// How far each snapshot's input time was behind its tick time over
+    /// the last [`Self::LAG_WINDOW`], `(tick time, lag)`, kept only while
+    /// it could still be the smallest.
+    lags: std::collections::VecDeque<(f64, f64)>,
 }
 
 impl RemoteCar {
@@ -171,6 +186,11 @@ impl RemoteCar {
     /// A snapshot this far from the last one, or from the drawn car, is a
     /// respawn or teleport: drawn there at once, not slid to.
     pub const TELEPORT: f32 = 64.0;
+    /// Farthest the ack timeline may move from the tick one between two
+    /// snapshots before it is pinned again, seconds.
+    pub const ACK_SLIP_MAX: f64 = 1.0;
+    /// Seconds the smallest input lag counts as the car's usual one.
+    pub const LAG_WINDOW: f64 = 3.0;
 
     pub fn new(phys_data: CarPhysicsData) -> Self {
         RemoteCar {
@@ -190,13 +210,108 @@ impl RemoteCar {
             prev_velocity: Vec3::ZERO,
             prev_spin: Vec3::ZERO,
             blend: 0.0,
+            lead: 0.0,
+            ack_base: None,
+            last_tick: None,
+            last_time: None,
+            lags: Default::default(),
         }
     }
 
-    /// Take a server snapshot of this car (see `on_snapshot`).
-    pub fn on_agent(&mut self, agent: &vangers_net::AgentState, period: Option<Vec2>) {
+    /// Take this car's state from the `WorldState` of server `tick`.
+    ///
+    /// Timed by the car's own input timeline, its `ack` at
+    /// `quanta_per_sec`, rather than one snapshot interval apart: the
+    /// server runs a car only as its owner's input comes in, 4 or 5 quanta
+    /// a tick, none while that input is stalled (the pose repeats) and up
+    /// to twice that to catch up. By the ack a repeated pose is the same
+    /// moment again and is skipped, the motion is the step over the input
+    /// time it took, and a snapshot sent behind its usual timing is
+    /// carried on by how far behind it is.
+    pub fn on_agent(
+        &mut self,
+        agent: &vangers_net::AgentState,
+        tick: u32,
+        quanta_per_sec: f32,
+        period: Option<Vec2>,
+    ) {
         self.control = agent_control(agent);
-        self.on_snapshot(&server_car(agent), period);
+        self.on_input_snapshot(&server_car(agent), agent.ack, tick, quanta_per_sec, period);
+    }
+
+    /// `on_agent` with the car's state apart from its control.
+    fn on_input_snapshot(
+        &mut self,
+        car: &ServerCar,
+        ack: u32,
+        tick: u32,
+        quanta_per_sec: f32,
+        period: Option<Vec2>,
+    ) {
+        let last = self.last_time;
+        let (time, by_tick, pinned) = self.agent_time(ack, tick, quanta_per_sec);
+        // How far this input time is behind the tick, against the least
+        // of the last few seconds.
+        let lag = by_tick - time;
+        while self.lags.back().is_some_and(|&(_, l)| l >= lag) {
+            self.lags.pop_back();
+        }
+        self.lags.push_back((by_tick, lag));
+        while self.lags[0].0 < by_tick - Self::LAG_WINDOW {
+            self.lags.pop_front();
+        }
+        let behind = (lag - self.lags[0].1) as f32;
+        let dt = match last {
+            // Pinned again: one interval on, by the tick.
+            _ if pinned => 1.0 / Self::SNAPSHOT_RATE,
+            Some(last) if time <= last => {
+                // No input run since: the same pose; keep its motion.
+                self.linear_velocity = car.linear_velocity;
+                self.angular_velocity = car.angular_velocity;
+                self.traction = car.traction;
+                self.rudder = car.rudder;
+                return;
+            }
+            Some(last) => (time - last) as f32,
+            None => 1.0 / Self::SNAPSHOT_RATE,
+        };
+        self.last_time = Some(time);
+        self.on_snapshot_timed(car, period, dt, behind.min(Self::DEAD_RECKON_MAX));
+    }
+
+    /// Input time of a snapshot of server `tick` with input `ack`, and
+    /// where the tick alone puts it, seconds; and whether the timeline was
+    /// pinned again there.
+    fn agent_time(&mut self, ack: u32, tick: u32, quanta_per_sec: f32) -> (f64, f64, bool) {
+        let rate = Self::SNAPSHOT_RATE as f64;
+        let by_tick = match self.last_tick {
+            Some((t, time)) => time + tick.wrapping_sub(t) as i32 as f64 / rate,
+            None => tick as f64 / rate,
+        };
+        let by_ack = match self.ack_base {
+            Some((a, base)) if quanta_per_sec > 0.0 => {
+                Some(base + ack.wrapping_sub(a) as i32 as f64 / quanta_per_sec as f64)
+            }
+            _ => None,
+        };
+        let (time, pinned) = match by_ack {
+            Some(time) if (time - by_tick).abs() <= Self::ACK_SLIP_MAX => (time, false),
+            // The first snapshot, or the ack moved on its own (a respawn
+            // or a pose set by the server): pinned again where the tick
+            // says.
+            _ => {
+                self.ack_base = Some((ack, by_tick));
+                self.lags.clear();
+                (by_tick, true)
+            }
+        };
+        self.last_tick = Some((tick, by_tick));
+        (time, by_tick, pinned)
+    }
+
+    /// Take the next snapshot of this car, one interval after the last.
+    pub fn on_snapshot(&mut self, car: &ServerCar, period: Option<Vec2>) {
+        self.on_snapshot_timed(car, period, 1.0 / Self::SNAPSHOT_RATE, 0.0);
     }
 
     /// Take a snapshot of this car. The first one (and a teleport) is
@@ -204,7 +319,10 @@ impl RemoteCar {
     /// on the replica nearest the last one (the server folds every car
     /// onto the home tile, so a car crossing the seam would otherwise be
     /// drawn sweeping across the whole world).
-    pub fn on_snapshot(&mut self, car: &ServerCar, period: Option<Vec2>) {
+    ///
+    /// `dt` is the car's time since the previous snapshot, `lead` how far
+    /// beyond its arrival to carry it on at once.
+    pub fn on_snapshot_timed(&mut self, car: &ServerCar, period: Option<Vec2>, dt: f32, lead: f32) {
         self.linear_velocity = car.linear_velocity;
         self.angular_velocity = car.angular_velocity;
         self.traction = car.traction;
@@ -229,6 +347,7 @@ impl RemoteCar {
             self.prev_spin = Vec3::ZERO;
             self.reckon_velocity = Vec3::ZERO;
             self.reckon_spin = Vec3::ZERO;
+            self.lead = 0.0;
             self.pose_ready = true;
         } else {
             let mut turn = target.rot * self.target_transform.rot.inverse();
@@ -247,11 +366,12 @@ impl RemoteCar {
                 (Vec3::ZERO, Vec3::ZERO)
             };
             self.prev_transform = self.render_transform;
-            self.reckon_spin = turn.to_scaled_axis() * Self::SNAPSHOT_RATE;
-            // The step is a chord: its direction is the heading half an
+            self.reckon_spin = turn.to_scaled_axis() / dt;
+            // The step is a chord: its direction is the heading half the
             // interval back. Turned on to the snapshot's heading.
-            let half = Quat::from_scaled_axis(self.reckon_spin * (0.5 / Self::SNAPSHOT_RATE));
-            self.reckon_velocity = half * step * Self::SNAPSHOT_RATE;
+            let half = Quat::from_scaled_axis(self.reckon_spin * (0.5 * dt));
+            self.reckon_velocity = half * step / dt;
+            self.lead = lead;
         }
         self.target_transform = target;
         self.interp_t = 0.0;
@@ -263,19 +383,26 @@ impl RemoteCar {
         self.interp_t += delta * Self::SNAPSHOT_RATE;
         let since = self.interp_t / Self::SNAPSHOT_RATE;
         let ahead = since.min(Self::DEAD_RECKON_MAX);
+        let ahead_target = (since + self.lead).min(Self::DEAD_RECKON_MAX);
         let rate = (delta / Self::BLEND).min(1.0 / Self::BLEND_FRAMES_MIN);
         self.blend = (self.blend + rate).min(1.0);
         let blend = self.blend;
-        let carry = |t: &space::Transform, v: Vec3, w: Vec3| space::Transform {
+        let carry = |t: &space::Transform, v: Vec3, w: Vec3, ahead: f32| space::Transform {
             disp: t.disp + arc(v, w, ahead),
             rot: (Quat::from_scaled_axis(w * ahead) * t.rot).normalize(),
             scale: t.scale,
         };
-        let a = carry(&self.prev_transform, self.prev_velocity, self.prev_spin);
+        let a = carry(
+            &self.prev_transform,
+            self.prev_velocity,
+            self.prev_spin,
+            ahead,
+        );
         let b = carry(
             &self.target_transform,
             self.reckon_velocity,
             self.reckon_spin,
+            ahead_target,
         );
         self.render_transform = space::Transform {
             disp: a.disp.lerp(b.disp, blend),
@@ -933,6 +1060,124 @@ mod tests {
             last = x;
         }
         assert!((last - 16.0).abs() < 1e-3);
+    }
+
+    /// Quanta a second: the server's 4.5 a tick.
+    const QPS: f32 = 90.0;
+
+    /// The server's acks for a car whose owner's input stalls for ticks
+    /// `stall` and then all comes in: it runs 4 or 5 quanta a tick (4.5 a
+    /// tick of input), none while starved, then up to twice that.
+    fn starved_acks(ticks: u32, stall: std::ops::Range<u32>) -> Vec<u32> {
+        let (mut ack, mut carry, mut acks) = (0u32, 0.0f32, Vec::new());
+        for n in 0..ticks {
+            let received = if stall.contains(&n) {
+                (4.5 * stall.start as f32) as u32
+            } else {
+                (4.5 * (n + 1) as f32) as u32
+            };
+            carry += 4.5;
+            let budget = carry.floor() as u32;
+            carry -= budget as f32;
+            let pending = received - ack;
+            ack += if pending > budget {
+                (2 * budget).min(pending)
+            } else {
+                pending
+            };
+            acks.push(ack);
+        }
+        acks
+    }
+
+    /// Draw at 60 fps a car driving +X at `speed` whose server acks are
+    /// `acks`, one snapshot a tick arriving on time, timed by the ack or
+    /// one interval apart. The drawn move of each frame after the first
+    /// half second.
+    fn drive_acks(acks: &[u32], speed: f32, by_ack: bool) -> Vec<f32> {
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        let pose = |ack: u32| server(100.0 + speed * ack as f32 / QPS, 50.0);
+        let mut moves = Vec::new();
+        let mut prev = None;
+        for i in 0..acks.len() as u32 * 3 {
+            if i % 3 == 0 {
+                let n = i / 3;
+                let car = pose(acks[n as usize]);
+                if by_ack {
+                    r.on_input_snapshot(&car, acks[n as usize], n, QPS, None);
+                } else {
+                    r.on_snapshot(&car, None);
+                }
+            }
+            r.interpolate(1.0 / 60.0);
+            let x = r.render_transform.disp.x;
+            if let Some(p) = prev
+                && i >= 30
+            {
+                moves.push(x - p);
+            }
+            prev = Some(x);
+        }
+        moves
+    }
+
+    #[test]
+    fn remote_by_ack_drives_through_the_quanta_alternation_evenly() {
+        // 4 or 5 quanta a tick, no stall.
+        let acks = starved_acks(60, 0..0);
+        assert!(acks.windows(2).any(|w| w[1] - w[0] == 4));
+        assert!(acks.windows(2).any(|w| w[1] - w[0] == 5));
+        let step = 20.0 / 60.0;
+        let spread = |m: &[f32]| {
+            let (lo, hi) = m
+                .iter()
+                .fold((f32::MAX, f32::MIN), |(lo, hi), &x| (lo.min(x), hi.max(x)));
+            (hi - lo) / step
+        };
+        // A snapshot interval apart, each tick's step is 4 or 5 quanta
+        // over the same 50 ms: the drawn speed swings.
+        let by_tick = spread(&drive_acks(&acks, 20.0, false));
+        assert!(by_tick > 0.15, "swing {by_tick:.3}");
+        // By the ack every step is over its own input time.
+        let by_ack = spread(&drive_acks(&acks, 20.0, true));
+        assert!(by_ack < 0.02, "swing {by_ack:.3}");
+    }
+
+    #[test]
+    fn remote_by_ack_drives_through_a_starved_input() {
+        let speed = 20.0;
+        let acks = starved_acks(80, 20..28);
+        let step = speed / 60.0;
+        // One interval apart the car is reckoned on while its pose
+        // repeats, pulled back to it, then rushed through the catch-up.
+        let by_tick = drive_acks(&acks, speed, false);
+        let worst = |m: &[f32]| m.iter().map(|&x| (x - step).abs()).fold(0.0, f32::max) / step;
+        assert!(worst(&by_tick) > 0.8, "by tick {:.2}", worst(&by_tick));
+        // By the ack the repeats are skipped and the catch-up snapshots
+        // carried on by how late they are: about its speed throughout.
+        let by_ack = drive_acks(&acks, speed, true);
+        assert!(worst(&by_ack) < 0.1, "by ack {:.2}", worst(&by_ack));
+    }
+
+    #[test]
+    fn remote_ack_timeline_repins_on_a_jump() {
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        let (t0, ..) = r.agent_time(1000, 100, QPS);
+        assert_eq!(t0, 5.0);
+        let (t1, ..) = r.agent_time(1004, 101, QPS);
+        assert!((t1 - (5.0 + 4.0 / 90.0)).abs() < 1e-9);
+        // None run: the same moment again.
+        assert_eq!(r.agent_time(1004, 102, QPS).0, t1);
+        // A respawn moves the ack far on: pinned again by the tick.
+        let (t2, ..) = r.agent_time(500_000, 103, QPS);
+        assert!((t2 - 5.15).abs() < 1e-9);
+        let (t3, ..) = r.agent_time(500_009, 104, QPS);
+        assert!((t3 - (t2 + 0.1)).abs() < 1e-9);
+        // The ack wraps.
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        let (t0, ..) = r.agent_time(u32::MAX - 1, 0, QPS);
+        let (t1, ..) = r.agent_time(3, 1, QPS);
+        assert!((t1 - t0 - 5.0 / 90.0).abs() < 1e-9);
     }
 
     #[test]

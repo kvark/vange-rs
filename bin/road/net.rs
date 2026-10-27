@@ -21,7 +21,7 @@ pub enum NetEvent {
         player_id: PlayerId,
     },
     WorldState {
-        _tick: u32,
+        tick: u32,
         agents: Vec<AgentState>,
         cycle: Option<CycleState>,
         moving: Option<MovingLandState>,
@@ -112,7 +112,7 @@ impl NetworkClient {
                                     cycle,
                                     moving,
                                 } => NetEvent::WorldState {
-                                    _tick: tick,
+                                    tick,
                                     agents,
                                     cycle,
                                     moving,
