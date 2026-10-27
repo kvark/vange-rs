@@ -790,6 +790,7 @@ async fn main() {
     // Last known pose + cirtainer + spiral per player_id after leave (grace reclaim).
     let mut last_poses: HashMap<PlayerId, LastPose> = HashMap::new();
     let mut tick: u32 = 0;
+    let mut bump_tracker = BumpTracker::default();
     let level_name = cycle_world.clone();
     let max_players = cli.max_players;
     let duel = cli.duel_spawn.then_some(cli.duel_center);
@@ -898,8 +899,16 @@ async fn main() {
                     // Car-vs-car contact, server-authoritative. Each agent's
                     // `physics::step` only sees the terrain, so without this
                     // pass players drive straight through each other.
-                    collide_players(&mut players, level.size, &common, tick, last);
+                    collide_players(
+                        &mut players,
+                        level.size,
+                        &common,
+                        tick,
+                        last,
+                        &mut bump_tracker,
+                    );
                 }
+                bump_tracker.prune(tick);
                 let wrap = (level.size.0 as f32, level.size.1 as f32);
                 for (&player_id, agent) in players.iter_mut() {
                     agent.trace_jump(player_id, tick, wrap);
@@ -1272,16 +1281,67 @@ fn net_control_of(input: &QuantInput) -> NetControl {
 /// `config/settings.template.ron` so CI clients and server agree.
 const DEFAULT_MAX_QUANT: f32 = 0.1;
 
+/// Ticks a pair of cars must stay apart before their next felt contact
+/// counts as a new bump (0.5 s at 20 Hz).
+const BUMP_REARM_TICKS: u32 = 10;
+
+#[derive(Clone, Copy, Debug)]
+struct PairContact {
+    /// Last tick the pair touched at all.
+    last_tick: u32,
+    /// Which car of the pair already took this contact's bump.
+    counted: [bool; 2],
+}
+
+/// Counts a felt bump once per contact: a pair that keeps touching (one
+/// car pushing the other, resting contact trickling impulses) is one
+/// contact until they have been apart for [`BUMP_REARM_TICKS`].
+#[derive(Debug, Default)]
+struct BumpTracker {
+    pairs: HashMap<(PlayerId, PlayerId), PairContact>,
+}
+
+impl BumpTracker {
+    /// The pair touched on `tick`, `felt` per car; returns which cars take
+    /// a new bump.
+    fn on_contact(&mut self, pair: (PlayerId, PlayerId), tick: u32, felt: [bool; 2]) -> [bool; 2] {
+        let entry = self.pairs.entry(pair).or_insert(PairContact {
+            last_tick: tick,
+            counted: [false; 2],
+        });
+        if tick.wrapping_sub(entry.last_tick) > BUMP_REARM_TICKS {
+            entry.counted = [false; 2];
+        }
+        entry.last_tick = tick;
+        let mut new = [false; 2];
+        for k in 0..2 {
+            if felt[k] && !entry.counted[k] {
+                entry.counted[k] = true;
+                new[k] = true;
+            }
+        }
+        new
+    }
+
+    /// Forget pairs apart for longer than [`BUMP_REARM_TICKS`].
+    fn prune(&mut self, tick: u32) {
+        self.pairs
+            .retain(|_, c| tick.wrapping_sub(c.last_tick) <= BUMP_REARM_TICKS);
+    }
+}
+
 /// Pairwise car-car contact across joined players, in player-id order so the
 /// result does not depend on `HashMap` iteration. Re-wraps moved cars.
 /// Called after every physics quantum; `trace` (the tick's last quantum)
-/// gates the per-tick proximity trace.
+/// gates the per-tick proximity trace. A felt bump counts in
+/// `ServerAgent::bumps` once per contact (`bump_tracker`).
 fn collide_players(
     players: &mut HashMap<PlayerId, ServerAgent>,
     size: (i32, i32),
     common: &config::common::Common,
     tick: u32,
     trace: bool,
+    bump_tracker: &mut BumpTracker,
 ) {
     let mut joined: Vec<(PlayerId, &mut ServerAgent)> = players
         .iter_mut()
@@ -1312,12 +1372,19 @@ fn collide_players(
                 common,
             );
             if let Some(c) = contact {
+                let felt = c.delta_v.map(|dv| dv >= physics::FELT_BUMP_DV);
+                let new = bump_tracker.on_contact((id_a, *id_b), tick, felt);
                 // Wrapping: clients only compare for a change.
-                if c.delta_v[0] >= physics::FELT_BUMP_DV {
-                    a.bumps = a.bumps.wrapping_add(1);
-                }
-                if c.delta_v[1] >= physics::FELT_BUMP_DV {
-                    b.bumps = b.bumps.wrapping_add(1);
+                for (k, agent, id, other) in
+                    [(0, &mut **a, id_a, *id_b), (1, &mut **b, *id_b, id_a)]
+                {
+                    if new[k] {
+                        agent.bumps = agent.bumps.wrapping_add(1);
+                        info!(
+                            "Car bump tick {} p{} from p{} dv={:.2} bumps={}",
+                            tick, id, other, c.delta_v[k], agent.bumps
+                        );
+                    }
                 }
             }
             if trace {
@@ -1705,6 +1772,38 @@ mod tests {
                 roll: 1.0,
             }
         );
+    }
+
+    #[test]
+    fn sustained_contact_is_one_bump() {
+        let mut t = BumpTracker::default();
+        let pair = (1, 2);
+        let mut bumps = [0u32; 2];
+        let count = |new: [bool; 2], bumps: &mut [u32; 2]| {
+            for k in 0..2 {
+                bumps[k] += u32::from(new[k]);
+            }
+        };
+        // Five seconds of pushing: touching every tick, a felt impulse on
+        // the pushed car about once a second, on the pusher at the start.
+        for tick in 100..200 {
+            let felt = [tick == 100, tick % 20 == 0];
+            count(t.on_contact(pair, tick, felt), &mut bumps);
+            t.prune(tick);
+        }
+        assert_eq!(bumps, [1, 1]);
+        // A short gap is still the same contact.
+        count(
+            t.on_contact(pair, 199 + BUMP_REARM_TICKS, [true, true]),
+            &mut bumps,
+        );
+        assert_eq!(bumps, [1, 1]);
+        // Apart for longer: the next ram is a new bump.
+        let later = 199 + 3 * BUMP_REARM_TICKS;
+        t.prune(later);
+        assert!(t.pairs.is_empty());
+        count(t.on_contact(pair, later, [true, false]), &mut bumps);
+        assert_eq!(bumps, [2, 1]);
     }
 
     fn test_level() -> level::Level {
