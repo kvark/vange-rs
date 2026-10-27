@@ -2,6 +2,7 @@
 
 use crate::combat::torus_delta;
 use crate::escave::{Inventory, Kind};
+use crate::level::Level;
 use glam::Vec3;
 
 pub const SHOT_SPEED: f32 = 400.0;
@@ -34,6 +35,23 @@ pub struct Shot {
 impl Shot {
     pub fn step(&mut self, dt: f32) {
         self.pos += self.vel * dt;
+    }
+
+    /// Seconds the shot flies before the terrain stops it, at most
+    /// [`SHOT_LIFE`]: the server ends it at the same rock
+    /// (`combat::ServerShot::step`), so a streak doesn't go through hills.
+    pub fn flight_time(&self, level: &Level) -> f32 {
+        let end = self.pos + self.vel * SHOT_LIFE;
+        level
+            .segment_hits_terrain(self.pos, end)
+            .map_or(SHOT_LIFE, |t| t * SHOT_LIFE)
+    }
+
+    /// Fly on by `dt`, but not past `life` seconds of `age` (the shot is
+    /// then at the rock that stopped it). Returns the new age.
+    pub fn step_within(&mut self, dt: f32, age: f32, life: f32) -> f32 {
+        self.step(dt.min((life - age).max(0.0)));
+        age + dt
     }
 
     /// The streak drawn for the shot: from its head back along its flight.

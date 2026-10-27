@@ -722,6 +722,8 @@ struct CaveView {
 struct LiveShot {
     shot: weapon::Shot,
     age: f32,
+    /// When the terrain stops it (`Shot::flight_time`).
+    life: f32,
     /// Fired by another player (`ServerMessage::Shot`), drawn in its colour.
     remote: bool,
 }
@@ -2916,8 +2918,19 @@ impl Application for Game {
                 Physics::Cpu { ref transform, .. } => *transform,
             };
             let forward = transform.rot * Vec3::Y;
-            if let Some(shot) = weapon::fire(&self.inventory, bay, transform.disp, forward) {
-                log::debug!("Fire bay {bay} from {:?} dir {:?}", transform.disp, forward);
+            // From the bay's mount on the model, not the car's centre: that
+            // rides a few units over the ground, and the terrain stops
+            // shots.
+            let muzzle = player
+                .car
+                .model
+                .slots
+                .get(bay)
+                .map_or(transform.disp, |slot| {
+                    transform.transform_point(Vec3::from(slot.pos.map(|v| v as f32)))
+                });
+            if let Some(shot) = weapon::fire(&self.inventory, bay, muzzle, forward) {
+                log::debug!("Fire bay {bay} from {:?} dir {:?}", muzzle, forward);
                 if let Some(ref net) = self.net {
                     // Lined up with our inputs: the shot happens before
                     // the next quantum we send.
@@ -2934,6 +2947,7 @@ impl Application for Game {
                     );
                 }
                 self.shots.push(LiveShot {
+                    life: shot.flight_time(&self.level),
                     shot,
                     age: 0.0,
                     remote: false,
@@ -2943,10 +2957,9 @@ impl Application for Game {
             }
         }
         for live in &mut self.shots {
-            live.shot.step(delta);
-            live.age += delta;
+            live.age = live.shot.step_within(delta, live.age, live.life);
         }
-        self.shots.retain(|live| live.age < weapon::SHOT_LIFE);
+        self.shots.retain(|live| live.age < live.life);
 
         self.step_moving_land(delta);
         if !riding && !pad_locked {
@@ -3291,6 +3304,7 @@ impl Application for Game {
                             Vec3::from(origin),
                         );
                         self.shots.push(LiveShot {
+                            life: shot.flight_time(&self.level),
                             shot,
                             age: 0.0,
                             remote: true,

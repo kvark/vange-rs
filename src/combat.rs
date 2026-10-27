@@ -5,9 +5,10 @@
 //! flies here at `weapon::SHOT_SPEED` for `weapon::SHOT_LIFE`, and each tick it
 //! is tested against the other cars as the shooter saw them: rewound by how
 //! far the shooter's view of the world was behind the server
-//! ([`rewind_ticks`]), at most [`REWIND_CAP_SECS`].
+//! ([`rewind_ticks`]), at most [`REWIND_CAP_SECS`]. The terrain stops it
+//! ([`Level::segment_hits_terrain`]).
 
-use crate::weapon;
+use crate::{level::Level, weapon};
 use glam::Vec3;
 use std::collections::VecDeque;
 
@@ -167,8 +168,17 @@ impl<Id: Copy + PartialEq> ServerShot<Id> {
 
     /// Fly the shot on by `dt` and return the first car it hits on the
     /// way (never its shooter). Targets are tested wrap-aware on a torus of
-    /// `period`. A spent shot (past `SHOT_LIFE`) hits nothing.
-    pub fn step(&mut self, dt: f32, targets: &[Target<Id>], period: (f32, f32)) -> Option<Id> {
+    /// `period`. With a `level`, the terrain stops the shot: a car behind
+    /// the first rock on the way is not hit, and the shot ends there (it
+    /// flies on between the layers under a slab). A spent shot (past
+    /// `SHOT_LIFE`, or stopped) hits nothing.
+    pub fn step(
+        &mut self,
+        dt: f32,
+        targets: &[Target<Id>],
+        period: (f32, f32),
+        level: Option<&Level>,
+    ) -> Option<Id> {
         if self.is_spent() {
             return None;
         }
@@ -176,7 +186,8 @@ impl<Id: Copy + PartialEq> ServerShot<Id> {
         let to = from + self.vel * dt;
         self.pos = to;
         self.age += dt;
-        targets
+        let rock = level.and_then(|level| level.segment_hits_terrain(from, to));
+        let hit = targets
             .iter()
             .filter(|t| t.id != self.shooter)
             .filter_map(|t| {
@@ -184,8 +195,20 @@ impl<Id: Copy + PartialEq> ServerShot<Id> {
                 let center = from + torus_delta(from, t.center, period);
                 segment_hits_sphere(from, to, center, t.radius).map(|f| (f, t.id))
             })
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, id)| id)
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        match (hit, rock) {
+            (Some((f, _)), Some(r)) if r < f => self.stop(from.lerp(to, r)),
+            (Some((_, id)), _) => return Some(id),
+            (None, Some(r)) => self.stop(from.lerp(to, r)),
+            (None, None) => {}
+        }
+        None
+    }
+
+    /// The shot hit the terrain at `at`: it ends there.
+    fn stop(&mut self, at: Vec3) {
+        self.pos = at;
+        self.age = weapon::SHOT_LIFE;
     }
 
     pub fn is_spent(&self) -> bool {
@@ -243,17 +266,17 @@ mod tests {
         // Player 1 fires from inside its own sphere along +Y.
         let mut shot = ServerShot::new(1, 0, Vec3::ZERO, Vec3::Y, 0.0);
         assert_eq!(
-            shot.step(0.05, &targets, PERIOD),
+            shot.step(0.05, &targets, PERIOD, None),
             Some(3),
             "20u: 3 is nearer than 2"
         );
         // Fired by 3 along +Y: the next car out is 2.
         let mut shot = ServerShot::new(3, 0, Vec3::new(0.0, 30.0, 0.0), Vec3::Y, 0.0);
-        assert_eq!(shot.step(0.05, &targets, PERIOD), Some(2));
+        assert_eq!(shot.step(0.05, &targets, PERIOD, None), Some(2));
         // Alone, the shooter's own sphere is never hit.
         let mut shot = ServerShot::new(1, 0, Vec3::ZERO, -Vec3::Y, 0.0);
         for _ in 0..40 {
-            assert_eq!(shot.step(0.05, &targets[..1], PERIOD), None);
+            assert_eq!(shot.step(0.05, &targets[..1], PERIOD, None), None);
         }
         assert!(shot.is_spent());
     }
@@ -266,7 +289,7 @@ mod tests {
             radius: 15.0,
         }];
         let mut shot = ServerShot::new(1, 0, Vec3::new(2030.0, 500.0, 0.0), Vec3::X, 0.0);
-        assert_eq!(shot.step(0.1, &targets, PERIOD), Some(2));
+        assert_eq!(shot.step(0.1, &targets, PERIOD, None), Some(2));
     }
 
     #[test]
@@ -327,9 +350,9 @@ mod tests {
             radius: 15.0,
         };
         let mut unrewound = shot.clone();
-        assert_eq!(shot.step(0.3, &[seen], PERIOD), Some(2));
+        assert_eq!(shot.step(0.3, &[seen], PERIOD, None), Some(2));
         assert_eq!(
-            unrewound.step(0.3, &[current], PERIOD),
+            unrewound.step(0.3, &[current], PERIOD, None),
             None,
             "it has moved on by now"
         );
@@ -339,5 +362,147 @@ mod tests {
     fn damage_is_flat_per_bay() {
         assert!(bay_damage(0) > 0 && bay_damage(1) > 0 && bay_damage(2) > 0);
         assert_eq!(bay_damage(200), bay_damage(2));
+    }
+
+    /// A 256x256 level, flat at height `ground` (altitude scale 1).
+    fn flat_level(ground: u8) -> Level {
+        let mut level =
+            crate::level::load(&crate::level::LevelConfig::new_test(), &Default::default());
+        level.height.fill(ground);
+        level.meta.fill(0);
+        level
+    }
+
+    /// Turn texels `x0..x1` x `y0..y1` into a slab over a cave: floor `low`,
+    /// ceiling `low + delta * 8` (default geometry), top `high`. Returns the
+    /// ceiling as read back.
+    fn add_slab(
+        level: &mut Level,
+        (x0, x1): (i32, i32),
+        (y0, y1): (i32, i32),
+        low: u8,
+        delta: u8,
+        high: u8,
+    ) -> f32 {
+        for y in y0..y1 {
+            // Double-level texels come in even/odd pairs.
+            for x in (x0 & !1..x1).step_by(2) {
+                let i = level.wrap((x, y));
+                level.height[i] = low;
+                level.height[i + 1] = high;
+                level.meta[i] = crate::level::DOUBLE_LEVEL | (delta >> 2);
+                level.meta[i + 1] = crate::level::DOUBLE_LEVEL | (delta & 3);
+            }
+        }
+        match level.get((x0, y0)) {
+            crate::level::Texel::Dual { mid, .. } => mid,
+            crate::level::Texel::Single(_) => panic!("no slab"),
+        }
+    }
+
+    const SMALL: (f32, f32) = (256.0, 256.0);
+
+    fn fly(shot: &mut ServerShot<u32>, targets: &[Target<u32>], level: &Level) -> Option<u32> {
+        (0..40).find_map(|_| shot.step(0.05, targets, SMALL, Some(level)))
+    }
+
+    #[test]
+    fn a_hill_between_blocks_the_shot() {
+        let target = [Target {
+            id: 2,
+            center: Vec3::new(150.0, 100.0, 20.0),
+            radius: 10.0,
+        }];
+        let mut level = flat_level(10);
+        let mut shot = ServerShot::new(1, 0, Vec3::new(50.0, 100.0, 20.0), Vec3::X, 0.0);
+        assert_eq!(fly(&mut shot, &target, &level), Some(2), "open ground: hit");
+
+        for y in 90..110 {
+            for x in 95..105 {
+                let i = level.wrap((x, y));
+                level.height[i] = 60;
+            }
+        }
+        let mut shot = ServerShot::new(1, 0, Vec3::new(50.0, 100.0, 20.0), Vec3::X, 0.0);
+        assert_eq!(fly(&mut shot, &target, &level), None, "the hill takes it");
+        assert!(shot.is_spent(), "and the shot ends there");
+        assert!(
+            (shot.pos.x - 95.0).abs() <= 1.0,
+            "at the hill: {:?}",
+            shot.pos
+        );
+    }
+
+    #[test]
+    fn a_shot_under_a_slab_flies_between_the_layers() {
+        let target = [Target {
+            id: 2,
+            center: Vec3::new(150.0, 100.0, 20.0),
+            radius: 10.0,
+        }];
+        let mut level = flat_level(10);
+        let mid = add_slab(&mut level, (80, 120), (90, 110), 10, 4, 80);
+        assert!(mid > 30.0 && mid < 80.0, "a cave 10..{mid} under the slab");
+        let mut shot = ServerShot::new(1, 0, Vec3::new(50.0, 100.0, 20.0), Vec3::X, 0.0);
+        assert_eq!(fly(&mut shot, &target, &level), Some(2));
+    }
+
+    #[test]
+    fn a_shot_into_the_underside_of_a_slab_stops() {
+        let mut level = flat_level(10);
+        let mid = add_slab(&mut level, (80, 120), (90, 110), 10, 4, 80);
+        // Rising at 45 degrees from the cave towards a car above the slab.
+        let from = Vec3::new(60.0, 100.0, 20.0);
+        let dir = Vec3::new(1.0, 0.0, 1.0);
+        let target = [Target {
+            id: 2,
+            center: from + dir * 70.0,
+            radius: 10.0,
+        }];
+        let mut open = ServerShot::new(1, 0, from, dir, 0.0);
+        assert_eq!(
+            fly(&mut open, &target, &flat_level(10)),
+            Some(2),
+            "no slab: hit"
+        );
+        let mut shot = ServerShot::new(1, 0, from, dir, 0.0);
+        assert_eq!(fly(&mut shot, &target, &level), None);
+        assert!(shot.is_spent());
+        assert!(
+            (80.0..120.0).contains(&shot.pos.x) && (shot.pos.z - mid).abs() <= 1.0,
+            "stopped at the slab's underside (z {mid}): {:?}",
+            shot.pos
+        );
+    }
+
+    #[test]
+    fn the_client_streak_ends_where_the_server_shot_stops() {
+        let mut level = flat_level(10);
+        for y in 90..110 {
+            for x in 95..105 {
+                let i = level.wrap((x, y));
+                level.height[i] = 60;
+            }
+        }
+        let from = Vec3::new(50.0, 100.0, 20.0);
+        let mut server = ServerShot::new(1, 0, from, Vec3::X, 0.0);
+        assert_eq!(fly(&mut server, &[], &level), None);
+
+        let mut shot = weapon::Shot {
+            pos: from,
+            vel: Vec3::X * weapon::SHOT_SPEED,
+        };
+        let life = shot.flight_time(&level);
+        assert!(life < weapon::SHOT_LIFE);
+        let mut age = 0.0;
+        while age < life {
+            age = shot.step_within(1.0 / 60.0, age, life);
+        }
+        assert!(
+            (shot.pos - server.pos).length() <= 1.0,
+            "client {:?} vs server {:?}",
+            shot.pos,
+            server.pos
+        );
     }
 }

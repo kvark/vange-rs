@@ -264,6 +264,92 @@ impl Level {
         }
     }
 
+    /// Whether `pos` is inside the rock, by the same reading of the
+    /// layers as [`floor_below`](Self::floor_below): below the ground of a
+    /// single-level texel; below the cave floor (`low`) or within the slab
+    /// (from the cave ceiling `mid` up to its top `high`) of a double-level
+    /// one. The cave between `low` and `mid` is open.
+    pub fn solid_at(&self, pos: glam::Vec3) -> bool {
+        match self.get((pos.x.floor() as i32, pos.y.floor() as i32)) {
+            Texel::Single(p) => pos.z < p.0,
+            Texel::Dual { low, mid, high } => pos.z < low.0 || (pos.z >= mid && pos.z < high.0),
+        }
+    }
+
+    /// First point of the segment `from`-`to` inside the rock (see
+    /// [`solid_at`](Self::solid_at)), as a fraction of the way along it;
+    /// `from` itself counts. Exact: the segment is walked texel column by
+    /// texel column, and within each the line's height range is tested
+    /// against the column's solid layers, so a corner clipped by a
+    /// fraction of a unit is found no matter how the segment is split
+    /// (point sampling skipped thin crossings of steep shots, and which
+    /// ones it skipped depended on where the server's tick steps fell).
+    pub fn segment_hits_terrain(&self, from: glam::Vec3, to: glam::Vec3) -> Option<f32> {
+        let d = to - from;
+        // Per axis: the cell, its step, the fraction at the next boundary,
+        // and the fraction per cell.
+        let axis = |p: f32, d: f32| -> (i32, i32, f32, f32) {
+            let cell = p.floor();
+            if d > 0.0 {
+                (cell as i32, 1, (cell + 1.0 - p) / d, 1.0 / d)
+            } else if d < 0.0 {
+                (cell as i32, -1, (cell - p) / d, -1.0 / d)
+            } else {
+                (cell as i32, 0, f32::INFINITY, f32::INFINITY)
+            }
+        };
+        let (mut cx, sx, mut next_x, dx) = axis(from.x, d.x);
+        let (mut cy, sy, mut next_y, dy) = axis(from.y, d.y);
+        let mut t0 = 0.0f32;
+        loop {
+            let t1 = next_x.min(next_y).min(1.0);
+            if let Some(t) = self.column_hit(self.get((cx, cy)), from.z, d.z, t0, t1) {
+                return Some(t);
+            }
+            if t1 >= 1.0 {
+                return None;
+            }
+            t0 = t1;
+            if next_x <= t1 {
+                cx += sx;
+                next_x += dx;
+            }
+            if next_y <= t1 {
+                cy += sy;
+                next_y += dy;
+            }
+        }
+    }
+
+    /// First fraction in `t0..=t1` at which the line `z0 + dz * t` is in
+    /// the rock of `texel`, read as [`solid_at`](Self::solid_at) does.
+    fn column_hit(&self, texel: Texel, z0: f32, dz: f32, t0: f32, t1: f32) -> Option<f32> {
+        let (a, b) = (z0 + dz * t0, z0 + dz * t1);
+        // The rock as half-open height ranges `lo..hi`.
+        let ranges = match texel {
+            Texel::Single(p) => [(f32::NEG_INFINITY, p.0), (0.0, 0.0)],
+            Texel::Dual { low, mid, high } => [(f32::NEG_INFINITY, low.0), (mid, high.0)],
+        };
+        ranges
+            .into_iter()
+            .filter(|&(lo, hi)| lo < hi)
+            .filter_map(|(lo, hi)| {
+                if (lo..hi).contains(&a) {
+                    Some(t0)
+                } else if a < lo && b >= lo {
+                    // Rising into the slab's underside.
+                    Some((lo - z0) / dz)
+                } else if a >= hi && b < hi {
+                    // Coming down onto the top.
+                    Some((hi - z0) / dz)
+                } else {
+                    None
+                }
+            })
+            .map(|t| t.clamp(t0, t1))
+            .min_by(f32::total_cmp)
+    }
+
     pub fn get_low_fast(&self, coord: (i32, i32)) -> f32 {
         assert!(coord.0 >= 0 && coord.1 >= 0);
         let mut i = ((coord.1 % self.size.1) * self.size.0 + (coord.0 % self.size.0)) as usize;
@@ -815,6 +901,72 @@ mod torus_tests {
             palette: [[0; 4]; 0x100],
             terrains: LevelConfig::new_test().terrains,
             geometry: settings::Geometry::default(),
+        }
+    }
+
+    #[test]
+    fn a_steep_shot_clipping_a_texel_corner_is_stopped_however_it_is_split() {
+        // Ground at 10, one texel column up to 50. The shot climbs 3 per
+        // texel and is under its top only for the first 0.07 of it (0.2
+        // deep): thinner than a half-texel sampling step along the shot.
+        let mut level = tiny_level(16, 16);
+        level.height.fill(10);
+        level.height[5 * 16 + 5] = 50;
+        let from = glam::Vec3::new(3.0, 5.5, 43.8);
+        let to = glam::Vec3::new(8.0, 5.5, 58.8);
+        let t = level
+            .segment_hits_terrain(from, to)
+            .expect("the corner stops it");
+        assert!(
+            (t - 0.4).abs() < 1e-3,
+            "stopped at the column's face, got {t}"
+        );
+        assert!(level.solid_at(from.lerp(to, t + 1e-3)));
+        // The same rock, whatever ticks the flight is cut into.
+        for parts in 2..12 {
+            let hit = (0..parts).find_map(|i| {
+                let a = from.lerp(to, i as f32 / parts as f32);
+                let b = from.lerp(to, (i + 1) as f32 / parts as f32);
+                level.segment_hits_terrain(a, b).map(|f| a.lerp(b, f))
+            });
+            let at = hit.unwrap_or_else(|| panic!("missed in {parts} steps"));
+            assert!((at.x - 5.0).abs() < 1e-3, "{parts} steps: {at:?}");
+        }
+        // Just over the top, it flies on.
+        let over = glam::Vec3::new(0.0, 0.0, 0.5);
+        assert_eq!(level.segment_hits_terrain(from + over, to + over), None);
+    }
+
+    #[test]
+    fn segment_rock_agrees_with_solid_at_on_the_test_level() {
+        let level = load(&LevelConfig::new_test(), &settings::Geometry::default());
+        let mut seed = 0x2545_f491_u32;
+        let mut rand = move |range: f32| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1 << 24) as f32 * range
+        };
+        for _ in 0..2000 {
+            let from = glam::Vec3::new(rand(256.0), rand(256.0), rand(260.0));
+            let to =
+                from + glam::Vec3::new(rand(80.0) - 40.0, rand(80.0) - 40.0, rand(160.0) - 80.0);
+            let exact = level.segment_hits_terrain(from, to);
+            // No sampled point is in the rock before the exact first rock.
+            let first_sampled = (0..=400)
+                .map(|i| i as f32 / 400.0)
+                .find(|&t| level.solid_at(from.lerp(to, t)));
+            match (exact, first_sampled) {
+                (None, Some(t)) => panic!("{from:?}->{to:?}: rock at {t} missed"),
+                (Some(e), Some(t)) => assert!(e <= t + 1e-4, "{from:?}->{to:?}: {e} after {t}"),
+                _ => {}
+            }
+            // And the exact rock is rock.
+            if let Some(e) = exact {
+                let past = (e + 1e-4).min(1.0);
+                assert!(
+                    level.solid_at(from.lerp(to, e)) || level.solid_at(from.lerp(to, past)),
+                    "{from:?}->{to:?}: no rock at {e}"
+                );
+            }
         }
     }
 
