@@ -31,6 +31,12 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// How long the HUD shows a death.
+const DEATH_NOTE_SECS: f32 = 5.0;
+/// A wreck gets its control back after this long even if no `Respawned`
+/// arrives (the server respawns after `combat::RESPAWN_SECS`).
+const WRECK_GIVE_UP: f32 = 10.0;
+
 #[derive(Debug, PartialEq)]
 struct Ai {
     last_transform: space::Transform,
@@ -317,6 +323,8 @@ struct RemoteAgent {
     net: physics::client::RemoteCar,
     /// Its treads, from the drawn pose, for the cosmetic track overlay.
     treads: level::overlay::GhostTreads,
+    /// A wreck waiting to respawn (`AgentState::dead`): it smokes.
+    dead: bool,
 }
 
 impl std::borrow::Borrow<physics::client::RemoteCar> for RemoteAgent {
@@ -678,6 +686,11 @@ pub struct Game {
     /// Newest `WorldState` tick applied and when: the view a `Fire` was
     /// aimed in, for the server's lag compensation.
     world_view: Option<(u32, std::time::Instant)>,
+    /// Online, our car is a wreck (`ServerMessage::Died`): seconds since,
+    /// no control until the server's `Respawned` (or `WRECK_GIVE_UP`).
+    wrecked: Option<f32>,
+    /// HUD line about a death (ours, by us, or another's) and its seconds left.
+    death_note: Option<(String, f32)>,
     /// Space queued a portal hop; applied on the next `update` with GPU handles.
     pending_portal: Option<PendingPortal>,
     /// After a world hop: hold XY on the reverse-passage pad while physics settles.
@@ -1125,6 +1138,8 @@ impl Game {
             spiral,
             passage_note: None,
             world_view: None,
+            wrecked: None,
+            death_note: None,
             pending_portal: None,
             portal_pad_lock: None,
         }
@@ -1501,6 +1516,31 @@ impl Game {
     }
 
     fn step_world_life(&mut self, delta: f32) {
+        if let Some(ref mut since) = self.wrecked {
+            *since += delta;
+            if *since > WRECK_GIVE_UP {
+                log::warn!("No respawn from the server: control back");
+                self.wrecked = None;
+            }
+        }
+        if let Some((_, ref mut left)) = self.death_note {
+            *left -= delta;
+            if *left <= 0.0 {
+                self.death_note = None;
+            }
+        }
+        let player_pos = self
+            .agents
+            .iter()
+            .find(|a| a.spirit == Spirit::Player)
+            .map(|a| a.position());
+        self.life.wrecks = self
+            .remote_agents
+            .values()
+            .filter(|r| r.dead && r.net.pose_ready)
+            .map(|r| r.net.render_transform.disp)
+            .chain(player_pos.filter(|_| self.wrecked.is_some()))
+            .collect();
         let player = self
             .agents
             .iter()
@@ -2473,6 +2513,110 @@ impl Game {
         net.send_set_pose(&nt, next_quant);
     }
 
+    fn player_name(
+        &self,
+        id: vangers_net::PlayerId,
+        my_id: Option<vangers_net::PlayerId>,
+    ) -> String {
+        if Some(id) == my_id {
+            "you".to_string()
+        } else {
+            self.remote_agents
+                .get(&id)
+                .map_or_else(|| format!("player {id}"), |r| r.name.clone())
+        }
+    }
+
+    /// `ServerMessage::Died`: an explosion where the car went up, a HUD
+    /// note, and no control for us until the respawn if it was ours.
+    fn on_died(
+        &mut self,
+        player_id: vangers_net::PlayerId,
+        killer: Option<vangers_net::PlayerId>,
+        position: Vec3,
+        my_id: Option<vangers_net::PlayerId>,
+    ) {
+        let eye = self
+            .agents
+            .iter()
+            .find(|a| a.spirit == Spirit::Player)
+            .map_or(position, |a| a.position());
+        let at = match self.remote_agents.get_mut(&player_id) {
+            Some(remote) => {
+                remote.dead = true;
+                if remote.net.pose_ready {
+                    remote.net.render_transform.disp
+                } else {
+                    self.level.display_pos(position, eye)
+                }
+            }
+            None if Some(player_id) == my_id => eye,
+            None => self.level.display_pos(position, eye),
+        };
+        self.life.particles.emit_explosion(at);
+        let by = killer.map(|k| self.player_name(k, my_id));
+        let note = if Some(player_id) == my_id {
+            self.wrecked = Some(0.0);
+            match by {
+                Some(by) => format!("Destroyed by {by}! Respawning…"),
+                None => "Destroyed! Respawning…".to_string(),
+            }
+        } else {
+            let who = self.player_name(player_id, my_id);
+            match by {
+                Some(by) if by == "you" => format!("You destroyed {who}"),
+                Some(by) => format!("{who} destroyed by {by}"),
+                None => format!("{who} destroyed"),
+            }
+        };
+        log::info!("Died: {} ({note})", self.player_name(player_id, my_id));
+        self.death_note = Some((note, DEATH_NOTE_SECS));
+    }
+
+    /// `ServerMessage::Respawned`: the car is back, standing, at the
+    /// server's pose. Ours is snapped there and the pose sent back
+    /// (`SetPose`), which restarts our prediction and the server's input
+    /// numbering from it; a remote one is drawn there at once.
+    fn on_respawned(
+        &mut self,
+        player_id: vangers_net::PlayerId,
+        transform: &vangers_net::NetTransform,
+        my_id: Option<vangers_net::PlayerId>,
+    ) {
+        let rot = glam::Quat::from_array(transform.rotation);
+        if Some(player_id) == my_id {
+            self.wrecked = None;
+            let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
+                return;
+            };
+            let Physics::Cpu {
+                transform: ref mut local,
+                ref mut dynamo,
+            } = player.physics;
+            local.disp = self
+                .level
+                .display_pos(Vec3::from(transform.position), local.disp);
+            local.rot = rot;
+            *dynamo = Default::default();
+            player.armor = player.max_armor;
+            let focus = *local;
+            log::info!("Respawned at {:?}", focus.disp);
+            self.cam.focus_on(&focus);
+            self.send_tweaks_pose();
+            self.death_note = Some(("Respawned".to_string(), 2.0));
+        } else if let Some(remote) = self.remote_agents.get_mut(&player_id) {
+            let eye = remote.net.render_transform.disp;
+            remote.dead = false;
+            remote.net.respawn_at(space::Transform {
+                disp: self.level.display_pos(Vec3::from(transform.position), eye),
+                rot,
+                scale: transform.scale,
+            });
+            remote.treads.reset();
+            log::info!("Respawned: {}", remote.name);
+        }
+    }
+
     fn draw_spiral_hud(&self, context: &egui::Context) {
         egui::Area::new(egui::Id::new("spiral-hud"))
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 120.0))
@@ -2494,6 +2638,13 @@ impl Game {
                     ))
                     .strong(),
                 );
+                if let Some((note, _)) = self.death_note.as_ref() {
+                    ui.label(
+                        egui::RichText::new(note)
+                            .strong()
+                            .color(egui::Color32::from_rgb(255, 120, 60)),
+                    );
+                }
                 if let Some(note) = self.passage_note.as_deref() {
                     ui.label(note);
                 }
@@ -2888,6 +3039,11 @@ impl Application for Game {
                 }
                 None => 0.0,
             };
+            if self.wrecked.is_some() {
+                // A wreck: no control until the respawn.
+                player.control = Default::default();
+                self.input.fire_bay = None;
+            }
         }
 
         if self.input.use_entrance {
@@ -3142,6 +3298,7 @@ impl Application for Game {
                                         CarPhysicsData::from_car_info(car),
                                     ),
                                     treads: Default::default(),
+                                    dead: false,
                                 });
                         }
                     }
@@ -3270,6 +3427,7 @@ impl Application for Game {
                                         * c.nature.num_calls_analysis as f32
                                         / self.max_quant
                                 };
+                                remote.dead = agent_state.dead;
                                 remote.net.on_agent(
                                     agent_state,
                                     tick,
@@ -3310,7 +3468,17 @@ impl Application for Game {
                             remote: true,
                         });
                     }
+                    NetEvent::Died {
+                        player_id,
+                        killer,
+                        position,
+                    } => self.on_died(player_id, killer, Vec3::from(position), my_id),
+                    NetEvent::Respawned {
+                        player_id,
+                        transform,
+                    } => self.on_respawned(player_id, &transform, my_id),
                     NetEvent::Disconnected => {
+                        self.wrecked = None;
                         log::warn!("Disconnected from server");
                         self.remote_agents.clear();
                         self.mp_state.connected = false;

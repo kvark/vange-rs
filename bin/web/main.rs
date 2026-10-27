@@ -570,6 +570,8 @@ struct WebRemote {
     net: physics::client::RemoteCar,
     /// Its treads, from the drawn pose, for the cosmetic track overlay.
     treads: level::overlay::GhostTreads,
+    /// A wreck waiting to respawn (`AgentState::dead`): it smokes.
+    dead: bool,
 }
 
 impl std::borrow::Borrow<physics::client::RemoteCar> for WebRemote {
@@ -666,6 +668,9 @@ struct WebApp {
     mp: physics::client::ClientSync,
     /// Other players of the multiplayer session.
     remotes: HashMap<vangers_net::PlayerId, WebRemote>,
+    /// Our car is a wreck (`ServerMessage::Died`): no control until the
+    /// server's `Respawned`.
+    wrecked: bool,
     /// On-page multiplayer diagnostics.
     net_debug: NetDebug,
     /// Vehicles by name, for the remote players' cars.
@@ -1077,6 +1082,7 @@ impl WebApp {
             cycle_time: 0.0,
             mp: Default::default(),
             remotes: HashMap::new(),
+            wrecked: false,
             net_debug: NetDebug::new(),
             cars,
             moving,
@@ -1581,6 +1587,14 @@ impl WebApp {
             armor: agent.armor,
             max_armor: agent.max_armor,
         };
+        let wrecked = self.wrecked.then_some(agent.transform.disp);
+        self.life.wrecks = self
+            .remotes
+            .values()
+            .filter(|r| r.dead && r.net.pose_ready)
+            .map(|r| r.net.render_transform.disp)
+            .chain(wrecked)
+            .collect();
         let nibble = self.life.step(&self.level, delta, contact, &[]);
         if nibble != 0
             && !online
@@ -2052,6 +2066,19 @@ mod net_ws {
                 first_quant,
                 quanta: quanta.min(u16::MAX as u32) as u16,
                 control: control.clone(),
+            });
+            let _ = self.ws.send_with_u8_array(&msg);
+        }
+
+        /// The car was put at `transform` (a respawn): the server predicts
+        /// it from there with our quanta from `next_quant`.
+        pub fn send_set_pose(&self, transform: &vangers_net::NetTransform, next_quant: u32) {
+            if !self.is_joined() {
+                return;
+            }
+            let msg = encode(&ClientMessage::SetPose {
+                transform: transform.clone(),
+                next_quant,
             });
             let _ = self.ws.send_with_u8_array(&msg);
         }
@@ -3184,12 +3211,21 @@ impl WebHandler {
                 let level_ref = &gpu.app.level;
                 let mut follow = gpu.app.follow;
                 let max_quant = gpu.app.max_quant;
+                let wrecked = gpu.app.wrecked;
                 if let Some(ref mut agent) = gpu.app.agent {
                     agent.control.motor = motor;
                     agent.control.rudder = rudder;
                     agent.control.brake = brake;
                     agent.control.turbo = turbo;
                     agent.control.roll = roll;
+                    if wrecked {
+                        // A wreck: no control until the respawn.
+                        agent.control.motor = 0.0;
+                        agent.control.rudder = 0.0;
+                        agent.control.brake = false;
+                        agent.control.turbo = false;
+                        agent.control.roll = 0.0;
+                    }
                     // Jump: charge while Alt is held, fire on release. A
                     // tap within one frame fires with one frame's charge.
                     let frame_power = dt * common.speed.standard_frame_rate as f32;
@@ -3413,6 +3449,7 @@ impl WebHandler {
                                 color,
                                 net: physics::client::RemoteCar::new(phys.clone()),
                                 treads: Default::default(),
+                                dead: false,
                             });
                     }
                     vangers_net::ServerMessage::Shot {
@@ -3436,6 +3473,96 @@ impl WebHandler {
                         );
                         let life = shot.flight_time(&gpu.app.level);
                         gpu.app.remote_shots.push((shot, 0.0, life));
+                    }
+                    vangers_net::ServerMessage::Died {
+                        player_id,
+                        killer,
+                        position,
+                    } => {
+                        let eye = gpu
+                            .app
+                            .agent
+                            .as_ref()
+                            .map_or(glam::Vec3::from(position), |a| a.transform.disp);
+                        let mine = Some(player_id) == ws.player_id;
+                        let at = match gpu.app.remotes.get_mut(&player_id) {
+                            Some(remote) => {
+                                remote.dead = true;
+                                if remote.net.pose_ready {
+                                    remote.net.render_transform.disp
+                                } else {
+                                    gpu.app.level.display_pos(glam::Vec3::from(position), eye)
+                                }
+                            }
+                            None if mine => eye,
+                            None => gpu.app.level.display_pos(glam::Vec3::from(position), eye),
+                        };
+                        gpu.app.life.particles.emit_explosion(at);
+                        let name = |id| {
+                            if Some(id) == ws.player_id {
+                                "you".to_string()
+                            } else {
+                                gpu.app
+                                    .remotes
+                                    .get(&id)
+                                    .map_or_else(|| format!("player {id}"), |r| r.name.clone())
+                            }
+                        };
+                        let by = killer.map(name);
+                        let note = match (mine, by) {
+                            (true, Some(by)) => format!("Destroyed by {by}! Respawning..."),
+                            (true, None) => "Destroyed! Respawning...".to_string(),
+                            (false, Some(by)) => format!("{} destroyed by {by}", name(player_id)),
+                            (false, None) => format!("{} destroyed", name(player_id)),
+                        };
+                        if mine {
+                            gpu.app.wrecked = true;
+                        }
+                        gpu.app.net_debug.note(log::Level::Warn, note);
+                    }
+                    vangers_net::ServerMessage::Respawned {
+                        player_id,
+                        transform,
+                    } => {
+                        let rot = glam::Quat::from_array(transform.rotation);
+                        if Some(player_id) == ws.player_id {
+                            gpu.app.wrecked = false;
+                            gpu.app.mp.reset();
+                            let next_quant = gpu.app.mp.prediction.next();
+                            if let Some(ref mut agent) = gpu.app.agent {
+                                agent.transform.disp = gpu.app.level.display_pos(
+                                    glam::Vec3::from(transform.position),
+                                    agent.transform.disp,
+                                );
+                                agent.transform.rot = rot;
+                                agent.dynamo = Default::default();
+                                agent.armor = agent.max_armor;
+                                let t = &agent.transform;
+                                ws.send_set_pose(
+                                    &vangers_net::NetTransform {
+                                        position: t.disp.into(),
+                                        rotation: t.rot.to_array(),
+                                        scale: t.scale,
+                                    },
+                                    next_quant,
+                                );
+                            }
+                            gpu.app
+                                .net_debug
+                                .note(log::Level::Info, "Respawned".to_string());
+                        } else if let Some(remote) = gpu.app.remotes.get_mut(&player_id) {
+                            let eye = remote.net.render_transform.disp;
+                            remote.dead = false;
+                            remote.net.respawn_at(space::Transform {
+                                disp: gpu
+                                    .app
+                                    .level
+                                    .display_pos(glam::Vec3::from(transform.position), eye),
+                                rot,
+                                scale: transform.scale,
+                            });
+                            remote.treads.reset();
+                        }
                     }
                     vangers_net::ServerMessage::PlayerLeft { player_id } => {
                         let name = gpu.app.remotes.remove(&player_id).map(|r| r.name);
@@ -3472,6 +3599,7 @@ impl WebHandler {
                                 continue;
                             }
                             if let Some(remote) = gpu.app.remotes.get_mut(&agent_state.player_id) {
+                                remote.dead = agent_state.dead;
                                 remote
                                     .net
                                     .on_agent(agent_state, tick, quanta_per_sec, period);

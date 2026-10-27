@@ -33,6 +33,17 @@ pub enum NetEvent {
         origin: [f32; 3],
         dir: [f32; 3],
     },
+    /// A car's armour ran out (`ServerMessage::Died`).
+    Died {
+        player_id: PlayerId,
+        killer: Option<PlayerId>,
+        position: [f32; 3],
+    },
+    /// A wreck is back (`ServerMessage::Respawned`).
+    Respawned {
+        player_id: PlayerId,
+        transform: NetTransform,
+    },
     Disconnected,
 }
 
@@ -135,6 +146,22 @@ impl NetworkClient {
                                     bay,
                                     origin,
                                     dir,
+                                },
+                                ServerMessage::Died {
+                                    player_id,
+                                    killer,
+                                    position,
+                                } => NetEvent::Died {
+                                    player_id,
+                                    killer,
+                                    position,
+                                },
+                                ServerMessage::Respawned {
+                                    player_id,
+                                    transform,
+                                } => NetEvent::Respawned {
+                                    player_id,
+                                    transform,
                                 },
                             };
                             if recv_tx.send(event).is_err() {

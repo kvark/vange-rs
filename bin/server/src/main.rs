@@ -77,6 +77,12 @@ struct Cli {
     #[arg(long, value_parser = parse_xy)]
     spawn_at: Option<(i32, i32)>,
 
+    /// An escave entrance at map `X,Y` for wrecks to respawn by, on top of
+    /// the hosted world's own from `escaves.prm` / `spots.prm` (the `test`
+    /// level has none). Repeatable.
+    #[arg(long = "escave", value_parser = parse_xy)]
+    escaves: Vec<(i32, i32)>,
+
     /// Debug: hold every message this many milliseconds each way, to try
     /// the multiplayer prediction on localhost under a real-world ping
     /// (the round trip is twice this plus jitter).
@@ -206,6 +212,8 @@ struct ServerAgent {
     /// Throttled summaries of this player's shots and of the hits it took.
     fire_log: FireLog,
     hit_log: HitLog,
+    /// Out of armour: a wreck until `Wreck::respawn` (`AgentState::dead`).
+    dead: Option<combat::Wreck<PlayerId>>,
 }
 
 /// Diagnostic: a player's accepted shots, summed into at most one info
@@ -371,6 +379,7 @@ impl ServerAgent {
             control: net_control_of(&self.inputs.last()),
             armor: self.armor,
             max_armor: self.max_armor,
+            dead: self.dead.is_some(),
         }
     }
 
@@ -819,14 +828,32 @@ async fn main() {
     // Name matches the hosted terrain (Welcome + cycle), not a mismatched
     // settings.game.level when `--level test` was forced.
     let cycle_world = hosted.name.clone();
+    // Every world's escaves (and spots): the story cycle looks up its own,
+    // and wrecks respawn by the hosted world's.
+    let all_escaves = settings
+        .as_ref()
+        .map(|settings| {
+            let mut escaves = config::escaves::load_optional(settings, "escaves.prm");
+            escaves.extend(config::escaves::load_optional(settings, "spots.prm"));
+            escaves
+        })
+        .unwrap_or_default();
+    let mut respawn_escaves: Vec<(i32, i32)> = all_escaves
+        .iter()
+        .filter(|e| e.world.eq_ignore_ascii_case(&cycle_world))
+        .map(|e| e.coordinates)
+        .collect();
+    respawn_escaves.extend(cli.escaves.iter().copied());
+    info!(
+        "Respawn escaves for '{}': {:?}",
+        cycle_world, respawn_escaves
+    );
     let mut cycle = if let Some(ref settings) = settings {
         if !settings.check_path("bunches.prm") {
             None
         } else {
             let bunches = config::bunches::load(settings.open_relative("bunches.prm"));
-            let mut escaves = config::escaves::load_optional(settings, "escaves.prm");
-            escaves.extend(config::escaves::load_optional(settings, "spots.prm"));
-            level::cycle::Bunch::load(&cycle_world, &level, &bunches, &escaves, |path| {
+            level::cycle::Bunch::load(&cycle_world, &level, &bunches, &all_escaves, |path| {
                 settings
                     .check_path(path)
                     .then(|| std::fs::read(settings.data_path.join(path)).ok())
@@ -1064,6 +1091,13 @@ async fn main() {
                             _ => continue,
                         }
                         let input = agent.inputs.pop();
+                        // A wreck rolls on with no control (its client
+                        // sends none either).
+                        let input = if agent.dead.is_some() {
+                            physics::prediction::QuantInput::default()
+                        } else {
+                            input
+                        };
                         let before = agent.transform.disp;
                         // The server does not deform the terrain: the edits
                         // would have to be replicated for clients to agree
@@ -1109,7 +1143,28 @@ async fn main() {
                     agent.trace_jump(player_id, tick, wrap);
                     agent.log_pose(player_id);
                 }
-                step_shots(&mut shots, &mut players, &level, tick, dt_fixed);
+                let deaths = step_shots(&mut shots, &mut players, &level, tick, dt_fixed);
+                for (player_id, killer, position) in deaths {
+                    let msg = encode(&ServerMessage::Died {
+                        player_id,
+                        killer,
+                        position: position.into(),
+                    });
+                    for agent in players.values().filter(|a| a.joined) {
+                        let _ = agent.sender.send(msg.clone());
+                    }
+                }
+                for (player_id, transform) in
+                    respawn_wrecks(&mut players, &level, &respawn_escaves, tick)
+                {
+                    let msg = encode(&ServerMessage::Respawned {
+                        player_id,
+                        transform,
+                    });
+                    for agent in players.values().filter(|a| a.joined) {
+                        let _ = agent.sender.send(msg.clone());
+                    }
+                }
 
                 // Story cycle: one quant per server tick (tick_rate 20 Hz
                 // matches MAIN_LOOP_TIME = 0.05). All joined players
@@ -1238,6 +1293,7 @@ async fn main() {
                             history: combat::PoseHistory::default(),
                             fire_log: FireLog::default(),
                             hit_log: HitLog::default(),
+                            dead: None,
                         });
                     }
 
@@ -1322,12 +1378,16 @@ async fn main() {
                                         .copied()
                                         .unwrap_or(combat::DEFAULT_MAX_ARMOR);
                                     agent.armor = agent.max_armor;
+                                    agent.dead = None;
                                     if let Some(pose) = restored {
                                         agent.transform = pose.transform;
                                         agent.dynamo = pose.dynamo;
                                         agent.cirtainer = pose.cirtainer;
                                         agent.spiral_charge = pose.spiral_charge;
-                                        agent.armor = pose.armor.min(agent.max_armor);
+                                        // A wreck that left comes back whole.
+                                        if pose.armor > 0 {
+                                            agent.armor = pose.armor.min(agent.max_armor);
+                                        }
                                         // Keep model scale in sync with the chosen car.
                                         agent.transform.scale = agent.phys_data.scale;
                                     } else {
@@ -1416,7 +1476,8 @@ async fn main() {
                             ClientMessage::SetPose { transform, next_quant } => {
                                 let player_id = effective_player_id(&conn_to_player, conn_id);
                                 if let Some(agent) = players.get_mut(&player_id) {
-                                    if agent.joined {
+                                    // A wreck stays where it went up.
+                                    if agent.joined && agent.dead.is_none() {
                                         // The client predicts from this pose
                                         // with its quanta from `next_quant`.
                                         agent.inputs.reset(next_quant);
@@ -1457,6 +1518,10 @@ async fn main() {
                                     continue;
                                 };
                                 if !agent.joined {
+                                    continue;
+                                }
+                                if agent.dead.is_some() {
+                                    debug!("Fire from player {}: a wreck, dropped", player_id);
                                     continue;
                                 }
                                 if agent.fires >= weapon::FIRES_PER_TICK {
@@ -1814,46 +1879,57 @@ fn purge_expired_poses(last_poses: &mut HashMap<PlayerId, LastPose>) {
 /// apply its hit, if any: each shot tests the other joined cars where they
 /// were `rewind` ticks ago (`combat::rewind_ticks`), as its shooter saw
 /// them. A hit takes `combat::bay_damage` off the target's armour, down
-/// to 0, and ends the shot. The terrain stops shots.
+/// to 0, and ends the shot. The terrain stops shots. Wrecks are not hit
+/// and their shots are dropped (`combat::fly_shots`).
+///
+/// A car whose armour this empties is a wreck from now: returns each as
+/// `(player, killer, where)` for `ServerMessage::Died`.
 fn step_shots(
     shots: &mut Vec<combat::ServerShot<PlayerId>>,
     players: &mut HashMap<PlayerId, ServerAgent>,
     level: &level::Level,
     tick: u32,
     dt: f32,
-) {
+) -> Vec<(PlayerId, Option<PlayerId>, Vec3)> {
     let period = (level.size.0 as f32, level.size.1 as f32);
     let keep = (combat::HISTORY_SECS / dt).ceil() as usize + 1;
     for agent in players.values_mut().filter(|a| a.joined) {
         agent.history.record(tick, agent.transform.disp, keep);
     }
-    let mut hits = Vec::new();
-    shots.retain_mut(|shot| {
-        let at = tick as f32 - shot.rewind;
-        let targets: Vec<_> = players
-            .iter()
-            .filter(|(_, a)| a.joined)
-            .map(|(&id, a)| combat::Target {
-                id,
-                center: a.history.at(at, period).unwrap_or(a.transform.disp),
-                radius: a.phys_data.bbox.radius * a.transform.scale,
-            })
-            .collect();
-        match shot.step(dt, &targets, period, Some(level)) {
-            Some(target) => {
-                hits.push((shot.shooter, shot.bay, target));
-                false
-            }
-            None => !shot.is_spent(),
-        }
-    });
+    let hits = {
+        let players = &*players;
+        combat::fly_shots(
+            shots,
+            dt,
+            period,
+            Some(level),
+            |rewind| {
+                let at = tick as f32 - rewind;
+                players
+                    .iter()
+                    .filter(|(_, a)| a.joined)
+                    .map(|(&id, a)| combat::Target {
+                        id,
+                        center: a.history.at(at, period).unwrap_or(a.transform.disp),
+                        radius: a.phys_data.bbox.radius * a.transform.scale,
+                    })
+                    .collect()
+            },
+            |id| players.get(&id).is_some_and(|a| a.dead.is_some()),
+        )
+    };
+    let mut deaths = Vec::new();
     for (shooter, bay, target) in hits {
         let shooter_name = players
             .get(&shooter)
             .map_or_else(|| format!("p{}", shooter), |a| a.name.clone());
+        let killer = players.contains_key(&shooter).then_some(shooter);
         let Some(agent) = players.get_mut(&target) else {
             continue;
         };
+        if agent.dead.is_some() {
+            continue; // killed by an earlier shot this tick
+        }
         let damage = combat::bay_damage(bay);
         let before = agent.armor;
         agent.armor = agent.armor.saturating_sub(damage);
@@ -1866,7 +1942,97 @@ fn step_shots(
         agent
             .hit_log
             .note((target, &agent.name), &shooter_name, damage, armor, emptied);
+        if agent.armor == 0 {
+            let wreck = combat::Wreck {
+                at: agent.transform.disp,
+                killer,
+                respawn: combat::respawn_tick(tick, dt),
+            };
+            info!(
+                "Died: p{} ({}) killed by {} at {:?}; respawn in {}s",
+                target,
+                agent.name,
+                shooter_name,
+                wreck.at,
+                combat::RESPAWN_SECS
+            );
+            agent.dead = Some(wreck);
+            deaths.push((target, killer, wreck.at));
+        }
     }
+    deaths
+}
+
+/// Put back every wreck whose `combat::Wreck::respawn` tick has come:
+/// on clear ground (`clear_ground_near`, away from the other cars) by the
+/// escave entrance nearest to where it died, or on the escave itself when
+/// none is clear; with no escaves, at a fresh-spawn point. It stands
+/// still and undamaged, facing -Y, and the shots of before do not rewind
+/// to its old place. Returns each one's new pose for
+/// `ServerMessage::Respawned`.
+fn respawn_wrecks(
+    players: &mut HashMap<PlayerId, ServerAgent>,
+    level: &level::Level,
+    escaves: &[(i32, i32)],
+    tick: u32,
+) -> Vec<(PlayerId, NetTransform)> {
+    let due: Vec<PlayerId> = players
+        .iter()
+        .filter(|(_, a)| {
+            a.joined
+                && a.dead
+                    .is_some_and(|wreck| combat::respawn_due(tick, wreck.respawn))
+        })
+        .map(|(&id, _)| id)
+        .collect();
+    let mut respawned = Vec::new();
+    for player_id in due {
+        let occupied: Vec<Vec2> = players
+            .iter()
+            .filter(|&(&id, a)| id != player_id && a.joined)
+            .map(|(_, a)| a.transform.disp.truncate())
+            .collect();
+        let Some(agent) = players.get_mut(&player_id) else {
+            continue;
+        };
+        let Some(wreck) = agent.dead.take() else {
+            continue;
+        };
+        let period = (level.size.0 as f32, level.size.1 as f32);
+        let coords = match combat::nearest_escave(wreck.at, escaves, period) {
+            Some(escave) => {
+                let (x, y) = clear_ground_near(level, escave, &occupied).unwrap_or(escave);
+                (x.rem_euclid(level.size.0), y.rem_euclid(level.size.1))
+            }
+            None => find_spawn_point(level, 0, &occupied),
+        };
+        agent.transform = space::Transform {
+            scale: agent.phys_data.scale,
+            disp: Vec3::new(
+                coords.0 as f32,
+                coords.1 as f32,
+                level.get(coords).high() + 5.0,
+            ),
+            rot: glam::Quat::from_rotation_z(std::f32::consts::PI),
+        };
+        agent.dynamo = Dynamo::default();
+        agent.armor = agent.max_armor;
+        agent.history.clear();
+        info!(
+            "Respawned: p{} ({}) at ({},{}), armour {}",
+            player_id, agent.name, coords.0, coords.1, agent.armor
+        );
+        let t = &agent.transform;
+        respawned.push((
+            player_id,
+            NetTransform {
+                position: t.disp.into(),
+                rotation: [t.rot.x, t.rot.y, t.rot.z, t.rot.w],
+                scale: t.scale,
+            },
+        ));
+    }
+    respawned
 }
 
 fn remove_player(
