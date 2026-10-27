@@ -43,6 +43,7 @@ pub enum NetEvent {
     Respawned {
         player_id: PlayerId,
         transform: NetTransform,
+        next_quant: u32,
     },
     Disconnected,
 }
@@ -159,9 +160,11 @@ impl NetworkClient {
                                 ServerMessage::Respawned {
                                     player_id,
                                     transform,
+                                    next_quant,
                                 } => NetEvent::Respawned {
                                     player_id,
                                     transform,
+                                    next_quant,
                                 },
                             };
                             if recv_tx.send(event).is_err() {
@@ -197,7 +200,18 @@ impl NetworkClient {
         let _ = self.send_tx.send(msg);
     }
 
-    /// Debug: upload local pose so the server WorldState keeps it.
+    /// The upright key: our car stands upright and still at `position`
+    /// from quantum `next_quant` (`ClientMessage::Reset`).
+    pub fn send_reset(&self, position: [f32; 3], next_quant: u32) {
+        let msg = encode(&ClientMessage::Reset {
+            position,
+            next_quant,
+        });
+        let _ = self.send_tx.send(msg);
+    }
+
+    /// Debug: upload local pose so the server WorldState keeps it (only a
+    /// server run with `--allow-setpose` takes it).
     pub fn send_set_pose(&self, transform: &NetTransform, next_quant: u32) {
         let msg = encode(&ClientMessage::SetPose {
             transform: transform.clone(),

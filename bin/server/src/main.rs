@@ -93,6 +93,12 @@ struct Cli {
     /// order is kept), on top of `--sim-latency-ms`.
     #[arg(long, default_value = "0")]
     sim_jitter_ms: u64,
+
+    /// Debug: take `ClientMessage::SetPose` (the Tweaks Position apply,
+    /// `--autodrive tp:`): a client may then put its car anywhere. Off by
+    /// default; still never for a wreck or just after a respawn.
+    #[arg(long)]
+    allow_setpose: bool,
 }
 
 /// Parse `X,Y` map coordinates.
@@ -214,6 +220,9 @@ struct ServerAgent {
     hit_log: HitLog,
     /// Out of armour: a wreck until `Wreck::respawn` (`AgentState::dead`).
     dead: Option<combat::Wreck<PlayerId>>,
+    /// The tick it last respawned in: no pose from the client is taken
+    /// for `combat::RESPAWN_POSE_LOCK_SECS` after.
+    respawned: Option<u32>,
 }
 
 /// Diagnostic: a player's accepted shots, summed into at most one info
@@ -1154,12 +1163,13 @@ async fn main() {
                         let _ = agent.sender.send(msg.clone());
                     }
                 }
-                for (player_id, transform) in
+                for (player_id, transform, next_quant) in
                     respawn_wrecks(&mut players, &level, &respawn_escaves, tick)
                 {
                     let msg = encode(&ServerMessage::Respawned {
                         player_id,
                         transform,
+                        next_quant,
                     });
                     for agent in players.values().filter(|a| a.joined) {
                         let _ = agent.sender.send(msg.clone());
@@ -1294,6 +1304,7 @@ async fn main() {
                             fire_log: FireLog::default(),
                             hit_log: HitLog::default(),
                             dead: None,
+                            respawned: None,
                         });
                     }
 
@@ -1476,8 +1487,20 @@ async fn main() {
                             ClientMessage::SetPose { transform, next_quant } => {
                                 let player_id = effective_player_id(&conn_to_player, conn_id);
                                 if let Some(agent) = players.get_mut(&player_id) {
-                                    // A wreck stays where it went up.
-                                    if agent.joined && agent.dead.is_none() {
+                                    let check = combat::check_client_pose(
+                                        true,
+                                        cli.allow_setpose,
+                                        agent.dead.is_some(),
+                                        agent.respawned,
+                                        tick,
+                                        dt_fixed,
+                                    );
+                                    if let Err(why) = check {
+                                        warn!(
+                                            "SetPose from player {} ({}) ignored: {}",
+                                            player_id, agent.name, why
+                                        );
+                                    } else if agent.joined {
                                         // The client predicts from this pose
                                         // with its quanta from `next_quant`.
                                         agent.inputs.reset(next_quant);
@@ -1496,6 +1519,48 @@ async fn main() {
                                         agent.dynamo.angular_velocity = Vec3::ZERO;
                                         // Don't rewind shots to before
                                         // the teleport.
+                                        agent.history.clear();
+                                    }
+                                }
+                            }
+
+                            ClientMessage::Reset { position, next_quant } => {
+                                let player_id = effective_player_id(&conn_to_player, conn_id);
+                                if let Some(agent) = players.get_mut(&player_id) {
+                                    let check = combat::check_client_pose(
+                                        false,
+                                        cli.allow_setpose,
+                                        agent.dead.is_some(),
+                                        agent.respawned,
+                                        tick,
+                                        dt_fixed,
+                                    );
+                                    if let Err(why) = check {
+                                        warn!(
+                                            "Reset from player {} ({}) ignored: {}",
+                                            player_id, agent.name, why
+                                        );
+                                    } else if agent.joined {
+                                        let period = level.period();
+                                        let at = combat::reset_position(
+                                            Vec3::from(position),
+                                            agent.transform.disp,
+                                            (period.x, period.y),
+                                        );
+                                        if at != Vec3::from(position) {
+                                            warn!(
+                                                "Reset from player {} ({}) at {:?}: too far from {:?}, kept there",
+                                                player_id, agent.name, position, agent.transform.disp
+                                            );
+                                        }
+                                        // Upright where it stands, still,
+                                        // as the client did before
+                                        // quantum `next_quant`.
+                                        agent.inputs.reset(next_quant);
+                                        agent.transform.disp = at;
+                                        agent.transform.rot = glam::Quat::IDENTITY;
+                                        agent.dynamo.linear_velocity = Vec3::ZERO;
+                                        agent.dynamo.angular_velocity = Vec3::ZERO;
                                         agent.history.clear();
                                     }
                                 }
@@ -1968,14 +2033,15 @@ fn step_shots(
 /// escave entrance nearest to where it died, or on the escave itself when
 /// none is clear; with no escaves, at a fresh-spawn point. It stands
 /// still and undamaged, facing -Y, and the shots of before do not rewind
-/// to its old place. Returns each one's new pose for
-/// `ServerMessage::Respawned`.
+/// to its old place, and its inputs are numbered afresh
+/// (`InputQueue::restart`). Returns each one's new pose and first input
+/// quantum for `ServerMessage::Respawned`.
 fn respawn_wrecks(
     players: &mut HashMap<PlayerId, ServerAgent>,
     level: &level::Level,
     escaves: &[(i32, i32)],
     tick: u32,
-) -> Vec<(PlayerId, NetTransform)> {
+) -> Vec<(PlayerId, NetTransform, u32)> {
     let due: Vec<PlayerId> = players
         .iter()
         .filter(|(_, a)| {
@@ -2018,9 +2084,13 @@ fn respawn_wrecks(
         agent.dynamo = Dynamo::default();
         agent.armor = agent.max_armor;
         agent.history.clear();
+        agent.respawned = Some(tick);
+        // The client numbers its inputs on from here; what the wreck
+        // still has in flight falls below it and is dropped.
+        let next_quant = agent.inputs.restart();
         info!(
-            "Respawned: p{} ({}) at ({},{}), armour {}",
-            player_id, agent.name, coords.0, coords.1, agent.armor
+            "Respawned: p{} ({}) at ({},{}), armour {}, inputs from quantum {}",
+            player_id, agent.name, coords.0, coords.1, agent.armor, next_quant
         );
         let t = &agent.transform;
         respawned.push((
@@ -2030,6 +2100,7 @@ fn respawn_wrecks(
                 rotation: [t.rot.x, t.rot.y, t.rot.z, t.rot.w],
                 scale: t.scale,
             },
+            next_quant,
         ));
     }
     respawned

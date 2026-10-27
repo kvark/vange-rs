@@ -327,6 +327,21 @@ struct RemoteAgent {
     dead: bool,
 }
 
+impl physics::death::DeathRemote for RemoteAgent {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn net_mut(&mut self) -> &mut physics::client::RemoteCar {
+        &mut self.net
+    }
+    fn treads_mut(&mut self) -> &mut level::overlay::GhostTreads {
+        &mut self.treads
+    }
+    fn set_dead(&mut self, dead: bool) {
+        self.dead = dead;
+    }
+}
+
 impl std::borrow::Borrow<physics::client::RemoteCar> for RemoteAgent {
     fn borrow(&self) -> &physics::client::RemoteCar {
         &self.net
@@ -2482,9 +2497,30 @@ impl Game {
         );
     }
 
-    /// MP: push the local pose to the server (Tweaks Position edit, R reset).
-    /// The car was moved outside its inputs, so the prediction history is
-    /// dropped and the server told which quantum the pose holds from.
+    /// MP: the upright key (`ClientMessage::Reset`). The car was moved
+    /// outside its inputs, so the prediction history is dropped and the
+    /// server told which quantum it stands upright from; the server checks
+    /// the position against its own.
+    fn send_reset_pose(&mut self) {
+        if self.net.is_none() {
+            return;
+        }
+        self.sync.reset();
+        let next_quant = self.sync.prediction.next();
+        let Some(net) = self.net.as_ref() else {
+            return;
+        };
+        let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) else {
+            return;
+        };
+        let Physics::Cpu { ref transform, .. } = player.physics;
+        net.send_reset(transform.disp.into(), next_quant);
+    }
+
+    /// MP debug: push the local pose to the server (Tweaks Position edit,
+    /// autodrive `tp:`); only a server run with `--allow-setpose` takes
+    /// it. The car was moved outside its inputs, so the prediction history
+    /// is dropped and the server told which quantum the pose holds from.
     fn send_tweaks_pose(&mut self) {
         if self.net.is_none() {
             return;
@@ -2513,107 +2549,95 @@ impl Game {
         net.send_set_pose(&nt, next_quant);
     }
 
-    fn player_name(
-        &self,
-        id: vangers_net::PlayerId,
-        my_id: Option<vangers_net::PlayerId>,
-    ) -> String {
-        if Some(id) == my_id {
-            "you".to_string()
-        } else {
-            self.remote_agents
-                .get(&id)
-                .map_or_else(|| format!("player {id}"), |r| r.name.clone())
-        }
-    }
-
-    /// `ServerMessage::Died`: an explosion where the car went up, a HUD
-    /// note, and no control for us until the respawn if it was ours.
+    /// `ServerMessage::Died` (`physics::death::on_died`): an explosion
+    /// where the car went up, a HUD note, and no control for us until the
+    /// respawn if it was ours.
     fn on_died(
         &mut self,
         player_id: vangers_net::PlayerId,
         killer: Option<vangers_net::PlayerId>,
-        position: Vec3,
+        position: [f32; 3],
         my_id: Option<vangers_net::PlayerId>,
     ) {
         let eye = self
             .agents
             .iter()
             .find(|a| a.spirit == Spirit::Player)
-            .map_or(position, |a| a.position());
-        let at = match self.remote_agents.get_mut(&player_id) {
-            Some(remote) => {
-                remote.dead = true;
-                if remote.net.pose_ready {
-                    remote.net.render_transform.disp
-                } else {
-                    self.level.display_pos(position, eye)
-                }
-            }
-            None if Some(player_id) == my_id => eye,
-            None => self.level.display_pos(position, eye),
-        };
-        self.life.particles.emit_explosion(at);
-        let by = killer.map(|k| self.player_name(k, my_id));
-        let note = if Some(player_id) == my_id {
+            .map(|a| a.position());
+        let died = physics::death::on_died(
+            &mut self.remote_agents,
+            &self.level,
+            my_id,
+            eye,
+            player_id,
+            killer,
+            position,
+        );
+        self.life.particles.emit_explosion(died.at);
+        if died.mine {
             self.wrecked = Some(0.0);
-            match by {
-                Some(by) => format!("Destroyed by {by}! Respawning…"),
-                None => "Destroyed! Respawning…".to_string(),
-            }
-        } else {
-            let who = self.player_name(player_id, my_id);
-            match by {
-                Some(by) if by == "you" => format!("You destroyed {who}"),
-                Some(by) => format!("{who} destroyed by {by}"),
-                None => format!("{who} destroyed"),
-            }
-        };
-        log::info!("Died: {} ({note})", self.player_name(player_id, my_id));
-        self.death_note = Some((note, DEATH_NOTE_SECS));
+        }
+        log::info!(
+            "Died: {} ({})",
+            physics::death::player_name(player_id, my_id, &self.remote_agents),
+            died.note
+        );
+        self.death_note = Some((died.note, DEATH_NOTE_SECS));
     }
 
-    /// `ServerMessage::Respawned`: the car is back, standing, at the
-    /// server's pose. Ours is snapped there and the pose sent back
-    /// (`SetPose`), which restarts our prediction and the server's input
-    /// numbering from it; a remote one is drawn there at once.
+    /// `ServerMessage::Respawned` (`physics::death::on_respawned`): the car
+    /// is back, standing, at the server's pose. Ours is snapped there and
+    /// our prediction numbered on from the server's `next_quant`; a remote
+    /// one is drawn there at once.
     fn on_respawned(
         &mut self,
         player_id: vangers_net::PlayerId,
         transform: &vangers_net::NetTransform,
+        next_quant: u32,
         my_id: Option<vangers_net::PlayerId>,
     ) {
-        let rot = glam::Quat::from_array(transform.rotation);
-        if Some(player_id) == my_id {
-            self.wrecked = None;
-            let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
-                return;
-            };
-            let Physics::Cpu {
-                transform: ref mut local,
-                ref mut dynamo,
-            } = player.physics;
-            local.disp = self
-                .level
-                .display_pos(Vec3::from(transform.position), local.disp);
-            local.rot = rot;
-            *dynamo = Default::default();
-            player.armor = player.max_armor;
-            let focus = *local;
-            log::info!("Respawned at {:?}", focus.disp);
-            self.cam.focus_on(&focus);
-            self.send_tweaks_pose();
-            self.death_note = Some(("Respawned".to_string(), 2.0));
-        } else if let Some(remote) = self.remote_agents.get_mut(&player_id) {
-            let eye = remote.net.render_transform.disp;
-            remote.dead = false;
-            remote.net.respawn_at(space::Transform {
-                disp: self.level.display_pos(Vec3::from(transform.position), eye),
-                rot,
-                scale: transform.scale,
+        let local = self
+            .agents
+            .iter_mut()
+            .find(|a| a.spirit == Spirit::Player)
+            .map(|player| {
+                let Physics::Cpu {
+                    ref mut transform,
+                    ref mut dynamo,
+                } = player.physics;
+                physics::death::LocalRespawn {
+                    transform,
+                    dynamo,
+                    armor: &mut player.armor,
+                    max_armor: player.max_armor,
+                }
             });
-            remote.treads.reset();
-            log::info!("Respawned: {}", remote.name);
+        let done = physics::death::on_respawned(
+            &mut self.remote_agents,
+            &self.level,
+            my_id,
+            local,
+            &mut self.sync,
+            player_id,
+            transform,
+            next_quant,
+        );
+        match done {
+            physics::death::Respawned::Mine(focus) => {
+                self.wrecked = None;
+                log::info!(
+                    "Respawned at {:?}, inputs from quantum {next_quant}",
+                    focus.disp
+                );
+                self.cam.focus_on(&focus);
+                self.death_note = Some(("Respawned".to_string(), 2.0));
+            }
+            physics::death::Respawned::Remote(name) => log::info!("Respawned: {name}"),
+            physics::death::Respawned::Unknown => {
+                if Some(player_id) == my_id {
+                    self.wrecked = None;
+                }
+            }
         }
     }
 
@@ -2930,7 +2954,7 @@ impl Application for Game {
                     // (rotation error > SNAP_ROT). Upload it, and skip the
                     // reconcile briefly so in-flight snapshots don't undo it.
                     if self.net.is_some() {
-                        self.send_tweaks_pose();
+                        self.send_reset_pose();
                         self.tweaks_pos_hold = self.tweaks_pos_hold.max(0.25);
                     }
                 }
@@ -3472,11 +3496,12 @@ impl Application for Game {
                         player_id,
                         killer,
                         position,
-                    } => self.on_died(player_id, killer, Vec3::from(position), my_id),
+                    } => self.on_died(player_id, killer, position, my_id),
                     NetEvent::Respawned {
                         player_id,
                         transform,
-                    } => self.on_respawned(player_id, &transform, my_id),
+                        next_quant,
+                    } => self.on_respawned(player_id, &transform, next_quant, my_id),
                     NetEvent::Disconnected => {
                         self.wrecked = None;
                         log::warn!("Disconnected from server");

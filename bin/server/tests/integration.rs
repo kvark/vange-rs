@@ -615,9 +615,62 @@ fn test_reconnect_restores_cirtainer() {
     assert_eq!(bob_held, vec![7, 0, 2], "fresh name uses seed, not Alice slot");
 }
 
+/// The newest `WorldState` pose and ack of player `id`.
+fn pose_in_world(msgs: &[ServerMessage], id: u32) -> Option<(NetTransform, u32)> {
+    msgs.iter().rev().find_map(|m| match m {
+        ServerMessage::WorldState { agents, .. } => agents
+            .iter()
+            .find(|a| a.player_id == id)
+            .map(|a| (a.transform.clone(), a.ack)),
+        _ => None,
+    })
+}
+
+fn set_pose_to(at: [f32; 3], next_quant: u32) -> ClientMessage {
+    ClientMessage::SetPose {
+        transform: NetTransform {
+            position: at,
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: 1.0,
+        },
+        next_quant,
+    }
+}
+
+#[test]
+fn test_set_pose_needs_allow_setpose() {
+    let server = ServerProcess::start();
+    let mut alice = server.connect();
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
+    });
+    let mut stash = Vec::new();
+    let alice_id = match alice.recv_welcome(&mut stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    stash.extend(alice.recv_for(Duration::from_millis(500)));
+    let (before, _) = pose_in_world(&stash, alice_id).expect("WorldState");
+    let target = [180.0_f32, 200.0, 40.0];
+    alice.send(&set_pose_to(target, 0));
+    let msgs = alice.recv_for(Duration::from_secs(1));
+    let (after, _) = pose_in_world(&msgs, alice_id).expect("WorldState");
+    let moved = |a: [f32; 3], b: [f32; 3]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+    assert!(
+        moved(after.position, before.position) < 2.0,
+        "SetPose without --allow-setpose moved the car: {:?} -> {:?}",
+        before.position,
+        after.position
+    );
+    assert!(moved(after.position, target) > 20.0);
+}
+
 #[test]
 fn test_set_pose_updates_world_state() {
-    let server = ServerProcess::start();
+    let server = ServerProcess::start_with_args("test", &[], &["--allow-setpose"]);
     let mut alice = server.connect();
     let mut bob = server.connect();
 
@@ -1314,8 +1367,19 @@ fn test_a_kill_respawns_the_wreck_at_the_nearest_escave() {
     // (across the seams).
     let near = (130, 90);
     let far = (220, 220);
-    let server =
-        ServerProcess::start_with_args("test", &[], &["--escave", "130,90", "--escave", "220,220"]);
+    // `--allow-setpose`: even the debug pose is refused from a wreck and
+    // just after a respawn.
+    let server = ServerProcess::start_with_args(
+        "test",
+        &[],
+        &[
+            "--escave",
+            "130,90",
+            "--escave",
+            "220,220",
+            "--allow-setpose",
+        ],
+    );
     let mut alice = server.connect();
     let mut bob = server.connect();
     let mut join = |client: &mut Client, name: &str, color| {
@@ -1405,10 +1469,24 @@ fn test_a_kill_respawns_the_wreck_at_the_nearest_escave() {
     let (_, armor, _, dead) = bob_in_world(&bob_msgs, bob_id).expect("WorldState");
     assert_eq!((armor, dead), (0, true), "a wreck in the WorldState");
 
-    // A shot at the wreck does nothing (no second death).
+    // A shot at the wreck does nothing (no second death), and neither
+    // does a pose the wreck sets itself.
     fire(&mut alice, 40);
+    let far_off = [b_pos[0] + 60.0, b_pos[1] - 50.0, b_pos[2]];
+    bob.send(&set_pose_to(far_off, 5_000));
+    bob.send(&ClientMessage::Reset {
+        position: [b_pos[0] + 10.0, b_pos[1], b_pos[2]],
+        next_quant: 5_000,
+    });
     let more = bob.recv_for(Duration::from_millis(600));
     assert!(died(&more).is_empty(), "a wreck dies once");
+    let (wreck, ack) = pose_in_world(&more, bob_id).expect("WorldState");
+    assert!(
+        flat_gap(wreck.position, (b_pos[0] as i32, b_pos[1] as i32)) < 5.0,
+        "the wreck moved: {:?}",
+        wreck.position
+    );
+    assert_ne!(ack, 5_000, "the wreck's SetPose reset its inputs");
     bob_msgs.extend(more);
 
     // About `RESPAWN_SECS` after the death: back at the near escave, whole.
@@ -1419,7 +1497,8 @@ fn test_a_kill_respawns_the_wreck_at_the_nearest_escave() {
             ServerMessage::Respawned {
                 player_id,
                 transform,
-            } if *player_id == bob_id => Some(transform.position),
+                next_quant,
+            } if *player_id == bob_id => Some((transform.position, *next_quant)),
             _ => None,
         });
         bob_msgs.extend(msgs);
@@ -1428,6 +1507,15 @@ fn test_a_kill_respawns_the_wreck_at_the_nearest_escave() {
         }
         assert!(Instant::now() < deadline, "no respawn");
     };
+    let (respawn, next_quant) = respawn;
+    // Right after the respawn (a SetPose racing it): both refused.
+    bob.send(&set_pose_to(far_off, next_quant + 9));
+    bob.send(&ClientMessage::Reset {
+        position: [respawn[0] + 10.0, respawn[1], respawn[2]],
+        next_quant: next_quant + 9,
+    });
+    // Late inputs from the wreck, numbered below `next_quant`: dropped.
+    bob.input(30, vangers_net::NetControl::default());
     assert!(
         flat_gap(respawn, near) <= 40.0,
         "respawned {respawn:?}, not by the escave at {near:?}"
@@ -1436,6 +1524,61 @@ fn test_a_kill_respawns_the_wreck_at_the_nearest_escave() {
     let (at, armor, max, dead) = bob_in_world(&msgs, bob_id).expect("WorldState");
     assert_eq!((armor, dead), (max, false), "whole again");
     assert!(flat_gap(at, near) <= 50.0, "stays by the escave: {at:?}");
+    let (pose, ack) = pose_in_world(&msgs, bob_id).expect("WorldState");
+    assert_eq!(
+        ack, next_quant,
+        "inputs numbered from the Respawned quantum"
+    );
+    assert!(
+        (pose.position[0] - respawn[0]).abs() < 2.0 && (pose.position[1] - respawn[1]).abs() < 2.0,
+        "a pose just after the respawn moved it: {:?} -> {:?}",
+        respawn,
+        pose.position
+    );
+
+    // Bob numbers on from `next_quant`: taken and acked.
+    bob.next_quant = next_quant;
+    bob.input(4, vangers_net::NetControl::default());
+    // A coarse `max_quant` (the test defaults) runs a quantum every few
+    // ticks: give them time.
+    let msgs = bob.recv_for(Duration::from_millis(1000));
+    let (_, ack) = pose_in_world(&msgs, bob_id).expect("WorldState");
+    assert_eq!(ack, next_quant + 4, "inputs after the respawn run");
+
+    // Past the lock the upright key works, near the server's pose only.
+    let (pose, _) = pose_in_world(&bob.recv_for(Duration::from_millis(200)), bob_id).unwrap();
+    let here = pose.position;
+    bob.send(&ClientMessage::Reset {
+        position: [here[0] + 10.0, here[1], here[2]],
+        next_quant: next_quant + 100,
+    });
+    let msgs = bob.recv_for(Duration::from_millis(300));
+    let (upright, ack) = pose_in_world(&msgs, bob_id).expect("WorldState");
+    assert_eq!(ack, next_quant + 100);
+    assert!(
+        (upright.position[0] - (here[0] + 10.0)).abs() < 2.0,
+        "Reset within reach: {:?} from {:?}",
+        upright.position,
+        here
+    );
+    let rot = glam::Quat::from_array(upright.rotation);
+    assert!(
+        rot.angle_between(glam::Quat::IDENTITY) < 0.05,
+        "upright: {rot:?}"
+    );
+    let here = upright.position;
+    bob.send(&ClientMessage::Reset {
+        position: [here[0] + 300.0, here[1], here[2]],
+        next_quant: next_quant + 200,
+    });
+    let msgs = bob.recv_for(Duration::from_millis(300));
+    let (kept, _) = pose_in_world(&msgs, bob_id).expect("WorldState");
+    assert!(
+        (kept.position[0] - here[0]).abs() < 2.0,
+        "a Reset out of reach moved the car: {:?} -> {:?}",
+        here,
+        kept.position
+    );
 
     // Alice saw both, in that order.
     alice_stash.extend(alice.recv_for(Duration::from_secs(1)));
