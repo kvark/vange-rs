@@ -3413,12 +3413,21 @@ impl WebHandler {
                         // Remote cars first: a replay of the local car
                         // bumps against their ghosts.
                         let period = Some(gpu.app.level.period());
+                        let quanta_per_sec = {
+                            let c = &gpu.app.common;
+                            c.speed.standard_frame_rate as f32
+                                * c.nature.time_delta0
+                                * c.nature.num_calls_analysis as f32
+                                / gpu.app.max_quant
+                        };
                         for agent_state in &agents {
                             if Some(agent_state.player_id) == ws.player_id {
                                 continue;
                             }
                             if let Some(remote) = gpu.app.remotes.get_mut(&agent_state.player_id) {
-                                remote.net.on_agent(agent_state, tick, period);
+                                remote
+                                    .net
+                                    .on_agent(agent_state, tick, quanta_per_sec, period);
                             }
                         }
                         if Some(index) != newest_world {

@@ -2879,9 +2879,19 @@ impl Application for Game {
                             } else if let Some(remote) =
                                 self.remote_agents.get_mut(&agent_state.player_id)
                             {
-                                remote
-                                    .net
-                                    .on_agent(agent_state, tick, Some(self.level.period()));
+                                let quanta_per_sec = {
+                                    let c = &self.db.common;
+                                    c.speed.standard_frame_rate as f32
+                                        * c.nature.time_delta0
+                                        * c.nature.num_calls_analysis as f32
+                                        / self.max_quant
+                                };
+                                remote.net.on_agent(
+                                    agent_state,
+                                    tick,
+                                    quanta_per_sec,
+                                    Some(self.level.period()),
+                                );
                             }
                         }
                     }
