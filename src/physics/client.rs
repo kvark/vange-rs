@@ -93,6 +93,21 @@ pub fn net_control(input: &QuantInput) -> vangers_net::NetControl {
     }
 }
 
+/// Displacement over `t` seconds at velocity `v` turning at spin `w`
+/// (scaled axis): along an arc, so a car reckoned through a turn stays on
+/// its circle instead of running off on the tangent.
+fn arc(v: Vec3, w: Vec3, t: f32) -> Vec3 {
+    let rate = w.length();
+    if rate * t < 1e-4 {
+        return v * t;
+    }
+    let n = w / rate;
+    let along = n * n.dot(v);
+    let across = v - along;
+    let angle = rate * t;
+    along * t + (across * angle.sin() + n.cross(across) * (1.0 - angle.cos())) / rate
+}
+
 /// Another player's car.
 ///
 /// Drawn by dead reckoning with a blend: from each snapshot the car is
@@ -135,6 +150,8 @@ pub struct RemoteCar {
     /// drawn with when the latest snapshot arrived.
     prev_velocity: Vec3,
     prev_spin: Vec3,
+    /// Progress of the blend into the latest snapshot, 0..=1.
+    blend: f32,
 }
 
 impl RemoteCar {
@@ -144,6 +161,9 @@ impl RemoteCar {
     /// one: with ±20 ms of jitter the drawn car peaks at 1.3x its speed
     /// instead of 1.7x, for a few frames more to settle from rest.
     pub const BLEND: f32 = 2.0 / Self::SNAPSHOT_RATE;
+    /// Frames a blend takes at least: at a low frame rate a whole blend
+    /// would fit in one frame and show a correction as a jump.
+    pub const BLEND_FRAMES_MIN: f32 = 3.0;
     /// Longest the drawn car is carried on past a snapshot's arrival
     /// before it holds: covers a retransmit stall at a 250 ms RTT (~0.45
     /// s) plus the interval, not a dropped connection.
@@ -169,6 +189,7 @@ impl RemoteCar {
             reckon_spin: Vec3::ZERO,
             prev_velocity: Vec3::ZERO,
             prev_spin: Vec3::ZERO,
+            blend: 0.0,
         }
     }
 
@@ -217,21 +238,24 @@ impl RemoteCar {
             // The blend source carries on as the drawn car was carried
             // (still, once held past the cap).
             let since = self.interp_t / Self::SNAPSHOT_RATE;
-            let blend = (since / Self::BLEND).min(1.0);
             (self.prev_velocity, self.prev_spin) = if since < Self::DEAD_RECKON_MAX {
                 (
-                    self.prev_velocity.lerp(self.reckon_velocity, blend),
-                    self.prev_spin.lerp(self.reckon_spin, blend),
+                    self.prev_velocity.lerp(self.reckon_velocity, self.blend),
+                    self.prev_spin.lerp(self.reckon_spin, self.blend),
                 )
             } else {
                 (Vec3::ZERO, Vec3::ZERO)
             };
             self.prev_transform = self.render_transform;
-            self.reckon_velocity = step * Self::SNAPSHOT_RATE;
             self.reckon_spin = turn.to_scaled_axis() * Self::SNAPSHOT_RATE;
+            // The step is a chord: its direction is the heading half an
+            // interval back. Turned on to the snapshot's heading.
+            let half = Quat::from_scaled_axis(self.reckon_spin * (0.5 / Self::SNAPSHOT_RATE));
+            self.reckon_velocity = half * step * Self::SNAPSHOT_RATE;
         }
         self.target_transform = target;
         self.interp_t = 0.0;
+        self.blend = 0.0;
     }
 
     /// Move the drawn pose `delta` seconds on.
@@ -239,9 +263,11 @@ impl RemoteCar {
         self.interp_t += delta * Self::SNAPSHOT_RATE;
         let since = self.interp_t / Self::SNAPSHOT_RATE;
         let ahead = since.min(Self::DEAD_RECKON_MAX);
-        let blend = (since / Self::BLEND).min(1.0);
+        let rate = (delta / Self::BLEND).min(1.0 / Self::BLEND_FRAMES_MIN);
+        self.blend = (self.blend + rate).min(1.0);
+        let blend = self.blend;
         let carry = |t: &space::Transform, v: Vec3, w: Vec3| space::Transform {
-            disp: t.disp + v * ahead,
+            disp: t.disp + arc(v, w, ahead),
             rot: (Quat::from_scaled_axis(w * ahead) * t.rot).normalize(),
             scale: t.scale,
         };
@@ -723,10 +749,12 @@ mod tests {
         r.on_snapshot(&server(11.0, 10.0), None);
         // Not moved by the arrival, only by the frames after it.
         assert_eq!(r.render_transform.disp.x, 10.0);
-        r.interpolate(0.05);
+        r.interpolate(0.025);
+        r.interpolate(0.025);
         // Half blended between standing at 10 and 11 carried on at 20 u/s.
         assert!((r.render_transform.disp.x - 11.0).abs() < 1e-4);
-        r.interpolate(0.05);
+        r.interpolate(0.025);
+        r.interpolate(0.025);
         assert!((r.render_transform.disp.x - 13.0).abs() < 1e-4);
         let g = r.ghost().unwrap();
         assert_eq!(g.transform.disp.x, 11.0);
@@ -735,7 +763,8 @@ mod tests {
         // Drawn a unit ahead at 20 u/s: the next snapshot blends in from
         // there, both carried on.
         r.on_snapshot(&server(12.0, 10.0), None);
-        r.interpolate(0.05);
+        r.interpolate(0.025);
+        r.interpolate(0.025);
         assert!((r.render_transform.disp.x - 13.5).abs() < 1e-4);
     }
 
@@ -853,25 +882,57 @@ mod tests {
         assert!((r.render_transform.disp - held.transform.disp).length() < 1e-3);
     }
 
+    /// A remote going round a circle of `radius` at `speed`, at tick `n`.
+    fn circling(n: u32, speed: f32, radius: f32) -> ServerCar {
+        let angle = speed / radius * n as f32 / RemoteCar::SNAPSHOT_RATE;
+        let mut car = server(100.0 + radius * angle.sin(), 100.0 - radius * angle.cos());
+        car.transform.rot = Quat::from_rotation_z(angle);
+        car
+    }
+
     #[test]
     fn remote_dead_reckoning_turns_and_holds() {
-        let (speed, turn) = (40.0, 1.0);
+        let (speed, radius) = (40.0, 20.0);
         let mut r = RemoteCar::new(CarPhysicsData::test_default());
         for n in 0..4 {
-            r.on_snapshot(&moving(n, speed, turn), None);
+            r.on_snapshot(&circling(n, speed, radius), None);
             r.interpolate(0.05);
         }
-        // 0.3 s later in all: turned on by 0.3 rad from tick 3.
-        r.interpolate(0.25);
-        let yaw = r.render_transform.rot.to_euler(glam::EulerRot::ZYX).0;
-        assert!((yaw - turn * 0.45).abs() < 1e-3, "yaw {yaw}");
+        // A 0.3 s stall: drawn on round the circle, turned with it.
+        for _ in 0..5 {
+            r.interpolate(0.05);
+        }
+        let truth = circling(9, speed, radius).transform;
+        let off = (r.render_transform.disp - truth.disp).length();
+        assert!(off < 0.5, "{off:.2}u off the circle");
+        assert!(r.render_transform.rot.angle_between(truth.rot) < 0.02);
         // Past the cap it holds.
         r.interpolate(1.0);
         let held = r.render_transform;
         r.interpolate(1.0);
         assert_eq!(r.render_transform.disp, held.disp);
-        let reckoned = held.disp.x - moving(3, speed, turn).transform.disp.x;
-        assert!((reckoned - speed * RemoteCar::DEAD_RECKON_MAX).abs() < 1e-3);
+        let truth = circling(3 + 14, speed, radius).transform;
+        assert!((held.disp - truth.disp).length() < 0.5);
+    }
+
+    #[test]
+    fn remote_correction_spreads_over_frames_at_a_low_frame_rate() {
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        r.on_snapshot(&server(10.0, 10.0), None);
+        r.on_snapshot(&server(10.0, 10.0), None);
+        r.interpolate(0.125);
+        // Standing 6 u off where it was drawn, at 8 fps: a whole blend
+        // would fit in one frame.
+        r.on_snapshot(&server(16.0, 10.0), None);
+        r.on_snapshot(&server(16.0, 10.0), None);
+        let mut last = r.render_transform.disp.x;
+        for _ in 0..3 {
+            r.interpolate(0.125);
+            let x = r.render_transform.disp.x;
+            assert!(x - last < 2.0 + 1e-3, "moved {}", x - last);
+            last = x;
+        }
+        assert!((last - 16.0).abs() < 1e-3);
     }
 
     #[test]
@@ -882,9 +943,10 @@ mod tests {
         r.interpolate(0.2);
         // Respawned far away: no slide across the map, no reckoning on.
         r.on_snapshot(&server(900.0, 900.0), None);
-        assert_eq!(r.render_transform.disp, Vec3::new(900.0, 900.0, 10.0));
+        let at = Vec3::new(900.0, 900.0, 10.0);
+        assert_eq!(r.render_transform.disp, at);
         r.interpolate(0.3);
-        assert_eq!(r.render_transform.disp, Vec3::new(900.0, 900.0, 10.0));
+        assert!((r.render_transform.disp - at).length() < 1e-3);
     }
 
     #[test]
