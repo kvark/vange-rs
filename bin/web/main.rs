@@ -2000,18 +2000,35 @@ impl WebApp {
 
 mod net_ws {
     use super::*;
+    use std::cell::Cell;
     use std::cell::RefCell;
     use std::rc::Rc;
+    use vangers_net::link::{Closed, Keepalive};
     use vangers_net::{ClientMessage, PlayerId, ServerMessage, decode, encode};
     use wasm_bindgen::closure::Closure;
 
+    /// Seconds on the page's clock (what [`Keepalive`] and
+    /// [`vangers_net::link::Redial`] count in).
+    pub fn now() -> f64 {
+        js_sys::Date::now() / 1000.0
+    }
+
     pub struct WsClient {
         ws: web_sys::WebSocket,
+        /// What it was opened on, to dial again.
+        pub url: String,
         pub received: Rc<RefCell<Vec<ServerMessage>>>,
         pub connected: Rc<RefCell<bool>>,
         pub player_id: Option<PlayerId>,
         /// `Join` went out on this connection.
-        joined: bool,
+        joined: Rc<Cell<bool>>,
+        /// It opened at some point.
+        opened: Rc<Cell<bool>>,
+        /// It closed, and the frame loop has not taken that yet.
+        closed: Rc<Cell<bool>>,
+        keepalive: Rc<Cell<Keepalive>>,
+        /// The quantum the next batch starts at, for the keepalive.
+        next_quant: Rc<Cell<u32>>,
         _on_message: Closure<dyn FnMut(web_sys::MessageEvent)>,
         _on_open: Closure<dyn FnMut(JsValue)>,
         _on_error: Closure<dyn FnMut(web_sys::ErrorEvent)>,
@@ -2026,10 +2043,36 @@ mod net_ws {
 
             let received = Rc::new(RefCell::new(Vec::<ServerMessage>::new()));
             let connected = Rc::new(RefCell::new(false));
+            let joined = Rc::new(Cell::new(false));
+            let opened = Rc::new(Cell::new(false));
+            let closed = Rc::new(Cell::new(false));
+            let keepalive = Rc::new(Cell::new(Keepalive::default()));
+            let next_quant = Rc::new(Cell::new(0u32));
 
-            // on_message: decode binary frames
+            // on_message: decode binary frames. It also sends the
+            // keepalive: a hidden tab draws no frames (no input goes out)
+            // and throttles its timers, after 5 min hidden to one a
+            // minute, but still hears the server's snapshots, and a
+            // message handler is not throttled.
             let recv_clone = received.clone();
+            let (ka_ws, ka_joined, ka, ka_quant) = (
+                ws.clone(),
+                joined.clone(),
+                keepalive.clone(),
+                next_quant.clone(),
+            );
             let on_message = Closure::wrap(Box::new(move |e: web_sys::MessageEvent| {
+                if ka_joined.get() {
+                    let mut k = ka.get();
+                    if k.due(now()) {
+                        let _ = ka_ws.send_with_u8_array(&encode(&ClientMessage::Input {
+                            first_quant: ka_quant.get(),
+                            quanta: 0,
+                            control: Default::default(),
+                        }));
+                    }
+                    ka.set(k);
+                }
                 if let Ok(buf) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
                     let array = js_sys::Uint8Array::new(&buf);
                     let data = array.to_vec();
@@ -2045,9 +2088,11 @@ mod net_ws {
 
             // on_open: the frame loop sends `Join` once the car is known.
             let conn_clone = connected.clone();
+            let open_clone = opened.clone();
             let on_open = Closure::wrap(Box::new(move |_: JsValue| {
                 log::info!("WebSocket connected");
                 *conn_clone.borrow_mut() = true;
+                open_clone.set(true);
             }) as Box<dyn FnMut(JsValue)>);
             ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
@@ -2059,18 +2104,25 @@ mod net_ws {
 
             // on_close
             let conn_close = connected.clone();
+            let closed_clone = closed.clone();
             let on_close = Closure::wrap(Box::new(move |_: web_sys::CloseEvent| {
                 log::info!("WebSocket closed");
                 *conn_close.borrow_mut() = false;
+                closed_clone.set(true);
             }) as Box<dyn FnMut(web_sys::CloseEvent)>);
             ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
 
             Ok(WsClient {
                 ws,
+                url: url.to_string(),
                 received,
                 connected,
                 player_id: None,
-                joined: false,
+                joined,
+                opened,
+                closed,
+                keepalive,
+                next_quant,
                 _on_message: on_message,
                 _on_open: on_open,
                 _on_error: on_error,
@@ -2080,10 +2132,11 @@ mod net_ws {
 
         /// Join the session with the player's car, once per connection.
         pub fn join(&mut self, player_name: &str, car_name: &str, color: u8) {
-            if self.joined || !self.is_connected() {
+            if self.joined.get() || !self.is_connected() {
                 return;
             }
-            self.joined = true;
+            self.joined.set(true);
+            self.note_sent();
             log::info!(
                 "Joining as {} in {} (color {})",
                 player_name,
@@ -2102,7 +2155,27 @@ mod net_ws {
         }
 
         pub fn is_joined(&self) -> bool {
-            self.joined && self.is_connected()
+            self.joined.get() && self.is_connected()
+        }
+
+        fn note_sent(&self) {
+            let mut k = self.keepalive.get();
+            k.sent(now());
+            self.keepalive.set(k);
+        }
+
+        /// How it ended, once, after it closed.
+        pub fn take_closed(&mut self) -> Option<Closed> {
+            if !self.closed.replace(false) {
+                return None;
+            }
+            Some(if self.player_id.is_some() {
+                Closed::Dropped
+            } else if self.opened.get() {
+                Closed::Refused
+            } else {
+                Closed::NeverOpened
+            })
         }
 
         /// This frame's batch: `quanta` quanta from `first_quant` with the
@@ -2118,12 +2191,15 @@ mod net_ws {
             if !self.is_joined() || quanta == 0 {
                 return;
             }
+            let quanta = quanta.min(u16::MAX as u32) as u16;
             let msg = encode(&ClientMessage::Input {
                 first_quant,
-                quanta: quanta.min(u16::MAX as u32) as u16,
+                quanta,
                 control: control.clone(),
             });
             let _ = self.ws.send_with_u8_array(&msg);
+            self.next_quant.set(first_quant.wrapping_add(quanta as u32));
+            self.note_sent();
         }
 
         pub fn poll(&mut self) -> Vec<ServerMessage> {
@@ -2132,6 +2208,18 @@ mod net_ws {
 
         pub fn is_connected(&self) -> bool {
             *self.connected.borrow()
+        }
+    }
+
+    impl Drop for WsClient {
+        /// Unhook the handlers before their closures go, so a late event
+        /// on the old socket finds none.
+        fn drop(&mut self) {
+            self.ws.set_onmessage(None);
+            self.ws.set_onopen(None);
+            self.ws.set_onerror(None);
+            self.ws.set_onclose(None);
+            let _ = self.ws.close();
         }
     }
 }
@@ -2342,6 +2430,8 @@ struct WebHandler {
     /// pause or a stuck Ctrl (brake) from Ctrl+Tab.
     clock_stale: std::rc::Rc<std::cell::Cell<bool>>,
     ws_client: Option<net_ws::WsClient>,
+    /// When to dial the server again after the link dropped.
+    redial: vangers_net::link::Redial,
     /// The first frame builds the whole terrain TIN and uploads it; time
     /// it once so the console shows where startup actually goes.
     first_draw_measured: bool,
@@ -2403,6 +2493,7 @@ impl WebHandler {
             clock_stale: std::rc::Rc::new(std::cell::Cell::new(false)),
             first_draw_measured: false,
             ws_client,
+            redial: Default::default(),
             mp_status,
         }
     }
@@ -3169,6 +3260,35 @@ impl WebHandler {
         // `WsClient::is_connected` exposes. Otherwise a failed or
         // dropped connection would leave the camera locked.
         let connected = self.ws_client.as_ref().is_some_and(|c| c.is_connected());
+
+        // A link that was in the game and dropped dials again: a page
+        // frozen in a background tab comes back timed out, or the server
+        // restarted. Frames (so this) run only while the page is visible.
+        if let Some(ref mut ws) = self.ws_client
+            && let Some(how) = ws.take_closed()
+        {
+            let now = net_ws::now();
+            self.redial.closed(how, now);
+            if let Some(wait) = self.redial.pending(now) {
+                gpu.app.net_debug.note(
+                    log::Level::Info,
+                    format!("Connection {how:?}; dialing again in {wait:.0} s"),
+                );
+            }
+        }
+        if self.redial.due(net_ws::now())
+            && let Some(url) = self.ws_client.as_ref().map(|c| c.url.clone())
+        {
+            log::info!("Dialing {url} again");
+            match net_ws::WsClient::connect(&url) {
+                Ok(client) => self.ws_client = Some(client),
+                Err(e) => {
+                    log::warn!("Failed to connect to {url}: {e:?}");
+                    self.redial
+                        .closed(vangers_net::link::Closed::NeverOpened, net_ws::now());
+                }
+            }
+        }
 
         // Multiplayer: join with the player's car once the socket is open,
         // and start over when it closes.
