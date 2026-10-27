@@ -124,6 +124,30 @@ sized for 20 Hz authority (`Transform::WORLD_STATE_SNAP_POS` / `_SNAP_ROT` /
 `_BLEND`). The first snapshot still hard-snaps camera and pose. Tweaks
 Position hold / `SetPose` is unchanged.
 
+## Duel spawn (ram / bump tests)
+
+`--duel-spawn` places the first two **fresh** joiners 30u apart, facing each
+other along X, so collision / bump tests need no long drive. Joiner 0 spawns
+15u west of `--duel-center` facing east (+X); joiner 1 spawns 15u east facing
+west (−X). Later joiners use the regular spawn grid, and a reconnect within the
+grace window still restores its last pose. Without the flag spawning is
+unchanged.
+
+The default center `590,4151` is open flat sand on Fostral: terrain height 0–2
+with no slab (dual) texels across a 50×16 box, and both cars settle upright in
+place within about 1u. For other worlds pass a flat spot via
+`--duel-center X,Y`.
+
+```bash
+# Terminal A — server
+cargo run -p vangers-server -- --port 7800 --ws-port 7801 --level Fostral --duel-spawn
+# cargo run -p vangers-server -- ... --duel-spawn --duel-center 590,4151
+
+# Terminal B / C — join in order: Alice (west, faces east), then Bob (east, faces west)
+cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
+cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
+```
+
 ## Tweaks Position (debug hold + SetPose)
 
 In multiplayer, `WorldState` corrects the local player's transform toward the
@@ -162,7 +186,7 @@ cargo test --lib space::reconcile_tests
 cargo test --lib level::cycle
 # moving-land sync_authority:
 cargo test --lib level::moving::tests::sync_authority_matches_free_running_peer
-# server integration (incl. SetPose / SetSpiral → WorldState, reclaim):
+# server integration (incl. SetPose / SetSpiral → WorldState, reclaim, duel spawn):
 cargo test -p vangers-server --test integration
 ```
 
