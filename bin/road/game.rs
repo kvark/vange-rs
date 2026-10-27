@@ -696,6 +696,8 @@ pub struct Game {
     passages: Vec<config::passages::Passage>,
     /// Charges at an escave or outdoor KEY_UPDATE station; spent to open a passage.
     spiral: level::spiral::Spiral,
+    /// Online: our `SetSpiral` reports against the server's echoes.
+    spiral_sync: level::spiral::SpiralSync,
     /// HUD line: charge, proximity prompt, arrival, or missing-data note.
     passage_note: Option<String>,
     /// Newest `WorldState` tick applied and when: the view a `Fire` was
@@ -1151,6 +1153,7 @@ impl Game {
             all_passages,
             passages,
             spiral,
+            spiral_sync: Default::default(),
             passage_note: None,
             world_view: None,
             wrecked: None,
@@ -1283,12 +1286,19 @@ impl Game {
         }
     }
 
-    /// Push local spiral charge to the server after charge/discharge.
-    fn report_spiral_to_server(&self) {
+    /// Push local spiral charge to the server after charge/discharge, once
+    /// per change (see `SpiralSync`).
+    fn report_spiral_to_server(&mut self) {
         if let Some(net) = self.net.as_ref()
             && net.player_id.is_some()
+            && let Some(charge) = self.spiral_sync.report(self.spiral.charge)
         {
-            net.send_set_spiral(self.spiral.charge);
+            log::info!(
+                "Spiral reported to server: {}/{}",
+                charge,
+                self.spiral.capacity
+            );
+            net.send_set_spiral(charge);
         }
     }
 
@@ -1324,8 +1334,22 @@ impl Game {
     ) {
         for agent_state in agents {
             if Some(agent_state.player_id) == my_id {
+                use level::spiral::SpiralEcho;
+                let next = match self.spiral_sync.on_server(agent_state.spiral_charge) {
+                    SpiralEcho::Apply(c) | SpiralEcho::Confirmed(c) => c,
+                    SpiralEcho::Stale(c) => {
+                        if c != self.spiral.charge {
+                            log::debug!(
+                                "Spiral echo {} ignored: our {} not echoed yet",
+                                c,
+                                self.spiral.charge
+                            );
+                        }
+                        continue;
+                    }
+                };
                 let prev = self.spiral.charge;
-                let next = agent_state.spiral_charge.min(self.spiral.capacity);
+                let next = next.min(self.spiral.capacity);
                 if next != prev {
                     self.spiral.charge = next;
                     if next > prev && next == self.spiral.capacity {
@@ -1336,8 +1360,6 @@ impl Game {
                         self.spiral.charge,
                         self.spiral.capacity
                     );
-                } else {
-                    self.spiral.charge = next;
                 }
             } else if let Some(remote) = self.remote_agents.get_mut(&agent_state.player_id)
                 && remote.spiral_charge != agent_state.spiral_charge
@@ -2194,13 +2216,13 @@ impl Game {
         };
         if self.spiral.charge_full() {
             self.passage_note = Some("Spiral charged.".to_string());
-            self.report_spiral_to_server();
             log::info!(
                 "Spiral charged at station {} ({},{})",
                 station.name,
                 station.pos.0,
                 station.pos.1
             );
+            self.report_spiral_to_server();
         }
     }
 
@@ -3278,6 +3300,7 @@ impl Application for Game {
                         self.mp_state.status =
                             format!("Connected (player {}, level '{}')", player_id, level_name);
                         self.mp_state.connected = true;
+                        self.spiral_sync.reset();
                     }
                     NetEvent::PlayerJoined {
                         player_id,
@@ -3504,6 +3527,7 @@ impl Application for Game {
                     } => self.on_respawned(player_id, &transform, next_quant, my_id),
                     NetEvent::Disconnected => {
                         self.wrecked = None;
+                        self.spiral_sync.reset();
                         log::warn!("Disconnected from server");
                         self.remote_agents.clear();
                         self.mp_state.connected = false;
