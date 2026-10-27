@@ -805,6 +805,60 @@ fn test_reconnect_restores_spiral() {
     assert_eq!(bob_charge, 3, "fresh name uses seed, not Alice spiral");
 }
 
+/// Peak upward velocity the server reports over `duration`.
+fn peak_vz(client: &mut Client, duration: Duration) -> f32 {
+    client
+        .recv_for(duration)
+        .iter()
+        .filter_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => {
+                agents.first().map(|a| a.dynamo.linear_velocity[2])
+            }
+            _ => None,
+        })
+        .fold(f32::MIN, f32::max)
+}
+
+#[test]
+fn test_jump_reaches_server_physics() {
+    let server = ServerProcess::start();
+    let mut client = server.connect();
+    client.send(&ClientMessage::Join {
+        player_name: "Jumper".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+    });
+    let mut stash = Vec::new();
+    let _ = client.recv_welcome(&mut stash);
+    // Settle after the spawn drop, then measure idle vertical motion.
+    let _ = client.recv_for(Duration::from_secs(1));
+    let idle = peak_vz(&mut client, Duration::from_millis(600));
+
+    // A client sends Input every frame; the jump frame is followed at once
+    // by a jump-less one, inside the same 20 Hz server tick.
+    let control = |jump| vangers_net::NetControl {
+        motor: 0.0,
+        rudder: 0.0,
+        roll: 0.0,
+        brake: false,
+        turbo: false,
+        jump,
+    };
+    client.send(&ClientMessage::Input {
+        sequence: 1,
+        control: control(Some(10.0)),
+    });
+    client.send(&ClientMessage::Input {
+        sequence: 2,
+        control: control(None),
+    });
+    let jumped = peak_vz(&mut client, Duration::from_millis(600));
+    assert!(
+        jumped > idle + 5.0,
+        "jump never reached server physics: idle vz {idle}, after jump {jumped}"
+    );
+}
+
 #[test]
 fn test_duel_spawn_places_pair_facing_each_other() {
     let server =
