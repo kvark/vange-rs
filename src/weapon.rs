@@ -1,5 +1,6 @@
 //! Shots from equipped weapon bays. No original ammo tables or pixel bullets.
 
+use crate::combat::torus_delta;
 use crate::escave::{Inventory, Kind};
 use glam::Vec3;
 
@@ -40,20 +41,6 @@ impl Shot {
         let dir = self.vel.try_normalize().unwrap_or(Vec3::Y);
         (self.pos, self.pos + dir * SHOT_DRAW_LEN)
     }
-}
-
-/// Wrap-aware `to - from` on a torus of `period` (XY; Z is not wrapped).
-/// A zero period component does not wrap.
-fn torus_delta(from: Vec3, to: Vec3, period: (f32, f32)) -> Vec3 {
-    let wrap = |d: f32, span: f32| {
-        if span > 0.0 {
-            d - (d / span).round() * span
-        } else {
-            d
-        }
-    };
-    let d = to - from;
-    Vec3::new(wrap(d.x, period.0), wrap(d.y, period.1), d.z)
 }
 
 /// Server check of a `Fire`: the bay exists, the numbers are finite, the

@@ -1,5 +1,5 @@
 use vangers::{
-    config, level,
+    combat, config, level,
     physics::{
         self,
         prediction::{InputQueue, QuantInput, TickBudget},
@@ -16,7 +16,7 @@ use vangers_net::{
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
 use glam::{Vec2, Vec3};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -133,6 +133,7 @@ struct LastPose {
     dynamo: Dynamo,
     cirtainer: level::cycle::Cirtainer,
     spiral_charge: u8,
+    armor: u16,
     disconnected_at: Instant,
 }
 
@@ -195,6 +196,83 @@ struct ServerAgent {
     starved: Option<u32>,
     /// Shots taken from this player this tick (`weapon::FIRES_PER_TICK`).
     fires: u8,
+    /// Armour left (`AgentState::armor`); shots resolved here take it
+    /// down to 0.
+    armor: u16,
+    max_armor: u16,
+    /// The car's positions over the last `combat::HISTORY_SECS`, to test
+    /// shots against it where their shooters saw it.
+    history: combat::PoseHistory,
+    /// Throttled summaries of this player's shots and of the hits it took.
+    fire_log: FireLog,
+    hit_log: HitLog,
+}
+
+/// Diagnostic: a player's accepted shots, summed into at most one info
+/// line per [`INPUT_LOG_EVERY`] (each shot is a debug line; at two a tick
+/// they would flood the log).
+#[derive(Default)]
+struct FireLog {
+    last: Option<Instant>,
+    shots: u32,
+    rewind_max: f32,
+}
+
+impl FireLog {
+    fn note(&mut self, player_id: PlayerId, name: &str, rewind: f32) {
+        self.shots += 1;
+        self.rewind_max = self.rewind_max.max(rewind);
+        let now = Instant::now();
+        if self.last.is_some_and(|t| now - t < INPUT_LOG_EVERY) {
+            return;
+        }
+        info!(
+            "Fire: p{} ({}) {} shot(s) since the last line, rewind up to {:.2} ticks",
+            player_id, name, self.shots, self.rewind_max
+        );
+        *self = FireLog {
+            last: Some(now),
+            ..FireLog::default()
+        };
+    }
+}
+
+/// Diagnostic: hits a car took, summed into at most one info line per
+/// [`HIT_LOG_EVERY`], and always the one that empties its armour.
+#[derive(Default)]
+struct HitLog {
+    last: Option<Instant>,
+    hits: u32,
+    damage: u32,
+}
+
+const HIT_LOG_EVERY: Duration = Duration::from_millis(500);
+
+impl HitLog {
+    /// `emptied`: this hit took the last of the armour.
+    fn note(
+        &mut self,
+        target: (PlayerId, &str),
+        shooter: &str,
+        damage: u16,
+        armor: (u16, u16),
+        emptied: bool,
+    ) {
+        self.hits += 1;
+        self.damage += damage as u32;
+        let now = Instant::now();
+        if !emptied && self.last.is_some_and(|t| now - t < HIT_LOG_EVERY) {
+            return;
+        }
+        info!(
+            "Hit: p{} ({}) took {} hit(s) for {} since the last line, last from {}; armour {}/{}",
+            target.0, target.1, self.hits, self.damage, shooter, armor.0, armor.1
+        );
+        *self = HitLog {
+            last: Some(now),
+            ..HitLog::default()
+        };
+    }
 }
 
 /// Diagnostic: the brake, turbo and jump a client sends, logged at info so
@@ -291,6 +369,8 @@ impl ServerAgent {
             bumps: self.bumps,
             ack: self.inputs.ack(),
             control: net_control_of(&self.inputs.last()),
+            armor: self.armor,
+            max_armor: self.max_armor,
         }
     }
 
@@ -810,6 +890,19 @@ async fn main() {
         (common, std::collections::HashMap::new())
     };
 
+    // Undamaged armour per car, from `car.prm`.
+    let car_armor: HashMap<String, u16> = settings
+        .as_ref()
+        .map(|settings| {
+            config::car::entries(settings.open_relative("car.prm"))
+                .into_iter()
+                .map(|(name, _, data)| (name, config::car::CarStats::new(&data).max_armor as u16))
+                .collect()
+        })
+        .unwrap_or_default();
+    // Shots in flight, and the pose history each car keeps for them.
+    let mut shots: Vec<combat::ServerShot<PlayerId>> = Vec::new();
+
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<SessionEvent>();
     let sim_lag = SimLag {
         latency: Duration::from_millis(cli.sim_latency_ms),
@@ -1016,6 +1109,7 @@ async fn main() {
                     agent.trace_jump(player_id, tick, wrap);
                     agent.log_pose(player_id);
                 }
+                step_shots(&mut shots, &mut players, tick, dt_fixed, wrap);
 
                 // Story cycle: one quant per server tick (tick_rate 20 Hz
                 // matches MAIN_LOOP_TIME = 0.05). All joined players
@@ -1139,6 +1233,11 @@ async fn main() {
                             pose_logged: None,
                             starved: None,
                             fires: 0,
+                            armor: combat::DEFAULT_MAX_ARMOR,
+                            max_armor: combat::DEFAULT_MAX_ARMOR,
+                            history: combat::PoseHistory::default(),
+                            fire_log: FireLog::default(),
+                            hit_log: HitLog::default(),
                         });
                     }
 
@@ -1217,11 +1316,18 @@ async fn main() {
                                     agent.color = color;
                                     agent.joined = true;
                                     agent.inputs = InputQueue::default();
+                                    agent.history.clear();
+                                    agent.max_armor = car_armor
+                                        .get(&car_name)
+                                        .copied()
+                                        .unwrap_or(combat::DEFAULT_MAX_ARMOR);
+                                    agent.armor = agent.max_armor;
                                     if let Some(pose) = restored {
                                         agent.transform = pose.transform;
                                         agent.dynamo = pose.dynamo;
                                         agent.cirtainer = pose.cirtainer;
                                         agent.spiral_charge = pose.spiral_charge;
+                                        agent.armor = pose.armor.min(agent.max_armor);
                                         // Keep model scale in sync with the chosen car.
                                         agent.transform.scale = agent.phys_data.scale;
                                     } else {
@@ -1327,6 +1433,9 @@ async fn main() {
                                         // teleport sticks in WorldState.
                                         agent.dynamo.linear_velocity = Vec3::ZERO;
                                         agent.dynamo.angular_velocity = Vec3::ZERO;
+                                        // Don't rewind shots to before
+                                        // the teleport.
+                                        agent.history.clear();
                                     }
                                 }
                             }
@@ -1341,7 +1450,7 @@ async fn main() {
                                 }
                             }
 
-                            ClientMessage::Fire { quant, bay, origin, dir } => {
+                            ClientMessage::Fire { quant, bay, origin, dir, view_tick, view_ms } => {
                                 let player_id = effective_player_id(&conn_to_player, conn_id);
                                 let period = level.period();
                                 let Some(agent) = players.get_mut(&player_id) else {
@@ -1371,16 +1480,28 @@ async fn main() {
                                     }
                                 };
                                 agent.fires += 1;
-                                info!(
-                                    "Fire: player {} ({}) bay {} quant {} ack {} from {:?} dir {:?}",
+                                let rewind = combat::rewind_ticks(tick, view_tick, view_ms, dt_fixed);
+                                debug!(
+                                    "Fire: player {} ({}) bay {} quant {} ack {} view {}+{}ms rewind {:.2} ticks from {:?} dir {:?}",
                                     player_id,
                                     agent.name,
                                     bay,
                                     quant,
                                     agent.inputs.ack(),
+                                    view_tick,
+                                    view_ms,
+                                    rewind,
                                     origin,
                                     dir
                                 );
+                                agent.fire_log.note(player_id, &agent.name, rewind);
+                                shots.push(combat::ServerShot::new(
+                                    player_id,
+                                    bay,
+                                    Vec3::from(origin),
+                                    dir,
+                                    rewind,
+                                ));
                                 let shot = encode(&ServerMessage::Shot {
                                     shooter: player_id,
                                     tick,
@@ -1689,6 +1810,64 @@ fn purge_expired_poses(last_poses: &mut HashMap<PlayerId, LastPose>) {
     last_poses.retain(|_, pose| pose.disconnected_at.elapsed() <= RECONNECT_POSE_GRACE);
 }
 
+/// Record this tick's car positions, then fly every shot one tick on and
+/// apply its hit, if any: each shot tests the other joined cars where they
+/// were `rewind` ticks ago (`combat::rewind_ticks`), as its shooter saw
+/// them. A hit takes `combat::bay_damage` off the target's armour, down
+/// to 0, and ends the shot.
+fn step_shots(
+    shots: &mut Vec<combat::ServerShot<PlayerId>>,
+    players: &mut HashMap<PlayerId, ServerAgent>,
+    tick: u32,
+    dt: f32,
+    period: (f32, f32),
+) {
+    let keep = (combat::HISTORY_SECS / dt).ceil() as usize + 1;
+    for agent in players.values_mut().filter(|a| a.joined) {
+        agent.history.record(tick, agent.transform.disp, keep);
+    }
+    let mut hits = Vec::new();
+    shots.retain_mut(|shot| {
+        let at = tick as f32 - shot.rewind;
+        let targets: Vec<_> = players
+            .iter()
+            .filter(|(_, a)| a.joined)
+            .map(|(&id, a)| combat::Target {
+                id,
+                center: a.history.at(at, period).unwrap_or(a.transform.disp),
+                radius: a.phys_data.bbox.radius * a.transform.scale,
+            })
+            .collect();
+        match shot.step(dt, &targets, period) {
+            Some(target) => {
+                hits.push((shot.shooter, shot.bay, target));
+                false
+            }
+            None => !shot.is_spent(),
+        }
+    });
+    for (shooter, bay, target) in hits {
+        let shooter_name = players
+            .get(&shooter)
+            .map_or_else(|| format!("p{}", shooter), |a| a.name.clone());
+        let Some(agent) = players.get_mut(&target) else {
+            continue;
+        };
+        let damage = combat::bay_damage(bay);
+        let before = agent.armor;
+        agent.armor = agent.armor.saturating_sub(damage);
+        debug!(
+            "Hit: p{} ({}) by {} bay {} for {}: armour {}/{}",
+            target, agent.name, shooter_name, bay, damage, agent.armor, agent.max_armor
+        );
+        let armor = (agent.armor, agent.max_armor);
+        let emptied = before > 0 && agent.armor == 0;
+        agent
+            .hit_log
+            .note((target, &agent.name), &shooter_name, damage, armor, emptied);
+    }
+}
+
 fn remove_player(
     players: &mut HashMap<PlayerId, ServerAgent>,
     conn_to_player: &mut HashMap<PlayerId, PlayerId>,
@@ -1706,6 +1885,7 @@ fn remove_player(
                     dynamo: removed.dynamo,
                     cirtainer: removed.cirtainer,
                     spiral_charge: removed.spiral_charge,
+                    armor: removed.armor,
                     disconnected_at: Instant::now(),
                 },
             );

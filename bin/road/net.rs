@@ -185,13 +185,24 @@ impl NetworkClient {
         let _ = self.send_tx.send(msg);
     }
 
-    /// Report a shot from weapon bay `bay` (`ClientMessage::Fire`).
-    pub fn send_fire(&self, quant: u32, bay: u8, origin: [f32; 3], dir: [f32; 3]) {
+    /// Report a shot from weapon bay `bay` (`ClientMessage::Fire`), with
+    /// the `WorldState` tick the other cars were drawn from and how many
+    /// ms ago it arrived.
+    pub fn send_fire(
+        &self,
+        quant: u32,
+        bay: u8,
+        origin: [f32; 3],
+        dir: [f32; 3],
+        view: (u32, u16),
+    ) {
         let msg = encode(&ClientMessage::Fire {
             quant,
             bay,
             origin,
             dir,
+            view_tick: view.0,
+            view_ms: view.1,
         });
         let _ = self.send_tx.send(msg);
     }

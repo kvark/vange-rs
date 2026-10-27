@@ -740,6 +740,8 @@ fn test_fire_is_relayed_to_other_players() {
         bay: 1,
         origin: car,
         dir: [0.0, 2.0, 0.0],
+        view_tick: 0,
+        view_ms: 0,
     });
     // A muzzle far from the car and a bay that doesn't exist are dropped.
     alice.send(&ClientMessage::Fire {
@@ -747,12 +749,16 @@ fn test_fire_is_relayed_to_other_players() {
         bay: 0,
         origin: [car[0], car[1], car[2] + 1000.0],
         dir: [0.0, 1.0, 0.0],
+        view_tick: 0,
+        view_ms: 0,
     });
     alice.send(&ClientMessage::Fire {
         quant: 44,
         bay: 200,
         origin: car,
         dir: [0.0, 1.0, 0.0],
+        view_tick: 0,
+        view_ms: 0,
     });
 
     bob_stash.extend(bob.recv_for(Duration::from_secs(1)));
@@ -782,6 +788,104 @@ fn test_fire_is_relayed_to_other_players() {
         .chain(&alice_stash)
         .any(|m| matches!(m, ServerMessage::Shot { .. }));
     assert!(!echoed, "the shooter draws its own shot; no echo");
+}
+
+/// The newest `WorldState` in `msgs`: its tick and each agent's
+/// `(player_id, position, armor, max_armor)`.
+fn latest_world(msgs: &[ServerMessage]) -> Option<(u32, Vec<(u32, [f32; 3], u16, u16)>)> {
+    msgs.iter().rev().find_map(|m| match m {
+        ServerMessage::WorldState { tick, agents, .. } => Some((
+            *tick,
+            agents
+                .iter()
+                .map(|a| (a.player_id, a.transform.position, a.armor, a.max_armor))
+                .collect(),
+        )),
+        _ => None,
+    })
+}
+
+#[test]
+fn test_shot_takes_armor_off_the_target_only() {
+    let server = ServerProcess::start();
+    let mut alice = server.connect();
+    let mut bob = server.connect();
+
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
+    });
+    let mut alice_stash = Vec::new();
+    let alice_id = match alice.recv_welcome(&mut alice_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
+    });
+    let mut bob_stash = Vec::new();
+    let bob_id = match bob.recv_welcome(&mut bob_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+
+    alice_stash.extend(alice.recv_for(Duration::from_millis(400)));
+    let (tick, agents) = latest_world(&alice_stash).expect("Alice should get a WorldState");
+    let find = |agents: &[(u32, [f32; 3], u16, u16)], id| {
+        *agents
+            .iter()
+            .find(|a| a.0 == id)
+            .expect("both cars in WorldState")
+    };
+    let (_, a_pos, a_armor, a_max) = find(&agents, alice_id);
+    let (_, b_pos, b_armor, b_max) = find(&agents, bob_id);
+    assert!(a_max > 0 && b_max > 0, "armour comes with the car");
+    assert_eq!((a_armor, b_armor), (a_max, b_max), "both start undamaged");
+
+    // Two shots from Alice's car straight at Bob's (one bay 1, one bay 0),
+    // aimed in the view of the snapshot just received; one aimed away.
+    let at_bob = [
+        b_pos[0] - a_pos[0],
+        b_pos[1] - a_pos[1],
+        b_pos[2] - a_pos[2],
+    ];
+    for (quant, bay, dir) in [(10, 1, at_bob), (11, 0, at_bob)] {
+        alice.send(&ClientMessage::Fire {
+            quant,
+            bay,
+            origin: a_pos,
+            dir,
+            view_tick: tick,
+            view_ms: 0,
+        });
+    }
+    std::thread::sleep(Duration::from_millis(80));
+    alice.send(&ClientMessage::Fire {
+        quant: 12,
+        bay: 2,
+        origin: a_pos,
+        dir: [-at_bob[0], -at_bob[1], -at_bob[2]],
+        view_tick: tick,
+        view_ms: 0,
+    });
+
+    // Shots fly for at most `SHOT_LIFE` (1.5 s); give them time to land.
+    let msgs = bob.recv_for(Duration::from_secs(2));
+    let (_, agents) = latest_world(&msgs).expect("Bob should keep getting WorldState");
+    let (_, _, a_armor, _) = find(&agents, alice_id);
+    let (_, _, b_armor, _) = find(&agents, bob_id);
+    let expected =
+        b_max.saturating_sub(vangers::combat::bay_damage(1) + vangers::combat::bay_damage(0));
+    assert_eq!(
+        b_armor, expected,
+        "Bob takes both hits, the stray shot misses"
+    );
+    assert_eq!(a_armor, a_max, "the shooter is not hit by its own shots");
 }
 
 #[test]
