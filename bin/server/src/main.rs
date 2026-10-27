@@ -155,7 +155,25 @@ struct ServerAgent {
     spiral_charge: u8,
     sender: mpsc::UnboundedSender<Vec<u8>>,
     joined: bool,
+    /// Felt car-car bumps taken (`physics::FELT_BUMP_DV`), sent in
+    /// `AgentState::bumps` so the owning client adopts the hit.
+    bumps: u32,
+    /// Follow-up pose logs after the last jump.
+    jump_trace: Option<JumpTrace>,
 }
+
+/// Diagnostic: where a jump took the car, logged at info.
+struct JumpTrace {
+    tick: u32,
+    start: Vec3,
+}
+
+/// Ticks between `Jump trace` lines (1 s at 20 Hz).
+const JUMP_TRACE_EVERY: u32 = 20;
+/// Stop tracing after this many ticks even if the car keeps moving.
+const JUMP_TRACE_MAX: u32 = 200;
+/// World speed under which a traced car counts as at rest.
+const JUMP_TRACE_REST_SPEED: f32 = 0.2;
 
 impl ServerAgent {
     fn to_agent_state(&self, player_id: PlayerId) -> AgentState {
@@ -178,6 +196,62 @@ impl ServerAgent {
                 angular_velocity: self.dynamo.angular_velocity.into(),
             },
             spiral_charge: self.spiral_charge,
+            bumps: self.bumps,
+        }
+    }
+
+    fn world_velocity(&self) -> Vec3 {
+        self.transform.rot * self.dynamo.linear_velocity
+    }
+
+    /// One-shot `Jump` line at the quantum the jump impulse is applied
+    /// (pose before it, velocity after it).
+    fn log_jump(&mut self, player_id: PlayerId, tick: u32, power: f32, before: Vec3) {
+        let v = self.world_velocity();
+        info!(
+            "Jump tick {} p{} power={:.1} pos=({:.1},{:.1},{:.1}) vel=({:.2},{:.2},{:.2})",
+            tick, player_id, power, before.x, before.y, before.z, v.x, v.y, v.z
+        );
+        self.jump_trace = Some(JumpTrace {
+            tick,
+            start: before,
+        });
+    }
+
+    /// `Jump trace` lines every second after a jump: at +1 s, +2 s, then
+    /// on until the car is at rest (or `JUMP_TRACE_MAX`).
+    fn trace_jump(&mut self, player_id: PlayerId, tick: u32, wrap: (f32, f32)) {
+        let Some(ref trace) = self.jump_trace else {
+            return;
+        };
+        let elapsed = tick.wrapping_sub(trace.tick);
+        if elapsed == 0 || elapsed % JUMP_TRACE_EVERY != 0 {
+            return;
+        }
+        let shortest = |d: f32, size: f32| d - size * (d / size).round();
+        let pos = self.transform.disp;
+        let d = pos - trace.start;
+        let moved = Vec3::new(shortest(d.x, wrap.0), shortest(d.y, wrap.1), d.z);
+        let v = self.world_velocity();
+        let at_rest = v.length() < JUMP_TRACE_REST_SPEED;
+        info!(
+            "Jump trace +{:.1}s tick {} p{} pos=({:.1},{:.1},{:.1}) vel=({:.2},{:.2},{:.2}) moved=({:.1},{:.1},{:.1}){}",
+            elapsed as f32 / JUMP_TRACE_EVERY as f32,
+            tick,
+            player_id,
+            pos.x,
+            pos.y,
+            pos.z,
+            v.x,
+            v.y,
+            v.z,
+            moved.x,
+            moved.y,
+            moved.z,
+            if at_rest { " at rest" } else { "" }
+        );
+        if (elapsed >= 2 * JUMP_TRACE_EVERY && at_rest) || elapsed >= JUMP_TRACE_MAX {
+            self.jump_trace = None;
         }
     }
 
@@ -628,7 +702,7 @@ async fn main() {
                 // tick with no quantum keeps the jump pending.
                 for i in 0..quanta {
                     let last = i + 1 == quanta;
-                    for agent in players.values_mut() {
+                    for (&player_id, agent) in players.iter_mut() {
                         if !agent.joined {
                             continue;
                         }
@@ -650,6 +724,7 @@ async fn main() {
                         } else {
                             (None, 0.0)
                         };
+                        let before = agent.transform.disp;
                         physics::step(
                             &mut agent.dynamo,
                             &mut agent.transform,
@@ -667,6 +742,9 @@ async fn main() {
                             // on the ground they are driving over.
                             None,
                         );
+                        if let Some(power) = jump {
+                            agent.log_jump(player_id, tick, power, before);
+                        }
 
                         // Wrap coordinates
                         let size = level.size;
@@ -680,6 +758,10 @@ async fn main() {
                     // `physics::step` only sees the terrain, so without this
                     // pass players drive straight through each other.
                     collide_players(&mut players, level.size, &common, tick, last);
+                }
+                let wrap = (level.size.0 as f32, level.size.1 as f32);
+                for (&player_id, agent) in players.iter_mut() {
+                    agent.trace_jump(player_id, tick, wrap);
                 }
 
                 // Story cycle: one quant per server tick (tick_rate 20 Hz
@@ -798,6 +880,8 @@ async fn main() {
                             spiral_charge: 0,
                             sender,
                             joined: false,
+                            bumps: 0,
+                            jump_trace: None,
                         });
                     }
 
@@ -1043,6 +1127,15 @@ fn collide_players(
                 Some(wrap),
                 common,
             );
+            if let Some(c) = contact {
+                // Wrapping: clients only compare for a change.
+                if c.delta_v[0] >= physics::FELT_BUMP_DV {
+                    a.bumps = a.bumps.wrapping_add(1);
+                }
+                if c.delta_v[1] >= physics::FELT_BUMP_DV {
+                    b.bumps = b.bumps.wrapping_add(1);
+                }
+            }
             if trace {
                 log_proximity(tick, (id_a, &**a), (*id_b, &**b), wrap, contact.as_ref());
             }

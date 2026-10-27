@@ -494,6 +494,9 @@ pub struct Game {
     /// Multiplayer: whole-quantum stepping for the local car, matching the
     /// server's split so client prediction and server agree on a jump.
     quant_clock: physics::QuantClock,
+    /// Multiplayer: the local car's `AgentState::bumps` at the last
+    /// reconcile; a change means the server saw another car hit it.
+    server_bumps: Option<u32>,
     input: Input,
     life: life::World,
     inventory: escave::Inventory,
@@ -940,6 +943,7 @@ impl Game {
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
             quant_clock: physics::QuantClock::default(),
+            server_bumps: None,
             input: Input::default(),
             life,
             inventory,
@@ -2642,20 +2646,41 @@ impl Application for Game {
                                         self.server_synced = true;
                                         self.cam.focus_on(&server_transform);
                                     }
+                                    let bumped = self
+                                        .server_bumps
+                                        .replace(agent_state.bumps)
+                                        .is_some_and(|seen| seen != agent_state.bumps);
                                     if self.tweaks_pos_hold <= 0.0 {
-                                        let hard = if first_sync {
-                                            *transform = server_transform;
-                                            true
-                                        } else {
-                                            transform.reconcile_world_state(&server_transform)
+                                        let server = physics::ServerCar {
+                                            transform: server_transform,
+                                            linear_velocity: Vec3::from(
+                                                agent_state.dynamo.linear_velocity,
+                                            ),
+                                            angular_velocity: Vec3::from(
+                                                agent_state.dynamo.angular_velocity,
+                                            ),
+                                            traction: agent_state.dynamo.traction,
+                                            rudder: agent_state.dynamo.rudder,
+                                            bumped,
                                         };
-                                        if hard {
-                                            dynamo.linear_velocity =
-                                                Vec3::from(agent_state.dynamo.linear_velocity);
-                                            dynamo.angular_velocity =
-                                                Vec3::from(agent_state.dynamo.angular_velocity);
-                                            dynamo.traction = agent_state.dynamo.traction;
-                                            dynamo.rudder = agent_state.dynamo.rudder;
+                                        if first_sync {
+                                            *transform = server_transform;
+                                            dynamo.linear_velocity = server.linear_velocity;
+                                            dynamo.angular_velocity = server.angular_velocity;
+                                            dynamo.traction = server.traction;
+                                            dynamo.rudder = server.rudder;
+                                        } else if physics::reconcile_local_car(
+                                            transform, dynamo, &server,
+                                        ) == physics::Reconcile::Bump
+                                        {
+                                            let v = transform.rot * dynamo.linear_velocity;
+                                            log::info!(
+                                                "Server bump: adopted vel=({:.2},{:.2},{:.2}) bumps={}",
+                                                v.x,
+                                                v.y,
+                                                v.z,
+                                                agent_state.bumps
+                                            );
                                         }
                                     }
                                 }

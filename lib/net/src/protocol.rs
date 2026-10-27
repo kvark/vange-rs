@@ -132,6 +132,10 @@ pub struct AgentState {
     pub dynamo: NetDynamo,
     /// Spiral energy slots filled (0 = discharged). Capacity stays client-local.
     pub spiral_charge: u8,
+    /// Felt car-car bumps this car has taken (wrapping counter). A change
+    /// between snapshots tells the owning client to adopt the server
+    /// velocity even if it skipped the snapshot of the bump itself.
+    pub bumps: u32,
 }
 
 /// Network-serializable transform (position + rotation + scale).
@@ -221,6 +225,7 @@ mod tests {
                     angular_velocity: [0.0, 0.0, 0.5],
                 },
                 spiral_charge: 3,
+                bumps: 7,
             }],
             cycle: None,
             moving: None,
