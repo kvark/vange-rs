@@ -464,11 +464,23 @@ timer expires with a pending edit, the client sends `ClientMessage::SetPose`
 with the local position and orientation. The server applies that transform for
 the sender's `player_id` (and clears residual velocity) so the next `WorldState`
 broadcast keeps the tweaked spot for everyone. Remote agents and normal sync
-when not editing are unchanged. **Debug-only** — not for normal gameplay.
+when not editing are unchanged. **Debug-only** — not for normal gameplay: the
+server takes `SetPose` only when started with `--allow-setpose` (as does the
+autodrive `tp:` step), and never from a wreck or within
+`combat::RESPAWN_POSE_LOCK_SECS` (1 s) of a respawn.
+
+The upright key (R) is not a debug pose: it sends `ClientMessage::Reset` with
+the car's position, and the server stands the car upright and still there if
+that is within `combat::RESET_REACH` (40u) of its own pose (else where the
+server has it), with the same wreck / respawn refusals. A respawn needs no
+answer from the client: `ServerMessage::Respawned` carries the quantum the
+server numbers the car's inputs from (`InputQueue::restart`, far past
+anything the wreck still has in flight), and the client restarts its
+prediction there (`physics::death`, shared by native and web; protocol 7).
 
 ```bash
-# Terminal A — server (matching level as usual)
-cargo run -p vangers-server -- --port 7800 --ws-port 7801
+# Terminal A — server (matching level as usual), debug poses allowed
+cargo run -p vangers-server -- --port 7800 --ws-port 7801 --allow-setpose
 
 # Terminal B / C — Alice and Bob
 cargo run --bin road -- --server 127.0.0.1:7800 --name Alice

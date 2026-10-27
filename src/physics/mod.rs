@@ -9,6 +9,7 @@ const EPSILON: f32 = f32::EPSILON;
 
 pub mod client;
 mod collision;
+pub mod death;
 mod fmath;
 pub mod prediction;
 mod reconcile;

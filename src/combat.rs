@@ -183,6 +183,79 @@ pub fn nearest_escave(pos: Vec3, escaves: &[(i32, i32)], period: (f32, f32)) -> 
         .copied()
 }
 
+/// How long after a respawn the server takes no pose from the client,
+/// seconds: a `SetPose` or upright `Reset` sent from the wreck (or racing
+/// the `Respawned`) must not undo the respawn.
+pub const RESPAWN_POSE_LOCK_SECS: f32 = 1.0;
+/// How far from the server's pose of the car the upright key may put it,
+/// in world units: the client's prediction runs a little ahead of the
+/// server, but not a car-length or more.
+pub const RESET_REACH: f32 = 40.0;
+
+/// Why the server ignored a pose the client set itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoseRefusal {
+    /// `SetPose` on a server run without `--allow-setpose`.
+    NotAllowed,
+    /// The car is a wreck: it stays where it went up.
+    Wreck,
+    /// Within [`RESPAWN_POSE_LOCK_SECS`] of a respawn.
+    JustRespawned,
+}
+
+impl std::fmt::Display for PoseRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match *self {
+            Self::NotAllowed => "SetPose is debug only (--allow-setpose)",
+            Self::Wreck => "a wreck",
+            Self::JustRespawned => "just respawned",
+        })
+    }
+}
+
+/// Whether the server takes a pose the client set its car to itself in
+/// tick `now`: a debug `SetPose` (`set_pose`) only when `allowed`
+/// (`--allow-setpose`), an upright `Reset` always; neither for a wreck (`dead`) nor within
+/// [`RESPAWN_POSE_LOCK_SECS`] after the tick it last respawned in.
+pub fn check_client_pose(
+    set_pose: bool,
+    allowed: bool,
+    dead: bool,
+    respawned: Option<u32>,
+    now: u32,
+    tick_secs: f32,
+) -> Result<(), PoseRefusal> {
+    if set_pose && !allowed {
+        return Err(PoseRefusal::NotAllowed);
+    }
+    if dead {
+        return Err(PoseRefusal::Wreck);
+    }
+    if let Some(at) = respawned {
+        let lock = if tick_secs > 0.0 {
+            (RESPAWN_POSE_LOCK_SECS / tick_secs).round() as u32
+        } else {
+            0
+        };
+        if now.wrapping_sub(at) < lock {
+            return Err(PoseRefusal::JustRespawned);
+        }
+    }
+    Ok(())
+}
+
+/// Where the upright key puts a car the server has at `server`, the client
+/// at `client`: the client's position (unfolded next to the server's)
+/// within [`RESET_REACH`], else the server's own.
+pub fn reset_position(client: Vec3, server: Vec3, period: (f32, f32)) -> Vec3 {
+    let delta = torus_delta(server, client, period);
+    if delta.is_finite() && delta.length() <= RESET_REACH {
+        server + delta
+    } else {
+        server
+    }
+}
+
 /// Fly every shot one tick of `dt` on and return its hits as
 /// `(shooter, bay, target)`; a shot that hit or is spent is removed.
 /// `targets(rewind)` lists the cars as a shot rewound by `rewind` ticks
@@ -302,6 +375,70 @@ mod tests {
     use super::*;
 
     const PERIOD: (f32, f32) = (2048.0, 16384.0);
+
+    #[test]
+    fn client_poses_are_refused_for_wrecks_and_just_after_a_respawn() {
+        let tick = 0.05;
+        // SetPose needs --allow-setpose; Reset does not.
+        assert_eq!(
+            check_client_pose(true, false, false, None, 100, tick),
+            Err(PoseRefusal::NotAllowed)
+        );
+        assert_eq!(
+            check_client_pose(true, true, false, None, 100, tick),
+            Ok(())
+        );
+        assert_eq!(
+            check_client_pose(false, false, false, None, 100, tick),
+            Ok(())
+        );
+        // Never from a wreck.
+        for set_pose in [true, false] {
+            assert_eq!(
+                check_client_pose(set_pose, true, true, None, 100, tick),
+                Err(PoseRefusal::Wreck)
+            );
+        }
+        // Locked for a second (20 ticks) after the respawn tick.
+        for now in [100, 110, 119] {
+            assert_eq!(
+                check_client_pose(true, true, false, Some(100), now, tick),
+                Err(PoseRefusal::JustRespawned),
+                "tick {now}"
+            );
+            assert_eq!(
+                check_client_pose(false, false, false, Some(100), now, tick),
+                Err(PoseRefusal::JustRespawned),
+                "tick {now}"
+            );
+        }
+        assert_eq!(
+            check_client_pose(false, false, false, Some(100), 120, tick),
+            Ok(())
+        );
+        // Across the tick counter's wrap.
+        assert_eq!(
+            check_client_pose(false, false, false, Some(u32::MAX - 2), 5, tick),
+            Err(PoseRefusal::JustRespawned)
+        );
+    }
+
+    #[test]
+    fn reset_keeps_the_client_position_only_within_reach() {
+        let server = Vec3::new(100.0, 200.0, 10.0);
+        let near = Vec3::new(110.0, 195.0, 12.0);
+        assert_eq!(reset_position(near, server, PERIOD), near);
+        let far = Vec3::new(1000.0, 200.0, 10.0);
+        assert_eq!(reset_position(far, server, PERIOD), server);
+        // Unfolded across the seam next to the server's pose.
+        let seam = Vec3::new(2040.0, 200.0, 10.0);
+        let folded = Vec3::new(5.0, 200.0, 10.0);
+        assert_eq!(
+            reset_position(folded, seam, PERIOD),
+            Vec3::new(2053.0, 200.0, 10.0)
+        );
+        assert_eq!(reset_position(Vec3::NAN, server, PERIOD), server);
+    }
 
     #[test]
     fn segment_sphere_hits_and_misses() {

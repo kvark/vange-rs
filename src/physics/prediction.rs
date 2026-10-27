@@ -227,6 +227,22 @@ impl InputQueue {
         TickBudget { real, held: 0 }
     }
 
+    /// Quanta past every input this queue could have been sent so far
+    /// that a respawn starts the numbering from: far beyond what a client
+    /// can have in flight (minutes of quanta), so its wreck's late inputs
+    /// fall below the new start and are dropped.
+    pub const RESTART_GAP: u32 = 1 << 16;
+
+    /// The server moved the car itself (a respawn): drop what is queued
+    /// and expect inputs from a fresh index [`Self::RESTART_GAP`] past
+    /// everything received. Returns it, for the client to number on from.
+    pub fn restart(&mut self) -> u32 {
+        let queued_end = self.next.wrapping_add(self.pending.len() as u32);
+        let next = queued_end.wrapping_add(Self::RESTART_GAP);
+        self.reset(next);
+        next
+    }
+
     /// The held control the car last ran with (no jump or roll), sent to
     /// the other clients for their contact ghost of this car.
     pub fn last(&self) -> QuantInput {
@@ -332,6 +348,13 @@ impl Prediction {
     /// numbering goes on.
     pub fn clear(&mut self) {
         self.history.clear();
+    }
+
+    /// The server moved the car and numbers its inputs on from `next`
+    /// (a respawn): the history goes and the numbering jumps there.
+    pub fn restart_at(&mut self, next: u32) {
+        self.history.clear();
+        self.next = next;
     }
 
     /// `count` quanta pass with the car moved outside its inputs (held on
@@ -704,6 +727,40 @@ mod tests {
         assert_eq!((q.ack(), q.pending()), (10, 2));
         q.reset(20);
         assert_eq!((q.ack(), q.pending()), (20, 0));
+    }
+
+    #[test]
+    fn restart_drops_the_wrecks_late_inputs() {
+        let mut q = InputQueue::default();
+        q.push(0, 30, input(1.0, None));
+        q.pop();
+        let next = q.restart();
+        assert_eq!(next, 30 + InputQueue::RESTART_GAP);
+        assert_eq!((q.ack(), q.pending()), (next, 0));
+        // Inputs the wreck sent before it heard of the respawn: ignored.
+        q.push(30, 50, input(0.0, None));
+        q.push(500, 4, input(0.0, None));
+        assert_eq!((q.ack(), q.pending()), (next, 0));
+        // The client's inputs numbered on from the respawn.
+        q.push(next, 3, input(1.0, None));
+        assert_eq!((q.ack(), q.pending()), (next, 3));
+        // Across the counter's wrap.
+        let mut q = InputQueue::default();
+        q.reset(u32::MAX - 5);
+        q.push(u32::MAX - 5, 4, input(1.0, None));
+        let next = q.restart();
+        assert_eq!(next, (u32::MAX - 1).wrapping_add(InputQueue::RESTART_GAP));
+        q.push(u32::MAX - 1, 8, input(0.0, None));
+        assert_eq!((q.ack(), q.pending()), (next, 0));
+    }
+
+    #[test]
+    fn prediction_restarts_at_the_servers_quantum() {
+        let mut p = Prediction::default();
+        p.skip(12);
+        p.restart_at(90_000);
+        assert_eq!(p.next(), 90_000);
+        assert!(p.is_empty());
     }
 
     #[test]

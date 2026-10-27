@@ -13,7 +13,10 @@ pub type PlayerId = u32;
 /// 5: server-owned armour in `AgentState::armor` / `max_armor`; the
 /// shooter's view of the world in `Fire::view_tick` / `view_ms`.
 /// 6: `ServerMessage::Died` / `Respawned` and `AgentState::dead`.
-pub const PROTOCOL_VERSION: u32 = 6;
+/// 7: `Respawned::next_quant` (no `SetPose` answer); `ClientMessage::Reset`
+/// for the upright key, `SetPose` only on a server run with
+/// `--allow-setpose`.
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// Client-to-server messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,10 +41,12 @@ pub enum ClientMessage {
     },
     /// Client is leaving the session.
     Leave,
-    /// Debug: set this player's authoritative pose (Tweaks Position apply).
+    /// Debug: set this player's authoritative pose (Tweaks Position apply,
+    /// the autodrive teleport).
     ///
-    /// Server accepts for the sender's `player_id` and uses the transform in
-    /// subsequent `WorldState` snapshots. Not for normal gameplay.
+    /// Only a server started with `--allow-setpose` takes it, and never for
+    /// a wreck or just after a respawn; otherwise it is ignored (the
+    /// client's next snapshot puts its car back). Not for normal gameplay.
     ///
     /// `next_quant` is the client's next quantum index: queued input from
     /// before the pose is dropped and the ack moves there.
@@ -54,6 +59,14 @@ pub enum ClientMessage {
     /// Server stores the value and broadcasts it on `AgentState.spiral_charge`
     /// so remotes and reclaim see the same charge. Solo offline never sends this.
     SetSpiral { charge: u8 },
+    /// The upright key: the client set its car upright (identity rotation,
+    /// standing still) at `position`, before quantum `next_quant`.
+    ///
+    /// The server checks it against its own pose: it ignores it for a
+    /// wreck or just after a respawn, and a `position` further than a
+    /// short reach from the car is replaced by the server's. Queued input
+    /// from before is dropped and the ack moves to `next_quant`.
+    Reset { position: [f32; 3], next_quant: u32 },
     /// The player fired weapon bay `bay`: a shot from `origin` (the car's
     /// predicted position) along `dir` (unit, the car's forward).
     ///
@@ -127,11 +140,14 @@ pub enum ServerMessage {
     },
     /// Player `player_id` is back, undamaged, at `transform` (near an
     /// escave), standing still. Sent to everyone. The owning client snaps
-    /// its car there and answers with `ClientMessage::SetPose`, which
-    /// lines its inputs up again; the others snap their copy of the car.
+    /// its car there and numbers its inputs on from `next_quant` (the
+    /// server dropped what it had queued and acks from there; input still
+    /// in flight from the wreck is numbered below it and ignored); the
+    /// others snap their copy of the car.
     Respawned {
         player_id: PlayerId,
         transform: NetTransform,
+        next_quant: u32,
     },
 }
 
@@ -557,15 +573,36 @@ mod tests {
                 rotation: [0.0, 0.0, 1.0, 0.0],
                 scale: 1.0,
             },
+            next_quant: 70_000,
         };
         let (decoded, _): (ServerMessage, _) = decode(&encode(&msg)).unwrap();
         match decoded {
             ServerMessage::Respawned {
                 player_id,
                 transform,
+                next_quant,
             } => {
-                assert_eq!(player_id, 2);
+                assert_eq!((player_id, next_quant), (2, 70_000));
                 assert_eq!(transform.position, [1657.0, 353.0, 40.0]);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn round_trip_reset() {
+        let msg = ClientMessage::Reset {
+            position: [1.0, 2.0, 3.0],
+            next_quant: 41,
+        };
+        let (decoded, _): (ClientMessage, _) = decode(&encode(&msg)).unwrap();
+        match decoded {
+            ClientMessage::Reset {
+                position,
+                next_quant,
+            } => {
+                assert_eq!(position, [1.0, 2.0, 3.0]);
+                assert_eq!(next_quant, 41);
             }
             _ => panic!("wrong variant"),
         }
