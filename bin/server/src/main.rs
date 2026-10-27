@@ -51,8 +51,8 @@ struct Cli {
 
     /// Drop a client that has sent nothing for this many seconds (a crashed
     /// or frozen client whose TCP connection never closed). A live client
-    /// sends an `Input` batch every frame; one in an escave may be silent
-    /// and is never timed out. 0 turns it off.
+    /// sends an `Input` batch every frame, and one on the escave screen an
+    /// empty one as a keepalive. 0 turns it off.
     #[arg(long, default_value_t = DEFAULT_SILENT_TIMEOUT_SECS)]
     silent_timeout_secs: f32,
 
@@ -145,6 +145,13 @@ enum SessionEvent {
 /// level load on the client, short enough that a frozen client's car does
 /// not stand in the road (and hold its name) for long.
 const DEFAULT_SILENT_TIMEOUT_SECS: f32 = 8.0;
+
+/// A same-name `Join` takes over the session holding the name only once
+/// that session has been silent this long: a client that restarted before
+/// the server noticed its old connection die. A live client is heard every
+/// frame (and every `KEEPALIVE_EVERY`, 0.5 s, on the escave screen), so
+/// a join under a name in use is refused instead.
+const REPLACE_AFTER_SILENT: Duration = Duration::from_millis(1500);
 
 /// How long a disconnected player's last pose / cycle carry is kept for reclaim.
 const RECONNECT_POSE_GRACE: Duration = Duration::from_secs(5 * 60);
@@ -1454,15 +1461,27 @@ async fn main() {
                                     remove_player(&mut players, &mut conn_to_player, &mut last_poses, conn_id);
                                     continue;
                                 }
-                                // A same-name rejoin while the old session is
-                                // still joined (the client restarted before the
-                                // server noticed the old connection die):
-                                // replace it, keeping its pose for the reclaim,
-                                // instead of putting a second car on the road.
+                                // A same-name join while the old session is
+                                // still joined. Silent for a while: the client
+                                // restarted before the server noticed the old
+                                // connection die, so replace it, keeping its
+                                // pose for the reclaim. Still talking: someone
+                                // else wants the name (there is no auth), so
+                                // refuse rather than kick it or put a second
+                                // car on the road.
                                 if let Some(old_id) = live_holder(&player_name, conn_id, &players, &name_ids) {
+                                    let quiet = players[&old_id].last_heard.elapsed();
+                                    if quiet < REPLACE_AFTER_SILENT {
+                                        warn!(
+                                            "Refusing conn_id={}: the name {:?} is in use by player {} (heard {:.1} s ago)",
+                                            conn_id, player_name, old_id, quiet.as_secs_f32()
+                                        );
+                                        remove_player(&mut players, &mut conn_to_player, &mut last_poses, conn_id);
+                                        continue;
+                                    }
                                     warn!(
-                                        "Player {} ({:?}) rejoined on conn_id={}: replacing the stale session",
-                                        old_id, player_name, conn_id
+                                        "Player {} ({:?}) rejoined on conn_id={}: replacing the stale session (silent for {:.1} s)",
+                                        old_id, player_name, conn_id, quiet.as_secs_f32()
                                     );
                                     remove_player(&mut players, &mut conn_to_player, &mut last_poses, old_id);
                                 }
@@ -2158,15 +2177,13 @@ fn effective_player_id(
 }
 
 /// Players (joined or not) that have sent nothing for longer than `limit`, with how
-/// long. A player in an escave is never silent: the escave screen may send
-/// nothing while it is up.
+/// long. One in an escave too: the escave screen sends a keepalive.
 fn silent_players(
     players: &HashMap<PlayerId, ServerAgent>,
     limit: Duration,
 ) -> Vec<(PlayerId, Duration)> {
     let mut silent: Vec<_> = players
         .iter()
-        .filter(|(_, a)| !a.in_escave)
         .map(|(&id, a)| (id, a.last_heard.elapsed()))
         .filter(|&(_, quiet)| quiet > limit)
         .collect();
@@ -2472,6 +2489,11 @@ fn remove_player(
             );
         }
         info!("Removed player {} ({})", player_id, removed.name);
+        // A connection that never joined (refused, or gone before its
+        // `Join`) was never announced either.
+        if !removed.joined {
+            return;
+        }
         let msg = encode(&ServerMessage::PlayerLeft { player_id });
         for agent in players.values() {
             let _ = agent.sender.send(msg.clone());
