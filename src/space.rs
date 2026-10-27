@@ -213,6 +213,10 @@ pub struct Camera {
     // this non-uniform scale is used to make the camera left-handed
     pub scale: Vec3,
     pub proj: Projection,
+    /// Heading (yaw about +Z, radians) the chase camera is following,
+    /// carried between frames by [`Camera::follow`]. `None` until the
+    /// first follow, which adopts the target's heading outright.
+    pub chase_yaw: Option<f32>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -370,15 +374,58 @@ impl Camera {
         ]
     }
 
+    /// Heading of a car for the chase camera: the yaw of its forward
+    /// axis, and how far that yaw can be trusted (0..=1).
+    ///
+    /// The flattened forward axis alone degenerates and flips when the
+    /// car pitches through vertical; the flattened right axis (turned a
+    /// quarter to the front) does the same through a full roll. Their sum
+    /// is the car's yaw for any upright pose and survives any pitch or
+    /// any roll, shrinking to zero only when the car is upside down - the
+    /// one pose whose "forward" depends on how it got there.
+    pub fn chase_heading(rot: Quat) -> (f32, f32) {
+        let front = rot * Vec3::Y;
+        let right = rot * Vec3::X;
+        let d = Vec2::new(front.x - right.y, front.y + right.x);
+        // |d| is 2 upright, 1 on the side or nose-up, 0 upside down.
+        let trust = ((0.5 * d.length() - 0.3) / 0.4).clamp(0.0, 1.0);
+        let trust = trust * trust * (3.0 - 2.0 * trust);
+        (f32::atan2(-d.x, d.y), trust)
+    }
+
+    /// Advance [`Self::chase_yaw`] toward the target's heading.
+    ///
+    /// Upright the camera takes the car's yaw as is. While the car is
+    /// tumbling (upside down, or flipping through it) the heading is held,
+    /// eased in again as the car rights itself, and never turned faster
+    /// than `CHASE_YAW_RATE`, so an in-air tumble cannot spin the view.
+    pub fn update_chase_yaw(&mut self, target: &Transform, dt: f32) -> Quat {
+        /// Fastest the chase heading may turn, radians per second: half a
+        /// turn a second, twice a hard driving turn.
+        const CHASE_YAW_RATE: f32 = std::f32::consts::PI;
+        let (yaw, trust) = Self::chase_heading(target.rot);
+        let next = match self.chase_yaw {
+            Some(prev) if prev.is_finite() => {
+                let pi = std::f32::consts::PI;
+                let delta = (yaw - prev + pi).rem_euclid(2.0 * pi) - pi;
+                let max = CHASE_YAW_RATE * dt.max(0.0);
+                let next = prev + (delta * trust).clamp(-max, max);
+                (next + pi).rem_euclid(2.0 * pi) - pi
+            }
+            _ => yaw,
+        };
+        self.chase_yaw = Some(next);
+        Quat::from_rotation_z(next)
+    }
+
+    /// The heading [`Self::follow`] last used, as a rotation about +Z.
+    pub fn chase_twist(&self) -> Quat {
+        Quat::from_rotation_z(self.chase_yaw.unwrap_or(0.0))
+    }
+
     pub fn follow(&mut self, target: &Transform, dt: f32, follow: &Follow) {
         let swing = Quat::from_rotation_x(follow.angle_x);
-        let mut front = target.rot * Vec3::Y;
-        front.z = 0.0;
-        let twist = if front.length_squared() > 1e-8 {
-            Quat::from_rotation_arc(Vec3::Y, front.normalize())
-        } else {
-            Quat::IDENTITY
-        };
+        let twist = self.update_chase_yaw(target, dt);
 
         let patch = Quat::from_rotation_z(std::f32::consts::PI);
         let heading = patch * twist;
@@ -519,6 +566,8 @@ impl Camera {
     pub fn focus_on(&mut self, target: &Transform) {
         self.loc = target.disp + Vec3::new(0.0, -64.0, 40.0);
         self.rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_3);
+        // A jump cut: the next follow takes the target's heading outright.
+        self.chase_yaw = None;
     }
 
     pub fn rotate_focus(&mut self, target: &Transform, hor: f32, ver: f32) {
@@ -740,6 +789,7 @@ mod ground_tests {
 
     fn cam_at(loc: Vec3) -> Camera {
         Camera {
+            chase_yaw: None,
             loc,
             rot: Quat::IDENTITY,
             scale: Vec3::ONE,
@@ -1032,6 +1082,190 @@ mod ground_tests {
             "should still sit behind the hull, got {dist} at {:?}",
             cam.loc
         );
+    }
+
+    /// The overhead chase of `config/settings.ron` (240u up, tilted 30°,
+    /// speed 1) and the web build's close look-ahead chase.
+    fn chase_follows() -> [Follow; 2] {
+        [
+            Follow {
+                angle_x: 60f32.to_radians() - std::f32::consts::FRAC_PI_2,
+                offset: Vec3::new(0.0, 0.0, 240.0),
+                speed: 1.0,
+                look_ahead: 0.0,
+            },
+            Follow {
+                angle_x: 12f32.to_radians() - std::f32::consts::FRAC_PI_2,
+                offset: Vec3::new(0.0, 24.0, 9.0),
+                speed: 8.0,
+                look_ahead: 10.0,
+            },
+        ]
+    }
+
+    fn wrap_angle(a: f32) -> f32 {
+        let pi = std::f32::consts::PI;
+        (a + pi).rem_euclid(2.0 * pi) - pi
+    }
+
+    /// Yaw of the camera's view direction, flattened.
+    fn view_yaw(cam: &Camera) -> f32 {
+        let d = cam.dir();
+        f32::atan2(-d.x, d.y)
+    }
+
+    /// Follow `pose(t)` for `frames` 60 fps frames after settling on
+    /// `pose(0)`; returns the worst per-frame turn of the camera view and
+    /// of the chase heading, and the largest heading drift from the start.
+    fn chase(follow: &Follow, frames: usize, pose: impl Fn(f32) -> Quat) -> (f32, f32, f32) {
+        let dt = 1.0 / 60.0;
+        let mut target = Transform {
+            disp: Vec3::new(100.0, 100.0, 50.0),
+            rot: pose(0.0),
+            scale: 1.0,
+        };
+        let mut cam = cam_at(target.disp + Vec3::new(0.0, 0.0, 200.0));
+        for _ in 0..600 {
+            cam.follow(&target, dt, follow);
+        }
+        let start = cam.chase_yaw.unwrap();
+        let (mut view, mut heading, mut drift) = (view_yaw(&cam), start, 0.0f32);
+        let (mut worst_view, mut worst_heading) = (0.0f32, 0.0f32);
+        for i in 1..=frames {
+            let t = i as f32 / frames as f32;
+            target.rot = pose(t);
+            // A jump arc: the car keeps moving while it tumbles.
+            target.disp += Vec3::new(0.0, 0.5, 1.0 - 2.0 * t);
+            cam.follow(&target, dt, follow);
+            let (v, h) = (view_yaw(&cam), cam.chase_yaw.unwrap());
+            worst_view = worst_view.max(wrap_angle(v - view).abs());
+            worst_heading = worst_heading.max(wrap_angle(h - heading).abs());
+            drift = drift.max(wrap_angle(h - start).abs());
+            (view, heading) = (v, h);
+        }
+        (worst_view, worst_heading, drift)
+    }
+
+    /// A car flipping end over end, or rolling over, in a 2 s jump: the
+    /// raw forward axis turns through 180° in a frame at the vertical,
+    /// which used to spin the chase camera round. The heading now holds.
+    #[test]
+    fn chase_heading_survives_a_flip_and_a_roll() {
+        let yaw = 0.7;
+        let tau = std::f32::consts::TAU;
+        for follow in chase_follows() {
+            for (name, axis) in [("pitch", Vec3::X), ("roll", Vec3::Y)] {
+                let (view, heading, drift) = chase(&follow, 120, |t| {
+                    Quat::from_rotation_z(yaw) * Quat::from_axis_angle(axis, tau * t)
+                });
+                assert!(
+                    drift < 1f32.to_radians(),
+                    "{name}: heading drifted {}°",
+                    drift.to_degrees()
+                );
+                assert!(heading < 1f32.to_radians(), "{name}: heading jumped");
+                assert!(
+                    view < 3f32.to_radians(),
+                    "{name}: view turned {}° in one frame",
+                    view.to_degrees()
+                );
+            }
+        }
+    }
+
+    /// Tumbling about a skewed axis, spinning as well, passes through
+    /// upside-down poses whose heading is meaningless: the camera may
+    /// come round, but never by more than a few degrees a frame.
+    #[test]
+    fn chase_heading_stays_continuous_through_a_tumble() {
+        let tau = std::f32::consts::TAU;
+        for follow in chase_follows() {
+            for (axis, spin) in [
+                (Vec3::new(1.0, 1.0, 0.0), 0.0),
+                (Vec3::new(1.0, 0.3, 0.2), 0.0),
+                (Vec3::new(0.2, 1.0, 0.5), 1.5),
+                (Vec3::new(1.0, -0.6, 0.0), -2.0),
+            ] {
+                let axis = axis.normalize();
+                let (view, heading, _) = chase(&follow, 120, |t| {
+                    Quat::from_rotation_z(0.3 + spin * t)
+                        * Quat::from_axis_angle(axis, 1.5 * tau * t)
+                });
+                // `CHASE_YAW_RATE` is half a turn a second: 3° a 60 fps frame.
+                assert!(
+                    heading <= 3.01f32.to_radians(),
+                    "axis {axis:?}: heading turned {}° in one frame",
+                    heading.to_degrees()
+                );
+                assert!(
+                    view < 3.5f32.to_radians(),
+                    "axis {axis:?}: view turned {}° in one frame",
+                    view.to_degrees()
+                );
+            }
+        }
+    }
+
+    /// Normal driving is untouched: a car turning on a bumpy road gets
+    /// the camera of the old flattened-forward heading, frame by frame,
+    /// within the fraction of a degree by which the two headings differ
+    /// when the car is pitched and rolled at once.
+    #[test]
+    fn chase_heading_follows_a_normal_turn() {
+        let dt = 1.0 / 60.0;
+        for follow in chase_follows() {
+            let mut target = Transform {
+                disp: Vec3::new(100.0, 100.0, 5.0),
+                rot: Quat::IDENTITY,
+                scale: 1.0,
+            };
+            let mut cam = cam_at(Vec3::new(100.0, 100.0, 200.0));
+            let mut old = cam_at(Vec3::new(100.0, 100.0, 200.0));
+            for i in 0..240 {
+                let t = i as f32 * dt;
+                // 86°/s, swinging to -52°/s, over 10° pitch and roll bumps.
+                let yaw = 1.5 * t - 0.3 * t * t;
+                target.rot = Quat::from_rotation_z(yaw)
+                    * Quat::from_rotation_x(0.17 * (7.0 * t).sin())
+                    * Quat::from_rotation_y(0.17 * (5.0 * t).cos());
+                target.disp += target.rot * Vec3::new(0.0, 0.4, 0.0);
+                cam.follow(&target, dt, &follow);
+                old_follow(&mut old, &target, dt, &follow);
+                let heading = cam.chase_yaw.unwrap();
+                let (want, _) = Camera::chase_heading(target.rot);
+                assert!(
+                    wrap_angle(heading - want).abs() < 1e-4,
+                    "frame {i}: heading lags"
+                );
+                assert!(
+                    cam.rot.angle_between(old.rot) < 1f32.to_radians()
+                        && (cam.loc - old.loc).length() < 0.5,
+                    "frame {i}: {:?} / {:?} strayed from the old camera {:?} / {:?}",
+                    cam.rot,
+                    cam.loc,
+                    old.rot,
+                    old.loc
+                );
+            }
+        }
+    }
+
+    /// `Camera::follow` before the chase heading: the flattened forward.
+    fn old_follow(cam: &mut Camera, target: &Transform, dt: f32, follow: &Follow) {
+        let mut front = target.rot * Vec3::Y;
+        front.z = 0.0;
+        let twist = Quat::from_rotation_arc(Vec3::Y, front.normalize());
+        let heading = Quat::from_rotation_z(std::f32::consts::PI) * twist;
+        let location = target.disp + heading * follow.offset;
+        let k = (dt * -follow.speed).exp();
+        cam.loc = location * (1.0 - k) + cam.loc * k;
+        let rotation = if follow.look_ahead.abs() > 1e-4 {
+            let look_at = target.disp + twist * Vec3::new(0.0, follow.look_ahead, 0.0);
+            Camera::look_rotation(look_at - cam.loc)
+        } else {
+            heading * Quat::from_rotation_x(follow.angle_x)
+        };
+        cam.rot = rotation.slerp(cam.rot, k);
     }
 }
 

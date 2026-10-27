@@ -50,6 +50,7 @@ fn make_follow() -> space::Follow {
 
 fn make_camera(transform: &space::Transform) -> space::Camera {
     let mut cam = space::Camera {
+        chase_yaw: None,
         loc: transform.disp + Vec3::new(0.0, 0.0, 200.0),
         rot: Quat::IDENTITY,
         scale: Vec3::new(1.0, -1.0, 1.0),

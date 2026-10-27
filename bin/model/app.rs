@@ -27,6 +27,7 @@ impl ResourceView {
         gfx: &render::GraphicsContext,
     ) -> Self {
         let camera = space::Camera {
+            chase_yaw: None,
             loc: glam::Vec3::new(0.0, -200.0, 100.0),
             rot: glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_3),
             scale: glam::Vec3::new(1.0, 1.0, 1.0),
