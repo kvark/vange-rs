@@ -309,9 +309,7 @@ pub enum SyncEvent {
         shown_at_once: bool,
         /// The correction came with car contact (a server bump, a
         /// predicted contact since shortly before the ack, or a remote car
-        /// touching the server's pose): past `RenderOffset::TELEPORT` it is
-        /// faded out over `RenderOffset::CONTACT_FADE` rather than shown at
-        /// once, up to `RenderOffset::CONTACT_TELEPORT`.
+        /// touching the server's pose). Faded like any other; for the logs.
         contact: bool,
     },
 }
@@ -332,10 +330,10 @@ pub struct ClientSync {
     /// The quantum of the latest predicted contact with a ghost (live or
     /// in a replay).
     pub contact_at: Option<u32>,
-    /// Treat contact corrections like any other (shown at once past
-    /// `RenderOffset::TELEPORT`, decayed at the usual rate): the behaviour
-    /// before contact fading, for comparisons.
-    pub no_contact_fade: bool,
+    /// Show corrections past `RenderOffset::FADE_ABOVE` at once and decay
+    /// the rest at the usual rate: the behaviour before fading, for
+    /// comparisons.
+    pub no_fade: bool,
 }
 
 impl ClientSync {
@@ -343,9 +341,9 @@ impl ClientSync {
     /// correction a contact correction (the server's contact may come a
     /// little earlier or later than the prediction's).
     pub const CONTACT_RECENT: u32 = 32;
-    /// A faded contact correction larger than this is worth a log line
-    /// (`Server correction ...u in contact: faded`).
-    pub const CONTACT_LOG: f32 = 10.0;
+    /// A faded correction larger than this is worth a log line
+    /// (`Server correction ...u: faded`).
+    pub const FADE_LOG: f32 = 10.0;
 
     /// Whole quanta due for `physics_dt` of physics time.
     pub fn due_quanta(&mut self, physics_dt: f32, max_quant: f32) -> u32 {
@@ -555,8 +553,8 @@ impl ClientSync {
         let moved = before.disp.distance(car.transform.disp);
         let mut shown_at_once = false;
         if let Reconciled::Replayed(_) | Reconciled::Ahead = outcome {
-            shown_at_once = !if contact && !self.no_contact_fade {
-                self.render_offset.absorb_contact(&before, car.transform)
+            shown_at_once = !if self.no_fade {
+                self.render_offset.absorb_unfaded(&before, car.transform)
             } else {
                 self.render_offset.absorb(&before, car.transform)
             };

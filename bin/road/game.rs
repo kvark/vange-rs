@@ -1135,17 +1135,26 @@ impl Game {
     /// The wheels record where they have been while the physics runs, which
     /// is over an immutable level and in parallel across the agents. Doing
     /// the cutting here, afterwards, is what lets both of those stand.
+    ///
+    /// Online the level is left alone: the server never edits its copy,
+    /// and the car has to be predicted over the same ground (see
+    /// `terraform::drain_vehicle`). The dust still flies.
     fn step_tracks(&mut self) {
         self.track_regions.clear();
+        let online = self.net.is_some();
         for agent in self.agents.iter_mut() {
             let reach = (agent.phys_data.bbox.radius * agent.car.scale).max(8.0) as i32;
-            let treads = level::terraform::apply_vehicle(
-                &mut self.level,
-                &self.terraform,
-                &mut agent.tracks,
-                reach,
-                &mut self.track_regions,
-            );
+            let treads = if online {
+                level::terraform::drain_vehicle(&mut agent.tracks)
+            } else {
+                level::terraform::apply_vehicle(
+                    &mut self.level,
+                    &self.terraform,
+                    &mut agent.tracks,
+                    reach,
+                    &mut self.track_regions,
+                )
+            };
             for track in treads {
                 self.life.particles.from_track(&track, &self.level);
             }
@@ -2694,12 +2703,12 @@ impl Application for Game {
                                                     "Server correction {:.1}u: shown at once",
                                                     moved
                                                 );
-                                            } else if contact
-                                                && moved > physics::client::ClientSync::CONTACT_LOG
+                                            } else if moved > physics::client::ClientSync::FADE_LOG
                                             {
                                                 log::info!(
-                                                    "Server correction {:.1}u in contact: faded",
-                                                    moved
+                                                    "Server correction {:.1}u{}: faded",
+                                                    moved,
+                                                    if contact { " in contact" } else { "" }
                                                 );
                                             } else if matches!(
                                                 outcome,

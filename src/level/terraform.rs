@@ -665,6 +665,20 @@ pub fn apply_vehicle(
     treads
 }
 
+/// Everything a vehicle recorded since the last call, dropped without
+/// touching the level: the multiplayer clients' [`apply_vehicle`]. The
+/// server steps every car over a level it never edits, so a client that
+/// cut tracks (or smashed ceilings) into its own copy would drive its car
+/// over different ground from the next quantum on and be corrected. The
+/// recorded treads come back for the dust they kick up.
+pub fn drain_vehicle(tracks: &mut Tracks) -> Vec<Track> {
+    tracks.drain_ceilings().for_each(drop);
+    tracks.drain_burrows().for_each(drop);
+    tracks.take_hull();
+    tracks.drain_sweeps().for_each(drop);
+    tracks.drain().collect()
+}
+
 /// Cuts `track` into the level, pushing what it touched onto `regions`.
 pub fn apply_tread(level: &mut Level, config: &Tread, track: &Track, regions: &mut Vec<Region>) {
     if !config.enabled || config.depth == 0 || config.period == 0 || config.bar == 0 {

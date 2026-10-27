@@ -239,7 +239,7 @@ struct Outcome {
     contacts: u32,
     /// Physics move of the last reconcile (the prediction settles).
     last_moved: f32,
-    /// Contact corrections under [`RenderOffset::CONTACT_TELEPORT`] shown
+    /// Contact corrections under [`RenderOffset::TELEPORT`] shown
     /// at once anyway.
     contact_snaps: u32,
     /// A car fell through the test level; the run stopped there.
@@ -272,7 +272,7 @@ fn run(world: &World, park: f32, latency_ticks: u32, frame: f32, fade: bool) -> 
     let mut sync = ClientSync {
         synced: true,
         server_bumps: Some(0),
-        no_contact_fade: !fade,
+        no_fade: !fade,
         ..ClientSync::default()
     };
     let mut car = start;
@@ -374,7 +374,7 @@ fn run(world: &World, park: f32, latency_ticks: u32, frame: f32, fade: bool) -> 
                 }
                 if shown_at_once {
                     out.snaps += 1;
-                    if contact && moved <= RenderOffset::CONTACT_TELEPORT {
+                    if contact && moved <= RenderOffset::TELEPORT {
                         out.contact_snaps += 1;
                     }
                 }
@@ -448,18 +448,16 @@ fn hard_shove_with_turbo_fades_instead_of_snapping() {
             );
             // The fade changes only what is drawn, never the physics.
             assert_eq!(new.max_moved, old.max_moved);
-            // A run with a real teleport past `CONTACT_TELEPORT` snaps either
+            // A run with a real teleport past `TELEPORT` snaps either
             // way, and the snap also drops what was still fading, so it can
             // show a little more than the old snap did: compare the rest.
             if old.contact_snaps > 0 && new.snaps == 0 {
                 // The old rule showed it at once; the fade spreads it out over
-                // the frames of `CONTACT_FADE` (at 4 fps that is about one).
-                // Shoves piling up past `CONTACT_TELEPORT` still show the
+                // the frames of `FADE` (at 4 fps that is about one).
+                // Shoves piling up past `TELEPORT` still show the
                 // excess, so only some runs cut the snap by 4x.
                 assert!(new.max_visible <= old.max_visible, "{new:?} vs {old:?}");
-                if frame * 8.0 <= RenderOffset::CONTACT_FADE
-                    && new.max_visible < 0.25 * old.max_visible
-                {
+                if frame * 8.0 <= RenderOffset::FADE && new.max_visible < 0.25 * old.max_visible {
                     big += 1;
                 }
             }
