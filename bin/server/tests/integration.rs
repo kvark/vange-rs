@@ -93,6 +93,23 @@ struct Client {
 /// Physics quanta a second the server runs, as a client's `QuantClock`
 /// counts them: from the same settings and `common.prm` the server loads
 /// (`Common::test_default` and 0.1 quanta without them: 5.6 a second).
+/// The guns every test car joins with (`TestCar` has no `car.prm`
+/// entry, so each bay takes any size): a Machotine (bay 0), a light and a
+/// heavy Ghorb (bays 1 and 2).
+const GUNS: [&str; vangers_net::BAYS] = ["LightMissile", "LightFireBall", "HeavyFireBall"];
+
+fn guns() -> vangers_net::NetGuns {
+    GUNS.map(|g| Some(g.to_string()))
+}
+
+/// The damage of a shot from `bay` of `GUNS`, in hundredths of armour.
+fn bay_damage(bay: usize) -> u32 {
+    vangers::combat::weapons::Table::original()
+        .gun(GUNS[bay])
+        .expect("an original gun")
+        .damage()
+}
+
 fn quanta_per_sec() -> f32 {
     use vangers::config;
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/settings.ron");
@@ -180,6 +197,7 @@ fn test_join_and_receive_welcome() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
 
     let mut stash = Vec::new();
@@ -210,6 +228,7 @@ fn test_two_players_see_each_other() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut alice_extra = Vec::new();
     let alice_id = match alice.recv_welcome(&mut alice_extra) {
@@ -223,6 +242,7 @@ fn test_two_players_see_each_other() {
         car_name: "TestCar".into(),
         color: 7,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut bob_extra = Vec::new();
     let bob_id = match bob.recv_welcome(&mut bob_extra) {
@@ -273,6 +293,7 @@ fn test_physics_updates_position() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut stash = Vec::new();
     let _ = client.recv_welcome(&mut stash);
@@ -332,6 +353,7 @@ fn test_reconnect_same_name_reclaims_player_id() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut stash = Vec::new();
     let first_id = match alice.recv_welcome(&mut stash) {
@@ -349,6 +371,7 @@ fn test_reconnect_same_name_reclaims_player_id() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut stash2 = Vec::new();
     let second_id = match alice2.recv_welcome(&mut stash2) {
@@ -368,6 +391,7 @@ fn test_reconnect_same_name_reclaims_player_id() {
         car_name: "TestCar".into(),
         color: 7,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut bob_stash = Vec::new();
     let bob_id = match bob.recv_welcome(&mut bob_stash) {
@@ -387,6 +411,7 @@ fn test_reconnect_restores_last_pose() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut stash = Vec::new();
     let first_id = match alice.recv_welcome(&mut stash) {
@@ -430,6 +455,7 @@ fn test_reconnect_restores_last_pose() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut stash2 = Vec::new();
     let second_id = match alice2.recv_welcome(&mut stash2) {
@@ -468,6 +494,7 @@ fn test_reconnect_restores_last_pose() {
         car_name: "TestCar".into(),
         color: 7,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut bob_stash = Vec::new();
     let bob_id = match bob.recv_welcome(&mut bob_stash) {
@@ -517,6 +544,7 @@ fn test_reconnect_restores_cirtainer() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut stash = Vec::new();
     let first_id = match alice.recv_welcome(&mut stash) {
@@ -555,6 +583,7 @@ fn test_reconnect_restores_cirtainer() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut stash2 = Vec::new();
     let second_id = match alice2.recv_welcome(&mut stash2) {
@@ -590,6 +619,7 @@ fn test_reconnect_restores_cirtainer() {
         car_name: "TestCar".into(),
         color: 7,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut bob_stash = Vec::new();
     let bob_id = match bob.recv_welcome(&mut bob_stash) {
@@ -646,6 +676,7 @@ fn test_set_pose_needs_allow_setpose() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut stash = Vec::new();
     let alice_id = match alice.recv_welcome(&mut stash) {
@@ -679,6 +710,7 @@ fn test_set_pose_updates_world_state() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut alice_stash = Vec::new();
     let alice_id = match alice.recv_welcome(&mut alice_stash) {
@@ -691,6 +723,7 @@ fn test_set_pose_updates_world_state() {
         car_name: "TestCar".into(),
         color: 7,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut bob_stash = Vec::new();
     let _bob_id = match bob.recv_welcome(&mut bob_stash) {
@@ -760,6 +793,7 @@ fn test_fire_is_relayed_to_other_players() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut alice_stash = Vec::new();
     let alice_id = match alice.recv_welcome(&mut alice_stash) {
@@ -771,6 +805,7 @@ fn test_fire_is_relayed_to_other_players() {
         car_name: "TestCar".into(),
         color: 7,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut bob_stash = Vec::new();
     let _ = bob.recv_welcome(&mut bob_stash);
@@ -845,7 +880,7 @@ fn test_fire_is_relayed_to_other_players() {
 
 /// The newest `WorldState` in `msgs`: its tick and each agent's
 /// `(player_id, position, armor, max_armor)`.
-fn latest_world(msgs: &[ServerMessage]) -> Option<(u32, Vec<(u32, [f32; 3], u16, u16)>)> {
+fn latest_world(msgs: &[ServerMessage]) -> Option<(u32, Vec<(u32, [f32; 3], u32, u32)>)> {
     msgs.iter().rev().find_map(|m| match m {
         ServerMessage::WorldState { tick, agents, .. } => Some((
             *tick,
@@ -869,6 +904,7 @@ fn test_shot_takes_armor_off_the_target_only() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut alice_stash = Vec::new();
     let alice_id = match alice.recv_welcome(&mut alice_stash) {
@@ -880,6 +916,7 @@ fn test_shot_takes_armor_off_the_target_only() {
         car_name: "TestCar".into(),
         color: 7,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut bob_stash = Vec::new();
     let bob_id = match bob.recv_welcome(&mut bob_stash) {
@@ -890,7 +927,7 @@ fn test_shot_takes_armor_off_the_target_only() {
     // Let both cars land first.
     alice_stash.extend(alice.recv_for(Duration::from_secs(2)));
     let (tick, agents) = latest_world(&alice_stash).expect("Alice should get a WorldState");
-    let find = |agents: &[(u32, [f32; 3], u16, u16)], id| {
+    let find = |agents: &[(u32, [f32; 3], u32, u32)], id| {
         *agents
             .iter()
             .find(|a| a.0 == id)
@@ -977,8 +1014,7 @@ fn test_shot_takes_armor_off_the_target_only() {
     let (_, agents) = latest_world(&msgs).expect("Bob should keep getting WorldState");
     let (_, _, a_armor, _) = find(&agents, alice_id);
     let (_, _, b_armor, _) = find(&agents, bob_id);
-    let expected =
-        b_max.saturating_sub(vangers::combat::bay_damage(1) + vangers::combat::bay_damage(0));
+    let expected = b_max.saturating_sub(bay_damage(1) + bay_damage(0));
     assert_eq!(
         b_armor, expected,
         "Bob takes both hits, the stray shot misses"
@@ -997,6 +1033,7 @@ fn test_set_spiral_broadcasts_to_peers() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut alice_stash = Vec::new();
     let alice_id = match alice.recv_welcome(&mut alice_stash) {
@@ -1009,6 +1046,7 @@ fn test_set_spiral_broadcasts_to_peers() {
         car_name: "TestCar".into(),
         color: 7,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut bob_stash = Vec::new();
     let _ = bob.recv_welcome(&mut bob_stash);
@@ -1055,6 +1093,7 @@ fn test_reconnect_restores_spiral() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut stash = Vec::new();
     let first_id = match alice.recv_welcome(&mut stash) {
@@ -1100,6 +1139,7 @@ fn test_reconnect_restores_spiral() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut stash2 = Vec::new();
     let second_id = match alice2.recv_welcome(&mut stash2) {
@@ -1132,6 +1172,7 @@ fn test_reconnect_restores_spiral() {
         car_name: "TestCar".into(),
         color: 7,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut bob_stash = Vec::new();
     let bob_id = match bob.recv_welcome(&mut bob_stash) {
@@ -1176,6 +1217,7 @@ fn test_jump_reaches_server_physics() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut stash = Vec::new();
     let _ = client.recv_welcome(&mut stash);
@@ -1213,6 +1255,7 @@ fn test_duel_spawn_places_pair_facing_each_other() {
         car_name: "TestCar".into(),
         color: 21,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let alice_id = match alice.recv_welcome(&mut stash) {
         ServerMessage::Welcome { player_id, .. } => player_id,
@@ -1224,6 +1267,7 @@ fn test_duel_spawn_places_pair_facing_each_other() {
         car_name: "TestCar".into(),
         color: 22,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     // `recv_welcome` keeps reading for a while; the procedural level is
     // hilly, so read the spawn pose from the earliest stashed snapshot.
@@ -1274,6 +1318,7 @@ fn test_duel_slow_ram_shoves_parked_car() {
             car_name: "OxidizeMonk".into(),
             color: 21,
             protocol: vangers_net::PROTOCOL_VERSION,
+            guns: guns(),
         });
         let mut stash = Vec::new();
         let id = match c.recv_welcome(&mut stash) {
@@ -1351,7 +1396,7 @@ fn test_duel_slow_ram_shoves_parked_car() {
 }
 
 /// Bob's `(position, armor, max_armor, dead)` in the newest `WorldState`.
-fn bob_in_world(msgs: &[ServerMessage], bob_id: u32) -> Option<([f32; 3], u16, u16, bool)> {
+fn bob_in_world(msgs: &[ServerMessage], bob_id: u32) -> Option<([f32; 3], u32, u32, bool)> {
     msgs.iter().rev().find_map(|m| match m {
         ServerMessage::WorldState { agents, .. } => agents
             .iter()
@@ -1388,6 +1433,7 @@ fn test_a_kill_respawns_the_wreck_at_the_nearest_escave() {
             car_name: "TestCar".into(),
             color,
             protocol: vangers_net::PROTOCOL_VERSION,
+            guns: guns(),
         });
         let mut stash = Vec::new();
         match client.recv_welcome(&mut stash) {
@@ -1420,15 +1466,15 @@ fn test_a_kill_respawns_the_wreck_at_the_nearest_escave() {
         "spawns moved: Bob at {b_pos:?}"
     );
 
-    // Bay 2 takes 20 a hit: enough shots to finish Bob, two a tick at
-    // most, from high over Alice's car down onto his.
+    // Enough heavy Ghorb shots (bay 2) to finish Bob, one a reload,
+    // from high over Alice's car down onto his.
     let muzzle = [a_pos[0], a_pos[1], a_pos[2] + 120.0];
     let at_bob = [
         b_pos[0] - muzzle[0],
         b_pos[1] - muzzle[1],
         b_pos[2] - muzzle[2],
     ];
-    let shots = (b_max as u32).div_ceil(vangers::combat::bay_damage(2) as u32);
+    let shots = b_max.div_ceil(bay_damage(2));
     let fire = |client: &mut Client, quant| {
         client.send(&ClientMessage::Fire {
             quant,
@@ -1439,9 +1485,10 @@ fn test_a_kill_respawns_the_wreck_at_the_nearest_escave() {
             view_ms: 0,
         });
     };
+    // One a reload (0.55 s for the heavy Ghorb).
     for quant in 0..shots {
         fire(&mut alice, 20 + quant);
-        std::thread::sleep(Duration::from_millis(120));
+        std::thread::sleep(Duration::from_millis(600));
     }
 
     // Everyone hears of the death, with the killer.
@@ -1595,7 +1642,7 @@ fn test_a_kill_respawns_the_wreck_at_the_nearest_escave() {
 
 /// Per player in the newest `WorldState`: (position, armour, in_escave,
 /// bumps).
-type CarInWorld = (u32, [f32; 3], u16, bool, u32);
+type CarInWorld = (u32, [f32; 3], u32, bool, u32);
 
 fn cars_in_world(msgs: &[ServerMessage]) -> Option<(u32, Vec<CarInWorld>)> {
     msgs.iter().rev().find_map(|m| match m {
@@ -1631,6 +1678,7 @@ fn test_a_car_in_an_escave_is_out_of_shots_and_contact() {
             car_name: "TestCar".into(),
             color,
             protocol: vangers_net::PROTOCOL_VERSION,
+            guns: guns(),
         });
         let mut stash = Vec::new();
         match client.recv_welcome(&mut stash) {
@@ -1715,7 +1763,7 @@ fn test_a_car_in_an_escave_is_out_of_shots_and_contact() {
         tick_out.max(tick),
     );
     let msgs = alice.recv_for(Duration::from_secs(2));
-    let hit = vangers::combat::bay_damage(2);
+    let hit = bay_damage(2);
     let (_, _, b_armor, _, b_bumps) = car(&msgs, bob_id);
     assert_eq!(b_armor, b_max - hit, "back on the road, Bob is hit");
 
@@ -1777,6 +1825,7 @@ fn test_a_car_in_an_escave_ignores_drive_input() {
         car_name: "TestCar".into(),
         color: 7,
         protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
     });
     let mut stash = Vec::new();
     let bob_id = match bob.recv_welcome(&mut stash) {
@@ -1855,4 +1904,194 @@ fn test_a_car_in_an_escave_ignores_drive_input() {
         gap(parked, out_at).0 > 5.0,
         "out of the escave, the car drives: {parked:?} -> {out_at:?}"
     );
+}
+
+/// Each player's `(guns, armor)` in the newest `WorldState`.
+fn guns_in_world(msgs: &[ServerMessage]) -> Vec<(u32, [Option<u8>; vangers_net::BAYS], u32)> {
+    msgs.iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => Some(
+                agents
+                    .iter()
+                    .map(|a| (a.player_id, a.guns, a.armor))
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+fn named_guns(names: [Option<&str>; vangers_net::BAYS]) -> vangers_net::NetGuns {
+    names.map(|g| g.map(str::to_string))
+}
+
+#[test]
+fn test_guns_are_checked_on_join_and_changed_only_in_an_escave() {
+    // One escave ~50u from where Bob's car stands.
+    let server = ServerProcess::start_with_args("test", &[], &["--escave", "130,90"]);
+    let mut alice = server.connect();
+    let mut bob = server.connect();
+    let join = |client: &mut Client, name: &str, car: &str, guns| {
+        client.send(&ClientMessage::Join {
+            player_name: name.into(),
+            car_name: car.into(),
+            color: 7,
+            protocol: vangers_net::PROTOCOL_VERSION,
+            guns,
+        });
+        let mut stash = Vec::new();
+        match client.recv_welcome(&mut stash) {
+            ServerMessage::Welcome { player_id, .. } => player_id,
+            _ => unreachable!(),
+        }
+    };
+    // `TestCar` takes any gun in any bay. OxidizeMonk (`car.prm`) has two
+    // bays of size 3: a Speetle (size 5) does not fit, so the whole set is
+    // refused and Bob has no guns.
+    let alice_id = join(&mut alice, "Alice", "TestCar", guns());
+    let bob_id = join(
+        &mut bob,
+        "Bob",
+        "OxidizeMonk",
+        named_guns([Some("LightLaser"), None, None]),
+    );
+    let bob_guns = |client: &mut Client, wait| {
+        let world = guns_in_world(&client.recv_for(Duration::from_millis(wait)));
+        let find = |id| world.iter().find(|a| a.0 == id).expect("both cars").1;
+        (find(alice_id), find(bob_id))
+    };
+    let (a_guns, b_guns) = bob_guns(&mut alice, 1000);
+    assert_eq!(a_guns, [Some(11), Some(15), Some(16)], "Machotine, Ghorbs");
+    assert_eq!(b_guns, [None; 3], "a Speetle does not fit OxidizeMonk");
+
+    // Out on the road, a new set is refused.
+    let fits = named_guns([Some("LightMissile"), Some("LightFireBall"), None]);
+    bob.send(&ClientMessage::Weapons { guns: fits.clone() });
+    assert_eq!(bob_guns(&mut alice, 400).1, [None; 3], "only in an escave");
+
+    // In the escave it is taken.
+    bob.send(&ClientMessage::Escave { inside: true });
+    let _ = alice.recv_for(Duration::from_millis(300));
+    bob.send(&ClientMessage::Weapons { guns: fits });
+    let taken = [Some(11), Some(15), None];
+    assert_eq!(bob_guns(&mut alice, 400).1, taken, "taken in an escave");
+
+    // A set that does not fit keeps the last one: a heavy Ghorb (size 7)
+    // in a size 3 bay, or a gun in the bay OxidizeMonk does not have.
+    for bad in [
+        [Some("LightMissile"), Some("HeavyFireBall"), None],
+        [None, None, Some("LightMissile")],
+        [Some("NoSuchGun"), None, None],
+    ] {
+        bob.send(&ClientMessage::Weapons {
+            guns: named_guns(bad),
+        });
+        assert_eq!(
+            bob_guns(&mut alice, 400).1,
+            taken,
+            "{bad:?} keeps the last set"
+        );
+    }
+}
+
+#[test]
+fn test_each_gun_hits_for_its_own_damage_once_a_reload() {
+    let server = ServerProcess::start();
+    let mut alice = server.connect();
+    let mut bob = server.connect();
+    // No gun in bay 0, a light Ghorb in bay 1, a heavy one in bay 2.
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
+        guns: named_guns([None, Some(GUNS[1]), Some(GUNS[2])]),
+    });
+    let mut alice_stash = Vec::new();
+    let alice_id = match alice.recv_welcome(&mut alice_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
+    });
+    let mut bob_stash = Vec::new();
+    let bob_id = match bob.recv_welcome(&mut bob_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+
+    alice_stash.extend(alice.recv_for(Duration::from_secs(2)));
+    let (tick, agents) = latest_world(&alice_stash).expect("Alice should get a WorldState");
+    let find = |agents: &[(u32, [f32; 3], u32, u32)], id| {
+        *agents
+            .iter()
+            .find(|a| a.0 == id)
+            .expect("both cars in WorldState")
+    };
+    let (_, a_pos, _, _) = find(&agents, alice_id);
+    let (_, b_pos, b_max, _) = find(&agents, bob_id);
+    // From high over Alice's car down onto Bob's (as in
+    // `test_shot_takes_armor_off_the_target_only`).
+    let muzzle = [a_pos[0], a_pos[1], a_pos[2] + 120.0];
+    let at_bob = [
+        b_pos[0] - muzzle[0],
+        b_pos[1] - muzzle[1],
+        b_pos[2] - muzzle[2],
+    ];
+    let mut quant = 10;
+    let mut fire = |alice: &mut Client, bay| {
+        quant += 1;
+        alice.send(&ClientMessage::Fire {
+            quant,
+            bay,
+            origin: muzzle,
+            dir: at_bob,
+            view_tick: tick,
+            view_ms: 0,
+        });
+    };
+    let bob_armor = |client: &mut Client, wait| {
+        let world = guns_in_world(&client.recv_for(Duration::from_millis(wait)));
+        world.iter().find(|a| a.0 == bob_id).expect("Bob").2
+    };
+
+    // Bay 0 has no gun; bay 1 fires three times in 0.1 s and only the
+    // first gets through its 0.55 s reload; bay 2 reloads on its own.
+    fire(&mut alice, 0);
+    for _ in 0..3 {
+        fire(&mut alice, 1);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    fire(&mut alice, 2);
+    let shots = bob.recv_for(Duration::from_millis(1500));
+    let relayed: Vec<_> = shots
+        .iter()
+        .filter_map(|m| match m {
+            ServerMessage::Shot { bay, .. } => Some(*bay),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(relayed, vec![1, 2], "one shot a gun and a reload");
+    let after = guns_in_world(&shots)
+        .iter()
+        .find(|a| a.0 == bob_id)
+        .expect("Bob")
+        .2;
+    let (light, heavy) = (bay_damage(1), bay_damage(2));
+    assert_eq!((light, heavy), (1250, 2500), "Ghorbs' FirstPower");
+    assert_eq!(
+        after,
+        b_max - light - heavy,
+        "each gun takes its own damage"
+    );
+
+    // Reloaded: the light Ghorb hits again.
+    fire(&mut alice, 1);
+    assert_eq!(bob_armor(&mut bob, 1500), b_max - 2 * light - heavy);
 }

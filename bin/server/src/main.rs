@@ -1,5 +1,6 @@
 use vangers::{
-    combat, config, level,
+    combat::{self, weapons},
+    config, level,
     physics::{
         self,
         prediction::{InputQueue, QuantInput, TickBudget},
@@ -145,7 +146,7 @@ struct LastPose {
     dynamo: Dynamo,
     cirtainer: level::cycle::Cirtainer,
     spiral_charge: u8,
-    armor: u16,
+    armor: u32,
     disconnected_at: Instant,
 }
 
@@ -208,10 +209,14 @@ struct ServerAgent {
     starved: Option<u32>,
     /// Shots taken from this player this tick (`weapon::FIRES_PER_TICK`).
     fires: u8,
-    /// Armour left (`AgentState::armor`); shots resolved here take it
-    /// down to 0.
-    armor: u16,
-    max_armor: u16,
+    /// Armour left (`AgentState::armor`, `combat::ARMOR_UNIT`s); shots
+    /// resolved here take it down to 0.
+    armor: u32,
+    max_armor: u32,
+    /// The gun in each bay, as last taken (`Join::guns`, `Weapons`).
+    guns: [Option<weapons::Gun>; weapons::BAYS],
+    /// Each bay's reload (`weapons::Table::cooldown`), server clock.
+    reload: weapon::Reload,
     /// The car's positions over the last `combat::HISTORY_SECS`, to test
     /// shots against it where their shooters saw it.
     history: combat::PoseHistory,
@@ -274,19 +279,25 @@ impl HitLog {
         &mut self,
         target: (PlayerId, &str),
         shooter: &str,
-        damage: u16,
-        armor: (u16, u16),
+        damage: u32,
+        armor: (u32, u32),
         emptied: bool,
     ) {
         self.hits += 1;
-        self.damage += damage as u32;
+        self.damage += damage;
         let now = Instant::now();
         if !emptied && self.last.is_some_and(|t| now - t < HIT_LOG_EVERY) {
             return;
         }
         info!(
             "Hit: p{} ({}) took {} hit(s) for {} since the last line, last from {}; armour {}/{}",
-            target.0, target.1, self.hits, self.damage, shooter, armor.0, armor.1
+            target.0,
+            target.1,
+            self.hits,
+            weapons::points(self.damage),
+            shooter,
+            weapons::points(armor.0),
+            weapons::points(armor.1)
         );
         *self = HitLog {
             last: Some(now),
@@ -391,6 +402,10 @@ impl ServerAgent {
             control: net_control_of(&self.inputs.last()),
             armor: self.armor,
             max_armor: self.max_armor,
+            guns: self
+                .guns
+                .each_ref()
+                .map(|g| g.as_ref().map(|g| g.bullet_id)),
             dead: self.dead.is_some(),
             in_escave: self.in_escave,
         }
@@ -930,16 +945,32 @@ async fn main() {
         (common, std::collections::HashMap::new())
     };
 
-    // Undamaged armour per car, from `car.prm`.
-    let car_armor: HashMap<String, u16> = settings
+    // Undamaged armour per car, from `car.prm`, in `combat::ARMOR_UNIT`s.
+    let car_armor: HashMap<String, u32> = settings
         .as_ref()
         .map(|settings| {
             config::car::entries(settings.open_relative("car.prm"))
                 .into_iter()
-                .map(|(name, _, data)| (name, config::car::CarStats::new(&data).max_armor as u16))
+                .map(|(name, _, data)| {
+                    let points = config::car::CarStats::new(&data).max_armor as u32;
+                    (name, points * combat::ARMOR_UNIT)
+                })
                 .collect()
         })
         .unwrap_or_default();
+    // The guns and the cars' slots: the game files, else the built-in copy.
+    let weapons = settings
+        .as_ref()
+        .map_or_else(weapons::Table::original, |s| {
+            weapons::Table::load(&s.data_path)
+        });
+    info!(
+        "Weapons: {} guns, slots of {} cars",
+        weapons.guns.len(),
+        weapons.cars.len()
+    );
+    // The clock the bays reload on.
+    let clock = Instant::now();
     // Shots in flight, and the pose history each car keeps for them.
     let mut shots: Vec<combat::ServerShot<PlayerId>> = Vec::new();
 
@@ -1313,6 +1344,8 @@ async fn main() {
                             fires: 0,
                             armor: combat::DEFAULT_MAX_ARMOR,
                             max_armor: combat::DEFAULT_MAX_ARMOR,
+                            guns: Default::default(),
+                            reload: weapon::Reload::default(),
                             history: combat::PoseHistory::default(),
                             fire_log: FireLog::default(),
                             hit_log: HitLog::default(),
@@ -1324,7 +1357,7 @@ async fn main() {
 
                     SessionEvent::Message { conn_id, msg } => {
                         match msg {
-                            ClientMessage::Join { player_name, car_name, color, protocol } => {
+                            ClientMessage::Join { player_name, car_name, color, protocol, guns } => {
                                 if protocol != PROTOCOL_VERSION {
                                     warn!(
                                         "Rejecting conn_id={}: protocol {} (server speaks {})",
@@ -1405,6 +1438,22 @@ async fn main() {
                                     agent.armor = agent.max_armor;
                                     agent.dead = None;
                                     agent.in_escave = false;
+                                    agent.reload.clear();
+                                    agent.guns = match weapons.check(&car_name, &guns) {
+                                        Ok(taken) => taken.map(|g| g.cloned()),
+                                        Err(why) => {
+                                            warn!(
+                                                "Guns of player {} ({}) refused: {}; no guns",
+                                                player_id, car_name, why
+                                            );
+                                            Default::default()
+                                        }
+                                    };
+                                    info!(
+                                        "Guns of player {}: {}",
+                                        player_id,
+                                        describe_guns(&agent.guns, &weapons)
+                                    );
                                     if let Some(pose) = restored {
                                         agent.transform = pose.transform;
                                         agent.dynamo = pose.dynamo;
@@ -1634,6 +1683,42 @@ async fn main() {
                                 );
                             }
 
+                            ClientMessage::Weapons { guns } => {
+                                let player_id = effective_player_id(&conn_to_player, conn_id);
+                                let Some(agent) = players.get_mut(&player_id) else {
+                                    continue;
+                                };
+                                if !agent.joined {
+                                    continue;
+                                }
+                                if !agent.in_escave {
+                                    warn!(
+                                        "Guns of player {} refused: not in an escave; keeping {}",
+                                        player_id,
+                                        describe_guns(&agent.guns, &weapons)
+                                    );
+                                    continue;
+                                }
+                                match weapons.check(&agent.car_name, &guns) {
+                                    Ok(taken) => {
+                                        agent.guns = taken.map(|g| g.cloned());
+                                        agent.reload.clear();
+                                        info!(
+                                            "Guns of player {}: {}",
+                                            player_id,
+                                            describe_guns(&agent.guns, &weapons)
+                                        );
+                                    }
+                                    Err(why) => warn!(
+                                        "Guns of player {} ({}) refused: {}; keeping {}",
+                                        player_id,
+                                        agent.car_name,
+                                        why,
+                                        describe_guns(&agent.guns, &weapons)
+                                    ),
+                                }
+                            }
+
                             ClientMessage::Fire { quant, bay, origin, dir, view_tick, view_ms } => {
                                 let player_id = effective_player_id(&conn_to_player, conn_id);
                                 let period = level.period();
@@ -1655,6 +1740,10 @@ async fn main() {
                                     warn!("Fire from player {}: over {} a tick, dropped", player_id, weapon::FIRES_PER_TICK);
                                     continue;
                                 }
+                                let Some(gun) = agent.guns.get(bay as usize).cloned().flatten() else {
+                                    debug!("Fire from player {}: no gun in bay {}, dropped", player_id, bay);
+                                    continue;
+                                };
                                 let dir = match weapon::check_fire(
                                     bay,
                                     Vec3::from(origin),
@@ -1671,6 +1760,20 @@ async fn main() {
                                         continue;
                                     }
                                 };
+                                // Only a shot that passed the checks takes the reload.
+                                let now = clock.elapsed().as_secs_f64();
+                                if !agent.reload.try_fire(
+                                    bay as usize,
+                                    now,
+                                    weapons.cooldown(&gun),
+                                    weapon::Reload::SLACK,
+                                ) {
+                                    debug!(
+                                        "Fire from player {}: bay {} ({}) reloading, dropped",
+                                        player_id, bay, gun.model
+                                    );
+                                    continue;
+                                }
                                 agent.fires += 1;
                                 let rewind = combat::rewind_ticks(tick, view_tick, view_ms, dt_fixed);
                                 debug!(
@@ -1687,9 +1790,10 @@ async fn main() {
                                     dir
                                 );
                                 agent.fire_log.note(player_id, &agent.name, rewind);
-                                shots.push(combat::ServerShot::new(
+                                shots.push(combat::ServerShot::from_gun(
                                     player_id,
                                     bay,
+                                    &gun,
                                     Vec3::from(origin),
                                     dir,
                                     rewind,
@@ -1999,6 +2103,22 @@ fn reclaim_player_id(
     effective
 }
 
+/// The guns in a car's bays for the log: `LightMissile (2.50, 0.35 s), -, -`.
+fn describe_guns(guns: &[Option<weapons::Gun>; weapons::BAYS], table: &weapons::Table) -> String {
+    guns.iter()
+        .map(|g| match g {
+            Some(g) => format!(
+                "{} ({}, {:.2} s)",
+                g.model,
+                weapons::points(g.damage()),
+                table.cooldown(g)
+            ),
+            None => "-".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn purge_expired_poses(last_poses: &mut HashMap<PlayerId, LastPose>) {
     last_poses.retain(|_, pose| pose.disconnected_at.elapsed() <= RECONNECT_POSE_GRACE);
 }
@@ -2006,7 +2126,7 @@ fn purge_expired_poses(last_poses: &mut HashMap<PlayerId, LastPose>) {
 /// Record this tick's car positions, then fly every shot one tick on and
 /// apply its hit, if any: each shot tests the other joined cars where they
 /// were `rewind` ticks ago (`combat::rewind_ticks`), as its shooter saw
-/// them. A hit takes `combat::bay_damage` off the target's armour, down
+/// them. A hit takes its gun's bullet power off the target's armour, down
 /// to 0, and ends the shot. The terrain stops shots. Wrecks and cars in an
 /// escave are not hit and their shots are dropped (`combat::fly_shots`).
 ///
@@ -2051,7 +2171,7 @@ fn step_shots(
         )
     };
     let mut deaths = Vec::new();
-    for (shooter, bay, target) in hits {
+    for (shooter, bay, damage, target) in hits {
         let shooter_name = players
             .get(&shooter)
             .map_or_else(|| format!("p{}", shooter), |a| a.name.clone());
@@ -2062,12 +2182,17 @@ fn step_shots(
         if agent.dead.is_some() {
             continue; // killed by an earlier shot this tick
         }
-        let damage = combat::bay_damage(bay);
         let before = agent.armor;
         agent.armor = agent.armor.saturating_sub(damage);
         debug!(
             "Hit: p{} ({}) by {} bay {} for {}: armour {}/{}",
-            target, agent.name, shooter_name, bay, damage, agent.armor, agent.max_armor
+            target,
+            agent.name,
+            shooter_name,
+            bay,
+            weapons::points(damage),
+            weapons::points(agent.armor),
+            weapons::points(agent.max_armor)
         );
         let armor = (agent.armor, agent.max_armor);
         let emptied = before > 0 && agent.armor == 0;

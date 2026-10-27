@@ -60,7 +60,13 @@ pub struct NetworkClient {
 
 impl NetworkClient {
     /// Connect to the server and start background I/O threads.
-    pub fn connect(addr: &str, player_name: &str, car_name: &str, color: u8) -> Self {
+    pub fn connect(
+        addr: &str,
+        player_name: &str,
+        car_name: &str,
+        color: u8,
+        guns: vangers_net::NetGuns,
+    ) -> Self {
         log::info!("Connecting to server at {}...", addr);
         let stream = TcpStream::connect(addr)
             .unwrap_or_else(|e| panic!("Failed to connect to {}: {}", addr, e));
@@ -75,6 +81,7 @@ impl NetworkClient {
             car_name: car_name.to_string(),
             color,
             protocol: vangers_net::PROTOCOL_VERSION,
+            guns,
         });
         let mut write_stream = stream.try_clone().expect("Failed to clone TCP stream");
         write_stream.write_all(&join_msg).ok();
@@ -229,6 +236,13 @@ impl NetworkClient {
     /// Upload spiral charge so WorldState / reclaim stay aligned.
     pub fn send_set_spiral(&self, charge: u8) {
         let msg = encode(&ClientMessage::SetSpiral { charge });
+        let _ = self.send_tx.send(msg);
+    }
+
+    /// Declare the guns in our bays (`ClientMessage::Weapons`): the server
+    /// takes them only while we are in an escave.
+    pub fn send_weapons(&self, guns: vangers_net::NetGuns) {
+        let msg = encode(&ClientMessage::Weapons { guns });
         let _ = self.send_tx.send(msg);
     }
 

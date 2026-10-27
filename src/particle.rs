@@ -106,17 +106,17 @@ impl System {
     /// `Armor < MaxArmor` gate. At full armour nothing comes out; at zero
     /// it always does, skipping the two `RND` rolls that would otherwise
     /// thin it out.
-    pub fn from_hull(&mut self, pos: Vec3, armor: u16, max_armor: u16) {
+    pub fn from_hull(&mut self, pos: Vec3, armor: u32, max_armor: u32) {
         if max_armor == 0 || armor >= max_armor {
             return;
         }
         if armor > 0 {
-            let roll = self.rng(max_armor as u32);
-            if roll <= armor as u32 {
+            let roll = self.rng(max_armor);
+            if roll <= armor {
                 return;
             }
-            let roll = self.rng(max_armor as u32);
-            if roll <= armor as u32 {
+            let roll = self.rng(max_armor);
+            if roll <= armor {
                 return;
             }
         }

@@ -929,8 +929,9 @@ mod tests {
             bumps: 0,
             ack,
             control: Default::default(),
-            armor: 100,
-            max_armor: 100,
+            armor: 10_000,
+            max_armor: 10_000,
+            guns: [None; vangers_net::BAYS],
             dead: false,
             in_escave,
         };

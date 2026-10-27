@@ -17,7 +17,16 @@ pub type PlayerId = u32;
 /// for the upright key, `SetPose` only on a server run with
 /// `--allow-setpose`.
 /// 8: `ClientMessage::Escave` and `AgentState::in_escave`.
-pub const PROTOCOL_VERSION: u32 = 8;
+/// 9: guns: `Join::guns`, `ClientMessage::Weapons`, `AgentState::guns`;
+/// armour in hundredths of a point (`u32`).
+pub const PROTOCOL_VERSION: u32 = 9;
+
+/// Weapon bays a car may have.
+pub const BAYS: usize = 3;
+
+/// The gun in each weapon bay, by `ModelID` (`device.lst`), `None` for an
+/// empty bay.
+pub type NetGuns = [Option<String>; BAYS];
 
 /// Client-to-server messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +38,9 @@ pub enum ClientMessage {
         color: u8,
         /// `PROTOCOL_VERSION` of the client.
         protocol: u32,
+        /// The guns in the car's bays. The server takes them if they fit
+        /// the car's slots (as `Weapons`), else the car has none.
+        guns: NetGuns,
     },
     /// The client's input for `quanta` physics quanta starting at quantum
     /// index `first_quant` (one batch per frame). The held controls apply
@@ -79,6 +91,12 @@ pub enum ClientMessage {
     /// `combat::ESCAVE_REACH` of one of its world's escaves; leaving is
     /// always taken.
     Escave { inside: bool },
+    /// The player changed the guns in its bays (in an escave). The server
+    /// takes them only from a car in an escave (`AgentState::in_escave`)
+    /// and only when each gun fits its bay's slot on that car; otherwise
+    /// it keeps the last set it took. It fires each bay's gun: its
+    /// bullet's power, speed and life, at most once a reload.
+    Weapons { guns: NetGuns },
     /// The player fired weapon bay `bay`: a shot from `origin` (the car's
     /// predicted position) along `dir` (unit, the car's forward).
     ///
@@ -248,11 +266,16 @@ pub struct AgentState {
     /// roll). Other clients carry the car's contact ghost on with it: a
     /// car pushing with turbo keeps pushing with turbo.
     pub control: NetControl,
-    /// Armour left, as the server keeps it: shots it resolved take it
-    /// down, stopping at 0. The owning client shows this one.
-    pub armor: u16,
-    /// Armour of the car undamaged (`car.prm`).
-    pub max_armor: u16,
+    /// Armour left, as the server keeps it, in hundredths of a `car.prm`
+    /// armour point: shots it resolved take their bullet's power off,
+    /// stopping at 0. The owning client shows this one.
+    pub armor: u32,
+    /// Armour of the car undamaged (`car.prm` `MaxArmor`, in hundredths).
+    pub max_armor: u32,
+    /// The bullet (`game.lst` index, `device.lst` `GunID`) of the gun the
+    /// server took in each bay: the other clients fly and draw this car's
+    /// shots as it.
+    pub guns: [Option<u8>; BAYS],
     /// A wreck waiting to respawn (between `Died` and `Respawned`): it
     /// drives with no control, takes no hits and fires no shots.
     pub dead: bool,
@@ -313,6 +336,7 @@ mod tests {
             car_name: "Torkash".into(),
             color: 21,
             protocol: PROTOCOL_VERSION,
+            guns: [Some("LightMissile".into()), None, Some("HeavyLaser".into())],
         };
         let encoded = encode(&msg);
         let (decoded, consumed): (ClientMessage, _) = decode(&encoded).unwrap();
@@ -323,8 +347,13 @@ mod tests {
                 car_name,
                 color,
                 protocol,
+                guns,
             } => {
                 assert_eq!(protocol, PROTOCOL_VERSION);
+                assert_eq!(
+                    guns,
+                    [Some("LightMissile".into()), None, Some("HeavyLaser".into())]
+                );
                 assert_eq!(player_name, "TestPlayer");
                 assert_eq!(car_name, "Torkash");
                 assert_eq!(color, 21);
@@ -358,8 +387,9 @@ mod tests {
                     turbo: true,
                     ..NetControl::default()
                 },
-                armor: 35,
-                max_armor: 120,
+                armor: 35_050,
+                max_armor: 50_000,
+                guns: [Some(11), None, Some(18)],
                 dead: true,
                 in_escave: true,
             }],
@@ -376,7 +406,8 @@ mod tests {
                 assert_eq!(agents[0].player_id, 1);
                 assert_eq!(agents[0].spiral_charge, 3);
                 assert_eq!(agents[0].ack, 1234);
-                assert_eq!((agents[0].armor, agents[0].max_armor), (35, 120));
+                assert_eq!((agents[0].armor, agents[0].max_armor), (35_050, 50_000));
+                assert_eq!(agents[0].guns, [Some(11), None, Some(18)]);
                 assert!(agents[0].dead);
                 assert!(agents[0].in_escave);
                 assert!(cycle.is_none());
@@ -634,6 +665,17 @@ mod tests {
                 ClientMessage::Escave { inside: got } => assert_eq!(got, inside),
                 _ => panic!("wrong variant"),
             }
+        }
+    }
+
+    #[test]
+    fn round_trip_weapons() {
+        let guns: NetGuns = [None, Some("LightFireBall".into()), None];
+        let (decoded, _): (ClientMessage, _) =
+            decode(&encode(&ClientMessage::Weapons { guns: guns.clone() })).unwrap();
+        match decoded {
+            ClientMessage::Weapons { guns: got } => assert_eq!(got, guns),
+            _ => panic!("wrong variant"),
         }
     }
 

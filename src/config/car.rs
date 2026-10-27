@@ -25,7 +25,8 @@ pub struct CarStats {
     pub price_sell: Price,
     pub size: [BoxSize; 4],
     pub max_speed: u8,
-    pub max_armor: u8,
+    /// `MaxArmor`, in armour points (up to 500, LastMoggy).
+    pub max_armor: u16,
     pub shield_max: Shield,
     pub shield_regen: Shield,
     pub shield_drop: Shield,
@@ -51,7 +52,7 @@ impl CarStats {
                 d[6] as BoxSize,
             ],
             max_speed: d[7] as u8,
-            max_armor: d[8] as u8,
+            max_armor: d[8] as u16,
             shield_max: d[9] as Shield,
             shield_regen: d[10] as Shield,
             shield_drop: d[11] as Shield,
@@ -306,4 +307,29 @@ pub fn load_physics_registry(
     }
 
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `car.prm`, as shipped, cut down to three cars.
+    const CAR_PRM: &str = "uniVang-ParametersFile_Ver_1\n3\n0\n0\nOxidizeMonk 1\t  5477\t 5477  0       0       3\t4\t 13\t 100\t 120\t 40\t 1\t50\t0\t2000\t250\t50\t 1\t 2\nHeavyLady   4\t   129456  129456 4\t  3\t  1\t   4\t    11\t    380     400     30\t    1\t   40\t   2\t   2000    900\t   50\t   3\t   5\nLastMoggy 5    262350 29150  2\t     3\t     2\t      4        10      500     500     25     1      40      2\t     9000    1000     50 \t 3\t 6\n";
+
+    #[test]
+    fn max_armor_is_read_whole() {
+        let armor: Vec<(String, u16)> = entries(CAR_PRM.as_bytes())
+            .into_iter()
+            .map(|(name, _, data)| (name, CarStats::new(&data).max_armor))
+            .collect();
+        // Past 255: HeavyLady and LastMoggy used to wrap around in a u8.
+        assert_eq!(
+            armor,
+            [
+                ("OxidizeMonk".to_string(), 100),
+                ("HeavyLady".to_string(), 380),
+                ("LastMoggy".to_string(), 500),
+            ]
+        );
+    }
 }
