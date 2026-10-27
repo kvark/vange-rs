@@ -425,33 +425,161 @@ struct Roll {
     time: f32,
 }
 
-/// Debug-only scripted controls (`road --autodrive`): a list of
-/// `seconds:motor:rudder` segments fed into the same `Input` fields the
-/// keyboard drives, so a headless session can drive a reproducible loop.
+/// Debug-only scripted controls (`road --autodrive`): a comma-separated
+/// list of steps fed into the same `Input` fields the keyboard drives, so a
+/// headless session can play a reproducible loop. A step is either a
+/// `seconds:motor:rudder` drive segment or one of the action tokens below.
+#[derive(Clone, Debug, PartialEq)]
+enum AutoStep {
+    /// `seconds:motor:rudder`, motor and rudder in -1..=1.
+    Drive {
+        secs: f32,
+        motor: f32,
+        rudder: f32,
+    },
+    /// `goto:x:y[:timeout]`: steer at full motor towards a world point until
+    /// within [`AutoDrive::GOTO_RADIUS`] or the timeout (default 30 s).
+    Goto {
+        x: f32,
+        y: f32,
+        timeout: f32,
+    },
+    /// `use`: Space - enter an escave, open a tunnel, use a passage, leave.
+    Use,
+    /// `fire0`/`fire1`: F/G - fire a weapon bay.
+    Fire(usize),
+    /// `jump[:secs]`: hold Alt for `secs` (default 0.5) and release.
+    Jump(f32),
+    /// `reset`: R - level the car (uploaded to the server online).
+    Reset,
+    /// `tp:x:y[:z]`: the Tweaks position edit, uploaded to the server.
+    Teleport {
+        x: f32,
+        y: f32,
+        z: Option<f32>,
+    },
+    /// `enter`/`leave`: the Tweaks "Enter <escave>" / "Leave escave" buttons.
+    Enter,
+    Leave,
+    /// `armor:N`: the Tweaks "Armour" slider.
+    Armor(u32),
+    /// `mark:NAME`: an "Autodrive mark NAME" log line, to sync screenshots.
+    Mark(String),
+}
+
 struct AutoDrive {
-    segments: Vec<(f32, f32, f32)>,
+    steps: Vec<AutoStep>,
+    /// Total script time, for the periodic pose line.
     time: f32,
+    /// Time spent in the current step.
+    step_time: f32,
     index: usize,
+    logged: Option<usize>,
 }
 
 impl AutoDrive {
-    fn parse(script: &str) -> Result<Self, String> {
-        let mut segments = Vec::new();
-        for seg in script.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-            let parts = seg
-                .split(':')
-                .map(|v| v.trim().parse::<f32>().map_err(|e| format!("{seg:?}: {e}")))
-                .collect::<Result<Vec<_>, _>>()?;
-            match parts[..] {
-                [secs, motor, rudder] => segments.push((secs, motor, rudder)),
-                _ => return Err(format!("{seg:?}: expected seconds:motor:rudder")),
+    const GOTO_RADIUS: f32 = 24.0;
+
+    fn parse_step(seg: &str) -> Result<AutoStep, String> {
+        let mut parts = seg.split(':').map(str::trim);
+        let head = parts.next().unwrap_or_default();
+        let rest = parts.collect::<Vec<_>>();
+        let nums = |min: usize, max: usize| -> Result<Vec<f32>, String> {
+            if rest.len() < min || rest.len() > max {
+                return Err(format!(
+                    "{seg:?}: expected {min}..={max} numbers after {head:?}"
+                ));
             }
-        }
-        Ok(AutoDrive {
-            segments,
-            time: 0.0,
-            index: 0,
+            rest.iter()
+                .map(|v| v.parse::<f32>().map_err(|e| format!("{seg:?}: {e}")))
+                .collect()
+        };
+        Ok(match head {
+            "use" => AutoStep::Use,
+            "fire0" => AutoStep::Fire(0),
+            "fire1" => AutoStep::Fire(1),
+            "reset" => AutoStep::Reset,
+            "enter" => AutoStep::Enter,
+            "leave" => AutoStep::Leave,
+            "jump" => AutoStep::Jump(nums(0, 1)?.first().copied().unwrap_or(0.5)),
+            "armor" => match rest[..] {
+                [n] => AutoStep::Armor(n.parse().map_err(|e| format!("{seg:?}: {e}"))?),
+                _ => return Err(format!("{seg:?}: expected armor:N")),
+            },
+            "mark" => match rest[..] {
+                [name] if !name.is_empty() => AutoStep::Mark(name.to_string()),
+                _ => return Err(format!("{seg:?}: expected mark:NAME")),
+            },
+            "goto" => {
+                let v = nums(2, 3)?;
+                AutoStep::Goto {
+                    x: v[0],
+                    y: v[1],
+                    timeout: v.get(2).copied().unwrap_or(30.0),
+                }
+            }
+            "tp" => {
+                let v = nums(2, 3)?;
+                AutoStep::Teleport {
+                    x: v[0],
+                    y: v[1],
+                    z: v.get(2).copied(),
+                }
+            }
+            _ => {
+                let v = seg
+                    .split(':')
+                    .map(|v| v.trim().parse::<f32>().map_err(|e| format!("{seg:?}: {e}")))
+                    .collect::<Result<Vec<_>, _>>()?;
+                match v[..] {
+                    [secs, motor, rudder] => AutoStep::Drive {
+                        secs,
+                        motor,
+                        rudder,
+                    },
+                    _ => return Err(format!("{seg:?}: expected seconds:motor:rudder")),
+                }
+            }
         })
+    }
+
+    fn parse(script: &str) -> Result<Self, String> {
+        let steps = script
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(Self::parse_step)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(AutoDrive {
+            steps,
+            time: 0.0,
+            step_time: 0.0,
+            index: 0,
+            logged: None,
+        })
+    }
+
+    /// Rudder towards `target` from a car at `pos` facing `forward`: the
+    /// sign of the cross product, scaled by how far off the heading is.
+    fn steer(pos: Vec3, forward: Vec3, target: (f32, f32), wrap: (f32, f32)) -> (f32, f32) {
+        let wrapped = |d: f32, size: f32| {
+            if size > 0.0 {
+                d - size * (d / size).round()
+            } else {
+                d
+            }
+        };
+        let dx = wrapped(target.0 - pos.x, wrap.0);
+        let dy = wrapped(target.1 - pos.y, wrap.1);
+        let dist = (dx * dx + dy * dy).sqrt();
+        let (fx, fy) = (forward.x, forward.y);
+        let flen = (fx * fx + fy * fy).sqrt().max(1e-3);
+        let cross = (fx * dy - fy * dx) / (flen * dist.max(1e-3));
+        let dot = (fx * dx + fy * dy) / (flen * dist.max(1e-3));
+        let angle = cross.atan2(dot);
+        // Positive rudder turns right (clockwise seen from above).
+        let rudder = (-angle * 2.0).clamp(-1.0, 1.0);
+        (dist, rudder)
     }
 }
 
@@ -2315,7 +2443,7 @@ impl Game {
     pub fn set_autodrive(&mut self, script: &str) {
         match AutoDrive::parse(script) {
             Ok(ad) => {
-                log::info!("Autodrive: {} segment(s)", ad.segments.len());
+                log::info!("Autodrive: {} step(s)", ad.steps.len());
                 self.autodrive = Some(ad);
             }
             Err(e) => log::error!("Autodrive script rejected: {e}"),
@@ -2328,47 +2456,204 @@ impl Game {
         }
         let overlay = self.render.tracks();
         let tiles = (overlay.len(), overlay.bytes());
+        let player_pose = || {
+            self.agents
+                .iter()
+                .find(|a| a.spirit == Spirit::Player)
+                .map(|a| match a.physics {
+                    Physics::Cpu { ref transform, .. } => *transform,
+                })
+        };
+        let pose = player_pose();
+        let wrap = (self.level.size.0 as f32, self.level.size.1 as f32);
         let Some(ad) = self.autodrive.as_mut() else {
             return;
         };
-        let pose = self
-            .agents
-            .iter()
-            .find(|a| a.spirit == Spirit::Player)
-            .map(|a| match a.physics {
-                Physics::Cpu { ref transform, .. } => transform.disp,
-            });
-        let mut start = 0.0;
-        let mut current = None;
-        for (i, &(secs, motor, rudder)) in ad.segments.iter().enumerate() {
-            if ad.time < start + secs {
-                current = Some((i, motor, rudder));
+        // Instant actions run back to back; a drive or goto step holds the
+        // controls for this frame.
+        let mut actions = Vec::new();
+        let mut controls = (0.0, 0.0);
+        while let Some(step) = ad.steps.get(ad.index).cloned() {
+            if ad.logged != Some(ad.index) {
+                ad.logged = Some(ad.index);
+                log::info!(
+                    "Autodrive step {}/{} at t={:.1}s {:?} pos={:?} track overlay: {} tiles, {} KiB",
+                    ad.index,
+                    ad.steps.len(),
+                    ad.time,
+                    step,
+                    pose.map(|t| t.disp),
+                    tiles.0,
+                    tiles.1 / 1024,
+                );
+                if let AutoStep::Goto { .. } | AutoStep::Jump(_) = step {
+                    // Open-ended steps time themselves from their start.
+                    ad.step_time = 0.0;
+                    if let AutoStep::Jump(_) = step {
+                        actions.push(AutoStep::Jump(0.0));
+                    }
+                }
+            }
+            let done = match step {
+                AutoStep::Drive {
+                    secs,
+                    motor,
+                    rudder,
+                } => {
+                    controls = (motor, rudder);
+                    ad.step_time >= secs
+                }
+                AutoStep::Goto { x, y, timeout } => match pose {
+                    Some(t) => {
+                        let (dist, rudder) =
+                            AutoDrive::steer(t.disp, t.rot * Vec3::Y, (x, y), wrap);
+                        let arrived = dist <= AutoDrive::GOTO_RADIUS;
+                        if arrived || ad.step_time >= timeout {
+                            log::info!(
+                                "Autodrive goto ({x},{y}) {} after {:.1}s, dist={dist:.0}",
+                                if arrived { "arrived" } else { "timed out" },
+                                ad.step_time
+                            );
+                            true
+                        } else {
+                            controls = ((dist / 60.0).clamp(0.4, 1.0), rudder);
+                            false
+                        }
+                    }
+                    None => true,
+                },
+                AutoStep::Jump(secs) => ad.step_time >= secs,
+                ref other => {
+                    actions.push(other.clone());
+                    true
+                }
+            };
+            if !done {
                 break;
             }
-            start += secs;
+            if let AutoStep::Jump(_) = step {
+                actions.push(AutoStep::Jump(-1.0));
+            }
+            ad.index += 1;
+            // Keep a drive step's overshoot (and pass it through instant
+            // actions), so a long script stays on its absolute timeline at
+            // a low frame rate and two clients' scripts stay in step.
+            ad.step_time = match step {
+                AutoStep::Drive { secs, .. } => (ad.step_time - secs).max(0.0),
+                AutoStep::Goto { .. } | AutoStep::Jump(_) => 0.0,
+                _ => ad.step_time,
+            };
         }
-        let (index, motor, rudder) = current.unwrap_or((ad.segments.len(), 0.0, 0.0));
-        if index != ad.index || ad.time == 0.0 {
-            log::info!(
-                "Autodrive segment {}/{} at t={:.1}s motor={} rudder={} pos={:?} track overlay: {} tiles, {} KiB",
-                index,
-                ad.segments.len(),
-                ad.time,
-                motor,
-                rudder,
-                pose,
-                tiles.0,
-                tiles.1 / 1024,
-            );
-            ad.index = index;
+        if ad.index < ad.steps.len() {
+            ad.step_time += delta;
         }
         // A pose line every two seconds, to follow the drive in the log.
-        if (ad.time / 2.0).floor() != ((ad.time + delta) / 2.0).floor() {
-            log::info!("Autodrive t={:.1}s pos={:?}", ad.time + delta, pose);
+        let periodic = (ad.time / 2.0).floor() != ((ad.time + delta) / 2.0).floor();
+        if periodic {
+            let armor = self
+                .agents
+                .iter()
+                .find(|a| a.spirit == Spirit::Player)
+                .map(|a| (a.armor, a.max_armor));
+            log::info!(
+                "Autodrive t={:.1}s pos={:?} armor={:?} spiral={}/{} shots={} world={} remotes={}",
+                ad.time + delta,
+                pose.map(|t| t.disp),
+                armor,
+                self.spiral.charge,
+                self.spiral.capacity,
+                self.shots.len(),
+                self.screen.is_world(),
+                self.remote_agents.len(),
+            );
         }
         ad.time += delta;
-        self.input.spin_ver = motor;
-        self.input.spin_hor = rudder;
+        self.input.spin_ver = controls.0;
+        self.input.spin_hor = controls.1;
+        for action in actions {
+            self.run_auto_action(action);
+        }
+    }
+
+    fn run_auto_action(&mut self, action: AutoStep) {
+        use winit::{event::ElementState, keyboard::KeyCode};
+        let key = |game: &mut Self, key| {
+            game.on_key(key, ElementState::Pressed);
+            game.on_key(key, ElementState::Released);
+        };
+        match action {
+            AutoStep::Use => self.input.use_entrance = true,
+            AutoStep::Fire(bay) => self.input.fire_bay = Some(bay),
+            AutoStep::Reset => key(self, KeyCode::KeyR),
+            AutoStep::Jump(t) if t >= 0.0 => {
+                self.on_key(KeyCode::AltLeft, ElementState::Pressed);
+            }
+            AutoStep::Jump(_) => {
+                self.on_key(KeyCode::AltLeft, ElementState::Released);
+            }
+            AutoStep::Teleport { x, y, z } => {
+                let z = z.unwrap_or_else(|| {
+                    level::terraform::surface_height(&self.level, (x as i32, y as i32)) + 8.0
+                });
+                if let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
+                    let Physics::Cpu {
+                        ref mut transform,
+                        ref mut dynamo,
+                    } = player.physics;
+                    transform.disp = Vec3::new(x, y, z);
+                    transform.rot = glam::Quat::IDENTITY;
+                    dynamo.linear_velocity = Vec3::ZERO;
+                    dynamo.angular_velocity = Vec3::ZERO;
+                    player.tracks.reset();
+                }
+                if self.net.is_some() {
+                    self.send_tweaks_pose();
+                    self.tweaks_pos_hold = self.tweaks_pos_hold.max(0.75);
+                }
+            }
+            AutoStep::Enter => {
+                let Some(pos) = self
+                    .agents
+                    .iter()
+                    .find(|a| a.spirit == Spirit::Player)
+                    .map(|a| a.position())
+                else {
+                    return;
+                };
+                let reach = (level::cycle::DELIVERY_RADIUS * 2).max(96);
+                let near = self.db.escaves.iter().find(|e| {
+                    let dx = pos.x as i32 - e.coordinates.0;
+                    let dy = pos.y as i32 - e.coordinates.1;
+                    dx * dx + dy * dy <= reach * reach
+                });
+                match near {
+                    Some(e) if self.screen.is_world() => {
+                        let dest =
+                            Vec3::new(e.coordinates.0 as f32, e.coordinates.1 as f32, pos.z - 24.0);
+                        let name = e.name.clone();
+                        log::info!("Autodrive enter {name}");
+                        self.start_enter(name, dest);
+                    }
+                    _ => log::warn!("Autodrive enter: no escave in reach of {pos:?}"),
+                }
+            }
+            AutoStep::Leave => {
+                if self.screen.visit().is_some() {
+                    self.sync_weapon_slots();
+                    self.screen.begin_leave();
+                } else {
+                    log::warn!("Autodrive leave: not in an escave");
+                }
+            }
+            AutoStep::Armor(n) => {
+                if let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
+                    player.armor = n.min(player.max_armor as u32) as u16;
+                    log::info!("Autodrive armor {}/{}", player.armor, player.max_armor);
+                }
+            }
+            AutoStep::Mark(name) => log::info!("Autodrive mark {name}"),
+            AutoStep::Drive { .. } | AutoStep::Goto { .. } => {}
+        }
     }
 }
 
@@ -2570,7 +2855,10 @@ impl Application for Game {
             };
             let forward = transform.rot * Vec3::Y;
             if let Some(shot) = weapon::fire(&self.inventory, bay, transform.disp, forward) {
+                log::debug!("Fire bay {bay} from {:?} dir {:?}", transform.disp, forward);
                 self.shots.push(LiveShot { shot, age: 0.0 });
+            } else {
+                log::debug!("Fire bay {bay}: no weapon");
             }
         }
         for live in &mut self.shots {
@@ -3537,5 +3825,79 @@ impl Application for Game {
         );*/
 
         encoder.finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AutoDrive, AutoStep};
+    use glam::Vec3;
+
+    #[test]
+    fn autodrive_parses_segments_and_actions() {
+        let ad = AutoDrive::parse(
+            "2:0:0, goto:1500:15700, goto:1:2:5, use, fire0, fire1, jump, jump:0.2, \
+             reset, tp:590:4140, tp:1:2:90, enter, leave, armor:0, mark:hit",
+        )
+        .unwrap();
+        assert_eq!(
+            ad.steps,
+            vec![
+                AutoStep::Drive {
+                    secs: 2.0,
+                    motor: 0.0,
+                    rudder: 0.0
+                },
+                AutoStep::Goto {
+                    x: 1500.0,
+                    y: 15700.0,
+                    timeout: 30.0
+                },
+                AutoStep::Goto {
+                    x: 1.0,
+                    y: 2.0,
+                    timeout: 5.0
+                },
+                AutoStep::Use,
+                AutoStep::Fire(0),
+                AutoStep::Fire(1),
+                AutoStep::Jump(0.5),
+                AutoStep::Jump(0.2),
+                AutoStep::Reset,
+                AutoStep::Teleport {
+                    x: 590.0,
+                    y: 4140.0,
+                    z: None
+                },
+                AutoStep::Teleport {
+                    x: 1.0,
+                    y: 2.0,
+                    z: Some(90.0)
+                },
+                AutoStep::Enter,
+                AutoStep::Leave,
+                AutoStep::Armor(0),
+                AutoStep::Mark("hit".to_string()),
+            ]
+        );
+        for bad in ["1:2", "goto:1", "tp:1:2:3:4", "mark:", "armor:x", "fly:1:2"] {
+            assert!(AutoDrive::parse(bad).is_err(), "{bad:?} parsed");
+        }
+    }
+
+    #[test]
+    fn autodrive_steers_towards_the_target() {
+        let size = (2048.0, 16384.0);
+        // Facing +Y: a target straight ahead needs no rudder.
+        let (dist, rudder) = AutoDrive::steer(Vec3::ZERO, Vec3::Y, (0.0, 100.0), size);
+        assert!((dist - 100.0).abs() < 1e-3 && rudder.abs() < 1e-3);
+        // Targets either side get opposite rudder, the full amount when
+        // abeam.
+        let (_, right) = AutoDrive::steer(Vec3::ZERO, Vec3::Y, (100.0, 0.0), size);
+        let (_, left) = AutoDrive::steer(Vec3::ZERO, Vec3::Y, (-100.0, 0.0), size);
+        assert_eq!((right, left), (1.0, -1.0));
+        // Across the seam the short way round wins.
+        let (dist, _) = AutoDrive::steer(Vec3::new(2040.0, 0.0, 0.0), Vec3::Y, (8.0, 0.0), size);
+        assert!((dist - 16.0).abs() < 1e-3, "{dist}");
     }
 }

@@ -18,9 +18,12 @@ struct Cli {
     #[arg(long, default_value = "Player")]
     name: String,
 
-    /// Debug: drive the local car from a script of `seconds:motor:rudder`
-    /// segments, comma separated (motor and rudder in -1..=1), e.g.
-    /// `2:0:0,20:1:0.6`. Controls go through the normal input path.
+    /// Debug: drive the local car from a comma-separated script of
+    /// `seconds:motor:rudder` segments (motor and rudder in -1..=1) and
+    /// actions: `goto:x:y[:timeout]`, `use` (Space), `fire0`/`fire1`,
+    /// `jump[:secs]`, `reset` (R), `tp:x:y[:z]`, `enter`/`leave` (escave),
+    /// `mark:NAME` (log line), e.g. `2:0:0,goto:1500:15840,enter,5:0:0,leave`.
+    /// Controls go through the normal input path.
     #[arg(long)]
     autodrive: Option<String>,
 }
