@@ -61,7 +61,7 @@ pub fn apply_input(
         dynamo.change_traction(input.motor * input_factor * common.car.traction_incr);
     }
     if input.brake && dynamo.traction != 0.0 {
-        dynamo.traction *= (-input_factor).exp2();
+        dynamo.traction *= super::fmath::exp2(-input_factor);
     }
 }
 
