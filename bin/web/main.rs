@@ -1264,12 +1264,6 @@ impl WebApp {
         self.render.dirty_terrain(regions, height);
     }
 
-    /// Cuts the stretches the wheels covered since the last frame into the
-    /// level, and hands the touched rectangles to the renderer. Port of the
-    /// native game's `step_tracks` (bin/road/game.rs); the physics records
-    /// the wheels' stretches over an immutable level, and the cutting here
-    /// runs where the level can be borrowed mutably.
-
     /// Solo: gather / deliver / advance. Networked: fade visuals only.
     fn step_cycle(&mut self, delta: f32, networked: bool) {
         let bunch = match self.cycle {
@@ -1343,6 +1337,11 @@ impl WebApp {
         }
     }
 
+    /// Cuts the stretches the wheels covered since the last frame into the
+    /// level, and hands the touched rectangles to the renderer. Port of the
+    /// native game's `step_tracks` (bin/road/game.rs); the physics records
+    /// the wheels' stretches over an immutable level, and the cutting here
+    /// runs where the level can be borrowed mutably.
     fn step_tracks(&mut self) {
         let Some(agent) = self.agent.as_mut() else {
             return;
