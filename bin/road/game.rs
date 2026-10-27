@@ -733,6 +733,9 @@ pub struct Game {
     /// Online: the bullet of the gun the server took in each of our bays
     /// (`AgentState::guns`); a bay fires only the gun the server has.
     my_guns: [Option<u8>; weapons::BAYS],
+    /// Online: our energy shield and its max (`AgentState::energy`,
+    /// `combat::ARMOR_UNIT`s), the server's. Offline there is none.
+    my_energy: Option<(u32, u32)>,
     /// Online: whether the server was last told we are in an escave
     /// (`ClientMessage::Escave`), sent when the escave screen takes over
     /// the drive (`Screen::blocks_drive`) and when it gives it back.
@@ -785,8 +788,12 @@ const SERVER_TICK_SECS: f32 = 1.0 / 20.0;
 
 /// Slack past a shot's flight before it counts as over: a lossy link
 /// delivers snapshots in bursts a few hundred ms late, and remote cars are
-/// drawn that far behind anyway. Only a backlog (an escave visit) is older.
+/// drawn that far behind anyway. Only a backlog (a stall) is older.
 const STALE_SHOT_MARGIN_SECS: f32 = 1.0;
+
+/// More snapshots than this in one frame (0.25 s of them) is a backlog
+/// worth a log line.
+const BACKLOG_LOG_SNAPSHOTS: usize = 5;
 
 /// How long ago, by the newest snapshot in hand, the server took a shot.
 fn shot_lateness(newest_tick: Option<u32>, shot_tick: u32) -> f32 {
@@ -1217,6 +1224,7 @@ impl Game {
             reload: weapon::Reload::default(),
             clock: std::time::Instant::now(),
             my_guns: [None; weapons::BAYS],
+            my_energy: None,
             death_note: None,
             pending_portal: None,
             portal_pad_lock: None,
@@ -1376,6 +1384,18 @@ impl Game {
             log::info!("Guns taken by the server: {:?}", state.guns);
             self.my_guns = state.guns;
         }
+        let energy = (state.energy, state.max_energy);
+        if let Some((before, _)) = self.my_energy
+            && state.energy < before
+        {
+            // A hit (it only refills otherwise).
+            log::info!(
+                "Energy from server: {}/{}",
+                weapons::points(state.energy),
+                weapons::points(state.max_energy)
+            );
+        }
+        self.my_energy = Some(energy);
         let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
             return;
         };
@@ -2761,6 +2781,12 @@ impl Game {
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 120.0))
             .order(egui::Order::Foreground)
             .show(context, |ui| {
+                if let Some((energy, max)) = self.my_energy {
+                    ui.label(
+                        egui::RichText::new(vangers::combat::shield::hud_line(energy, max))
+                            .strong(),
+                    );
+                }
                 if let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) {
                     ui.label(
                         // The original's scale: whole `car.prm` points.
@@ -2911,10 +2937,11 @@ impl Game {
                 .find(|a| a.spirit == Spirit::Player)
                 .map(|a| (a.armor, a.max_armor));
             log::info!(
-                "Autodrive t={:.1}s pos={:?} armor={:?} spiral={}/{} shots={} remote_shots={} world={} remotes={}",
+                "Autodrive t={:.1}s pos={:?} armor={:?} energy={:?} spiral={}/{} shots={} remote_shots={} world={} remotes={}",
                 ad.time + delta,
                 pose.map(|t| t.disp),
                 armor,
+                self.my_energy,
                 self.spiral.charge,
                 self.spiral.capacity,
                 self.shots.iter().filter(|l| !l.remote).count(),
@@ -3029,387 +3056,24 @@ impl Game {
             AutoStep::Drive { .. } | AutoStep::Goto { .. } => {}
         }
     }
-}
 
-impl Application for Game {
-    fn on_key(&mut self, key: winit::keyboard::KeyCode, state: winit::event::ElementState) -> bool {
-        use winit::{event::ElementState, keyboard::KeyCode};
-
-        let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
-            Some(agent) => agent,
-            None => return false,
-        };
-
-        match state {
-            ElementState::Pressed => match key {
-                KeyCode::Escape => return false,
-                KeyCode::KeyP => {
-                    let center = match player.physics {
-                        Physics::Cpu { ref transform, .. } => *transform,
-                    };
-                    self.input.tick = None;
-                    if self.input.is_paused {
-                        self.input.is_paused = false;
-                        self.cam.loc = center.disp + Vec3::new(0.0, 0.0, 200.0);
-                        self.cam.rot = glam::Quat::IDENTITY;
-                    } else {
-                        self.input.is_paused = true;
-                        self.cam.focus_on(&center);
-                    }
-                }
-                KeyCode::Comma => self.input.tick = Some(-1.0),
-                KeyCode::Period => self.input.tick = Some(1.0),
-                KeyCode::ShiftLeft => self.input.turbo = true,
-                KeyCode::KeyM => self.input.mole = true,
-                KeyCode::KeyC => {
-                    if let Physics::Cpu { ref mut dynamo, .. } = player.physics {
-                        dynamo.flotator = !dynamo.flotator;
-                        log::info!("cutterig {}", if dynamo.flotator { "on" } else { "off" });
-                    }
-                }
-                KeyCode::Space => self.input.use_entrance = true,
-                KeyCode::KeyF => self.input.fire_bay = Some(0),
-                KeyCode::KeyG => self.input.fire_bay = Some(1),
-                KeyCode::AltLeft => self.input.jump = Some(0.0),
-                KeyCode::KeyW => self.input.spin_ver = self.cam.scale.x,
-                KeyCode::KeyS => self.input.spin_ver = -self.cam.scale.x,
-                KeyCode::KeyR => {
-                    if let Physics::Cpu {
-                        ref mut transform,
-                        ref mut dynamo,
-                    } = player.physics
-                    {
-                        transform.rot = glam::Quat::IDENTITY;
-                        dynamo.linear_velocity = Vec3::ZERO;
-                        dynamo.angular_velocity = Vec3::ZERO;
-                    }
-                    player.tracks.reset();
-                    // Multiplayer: the server owns the pose, so a local-only
-                    // reset is snapped straight back by the next WorldState
-                    // (rotation error > SNAP_ROT). Upload it, and skip the
-                    // reconcile briefly so in-flight snapshots don't undo it.
-                    if self.net.is_some() {
-                        self.send_reset_pose();
-                        self.tweaks_pos_hold = self.tweaks_pos_hold.max(0.25);
-                    }
-                }
-                KeyCode::KeyA => self.input.spin_hor = -self.cam.scale.y,
-                KeyCode::KeyD => self.input.spin_hor = self.cam.scale.y,
-                KeyCode::KeyQ => {
-                    self.input.roll = Some(Roll {
-                        dir: -self.cam.scale.y,
-                        time: 0.0,
-                    })
-                }
-                KeyCode::KeyE => {
-                    self.input.roll = Some(Roll {
-                        dir: self.cam.scale.y,
-                        time: 0.0,
-                    })
-                }
-                _ => (),
-            },
-            ElementState::Released => match key {
-                KeyCode::KeyW | KeyCode::KeyS => self.input.spin_ver = 0.0,
-                KeyCode::KeyA | KeyCode::KeyD => self.input.spin_hor = 0.0,
-                KeyCode::KeyQ | KeyCode::KeyE => self.input.roll = None,
-                KeyCode::ShiftLeft => self.input.turbo = false,
-                KeyCode::KeyM => self.input.mole = false,
-                KeyCode::AltLeft => {
-                    player.jump = self.input.jump.take();
-                }
-                _ => (),
-            },
-        }
-
-        true
-    }
-
-    fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, delta: f32) {
-        profiling::scope!("Update");
-
-        self.apply_pending_portal(device, queue);
-        self.step_autodrive(delta);
-
-        let focus_point = self
-            .cam
-            .intersect_height(self.level.geometry.height as f32 * 0.3);
-
-        if let Some(ref mut jump) = self.input.jump {
-            let power = delta * (self.db.common.speed.standard_frame_rate as f32);
-            *jump = (*jump + power).min(self.db.common.force.max_jump_power);
-        }
-
-        {
-            let player = self
-                .agents
-                .iter_mut()
-                .find(|a| a.spirit == Spirit::Player)
-                .unwrap();
-            let target = match player.physics {
-                Physics::Cpu { ref transform, .. } => *transform,
-            };
-
-            if self.input.is_paused {
-                if let Some(tick) = self.input.tick.take() {
-                    self.line_buffer.clear();
-                    player.control.roll = 0.0;
-
-                    player.cpu_step(
-                        tick * self.max_quant,
-                        &self.level,
-                        &self.db.common,
-                        SimulationStep::Final {
-                            focus_point: &focus_point,
-                            line_buffer: Some(&mut self.line_buffer),
-                        },
-                    );
-                }
-
-                self.cam.rotate_focus(
-                    &target,
-                    2.0 * delta * self.input.spin_hor,
-                    delta * self.input.spin_ver,
-                );
-
-                // Stepping frame by frame still lays the track down, which
-                // is the only way to watch the tread take shape.
-                self.step_tracks();
-                return;
-            }
-
-            player.control.rudder = self.input.spin_hor;
-            player.control.motor = 1.0 * self.input.spin_ver;
-            player.control.turbo = self.input.turbo;
-            player.control.mole = self.input.mole;
-            player.control.roll = match self.input.roll {
-                Some(ref mut roll) => {
-                    let roll_count = (roll.time * self.db.common.speed.standard_frame_rate as f32)
-                        .min(100.0) as u8;
-                    roll.time += delta;
-                    if roll_count > self.db.common.force.side_impulse_delay {
-                        roll.time = 0.0;
-                    }
-                    if roll_count < self.db.common.force.side_impulse_duration {
-                        roll.dir
-                    } else {
-                        0.0
-                    }
-                }
-                None => 0.0,
-            };
-            if self.wrecked.is_some() {
-                // A wreck: no control until the respawn.
-                player.control = Default::default();
-                self.input.fire_bay = None;
-            }
-        }
-
-        if self.input.use_entrance {
-            self.input.use_entrance = false;
-            self.try_use_entrance();
-        }
-        if !self.screen.is_world() {
-            self.step_screen(delta);
-        }
-        // Before the early return below: the net block further down does
-        // not run while the escave screen holds the drive.
-        self.tell_server_about_escave();
-        if self.screen.blocks_drive() {
-            if self.screen.follows_camera() {
-                self.update_follow_camera(delta);
-            }
-            return;
-        }
-        let mut riding = self.step_ride(delta);
-        let pad_locked = self.step_portal_pad_lock(delta);
-
-        if let Some(bay) = self.input.fire_bay.take()
-            && !self.screen.blocks_drive()
-        {
-            let player = self
-                .agents
-                .iter()
-                .find(|a| a.spirit == Spirit::Player)
-                .unwrap();
-            let transform = match player.physics {
-                Physics::Cpu { ref transform, .. } => *transform,
-            };
-            let forward = transform.rot * Vec3::Y;
-            // From the bay's mount on the model, not the car's centre: that
-            // rides a few units over the ground, and the terrain stops
-            // shots.
-            let muzzle = player
-                .car
-                .model
-                .slots
-                .get(bay)
-                .map_or(transform.disp, |slot| {
-                    transform.transform_point(Vec3::from(slot.pos.map(|v| v as f32)))
-                });
-            let gun = self
-                .inventory
-                .bay(bay)
-                .filter(|good| good.kind == escave::Kind::Weapon)
-                .and_then(|good| self.weapons.gun(&good.id));
-            // Online a bay fires only the gun the server took for it.
-            let refused = self.net.is_some()
-                && gun
-                    .is_some_and(|g| self.my_guns.get(bay).copied().flatten() != Some(g.bullet_id));
-            let cooldown = gun.map_or(0.0, |g| self.weapons.cooldown(g));
-            let now = self.clock.elapsed().as_secs_f64();
-            let fired = if refused {
-                log::debug!("Fire bay {bay}: the server has not taken this gun");
-                None
-            } else if gun.is_some() && !self.reload.try_fire(bay, now, cooldown, 0.0) {
-                log::debug!("Fire bay {bay}: reloading");
-                None
-            } else {
-                weapon::fire(&self.inventory, &self.weapons, bay, muzzle, forward)
-            };
-            let color = gun
-                .and_then(|g| weapon::bullet_color(&g.bullet))
-                .unwrap_or(weapon::SHOT_COLOR);
-            if let Some(shot) = fired {
-                log::debug!(
-                    "Fire bay {bay} ({}) from {:?} dir {:?}",
-                    gun.map_or("?", |g| g.model.as_str()),
-                    muzzle,
-                    forward
-                );
-                if let Some(ref net) = self.net {
-                    // Lined up with our inputs: the shot happens before
-                    // the next quantum we send.
-                    let dir = shot.vel.normalize();
-                    let view = self.world_view.map_or((0, 0), |(tick, at)| {
-                        (tick, at.elapsed().as_millis().min(u16::MAX as u128) as u16)
-                    });
-                    net.send_fire(
-                        self.sync.prediction.next(),
-                        bay as u8,
-                        shot.pos.to_array(),
-                        dir.to_array(),
-                        view,
-                    );
-                }
-                self.shots.push(LiveShot {
-                    life: shot.flight_time(&self.level),
-                    shot,
-                    age: 0.0,
-                    remote: false,
-                    color,
-                });
-            } else if gun.is_none() {
-                log::debug!("Fire bay {bay}: no weapon");
-            }
-        }
+    /// Fly the shots on, dropping those whose flight is over.
+    fn step_shots(&mut self, delta: f32) {
         for live in &mut self.shots {
             live.age = live.shot.step_within(delta, live.age, live.life);
         }
         self.shots.retain(|live| live.age < live.life);
+    }
 
-        self.step_moving_land(delta);
-        if !riding && !pad_locked {
-            riding = self.begin_train_ride();
-        }
-        if !riding && !pad_locked {
-            self.try_begin_escave_visit();
-        }
-        // Train ride and post-hop pad lock both freeze local player physics.
-        let hold_player = riding || pad_locked;
-        self.update_passage_proximity();
-        self.try_charge_spiral_station();
-
-        if self.flood.step(&mut self.level, delta) {
-            self.render.terrain.dirty_flood = true;
-        }
-
-        self.step_cycle(delta);
-        if !self.cycle.as_ref().is_some_and(|b| b.is_fading()) {
-            let range = self.palette.step(&mut self.level, delta);
-            self.render.dirty_palette(range);
-        }
-
-        const TIME_HACK: f32 = 1.0;
-        // Note: the equations below make the game absolutely match the original
-        // in terms of time scale for both input and physics.
-        // However! the game feels much faster, presumably because of the lack
-        // of collision/drag forces that slow you down.
-        let input_factor = TIME_HACK * delta / config::common::MAIN_LOOP_TIME;
-        let physics_dt = TIME_HACK * delta * {
-            let n = &self.db.common.nature;
-            let fps = self.db.common.speed.standard_frame_rate as f32;
-            fps * n.time_delta0 * n.num_calls_analysis as f32
-        };
-
-        // Multiplayer: the server steps the car in whole `max_quant` quanta
-        // and applies the jump on the last one of its tick. Do the same for
-        // the local car (jump on the last quantum of the frame) so the
-        // prediction follows the server's path instead of one that depends
-        // on the frame rate. Single player keeps the per-frame split.
-        // While the player is held (train ride, pad lock) the quanta still
-        // go to the server, with no control, so its copy of the car stays
-        // put too instead of running on the last held input.
-        let player_quanta = self
-            .net
-            .is_some()
-            .then(|| self.sync.due_quanta(physics_dt, self.max_quant));
-
-        {
-            use rayon::prelude::*;
-
-            let clipper = Clipper::new(&self.cam);
-            let max_quant = self.max_quant;
-            let common = &self.db.common;
-            let level = &self.level;
-
-            self.agents.par_iter_mut().for_each(|a| {
-                if hold_player && a.spirit == Spirit::Player {
-                    return;
-                }
-                if a.spirit == Spirit::Player && player_quanta.is_some() {
-                    // Stepped below, quantum by quantum with its contacts.
-                    return;
-                }
-                let mut dt = physics_dt;
-                a.cpu_apply_control(input_factor, common);
-
-                // only go through the full iteration on visible objects
-                if !clipper.clip(&level.display_pos(a.position(), focus_point)) {
-                    while dt > max_quant {
-                        a.cpu_step(max_quant, level, common, SimulationStep::Intermediate);
-                        dt -= max_quant;
-                    }
-                }
-
-                a.cpu_step(
-                    dt,
-                    level,
-                    common,
-                    SimulationStep::Final {
-                        focus_point: &focus_point,
-                        line_buffer: None,
-                    },
-                );
-
-                a.ai_behavior(delta, level);
-            });
-        }
-
-        let input_batch = match player_quanta {
-            Some(quanta) if hold_player => {
-                // The car moves outside its inputs: no history to replay.
-                let first = self.sync.skip(quanta);
-                (quanta > 0).then(|| (first, quanta, Default::default()))
-            }
-            Some(quanta) => self
-                .step_player_quanta(quanta, &focus_point)
-                .map(|(first, input)| (first, quanta, input)),
-            None => None,
-        };
-        self.step_tracks();
-        self.step_world_life(delta);
-
+    /// Send the frame's input batch and handle what the server sent:
+    /// snapshots, acks, shots, deaths and respawns. Runs on the escave
+    /// screen too (no input, the car held), so the socket keeps
+    /// draining instead of backing up into a burst on the way out.
+    fn step_network(
+        &mut self,
+        input_batch: Option<(u32, u32, physics::prediction::QuantInput)>,
+        hold_player: bool,
+    ) {
         // Networking: send input and process server events.
         // Send + poll under a short `net` borrow, then handle events with
         // full `&mut self` so cycle sync can touch render/level/agents.
@@ -3431,8 +3095,15 @@ impl Application for Game {
             let newest_world = events
                 .iter()
                 .rposition(|e| matches!(e, NetEvent::WorldState { .. }));
-            // After the escave screen (no net block runs there) the whole
-            // visit arrives in one batch; shots from it are long over.
+            let snapshots = events
+                .iter()
+                .filter(|e| matches!(e, NetEvent::WorldState { .. }))
+                .count();
+            if snapshots > BACKLOG_LOG_SNAPSHOTS {
+                log::info!("Net backlog: {snapshots} snapshots in one frame");
+            }
+            // A stalled frame or link hands over a backlog in one batch;
+            // shots from early in it may be long over.
             let newest_tick = events
                 .iter()
                 .filter_map(|e| match *e {
@@ -3701,6 +3372,7 @@ impl Application for Game {
                     } => self.on_respawned(player_id, &transform, next_quant, my_id),
                     NetEvent::Disconnected => {
                         self.wrecked = None;
+                        self.my_energy = None;
                         self.escave_sent = false;
                         self.spiral_sync.reset();
                         log::warn!("Disconnected from server");
@@ -3711,6 +3383,396 @@ impl Application for Game {
                 }
             }
         }
+    }
+}
+
+impl Application for Game {
+    fn on_key(&mut self, key: winit::keyboard::KeyCode, state: winit::event::ElementState) -> bool {
+        use winit::{event::ElementState, keyboard::KeyCode};
+
+        let player = match self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
+            Some(agent) => agent,
+            None => return false,
+        };
+
+        match state {
+            ElementState::Pressed => match key {
+                KeyCode::Escape => return false,
+                KeyCode::KeyP => {
+                    let center = match player.physics {
+                        Physics::Cpu { ref transform, .. } => *transform,
+                    };
+                    self.input.tick = None;
+                    if self.input.is_paused {
+                        self.input.is_paused = false;
+                        self.cam.loc = center.disp + Vec3::new(0.0, 0.0, 200.0);
+                        self.cam.rot = glam::Quat::IDENTITY;
+                    } else {
+                        self.input.is_paused = true;
+                        self.cam.focus_on(&center);
+                    }
+                }
+                KeyCode::Comma => self.input.tick = Some(-1.0),
+                KeyCode::Period => self.input.tick = Some(1.0),
+                KeyCode::ShiftLeft => self.input.turbo = true,
+                KeyCode::KeyM => self.input.mole = true,
+                KeyCode::KeyC => {
+                    if let Physics::Cpu { ref mut dynamo, .. } = player.physics {
+                        dynamo.flotator = !dynamo.flotator;
+                        log::info!("cutterig {}", if dynamo.flotator { "on" } else { "off" });
+                    }
+                }
+                KeyCode::Space => self.input.use_entrance = true,
+                KeyCode::KeyF => self.input.fire_bay = Some(0),
+                KeyCode::KeyG => self.input.fire_bay = Some(1),
+                KeyCode::AltLeft => self.input.jump = Some(0.0),
+                KeyCode::KeyW => self.input.spin_ver = self.cam.scale.x,
+                KeyCode::KeyS => self.input.spin_ver = -self.cam.scale.x,
+                KeyCode::KeyR => {
+                    if let Physics::Cpu {
+                        ref mut transform,
+                        ref mut dynamo,
+                    } = player.physics
+                    {
+                        transform.rot = glam::Quat::IDENTITY;
+                        dynamo.linear_velocity = Vec3::ZERO;
+                        dynamo.angular_velocity = Vec3::ZERO;
+                    }
+                    player.tracks.reset();
+                    // Multiplayer: the server owns the pose, so a local-only
+                    // reset is snapped straight back by the next WorldState
+                    // (rotation error > SNAP_ROT). Upload it, and skip the
+                    // reconcile briefly so in-flight snapshots don't undo it.
+                    if self.net.is_some() {
+                        self.send_reset_pose();
+                        self.tweaks_pos_hold = self.tweaks_pos_hold.max(0.25);
+                    }
+                }
+                KeyCode::KeyA => self.input.spin_hor = -self.cam.scale.y,
+                KeyCode::KeyD => self.input.spin_hor = self.cam.scale.y,
+                KeyCode::KeyQ => {
+                    self.input.roll = Some(Roll {
+                        dir: -self.cam.scale.y,
+                        time: 0.0,
+                    })
+                }
+                KeyCode::KeyE => {
+                    self.input.roll = Some(Roll {
+                        dir: self.cam.scale.y,
+                        time: 0.0,
+                    })
+                }
+                _ => (),
+            },
+            ElementState::Released => match key {
+                KeyCode::KeyW | KeyCode::KeyS => self.input.spin_ver = 0.0,
+                KeyCode::KeyA | KeyCode::KeyD => self.input.spin_hor = 0.0,
+                KeyCode::KeyQ | KeyCode::KeyE => self.input.roll = None,
+                KeyCode::ShiftLeft => self.input.turbo = false,
+                KeyCode::KeyM => self.input.mole = false,
+                KeyCode::AltLeft => {
+                    player.jump = self.input.jump.take();
+                }
+                _ => (),
+            },
+        }
+
+        true
+    }
+
+    fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, delta: f32) {
+        profiling::scope!("Update");
+
+        self.apply_pending_portal(device, queue);
+        self.step_autodrive(delta);
+
+        let focus_point = self
+            .cam
+            .intersect_height(self.level.geometry.height as f32 * 0.3);
+
+        if let Some(ref mut jump) = self.input.jump {
+            let power = delta * (self.db.common.speed.standard_frame_rate as f32);
+            *jump = (*jump + power).min(self.db.common.force.max_jump_power);
+        }
+
+        {
+            let player = self
+                .agents
+                .iter_mut()
+                .find(|a| a.spirit == Spirit::Player)
+                .unwrap();
+            let target = match player.physics {
+                Physics::Cpu { ref transform, .. } => *transform,
+            };
+
+            if self.input.is_paused {
+                if let Some(tick) = self.input.tick.take() {
+                    self.line_buffer.clear();
+                    player.control.roll = 0.0;
+
+                    player.cpu_step(
+                        tick * self.max_quant,
+                        &self.level,
+                        &self.db.common,
+                        SimulationStep::Final {
+                            focus_point: &focus_point,
+                            line_buffer: Some(&mut self.line_buffer),
+                        },
+                    );
+                }
+
+                self.cam.rotate_focus(
+                    &target,
+                    2.0 * delta * self.input.spin_hor,
+                    delta * self.input.spin_ver,
+                );
+
+                // Stepping frame by frame still lays the track down, which
+                // is the only way to watch the tread take shape.
+                self.step_tracks();
+                return;
+            }
+
+            player.control.rudder = self.input.spin_hor;
+            player.control.motor = 1.0 * self.input.spin_ver;
+            player.control.turbo = self.input.turbo;
+            player.control.mole = self.input.mole;
+            player.control.roll = match self.input.roll {
+                Some(ref mut roll) => {
+                    let roll_count = (roll.time * self.db.common.speed.standard_frame_rate as f32)
+                        .min(100.0) as u8;
+                    roll.time += delta;
+                    if roll_count > self.db.common.force.side_impulse_delay {
+                        roll.time = 0.0;
+                    }
+                    if roll_count < self.db.common.force.side_impulse_duration {
+                        roll.dir
+                    } else {
+                        0.0
+                    }
+                }
+                None => 0.0,
+            };
+            if self.wrecked.is_some() {
+                // A wreck: no control until the respawn.
+                player.control = Default::default();
+                self.input.fire_bay = None;
+            }
+        }
+
+        if self.input.use_entrance {
+            self.input.use_entrance = false;
+            self.try_use_entrance();
+        }
+        if !self.screen.is_world() {
+            self.step_screen(delta);
+        }
+        // Before the early return below, which skips the drive.
+        self.tell_server_about_escave();
+        if self.screen.blocks_drive() {
+            if self.net.is_some() {
+                // Online the world goes on: keep taking the server's
+                // snapshots, shots and deaths, the car held, so nothing
+                // backs up for the way out.
+                self.step_network(None, true);
+                self.step_shots(delta);
+                for remote in self.remote_agents.values_mut() {
+                    remote.net.interpolate(delta);
+                }
+                self.sync.decay(delta);
+            }
+            if self.screen.follows_camera() {
+                self.update_follow_camera(delta);
+            }
+            return;
+        }
+        let mut riding = self.step_ride(delta);
+        let pad_locked = self.step_portal_pad_lock(delta);
+
+        if let Some(bay) = self.input.fire_bay.take()
+            && !self.screen.blocks_drive()
+        {
+            let player = self
+                .agents
+                .iter()
+                .find(|a| a.spirit == Spirit::Player)
+                .unwrap();
+            let transform = match player.physics {
+                Physics::Cpu { ref transform, .. } => *transform,
+            };
+            let forward = transform.rot * Vec3::Y;
+            // From the bay's mount on the model, not the car's centre: that
+            // rides a few units over the ground, and the terrain stops
+            // shots.
+            let muzzle = player
+                .car
+                .model
+                .slots
+                .get(bay)
+                .map_or(transform.disp, |slot| {
+                    transform.transform_point(Vec3::from(slot.pos.map(|v| v as f32)))
+                });
+            let gun = self
+                .inventory
+                .bay(bay)
+                .filter(|good| good.kind == escave::Kind::Weapon)
+                .and_then(|good| self.weapons.gun(&good.id));
+            // Online a bay fires only the gun the server took for it.
+            let refused = self.net.is_some()
+                && gun
+                    .is_some_and(|g| self.my_guns.get(bay).copied().flatten() != Some(g.bullet_id));
+            let cooldown = gun.map_or(0.0, |g| self.weapons.cooldown(g));
+            let now = self.clock.elapsed().as_secs_f64();
+            let fired = if refused {
+                log::debug!("Fire bay {bay}: the server has not taken this gun");
+                None
+            } else if gun.is_some() && !self.reload.try_fire(bay, now, cooldown, 0.0) {
+                log::debug!("Fire bay {bay}: reloading");
+                None
+            } else {
+                weapon::fire(&self.inventory, &self.weapons, bay, muzzle, forward)
+            };
+            let color = gun
+                .and_then(|g| weapon::bullet_color(&g.bullet))
+                .unwrap_or(weapon::SHOT_COLOR);
+            if let Some(shot) = fired {
+                log::debug!(
+                    "Fire bay {bay} ({}) from {:?} dir {:?}",
+                    gun.map_or("?", |g| g.model.as_str()),
+                    muzzle,
+                    forward
+                );
+                if let Some(ref net) = self.net {
+                    // Lined up with our inputs: the shot happens before
+                    // the next quantum we send.
+                    let dir = shot.vel.normalize();
+                    let view = self.world_view.map_or((0, 0), |(tick, at)| {
+                        (tick, at.elapsed().as_millis().min(u16::MAX as u128) as u16)
+                    });
+                    net.send_fire(
+                        self.sync.prediction.next(),
+                        bay as u8,
+                        shot.pos.to_array(),
+                        dir.to_array(),
+                        view,
+                    );
+                }
+                self.shots.push(LiveShot {
+                    life: shot.flight_time(&self.level),
+                    shot,
+                    age: 0.0,
+                    remote: false,
+                    color,
+                });
+            } else if gun.is_none() {
+                log::debug!("Fire bay {bay}: no weapon");
+            }
+        }
+        self.step_shots(delta);
+
+        self.step_moving_land(delta);
+        if !riding && !pad_locked {
+            riding = self.begin_train_ride();
+        }
+        if !riding && !pad_locked {
+            self.try_begin_escave_visit();
+        }
+        // Train ride and post-hop pad lock both freeze local player physics.
+        let hold_player = riding || pad_locked;
+        self.update_passage_proximity();
+        self.try_charge_spiral_station();
+
+        if self.flood.step(&mut self.level, delta) {
+            self.render.terrain.dirty_flood = true;
+        }
+
+        self.step_cycle(delta);
+        if !self.cycle.as_ref().is_some_and(|b| b.is_fading()) {
+            let range = self.palette.step(&mut self.level, delta);
+            self.render.dirty_palette(range);
+        }
+
+        const TIME_HACK: f32 = 1.0;
+        // Note: the equations below make the game absolutely match the original
+        // in terms of time scale for both input and physics.
+        // However! the game feels much faster, presumably because of the lack
+        // of collision/drag forces that slow you down.
+        let input_factor = TIME_HACK * delta / config::common::MAIN_LOOP_TIME;
+        let physics_dt = TIME_HACK * delta * {
+            let n = &self.db.common.nature;
+            let fps = self.db.common.speed.standard_frame_rate as f32;
+            fps * n.time_delta0 * n.num_calls_analysis as f32
+        };
+
+        // Multiplayer: the server steps the car in whole `max_quant` quanta
+        // and applies the jump on the last one of its tick. Do the same for
+        // the local car (jump on the last quantum of the frame) so the
+        // prediction follows the server's path instead of one that depends
+        // on the frame rate. Single player keeps the per-frame split.
+        // While the player is held (train ride, pad lock) the quanta still
+        // go to the server, with no control, so its copy of the car stays
+        // put too instead of running on the last held input.
+        let player_quanta = self
+            .net
+            .is_some()
+            .then(|| self.sync.due_quanta(physics_dt, self.max_quant));
+
+        {
+            use rayon::prelude::*;
+
+            let clipper = Clipper::new(&self.cam);
+            let max_quant = self.max_quant;
+            let common = &self.db.common;
+            let level = &self.level;
+
+            self.agents.par_iter_mut().for_each(|a| {
+                if hold_player && a.spirit == Spirit::Player {
+                    return;
+                }
+                if a.spirit == Spirit::Player && player_quanta.is_some() {
+                    // Stepped below, quantum by quantum with its contacts.
+                    return;
+                }
+                let mut dt = physics_dt;
+                a.cpu_apply_control(input_factor, common);
+
+                // only go through the full iteration on visible objects
+                if !clipper.clip(&level.display_pos(a.position(), focus_point)) {
+                    while dt > max_quant {
+                        a.cpu_step(max_quant, level, common, SimulationStep::Intermediate);
+                        dt -= max_quant;
+                    }
+                }
+
+                a.cpu_step(
+                    dt,
+                    level,
+                    common,
+                    SimulationStep::Final {
+                        focus_point: &focus_point,
+                        line_buffer: None,
+                    },
+                );
+
+                a.ai_behavior(delta, level);
+            });
+        }
+
+        let input_batch = match player_quanta {
+            Some(quanta) if hold_player => {
+                // The car moves outside its inputs: no history to replay.
+                let first = self.sync.skip(quanta);
+                (quanta > 0).then(|| (first, quanta, Default::default()))
+            }
+            Some(quanta) => self
+                .step_player_quanta(quanta, &focus_point)
+                .map(|(first, input)| (first, quanta, input)),
+            None => None,
+        };
+        self.step_tracks();
+        self.step_world_life(delta);
+
+        self.step_network(input_batch, hold_player);
 
         if self.tweaks_pos_hold > 0.0 {
             self.tweaks_pos_hold = (self.tweaks_pos_hold - delta).max(0.0);

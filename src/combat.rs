@@ -13,7 +13,11 @@
 //! shots pass it and it fires none ([`fly_shots`]). Then the server puts it
 //! back, undamaged, by the escave entrance nearest to where it died
 //! ([`nearest_escave`]).
+//!
+//! A hit drains the car's energy shield ([`shield`]) before its armour, and
+//! the shield fills back at the original's rate.
 
+pub mod shield;
 pub mod weapons;
 
 pub use weapons::ARMOR_UNIT;

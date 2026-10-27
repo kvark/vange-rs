@@ -931,6 +931,8 @@ mod tests {
             control: Default::default(),
             armor: 10_000,
             max_armor: 10_000,
+            energy: 12_000,
+            max_energy: 12_000,
             guns: [None; vangers_net::BAYS],
             dead: false,
             in_escave,
