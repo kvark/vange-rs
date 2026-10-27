@@ -49,6 +49,13 @@ struct Cli {
     #[arg(long, default_value = "20")]
     tick_rate: u32,
 
+    /// Drop a client that has sent nothing for this many seconds (a crashed
+    /// or frozen client whose TCP connection never closed). A live client
+    /// sends an `Input` batch every frame; one in an escave may be silent
+    /// and is never timed out. 0 turns it off.
+    #[arg(long, default_value_t = DEFAULT_SILENT_TIMEOUT_SECS)]
+    silent_timeout_secs: f32,
+
     /// Level to host: `test`, a `world.ini` path, or a world name from `wrlds.dat`.
     /// When omitted, uses `settings.game.level` (resolved to `world.ini`) if game
     /// data is present; otherwise the procedural `test` level (CI / no data).
@@ -133,6 +140,11 @@ enum SessionEvent {
         conn_id: PlayerId,
     },
 }
+
+/// `--silent-timeout-secs` default: well past a frame hitch or a long
+/// level load on the client, short enough that a frozen client's car does
+/// not stand in the road (and hold its name) for long.
+const DEFAULT_SILENT_TIMEOUT_SECS: f32 = 8.0;
 
 /// How long a disconnected player's last pose / cycle carry is kept for reclaim.
 const RECONNECT_POSE_GRACE: Duration = Duration::from_secs(5 * 60);
@@ -231,6 +243,8 @@ struct ServerAgent {
     /// In an escave (`ClientMessage::Escave`, `AgentState::in_escave`):
     /// out of the shots and the car contact, and its fire is dropped.
     in_escave: bool,
+    /// When this connection last sent anything (`--silent-timeout-secs`).
+    last_heard: Instant,
 }
 
 /// Diagnostic: a player's accepted shots, summed into at most one info
@@ -1053,6 +1067,12 @@ async fn main() {
     // Last known pose + cirtainer + spiral per player_id after leave (grace reclaim).
     let mut last_poses: HashMap<PlayerId, LastPose> = HashMap::new();
     let mut tick: u32 = 0;
+    let silent_timeout =
+        (cli.silent_timeout_secs > 0.0).then(|| Duration::from_secs_f32(cli.silent_timeout_secs));
+    match silent_timeout {
+        Some(limit) => info!("Silent clients time out after {:.1} s", limit.as_secs_f32()),
+        None => info!("Silent client timeout off"),
+    }
     let mut bump_tracker = BumpTracker::default();
     let level_name = cycle_world.clone();
     let max_players = cli.max_players;
@@ -1102,6 +1122,18 @@ async fn main() {
                 tick += 1;
                 for agent in players.values_mut() {
                     agent.fires = 0;
+                }
+                if let Some(limit) = silent_timeout {
+                    for (id, silent) in silent_players(&players, limit) {
+                        warn!(
+                            "Timing out player {} ({:?}): silent for {:.1} s",
+                            id, players[&id].name, silent.as_secs_f32()
+                        );
+                        remove_player(&mut players, &mut conn_to_player, &mut last_poses, id);
+                    }
+                    if players.is_empty() {
+                        continue;
+                    }
                 }
 
                 // Whole `max_quant` steps only, the same split the
@@ -1352,10 +1384,23 @@ async fn main() {
                             dead: None,
                             respawned: None,
                             in_escave: false,
+                            last_heard: Instant::now(),
                         });
                     }
 
                     SessionEvent::Message { conn_id, msg } => {
+                        // A connection the server already dropped (timed
+                        // out, or replaced by a same-name rejoin) may still
+                        // have messages in flight; its id may now belong to
+                        // the new session, so they must not act on it.
+                        if !conn_to_player.contains_key(&conn_id) {
+                            debug!("Ignoring a message from dropped conn_id={}", conn_id);
+                            continue;
+                        }
+                        let heard = effective_player_id(&conn_to_player, conn_id);
+                        if let Some(agent) = players.get_mut(&heard) {
+                            agent.last_heard = Instant::now();
+                        }
                         match msg {
                             ClientMessage::Join { player_name, car_name, color, protocol, guns } => {
                                 if protocol != PROTOCOL_VERSION {
@@ -1365,6 +1410,18 @@ async fn main() {
                                     );
                                     remove_player(&mut players, &mut conn_to_player, &mut last_poses, conn_id);
                                     continue;
+                                }
+                                // A same-name rejoin while the old session is
+                                // still joined (the client restarted before the
+                                // server noticed the old connection die):
+                                // replace it, keeping its pose for the reclaim,
+                                // instead of putting a second car on the road.
+                                if let Some(old_id) = live_holder(&player_name, conn_id, &players, &name_ids) {
+                                    warn!(
+                                        "Player {} ({:?}) rejoined on conn_id={}: replacing the stale session",
+                                        old_id, player_name, conn_id
+                                    );
+                                    remove_player(&mut players, &mut conn_to_player, &mut last_poses, old_id);
                                 }
                                 let player_id = reclaim_player_id(
                                     conn_id,
@@ -1822,6 +1879,11 @@ async fn main() {
                     }
 
                     SessionEvent::Disconnected { conn_id } => {
+                        if !conn_to_player.contains_key(&conn_id) {
+                            // Already dropped; its player id may be live again.
+                            debug!("Dropped conn_id={} closed", conn_id);
+                            continue;
+                        }
                         let player_id = effective_player_id(&conn_to_player, conn_id);
                         info!("Player {} disconnected (conn_id={})", player_id, conn_id);
                         remove_player(&mut players, &mut conn_to_player, &mut last_poses, player_id);
@@ -2048,6 +2110,39 @@ fn effective_player_id(
     conn_id: PlayerId,
 ) -> PlayerId {
     *conn_to_player.get(&conn_id).unwrap_or(&conn_id)
+}
+
+/// Players (joined or not) that have sent nothing for longer than `limit`, with how
+/// long. A player in an escave is never silent: the escave screen may send
+/// nothing while it is up.
+fn silent_players(
+    players: &HashMap<PlayerId, ServerAgent>,
+    limit: Duration,
+) -> Vec<(PlayerId, Duration)> {
+    let mut silent: Vec<_> = players
+        .iter()
+        .filter(|(_, a)| !a.in_escave)
+        .map(|(&id, a)| (id, a.last_heard.elapsed()))
+        .filter(|&(_, quiet)| quiet > limit)
+        .collect();
+    silent.sort_by_key(|&(id, _)| id);
+    silent
+}
+
+/// The joined player that holds `player_name` on another connection, if any.
+fn live_holder(
+    player_name: &str,
+    conn_id: PlayerId,
+    players: &HashMap<PlayerId, ServerAgent>,
+    name_ids: &HashMap<String, PlayerId>,
+) -> Option<PlayerId> {
+    if player_name.is_empty() {
+        return None;
+    }
+    name_ids
+        .get(player_name)
+        .copied()
+        .filter(|&old_id| old_id != conn_id && players.get(&old_id).is_some_and(|a| a.joined))
 }
 
 /// On Join, reuse a prior player_id when this `--name` is free to reclaim.
@@ -2407,8 +2502,10 @@ async fn handle_tcp_connection(
         sender: sim_lag.delay(send_tx, player_id.wrapping_mul(2) + 1),
     });
 
-    // Spawn writer task
-    let write_handle = tokio::spawn(async move {
+    // Spawn writer task. It ends when the game loop drops this
+    // connection's sender (a timeout or a same-name replacement); the
+    // reader then stops too, which closes the socket.
+    let mut write_handle = tokio::spawn(async move {
         while let Some(data) = send_rx.recv().await {
             if writer.write_all(&data).await.is_err() {
                 break;
@@ -2421,7 +2518,14 @@ async fn handle_tcp_connection(
     let mut tmp = [0u8; 4096];
 
     loop {
-        match reader.read(&mut tmp).await {
+        let read = tokio::select! {
+            read = reader.read(&mut tmp) => read,
+            _ = &mut write_handle => {
+                info!("Closing dropped conn_id={}", player_id);
+                break;
+            }
+        };
+        match read {
             Ok(0) => break,
             Ok(n) => {
                 buf.extend_from_slice(&tmp[..n]);
@@ -2470,8 +2574,9 @@ async fn handle_ws_connection(
         sender: sim_lag.delay(send_tx, player_id.wrapping_mul(2) + 1),
     });
 
-    // Writer task: send binary WebSocket frames
-    let write_handle = tokio::spawn(async move {
+    // Writer task: send binary WebSocket frames. Ends when the game loop
+    // drops this connection's sender; the reader then stops too.
+    let mut write_handle = tokio::spawn(async move {
         while let Some(data) = send_rx.recv().await {
             if ws_writer
                 .send(tungstenite::Message::Binary(data.into()))
@@ -2486,7 +2591,17 @@ async fn handle_ws_connection(
     // Reader loop: receive binary WebSocket frames
     let mut buf = Vec::with_capacity(4096);
 
-    while let Some(result) = ws_reader.next().await {
+    loop {
+        let result = tokio::select! {
+            next = ws_reader.next() => match next {
+                Some(result) => result,
+                None => break,
+            },
+            _ = &mut write_handle => {
+                info!("Closing dropped conn_id={}", player_id);
+                break;
+            }
+        };
         match result {
             Ok(tungstenite::Message::Binary(data)) => {
                 buf.extend_from_slice(&data);
