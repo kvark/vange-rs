@@ -8,10 +8,12 @@ use glam::{Mat3, Quat, Vec3};
 const EPSILON: f32 = f32::EPSILON;
 
 mod collision;
+mod reconcile;
 mod rigid;
 pub mod terrain;
 
-pub use collision::{CarBody, CarContact, collide_cars};
+pub use collision::{CarBody, CarContact, FELT_BUMP_DV, collide_cars};
+pub use reconcile::{Reconcile, ServerCar, reconcile_local_car};
 
 const MAX_TRACTION: config::common::Traction = 4.0;
 

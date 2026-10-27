@@ -510,6 +510,9 @@ struct WebApp {
     cycle_time: f32,
     /// Set after the first WorldState snap from the multiplayer server.
     server_synced: bool,
+    /// The local car's `AgentState::bumps` at the last reconcile; a change
+    /// means the server saw another car hit it.
+    server_bumps: Option<u32>,
     moving: level::moving::MovingWorld,
     /// Terrain-editing effects the car is allowed to leave behind. Same
     /// defaults as the native game: tread on, hull-press and mole mounds off.
@@ -889,6 +892,7 @@ impl WebApp {
             cycle,
             cycle_time: 0.0,
             server_synced: false,
+            server_bumps: None,
             moving,
             terraform: level::terraform::Config::default(),
             life,
@@ -2887,19 +2891,31 @@ impl WebHandler {
                                     gpu.app.server_synced = true;
                                     gpu.app.cam.focus_on(&server_transform);
                                 }
-                                let hard = if first_sync {
-                                    agent.transform = server_transform;
-                                    true
-                                } else {
-                                    agent.transform.reconcile_world_state(&server_transform)
+                                let bumped = gpu
+                                    .app
+                                    .server_bumps
+                                    .replace(me.bumps)
+                                    .is_some_and(|seen| seen != me.bumps);
+                                let server = physics::ServerCar {
+                                    transform: server_transform,
+                                    linear_velocity: glam::Vec3::from(me.dynamo.linear_velocity),
+                                    angular_velocity: glam::Vec3::from(me.dynamo.angular_velocity),
+                                    traction: me.dynamo.traction,
+                                    rudder: me.dynamo.rudder,
+                                    bumped,
                                 };
-                                if hard {
-                                    agent.dynamo.linear_velocity =
-                                        glam::Vec3::from(me.dynamo.linear_velocity);
-                                    agent.dynamo.angular_velocity =
-                                        glam::Vec3::from(me.dynamo.angular_velocity);
-                                    agent.dynamo.traction = me.dynamo.traction;
-                                    agent.dynamo.rudder = me.dynamo.rudder;
+                                if first_sync {
+                                    agent.transform = server_transform;
+                                    agent.dynamo.linear_velocity = server.linear_velocity;
+                                    agent.dynamo.angular_velocity = server.angular_velocity;
+                                    agent.dynamo.traction = server.traction;
+                                    agent.dynamo.rudder = server.rudder;
+                                } else {
+                                    physics::reconcile_local_car(
+                                        &mut agent.transform,
+                                        &mut agent.dynamo,
+                                        &server,
+                                    );
                                 }
                             } else {
                                 // No local vehicle mesh — at least park the camera.

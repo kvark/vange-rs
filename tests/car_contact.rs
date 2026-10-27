@@ -445,3 +445,283 @@ fn airborne_contact_prediction_matches_the_server() {
     );
     assert!(worst[1] < 0.01, "per-quantum contact strayed {}", worst[1]);
 }
+
+/// One car in a `WorldState`, as the rammed client receives it.
+#[derive(Clone, Copy)]
+struct Snapshot {
+    transform: space::Transform,
+    linear_velocity: Vec3,
+    angular_velocity: Vec3,
+    traction: f32,
+    rudder: f32,
+    bumps: u32,
+}
+
+fn snapshot(c: &Car, bumps: u32) -> Snapshot {
+    Snapshot {
+        transform: c.transform,
+        linear_velocity: c.dynamo.linear_velocity,
+        angular_velocity: c.dynamo.angular_velocity,
+        traction: c.dynamo.traction,
+        rudder: c.dynamo.rudder,
+        bumps,
+    }
+}
+
+/// Server side of the duel ram: `a` holds W into parked `b`, quantum by
+/// quantum with contact after each, counting `b`'s felt bumps like
+/// `vangers-server`. Returns per-tick snapshots of both.
+fn ram_snapshots(
+    level: &level::Level,
+    common: &config::common::Common,
+    car: &CarPhysicsData,
+    max_quant: f32,
+    ticks: u32,
+) -> Vec<(Snapshot, Snapshot)> {
+    let physics_dt = 0.05 * {
+        let n = &common.nature;
+        common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
+    };
+    let quant_input = physics::QuantClock::input_factor(max_quant, common);
+    let (cx, cy) = (590, 4151);
+    let mut a = spawn(level, cx - 35, cy, -FRAC_PI_2, car);
+    let mut b = spawn(level, cx + 35, cy, FRAC_PI_2, car);
+    let mut clock = physics::QuantClock::default();
+    let wrap = (level.size.0 as f32, level.size.1 as f32);
+    let mut bumps = 0u32;
+    let mut out = Vec::new();
+    for tick in 0..ticks {
+        for _ in 0..clock.advance(physics_dt, max_quant) {
+            // Settle 1 s, then drive.
+            if tick >= 20 {
+                a.dynamo
+                    .change_traction(quant_input * common.car.traction_incr);
+            }
+            for c in [&mut a, &mut b] {
+                physics::step(
+                    &mut c.dynamo,
+                    &mut c.transform,
+                    max_quant,
+                    car,
+                    level,
+                    common,
+                    1.0,
+                    0.0,
+                    None,
+                    0.0,
+                    None,
+                    None,
+                );
+            }
+            let contact = physics::collide_cars(
+                physics::CarBody {
+                    dynamo: &mut a.dynamo,
+                    transform: &mut a.transform,
+                    car,
+                },
+                physics::CarBody {
+                    dynamo: &mut b.dynamo,
+                    transform: &mut b.transform,
+                    car,
+                },
+                Some(wrap),
+                common,
+            );
+            if contact.is_some_and(|c| c.delta_v[1] >= physics::FELT_BUMP_DV) {
+                bumps += 1;
+            }
+        }
+        out.push((snapshot(&a, 0), snapshot(&b, bumps)));
+    }
+    out
+}
+
+/// The rammed (parked) car's own client at `frame_dt`: predicts its car in
+/// quanta with contact against the rammer's ghost (latest `WorldState`),
+/// receives each tick's snapshot `latency_ticks` late and reconciles
+/// against it. Returns its world velocity at the tick ends its frames end
+/// on, keyed by tick, and the hard-snap count.
+fn rammed_client(
+    server: &[(Snapshot, Snapshot)],
+    frame_dt: f32,
+    latency_ticks: usize,
+    adopt_bumps: bool,
+    level: &level::Level,
+    common: &config::common::Common,
+    car: &CarPhysicsData,
+    max_quant: f32,
+) -> (Vec<(usize, Vec3)>, usize) {
+    let physics_dt = frame_dt * {
+        let n = &common.nature;
+        common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
+    };
+    let wrap = (level.size.0 as f32, level.size.1 as f32);
+    let first = server[0].1;
+    let mut me = Car {
+        dynamo: Dynamo {
+            linear_velocity: first.linear_velocity,
+            angular_velocity: first.angular_velocity,
+            ..Dynamo::default()
+        },
+        transform: first.transform,
+    };
+    let mut clock = physics::QuantClock::default();
+    let mut seen_bumps = first.bumps;
+    let mut reconciled = 0usize;
+    let mut snaps = 0;
+    let mut out = Vec::new();
+    let frames = (server.len() as f32 * 0.05 / frame_dt).round() as u32;
+    for frame in 0..frames {
+        let now_ms = ((frame + 1) as f32 * frame_dt * 1000.0).round() as usize;
+        // Tick `t` is sent at its end, (t+1)*50 ms, and arrives
+        // `latency_ticks` later.
+        let delivered = (now_ms / 50)
+            .saturating_sub(latency_ticks)
+            .min(server.len());
+        let ghost = server[delivered.saturating_sub(1)].0;
+        for _ in 0..clock.advance(physics_dt, max_quant) {
+            physics::step(
+                &mut me.dynamo,
+                &mut me.transform,
+                max_quant,
+                car,
+                level,
+                common,
+                1.0,
+                0.0,
+                None,
+                0.0,
+                None,
+                None,
+            );
+            let mut ghost_transform = ghost.transform;
+            let mut ghost_dynamo = Dynamo {
+                linear_velocity: ghost.linear_velocity,
+                angular_velocity: ghost.angular_velocity,
+                ..Dynamo::default()
+            };
+            physics::collide_cars(
+                physics::CarBody {
+                    dynamo: &mut me.dynamo,
+                    transform: &mut me.transform,
+                    car,
+                },
+                physics::CarBody {
+                    dynamo: &mut ghost_dynamo,
+                    transform: &mut ghost_transform,
+                    car,
+                },
+                Some(wrap),
+                common,
+            );
+        }
+        // Newest snapshot only, as the client does.
+        if delivered > reconciled {
+            reconciled = delivered;
+            let s = server[delivered - 1].1;
+            let bumped = adopt_bumps && s.bumps != seen_bumps;
+            seen_bumps = s.bumps;
+            let kind = physics::reconcile_local_car(
+                &mut me.transform,
+                &mut me.dynamo,
+                &physics::ServerCar {
+                    transform: s.transform,
+                    linear_velocity: s.linear_velocity,
+                    angular_velocity: s.angular_velocity,
+                    traction: s.traction,
+                    rudder: s.rudder,
+                    bumped,
+                },
+            );
+            if kind == physics::Reconcile::Snap {
+                snaps += 1;
+            }
+        }
+        if now_ms % 50 == 0 {
+            out.push((
+                now_ms / 50 - 1,
+                me.transform.rot * me.dynamo.linear_velocity,
+            ));
+        }
+    }
+    (out, snaps)
+}
+
+/// A parked car rammed by another player. Its owner only predicts the hit
+/// against the rammer's ghost, which arrives after the server already
+/// slowed the rammer, so the local bump is a fraction of the real one
+/// (1.35 against 5.19 here) and the blend-only reconcile never copies the
+/// velocity. With the server's bump counter the client adopts the server
+/// velocity on the first snapshot after the bump.
+#[test]
+fn rammed_client_takes_the_server_bump_within_two_ticks() {
+    let Some(settings) = config::Settings::try_load("config/settings.ron") else {
+        eprintln!("skipping: no config/settings.ron with game data");
+        return;
+    };
+    let ini = settings.data_path.join("thechain/fostral/world.ini");
+    if !ini.is_file() {
+        eprintln!("skipping: no Fostral data");
+        return;
+    }
+    let reg = config::game::Registry::load(&settings);
+    let level = level::load(&level::LevelConfig::load(&ini), &settings.game.geometry);
+    let common = config::common::load(settings.open_relative("common.prm"));
+    let cars = config::car::load_physics_registry(
+        &settings.data_path,
+        &reg,
+        settings.game.physics.shape_sampling,
+    );
+    let Some(car) = cars.get("OxidizeMonk") else {
+        eprintln!("skipping: no OxidizeMonk");
+        return;
+    };
+    let max_quant = settings.game.physics.max_quant;
+    let server = ram_snapshots(&level, &common, car, max_quant, 120);
+    let bump_tick = server
+        .iter()
+        .position(|(_, b)| b.bumps > 0)
+        .expect("the rammer never hit the parked car");
+    let hit = (server[bump_tick].1.transform.rot * server[bump_tick].1.linear_velocity).length();
+    println!("server: first felt bump at tick {bump_tick}, parked car speed {hit:.2}");
+    assert!(hit > physics::FELT_BUMP_DV);
+    // The client cannot know of the bump before its snapshot arrives, so
+    // compare it with the server `latency` ticks earlier, at the client's
+    // first tick-end sample once the bump has arrived. Later bumps of the
+    // slow ram the client predicts itself, ahead of that lagged copy.
+    let first_error = |client: &[(usize, Vec3)], latency: usize| {
+        let &(t, v) = client
+            .iter()
+            .find(|(t, _)| *t >= bump_tick + latency)
+            .expect("the bump never arrived");
+        let s = server[t - latency].1;
+        v.distance(s.transform.rot * s.linear_velocity)
+    };
+    let mut worst_old = 0.0f32;
+    for latency in [1, 2, 3] {
+        for frame_dt in FRAME_DTS {
+            let run = |adopt| {
+                rammed_client(
+                    &server, frame_dt, latency, adopt, &level, &common, car, max_quant,
+                )
+            };
+            let (old, old_snaps) = run(false);
+            let (new, new_snaps) = run(true);
+            let (old_err, new_err) = (first_error(&old, latency), first_error(&new, latency));
+            println!(
+                "latency {latency} ticks, frame {:.0} ms: velocity error once the bump arrives {old_err:.2} without adopting ({old_snaps} snaps), {new_err:.2} with ({new_snaps} snaps)",
+                frame_dt * 1000.0
+            );
+            assert!(new_err < 0.1 * hit, "adopted bump off by {new_err}");
+            worst_old = worst_old.max(old_err);
+            assert!(
+                new_snaps <= old_snaps,
+                "adopting the bump must not add snaps"
+            );
+        }
+    }
+    assert!(
+        worst_old > 0.5 * hit,
+        "the blend-only client was expected to miss most of the hit"
+    );
+}

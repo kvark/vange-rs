@@ -20,6 +20,11 @@ pub const RESTITUTION: f32 = 1.0;
 /// Fraction of the box overlap pushed apart per call (split by inverse
 /// mass). The original has none; this only keeps resting contact honest.
 pub const SEPARATION: f32 = 0.5;
+/// Speed change (world units, as `WorldState` velocities) from one contact
+/// impulse that counts as a felt bump: the multiplayer client adopts the
+/// server's velocity for it. A ram at driving speed is ~5; resting contact
+/// trickles ~0.1.
+pub const FELT_BUMP_DV: f32 = 1.0;
 /// Overlap tolerated without a positional push, in world units.
 const SLOP: f32 = 0.1;
 
@@ -41,6 +46,8 @@ pub struct CarContact {
     pub impulse: f32,
     /// Box overlap depth along the least-penetration face axis.
     pub depth: f32,
+    /// Linear speed change the impulse gave `a` and `b`.
+    pub delta_v: [f32; 2],
 }
 
 /// Same mass `physics::step` uses for the jump impulse.
@@ -218,6 +225,7 @@ pub fn collide_cars(
     let mass_a = body_mass(a.car, a.transform.scale, common);
     let mass_b = body_mass(b.car, b.transform.scale, common);
     let mut impulse = 0.0;
+    let mut delta_v = [0.0; 2];
     if closing > 0.0 {
         let j_a = inertia_inv(a.car, a.transform.scale);
         let j_b = inertia_inv(b.car, b.transform.scale);
@@ -233,6 +241,7 @@ pub fn collide_cars(
         b.dynamo.linear_velocity -= p_b;
         b.dynamo.angular_velocity -= j_b * lever_b.cross(p_b);
         impulse = p.length();
+        delta_v = [impulse / mass_a, impulse / mass_b];
     }
 
     if depth > SLOP {
@@ -247,6 +256,7 @@ pub fn collide_cars(
         normal,
         impulse,
         depth,
+        delta_v,
     })
 }
 

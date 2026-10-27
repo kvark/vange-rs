@@ -198,6 +198,47 @@ after a bump.
 Tuning: `RESTITUTION` (1.0 = original) and `SEPARATION` in
 `src/physics/collision.rs`.
 
+### Felt bumps (receiving side)
+
+Local prediction alone under-delivers a hit on the rammed car: the rammer's
+ghost arrives a tick or more late, already slowed by the server's contact,
+so the predicted bump is a fraction of the real one (1.35 against 5.19 for
+the duel-spawn ram), and the blend-only reconcile never copies velocity.
+So the server counts, per car, the contacts whose velocity change
+(`impulse / mass`, `CarContact::delta_v`) reaches `physics::FELT_BUMP_DV`
+(1.0: a ram is ~5, resting contact ~0.1) and sends the wrapping counter as
+`AgentState::bumps`. When the counter differs from the one seen at the
+client's previous reconcile (robust to snapshots skipped in a slow frame),
+`physics::reconcile_local_car` adopts the server's linear and angular
+velocity, rotated into the client's own blended frame, while the pose keeps
+its normal 0.25 blend: no new snap, and with matching velocities the offset
+decays. The native client logs it at info:
+
+```
+Server bump: adopted vel=(4.92,-0.31,0.08) bumps=3
+```
+
+The web client uses the same reconcile; it still reconciles every snapshot
+and steps once per frame (follow-up).
+
+## Jump trace (server)
+
+The server logs every jump at info, with the pose before the tick and the
+world velocity after it, then the pose every second; the trace ends at the
+first sample from +2s on where the car is at rest (speed < 0.2), or at +10s:
+
+```
+Jump tick 4210 p1 power=10.0 pos=(884.5,3960.3,47.2) vel=(…)
+Jump trace +1.0s tick 4230 p1 pos=(…) vel=(…) moved=(…)
+Jump trace +2.0s tick 4250 p1 pos=(…) vel=(…) moved=(…) at rest
+```
+
+`moved` is relative to the jump pose. A car that keeps sliding after
+landing on a steep slope shows here: e.g. Fostral (884.5, 3960.3) sits on a
+~50° slope (height 47 down to 3 within 37u along the fall line), and a
+standing jump there slides the car down to the floor near (903, 3990) on the
+server too.
+
 ## Tweaks Position (debug hold + SetPose)
 
 In multiplayer, `WorldState` corrects the local player's transform toward the
