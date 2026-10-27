@@ -448,7 +448,10 @@ fn hard_shove_with_turbo_fades_instead_of_snapping() {
             );
             // The fade changes only what is drawn, never the physics.
             assert_eq!(new.max_moved, old.max_moved);
-            if old.contact_snaps > 0 {
+            // A run with a real teleport past `CONTACT_TELEPORT` snaps either
+            // way, and the snap also drops what was still fading, so it can
+            // show a little more than the old snap did: compare the rest.
+            if old.contact_snaps > 0 && new.snaps == 0 {
                 // The old rule showed it at once; the fade spreads it out over
                 // the frames of `CONTACT_FADE` (at 4 fps that is about one).
                 // Shoves piling up past `CONTACT_TELEPORT` still show the
