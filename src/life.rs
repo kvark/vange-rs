@@ -17,8 +17,8 @@ pub struct Contact<'a> {
     pub pos: Vec3,
     pub wheels: &'a [Vec3],
     pub radius: f32,
-    pub armor: u16,
-    pub max_armor: u16,
+    pub armor: u32,
+    pub max_armor: u32,
 }
 
 /// Everything that lives on the surface besides the cars.

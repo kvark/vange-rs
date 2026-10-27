@@ -26,8 +26,8 @@ pub trait DeathRemote {
 pub struct LocalRespawn<'a> {
     pub transform: &'a mut space::Transform,
     pub dynamo: &'a mut Dynamo,
-    pub armor: &'a mut u16,
-    pub max_armor: u16,
+    pub armor: &'a mut u32,
+    pub max_armor: u32,
 }
 
 /// What a client shows for a `Died`.

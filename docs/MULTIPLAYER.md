@@ -165,6 +165,35 @@ taken, and a fresh join starts outside. While inside, the car is
 
 The car reappears where it parked once it drives back out.
 
+## Guns and armour (protocol 9)
+
+Armour and guns use the original's numbers (`src/combat/weapons.rs`):
+- **Armour** is a `u32` in hundredths of a `car.prm` point
+  (`combat::ARMOR_UNIT`): OxidizeMonk 100, HeavyLady 380, LastMoggy 500.
+  The HUD shows whole points, as the original (`Armor >> 16`).
+- **Guns** come from `game.lst` (bullets) and `device.lst` (gun devices)
+  into one `combat::weapons::Table`; with no game data the server uses the
+  built-in copy of the original table (a test checks it against the files).
+  A hit takes the bullet's `FirstPower` (in hundredths: a Machotine 2.50,
+  a light Ghorb 12.50, a Speetle 30.00). A shot flies at `Speed`×20 u/s
+  for `LifeTime`/20 s, and a bay reloads in
+  `((WeaponWaitTime × WaitTime) >> 8) + 1` quanta at 20 a second (light
+  Machotine 0.35 s, light Ghorb 0.55 s, Speetle 1.05 s). Homing and the
+  car's own speed added to the shot are left out.
+- **Loadout.** `Join` declares the gun in each bay; `ClientMessage::Weapons`
+  changes it. The server checks the whole set against the car's bays from
+  `device.lst` (a gun of `SizeID` fits a slot of that size or bigger; a
+  car the table lacks takes any gun) and takes a `Weapons` only from a car
+  in an escave; a refused set keeps the last one (a refused `Join` set
+  means no guns). `AgentState::guns` carries each bay's bullet, so the
+  client fires only what the server took and every client draws a shot in
+  its bullet's colour.
+- **Fire.** A `Fire` from an empty bay or within its reload (0.1 s slack
+  for jitter) is dropped; otherwise the server flies the bullet with its
+  own speed, range and damage.
+
+The Energy shield is not in yet (its own follow-up).
+
 ## Moving land (WorldState phase sync)
 
 Animated terrain patches (`*.vot` / `MovingWorld`) are **server-owned** in

@@ -2,6 +2,7 @@ use crate::boilerplate::Application;
 use crate::net::{NetEvent, NetworkClient};
 use m3d::Mesh;
 use vangers::{
+    combat::{ARMOR_UNIT, weapons},
     config, creature, escave, level, life, minimap, model,
     physics::{self, CarPhysicsData},
     render::{
@@ -99,9 +100,10 @@ pub struct Agent {
     tracks: level::terraform::Tracks,
     /// The cirt it has gathered and not yet handed in.
     cirtainer: level::cycle::Cirtainer,
-    /// Remaining armour; smoke comes off when this is below `max_armor`.
-    armor: u16,
-    max_armor: u16,
+    /// Remaining armour, in hundredths of a `car.prm` point
+    /// (`ARMOR_UNIT`); smoke comes off when this is below `max_armor`.
+    armor: u32,
+    max_armor: u32,
 }
 
 impl Agent {
@@ -141,8 +143,8 @@ impl Agent {
             },
             tracks: level::terraform::Tracks::default(),
             cirtainer: level::cycle::Cirtainer::default(),
-            armor: car.stats.max_armor as u16,
-            max_armor: car.stats.max_armor as u16,
+            armor: car.stats.max_armor as u32 * ARMOR_UNIT,
+            max_armor: car.stats.max_armor as u32 * ARMOR_UNIT,
         }
     }
 
@@ -150,7 +152,7 @@ impl Agent {
         self.phys_data = CarPhysicsData::from_car_info(car);
         self.car = car.clone();
         self.car_name = car_name;
-        self.max_armor = car.stats.max_armor as u16;
+        self.max_armor = car.stats.max_armor as u32 * ARMOR_UNIT;
         self.armor = self.armor.min(self.max_armor);
         match self.physics {
             Physics::Cpu {
@@ -325,6 +327,9 @@ struct RemoteAgent {
     treads: level::overlay::GhostTreads,
     /// A wreck waiting to respawn (`AgentState::dead`): it smokes.
     dead: bool,
+    /// The bullet of its gun in each bay (`AgentState::guns`): its shots
+    /// fly and are drawn as that.
+    guns: [Option<u8>; weapons::BAYS],
 }
 
 impl physics::death::DeathRemote for RemoteAgent {
@@ -706,6 +711,15 @@ pub struct Game {
     /// Online, our car is a wreck (`ServerMessage::Died`): seconds since,
     /// no control until the server's `Respawned` (or `WRECK_GIVE_UP`).
     wrecked: Option<f32>,
+    /// The original guns and the cars' slots (`game.lst`, `device.lst`).
+    weapons: weapons::Table,
+    /// Each bay's reload (`weapons::Table::cooldown`).
+    reload: weapon::Reload,
+    /// The clock `reload` runs on.
+    clock: std::time::Instant,
+    /// Online: the bullet of the gun the server took in each of our bays
+    /// (`AgentState::guns`); a bay fires only the gun the server has.
+    my_guns: [Option<u8>; weapons::BAYS],
     /// Online: whether the server was last told we are in an escave
     /// (`ClientMessage::Escave`), sent when the escave screen takes over
     /// the drive (`Screen::blocks_drive`) and when it gives it back.
@@ -758,8 +772,10 @@ struct LiveShot {
     age: f32,
     /// When the terrain stops it (`Shot::flight_time`).
     life: f32,
-    /// Fired by another player (`ServerMessage::Shot`), drawn in its colour.
+    /// Fired by another player (`ServerMessage::Shot`).
     remote: bool,
+    /// Streak colour: its bullet's (`weapon::bullet_color`).
+    color: u32,
 }
 
 struct Ride {
@@ -925,6 +941,7 @@ impl Game {
         player_agent.spirit = Spirit::Player;
 
         let shop = escave::Shop::fostral();
+        let weapon_table = weapons::Table::load(&settings.data_path);
         let boards = escave::Catalog::load(&settings.data_path);
         let mut inventory = escave::Inventory::for_car(&settings.car.id, &boards);
         for (i, sid) in settings
@@ -1022,7 +1039,13 @@ impl Game {
         let connected = server_addr.is_some();
         let net = server_addr.as_ref().map(|addr| {
             let player = agents.iter().find(|a| a.spirit == Spirit::Player).unwrap();
-            NetworkClient::connect(addr, &player_name, &player.car_name, player.color as u8)
+            NetworkClient::connect(
+                addr,
+                &player_name,
+                &player.car_name,
+                player.color as u8,
+                weapon::loadout(&inventory),
+            )
         });
 
         let mut life = life::World::spawn(&settings.game.level, &level, &settings.data_path);
@@ -1162,6 +1185,10 @@ impl Game {
             world_view: None,
             wrecked: None,
             escave_sent: false,
+            weapons: weapon_table,
+            reload: weapon::Reload::default(),
+            clock: std::time::Instant::now(),
+            my_guns: [None; weapons::BAYS],
             death_note: None,
             pending_portal: None,
             portal_pad_lock: None,
@@ -1317,14 +1344,22 @@ impl Game {
         let Some(state) = agents.iter().find(|a| Some(a.player_id) == my_id) else {
             return;
         };
+        if self.my_guns != state.guns {
+            log::info!("Guns taken by the server: {:?}", state.guns);
+            self.my_guns = state.guns;
+        }
         let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
             return;
         };
         if (player.armor, player.max_armor) != (state.armor, state.max_armor) {
+            let (left, max) = (
+                weapons::points(state.armor),
+                weapons::points(state.max_armor),
+            );
             if state.armor == 0 && player.armor > 0 {
-                log::info!("Armour from server: 0/{}", state.max_armor);
+                log::info!("Armour from server: 0/{max}");
             } else {
-                log::debug!("Armour from server: {}/{}", state.armor, state.max_armor);
+                log::info!("Armour from server: {left}/{max}");
             }
             player.armor = state.armor;
             player.max_armor = state.max_armor;
@@ -1614,7 +1649,7 @@ impl Game {
                 .iter_mut()
                 .find(|a| a.spirit == Spirit::Player)
                 .unwrap();
-            player.armor = player.armor.saturating_sub(nibble);
+            player.armor = player.armor.saturating_sub(nibble as u32 * ARMOR_UNIT);
         }
     }
 
@@ -1828,6 +1863,12 @@ impl Game {
             return;
         };
         hang_weapons(player, &self.inventory, &self.weapon_meshes, &self.db);
+        let guns = weapon::loadout(&self.inventory);
+        if let Some(ref net) = self.net {
+            // The server takes them only while we are in an escave.
+            log::info!("Guns: telling the server {:?}", guns);
+            net.send_weapons(guns);
+        }
     }
 
     /// Tell the server when the escave screen takes the drive and when it
@@ -2694,9 +2735,11 @@ impl Game {
             .show(context, |ui| {
                 if let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) {
                     ui.label(
+                        // The original's scale: whole `car.prm` points.
                         egui::RichText::new(format!(
                             "Armour {}/{}",
-                            player.armor, player.max_armor
+                            player.armor / ARMOR_UNIT,
+                            player.max_armor / ARMOR_UNIT
                         ))
                         .strong(),
                     );
@@ -2932,8 +2975,12 @@ impl Game {
             }
             AutoStep::Armor(n) => {
                 if let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) {
-                    player.armor = n.min(player.max_armor as u32) as u16;
-                    log::info!("Autodrive armor {}/{}", player.armor, player.max_armor);
+                    player.armor = (n * ARMOR_UNIT).min(player.max_armor);
+                    log::info!(
+                        "Autodrive armor {}/{}",
+                        weapons::points(player.armor),
+                        weapons::points(player.max_armor)
+                    );
                 }
             }
             AutoStep::Mark(name) => log::info!("Autodrive mark {name}"),
@@ -3158,8 +3205,36 @@ impl Application for Game {
                 .map_or(transform.disp, |slot| {
                     transform.transform_point(Vec3::from(slot.pos.map(|v| v as f32)))
                 });
-            if let Some(shot) = weapon::fire(&self.inventory, bay, muzzle, forward) {
-                log::debug!("Fire bay {bay} from {:?} dir {:?}", muzzle, forward);
+            let gun = self
+                .inventory
+                .bay(bay)
+                .filter(|good| good.kind == escave::Kind::Weapon)
+                .and_then(|good| self.weapons.gun(&good.id));
+            // Online a bay fires only the gun the server took for it.
+            let refused = self.net.is_some()
+                && gun
+                    .is_some_and(|g| self.my_guns.get(bay).copied().flatten() != Some(g.bullet_id));
+            let cooldown = gun.map_or(0.0, |g| self.weapons.cooldown(g));
+            let now = self.clock.elapsed().as_secs_f64();
+            let fired = if refused {
+                log::debug!("Fire bay {bay}: the server has not taken this gun");
+                None
+            } else if gun.is_some() && !self.reload.try_fire(bay, now, cooldown, 0.0) {
+                log::debug!("Fire bay {bay}: reloading");
+                None
+            } else {
+                weapon::fire(&self.inventory, &self.weapons, bay, muzzle, forward)
+            };
+            let color = gun
+                .and_then(|g| weapon::bullet_color(&g.bullet))
+                .unwrap_or(weapon::SHOT_COLOR);
+            if let Some(shot) = fired {
+                log::debug!(
+                    "Fire bay {bay} ({}) from {:?} dir {:?}",
+                    gun.map_or("?", |g| g.model.as_str()),
+                    muzzle,
+                    forward
+                );
                 if let Some(ref net) = self.net {
                     // Lined up with our inputs: the shot happens before
                     // the next quantum we send.
@@ -3180,8 +3255,9 @@ impl Application for Game {
                     shot,
                     age: 0.0,
                     remote: false,
+                    color,
                 });
-            } else {
+            } else if gun.is_none() {
                 log::debug!("Fire bay {bay}: no weapon");
             }
         }
@@ -3375,6 +3451,7 @@ impl Application for Game {
                                     ),
                                     treads: Default::default(),
                                     dead: false,
+                                    guns: [None; weapons::BAYS],
                                 });
                         }
                     }
@@ -3504,6 +3581,7 @@ impl Application for Game {
                                         / self.max_quant
                                 };
                                 remote.dead = agent_state.dead;
+                                remote.guns = agent_state.guns;
                                 remote.net.on_agent(
                                     agent_state,
                                     tick,
@@ -3524,12 +3602,20 @@ impl Application for Game {
                             .filter(|r| r.net.pose_ready)
                             .map(|r| r.net.render_transform.disp);
                         let span = self.level.period();
+                        // As the shooter's gun in that bay flies.
+                        let gun = remote
+                            .and_then(|r| r.guns.get(bay as usize).copied().flatten())
+                            .and_then(|bullet| self.weapons.by_bullet(bullet));
                         let shot = weapon::remote_shot(
                             Vec3::from(origin),
                             Vec3::from(dir),
                             drawn,
                             (span.x, span.y),
+                            gun,
                         );
+                        let color = gun
+                            .and_then(|g| weapon::bullet_color(&g.bullet))
+                            .unwrap_or(weapon::REMOTE_SHOT_COLOR);
                         log::debug!(
                             "Remote shot: {} bay {bay} from {:?} dir {:?} (reported {:?})",
                             remote.map_or("?", |r| r.name.as_str()),
@@ -3542,6 +3628,7 @@ impl Application for Game {
                             shot,
                             age: 0.0,
                             remote: true,
+                            color,
                         });
                     }
                     NetEvent::Died {
@@ -3855,10 +3942,14 @@ impl Application for Game {
                         }
                         ui.label("Space: enter escave / open tunnel / use passage");
                         ui.label("F/G: fire bays 0/1");
-                        ui.add(
-                            egui::Slider::new(&mut player.armor, 0..=player.max_armor.max(1))
-                                .text("Armour"),
-                        );
+                        let mut points = player.armor / ARMOR_UNIT;
+                        let max = (player.max_armor / ARMOR_UNIT).max(1);
+                        if ui
+                            .add(egui::Slider::new(&mut points, 0..=max).text("Armour"))
+                            .changed()
+                        {
+                            player.armor = (points * ARMOR_UNIT).min(player.max_armor);
+                        }
                         let pos = player.position();
                         let reach = (level::cycle::DELIVERY_RADIUS * 2).max(96);
                         let near = self.db.escaves.iter().find(|e| {
@@ -3978,6 +4069,7 @@ impl Application for Game {
                             &self.mp_state.player_name,
                             &player.car_name,
                             player.color as u8,
+                            weapon::loadout(&self.inventory),
                         ));
                         // Drop offline NPCs so they cannot be mistaken for
                         // remote players (joint playtest false positive).
@@ -4172,12 +4264,8 @@ impl Application for Game {
             let (from, to) = live.shot.streak();
             let shown = self.level.display_pos(from, eye);
             let (from, to) = (shown, to - from + shown);
-            let color = if live.remote {
-                weapon::REMOTE_SHOT_COLOR
-            } else {
-                weapon::SHOT_COLOR
-            };
-            self.line_buffer.add(from.to_array(), to.to_array(), color);
+            self.line_buffer
+                .add(from.to_array(), to.to_array(), live.color);
         }
 
         self.render.draw_world(

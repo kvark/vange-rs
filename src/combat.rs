@@ -1,9 +1,10 @@
 //! Server-side combat: shots flown on the server, hit against car spheres
 //! with lag compensation, and armour.
 //!
-//! The server owns every car's armour. A shot it accepts (`weapon::check_fire`)
-//! flies here at `weapon::SHOT_SPEED` for `weapon::SHOT_LIFE`, and each tick it
-//! is tested against the other cars as the shooter saw them: rewound by how
+//! The server owns every car's armour, in the original's units
+//! ([`weapons::ARMOR_UNIT`]). A shot it accepts (`weapon::check_fire`) from
+//! a bay with a gun ([`weapons`]) flies here at that gun's speed for its
+//! life, takes its power off the car it hits, and each tick it is tested against the other cars as the shooter saw them: rewound by how
 //! far the shooter's view of the world was behind the server
 //! ([`rewind_ticks`]), at most [`REWIND_CAP_SECS`]. The terrain stops it
 //! ([`Level::segment_hits_terrain`]).
@@ -13,12 +14,17 @@
 //! back, undamaged, by the escave entrance nearest to where it died
 //! ([`nearest_escave`]).
 
+pub mod weapons;
+
+pub use weapons::ARMOR_UNIT;
+
 use crate::{level::Level, weapon};
 use glam::Vec3;
 use std::collections::VecDeque;
 
-/// Armour of a car whose `car.prm` stats the server does not have.
-pub const DEFAULT_MAX_ARMOR: u16 = 100;
+/// Armour of a car whose `car.prm` stats the server does not have
+/// (100 points, in [`ARMOR_UNIT`]s).
+pub const DEFAULT_MAX_ARMOR: u32 = 100 * ARMOR_UNIT;
 /// Farthest back a target is rewound for a shot, seconds: past this a
 /// laggy shooter would hit cars that have long since moved on.
 pub const REWIND_CAP_SECS: f32 = 0.2;
@@ -27,19 +33,6 @@ pub const HISTORY_SECS: f32 = 1.0;
 
 /// How long a wreck waits before the server respawns it, seconds.
 pub const RESPAWN_SECS: f32 = 3.0;
-
-/// Armour a hit from weapon bay `bay` takes off.
-///
-/// TODO: real per-weapon damage from the game data, once the client
-/// declares its equipped weapons and the server checks them against the
-/// car's bays. Until then the bay alone sets the damage.
-pub fn bay_damage(bay: u8) -> u16 {
-    match bay {
-        0 => 10,
-        1 => 15,
-        _ => 20,
-    }
-}
 
 /// Server ticks to rewind the targets of a shot fired by a client whose
 /// newest snapshot was tick `view_tick`, arrived `view_ms` before it
@@ -272,7 +265,7 @@ pub fn reset_position(client: Vec3, server: Vec3, period: (f32, f32)) -> Vec3 {
 }
 
 /// Fly every shot one tick of `dt` on and return its hits as
-/// `(shooter, bay, target)`; a shot that hit or is spent is removed.
+/// `(shooter, bay, damage, target)`; a shot that hit or is spent is removed.
 /// `targets(rewind)` lists the cars as a shot rewound by `rewind` ticks
 /// sees them. `dead` tells the wrecks apart: a wreck's shots are dropped
 /// (even those it fired before it died) and shots fly through a wreck.
@@ -283,7 +276,7 @@ pub fn fly_shots<Id: Copy + PartialEq>(
     level: Option<&Level>,
     targets: impl Fn(f32) -> Vec<Target<Id>>,
     dead: impl Fn(Id) -> bool,
-) -> Vec<(Id, u8, Id)> {
+) -> Vec<(Id, u8, u32, Id)> {
     let mut hits = Vec::new();
     shots.retain_mut(|shot| {
         if dead(shot.shooter) {
@@ -293,7 +286,7 @@ pub fn fly_shots<Id: Copy + PartialEq>(
         targets.retain(|t| !dead(t.id));
         match shot.step(dt, &targets, period, level) {
             Some(target) => {
-                hits.push((shot.shooter, shot.bay, target));
+                hits.push((shot.shooter, shot.bay, shot.damage, target));
                 false
             }
             None => !shot.is_spent(),
@@ -310,6 +303,10 @@ pub struct ServerShot<Id> {
     pub pos: Vec3,
     pub vel: Vec3,
     pub age: f32,
+    /// Seconds it flies (the gun's bullet `LifeTime`).
+    pub life: f32,
+    /// Armour it takes off a car it hits ([`ARMOR_UNIT`]s).
+    pub damage: u32,
     /// Ticks the targets are rewound by for this shot ([`rewind_ticks`]).
     pub rewind: f32,
 }
@@ -324,6 +321,8 @@ pub struct Target<Id> {
 }
 
 impl<Id: Copy + PartialEq> ServerShot<Id> {
+    /// A shot at the default `weapon::SHOT_SPEED` for `weapon::SHOT_LIFE`
+    /// that does no damage; [`ServerShot::from_gun`] for a real one.
     pub fn new(shooter: Id, bay: u8, origin: Vec3, dir: Vec3, rewind: f32) -> Self {
         ServerShot {
             shooter,
@@ -331,8 +330,26 @@ impl<Id: Copy + PartialEq> ServerShot<Id> {
             pos: origin,
             vel: dir.try_normalize().unwrap_or(Vec3::Y) * weapon::SHOT_SPEED,
             age: 0.0,
+            life: weapon::SHOT_LIFE,
+            damage: 0,
             rewind,
         }
+    }
+
+    /// A bullet of `gun`: its speed, life and power.
+    pub fn from_gun(
+        shooter: Id,
+        bay: u8,
+        gun: &weapons::Gun,
+        origin: Vec3,
+        dir: Vec3,
+        rewind: f32,
+    ) -> Self {
+        let mut shot = Self::new(shooter, bay, origin, dir, rewind);
+        shot.vel = shot.vel.normalize() * gun.shot_speed();
+        shot.life = gun.shot_life();
+        shot.damage = gun.damage();
+        shot
     }
 
     /// Fly the shot on by `dt` and return the first car it hits on the
@@ -340,7 +357,7 @@ impl<Id: Copy + PartialEq> ServerShot<Id> {
     /// `period`. With a `level`, the terrain stops the shot: a car behind
     /// the first rock on the way is not hit, and the shot ends there (it
     /// flies on between the layers under a slab). A spent shot (past
-    /// `SHOT_LIFE`, or stopped) hits nothing.
+    /// its life, or stopped) hits nothing.
     pub fn step(
         &mut self,
         dt: f32,
@@ -377,11 +394,11 @@ impl<Id: Copy + PartialEq> ServerShot<Id> {
     /// The shot hit the terrain at `at`: it ends there.
     fn stop(&mut self, at: Vec3) {
         self.pos = at;
-        self.age = weapon::SHOT_LIFE;
+        self.age = self.life;
     }
 
     pub fn is_spent(&self) -> bool {
-        self.age >= weapon::SHOT_LIFE
+        self.age >= self.life
     }
 }
 
@@ -613,12 +630,12 @@ mod tests {
             hits
         };
         // All alive: both shots hit 2, the car between them.
-        assert_eq!(fly(&[]), vec![(1, 0, 2), (3, 1, 2)]);
+        assert_eq!(fly(&[]), vec![(1, 0, 0, 2), (3, 1, 0, 2)]);
         // 2 is a wreck: 1's shot flies through it into 3; 3's flies
         // through it into 1.
-        assert_eq!(fly(&[2]), vec![(1, 0, 3), (3, 1, 1)]);
+        assert_eq!(fly(&[2]), vec![(1, 0, 0, 3), (3, 1, 0, 1)]);
         // 3 is a wreck: its shot is dropped, and 1's still stops at 2.
-        assert_eq!(fly(&[3]), vec![(1, 0, 2)]);
+        assert_eq!(fly(&[3]), vec![(1, 0, 0, 2)]);
     }
 
     #[test]
@@ -699,9 +716,45 @@ mod tests {
     }
 
     #[test]
-    fn damage_is_flat_per_bay() {
-        assert!(bay_damage(0) > 0 && bay_damage(1) > 0 && bay_damage(2) > 0);
-        assert_eq!(bay_damage(200), bay_damage(2));
+    fn a_gun_shot_flies_and_hits_as_its_bullet() {
+        let table = weapons::Table::original();
+        let gun = table.gun("LightFireBall").unwrap();
+        let target = [Target {
+            id: 2,
+            center: Vec3::new(0.0, 300.0, 0.0),
+            radius: 10.0,
+        }];
+        // Ghorb light: 20u a quantum for 30 quanta, 400u/s for 1.5 s.
+        let mut shot = ServerShot::from_gun(1, 0, gun, Vec3::ZERO, Vec3::Y * 3.0, 0.0);
+        assert_eq!(shot.vel, Vec3::Y * 400.0);
+        assert_eq!((shot.life, shot.damage), (1.5, 1250));
+        let mut shots = vec![shot.clone()];
+        let hits: Vec<_> = (0..40)
+            .flat_map(|_| {
+                fly_shots(
+                    &mut shots,
+                    0.05,
+                    PERIOD,
+                    None,
+                    |_| target.to_vec(),
+                    |_| false,
+                )
+            })
+            .collect();
+        assert_eq!(hits, vec![(1, 0, 1250, 2)]);
+        // Machotine light: 600u/s for 0.35 s, 210u: short of the car.
+        let gun = table.gun("LightMissile").unwrap();
+        shot = ServerShot::from_gun(1, 1, gun, Vec3::ZERO, Vec3::Y, 0.0);
+        assert_eq!(fly_both(&mut shot, &target), None);
+        assert!(
+            shot.is_spent() && (shot.pos.y - 210.0).abs() < 1.0,
+            "{:?}",
+            shot.pos
+        );
+    }
+
+    fn fly_both(shot: &mut ServerShot<u32>, targets: &[Target<u32>]) -> Option<u32> {
+        (0..40).find_map(|_| shot.step(0.05, targets, PERIOD, None))
     }
 
     /// A 256x256 level, flat at height `ground` (altitude scale 1).
@@ -831,6 +884,7 @@ mod tests {
         let mut shot = weapon::Shot {
             pos: from,
             vel: Vec3::X * weapon::SHOT_SPEED,
+            life: weapon::SHOT_LIFE,
         };
         let life = shot.flight_time(&level);
         assert!(life < weapon::SHOT_LIFE);

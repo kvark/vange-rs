@@ -388,8 +388,9 @@ struct Agent {
     tracks: level::terraform::Tracks,
     /// Cirt gathered toward the world's story cycles.
     cirtainer: level::cycle::Cirtainer,
-    armor: u16,
-    max_armor: u16,
+    /// In hundredths of a `car.prm` point (`combat::ARMOR_UNIT`).
+    armor: u32,
+    max_armor: u32,
 }
 
 impl Agent {
@@ -546,7 +547,7 @@ fn spawn_default_agent(
         rot: glam::Quat::IDENTITY,
     };
 
-    let armor = car.stats.max_armor as u16;
+    let armor = car.stats.max_armor as u32 * vangers::combat::ARMOR_UNIT;
     Some(Agent {
         car_name,
         car,
@@ -572,6 +573,8 @@ struct WebRemote {
     treads: level::overlay::GhostTreads,
     /// A wreck waiting to respawn (`AgentState::dead`): it smokes.
     dead: bool,
+    /// The bullet of its gun in each bay (`AgentState::guns`).
+    guns: [Option<u8>; vangers_net::BAYS],
 }
 
 impl physics::death::DeathRemote for WebRemote {
@@ -698,7 +701,10 @@ struct WebApp {
     line_buffer: LineBuffer,
     /// Other players' shots in flight (`ServerMessage::Shot`), their ages
     /// and when the terrain stops them, drawn as streaks. This page has no weapons of its own yet.
-    remote_shots: Vec<(weapon::Shot, f32, f32)>,
+    /// Other players' shots: the shot, its age, life and colour.
+    remote_shots: Vec<(weapon::Shot, f32, f32, u32)>,
+    /// The original guns (built in): how the other players' shots fly.
+    weapons: vangers::combat::weapons::Table,
     space_held: bool,
     ride: Option<Ride>,
     /// Original Bug `.a3d` frames, if `game.lst` has one in the VFS.
@@ -1105,6 +1111,7 @@ impl WebApp {
             life,
             line_buffer: LineBuffer::new(),
             remote_shots: Vec::new(),
+            weapons: vangers::combat::weapons::Table::original(),
             space_held: false,
             ride: None,
             bug,
@@ -1582,10 +1589,10 @@ impl WebApp {
 
     /// Fly the other players' shots on and drop the spent ones.
     fn step_remote_shots(&mut self, delta: f32) {
-        for (shot, age, life) in &mut self.remote_shots {
+        for (shot, age, life, _) in &mut self.remote_shots {
             *age = shot.step_within(delta, *age, *life);
         }
-        self.remote_shots.retain(|(_, age, life)| *age < *life);
+        self.remote_shots.retain(|(_, age, life, _)| *age < *life);
     }
 
     /// `online`: the server owns the armour, so wildlife bites stay
@@ -1615,7 +1622,9 @@ impl WebApp {
             && !online
             && let Some(ref mut agent) = self.agent
         {
-            agent.armor = agent.armor.saturating_sub(nibble);
+            agent.armor = agent
+                .armor
+                .saturating_sub(nibble as u32 * vangers::combat::ARMOR_UNIT);
         }
     }
 
@@ -1934,13 +1943,12 @@ impl WebApp {
         }
         self.life
             .draw_fx(&mut self.line_buffer, eye, self.bug.is_none());
-        for (shot, _, _) in &self.remote_shots {
+        for &(ref shot, _, _, color) in &self.remote_shots {
             // The replica next to the camera, as the cars are drawn.
             let (from, to) = shot.streak();
             let shown = self.level.display_pos(from, eye);
             let (from, to) = (shown, to - from + shown);
-            self.line_buffer
-                .add(from.to_array(), to.to_array(), weapon::REMOTE_SHOT_COLOR);
+            self.line_buffer.add(from.to_array(), to.to_array(), color);
         }
 
         self.render.draw_world(
@@ -2057,6 +2065,8 @@ mod net_ws {
                 car_name: car_name.to_string(),
                 color,
                 protocol: vangers_net::PROTOCOL_VERSION,
+                // The web client does not fire: no guns.
+                guns: Default::default(),
             });
             let _ = self.ws.send_with_u8_array(&msg);
         }
@@ -3453,10 +3463,12 @@ impl WebHandler {
                                 net: physics::client::RemoteCar::new(phys.clone()),
                                 treads: Default::default(),
                                 dead: false,
+                                guns: [None; vangers_net::BAYS],
                             });
                     }
                     vangers_net::ServerMessage::Shot {
                         shooter,
+                        bay,
                         origin,
                         dir,
                         ..
@@ -3468,14 +3480,25 @@ impl WebHandler {
                             .filter(|r| r.net.pose_ready)
                             .map(|r| r.net.render_transform.disp);
                         let span = gpu.app.level.period();
+                        // As the shooter's gun in that bay flies.
+                        let gun = gpu
+                            .app
+                            .remotes
+                            .get(&shooter)
+                            .and_then(|r| r.guns.get(bay as usize).copied().flatten())
+                            .and_then(|bullet| gpu.app.weapons.by_bullet(bullet));
                         let shot = weapon::remote_shot(
                             glam::Vec3::from(origin),
                             glam::Vec3::from(dir),
                             drawn,
                             (span.x, span.y),
+                            gun,
                         );
+                        let color = gun
+                            .and_then(|g| weapon::bullet_color(&g.bullet))
+                            .unwrap_or(weapon::REMOTE_SHOT_COLOR);
                         let life = shot.flight_time(&gpu.app.level);
-                        gpu.app.remote_shots.push((shot, 0.0, life));
+                        gpu.app.remote_shots.push((shot, 0.0, life, color));
                     }
                     vangers_net::ServerMessage::Died {
                         player_id,
@@ -3569,6 +3592,7 @@ impl WebHandler {
                             }
                             if let Some(remote) = gpu.app.remotes.get_mut(&agent_state.player_id) {
                                 remote.dead = agent_state.dead;
+                                remote.guns = agent_state.guns;
                                 remote
                                     .net
                                     .on_agent(agent_state, tick, quanta_per_sec, period);
