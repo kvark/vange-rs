@@ -16,7 +16,8 @@ pub type PlayerId = u32;
 /// 7: `Respawned::next_quant` (no `SetPose` answer); `ClientMessage::Reset`
 /// for the upright key, `SetPose` only on a server run with
 /// `--allow-setpose`.
-pub const PROTOCOL_VERSION: u32 = 7;
+/// 8: `ClientMessage::Escave` and `AgentState::in_escave`.
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Client-to-server messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +68,17 @@ pub enum ClientMessage {
     /// short reach from the car is replaced by the server's. Queued input
     /// from before is dropped and the ack moves to `next_quant`.
     Reset { position: [f32; 3], next_quant: u32 },
+    /// The player went into an escave (`inside`), or came back out to the
+    /// road. Sent when the escave screen takes over the drive, and again
+    /// when the car drives off.
+    ///
+    /// While inside, the car is in `AgentState::in_escave`: the other
+    /// clients hide it, and the server neither hits it with shots nor
+    /// lets it touch the other cars, and drops its fire. The server takes
+    /// `inside` only from a car that is not a wreck and is within
+    /// `combat::ESCAVE_REACH` of one of its world's escaves; leaving is
+    /// always taken.
+    Escave { inside: bool },
     /// The player fired weapon bay `bay`: a shot from `origin` (the car's
     /// predicted position) along `dir` (unit, the car's forward).
     ///
@@ -244,6 +256,9 @@ pub struct AgentState {
     /// A wreck waiting to respawn (between `Died` and `Respawned`): it
     /// drives with no control, takes no hits and fires no shots.
     pub dead: bool,
+    /// Inside an escave (`ClientMessage::Escave`): not drawn by the other
+    /// clients, and out of the shots and the car contact.
+    pub in_escave: bool,
 }
 
 /// Network-serializable transform (position + rotation + scale).
@@ -346,6 +361,7 @@ mod tests {
                 armor: 35,
                 max_armor: 120,
                 dead: true,
+                in_escave: true,
             }],
             cycle: None,
             moving: None,
@@ -362,6 +378,7 @@ mod tests {
                 assert_eq!(agents[0].ack, 1234);
                 assert_eq!((agents[0].armor, agents[0].max_armor), (35, 120));
                 assert!(agents[0].dead);
+                assert!(agents[0].in_escave);
                 assert!(cycle.is_none());
                 assert!(moving.is_none());
             }
@@ -605,6 +622,18 @@ mod tests {
                 assert_eq!(next_quant, 41);
             }
             _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn round_trip_escave() {
+        for inside in [true, false] {
+            let msg = ClientMessage::Escave { inside };
+            let (decoded, _): (ClientMessage, _) = decode(&encode(&msg)).unwrap();
+            match decoded {
+                ClientMessage::Escave { inside: got } => assert_eq!(got, inside),
+                _ => panic!("wrong variant"),
+            }
         }
     }
 

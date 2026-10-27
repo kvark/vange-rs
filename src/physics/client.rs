@@ -132,6 +132,8 @@ pub struct RemoteCar {
     pub interp_t: f32,
     /// False until the first snapshot pose: nothing to blend from yet.
     pub pose_ready: bool,
+    /// In an escave (`AgentState::in_escave`): not drawn, no ghost.
+    pub in_escave: bool,
     /// Car-local velocities, traction and rudder of the latest snapshot.
     pub linear_velocity: Vec3,
     pub angular_velocity: Vec3,
@@ -203,6 +205,7 @@ impl RemoteCar {
             render_transform: space::Transform::IDENTITY,
             interp_t: 0.0,
             pose_ready: false,
+            in_escave: false,
             linear_velocity: Vec3::ZERO,
             angular_velocity: Vec3::ZERO,
             traction: 0.0,
@@ -239,6 +242,7 @@ impl RemoteCar {
         period: Option<Vec2>,
     ) {
         self.control = agent_control(agent);
+        self.in_escave = agent.in_escave;
         self.on_input_snapshot(&server_car(agent), agent.ack, tick, quanta_per_sec, period);
     }
 
@@ -414,10 +418,17 @@ impl RemoteCar {
         };
     }
 
+    /// Whether the car is on the road to be drawn: it has a pose and is
+    /// not in an escave.
+    pub fn shown(&self) -> bool {
+        self.pose_ready && !self.in_escave
+    }
+
     /// The contact ghost at the latest snapshot, once there is one: the
     /// server's pose and velocities, driven by the car's held control.
+    /// None for a car in an escave (the server keeps it out of contact).
     pub fn ghost(&self) -> Option<Ghost> {
-        self.pose_ready.then(|| {
+        self.shown().then(|| {
             Ghost::driven(
                 self.target_transform,
                 Dynamo {
@@ -444,6 +455,7 @@ impl RemoteCar {
         self.blend = 1.0;
         self.lead = 0.0;
         self.pose_ready = true;
+        self.in_escave = false;
         for v in [
             &mut self.linear_velocity,
             &mut self.angular_velocity,
@@ -771,7 +783,7 @@ impl ClientSync {
         let radius = |phys: &CarPhysicsData, t: &space::Transform| phys.bbox.radius * t.scale;
         let touching = remotes.iter().any(|(_, r)| {
             let r = r.borrow();
-            r.pose_ready
+            r.shown()
                 && wrapped_distance(r.target_transform.disp, server.transform.disp, period)
                     < radius(&r.phys_data, &r.target_transform)
                         + radius(car.phys, &server.transform)
@@ -896,6 +908,44 @@ mod tests {
 
     fn snapshot(car: ServerCar, ack: u32, bumps: u32) -> LocalSnapshot {
         LocalSnapshot { car, ack, bumps }
+    }
+
+    #[test]
+    fn a_remote_in_an_escave_is_hidden_and_has_no_ghost() {
+        let agent = |x: f32, ack: u32, in_escave: bool| vangers_net::AgentState {
+            player_id: 2,
+            transform: vangers_net::NetTransform {
+                position: [x, 10.0, 10.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: 1.0,
+            },
+            dynamo: vangers_net::NetDynamo {
+                traction: 0.5,
+                rudder: 0.0,
+                linear_velocity: [0.0; 3],
+                angular_velocity: [0.0; 3],
+            },
+            spiral_charge: 0,
+            bumps: 0,
+            ack,
+            control: Default::default(),
+            armor: 100,
+            max_armor: 100,
+            dead: false,
+            in_escave,
+        };
+        let mut remotes = HashMap::new();
+        remotes.insert(2, RemoteCar::new(CarPhysicsData::test_default()));
+        let r = remotes.get_mut(&2).unwrap();
+        r.on_agent(&agent(10.0, 100, false), 1, 100.0, None);
+        assert!(r.shown() && r.ghost().is_some());
+        r.on_agent(&agent(10.0, 105, true), 2, 100.0, None);
+        assert!(!r.shown(), "not drawn while inside");
+        assert!(r.ghost().is_none() && snapshot_ghosts(&remotes).is_empty());
+        let r = remotes.get_mut(&2).unwrap();
+        r.on_agent(&agent(10.0, 110, false), 3, 100.0, None);
+        assert!(r.shown() && r.ghost().is_some(), "back on the road");
+        assert_eq!(snapshot_ghosts(&remotes).len(), 1);
     }
 
     #[test]

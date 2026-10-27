@@ -704,6 +704,10 @@ pub struct Game {
     /// Online, our car is a wreck (`ServerMessage::Died`): seconds since,
     /// no control until the server's `Respawned` (or `WRECK_GIVE_UP`).
     wrecked: Option<f32>,
+    /// Online: whether the server was last told we are in an escave
+    /// (`ClientMessage::Escave`), sent when the escave screen takes over
+    /// the drive (`Screen::blocks_drive`) and when it gives it back.
+    escave_sent: bool,
     /// HUD line about a death (ours, by us, or another's) and its seconds left.
     death_note: Option<(String, f32)>,
     /// Space queued a portal hop; applied on the next `update` with GPU handles.
@@ -1154,6 +1158,7 @@ impl Game {
             passage_note: None,
             world_view: None,
             wrecked: None,
+            escave_sent: false,
             death_note: None,
             pending_portal: None,
             portal_pad_lock: None,
@@ -1405,7 +1410,7 @@ impl Game {
     /// tracks. The level and every physics state are left alone.
     fn step_remote_tracks(&mut self, delta: f32) {
         for remote in self.remote_agents.values_mut() {
-            if !remote.net.pose_ready {
+            if !remote.net.shown() {
                 continue;
             }
             let wheels = remote
@@ -1805,6 +1810,25 @@ impl Game {
 
     /// Space: poke nearby door sensors so a secret tunnel or escave hatch
     /// opens. The visit starts once the car has fallen into the hole.
+    /// Tell the server when the escave screen takes the drive and when it
+    /// gives it back, so other players stop drawing, shooting and touching
+    /// this car while it is inside.
+    fn tell_server_about_escave(&mut self) {
+        let inside = self.screen.blocks_drive();
+        let Some(net) = self.net.as_ref() else {
+            return;
+        };
+        if net.player_id.is_none() || inside == self.escave_sent {
+            return;
+        }
+        log::info!(
+            "Escave: telling the server we are {}",
+            if inside { "inside" } else { "back out" }
+        );
+        net.send_escave(inside);
+        self.escave_sent = inside;
+    }
+
     fn try_use_entrance(&mut self) {
         if self.screen.visit().is_some() {
             self.screen.begin_leave();
@@ -2130,7 +2154,7 @@ impl Game {
                 large: false,
             });
         }
-        for remote in self.remote_agents.values() {
+        for remote in self.remote_agents.values().filter(|r| !r.net.in_escave) {
             marks.push(minimap::Mark {
                 pos: remote.net.render_transform.disp.truncate(),
                 color: body_mark(remote.color),
@@ -3077,6 +3101,9 @@ impl Application for Game {
         if !self.screen.is_world() {
             self.step_screen(delta);
         }
+        // Before the early return below: the net block further down does
+        // not run while the escave screen holds the drive.
+        self.tell_server_about_escave();
         if self.screen.blocks_drive() {
             if self.screen.follows_camera() {
                 self.update_follow_camera(delta);
@@ -3278,6 +3305,8 @@ impl Application for Game {
                         self.mp_state.status =
                             format!("Connected (player {}, level '{}')", player_id, level_name);
                         self.mp_state.connected = true;
+                        // A fresh join is out on the road.
+                        self.escave_sent = false;
                     }
                     NetEvent::PlayerJoined {
                         player_id,
@@ -3504,6 +3533,7 @@ impl Application for Game {
                     } => self.on_respawned(player_id, &transform, next_quant, my_id),
                     NetEvent::Disconnected => {
                         self.wrecked = None;
+                        self.escave_sent = false;
                         log::warn!("Disconnected from server");
                         self.remote_agents.clear();
                         self.mp_state.connected = false;
@@ -4019,8 +4049,9 @@ impl Application for Game {
                 .add_model(&agent.car.model, &drawn, debug_shape_scale, agent.color);
         }
 
-        // Render remote agents from the network (using interpolated transform)
-        for remote in self.remote_agents.values() {
+        // Render remote agents from the network (using interpolated
+        // transform); a car in an escave is not drawn.
+        for remote in self.remote_agents.values().filter(|r| !r.net.in_escave) {
             let mut drawn = remote.net.render_transform;
             drawn.disp = self.level.display_pos(drawn.disp, eye);
             if clipper.clip(&drawn.disp) {

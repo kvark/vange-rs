@@ -146,6 +146,22 @@ cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
 ```
 
 
+## Inside an escave (protocol 8)
+
+The client tells the server when its escave screen takes over the drive and
+when it hands it back (`ClientMessage::Escave { inside }`, sent on the
+`Screen::blocks_drive` edges). The server takes `inside` only from a car that
+is not a wreck and stands within `combat::ESCAVE_REACH` (160u) of one of the
+hosted world's escaves or spots, or of a `--escave X,Y`. Leaving is always
+taken, and a fresh join starts outside. While inside, the car is
+`AgentState::in_escave`:
+- the other clients (native and web) don't draw it, give it no contact
+  ghost, and leave it off the minimap;
+- the server's shots fly through it, its own fire is dropped, and
+  `collide_players` skips it.
+
+The car reappears where it parked once it drives back out.
+
 ## Moving land (WorldState phase sync)
 
 Animated terrain patches (`*.vot` / `MovingWorld`) are **server-owned** in

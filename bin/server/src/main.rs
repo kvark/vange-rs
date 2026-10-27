@@ -223,6 +223,9 @@ struct ServerAgent {
     /// The tick it last respawned in: no pose from the client is taken
     /// for `combat::RESPAWN_POSE_LOCK_SECS` after.
     respawned: Option<u32>,
+    /// In an escave (`ClientMessage::Escave`, `AgentState::in_escave`):
+    /// out of the shots and the car contact, and its fire is dropped.
+    in_escave: bool,
 }
 
 /// Diagnostic: a player's accepted shots, summed into at most one info
@@ -389,6 +392,7 @@ impl ServerAgent {
             armor: self.armor,
             max_armor: self.max_armor,
             dead: self.dead.is_some(),
+            in_escave: self.in_escave,
         }
     }
 
@@ -1305,6 +1309,7 @@ async fn main() {
                             hit_log: HitLog::default(),
                             dead: None,
                             respawned: None,
+                            in_escave: false,
                         });
                     }
 
@@ -1390,6 +1395,7 @@ async fn main() {
                                         .unwrap_or(combat::DEFAULT_MAX_ARMOR);
                                     agent.armor = agent.max_armor;
                                     agent.dead = None;
+                                    agent.in_escave = false;
                                     if let Some(pose) = restored {
                                         agent.transform = pose.transform;
                                         agent.dynamo = pose.dynamo;
@@ -1575,6 +1581,39 @@ async fn main() {
                                     }
                                 }
                             }
+                            ClientMessage::Escave { inside } => {
+                                let player_id = effective_player_id(&conn_to_player, conn_id);
+                                let period = level.period();
+                                let Some(agent) = players.get_mut(&player_id) else {
+                                    continue;
+                                };
+                                if !agent.joined || agent.in_escave == inside {
+                                    continue;
+                                }
+                                if inside {
+                                    let at = agent.transform.disp;
+                                    if agent.dead.is_some() {
+                                        warn!("Escave from player {} ignored: a wreck", player_id);
+                                        continue;
+                                    }
+                                    if !combat::escave_in_reach(at, &respawn_escaves, (period.x, period.y)) {
+                                        warn!(
+                                            "Escave from player {} ignored: no escave within {} of ({:.0},{:.0})",
+                                            player_id, combat::ESCAVE_REACH, at.x, at.y
+                                        );
+                                        continue;
+                                    }
+                                }
+                                agent.in_escave = inside;
+                                info!(
+                                    "Player {} ({}) {} an escave at ({:.0},{:.0})",
+                                    player_id,
+                                    agent.name,
+                                    if inside { "went into" } else { "came out of" },
+                                    agent.transform.disp.x,
+                                    agent.transform.disp.y
+                                );
+                            }
 
                             ClientMessage::Fire { quant, bay, origin, dir, view_tick, view_ms } => {
                                 let player_id = effective_player_id(&conn_to_player, conn_id);
@@ -1587,6 +1626,10 @@ async fn main() {
                                 }
                                 if agent.dead.is_some() {
                                     debug!("Fire from player {}: a wreck, dropped", player_id);
+                                    continue;
+                                }
+                                if agent.in_escave {
+                                    debug!("Fire from player {}: in an escave, dropped", player_id);
                                     continue;
                                 }
                                 if agent.fires >= weapon::FIRES_PER_TICK {
@@ -1757,9 +1800,10 @@ fn collide_players(
     trace: bool,
     bump_tracker: &mut BumpTracker,
 ) {
+    // A car in an escave is off the road: nothing touches it.
     let mut joined: Vec<(PlayerId, &mut ServerAgent)> = players
         .iter_mut()
-        .filter(|(_, a)| a.joined)
+        .filter(|(_, a)| a.joined && !a.in_escave)
         .map(|(id, a)| (*id, a))
         .collect();
     if joined.len() < 2 {
@@ -1944,8 +1988,8 @@ fn purge_expired_poses(last_poses: &mut HashMap<PlayerId, LastPose>) {
 /// apply its hit, if any: each shot tests the other joined cars where they
 /// were `rewind` ticks ago (`combat::rewind_ticks`), as its shooter saw
 /// them. A hit takes `combat::bay_damage` off the target's armour, down
-/// to 0, and ends the shot. The terrain stops shots. Wrecks are not hit
-/// and their shots are dropped (`combat::fly_shots`).
+/// to 0, and ends the shot. The terrain stops shots. Wrecks and cars in an
+/// escave are not hit and their shots are dropped (`combat::fly_shots`).
 ///
 /// A car whose armour this empties is a wreck from now: returns each as
 /// `(player, killer, where)` for `ServerMessage::Died`.
@@ -1980,7 +2024,11 @@ fn step_shots(
                     })
                     .collect()
             },
-            |id| players.get(&id).is_some_and(|a| a.dead.is_some()),
+            |id| {
+                players
+                    .get(&id)
+                    .is_some_and(|a| a.dead.is_some() || a.in_escave)
+            },
         )
     };
     let mut deaths = Vec::new();
