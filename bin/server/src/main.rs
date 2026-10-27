@@ -866,7 +866,7 @@ async fn main() {
                             ClientMessage::Input { control, .. } => {
                                 let player_id = effective_player_id(&conn_to_player, conn_id);
                                 if let Some(agent) = players.get_mut(&player_id) {
-                                    agent.control = control;
+                                    merge_input(&mut agent.control, control);
                                 }
                             }
 
@@ -918,6 +918,16 @@ async fn main() {
             }
         }
     }
+}
+
+/// Latest-wins for held controls, but keep a jump that no tick has applied
+/// yet: clients send `Input` every frame (faster than the 20 Hz tick) and a
+/// jump is a one-shot, so the next frame's `jump: None` must not drop it.
+/// The tick clears it with `control.jump.take()`.
+fn merge_input(current: &mut NetControl, incoming: NetControl) {
+    let pending_jump = current.jump.take();
+    *current = incoming;
+    current.jump = current.jump.or(pending_jump);
 }
 
 /// `max_quant` used when no settings file is available; matches
@@ -1159,5 +1169,32 @@ mod tests {
             .unwrap();
         assert_eq!(DEFAULT_MAX_QUANT, value);
         assert_eq!(physics_max_quant(None), value);
+    }
+
+    #[test]
+    fn merge_input_keeps_unconsumed_jump() {
+        let mut control = NetControl::default();
+        merge_input(
+            &mut control,
+            NetControl {
+                jump: Some(4.0),
+                ..NetControl::default()
+            },
+        );
+        // A later Input in the same tick (no jump) must not clobber it,
+        // while held controls still take the latest value.
+        merge_input(
+            &mut control,
+            NetControl {
+                motor: 1.0,
+                ..NetControl::default()
+            },
+        );
+        assert_eq!(control.motor, 1.0);
+        assert_eq!(control.jump, Some(4.0));
+        // The tick consumes it; afterwards it is gone.
+        assert_eq!(control.jump.take(), Some(4.0));
+        merge_input(&mut control, NetControl::default());
+        assert_eq!(control.jump, None);
     }
 }

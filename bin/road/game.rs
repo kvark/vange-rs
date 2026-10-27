@@ -465,6 +465,11 @@ pub struct Game {
     net: Option<NetworkClient>,
     mp_state: MultiplayerState,
     input_seq: u32,
+    /// Multiplayer: jump released this frame, still to be sent to the server.
+    /// The local physics step `take()`s `Agent::jump` before the network send
+    /// runs, so the send cannot read it from there. Taken (sent once) by the
+    /// next `Input`.
+    net_jump: Option<f32>,
     /// Set after the first WorldState snap from the server.
     /// Before this, the client's player position may differ from the
     /// server's spawn point, so we need to hard-snap the camera.
@@ -917,6 +922,7 @@ impl Game {
                 connected,
             },
             input_seq: 0,
+            net_jump: None,
             server_synced: false,
             tweaks_pos_hold: 0.0,
             tweaks_pose_dirty: false,
@@ -2188,7 +2194,12 @@ impl Application for Game {
                 KeyCode::KeyQ | KeyCode::KeyE => self.input.roll = None,
                 KeyCode::ShiftLeft => self.input.turbo = false,
                 KeyCode::KeyM => self.input.mole = false,
-                KeyCode::AltLeft => player.jump = self.input.jump.take(),
+                KeyCode::AltLeft => {
+                    player.jump = self.input.jump.take();
+                    if self.net.is_some() {
+                        self.net_jump = player.jump;
+                    }
+                }
                 _ => (),
             },
         }
@@ -2398,7 +2409,7 @@ impl Application for Game {
                 roll: player.control.roll,
                 brake: player.control.brake,
                 turbo: player.control.turbo,
-                jump: player.jump,
+                jump: self.net_jump.take(),
             };
             let (events, my_id) = {
                 let net = self.net.as_mut().unwrap();
