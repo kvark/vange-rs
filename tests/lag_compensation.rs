@@ -13,14 +13,19 @@
 //! blend or snap in old mode; the render-offset decay in new mode).
 //! Scenarios: high-speed driving, a jump, a ram into a second car, on the
 //! built-in test level (CI) and on Fostral when the game data is there.
+//!
+//! The "shared" mode runs the client through `physics::client` (the
+//! `ClientSync` + `RemoteCar` that both the native game and the web build
+//! use) and must converge like the hand-rolled "new" client it replaced.
 
 use glam::{Quat, Vec3};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use vangers::{
     config::{self, settings},
     level,
     physics::{
         self, CarPhysicsData, Dynamo, ServerCar,
+        client::{ClientSync, LocalCar, LocalSnapshot, RemoteCar, Sim, SyncEvent},
         prediction::{
             Ghost, InputQueue, Prediction, QuantInput, Reconciled, RenderOffset, ServerSnapshot,
             fold_home,
@@ -201,6 +206,17 @@ enum Mode {
     Old,
     /// Numbered inputs, ack, rewind and replay, render offset.
     New,
+    /// `New` through `physics::client::ClientSync` (native and web).
+    Shared,
+    /// `Shared`, starting unsynced 300u off the server's spawn (as the web
+    /// build spawns at the level centre) until the first snapshot.
+    SharedCold,
+}
+
+impl Mode {
+    fn shared(self) -> bool {
+        matches!(self, Mode::Shared | Mode::SharedCold)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -342,7 +358,9 @@ struct Server {
 impl Server {
     fn receive(&mut self, mode: Mode, msg: InputMsg) {
         match mode {
-            Mode::New => self.queue.push(msg.first, msg.count, msg.input),
+            Mode::New | Mode::Shared | Mode::SharedCold => {
+                self.queue.push(msg.first, msg.count, msg.input)
+            }
             Mode::Old => {
                 let jump = self.control.jump.take();
                 self.control = msg.input;
@@ -359,8 +377,8 @@ impl Server {
             .clock
             .advance(TICK * world.physics_per_sec(), world.max_quant);
         let a_quanta = match mode {
-            Mode::New => self.queue.budget(quanta).total(),
             Mode::Old => quanta,
+            _ => self.queue.budget(quanta).total(),
         };
         let b_quanta = match self.b {
             Some(_) if drain => a_quanta,
@@ -376,13 +394,13 @@ impl Server {
         for i in 0..slots {
             if i < a_quanta {
                 let input = match mode {
-                    Mode::New => self.queue.pop(),
                     Mode::Old if i + 1 == quanta => {
                         let mut input = self.control;
                         input.jump = self.control.jump.take();
                         input
                     }
                     Mode::Old => self.control.held(),
+                    _ => self.queue.pop(),
                 };
                 world.step(&mut self.a, &input);
                 fold(&mut self.a);
@@ -419,6 +437,9 @@ struct Client {
     pred_ghost: Option<Ghost>,
     bumps: u32,
     pending_jump: Option<f32>,
+    /// Shared: the clients' own prediction state and the other car.
+    sync: ClientSync,
+    remotes: HashMap<u32, RemoteCar>,
 }
 
 impl Client {
@@ -447,8 +468,12 @@ impl Client {
     }
 
     /// The pose the player sees.
-    fn drawn(&self) -> Vec3 {
-        self.offset.apply(&self.car.transform).disp
+    fn drawn(&self, mode: Mode) -> Vec3 {
+        if mode.shared() {
+            self.sync.drawn(&self.car.transform).disp
+        } else {
+            self.offset.apply(&self.car.transform).disp
+        }
     }
 }
 
@@ -520,8 +545,19 @@ fn run(
         bumps: 0,
         clock: Default::default(),
     };
+    let mut sync = ClientSync::default();
+    let mut client_start = start;
+    if mode == Mode::SharedCold {
+        client_start.transform.disp.x += 300.0;
+        fold_home(&mut client_start.transform.disp, world.level.period());
+    } else {
+        // Same pose as the server from the start, as the hand-rolled
+        // client assumes.
+        sync.synced = true;
+        sync.server_bumps = Some(0);
+    }
     let mut client = Client {
-        car: start,
+        car: if mode.shared() { client_start } else { start },
         prediction: Prediction::default(),
         offset: RenderOffset::default(),
         clock: Default::default(),
@@ -529,6 +565,13 @@ fn run(
         pred_ghost: b.map(|b| Ghost::new(b.transform, b.dynamo)),
         bumps: 0,
         pending_jump: None,
+        sync,
+        remotes: HashMap::new(),
+    };
+    let sim = Sim {
+        level: &world.level,
+        common: &world.common,
+        max_quant: world.max_quant,
     };
     let mut up = Pipe::<InputMsg>::new(link, seed.wrapping_mul(7919));
     let mut down = Pipe::<Snapshot>::new(link, seed.wrapping_mul(104_729));
@@ -566,11 +609,21 @@ fn run(
             jumped = true;
             client.pending_jump = Some(world.jump_power);
         }
-        let drawn_before = client.drawn();
-        let quanta = client
-            .clock
-            .advance(dt * world.physics_per_sec(), world.max_quant);
-        let first = client.prediction.next();
+        let drawn_before = client.drawn(mode);
+        let quanta = if mode.shared() {
+            client
+                .sync
+                .due_quanta(dt * world.physics_per_sec(), world.max_quant)
+        } else {
+            client
+                .clock
+                .advance(dt * world.physics_per_sec(), world.max_quant)
+        };
+        let first = if mode.shared() {
+            client.sync.prediction.next()
+        } else {
+            client.prediction.next()
+        };
         let mut last_input = held;
         for i in 0..quanta {
             let last = i + 1 == quanta;
@@ -581,20 +634,34 @@ fn run(
                 None
             };
             last_input = input;
+            if mode.shared() {
+                client.sync.step_quantum(
+                    LocalCar {
+                        transform: &mut client.car.transform,
+                        dynamo: &mut client.car.dynamo,
+                        phys: &world.car,
+                    },
+                    &input,
+                    &client.remotes,
+                    sim,
+                    None,
+                );
+                continue;
+            }
             // Folded onto the home tile like the server: after the step
             // and after the contacts.
             world.step(&mut client.car, &input);
             fold_home(&mut client.car.transform.disp, world.level.period());
             match mode {
                 Mode::Old => Client::snapshot_contact(world, &mut client.car, client.ghost),
-                Mode::New => Client::ghost_contact(world, &mut client.car, &mut client.pred_ghost),
+                _ => Client::ghost_contact(world, &mut client.car, &mut client.pred_ghost),
             }
             fold_home(&mut client.car.transform.disp, world.level.period());
             client
                 .prediction
                 .push(input, &client.car.transform, &client.car.dynamo);
         }
-        let stepped = client.drawn();
+        let stepped = client.drawn(mode);
         if quanta > 0 {
             up.send(
                 now,
@@ -608,6 +675,8 @@ fn run(
         out.travelled += wrapped_distance(world, stepped, drawn_before);
 
         let mut correction = 0.0f32;
+        // The first sync of a cold start: a visible jump by design.
+        let mut first_sync = false;
         if let Some(snap) = down.recv(now).pop() {
             client.ghost = snap.other;
             let bumped = snap.bumps != client.bumps;
@@ -633,6 +702,53 @@ fn run(
                     }
                     if moved > 0.1 {
                         out.corrections += 1;
+                    }
+                }
+                Mode::Shared | Mode::SharedCold => {
+                    if let Some(b) = snap.other {
+                        client
+                            .remotes
+                            .entry(1)
+                            .or_insert_with(|| RemoteCar::new(world.car.clone()))
+                            .on_snapshot(&b.server_car(false), period);
+                    }
+                    let (event, _) = client.sync.on_snapshot(
+                        &LocalSnapshot {
+                            car: snap.car.server_car(false),
+                            ack: snap.ack,
+                            bumps: snap.bumps,
+                        },
+                        LocalCar {
+                            transform: &mut client.car.transform,
+                            dynamo: &mut client.car.dynamo,
+                            phys: &world.car,
+                        },
+                        &client.remotes,
+                        sim,
+                        false,
+                    );
+                    match event {
+                        SyncEvent::FirstSync => {
+                            first_sync = true;
+                            correction += wrapped_distance(world, client.drawn(mode), stepped);
+                        }
+                        SyncEvent::Held => unreachable!(),
+                        SyncEvent::Reconciled {
+                            outcome,
+                            moved,
+                            shown_at_once,
+                        } => {
+                            if matches!(outcome, Reconciled::Replayed(_) | Reconciled::Ahead) {
+                                if moved > 0.01 {
+                                    out.corrections += 1;
+                                }
+                                if shown_at_once {
+                                    out.snaps += 1;
+                                    correction +=
+                                        wrapped_distance(world, client.drawn(mode), stepped);
+                                }
+                            }
+                        }
                     }
                 }
                 Mode::New => {
@@ -695,7 +811,7 @@ fn run(
                             // Teleport: the offset is dropped and the car
                             // shown where it is.
                             out.snaps += 1;
-                            correction += wrapped_distance(world, client.drawn(), stepped);
+                            correction += wrapped_distance(world, client.drawn(mode), stepped);
                         }
                     }
                 }
@@ -703,10 +819,12 @@ fn run(
         }
         if mode == Mode::New {
             correction += client.offset.decay(dt);
+        } else if mode.shared() {
+            correction += client.sync.decay(dt);
         }
         // The drawn car moved by its step plus `correction`; double-check
         // the bookkeeping against the drawn poses.
-        let drawn_after = client.drawn();
+        let drawn_after = client.drawn(mode);
         let seen = wrapped_distance(world, drawn_after, stepped);
         if mode == Mode::Old && (!seen.is_finite() || seen > 1e4) {
             // The old reconcile can pull the car into a state the physics
@@ -718,13 +836,20 @@ fn run(
             seen <= correction + 1e-3,
             "unaccounted visible jump {seen} > {correction}"
         );
-        out.max_correction = out.max_correction.max(correction);
+        if !first_sync {
+            out.max_correction = out.max_correction.max(correction);
+        }
     }
     // Let the server catch up with every input sent (the client is ahead
     // of it by the latency), then compare like for like.
-    if mode == Mode::New {
+    if mode != Mode::Old {
+        let next = if mode.shared() {
+            client.sync.prediction.next()
+        } else {
+            client.prediction.next()
+        };
         let mut guard = 0;
-        while server.queue.ack() != client.prediction.next() && guard < 400 {
+        while server.queue.ack() != next && guard < 400 {
             for msg in up.recv(next_tick) {
                 server.receive(mode, msg);
             }
@@ -734,7 +859,11 @@ fn run(
         }
     }
     out.final_gap = wrapped_distance(world, client.car.transform.disp, server.a.transform.disp);
-    out.final_offset = client.offset.disp.length();
+    out.final_offset = if mode.shared() {
+        client.sync.render_offset.disp.length()
+    } else {
+        client.offset.disp.length()
+    };
     out.bumps = server.bumps;
     out
 }
@@ -795,11 +924,57 @@ fn sweep(world: &World, mode: Mode, scenario: Scenario) -> Outcome {
 /// Max visible per-frame correction allowed with prediction.
 const MAX_VISIBLE: f32 = 2.0;
 
+/// The shared client (`physics::client`, run by native and web) holds the
+/// same bounds as the hand-rolled one, and lands where it does.
+fn check_shared(scenario: Scenario, shared: &Outcome, new: &Outcome, cold: bool) {
+    println!(
+        "== shared {:?}: max {:.2}u ({} snaps, {} replays), final gap {:.3}u; hand-rolled max {:.2}u ({} replays)",
+        scenario,
+        shared.max_correction,
+        shared.snaps,
+        shared.corrections,
+        shared.final_gap,
+        new.max_correction,
+        new.corrections
+    );
+    assert!(
+        shared.max_correction < MAX_VISIBLE,
+        "shared {scenario:?}: visible correction {:.2}u",
+        shared.max_correction
+    );
+    assert_eq!(
+        shared.snaps, 0,
+        "shared {scenario:?}: correction shown at once"
+    );
+    assert!(
+        shared.final_gap < 0.05,
+        "shared {scenario:?}: client did not converge to the server: {:.3}u",
+        shared.final_gap
+    );
+    assert!(
+        shared.final_offset < 0.05,
+        "shared {scenario:?}: offset left over"
+    );
+    if matches!(scenario, Scenario::Ram) {
+        assert!(shared.bumps > 0, "shared: the ram never hit the other car");
+    }
+    // Synced from the start it is the same client: the same path. (A cold
+    // start drives from elsewhere until the first snapshot.)
+    assert!(
+        cold || (shared.travelled - new.travelled).abs() < 0.05 * new.travelled.max(1.0),
+        "shared {scenario:?}: drove {:.0}u, hand-rolled {:.0}u",
+        shared.travelled,
+        new.travelled
+    );
+}
+
 fn check_world(world: &World) -> (f32, f32) {
     let (mut old_worst, mut new_worst) = (0.0f32, 0.0f32);
     for scenario in SCENARIOS {
         let new = sweep(world, Mode::New, scenario);
         let old = sweep(world, Mode::Old, scenario);
+        let shared = sweep(world, Mode::Shared, scenario);
+        check_shared(scenario, &shared, &new, false);
         println!(
             "== {} {:?}: old max {:.2}u ({} snaps), new max {:.2}u ({} snaps, {} replays)",
             world.name,
@@ -892,4 +1067,17 @@ fn old_reconcile_corrects_at_one_tick() {
     );
     assert_eq!(new.corrections, 0, "nothing to correct without contact");
     assert!(old.max_correction > new.max_correction);
+}
+
+/// The web build spawns at the level centre, the server elsewhere: the
+/// first snapshot puts the car there, and from then on the shared client
+/// converges like a synced one.
+#[test]
+fn shared_client_first_sync_from_a_cold_start() {
+    let world = test_world();
+    for scenario in SCENARIOS {
+        let cold = sweep(&world, Mode::SharedCold, scenario);
+        let new = sweep(&world, Mode::New, scenario);
+        check_shared(scenario, &cold, &new, true);
+    }
 }

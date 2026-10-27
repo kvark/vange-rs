@@ -7,6 +7,7 @@ use glam::{Mat3, Quat, Vec3};
 
 const EPSILON: f32 = f32::EPSILON;
 
+pub mod client;
 mod collision;
 pub mod prediction;
 mod reconcile;
