@@ -5,7 +5,7 @@ use vangers::{
         prediction::{InputQueue, QuantInput, TickBudget},
         CarPhysicsData, Dynamo,
     },
-    space,
+    space, weapon,
 };
 use vangers_net::{
     decode, encode, AgentState, ClientMessage, CycleFade, CycleState, LocationPhase,
@@ -193,6 +193,8 @@ struct ServerAgent {
     /// client went quiet (`InputQueue::STARVE_TICKS`), unacked: motion the
     /// client never predicted. `None` while its inputs arrive.
     starved: Option<u32>,
+    /// Shots taken from this player this tick (`weapon::FIRES_PER_TICK`).
+    fires: u8,
 }
 
 /// Diagnostic: the brake, turbo and jump a client sends, logged at info so
@@ -934,6 +936,9 @@ async fn main() {
                 }
 
                 tick += 1;
+                for agent in players.values_mut() {
+                    agent.fires = 0;
+                }
 
                 // Whole `max_quant` steps only, the same split the
                 // clients use for their own car (`physics::QuantClock`),
@@ -1133,6 +1138,7 @@ async fn main() {
                             input_log: InputLog::default(),
                             pose_logged: None,
                             starved: None,
+                            fires: 0,
                         });
                     }
 
@@ -1331,6 +1337,61 @@ async fn main() {
                                     if agent.joined {
                                         // Capacity is car-local on clients; store charge only.
                                         agent.spiral_charge = charge;
+                                    }
+                                }
+                            }
+
+                            ClientMessage::Fire { quant, bay, origin, dir } => {
+                                let player_id = effective_player_id(&conn_to_player, conn_id);
+                                let period = level.period();
+                                let Some(agent) = players.get_mut(&player_id) else {
+                                    continue;
+                                };
+                                if !agent.joined {
+                                    continue;
+                                }
+                                if agent.fires >= weapon::FIRES_PER_TICK {
+                                    warn!("Fire from player {}: over {} a tick, dropped", player_id, weapon::FIRES_PER_TICK);
+                                    continue;
+                                }
+                                let dir = match weapon::check_fire(
+                                    bay,
+                                    Vec3::from(origin),
+                                    Vec3::from(dir),
+                                    agent.transform.disp,
+                                    (period.x, period.y),
+                                ) {
+                                    Ok(dir) => dir,
+                                    Err(why) => {
+                                        warn!(
+                                            "Fire from player {} rejected: {} (muzzle {:?}, car {:?})",
+                                            player_id, why, origin, agent.transform.disp
+                                        );
+                                        continue;
+                                    }
+                                };
+                                agent.fires += 1;
+                                info!(
+                                    "Fire: player {} ({}) bay {} quant {} ack {} from {:?} dir {:?}",
+                                    player_id,
+                                    agent.name,
+                                    bay,
+                                    quant,
+                                    agent.inputs.ack(),
+                                    origin,
+                                    dir
+                                );
+                                let shot = encode(&ServerMessage::Shot {
+                                    shooter: player_id,
+                                    tick,
+                                    quant,
+                                    bay,
+                                    origin,
+                                    dir: dir.into(),
+                                });
+                                for (&id, other) in &players {
+                                    if id != player_id && other.joined {
+                                        let _ = other.sender.send(shot.clone());
                                     }
                                 }
                             }

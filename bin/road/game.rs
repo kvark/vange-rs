@@ -719,6 +719,8 @@ struct CaveView {
 struct LiveShot {
     shot: weapon::Shot,
     age: f32,
+    /// Fired by another player (`ServerMessage::Shot`), drawn in its colour.
+    remote: bool,
 }
 
 struct Ride {
@@ -1485,7 +1487,13 @@ impl Game {
             armor: player.armor,
             max_armor: player.max_armor,
         };
-        let shots: Vec<Vec3> = self.shots.iter().map(|s| s.shot.pos).collect();
+        // Our own shots only: another player's hits are the server's call.
+        let shots: Vec<Vec3> = self
+            .shots
+            .iter()
+            .filter(|s| !s.remote)
+            .map(|s| s.shot.pos)
+            .collect();
         let nibble = self.life.step(&self.level, delta, contact, &shots);
         if nibble != 0 {
             let player = self
@@ -2571,13 +2579,14 @@ impl Game {
                 .find(|a| a.spirit == Spirit::Player)
                 .map(|a| (a.armor, a.max_armor));
             log::info!(
-                "Autodrive t={:.1}s pos={:?} armor={:?} spiral={}/{} shots={} world={} remotes={}",
+                "Autodrive t={:.1}s pos={:?} armor={:?} spiral={}/{} shots={} remote_shots={} world={} remotes={}",
                 ad.time + delta,
                 pose.map(|t| t.disp),
                 armor,
                 self.spiral.charge,
                 self.spiral.capacity,
-                self.shots.len(),
+                self.shots.iter().filter(|l| !l.remote).count(),
+                self.shots.iter().filter(|l| l.remote).count(),
                 self.screen.is_world(),
                 self.remote_agents.len(),
             );
@@ -2871,7 +2880,22 @@ impl Application for Game {
             let forward = transform.rot * Vec3::Y;
             if let Some(shot) = weapon::fire(&self.inventory, bay, transform.disp, forward) {
                 log::debug!("Fire bay {bay} from {:?} dir {:?}", transform.disp, forward);
-                self.shots.push(LiveShot { shot, age: 0.0 });
+                if let Some(ref net) = self.net {
+                    // Lined up with our inputs: the shot happens before
+                    // the next quantum we send.
+                    let dir = shot.vel.normalize();
+                    net.send_fire(
+                        self.sync.prediction.next(),
+                        bay as u8,
+                        shot.pos.to_array(),
+                        dir.to_array(),
+                    );
+                }
+                self.shots.push(LiveShot {
+                    shot,
+                    age: 0.0,
+                    remote: false,
+                });
             } else {
                 log::debug!("Fire bay {bay}: no weapon");
             }
@@ -2880,7 +2904,7 @@ impl Application for Game {
             live.shot.step(delta);
             live.age += delta;
         }
-        self.shots.retain(|live| live.age < 1.5);
+        self.shots.retain(|live| live.age < weapon::SHOT_LIFE);
 
         self.step_moving_land(delta);
         if !riding && !pad_locked {
@@ -3197,6 +3221,36 @@ impl Application for Game {
                                 );
                             }
                         }
+                    }
+                    NetEvent::Shot {
+                        shooter,
+                        bay,
+                        origin,
+                        dir,
+                    } => {
+                        let remote = self.remote_agents.get(&shooter);
+                        let drawn = remote
+                            .filter(|r| r.net.pose_ready)
+                            .map(|r| r.net.render_transform.disp);
+                        let span = self.level.period();
+                        let shot = weapon::remote_shot(
+                            Vec3::from(origin),
+                            Vec3::from(dir),
+                            drawn,
+                            (span.x, span.y),
+                        );
+                        log::info!(
+                            "Remote shot: {} bay {bay} from {:?} dir {:?} (reported {:?})",
+                            remote.map_or("?", |r| r.name.as_str()),
+                            shot.pos,
+                            Vec3::from(dir),
+                            Vec3::from(origin),
+                        );
+                        self.shots.push(LiveShot {
+                            shot,
+                            age: 0.0,
+                            remote: true,
+                        });
                     }
                     NetEvent::Disconnected => {
                         log::warn!("Disconnected from server");
@@ -3807,17 +3861,17 @@ impl Application for Game {
 
         self.life
             .draw_fx(&mut self.line_buffer, eye, self.bug.is_none());
-        const SHOT_COLOR: u32 = 0xFF44_EEFF;
         for live in &self.shots {
-            let dir = if live.shot.vel.length_squared() > 1e-6 {
-                live.shot.vel.normalize()
+            // The replica next to the camera, as the cars are drawn.
+            let (from, to) = live.shot.streak();
+            let shown = self.level.display_pos(from, eye);
+            let (from, to) = (shown, to - from + shown);
+            let color = if live.remote {
+                weapon::REMOTE_SHOT_COLOR
             } else {
-                Vec3::Y
+                weapon::SHOT_COLOR
             };
-            let from = live.shot.pos;
-            let to = from + dir * 18.0;
-            self.line_buffer
-                .add(from.to_array(), to.to_array(), SHOT_COLOR);
+            self.line_buffer.add(from.to_array(), to.to_array(), color);
         }
 
         self.render.draw_world(

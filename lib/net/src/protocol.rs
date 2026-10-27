@@ -9,7 +9,8 @@ pub type PlayerId = u32;
 /// 2: per-quantum input batches (`Input::first_quant` / `quanta`), the
 /// input ack in `AgentState::ack`, `SetPose::next_quant`.
 /// 3: the held control in `AgentState::control`.
-pub const PROTOCOL_VERSION: u32 = 3;
+/// 4: `ClientMessage::Fire` and `ServerMessage::Shot`.
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Client-to-server messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +51,20 @@ pub enum ClientMessage {
     /// Server stores the value and broadcasts it on `AgentState.spiral_charge`
     /// so remotes and reclaim see the same charge. Solo offline never sends this.
     SetSpiral { charge: u8 },
+    /// The player fired weapon bay `bay`: a shot from `origin` (the car's
+    /// predicted position) along `dir` (unit, the car's forward).
+    ///
+    /// `quant` is the client's next input quantum when it fired, so the
+    /// server can line the shot up with this player's inputs (the shot
+    /// happened once `AgentState::ack` reaches it). The server checks it
+    /// against its pose of the car and relays it to the other players as
+    /// `ServerMessage::Shot`; the shooter draws its own shot at once.
+    Fire {
+        quant: u32,
+        bay: u8,
+        origin: [f32; 3],
+        dir: [f32; 3],
+    },
 }
 
 /// Server-to-client messages.
@@ -80,6 +95,17 @@ pub enum ServerMessage {
         /// Moving-land playback when the hosted world has `*.vot` locations.
         /// `None` when empty / unloaded. Server owns phase; clients apply.
         moving: Option<MovingLandState>,
+    },
+    /// Player `shooter` fired (a relayed `ClientMessage::Fire`, sent to
+    /// everyone but the shooter as soon as the server takes it). `dir` is
+    /// normalized by the server. `tick`: the server tick it was taken in.
+    Shot {
+        shooter: PlayerId,
+        tick: u32,
+        quant: u32,
+        bay: u8,
+        origin: [f32; 3],
+        dir: [f32; 3],
     },
 }
 
@@ -402,6 +428,59 @@ mod tests {
             } => {
                 assert_eq!((first_quant, quanta), (900, 3));
                 assert_eq!(control.jump, Some(4.0));
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn round_trip_fire_and_shot() {
+        let msg = ClientMessage::Fire {
+            quant: 77,
+            bay: 1,
+            origin: [1.0, 2.0, 3.0],
+            dir: [0.0, 1.0, 0.0],
+        };
+        let encoded = encode(&msg);
+        let (decoded, consumed): (ClientMessage, _) = decode(&encoded).unwrap();
+        assert_eq!(consumed, encoded.len());
+        match decoded {
+            ClientMessage::Fire {
+                quant,
+                bay,
+                origin,
+                dir,
+            } => {
+                assert_eq!((quant, bay), (77, 1));
+                assert_eq!(origin, [1.0, 2.0, 3.0]);
+                assert_eq!(dir, [0.0, 1.0, 0.0]);
+            }
+            _ => panic!("wrong variant"),
+        }
+
+        let msg = ServerMessage::Shot {
+            shooter: 3,
+            tick: 900,
+            quant: 77,
+            bay: 0,
+            origin: [4.0, 5.0, 6.0],
+            dir: [1.0, 0.0, 0.0],
+        };
+        let encoded = encode(&msg);
+        let (decoded, consumed): (ServerMessage, _) = decode(&encoded).unwrap();
+        assert_eq!(consumed, encoded.len());
+        match decoded {
+            ServerMessage::Shot {
+                shooter,
+                tick,
+                quant,
+                bay,
+                origin,
+                dir,
+            } => {
+                assert_eq!((shooter, tick, quant, bay), (3, 900, 77, 0));
+                assert_eq!(origin, [4.0, 5.0, 6.0]);
+                assert_eq!(dir, [1.0, 0.0, 0.0]);
             }
             _ => panic!("wrong variant"),
         }
