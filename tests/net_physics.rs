@@ -607,3 +607,111 @@ fn one_big_step_does_not_match_sub_stepping() {
          true the sub-stepping is dead code and the gate can go"
     );
 }
+
+/// Run 20 Hz server ticks from `transform`, holding W and jumping once at
+/// tick 5, splitting each tick's `physics_dt` at `max_quant` like
+/// `vangers-server` does. Returns how far the car got.
+fn jump_and_drive(
+    mut transform: space::Transform,
+    max_quant: f32,
+    car: &CarPhysicsData,
+    level: &level::Level,
+    common: &config::common::Common,
+) -> f32 {
+    let dt_fixed = 1.0 / 20.0;
+    let input_factor = dt_fixed / config::common::MAIN_LOOP_TIME;
+    let physics_dt = dt_fixed * {
+        let n = &common.nature;
+        common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
+    };
+    let start = transform.disp;
+    let mut dynamo = Dynamo::default();
+    for tick in 0..60 {
+        dynamo.change_traction(input_factor * common.car.traction_incr);
+        let mut remaining = physics_dt;
+        while remaining > max_quant {
+            physics::step(
+                &mut dynamo,
+                &mut transform,
+                max_quant,
+                car,
+                level,
+                common,
+                1.0,
+                0.0,
+                None,
+                0.0,
+                None,
+                None,
+            );
+            remaining -= max_quant;
+        }
+        let jump = (tick == 5).then_some(1.0);
+        physics::step(
+            &mut dynamo,
+            &mut transform,
+            remaining,
+            car,
+            level,
+            common,
+            1.0,
+            0.0,
+            jump,
+            0.0,
+            None,
+            None,
+        );
+    }
+    transform.disp.distance(start)
+}
+
+/// MP freeze repro (needs game data; skipped without it). Alice's server
+/// pose after she "ignored every key" on Fostral: tipped ~50° on its side
+/// against a tree cluster (`(rot * X).z = 0.76`, past the 0.7 wheels
+/// limit), at rest, so W/S/A/D have no traction. Jump + W is the way out
+/// and works at the clients' `max_quant`, but the server's old hard-coded
+/// 0.02 ran ~4x as many contact passes per tick and swallowed the jump;
+/// the WorldState reconcile then pinned the client's car to that pose.
+#[test]
+fn wedged_car_escapes_at_client_max_quant() {
+    let Some(settings) = config::Settings::try_load("config/settings.ron") else {
+        eprintln!("skipping: no config/settings.ron with game data");
+        return;
+    };
+    let ini = settings.data_path.join("thechain/fostral/world.ini");
+    if !ini.is_file() {
+        eprintln!("skipping: no Fostral data");
+        return;
+    }
+    let reg = config::game::Registry::load(&settings);
+    let level = level::load(&level::LevelConfig::load(&ini), &settings.game.geometry);
+    let common = config::common::load(settings.open_relative("common.prm"));
+    let cars = config::car::load_physics_registry(
+        &settings.data_path,
+        &reg,
+        settings.game.physics.shape_sampling,
+    );
+    let Some(car) = cars.get("OxidizeMonk") else {
+        eprintln!("skipping: no OxidizeMonk");
+        return;
+    };
+    let wedged = space::Transform {
+        disp: Vec3::new(432.90, 3925.99, 61.04),
+        rot: Quat::from_xyzw(-0.227, -0.368, -0.620, 0.655).normalize(),
+        scale: car.scale,
+    };
+    let client_quant = settings.game.physics.max_quant;
+    let at_client = jump_and_drive(wedged, client_quant, car, &level, &common);
+    let at_old_server = jump_and_drive(wedged, 0.02, car, &level, &common);
+    println!(
+        "jump+W from wedge: max_quant {client_quant} -> {at_client:.2}, 0.02 -> {at_old_server:.2}"
+    );
+    assert!(
+        at_old_server < 5.0,
+        "old server quant was expected to stay pinned"
+    );
+    assert!(
+        at_client > 20.0,
+        "car should jump free at the client max_quant"
+    );
+}

@@ -2061,7 +2061,7 @@ impl Game {
     }
 
 
-    /// Debug MP: push local Tweaks Position/orientation to the server.
+    /// MP: push the local pose to the server (Tweaks Position edit, R reset).
     fn send_tweaks_pose(&self) {
         let Some(net) = self.net.as_ref() else {
             return;
@@ -2157,6 +2157,14 @@ impl Application for Game {
                         dynamo.angular_velocity = Vec3::ZERO;
                     }
                     player.tracks.reset();
+                    // Multiplayer: the server owns the pose, so a local-only
+                    // reset is snapped straight back by the next WorldState
+                    // (rotation error > SNAP_ROT). Upload it, and skip the
+                    // reconcile briefly so in-flight snapshots don't undo it.
+                    if self.net.is_some() {
+                        self.send_tweaks_pose();
+                        self.tweaks_pos_hold = self.tweaks_pos_hold.max(0.25);
+                    }
                 }
                 KeyCode::KeyA => self.input.spin_hor = -self.cam.scale.y,
                 KeyCode::KeyD => self.input.spin_hor = self.cam.scale.y,
