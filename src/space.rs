@@ -221,6 +221,10 @@ const UNDER_SLAB_LOOK_AHEAD: f32 = 10.0;
 const UNDER_SLAB_SPEED: f32 = 3.0;
 /// Fastest the view turns while blending under a slab, radians/second.
 const UNDER_SLAB_TURN_RATE: f32 = std::f32::consts::PI;
+/// A slab counts only if its cave floor is within this of the floor
+/// under the car: the car drives in that cave, not on a roof or ledge
+/// beside a taller overhang whose cave is a pit far below.
+pub const SLAB_FLOOR_STEP: f32 = 16.0;
 
 #[derive(Copy, Clone)]
 pub struct Camera {
@@ -516,9 +520,20 @@ impl Camera {
         let authored_look_ahead = follow.look_ahead.abs() > 1e-4;
         let follow = if b > 0.0 {
             let slab = Self::under_slab_follow(follow, target.disp.z, ceiling, clearance);
+            let yaw = self
+                .chase_yaw
+                .unwrap_or_else(|| Self::chase_heading(target.rot).0);
+            let offset = Self::unblocked_slab_offset(
+                level,
+                target.disp,
+                yaw,
+                slab.offset,
+                ceiling,
+                clearance,
+            );
             Follow {
                 angle_x: follow.angle_x,
-                offset: follow.offset.lerp(slab.offset, b),
+                offset: follow.offset.lerp(offset, b),
                 speed: follow.speed + (slab.speed - follow.speed) * b,
                 look_ahead: follow.equivalent_look_ahead()
                     + (slab.look_ahead - follow.equivalent_look_ahead()) * b,
@@ -583,14 +598,90 @@ impl Camera {
         }
     }
 
+    /// The under-slab `offset` (x, back, up), swung up over the car
+    /// when rock or a rising floor stands right behind it.
+    ///
+    /// Backed up to a cave wall, the low pose behind the car is inside
+    /// the wall; pulling that arm in toward the car puts the lens on its
+    /// roof, the car filling the screen behind the see-through veil.
+    /// Tilting the arm up, toward a view from above the car still under
+    /// the slab, keeps it at length in the open gap instead. The first
+    /// elevation whose arm is clear wins, else the longest clear arm;
+    /// the follow eases the camera between them.
+    pub fn unblocked_slab_offset(
+        level: &crate::level::Level,
+        car: Vec3,
+        yaw: f32,
+        offset: Vec3,
+        ceiling: f32,
+        clearance: f32,
+    ) -> Vec3 {
+        let heading = Quat::from_rotation_z(std::f32::consts::PI + yaw);
+        let eye = Vec3::new(car.x, car.y, car.z + clearance);
+        let top = (ceiling - car.z - 2.0 * clearance).max(offset.z);
+        let length = Vec2::new(offset.y, offset.z).length();
+        let start = offset.z.atan2(offset.y);
+        let steps = 8;
+        let mut best = (0.0, offset);
+        for i in 0..=steps {
+            let e = start + (std::f32::consts::FRAC_PI_2 - start) * i as f32 / steps as f32;
+            let mut arm = Vec2::new(e.cos(), e.sin()) * length;
+            if arm.y > top {
+                arm *= top / arm.y;
+            }
+            let candidate = Vec3::new(offset.x, arm.x, arm.y);
+            let free = Self::free_arm(level, eye, car + heading * candidate, clearance, car.z);
+            if free >= 0.9 {
+                return candidate;
+            }
+            let reach = free * arm.length();
+            if reach > best.0 + 1.0 {
+                best = (reach, candidate);
+            }
+        }
+        best.1
+    }
+
+    /// How much of the segment `from`..`to` (0..1) is open air for a
+    /// camera, by the under-slab rule of [`Self::point_hits_terrain`].
+    fn free_arm(
+        level: &crate::level::Level,
+        from: Vec3,
+        to: Vec3,
+        clearance: f32,
+        car_z: f32,
+    ) -> f32 {
+        let dist = (to - from).length();
+        let steps = ((dist / 6.0) as usize).clamp(6, 40);
+        for i in 1..=steps {
+            let t = i as f32 / steps as f32;
+            if Self::point_hits_terrain(level, from.lerp(to, t), clearance, Some(car_z)) {
+                return (i - 1) as f32 / steps as f32;
+            }
+        }
+        1.0
+    }
+
     /// A slab overhangs `p` at `(x, y)`: a two-level column whose cave
     /// is open at `p`'s height (floor near or below it, underside
-    /// above it, and some rock on top). Single-level holes and
-    /// degenerate `low == mid == high` columns are not slabs.
-    fn slab_ceiling_at(level: &crate::level::Level, x: f32, y: f32, z: f32) -> Option<f32> {
+    /// above it, and some rock on top), and whose cave floor is
+    /// level with `floor`, the floor under `p` - so `p` is in (or at the
+    /// mouth of) that cave. Single-level holes and degenerate
+    /// `low == mid == high` columns are not slabs; nor is a taller
+    /// overhang next to a roof or ledge, whose cave floor is far below.
+    fn slab_ceiling_at(
+        level: &crate::level::Level,
+        x: f32,
+        y: f32,
+        z: f32,
+        floor: f32,
+    ) -> Option<f32> {
         match level.get((x as i32, y as i32)) {
             crate::level::Texel::Dual { low, mid, high }
-                if mid > z && low.0 <= z + 8.0 && high.0 > mid + 1.0 =>
+                if mid > z
+                    && low.0 <= z + 8.0
+                    && (low.0 - floor).abs() <= SLAB_FLOOR_STEP
+                    && high.0 > mid + 1.0 =>
             {
                 Some(mid)
             }
@@ -604,11 +695,12 @@ impl Camera {
     /// them, and each flip used to treat the whole gap as rock and yank
     /// the camera onto the car's roof.
     pub fn under_slab_at(level: &crate::level::Level, p: Vec3) -> Option<f32> {
+        let floor = level.floor_below(p);
         let mut ceiling: Option<f32> = None;
         for dy in -1..=1 {
             for dx in -1..=1 {
                 let (x, y) = (p.x + dx as f32 * 4.0, p.y + dy as f32 * 4.0);
-                if let Some(c) = Self::slab_ceiling_at(level, x, y, p.z) {
+                if let Some(c) = Self::slab_ceiling_at(level, x, y, p.z, floor) {
                     ceiling = Some(ceiling.map_or(c, |m| m.min(c)));
                 }
             }
@@ -624,6 +716,7 @@ impl Camera {
         let n = (UNDER_SLAB_REACH / step) as i32;
         let mut nearest = f32::INFINITY;
         let mut ceiling = f32::INFINITY;
+        let floor = level.floor_below(p);
         for j in -n..=n {
             for i in -n..=n {
                 let off = glam::Vec2::new(i as f32, j as f32) * step;
@@ -631,7 +724,8 @@ impl Camera {
                 if d > UNDER_SLAB_REACH {
                     continue;
                 }
-                if let Some(c) = Self::slab_ceiling_at(level, p.x + off.x, p.y + off.y, p.z) {
+                if let Some(c) = Self::slab_ceiling_at(level, p.x + off.x, p.y + off.y, p.z, floor)
+                {
                     nearest = nearest.min(d);
                     if d <= UNDER_SLAB_BACK + step {
                         ceiling = ceiling.min(c);
@@ -1465,6 +1559,100 @@ mod ground_tests {
                 assert_eq!(new.loc, old.loc, "frame {frame}");
                 assert_eq!(new.rot, old.rot, "frame {frame}");
             }
+        }
+    }
+
+    /// A ground of `Single` texels at `ground(x, y)`, with two-level
+    /// columns `(low, delta, high)` (underside `low + delta * 8`) where
+    /// `slab(x, y)` has one. Heights are world units (scale 1).
+    fn painted_level(
+        ground: impl Fn(i32, i32) -> u8,
+        slab: impl Fn(i32, i32) -> Option<(u8, u8, u8)>,
+    ) -> level::Level {
+        let mut level = test_level();
+        assert_eq!(level.altitude_scale(), 1.0);
+        assert_eq!(level.geometry.delta_power, 3);
+        let (w, h) = level.size;
+        for y in 0..h {
+            for x in (0..w).step_by(2) {
+                let i = (y * w + x) as usize;
+                if let Some((low, delta, high)) = slab(x, y) {
+                    level.height[i] = low;
+                    level.height[i + 1] = high;
+                    level.meta[i] = crate::level::DOUBLE_LEVEL | (delta >> 2);
+                    level.meta[i + 1] = crate::level::DOUBLE_LEVEL | (delta & 3);
+                } else {
+                    for (j, x) in [(i, x), (i + 1, x + 1)] {
+                        level.height[j] = ground(x, y);
+                        level.meta[j] = 0;
+                    }
+                }
+            }
+        }
+        level
+    }
+
+    /// On a roof at 100 beside a taller overhang (underside 130) whose
+    /// cave floor is a pit at 10, the car is not under a slab: the
+    /// under-slab pose must not kick in. On the pit floor it is.
+    #[test]
+    fn a_taller_overhang_beside_a_roof_is_not_cover() {
+        let slab = |x: i32, _y: i32| (x >= 140).then_some((10, 15, 200));
+        let roof = painted_level(|_, _| 100, slab);
+        match roof.get((150, 128)) {
+            level::Texel::Dual { low, mid, high } => {
+                assert_eq!((low.0, mid, high.0), (10.0, 130.0, 200.0))
+            }
+            level::Texel::Single(_) => panic!("the slab should be two-level"),
+        }
+        let car = Vec3::new(138.0, 128.0, 103.6);
+        assert!(Camera::under_slab_at(&roof, car).is_none());
+        assert_eq!(Camera::slab_cover(&roof, car, 4.0).0, 0.0);
+
+        let pit = painted_level(|_, _| 10, slab);
+        let car = Vec3::new(138.0, 128.0, 13.6);
+        assert!(Camera::under_slab_at(&pit, car).is_some());
+        assert!(Camera::slab_cover(&pit, car, 4.0).0 > 0.99);
+    }
+
+    /// Under a slab with a cliff right behind the car, the low pose
+    /// behind it is in rock: the offset swings up over the car at full
+    /// arm instead of folding onto it. With no wall it is unchanged.
+    #[test]
+    fn backed_to_a_wall_the_slab_pose_swings_up() {
+        // Cave (floor 10, underside 130) everywhere; a cliff up to 200
+        // for y < 120.
+        let wall = painted_level(|_, _| 200, |_, y| (y >= 120).then_some((10, 15, 200)));
+        let open = painted_level(|_, _| 200, |_, _| Some((10, 15, 200)));
+        let car = Vec3::new(128.0, 128.0, 13.6);
+        let follow = chase_follows()[0];
+        let pose = Camera::under_slab_follow(&follow, car.z, 130.0, 4.0).offset;
+        // Facing +Y: behind is -Y, the cliff 8u back.
+        let swung = Camera::unblocked_slab_offset(&wall, car, 0.0, pose, 130.0, 4.0);
+        assert!(swung.z > pose.z + 10.0, "{swung:?} from {pose:?}");
+        assert!((swung.length() - pose.length()).abs() < 1e-3, "{swung:?}");
+        let behind = car + Quat::from_rotation_z(std::f32::consts::PI) * swung;
+        assert!(Camera::free_arm(&wall, car + Vec3::Z * 4.0, behind, 4.0, car.z) >= 0.9);
+        assert_eq!(
+            Camera::unblocked_slab_offset(&open, car, 0.0, pose, 130.0, 4.0),
+            pose
+        );
+
+        // The whole chase keeps its distance (it used to settle ~12u off).
+        let target = Transform {
+            disp: car,
+            rot: Quat::IDENTITY,
+            scale: 1.0,
+        };
+        for follow in chase_follows() {
+            let mut cam = cam_at(car + Vec3::new(0.0, 0.0, 240.0));
+            for _ in 0..240 {
+                cam.chase(&wall, &target, 1.0 / 60.0, &follow, 4.0);
+            }
+            let d = (cam.loc - car).length();
+            assert!(d > 20.0, "camera {:?} only {d:.1} from the car", cam.loc);
+            assert!(cam.loc.z < 130.0 - 4.0 + 1e-3);
+            assert!(!Camera::terrain_blocks_view(&wall, cam.loc, car, 4.0));
         }
     }
 

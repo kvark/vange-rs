@@ -513,3 +513,191 @@ fn chase_camera_drives_through_the_underpass() {
         );
     }
 }
+
+/// Where the live #393 test backed (S) out of the underpass toward its
+/// south wall: (739.5, 3955.1) after an S tap from (714.8, 4017.4), and
+/// (767, 3964) by the ramp to the east, plus a step closer to each wall.
+/// Still under the 130 slab, but with the cliff 15u behind the car.
+const BACKED_TO_THE_WALL: [(f32, f32); 4] = [
+    (739.48, 3955.08),
+    (767.0, 3964.0),
+    (739.48, 3948.0),
+    (767.0, 3958.0),
+];
+
+/// Parked under the slab with the cave wall (or the rising floor of the
+/// ramp) right behind the car: the low pose behind it is inside rock.
+/// Pulling that arm in along the ray left the camera 6-17u from the car,
+/// which filled the screen behind the see-through veil. It must swing
+/// up over the car instead, at full arm, in the open gap.
+#[test]
+fn chase_camera_backed_to_a_wall_under_the_slab() {
+    let Some(f) = fostral() else { return };
+    let level = &f.level;
+    // The S-tap heading (car nose toward (714.8, 4017.4)), then the axes.
+    let yaws = [
+        0.377f32,
+        0.0,
+        std::f32::consts::PI,
+        std::f32::consts::FRAC_PI_2,
+        -std::f32::consts::FRAC_PI_2,
+    ];
+    for (fi, follow) in chase_follows().iter().enumerate() {
+        for &(x, y) in &BACKED_TO_THE_WALL {
+            let car = Vec3::new(x, y, level.get((x as i32, y as i32)).low() + 3.6);
+            let ceiling = space::Camera::under_slab_at(level, car)
+                .unwrap_or_else(|| panic!("({x}, {y}) should be under the slab"));
+            let mut nearest = f32::INFINITY;
+            for &yaw in &yaws {
+                let target = space::Transform {
+                    disp: car,
+                    rot: Quat::from_rotation_z(yaw),
+                    scale: 1.0,
+                };
+                let mut cam = camera_at(car + Vec3::new(0.0, 0.0, 240.0));
+                for frame in 0..240 {
+                    cam.chase(level, &target, 1.0 / 60.0, follow, CLEARANCE);
+                    let at = format!(
+                        "follow {fi} at ({x}, {y}) yaw {yaw:.2} frame {frame}: camera {:?}",
+                        cam.loc
+                    );
+                    assert!(
+                        in_air(level, cam.loc, CLEARANCE - 0.01),
+                        "{at} is not in open air"
+                    );
+                    if frame >= 120 {
+                        let dist = (cam.loc - car).length();
+                        nearest = nearest.min(dist);
+                        assert!(dist >= 20.0, "{at} collapsed to {dist:.1} from the car");
+                        assert!(cam.loc.z < ceiling, "{at} is above the {ceiling} underside");
+                        // Sight of the car's roof: a one-texel bump in the
+                        // floor between can hide its belly.
+                        let roof = car + Vec3::new(0.0, 0.0, CLEARANCE);
+                        assert!(clear_sight(level, cam.loc, roof), "{at} cannot see the car");
+                        assert!(
+                            !space::Camera::terrain_blocks_view(level, cam.loc, car, CLEARANCE),
+                            "{at}: the veil would kick in"
+                        );
+                    }
+                }
+            }
+            println!("follow {fi} at ({x}, {y}): nearest {nearest:.1}");
+        }
+    }
+}
+
+/// On the roof by the same wall, next to a taller overhang whose cave
+/// floor is the underpass far below: not "under a slab". The chase stays
+/// the authored one (it used to blend toward the under-slab pose here).
+#[test]
+fn chase_camera_on_the_roof_beside_a_taller_overhang() {
+    let Some(f) = fostral() else { return };
+    let level = &f.level;
+    for &(x, y) in &[(739.48f32, 3948.0f32), (743.5, 3958.9)] {
+        let car = Vec3::new(x, y, level.get((x as i32, y as i32)).high() + 3.6);
+        assert!(space::Camera::under_slab_at(level, car).is_none());
+        for follow in chase_follows().iter() {
+            let target = space::Transform {
+                disp: car,
+                rot: Quat::from_rotation_z(std::f32::consts::PI),
+                scale: 1.0,
+            };
+            let mut cam = camera_at(car + Vec3::new(0.0, 0.0, 240.0));
+            for _ in 0..120 {
+                cam.chase(level, &target, 1.0 / 60.0, follow, CLEARANCE);
+                assert_eq!(
+                    cam.under_slab, 0.0,
+                    "({x}, {y}) roof counted as under a slab"
+                );
+            }
+        }
+    }
+}
+
+/// Back up (S) from under the slab toward its south wall, as the live
+/// test did: the camera never collapses onto the car or lurches.
+#[test]
+fn chase_camera_reverses_toward_the_wall() {
+    let Some(Fostral {
+        level,
+        common,
+        car,
+        max_quant,
+    }) = fostral()
+    else {
+        return;
+    };
+    let frame_dt = 1.0 / 60.0;
+    let physics_dt = frame_dt * {
+        let n = &common.nature;
+        common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
+    };
+    let quant_input = physics::QuantClock::input_factor(max_quant, &common);
+    for (fi, follow) in chase_follows().iter().enumerate() {
+        let mut clock = physics::QuantClock::default();
+        let mut dynamo = Dynamo::default();
+        let mut transform = space::Transform {
+            disp: Vec3::new(714.8, 4017.4, level.get((714, 4017)).low() + 5.6),
+            rot: Quat::from_rotation_z(0.377),
+            scale: car.scale,
+        };
+        let mut cam = camera_at(transform.disp + Vec3::new(0.0, 0.0, 240.0));
+        let (mut near, mut lurch, mut min_y) = (f32::INFINITY, 0.0f32, f32::INFINITY);
+        let (mut close, mut longest_close) = (0, 0);
+        let (mut last_cam, mut last_car) = (cam.loc, transform.disp);
+        for frame in 0..60 * 8 {
+            for _ in 0..clock.advance(physics_dt, max_quant) {
+                if (60..150).contains(&frame) {
+                    dynamo.change_traction(-quant_input * common.car.traction_incr);
+                }
+                physics::step(
+                    &mut dynamo,
+                    &mut transform,
+                    max_quant,
+                    &car,
+                    &level,
+                    &common,
+                    1.0,
+                    0.0,
+                    None,
+                    0.0,
+                    None,
+                    None,
+                );
+            }
+            cam.chase(&level, &transform, frame_dt, follow, CLEARANCE);
+            let at = format!(
+                "follow {fi} frame {frame}: car {:?}, camera {:?}",
+                transform.disp, cam.loc
+            );
+            assert!(
+                in_air(&level, cam.loc, CLEARANCE - 0.01),
+                "{at}: camera in rock"
+            );
+            if frame > 120 {
+                let d = (cam.loc - transform.disp).length();
+                near = near.min(d);
+                close = if d < 12.0 { close + 1 } else { 0 };
+                longest_close = longest_close.max(close);
+                lurch = lurch.max(((cam.loc - last_cam) - (transform.disp - last_car)).length());
+            }
+            min_y = min_y.min(transform.disp.y);
+            (last_cam, last_car) = (cam.loc, transform.disp);
+        }
+        println!(
+            "follow {fi}: car reached y {min_y:.0}, ended at {:?}; nearest {near:.1}, closer than 12 for {longest_close} frames at most, worst lurch {lurch:.1}u",
+            transform.disp
+        );
+        assert!(min_y < 3975.0, "the car was meant to back up to the wall");
+        // Reversing into the camera, and the spin on the slope by the
+        // wall (the follow's position lerp cuts the swing's chord), bring
+        // it in for a moment. A camera folded onto the car stays there
+        // (live: ~3 s at 6-10u).
+        assert!(near > 8.0, "camera came within {near:.1} of the car");
+        assert!(
+            longest_close < 15,
+            "camera stayed within 12u of the car for {longest_close} frames"
+        );
+        assert!(lurch < 12.0, "camera lurched {lurch:.1}u in one frame");
+    }
+}
