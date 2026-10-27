@@ -227,6 +227,12 @@ impl InputQueue {
         TickBudget { real, held: 0 }
     }
 
+    /// The held control the car last ran with (no jump or roll), sent to
+    /// the other clients for their contact ghost of this car.
+    pub fn last(&self) -> QuantInput {
+        self.last.held()
+    }
+
     /// The input for one quantum of the planned budget: the next queued
     /// one (acked), or once it runs out the held control.
     pub fn pop(&mut self) -> QuantInput {
@@ -412,23 +418,34 @@ pub const GHOST_LEAD_MAX: u32 = 128;
 /// gives way pushes the local car off by the whole overlap where the
 /// server splits it. So a ghost starts at its snapshot pose on the local
 /// quantum of the same snapshot (our ack in it) and is then carried along
-/// with the local car one quantum at a time: full physics with its
-/// snapshot traction and rudder held (its driver's next inputs are
-/// unknown), for at most [`GHOST_LEAD_MAX`] quanta, and it takes its share
-/// of every contact.
+/// with the local car one quantum at a time: full physics from its
+/// snapshot velocities, traction and rudder, driven by the held control
+/// the server last ran it with (motor, rudder, brake and turbo: its
+/// driver's next inputs are unknown, the last ones are the best guess, as
+/// the server's own guess for a starved car), for at most
+/// [`GHOST_LEAD_MAX`] quanta, and it takes its share of every contact.
 #[derive(Clone, Copy, Debug)]
 pub struct Ghost {
     pub transform: space::Transform,
     pub dynamo: Dynamo,
+    /// The held control it is driven with (never a jump or roll).
+    pub control: QuantInput,
     /// Quanta led since the snapshot.
     pub lead: u32,
 }
 
 impl Ghost {
+    /// A ghost coasting with no control.
     pub fn new(transform: space::Transform, dynamo: Dynamo) -> Self {
+        Self::driven(transform, dynamo, QuantInput::default())
+    }
+
+    /// A ghost driven on with the held part of `control`.
+    pub fn driven(transform: space::Transform, dynamo: Dynamo, control: QuantInput) -> Self {
         Ghost {
             transform,
             dynamo,
+            control: control.held(),
             lead: 0,
         }
     }
@@ -445,18 +462,15 @@ impl Ghost {
             return;
         }
         self.lead += 1;
-        super::step(
+        step_input(
             &mut self.dynamo,
             &mut self.transform,
+            &self.control,
             quant,
+            super::QuantClock::input_factor(quant, common),
             car,
             level,
             common,
-            1.0,
-            0.0,
-            None,
-            0.0,
-            None,
             None,
         );
     }
@@ -488,7 +502,11 @@ pub fn wrapped_distance(a: Vec3, b: Vec3, period: Option<Vec2>) -> f32 {
 }
 
 /// `server` moved to the replica of its position closest to `disp`.
-fn near(server: &space::Transform, disp: Vec3, period: Option<Vec2>) -> space::Transform {
+pub(crate) fn near(
+    server: &space::Transform,
+    disp: Vec3,
+    period: Option<Vec2>,
+) -> space::Transform {
     let mut t = *server;
     if let Some(p) = period {
         let d = t.disp.truncate() - disp.truncate();
@@ -526,10 +544,22 @@ fn agrees(predicted: &Predicted, server: &space::Transform, car: &super::ServerC
 /// with time constant [`Self::TAU`] but by no more than
 /// [`Self::MAX_SPEED`] per second and [`Self::MAX_STEP`] per frame, so a
 /// frame never shows a pop.
+///
+/// A correction from car contact (a shove, a launch) is often far larger
+/// than a misprediction: contact is chaotic, and the ghost of the other car
+/// only guesses its driver's inputs. Such a correction is absorbed up to
+/// [`Self::CONTACT_TELEPORT`]; once the offset is past [`Self::TELEPORT`]
+/// (one big launch, or a sustained push piling it up) it is faded out
+/// within [`Self::CONTACT_FADE`], but over at least
+/// [`Self::CONTACT_FADE_FRAMES`] frames, whatever the speed and step caps:
+/// the car slides there instead of popping.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderOffset {
     pub disp: Vec3,
     pub rot: Quat,
+    /// Contact fade: the offset shrinks at least this fast, world units
+    /// per second, until it is gone.
+    pub fade_speed: f32,
 }
 
 impl Default for RenderOffset {
@@ -537,6 +567,7 @@ impl Default for RenderOffset {
         RenderOffset {
             disp: Vec3::ZERO,
             rot: Quat::IDENTITY,
+            fade_speed: 0.0,
         }
     }
 }
@@ -553,13 +584,46 @@ impl RenderOffset {
     /// A correction this large is a teleport, not a misprediction: shown
     /// at once.
     pub const TELEPORT: f32 = 50.0;
+    /// A correction coinciding with car contact is shown at once only past
+    /// this (a respawn or a real teleport during a fight still snaps).
+    pub const CONTACT_TELEPORT: f32 = 200.0;
+    /// Seconds a contact correction takes to fade out at most.
+    pub const CONTACT_FADE: f32 = 0.3;
+    /// Fewest frames a contact fade is spread over, for frames longer than
+    /// a third of [`Self::CONTACT_FADE`] (a 1-4 fps client).
+    pub const CONTACT_FADE_FRAMES: f32 = 3.0;
 
     /// Keep drawing the car where it was before the physics pose moved
     /// from `before` to `after`. Returns `false` (and clears the offset)
     /// for a teleport.
     pub fn absorb(&mut self, before: &space::Transform, after: &space::Transform) -> bool {
+        self.absorb_within(before, after, Self::TELEPORT)
+    }
+
+    /// [`Self::absorb`] for a correction caused by car contact: up to
+    /// [`Self::CONTACT_TELEPORT`]; an offset past [`Self::TELEPORT`] is
+    /// faded out within [`Self::CONTACT_FADE`].
+    pub fn absorb_contact(&mut self, before: &space::Transform, after: &space::Transform) -> bool {
+        if !self.absorb_within(before, after, Self::CONTACT_TELEPORT) {
+            return false;
+        }
+        // Smaller ones decay as usual (a frame never shows more than
+        // `MAX_STEP`); past the plain teleport limit, fade.
+        let len = self.disp.length();
+        if len > Self::TELEPORT {
+            self.fade_speed = self.fade_speed.max(len / Self::CONTACT_FADE);
+        }
+        true
+    }
+
+    fn absorb_within(
+        &mut self,
+        before: &space::Transform,
+        after: &space::Transform,
+        teleport: f32,
+    ) -> bool {
         let disp = self.disp + before.disp - after.disp;
-        if disp.length() > Self::TELEPORT {
+        if disp.length() > teleport {
             *self = Self::default();
             return false;
         }
@@ -575,13 +639,19 @@ impl RenderOffset {
         let keep = (-dt / Self::TAU).exp();
         let step = (len * (1.0 - keep))
             .min(Self::MAX_SPEED * dt)
-            .min(Self::MAX_STEP);
+            .min(Self::MAX_STEP)
+            .max(
+                (self.fade_speed * dt)
+                    .min(self.fade_speed * Self::CONTACT_FADE / Self::CONTACT_FADE_FRAMES),
+            )
+            .min(len);
         if len > 0.0 {
             self.disp *= (len - step) / len;
         }
         self.rot = Quat::IDENTITY.slerp(self.rot, keep);
         if self.disp.length() < 1e-4 {
             self.disp = Vec3::ZERO;
+            self.fade_speed = 0.0;
         }
         step
     }
@@ -794,5 +864,37 @@ mod tests {
             ..before
         };
         assert!(!o.absorb(&before, &far));
+    }
+
+    #[test]
+    fn contact_offset_fades_within_the_window() {
+        let before = space::Transform::IDENTITY;
+        let after = space::Transform {
+            disp: Vec3::new(120.0, 0.0, 0.0),
+            ..before
+        };
+        // A plain correction this large is a teleport.
+        assert!(!RenderOffset::default().absorb(&before, &after));
+        // From contact it fades: gone within `CONTACT_FADE` at 60 fps...
+        let mut o = RenderOffset::default();
+        assert!(o.absorb_contact(&before, &after));
+        let frames = (RenderOffset::CONTACT_FADE * 60.0).ceil() as usize;
+        for _ in 0..frames {
+            assert!(o.decay(1.0 / 60.0) <= 120.0 / frames as f32 + 1e-3);
+        }
+        assert_eq!(o.disp, Vec3::ZERO);
+        assert_eq!(o.fade_speed, 0.0);
+        // ...and over a few frames at 1 fps rather than one.
+        assert!(o.absorb_contact(&before, &after));
+        for _ in 0..RenderOffset::CONTACT_FADE_FRAMES as usize {
+            assert!(o.decay(1.0) < 120.0 / RenderOffset::CONTACT_FADE_FRAMES + 1e-3);
+        }
+        assert!(o.disp.length() < 1e-3);
+        // A respawn mid-fight still snaps.
+        let respawn = space::Transform {
+            disp: Vec3::new(1000.0, 0.0, 0.0),
+            ..before
+        };
+        assert!(!o.absorb_contact(&before, &respawn));
     }
 }

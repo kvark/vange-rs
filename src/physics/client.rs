@@ -15,7 +15,7 @@
 
 use super::prediction::{
     GHOST_LEAD_MAX, GHOST_REPLAY_RANGE, Ghost, Prediction, QuantInput, Reconciled, RenderOffset,
-    ServerSnapshot, fold_home, step_input, wrapped_distance,
+    ServerSnapshot, fold_home, near, step_input, wrapped_distance,
 };
 use super::{CarBody, CarPhysicsData, Dynamo, QuantClock, ServerCar, collide_cars};
 use crate::{config, level, space};
@@ -65,6 +65,20 @@ pub fn server_car(agent: &vangers_net::AgentState) -> ServerCar {
     }
 }
 
+/// The held control of a `WorldState` agent, as its contact ghost is
+/// driven on with.
+pub fn agent_control(agent: &vangers_net::AgentState) -> QuantInput {
+    let c = &agent.control;
+    QuantInput {
+        motor: c.motor,
+        rudder: c.rudder,
+        brake: c.brake,
+        turbo: c.turbo,
+        jump: None,
+        roll: 0.0,
+    }
+}
+
 /// The wire form of a frame's input batch: held controls plus the jump and
 /// roll of its last quantum.
 pub fn net_control(input: &QuantInput) -> vangers_net::NetControl {
@@ -98,6 +112,9 @@ pub struct RemoteCar {
     pub angular_velocity: Vec3,
     pub traction: f32,
     pub rudder: f32,
+    /// The held control the server last ran the car with: its ghost is
+    /// driven on with it.
+    pub control: QuantInput,
 }
 
 impl RemoteCar {
@@ -117,7 +134,15 @@ impl RemoteCar {
             angular_velocity: Vec3::ZERO,
             traction: 0.0,
             rudder: 0.0,
+            control: QuantInput::default(),
         }
+    }
+
+    /// Take a `WorldState` entry of this car: its pose and dynamics
+    /// ([`Self::on_snapshot`]) and its held control.
+    pub fn on_agent(&mut self, agent: &vangers_net::AgentState, period: Option<Vec2>) {
+        self.control = agent_control(agent);
+        self.on_snapshot(&server_car(agent), period);
     }
 
     /// Take a snapshot of this car. The first one is shown at once; later
@@ -162,10 +187,11 @@ impl RemoteCar {
         };
     }
 
-    /// The contact ghost at the latest snapshot, once there is one.
+    /// The contact ghost at the latest snapshot, once there is one: the
+    /// server's pose and velocities, driven by the car's held control.
     pub fn ghost(&self) -> Option<Ghost> {
         self.pose_ready.then(|| {
-            Ghost::new(
+            Ghost::driven(
                 self.target_transform,
                 Dynamo {
                     linear_velocity: self.linear_velocity,
@@ -174,6 +200,7 @@ impl RemoteCar {
                     rudder: self.rudder,
                     ..Default::default()
                 },
+                self.control,
             )
         })
     }
@@ -199,7 +226,8 @@ pub fn snapshot_ghosts<R: Borrow<RemoteCar>>(
 /// The local car against every remote ghost, one quantum: each ghost
 /// moves on, then one `collide_cars`, and both keep the result (the
 /// server's remote car gives way too). Folded onto the home tile after the
-/// step and the contact, like the server's copy.
+/// step and the contact, like the server's copy. Returns whether the car
+/// touched any ghost.
 pub fn ghost_contacts<R: Borrow<RemoteCar>>(
     transform: &mut space::Transform,
     dynamo: &mut Dynamo,
@@ -207,7 +235,8 @@ pub fn ghost_contacts<R: Borrow<RemoteCar>>(
     ghosts: &mut HashMap<PlayerId, Ghost>,
     remotes: &HashMap<PlayerId, R>,
     sim: Sim<'_>,
-) {
+) -> bool {
+    let mut touched = false;
     for (id, ghost) in ghosts.iter_mut() {
         let Some(remote) = remotes.get(id) else {
             continue;
@@ -215,7 +244,7 @@ pub fn ghost_contacts<R: Borrow<RemoteCar>>(
         let phys = &remote.borrow().phys_data;
         ghost.advance(sim.max_quant, phys, sim.level, sim.common);
         fold_home(&mut ghost.transform.disp, sim.period());
-        collide_cars(
+        touched |= collide_cars(
             CarBody {
                 dynamo,
                 transform,
@@ -228,9 +257,11 @@ pub fn ghost_contacts<R: Borrow<RemoteCar>>(
             },
             Some(sim.wrap()),
             sim.common,
-        );
+        )
+        .is_some();
         fold_home(&mut ghost.transform.disp, sim.period());
     }
+    touched
 }
 
 /// The local car, as [`ClientSync`] steps and corrects it.
@@ -276,6 +307,12 @@ pub enum SyncEvent {
         moved: f32,
         /// The move was too big for the render offset: shown at once.
         shown_at_once: bool,
+        /// The correction came with car contact (a server bump, a
+        /// predicted contact since shortly before the ack, or a remote car
+        /// touching the server's pose): past `RenderOffset::TELEPORT` it is
+        /// faded out over `RenderOffset::CONTACT_FADE` rather than shown at
+        /// once, up to `RenderOffset::CONTACT_TELEPORT`.
+        contact: bool,
     },
 }
 
@@ -292,9 +329,24 @@ pub struct ClientSync {
     pub server_bumps: Option<u32>,
     /// Set by the first snapshot of the local car.
     pub synced: bool,
+    /// The quantum of the latest predicted contact with a ghost (live or
+    /// in a replay).
+    pub contact_at: Option<u32>,
+    /// Treat contact corrections like any other (shown at once past
+    /// `RenderOffset::TELEPORT`, decayed at the usual rate): the behaviour
+    /// before contact fading, for comparisons.
+    pub no_contact_fade: bool,
 }
 
 impl ClientSync {
+    /// A predicted contact this many quanta before the ack still makes a
+    /// correction a contact correction (the server's contact may come a
+    /// little earlier or later than the prediction's).
+    pub const CONTACT_RECENT: u32 = 32;
+    /// A faded contact correction larger than this is worth a log line
+    /// (`Server correction ...u in contact: faded`).
+    pub const CONTACT_LOG: f32 = 10.0;
+
     /// Whole quanta due for `physics_dt` of physics time.
     pub fn due_quanta(&mut self, physics_dt: f32, max_quant: f32) -> u32 {
         self.quant_clock.advance(physics_dt, max_quant)
@@ -318,14 +370,16 @@ impl ClientSync {
         if !self.synced || remotes.is_empty() {
             return;
         }
-        ghost_contacts(
+        if ghost_contacts(
             car.transform,
             car.dynamo,
             car.phys,
             &mut self.ghosts,
             remotes,
             sim,
-        );
+        ) {
+            self.contact_at = Some(self.prediction.next());
+        }
     }
 
     /// One whole quantum of the local car the way the server steps it:
@@ -444,6 +498,21 @@ impl ClientSync {
         let force = fresh.values().any(|g| {
             wrapped_distance(g.transform.disp, car.transform.disp, period) < GHOST_REPLAY_RANGE
         });
+        // Car contact around the ack: the server bumped the car, a remote
+        // car touches its server pose, or the prediction touched a ghost
+        // shortly before the ack or since.
+        let radius = |phys: &CarPhysicsData, t: &space::Transform| phys.bbox.radius * t.scale;
+        let touching = remotes.iter().any(|(_, r)| {
+            let r = r.borrow();
+            r.pose_ready
+                && wrapped_distance(r.target_transform.disp, server.transform.disp, period)
+                    < radius(&r.phys_data, &r.target_transform)
+                        + radius(car.phys, &server.transform)
+        });
+        let recent = self
+            .contact_at
+            .is_some_and(|q| (q.wrapping_sub(ack.wrapping_sub(Self::CONTACT_RECENT)) as i32) >= 0);
+        let mut replay_contact = None;
         let mut ghosts = fresh;
         let input_factor = QuantClock::input_factor(sim.max_quant, sim.common);
         let phys = car.phys;
@@ -453,7 +522,7 @@ impl ClientSync {
             period,
             car.transform,
             car.dynamo,
-            |t, d, input, _| {
+            |t, d, input, quant| {
                 step_input(
                     d,
                     t,
@@ -466,23 +535,38 @@ impl ClientSync {
                     None,
                 );
                 fold_home(&mut t.disp, sim.period());
-                ghost_contacts(t, d, phys, &mut ghosts, remotes, sim);
+                if ghost_contacts(t, d, phys, &mut ghosts, remotes, sim) {
+                    replay_contact = Some(quant);
+                }
                 fold_home(&mut t.disp, sim.period());
             },
         );
         if let Reconciled::Replayed(_) = outcome {
             self.ghosts = ghosts;
+            // The replay is the prediction now, contacts included.
+            if replay_contact.is_some() {
+                self.contact_at = replay_contact;
+            }
         }
+        let contact = bumped || touching || recent || replay_contact.is_some();
+        // A replay that crossed a fold moved the car by whole periods too;
+        // only the rest is a correction.
+        let before = near(&before, car.transform.disp, period);
         let moved = before.disp.distance(car.transform.disp);
         let mut shown_at_once = false;
         if let Reconciled::Replayed(_) | Reconciled::Ahead = outcome {
-            shown_at_once = !self.render_offset.absorb(&before, car.transform);
+            shown_at_once = !if contact && !self.no_contact_fade {
+                self.render_offset.absorb_contact(&before, car.transform)
+            } else {
+                self.render_offset.absorb(&before, car.transform)
+            };
         }
         (
             SyncEvent::Reconciled {
                 outcome,
                 moved,
                 shown_at_once,
+                contact,
             },
             bumped,
         )
@@ -685,6 +769,7 @@ mod tests {
             outcome,
             moved,
             shown_at_once,
+            ..
         } = event
         else {
             panic!("{event:?}");

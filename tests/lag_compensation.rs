@@ -737,6 +737,7 @@ fn run(
                             outcome,
                             moved,
                             shown_at_once,
+                            ..
                         } => {
                             if matches!(outcome, Reconciled::Replayed(_) | Reconciled::Ahead) {
                                 if moved > 0.01 {
