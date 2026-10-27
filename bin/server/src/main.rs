@@ -617,28 +617,33 @@ async fn main() {
                 // so both integrate a jump along the same path.
                 let quanta = quant_clock.advance(physics_dt, max_quant);
 
-                // Apply controls and step physics for each player
-                for agent in players.values_mut() {
-                    if !agent.joined {
-                        continue;
-                    }
+                // Step every player one quantum at a time and resolve car
+                // contact after each quantum. The client predicts its own
+                // car's contacts on the same quanta, so a bump (airborne or
+                // not) pushes both sides' copies along the same path; once
+                // per tick against once per render frame did not, and the
+                // half-overlap push-apart left the prediction ~10-20u off.
+                // Jump and roll go on the last quantum of the tick, as the
+                // client applies them on the last quantum of its frame. A
+                // tick with no quantum keeps the jump pending.
+                for i in 0..quanta {
+                    let last = i + 1 == quanta;
+                    for agent in players.values_mut() {
+                        if !agent.joined {
+                            continue;
+                        }
 
-                    let f_turbo = if agent.control.turbo {
-                        common.global.k_traction_turbo
-                    } else {
-                        1.0
-                    };
-                    let f_brake = if agent.control.brake {
-                        common.global.f_brake_max
-                    } else {
-                        0.0
-                    };
+                        let f_turbo = if agent.control.turbo {
+                            common.global.k_traction_turbo
+                        } else {
+                            1.0
+                        };
+                        let f_brake = if agent.control.brake {
+                            common.global.f_brake_max
+                        } else {
+                            0.0
+                        };
 
-                    // Jump and roll go on the last quantum of the tick, as
-                    // the client applies them on the last quantum of its
-                    // frame. A tick with no quantum keeps the jump pending.
-                    for i in 0..quanta {
-                        let last = i + 1 == quanta;
                         agent.apply_control(quant_input_factor, &common);
                         let (jump, roll) = if last {
                             (agent.control.jump.take(), agent.control.roll)
@@ -662,20 +667,20 @@ async fn main() {
                             // on the ground they are driving over.
                             None,
                         );
+
+                        // Wrap coordinates
+                        let size = level.size;
+                        agent.transform.disp.x =
+                            agent.transform.disp.x.rem_euclid(size.0 as f32);
+                        agent.transform.disp.y =
+                            agent.transform.disp.y.rem_euclid(size.1 as f32);
                     }
 
-                    // Wrap coordinates
-                    let size = level.size;
-                    agent.transform.disp.x =
-                        agent.transform.disp.x.rem_euclid(size.0 as f32);
-                    agent.transform.disp.y =
-                        agent.transform.disp.y.rem_euclid(size.1 as f32);
+                    // Car-vs-car contact, server-authoritative. Each agent's
+                    // `physics::step` only sees the terrain, so without this
+                    // pass players drive straight through each other.
+                    collide_players(&mut players, level.size, &common, tick, last);
                 }
-
-                // Car-vs-car contact, server-authoritative. Each agent's
-                // `physics::step` only sees the terrain, so without this
-                // pass players drive straight through each other.
-                collide_players(&mut players, level.size, &common, tick);
 
                 // Story cycle: one quant per server tick (tick_rate 20 Hz
                 // matches MAIN_LOOP_TIME = 0.05). All joined players
@@ -999,14 +1004,16 @@ fn merge_input(current: &mut NetControl, incoming: NetControl) {
 /// `config/settings.template.ron` so CI clients and server agree.
 const DEFAULT_MAX_QUANT: f32 = 0.1;
 
-/// Physics sub-step size: the clients' `game.physics.max_quant`.
 /// Pairwise car-car contact across joined players, in player-id order so the
 /// result does not depend on `HashMap` iteration. Re-wraps moved cars.
+/// Called after every physics quantum; `trace` (the tick's last quantum)
+/// gates the per-tick proximity trace.
 fn collide_players(
     players: &mut HashMap<PlayerId, ServerAgent>,
     size: (i32, i32),
     common: &config::common::Common,
     tick: u32,
+    trace: bool,
 ) {
     let mut joined: Vec<(PlayerId, &mut ServerAgent)> = players
         .iter_mut()
@@ -1036,7 +1043,9 @@ fn collide_players(
                 Some(wrap),
                 common,
             );
-            log_proximity(tick, (id_a, &**a), (*id_b, &**b), wrap, contact.as_ref());
+            if trace {
+                log_proximity(tick, (id_a, &**a), (*id_b, &**b), wrap, contact.as_ref());
+            }
             // Resting contact trickles tiny impulses every tick; only
             // the original's "strong" collisions (sound / ram damage
             // there) are worth an info line.
@@ -1100,6 +1109,7 @@ fn log_proximity(
     );
 }
 
+/// Physics sub-step size: the clients' `game.physics.max_quant`.
 fn physics_max_quant(settings: Option<&config::Settings>) -> f32 {
     settings
         .map(|s| s.game.physics.max_quant)

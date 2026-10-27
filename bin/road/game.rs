@@ -1171,12 +1171,43 @@ impl Game {
         self.render.dirty_terrain(&self.track_regions, height);
     }
 
+    /// Multiplayer: step the local car `quanta` whole `max_quant` quanta,
+    /// the way `vangers-server` steps every car on its tick: control, then
+    /// `physics::step` (jump and roll on the last quantum of the frame),
+    /// then contact against the remote ghosts.
+    fn step_player_quanta(&mut self, quanta: u32, focus_point: &Vec3) {
+        let max_quant = self.max_quant;
+        let quant_input_factor = physics::QuantClock::input_factor(max_quant, &self.db.common);
+        for i in 0..quanta {
+            let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
+                return;
+            };
+            player.cpu_apply_control(quant_input_factor, &self.db.common);
+            let step = if i + 1 == quanta {
+                SimulationStep::Final {
+                    focus_point,
+                    line_buffer: None,
+                }
+            } else {
+                SimulationStep::Intermediate
+            };
+            player.cpu_step(max_quant, &self.level, &self.db.common, step);
+            self.predict_remote_contacts();
+        }
+    }
+
     /// Multiplayer: bump the local car off remote ghosts right away, with
     /// the same `physics::collide_cars` the server runs authoritatively.
     /// Only the local car takes the result; the ghost keeps following
     /// WorldState, and the server's own contact for us arrives within a
     /// tick and soft-blends in. Without this the local car drives through
     /// the ghost until the reconcile snaps it back.
+    ///
+    /// Runs after every physics quantum, as the server's `collide_players`
+    /// does: the push-apart moves half the overlap per call, so once per
+    /// render frame against once per tick took a different path at every
+    /// frame rate (10-20u after an airborne bump). The ghost is its latest
+    /// server pose, not the interpolated render pose a tick behind it.
     fn predict_remote_contacts(&mut self) {
         if self.net.is_none() || !self.server_synced || self.remote_agents.is_empty() {
             return;
@@ -1193,7 +1224,7 @@ impl Game {
             if !remote.pose_ready {
                 continue;
             }
-            let mut ghost_transform = remote.render_transform;
+            let mut ghost_transform = remote.target_transform;
             let mut ghost_dynamo = physics::Dynamo {
                 linear_velocity: remote.linear_velocity,
                 angular_velocity: remote.angular_velocity,
@@ -2427,22 +2458,8 @@ impl Application for Game {
                 if hold_player && a.spirit == Spirit::Player {
                     return;
                 }
-                if a.spirit == Spirit::Player
-                    && let Some(quanta) = player_quanta
-                {
-                    let quant_input_factor = physics::QuantClock::input_factor(max_quant, common);
-                    for i in 0..quanta {
-                        a.cpu_apply_control(quant_input_factor, common);
-                        let step = if i + 1 == quanta {
-                            SimulationStep::Final {
-                                focus_point: &focus_point,
-                                line_buffer: None,
-                            }
-                        } else {
-                            SimulationStep::Intermediate
-                        };
-                        a.cpu_step(max_quant, level, common, step);
-                    }
+                if a.spirit == Spirit::Player && player_quanta.is_some() {
+                    // Stepped below, quantum by quantum with its contacts.
                     return;
                 }
                 let mut dt = physics_dt;
@@ -2470,8 +2487,8 @@ impl Application for Game {
             });
         }
 
-        if !hold_player {
-            self.predict_remote_contacts();
+        if let Some(quanta) = player_quanta {
+            self.step_player_quanta(quanta, &focus_point);
         }
         self.step_tracks();
         self.step_world_life(delta);

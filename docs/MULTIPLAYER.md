@@ -124,6 +124,15 @@ sized for 20 Hz authority (`Transform::WORLD_STATE_SNAP_POS` / `_SNAP_ROT` /
 `_BLEND`). The first snapshot still hard-snaps camera and pose. Tweaks
 Position hold / `SetPose` is unchanged.
 
+Both sides step the car in whole `max_quant` quanta (`physics::QuantClock`,
+the remainder carried to the next tick or frame), apply controls per
+quantum, and release a jump on the last quantum of the server tick / client
+frame. `physics::step` is not linear in `dt`, so the old "quanta plus a
+remainder step per call" split flew the same jump along a different path at
+every client frame rate (9–90u apart on landing on Fostral). Only the newest
+`WorldState` of a poll batch is reconciled against the local car; older ones
+in the same slow frame would pull it back along its own path.
+
 ## Duel spawn (ram / bump tests)
 
 `--duel-spawn` places the first two **fresh** joiners 70u apart (centre to
@@ -151,7 +160,7 @@ cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
 
 ## Car-vs-car contact (server-authoritative)
 
-Each tick, after stepping every joined player's physics, the server runs
+After every physics quantum of every joined player, the server runs
 `physics::collide_cars` over every pair of players (in player-id order). It is
 a port of the original `Object::test_object_to_baseobject`: a bounding-sphere
 precheck, an oriented-box test on the `scale_box`-shrunk model bounds, the
@@ -177,10 +186,14 @@ Car proximity tick 178 dist=42.6 p1 pos=(582.8,4151.7,4.0) vel=(-0.03,0.23,-0.02
 `vel` is world-frame; `depth`/`impulse` are 0 when the boxes do not touch.
 
 The native client predicts the same contact for its own car against each
-remote ghost (`render_transform` plus the last `WorldState` velocities), so
+remote ghost (its latest `WorldState` pose and velocities), after each of its
+own quanta like the server, so
 the rammer bounces and the rammed car moves right away rather than passing
 through the ghost until reconcile pulls it back. The ghost itself is never
-moved locally.
+moved locally. The box test is fully 3D, so airborne cars and cars on
+different heights touch correctly; predicting once per render frame against
+the server's once per tick is what used to leave the local car 10–20u off
+after a bump.
 
 Tuning: `RESTITUTION` (1.0 = original) and `SEPARATION` in
 `src/physics/collision.rs`.
