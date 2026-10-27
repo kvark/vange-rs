@@ -147,6 +147,7 @@ struct LastPose {
     cirtainer: level::cycle::Cirtainer,
     spiral_charge: u8,
     armor: u32,
+    energy: u32,
     disconnected_at: Instant,
 }
 
@@ -213,6 +214,10 @@ struct ServerAgent {
     /// resolved here take it down to 0.
     armor: u32,
     max_armor: u32,
+    /// Energy shield left (`AgentState::energy`, `combat::ARMOR_UNIT`s):
+    /// hits drain it before the armour (`combat::shield`).
+    energy: u32,
+    shield: combat::shield::Shield,
     /// The gun in each bay, as last taken (`Join::guns`, `Weapons`).
     guns: [Option<weapons::Gun>; weapons::BAYS],
     /// Each bay's reload (`weapons::Table::cooldown`), server clock.
@@ -281,6 +286,7 @@ impl HitLog {
         shooter: &str,
         damage: u32,
         armor: (u32, u32),
+        energy: (u32, u32),
         emptied: bool,
     ) {
         self.hits += 1;
@@ -290,14 +296,16 @@ impl HitLog {
             return;
         }
         info!(
-            "Hit: p{} ({}) took {} hit(s) for {} since the last line, last from {}; armour {}/{}",
+            "Hit: p{} ({}) took {} hit(s) for {} since the last line, last from {}; armour {}/{}, energy {}/{}",
             target.0,
             target.1,
             self.hits,
             weapons::points(self.damage),
             shooter,
             weapons::points(armor.0),
-            weapons::points(armor.1)
+            weapons::points(armor.1),
+            weapons::points(energy.0),
+            weapons::points(energy.1)
         );
         *self = HitLog {
             last: Some(now),
@@ -402,6 +410,8 @@ impl ServerAgent {
             control: net_control_of(&self.inputs.last()),
             armor: self.armor,
             max_armor: self.max_armor,
+            energy: self.energy,
+            max_energy: self.shield.max,
             guns: self
                 .guns
                 .each_ref()
@@ -945,15 +955,19 @@ async fn main() {
         (common, std::collections::HashMap::new())
     };
 
-    // Undamaged armour per car, from `car.prm`, in `combat::ARMOR_UNIT`s.
-    let car_armor: HashMap<String, u32> = settings
+    // Undamaged armour (in `combat::ARMOR_UNIT`s) and energy shield per
+    // car, from `car.prm`.
+    let car_hull: HashMap<String, (u32, combat::shield::Shield)> = settings
         .as_ref()
         .map(|settings| {
             config::car::entries(settings.open_relative("car.prm"))
                 .into_iter()
                 .map(|(name, _, data)| {
-                    let points = config::car::CarStats::new(&data).max_armor as u32;
-                    (name, points * combat::ARMOR_UNIT)
+                    let stats = config::car::CarStats::new(&data);
+                    let armor = stats.max_armor as u32 * combat::ARMOR_UNIT;
+                    let shield =
+                        combat::shield::Shield::new(stats.shield_max, stats.shield_regen);
+                    (name, (armor, shield))
                 })
                 .collect()
         })
@@ -1196,6 +1210,18 @@ async fn main() {
                     agent.trace_jump(player_id, tick, wrap);
                     agent.log_pose(player_id);
                 }
+                // The shields refill, a quant's worth a tick
+                // (`input_factor`: XTCORE_FRAME_NORMAL), on the road only.
+                for agent in players.values_mut() {
+                    if agent.joined && agent.dead.is_none() && !agent.in_escave {
+                        combat::shield::regenerate(
+                            &mut agent.energy,
+                            agent.armor,
+                            agent.shield,
+                            input_factor,
+                        );
+                    }
+                }
                 let deaths = step_shots(&mut shots, &mut players, &level, tick, dt_fixed);
                 for (player_id, killer, position) in deaths {
                     let msg = encode(&ServerMessage::Died {
@@ -1344,6 +1370,8 @@ async fn main() {
                             fires: 0,
                             armor: combat::DEFAULT_MAX_ARMOR,
                             max_armor: combat::DEFAULT_MAX_ARMOR,
+                            energy: combat::shield::DEFAULT_SHIELD.max,
+                            shield: combat::shield::DEFAULT_SHIELD,
                             guns: Default::default(),
                             reload: weapon::Reload::default(),
                             history: combat::PoseHistory::default(),
@@ -1431,11 +1459,15 @@ async fn main() {
                                     agent.joined = true;
                                     agent.inputs = InputQueue::default();
                                     agent.history.clear();
-                                    agent.max_armor = car_armor
+                                    (agent.max_armor, agent.shield) = car_hull
                                         .get(&car_name)
                                         .copied()
-                                        .unwrap_or(combat::DEFAULT_MAX_ARMOR);
+                                        .unwrap_or((
+                                            combat::DEFAULT_MAX_ARMOR,
+                                            combat::shield::DEFAULT_SHIELD,
+                                        ));
                                     agent.armor = agent.max_armor;
+                                    agent.energy = agent.shield.max;
                                     agent.dead = None;
                                     agent.in_escave = false;
                                     agent.reload.clear();
@@ -1462,6 +1494,7 @@ async fn main() {
                                         // A wreck that left comes back whole.
                                         if pose.armor > 0 {
                                             agent.armor = pose.armor.min(agent.max_armor);
+                                            agent.energy = pose.energy.min(agent.shield.max);
                                         }
                                         // Keep model scale in sync with the chosen car.
                                         agent.transform.scale = agent.phys_data.scale;
@@ -2183,22 +2216,31 @@ fn step_shots(
             continue; // killed by an earlier shot this tick
         }
         let before = agent.armor;
-        agent.armor = agent.armor.saturating_sub(damage);
+        // The shield takes it first (`combat::shield::take_hit`).
+        combat::shield::take_hit(&mut agent.energy, &mut agent.armor, damage);
         debug!(
-            "Hit: p{} ({}) by {} bay {} for {}: armour {}/{}",
+            "Hit: p{} ({}) by {} bay {} for {}: armour {}/{}, energy {}/{}",
             target,
             agent.name,
             shooter_name,
             bay,
             weapons::points(damage),
             weapons::points(agent.armor),
-            weapons::points(agent.max_armor)
+            weapons::points(agent.max_armor),
+            weapons::points(agent.energy),
+            weapons::points(agent.shield.max)
         );
         let armor = (agent.armor, agent.max_armor);
+        let energy = (agent.energy, agent.shield.max);
         let emptied = before > 0 && agent.armor == 0;
-        agent
-            .hit_log
-            .note((target, &agent.name), &shooter_name, damage, armor, emptied);
+        agent.hit_log.note(
+            (target, &agent.name),
+            &shooter_name,
+            damage,
+            armor,
+            energy,
+            emptied,
+        );
         if agent.armor == 0 {
             let wreck = combat::Wreck {
                 at: agent.transform.disp,
@@ -2275,6 +2317,7 @@ fn respawn_wrecks(
         };
         agent.dynamo = Dynamo::default();
         agent.armor = agent.max_armor;
+        agent.energy = agent.shield.max;
         agent.history.clear();
         agent.respawned = Some(tick);
         // The client numbers its inputs on from here; what the wreck
@@ -2316,6 +2359,7 @@ fn remove_player(
                     cirtainer: removed.cirtainer,
                     spiral_charge: removed.spiral_charge,
                     armor: removed.armor,
+                    energy: removed.energy,
                     disconnected_at: Instant::now(),
                 },
             );
