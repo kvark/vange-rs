@@ -37,10 +37,55 @@ cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
 Terminal C — another native client, or web:
 
 ```bash
-# Web (compile-time WebSocket URL; rebuild when the host changes):
-VANGERS_SERVER_WS=ws://127.0.0.1:7801 cargo build --target wasm32-unknown-unknown --features web --bin web
-# then serve the wasm/js/html as usual for the web target
+# Web: the same bundle CI deploys (wasm-bindgen 0.2.117 into docs/), with
+# the server's WebSocket compiled in.
+VANGERS_SERVER_WS=ws://127.0.0.1:7801 cargo build --target wasm32-unknown-unknown --features web --bin web --release
+wasm-bindgen target/wasm32-unknown-unknown/release/web.wasm --out-dir docs/ --target web --no-typescript
+# Game data next to the page (the data-0 release: common.zip + <level>.zip).
+mkdir -p docs/data-0 && cp /path/to/data-0/{common,fostral}.zip docs/data-0/
+python3 -m http.server -d docs 8080
+# open http://127.0.0.1:8080/#name=Bob&color=red
 ```
+
+The web client takes its identity and server from the URL fragment:
+`#name=Bob` (default `WebPlayer`; the server reclaims a player by name),
+`#color=red` (`green`, `red`, `blue`, `yellow`, `gray`), and
+`#server=ws://host:7801` to join a server the bundle was not built for (a
+`VANGERS_SERVER_WS`-less build plays solo otherwise). It joins with the
+first main car of `car.prm`, the same one a native client picks by default.
+A build with a server keeps the full terrain height (`0x100`, what the
+server steps the cars on); a solo build flattens it to `0x80` for the
+original look. `#level=khox` picks the page's level (the level picker
+does the same); it has to be the server's level, or the page logs
+`Server runs 'X' but this page loaded 'Y'` and the status line says
+`level mismatch`.
+
+### Web without a GPU (software WebGL)
+
+On a machine without a GPU, Chrome runs the web build on SwiftShader
+(WebGL2): `google-chrome --use-angle=swiftshader --enable-unsafe-swiftshader`.
+SwiftShader caps textures at 8192 px, so the page swaps every big level
+(Fostral, Glorx, ... are 2048 x 16384) for Khox, the one stock level that
+fits. A mixed session there needs a Khox server and Khox for the native
+client. The `data-0` release has `khox.zip` (`gh release download data-0
+-R kvark/vange-rs -p khox.zip -D docs/data-0`); unzip it into
+`<data_path>/thechain/khox/` for the server and the native client (it holds
+`world.ini`, which `wrlds.dat` lists as `Khox`). Then:
+
+```bash
+cargo run --release -p vangers-server -- --port 7810 --ws-port 7811 --level Khox \
+    --duel-spawn --duel-center 410,195   # flat ground, first two joiners face each other
+cargo run --release --bin road -- --server 127.0.0.1:7810 --name Alice
+# open http://127.0.0.1:8080/#name=Bob&color=red&level=khox&server=ws://127.0.0.1:7811
+```
+
+Software rendering runs at about one frame a second or slower. A frame
+steps at most 0.1 s of game time, so the web car drives in slow motion,
+but the server steps it on its numbered inputs, so the two still agree.
+Under heavy load,
+`python3 -m http.server` (a listen backlog of 5) can drop one of the zip
+fetches. The page then logs `Couldn't fetch ...` and falls back. Reload
+the page, or use any other static server.
 
 Protocol: TCP `7800` (native), WebSocket `7801` (wasm). Messages live in
 `lib/net` (`ClientMessage` / `ServerMessage`). `WorldState` carries
@@ -116,8 +161,9 @@ cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
 
 ## Local player pose (blend vs snap)
 
-This is how the **web** client still reconciles (see the next section for
-the native one). Client and server both run physics. A hard snap on every 20 Hz `WorldState`
+This is how both clients reconciled before client prediction (next
+section); `physics::reconcile_local_car` is kept for the comparison in
+`tests/lag_compensation.rs`. Client and server both run physics. A hard snap on every 20 Hz `WorldState`
 fights local contact — a wedged car gets slammed back into geometry (jump-mass
 spam). The local player now blends small position/rotation errors toward the
 server and hard-snaps only when `|Δpos|` (or rotation) exceeds a threshold
@@ -134,10 +180,15 @@ every client frame rate (9–90u apart on landing on Fostral). Only the newest
 `WorldState` of a poll batch is reconciled against the local car; older ones
 in the same slow frame would pull it back along its own path.
 
-## Lag compensation (native client prediction, protocol 2)
+## Lag compensation (client prediction, protocol 2)
 
-The native client predicts its own car and lets the server's word land
-without visible snaps; the code is in `src/physics/prediction.rs`.
+Both clients predict their own car and let the server's word land
+without visible snaps. The building blocks are in
+`src/physics/prediction.rs`; `src/physics/client.rs` puts them together
+for a client (`ClientSync`: quantum clock, numbered history, ghosts,
+render offset; `RemoteCar`: a remote player's snapshots, interpolated
+pose and ghost), and the native game (`bin/road/game.rs`) and the web
+build (`bin/web/main.rs`) both run it.
 
 - **Numbered quantum inputs.** Each frame the client steps its car in whole
   `max_quant` quanta and sends one `ClientMessage::Input { first_quant,
@@ -177,8 +228,15 @@ without visible snaps; the code is in `src/physics/prediction.rs`.
   `Input { first_quant, quanta, control }` (was `{ sequence, control }`),
   `AgentState::ack`, `SetPose::next_quant` (drops queued input from before a
   debug pose). The server turns away clients on another revision.
-- **Web** sends protocol-2 quantum batches but keeps the older reconcile
-  (blend / snap against its present pose); single player is unchanged.
+- **Remote players** are drawn at their snapshots, interpolated at the
+  20 Hz tick rate; a snapshot across the torus seam is moved next to the
+  previous one so the car does not slide across the map.
+- **Web** runs the same `ClientSync` per quantum: full controls in every
+  frame's batch (motor, rudder, brake, turbo, roll and the jump on the
+  last quantum, a released input while the car is held by a train ride or
+  an escave screen), the same reconcile, ghosts, render offset and bump
+  adopt, and draws the remote players with their own cars and colours.
+  Single player is unchanged.
 
 Try it under a real-world ping on localhost with the server's simulated lag
 (held each way, so the round trip is twice the latency plus jitter):
@@ -193,7 +251,10 @@ cargo run --release --bin road -- --server 127.0.0.1:7800 --name Alice
 jump and a ram) on the test level and, when the data is present, on
 Fostral. It asserts a visible per-frame correction under 2u, no snaps and
 convergence with prediction, and prints what the old reconcile does on the
-same runs.
+same runs. The "shared" runs drive the client through `ClientSync` /
+`RemoteCar` (what native and web run) and must hold the same bounds and
+drive the same path; `shared_client_first_sync_from_a_cold_start` starts
+it 300u off the server's spawn, unsynced, as the web build does.
 
 ## Duel spawn (ram / bump tests)
 
@@ -301,8 +362,8 @@ decays. The native client logs it at info:
 Server bump: adopted vel=(4.92,-0.31,0.08) bumps=3
 ```
 
-The web client uses the same reconcile; it still reconciles every snapshot
-and steps once per frame (follow-up).
+The web client runs the same `ClientSync` and logs the same lines to the
+browser console (`Server correction ...: shown at once`, `Server bump: ...`).
 
 ## Jump trace (server)
 
@@ -360,6 +421,8 @@ cargo test --lib space::reconcile_tests
 cargo test --lib level::cycle
 # moving-land sync_authority:
 cargo test --lib level::moving::tests::sync_authority_matches_free_running_peer
+# shared client prediction (ClientSync / RemoteCar):
+cargo test --lib physics::client
 # lag compensation (prediction vs the old reconcile, simulated latency):
 cargo test --release --test lag_compensation -- --nocapture
 # server integration (incl. SetPose / SetSpiral → WorldState, reclaim, duel spawn):

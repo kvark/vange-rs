@@ -175,6 +175,32 @@ pub fn first_main_entry<R: Read>(reader: R) -> (String, Vec<u32>) {
     (name.to_owned(), data)
 }
 
+/// Every vehicle of `car.prm` in file order: its name, kind and raw
+/// stats. For a client that builds cars by name on demand (the web build
+/// loading a remote player's car).
+pub fn entries<R: Read>(reader: R) -> Vec<(String, Kind, Vec<u32>)> {
+    let mut fi = Reader::new(reader);
+    fi.advance();
+    assert_eq!(fi.cur(), "uniVang-ParametersFile_Ver_1");
+    let num_main: u8 = fi.next_value();
+    let num_ruffa: u8 = fi.next_value();
+    let num_const: u8 = fi.next_value();
+    let total = num_main as usize + num_ruffa as usize + num_const as usize;
+    (0..total)
+        .map(|i| {
+            let (name, data) = fi.next_entry::<u32>();
+            let kind = if i < num_main as usize {
+                Kind::Main
+            } else if i < num_main as usize + num_ruffa as usize {
+                Kind::Ruffa
+            } else {
+                Kind::Constructor
+            };
+            (name.to_owned(), kind, data)
+        })
+        .collect()
+}
+
 pub fn load_registry(
     settings: &Settings,
     reg: &super::game::Registry,

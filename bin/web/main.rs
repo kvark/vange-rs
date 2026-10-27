@@ -171,6 +171,48 @@ fn selected_level_id() -> String {
     DEFAULT_LEVEL.to_string()
 }
 
+/// The value of `key=` in the URL fragment (`#level=fostral&name=Bob`).
+fn hash_param(key: &str) -> Option<String> {
+    let hash = web_sys::window()?.location().hash().ok()?;
+    hash.trim_start_matches('#').split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == key && !v.is_empty()).then(|| {
+            js_sys::decode_uri_component(v)
+                .ok()
+                .map(String::from)
+                .unwrap_or_else(|| v.to_string())
+        })
+    })
+}
+
+/// The multiplayer server to join: `#server=ws://host:port`, else the
+/// compile-time [`SERVER_WS`]. `None` plays solo.
+fn server_url() -> Option<String> {
+    hash_param("server").or_else(|| SERVER_WS.filter(|url| !url.is_empty()).map(str::to_string))
+}
+
+/// Player name and body color for `Join`: `#name=Bob&color=red`
+/// (`green`, `red`, `blue`, `yellow`, `gray`, or the palette number).
+fn player_identity() -> (String, render::object::BodyColor) {
+    use render::object::BodyColor;
+    let name = hash_param("name").unwrap_or_else(|| "WebPlayer".to_string());
+    let color = match hash_param("color").as_deref().map(str::to_ascii_lowercase) {
+        None => PLAYER_COLOR,
+        Some(c) => match c.as_str() {
+            "green" => BodyColor::Green,
+            "red" => BodyColor::Red,
+            "blue" => BodyColor::Blue,
+            "yellow" => BodyColor::Yellow,
+            "gray" | "grey" => BodyColor::Gray,
+            other => other
+                .parse::<u8>()
+                .map(BodyColor::from_value)
+                .unwrap_or(PLAYER_COLOR),
+        },
+    };
+    (name, color)
+}
+
 /// Fetch `common.zip` and `<level_id>.zip` from the release and mount
 /// both into a VFS, reporting download progress to the JS UI. Returns
 /// `None` on any error; the caller falls back to a procedural test level.
@@ -234,9 +276,9 @@ use winit::{
 ///   VANGERS_SERVER_WS=ws://host:port cargo build ...
 const SERVER_WS: Option<&str> = option_env!("VANGERS_SERVER_WS");
 
-/// How many collision-shape samples per face to tessellate when
-/// uploading a vehicle's collision mesh. The native build takes this
-/// from `settings.ron`; on web we hardcode a balanced value.
+/// How many collision-shape samples per face to tessellate for models
+/// that only draw (the Bug). Cars take `settings.game.physics.shape_sampling`
+/// like the native game and the server, so their physics match.
 const SHAPE_SAMPLING: u8 = 3;
 
 /// Default body color for the spawned player vehicle.
@@ -264,6 +306,8 @@ struct Control {
 /// startup (when the VFS happens to contain enough Vangers data for
 /// it) and then stepped each frame.
 struct Agent {
+    /// The `car.prm` name, sent in the multiplayer `Join`.
+    car_name: String,
     car: config::car::CarInfo,
     phys_data: physics::CarPhysicsData,
     transform: space::Transform,
@@ -328,56 +372,101 @@ impl Agent {
     }
 }
 
-/// Try to load the first main vehicle listed in `car.prm` out of the
-/// VFS. Returns `None` on any missing asset — the caller uses free
-/// camera movement in that case (same UX as before gameplay was wired).
+/// The vehicles of `car.prm`, built on demand out of the VFS: the
+/// player's car, and remote players' cars by name as they join.
+struct CarLib {
+    vfs: Vfs,
+    registry: config::game::Registry,
+    entries: Vec<(String, config::car::Kind, Vec<u32>)>,
+    shape_sampling: u8,
+    cache: HashMap<String, config::car::CarInfo>,
+}
+
+impl CarLib {
+    fn new(vfs: &Vfs, shape_sampling: u8) -> Option<Self> {
+        use std::io::Cursor;
+        let game_lst = vfs.read("game.lst")?;
+        let registry = config::game::Registry::load_reader(Cursor::new(&*game_lst));
+        let car_prm = vfs.read("car.prm")?;
+        let entries = config::car::entries(Cursor::new(&*car_prm));
+        Some(CarLib {
+            vfs: vfs.clone(),
+            registry,
+            entries,
+            shape_sampling,
+            cache: HashMap::new(),
+        })
+    }
+
+    fn first_main(&self) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|(_, kind, _)| matches!(kind, config::car::Kind::Main))
+            .map(|(name, _, _)| name.as_str())
+    }
+
+    /// The car named `name`, `None` on a name `car.prm` lacks or a missing
+    /// asset.
+    fn get(
+        &mut self,
+        name: &str,
+        device: &wgpu::Device,
+        object: &render::object::Context,
+    ) -> Option<config::car::CarInfo> {
+        use std::io::Cursor;
+        if let Some(car) = self.cache.get(name) {
+            return Some(car.clone());
+        }
+        let (_, kind, stats_data) = self.entries.iter().find(|(n, _, _)| n == name)?;
+        let model_info = self.registry.model_infos.get(name)?;
+        let m3d_bytes = self.vfs.read(&model_info.path)?;
+
+        // Per-vehicle physics file lives next to the m3d. If it's missing,
+        // fall back to `default.prm` in the same directory.
+        let prm_path = std::path::Path::new(&model_info.path).with_extension("prm");
+        let prm_key = prm_path.to_str()?;
+        let (prm_bytes, is_default) = if let Some(bytes) = self.vfs.read(prm_key) {
+            (bytes, false)
+        } else {
+            let mut default = std::path::Path::new(&model_info.path).to_path_buf();
+            default.set_file_name("default.prm");
+            (self.vfs.read(default.to_str()?)?, true)
+        };
+
+        let physics = config::car::CarPhysics::load_reader(Cursor::new(&*prm_bytes));
+        let scale = if is_default {
+            model_info.scale
+        } else {
+            physics.scale_size
+        };
+        let car = config::car::CarInfo {
+            kind: *kind,
+            stats: config::car::CarStats::new(stats_data),
+            physics,
+            model: model::load_m3d_bytes(&m3d_bytes, device, object, self.shape_sampling),
+            scale,
+        };
+        self.cache.insert(name.to_string(), car.clone());
+        Some(car)
+    }
+}
+
+/// Build the first main vehicle listed in `car.prm`. Returns `None` on any
+/// missing asset — the caller uses free camera movement in that case
+/// (same UX as before gameplay was wired).
 fn spawn_default_agent(
-    vfs: &Vfs,
+    cars: &mut CarLib,
     level: &level::Level,
     device: &wgpu::Device,
     object: &render::object::Context,
+    color: render::object::BodyColor,
 ) -> Option<Agent> {
-    use std::io::Cursor;
-
-    let game_lst = vfs.read("game.lst")?;
-    let registry = config::game::Registry::load_reader(Cursor::new(&*game_lst));
-
-    let car_prm = vfs.read("car.prm")?;
-    let (car_name, stats_data) = config::car::first_main_entry(Cursor::new(&*car_prm));
-
-    let model_info = registry.model_infos.get(&car_name)?;
-    let m3d_bytes = vfs.read(&model_info.path)?;
-
-    // Per-vehicle physics file lives next to the m3d. If it's missing,
-    // fall back to `default.prm` in the same directory.
-    let prm_path = std::path::Path::new(&model_info.path).with_extension("prm");
-    let prm_key = prm_path.to_str()?;
-    let (prm_bytes, is_default) = if let Some(bytes) = vfs.read(prm_key) {
-        (bytes, false)
-    } else {
-        let mut default = std::path::Path::new(&model_info.path).to_path_buf();
-        default.set_file_name("default.prm");
-        (vfs.read(default.to_str()?)?, true)
-    };
-
-    let car_physics = config::car::CarPhysics::load_reader(Cursor::new(&*prm_bytes));
-    let scale = if is_default {
-        model_info.scale
-    } else {
-        car_physics.scale_size
-    };
-
-    let visual = model::load_m3d_bytes(&m3d_bytes, device, object, SHAPE_SAMPLING);
-    let phys_data =
-        physics::CarPhysicsData::from_bytes(&m3d_bytes, &prm_bytes, scale, SHAPE_SAMPLING);
-
-    let car = config::car::CarInfo {
-        kind: config::car::Kind::Main,
-        stats: config::car::CarStats::new(&stats_data),
-        physics: car_physics,
-        model: visual,
-        scale,
-    };
+    let car_name = cars.first_main()?.to_string();
+    let car = cars.get(&car_name, device, object)?;
+    // The same physics data the native game builds (and the server, from
+    // the same files and `shape_sampling`).
+    let phys_data = physics::CarPhysicsData::from_car_info(&car);
+    let scale = car.scale;
 
     // Spawn at the level center, snapped to the terrain.
     let coords = (level.size.0 / 2, level.size.1 / 2);
@@ -390,17 +479,32 @@ fn spawn_default_agent(
 
     let armor = car.stats.max_armor as u16;
     Some(Agent {
+        car_name,
         car,
         phys_data,
         transform,
         dynamo: physics::Dynamo::default(),
         control: Control::default(),
-        color: PLAYER_COLOR,
+        color,
         tracks: level::terraform::Tracks::default(),
         cirtainer: level::cycle::Cirtainer::default(),
         armor,
         max_armor: armor,
     })
+}
+
+/// A remote player, drawn where the server last put it (interpolated).
+struct WebRemote {
+    name: String,
+    car: config::car::CarInfo,
+    color: render::object::BodyColor,
+    net: physics::client::RemoteCar,
+}
+
+impl std::borrow::Borrow<physics::client::RemoteCar> for WebRemote {
+    fn borrow(&self) -> &physics::client::RemoteCar {
+        &self.net
+    }
 }
 
 fn load_shop_spins(
@@ -485,11 +589,14 @@ struct WebApp {
     /// Story cycles when the world has an escave bunch.
     cycle: Option<level::cycle::Bunch>,
     cycle_time: f32,
-    /// Set after the first WorldState snap from the multiplayer server.
-    server_synced: bool,
-    /// The local car's `AgentState::bumps` at the last reconcile; a change
-    /// means the server saw another car hit it.
-    server_bumps: Option<u32>,
+    /// Multiplayer client prediction of the local car (quantum clock,
+    /// numbered history, remote ghosts, render offset), shared with the
+    /// native game (`physics::client`).
+    mp: physics::client::ClientSync,
+    /// Other players of the multiplayer session.
+    remotes: HashMap<vangers_net::PlayerId, WebRemote>,
+    /// Vehicles by name, for the remote players' cars.
+    cars: Option<CarLib>,
     moving: level::moving::MovingWorld,
     /// Terrain-editing effects the car is allowed to leave behind. Same
     /// defaults as the native game: tread on, hull-press and mole mounds off.
@@ -566,7 +673,12 @@ impl WebApp {
         // brings the silhouette close to the 1998 look without
         // flattening it. Hard-coded here so native + the FFI keep the
         // settings.ron default (0x100).
-        s.game.geometry.height = 0x80;
+        // A multiplayer build keeps the full height: the server steps the
+        // cars on 0x100 terrain, and the prediction has to drive on the
+        // same ground or every snapshot would pull the car back.
+        if server_url().is_none() {
+            s.game.geometry.height = 0x80;
+        }
         // The focal-length FOV is wider than the legacy 45° default,
         // so the template's 2000-unit far plane clipped terrain near
         // the top of the screen. Push it out and widen the fog band
@@ -754,7 +866,11 @@ impl WebApp {
             .map(|b| config::common::load_reader(std::io::Cursor::new(&*b)))
             .unwrap_or_else(config::common::Common::test_default);
         let t = Instant::now();
-        let agent = vfs.and_then(|v| spawn_default_agent(v, &level, &gfx.device, &render.object));
+        let mut cars = vfs.and_then(|v| CarLib::new(v, settings.game.physics.shape_sampling));
+        let (_, player_color) = player_identity();
+        let agent = cars.as_mut().and_then(|cars| {
+            spawn_default_agent(cars, &level, &gfx.device, &render.object, player_color)
+        });
         if agent.is_some() {
             log::info!(
                 "[startup] player vehicle built in {:.0} ms",
@@ -875,11 +991,17 @@ impl WebApp {
             follow,
             max_quant: settings.game.physics.max_quant,
             is_webgpu,
-            world_name: world.to_string(),
+            // Without level data this is the procedural test level,
+            // whatever `world` names for the fauna.
+            world_name: match vfs {
+                Some(_) => world.to_string(),
+                None => "test".to_string(),
+            },
             cycle,
             cycle_time: 0.0,
-            server_synced: false,
-            server_bumps: None,
+            mp: Default::default(),
+            remotes: HashMap::new(),
+            cars,
             moving,
             terraform: level::terraform::Config::default(),
             life,
@@ -1167,10 +1289,7 @@ impl WebApp {
                 bunch.step_fade_quant(&mut self.level)
             } else {
                 if let Some(ref mut agent) = self.agent {
-                    let coord = (
-                        agent.transform.disp.x as i32,
-                        agent.transform.disp.y as i32,
-                    );
+                    let coord = (agent.transform.disp.x as i32, agent.transform.disp.y as i32);
                     bunch.gather(coord, &mut agent.cirtainer);
                     bunch.deliver(coord, &mut agent.cirtainer);
                 }
@@ -1208,7 +1327,11 @@ impl WebApp {
         }
     }
 
-    fn apply_player_cirt(&mut self, my_id: Option<vangers_net::PlayerId>, state: &vangers_net::CycleState) {
+    fn apply_player_cirt(
+        &mut self,
+        my_id: Option<vangers_net::PlayerId>,
+        state: &vangers_net::CycleState,
+    ) {
         let Some(ref mut agent) = self.agent else {
             return;
         };
@@ -1517,16 +1640,30 @@ impl WebApp {
         });
 
         self.batcher.clear();
-        if let Some(ref agent) = self.agent {
+        // Remote players at their interpolated server pose, on the copy of
+        // the torus next to the eye (as in the native game).
+        for remote in self.remotes.values() {
+            if !remote.net.pose_ready {
+                continue;
+            }
+            let mut drawn = remote.net.render_transform;
+            drawn.disp = self.level.display_pos(drawn.disp, self.cam.loc);
             self.batcher
-                .add_model(&agent.car.model, &agent.transform, None, agent.color);
+                .add_model(&remote.car.model, &drawn, None, remote.color);
+        }
+        if let Some(ref agent) = self.agent {
+            // In multiplayer the last corrections are drawn as a decaying
+            // offset; solo it is zero.
+            let mut drawn = self.mp.drawn(&agent.transform);
+            drawn.disp = self.level.display_pos(drawn.disp, self.cam.loc);
+            self.batcher
+                .add_model(&agent.car.model, &drawn, None, agent.color);
             let r = (agent.phys_data.bbox.radius * agent.car.scale).max(8.0);
-            let p = self.level.display_pos(agent.transform.disp, self.cam.loc);
+            let p = drawn.disp;
             // Only punch the see-through cone when terrain still blocks
             // the car after camera avoidance — otherwise solid ground
             // (especially the long cam→car strip at turbo pullback).
-            if space::Camera::terrain_blocks_view(&self.level, self.cam.loc, p, CAMERA_CLEARANCE)
-            {
+            if space::Camera::terrain_blocks_view(&self.level, self.cam.loc, p, CAMERA_CLEARANCE) {
                 self.render.set_focus(p, r * 1.15);
             } else {
                 self.render.clear_focus();
@@ -1584,13 +1721,8 @@ mod net_ws {
         pub received: Rc<RefCell<Vec<ServerMessage>>>,
         pub connected: Rc<RefCell<bool>>,
         pub player_id: Option<PlayerId>,
-        /// Numbers the quanta of `ClientMessage::Input` (protocol 2).
-        /// The web build does not predict per quantum yet: it keeps the
-        /// older reconcile against its present pose
-        /// (`physics::reconcile_local_car`), and only counts quanta so the
-        /// server's input queue runs at the right rate.
-        quant_clock: vangers::physics::QuantClock,
-        next_quant: u32,
+        /// `Join` went out on this connection.
+        joined: bool,
         _on_message: Closure<dyn FnMut(web_sys::MessageEvent)>,
         _on_open: Closure<dyn FnMut(JsValue)>,
         _on_error: Closure<dyn FnMut(web_sys::ErrorEvent)>,
@@ -1622,19 +1754,11 @@ mod net_ws {
             }) as Box<dyn FnMut(web_sys::MessageEvent)>);
             ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
 
-            // on_open: send Join
-            let ws_clone = ws.clone();
+            // on_open: the frame loop sends `Join` once the car is known.
             let conn_clone = connected.clone();
             let on_open = Closure::wrap(Box::new(move |_: JsValue| {
                 log::info!("WebSocket connected");
                 *conn_clone.borrow_mut() = true;
-                let msg = encode(&ClientMessage::Join {
-                    player_name: "WebPlayer".into(),
-                    car_name: "TestCar".into(),
-                    color: 21,
-                    protocol: vangers_net::PROTOCOL_VERSION,
-                });
-                let _ = ws_clone.send_with_u8_array(&msg);
             }) as Box<dyn FnMut(JsValue)>);
             ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
@@ -1657,8 +1781,7 @@ mod net_ws {
                 received,
                 connected,
                 player_id: None,
-                quant_clock: Default::default(),
-                next_quant: 0,
+                joined: false,
                 _on_message: on_message,
                 _on_open: on_open,
                 _on_error: on_error,
@@ -1666,26 +1789,48 @@ mod net_ws {
             })
         }
 
-        /// This frame's `physics_dt` worth of `max_quant` quanta, all with
-        /// the same held control.
-        pub fn send_input(&mut self, motor: f32, rudder: f32, physics_dt: f32, max_quant: f32) {
-            let quanta = self.quant_clock.advance(physics_dt, max_quant);
-            if !*self.connected.borrow() || quanta == 0 {
+        /// Join the session with the player's car, once per connection.
+        pub fn join(&mut self, player_name: &str, car_name: &str, color: u8) {
+            if self.joined || !self.is_connected() {
                 return;
             }
-            let first_quant = self.next_quant;
-            self.next_quant = self.next_quant.wrapping_add(quanta);
+            self.joined = true;
+            log::info!(
+                "Joining as {} in {} (color {})",
+                player_name,
+                car_name,
+                color
+            );
+            let msg = encode(&ClientMessage::Join {
+                player_name: player_name.to_string(),
+                car_name: car_name.to_string(),
+                color,
+                protocol: vangers_net::PROTOCOL_VERSION,
+            });
+            let _ = self.ws.send_with_u8_array(&msg);
+        }
+
+        pub fn is_joined(&self) -> bool {
+            self.joined && self.is_connected()
+        }
+
+        /// This frame's batch: `quanta` quanta from `first_quant` with the
+        /// full controls (held ones for all, the jump and roll of the last).
+        /// Sent every frame with quanta, released keys included: the server
+        /// runs exactly the quanta it is sent.
+        pub fn send_input(
+            &mut self,
+            first_quant: u32,
+            quanta: u32,
+            control: &vangers_net::NetControl,
+        ) {
+            if !self.is_joined() || quanta == 0 {
+                return;
+            }
             let msg = encode(&ClientMessage::Input {
                 first_quant,
-                quanta: quanta as u16,
-                control: vangers_net::NetControl {
-                    motor,
-                    rudder,
-                    roll: 0.0,
-                    brake: false,
-                    turbo: false,
-                    jump: None,
-                },
+                quanta: quanta.min(u16::MAX as u32) as u16,
+                control: control.clone(),
             });
             let _ = self.ws.send_with_u8_array(&msg);
         }
@@ -1910,8 +2055,8 @@ struct WebHandler {
 
 impl WebHandler {
     fn new() -> Self {
-        let (ws_client, mp_status) = match SERVER_WS {
-            Some(url) if !url.is_empty() => {
+        let (ws_client, mp_status) = match server_url() {
+            Some(url) => {
                 // Auto-upgrade ws:// to wss:// when page is served over HTTPS
                 let url = {
                     let is_https = web_sys::window()
@@ -2695,6 +2840,42 @@ impl WebHandler {
         // dropped connection would leave the camera locked.
         let connected = self.ws_client.as_ref().is_some_and(|c| c.is_connected());
 
+        // Multiplayer: join with the player's car once the socket is open,
+        // and start over when it closes.
+        if let Some(ref mut ws) = self.ws_client
+            && ws.is_connected()
+            && !ws.is_joined()
+        {
+            let (name, color) = player_identity();
+            let car_name = gpu.app.agent.as_ref().map_or("", |a| a.car_name.as_str());
+            ws.join(&name, car_name, color as u8);
+        }
+        if !connected && (gpu.app.mp.synced || !gpu.app.remotes.is_empty()) {
+            gpu.app.mp.disconnect();
+            gpu.app.remotes.clear();
+        }
+        let mp_on = self.ws_client.as_ref().is_some_and(|c| c.is_joined());
+        // Match the native build's time scaling (see bin/road/game.rs):
+        //   physics_dt = delta * fps * time_delta0 * num_calls
+        let physics_dt = dt * {
+            let common = &gpu.app.common;
+            let n = &common.nature;
+            common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
+        };
+        // Multiplayer steps the car in whole quanta, numbered for the
+        // server's input queue and the reconcile (`physics::client`, as in
+        // the native game).
+        let quanta = if mp_on {
+            gpu.app.mp.due_quanta(physics_dt, gpu.app.max_quant)
+        } else {
+            0
+        };
+        // This frame's input batch: first quantum and the last quantum's
+        // input (held controls with the jump and roll).
+        let mut batch: Option<(u32, physics::prediction::QuantInput)> = None;
+        // The car is not driven this frame (escave screen, train ride).
+        let mut held = true;
+
         // Moving land first, so the car drives on this quant's surface
         // (same order as the native game).
         gpu.app.step_moving_land(dt, connected);
@@ -2730,6 +2911,7 @@ impl WebHandler {
                 gpu.app.try_begin_escave_visit();
             }
 
+            held = riding;
             if gpu.app.agent.is_some() {
                 // Drive the player vehicle. Keyboard feeds control; physics
                 // integrates the dynamo; the camera chases the transform.
@@ -2755,15 +2937,49 @@ impl WebHandler {
                     }
                     // Match the native build's time scaling (see bin/road/game.rs):
                     //   input_factor = delta / MAIN_LOOP_TIME
-                    //   physics_dt   = delta * fps * time_delta0 * num_calls
                     let input_factor = dt / config::common::MAIN_LOOP_TIME;
-                    let physics_dt = dt * {
-                        let n = &common.nature;
-                        common.speed.standard_frame_rate as f32
-                            * n.time_delta0
-                            * n.num_calls_analysis as f32
-                    };
-                    if !riding {
+                    if mp_on && !riding {
+                        // Whole quanta, as the server runs them: the jump
+                        // and roll on the last one, each quantum folded
+                        // home and bumped off the remote ghosts, then kept
+                        // for the reconcile.
+                        let input = physics::prediction::QuantInput {
+                            motor,
+                            rudder,
+                            brake,
+                            turbo,
+                            jump: if quanta > 0 {
+                                agent.control.jump.take()
+                            } else {
+                                None
+                            },
+                            roll,
+                        };
+                        let first = gpu.app.mp.prediction.next();
+                        let sim = physics::client::Sim {
+                            level: level_ref,
+                            common: &common,
+                            max_quant,
+                        };
+                        for i in 0..quanta {
+                            let input = physics::client::ClientSync::frame_input(&input, i, quanta);
+                            let shift = gpu.app.mp.step_quantum(
+                                physics::client::LocalCar {
+                                    transform: &mut agent.transform,
+                                    dynamo: &mut agent.dynamo,
+                                    phys: &agent.phys_data,
+                                },
+                                &input,
+                                &gpu.app.remotes,
+                                sim,
+                                Some(&mut agent.tracks),
+                            );
+                            // The car moved to another copy of the torus:
+                            // the camera goes along.
+                            gpu.app.cam.loc += shift;
+                            batch = Some((first, input));
+                        }
+                    } else if !riding {
                         agent.apply_control(input_factor, &common);
                         let mut left = physics_dt;
                         while left > max_quant {
@@ -2780,7 +2996,7 @@ impl WebHandler {
                     };
                     follow.offset.y += (speed_xy * 0.03).min(3.0);
                     follow.look_ahead += (speed_xy * 0.04).min(4.0);
-                    let target = agent.transform;
+                    let target = gpu.app.mp.drawn(&agent.transform);
                     let reach = space::Subject::reach_of(&agent.phys_data.bbox, agent.car.scale);
                     gpu.app.cam.chase_anchored(
                         level_ref,
@@ -2836,21 +3052,25 @@ impl WebHandler {
         // palette fades and MP fade catch-up stay consistent.
         gpu.app.step_cycle(dt, connected);
 
+        // Multiplayer: a car that was not driven still uses up its quanta
+        // (numbered, no history), with a released input.
+        if mp_on && batch.is_none() && (held || gpu.app.agent.is_none()) {
+            let first = gpu.app.mp.skip(quanta);
+            batch = Some((first, physics::prediction::QuantInput::default()));
+        }
+
         // Process multiplayer messages
         if let Some(ref mut ws) = self.ws_client {
-            // Send input every frame, released keys included: the server
-            // runs exactly the quanta it is sent.
-            let physics_dt = dt * {
-                let common = &gpu.app.common;
-                let n = &common.nature;
-                common.speed.standard_frame_rate as f32
-                    * n.time_delta0
-                    * n.num_calls_analysis as f32
-            };
-            ws.send_input(motor, rudder, physics_dt, gpu.app.max_quant);
+            if let Some((first, input)) = batch {
+                ws.send_input(first, quanta, &physics::client::net_control(&input));
+            }
 
-            // Process received messages
-            for msg in ws.poll() {
+            let messages = ws.poll();
+            // Only the newest snapshot reconciles the local car.
+            let newest_world = messages
+                .iter()
+                .rposition(|m| matches!(m, vangers_net::ServerMessage::WorldState { .. }));
+            for (index, msg) in messages.into_iter().enumerate() {
                 match msg {
                     vangers_net::ServerMessage::Welcome {
                         player_id,
@@ -2861,16 +3081,70 @@ impl WebHandler {
                             format!("Connected (player {}, level '{}')", player_id, level_name);
                         ws.player_id = Some(player_id);
                         log::info!("{}", self.mp_status);
+                        // The page picks its own level (and swaps big
+                        // levels for Khox on GPUs capped at 8192 px, as
+                        // software WebGL is). Physics on another map
+                        // can't agree with the server, so say so.
+                        let here = gpu.app.world_name.as_str();
+                        if !level_name.eq_ignore_ascii_case(here) {
+                            log::warn!(
+                                "Server runs '{}' but this page loaded '{}'; positions won't match",
+                                level_name,
+                                here
+                            );
+                            self.mp_status += &format!(" - level mismatch, here '{}'", here);
+                        }
                     }
                     vangers_net::ServerMessage::PlayerJoined {
                         player_id,
                         player_name,
-                        ..
+                        car_name,
+                        color,
                     } => {
-                        log::info!("Player {} ({}) joined", player_id, player_name);
+                        log::info!(
+                            "Player {} ({}) joined in {}",
+                            player_id,
+                            player_name,
+                            car_name
+                        );
+                        if Some(player_id) == ws.player_id {
+                            continue;
+                        }
+                        let car = gpu
+                            .app
+                            .cars
+                            .as_mut()
+                            .and_then(|cars| {
+                                cars.get(&car_name, &gpu.device, &gpu.app.render.object)
+                            })
+                            .or_else(|| {
+                                log::warn!("No car '{}' here, drawing our own", car_name);
+                                gpu.app.agent.as_ref().map(|a| a.car.clone())
+                            });
+                        let Some(car) = car else {
+                            continue;
+                        };
+                        let phys = physics::CarPhysicsData::from_car_info(&car);
+                        let color = render::object::BodyColor::from_value(color);
+                        gpu.app
+                            .remotes
+                            .entry(player_id)
+                            .and_modify(|remote| {
+                                remote.name = player_name.clone();
+                                remote.net.phys_data = phys.clone();
+                                remote.car = car.clone();
+                                remote.color = color;
+                            })
+                            .or_insert_with(|| WebRemote {
+                                name: player_name.clone(),
+                                car: car.clone(),
+                                color,
+                                net: physics::client::RemoteCar::new(phys.clone()),
+                            });
                     }
                     vangers_net::ServerMessage::PlayerLeft { player_id } => {
-                        log::info!("Player {} left", player_id);
+                        let name = gpu.app.remotes.remove(&player_id).map(|r| r.name);
+                        log::info!("Player {} ({:?}) left", player_id, name);
                     }
                     vangers_net::ServerMessage::WorldState {
                         agents,
@@ -2885,60 +3159,83 @@ impl WebHandler {
                         if let Some(ref moving_state) = moving {
                             gpu.app.apply_moving_land_state(moving_state);
                         }
-                        if let Some(my_id) = ws.player_id
-                            && let Some(me) = agents.iter().find(|a| a.player_id == my_id)
-                        {
-                            let server_transform = space::Transform {
-                                disp: glam::Vec3::from(me.transform.position),
-                                rot: glam::Quat::from_xyzw(
-                                    me.transform.rotation[0],
-                                    me.transform.rotation[1],
-                                    me.transform.rotation[2],
-                                    me.transform.rotation[3],
-                                ),
-                                scale: me.transform.scale,
-                            };
-                            if let Some(ref mut agent) = gpu.app.agent {
-                                let first_sync = !gpu.app.server_synced;
-                                if first_sync {
-                                    gpu.app.server_synced = true;
-                                    gpu.app.cam.focus_on(&server_transform);
-                                }
-                                let bumped = gpu
-                                    .app
-                                    .server_bumps
-                                    .replace(me.bumps)
-                                    .is_some_and(|seen| seen != me.bumps);
-                                let server = physics::ServerCar {
-                                    transform: server_transform,
-                                    linear_velocity: glam::Vec3::from(me.dynamo.linear_velocity),
-                                    angular_velocity: glam::Vec3::from(me.dynamo.angular_velocity),
-                                    traction: me.dynamo.traction,
-                                    rudder: me.dynamo.rudder,
-                                    bumped,
-                                };
-                                if first_sync {
-                                    agent.transform = server_transform;
-                                    agent.dynamo.linear_velocity = server.linear_velocity;
-                                    agent.dynamo.angular_velocity = server.angular_velocity;
-                                    agent.dynamo.traction = server.traction;
-                                    agent.dynamo.rudder = server.rudder;
-                                } else {
-                                    physics::reconcile_local_car(
-                                        &mut agent.transform,
-                                        &mut agent.dynamo,
-                                        &server,
-                                    );
-                                }
-                            } else {
-                                // No local vehicle mesh — at least park the camera.
-                                let pos = server_transform.disp;
-                                gpu.app.cam.loc = glam::vec3(pos.x, pos.y, pos.z + 200.0);
+                        // Remote cars first: a replay of the local car
+                        // bumps against their ghosts.
+                        let period = Some(gpu.app.level.period());
+                        for agent_state in &agents {
+                            if Some(agent_state.player_id) == ws.player_id {
+                                continue;
                             }
+                            if let Some(remote) = gpu.app.remotes.get_mut(&agent_state.player_id) {
+                                remote
+                                    .net
+                                    .on_snapshot(&physics::client::server_car(agent_state), period);
+                            }
+                        }
+                        if Some(index) != newest_world {
+                            continue;
+                        }
+                        let Some(me) = ws
+                            .player_id
+                            .and_then(|my_id| agents.iter().find(|a| a.player_id == my_id))
+                        else {
+                            continue;
+                        };
+                        let snap = physics::client::LocalSnapshot::from_agent(me);
+                        if let Some(ref mut agent) = gpu.app.agent {
+                            // Compare with what we predicted at the ack; on
+                            // a mismatch rewind there and replay our inputs
+                            // since, drawing the move as a decaying offset.
+                            let (event, bumped) = gpu.app.mp.on_snapshot(
+                                &snap,
+                                physics::client::LocalCar {
+                                    transform: &mut agent.transform,
+                                    dynamo: &mut agent.dynamo,
+                                    phys: &agent.phys_data,
+                                },
+                                &gpu.app.remotes,
+                                physics::client::Sim {
+                                    level: &gpu.app.level,
+                                    common: &gpu.app.common,
+                                    max_quant: gpu.app.max_quant,
+                                },
+                                held,
+                            );
+                            match event {
+                                physics::client::SyncEvent::FirstSync => {
+                                    gpu.app.cam.focus_on(&snap.car.transform);
+                                }
+                                physics::client::SyncEvent::Reconciled {
+                                    outcome,
+                                    moved,
+                                    shown_at_once,
+                                } => {
+                                    if shown_at_once {
+                                        log::warn!(
+                                            "Server correction {:.1}u: shown at once",
+                                            moved
+                                        );
+                                    }
+                                    if bumped {
+                                        log::info!("Server bump: {:?} bumps={}", outcome, me.bumps);
+                                    }
+                                }
+                                physics::client::SyncEvent::Held => {}
+                            }
+                        } else {
+                            // No local vehicle mesh — at least park the camera.
+                            let pos = snap.car.transform.disp;
+                            gpu.app.cam.loc = glam::vec3(pos.x, pos.y, pos.z + 200.0);
                         }
                     }
                 }
             }
+        }
+        for remote in gpu.app.remotes.values_mut() {
+            remote.net.interpolate(dt);
+        }
+        if connected {
+            gpu.app.mp.decay(dt);
         }
 
         let frame = match gpu.surface.get_current_texture() {
