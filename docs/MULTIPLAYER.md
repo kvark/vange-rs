@@ -225,8 +225,15 @@ build (`bin/web/main.rs`) both run it.
   a negative coordinate samples the right cell.
 - **Render offset.** What a replay moves the car by goes into
   `RenderOffset`, drawn on top of the physics pose and decayed (time
-  constant 0.1 s, at most 30 u/s and 1.5u per frame). Only a jump over
-  50u (a teleport) is shown at once. The camera follows the drawn pose.
+  constant 0.1 s, at most 30 u/s and 1.5u per frame). Past 50u it fades
+  out within 0.3 s (over at least 3 frames) instead; only a jump over 200u
+  (a teleport) is shown at once. The camera follows the drawn pose.
+- **Same ground.** Online clients don't cut wheel tracks, burrows, smashed
+  ceilings or grader sweeps into their level (`terraform::drain_vehicle`):
+  the server never edits its copy, and a client driving over its own tracks
+  was predicted over different ground. The original game does deform the
+  collision height map with tracks, in multiplayer too, but each of its
+  clients was authoritative for its own car. Dust still flies.
 - **Bumps.** A `bumps` change still makes the reconcile take the server's
   velocities (the replay starts from them anyway).
 - **Protocol 2** (`PROTOCOL_VERSION`): `Join::protocol`,
