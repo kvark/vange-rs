@@ -15,7 +15,7 @@ use vangers_net::{
 
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use log::{error, info, warn};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -526,8 +526,7 @@ fn world_name_for_ini_path(
     // settings.game.level if it resolves to the same file
     let level = settings.game.level.trim();
     if !level.is_empty() {
-        if let Some(path) =
-            config::worlds::ini_path_if_present(&settings.data_path, &worlds, level)
+        if let Some(path) = config::worlds::ini_path_if_present(&settings.data_path, &worlds, level)
         {
             if paths_equal(&path, ini) {
                 return Some(
@@ -559,12 +558,14 @@ const DUEL_SPACING: i32 = 70;
 /// Default: `find_spawn_point` grid, yaw PI (facing -Y). With `duel`, joiner
 /// 0 sits west of the center facing +X and joiner 1 east facing -X, so a ram
 /// test needs no long drive. `spawn_at` puts joiner 0 there instead, facing
-/// -Y. The car's forward axis is local +Y.
+/// -Y. The car's forward axis is local +Y. `occupied`: the map XY of the
+/// cars in the world, which a grid spawn keeps clear of.
 fn spawn_pose(
     level: &level::Level,
     index: usize,
     duel: Option<(i32, i32)>,
     spawn_at: Option<(i32, i32)>,
+    occupied: &[Vec2],
 ) -> ((i32, i32), f32) {
     use std::f32::consts::{FRAC_PI_2, PI};
     if let (Some((x, y)), 0) = (spawn_at, index) {
@@ -585,18 +586,111 @@ fn spawn_pose(
                 yaw,
             )
         }
-        _ => (find_spawn_point(level, index), PI),
+        _ => (find_spawn_point(level, index, occupied), PI),
     }
 }
 
-/// Find a spawn point on the level terrain.
-fn find_spawn_point(level: &level::Level, index: usize) -> (i32, i32) {
-    let spacing = 30;
+/// Spacing of the default spawn grid, and the least distance a fresh
+/// spawn keeps from a car already in the world.
+const SPAWN_SPACING: i32 = 30;
+/// Half-width in texels of the ground a fresh spawn must have clear: a
+/// mechos contact box is ~40u long (OxidizeMonk), with a margin.
+const SPAWN_FOOTPRINT: i32 = 24;
+/// Steepest step in world units between neighbouring texels that spawn
+/// ground may hold. Rough ground steps a few units; a ledge (Khox at a
+/// quarter of the map: 123 next to 163) is many times that.
+const SPAWN_MAX_STEP: f32 = 16.0;
+/// How far, in texels, `find_spawn_point` looks for clear ground, and the
+/// stride of its rings.
+const SPAWN_SEARCH: i32 = 256;
+const SPAWN_SEARCH_STEP: i32 = 8;
+
+/// Find a spawn point on the level terrain: the grid point of `index`, or
+/// the nearest clear ground to it (see `spawn_ground_clear`) at least
+/// `SPAWN_SPACING` away from every car in `occupied` (map XY).
+fn find_spawn_point(level: &level::Level, index: usize, occupied: &[Vec2]) -> (i32, i32) {
+    let spacing = SPAWN_SPACING;
     let base_x = level.size.0 / 4;
     let base_y = level.size.1 / 4;
     let x = base_x + (index as i32 % 4) * spacing;
     let y = base_y + (index as i32 / 4) * spacing;
+    let (x, y) = clear_ground_near(level, (x, y), occupied).unwrap_or((x, y));
     (x.rem_euclid(level.size.0), y.rem_euclid(level.size.1))
+}
+
+/// Whether the car's footprint around `center` is one layer with no ledge.
+///
+/// The car is dropped from the height of its center texel. With a ledge
+/// or a slab under its body it starts inside the terrain and the contact
+/// throws it out: on Khox the default spawn sat across a 40u ridge, and
+/// the car flew ~75u up at 15u/s and tumbled for ~10s, deaf to the
+/// throttle until it landed.
+fn spawn_ground_clear(level: &level::Level, center: (i32, i32)) -> bool {
+    let r = SPAWN_FOOTPRINT;
+    let single = |x: i32, y: i32| match level.get((x, y)) {
+        level::Texel::Single(point) => Some(point.0),
+        level::Texel::Dual { .. } => None,
+    };
+    for y in center.1 - r..=center.1 + r {
+        for x in center.0 - r..=center.0 + r {
+            let Some(h) = single(x, y) else {
+                return false;
+            };
+            for (nx, ny) in [(x + 1, y), (x, y + 1)] {
+                if nx > center.0 + r || ny > center.1 + r {
+                    continue;
+                }
+                match single(nx, ny) {
+                    Some(n) if (n - h).abs() <= SPAWN_MAX_STEP => {}
+                    _ => return false,
+                }
+            }
+        }
+    }
+    true
+}
+
+/// `base` when its ground is clear and free, else the nearest such point
+/// on rings of `SPAWN_SEARCH_STEP` around it, out to `SPAWN_SEARCH`.
+fn clear_ground_near(
+    level: &level::Level,
+    base: (i32, i32),
+    occupied: &[Vec2],
+) -> Option<(i32, i32)> {
+    let min_sq = (SPAWN_SPACING * SPAWN_SPACING) as f32;
+    let free = |p: (i32, i32)| {
+        let at = Vec2::new(p.0 as f32, p.1 as f32);
+        occupied.iter().all(|&car| {
+            let d = level.shortest_xy(car.extend(0.0), at.extend(0.0));
+            d.length_squared() >= min_sq
+        })
+    };
+    let usable = |p: (i32, i32)| free(p) && spawn_ground_clear(level, p);
+    if usable(base) {
+        return Some(base);
+    }
+    let step = SPAWN_SEARCH_STEP;
+    for ring in 1..=SPAWN_SEARCH / step {
+        let d = ring * step;
+        let mut best: Option<(i32, (i32, i32))> = None;
+        for i in -ring..=ring {
+            let k = i * step;
+            for (dx, dy) in [(k, -d), (k, d), (-d, k), (d, k)] {
+                let p = (base.0 + dx, base.1 + dy);
+                let dist = dx * dx + dy * dy;
+                if best.is_some_and(|(b, _)| b <= dist) {
+                    continue;
+                }
+                if usable(p) {
+                    best = Some((dist, p));
+                }
+            }
+        }
+        if let Some((_, p)) = best {
+            return Some(p);
+        }
+    }
+    None
 }
 
 #[tokio::main]
@@ -669,7 +763,10 @@ async fn main() {
             bunch.escave
         );
     } else {
-        info!("No story cycle for '{}' (test/bonus world or missing data)", cycle_world);
+        info!(
+            "No story cycle for '{}' (test/bonus world or missing data)",
+            cycle_world
+        );
     }
 
     // Moving land (animated *.vot patches). Server owns playback so clients
@@ -1064,8 +1161,13 @@ async fn main() {
                                 });
 
                                 let spawn_index = players.values().filter(|a| a.joined).count();
+                                let occupied: Vec<Vec2> = players
+                                    .values()
+                                    .filter(|a| a.joined)
+                                    .map(|a| a.transform.disp.truncate())
+                                    .collect();
                                 let (coords, spawn_yaw) =
-                                    spawn_pose(&level, spawn_index, duel, spawn_at);
+                                    spawn_pose(&level, spawn_index, duel, spawn_at, &occupied);
                                 let height = level.get(coords).high() + 5.0;
 
                                 // Log restored map XY when reclaiming; find_spawn_point is
@@ -1462,7 +1564,10 @@ fn physics_max_quant(settings: Option<&config::Settings>) -> f32 {
 }
 
 /// Resolve accept-time conn_id to the effective player_id (after name reclaim).
-fn effective_player_id(conn_to_player: &HashMap<PlayerId, PlayerId>, conn_id: PlayerId) -> PlayerId {
+fn effective_player_id(
+    conn_to_player: &HashMap<PlayerId, PlayerId>,
+    conn_id: PlayerId,
+) -> PlayerId {
     *conn_to_player.get(&conn_id).unwrap_or(&conn_id)
 }
 
@@ -1509,9 +1614,7 @@ fn reclaim_player_id(
 
     // Bind name → id unless a different live player already owns the binding.
     let steal = match name_ids.get(player_name).copied() {
-        Some(bound) if bound != effective => {
-            players.get(&bound).is_some_and(|a| a.joined)
-        }
+        Some(bound) if bound != effective => players.get(&bound).is_some_and(|a| a.joined),
         _ => false,
     };
     if !steal {
@@ -1582,7 +1685,10 @@ impl SimLag {
         // Stamp on arrival (never blocks), then release in order.
         tokio::spawn(async move {
             while let Some(item) = rx.recv().await {
-                if stamped_tx.send((tokio::time::Instant::now(), item)).is_err() {
+                if stamped_tx
+                    .send((tokio::time::Instant::now(), item))
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -1649,7 +1755,10 @@ async fn handle_tcp_connection(
             Ok(n) => {
                 buf.extend_from_slice(&tmp[..n]);
                 while let Some((msg, consumed)) = decode::<ClientMessage>(&buf) {
-                    let _ = event_tx.send(SessionEvent::Message { conn_id: player_id, msg });
+                    let _ = event_tx.send(SessionEvent::Message {
+                        conn_id: player_id,
+                        msg,
+                    });
                     buf.drain(..consumed);
                 }
             }
@@ -1711,7 +1820,10 @@ async fn handle_ws_connection(
             Ok(tungstenite::Message::Binary(data)) => {
                 buf.extend_from_slice(&data);
                 while let Some((msg, consumed)) = decode::<ClientMessage>(&buf) {
-                    let _ = event_tx.send(SessionEvent::Message { conn_id: player_id, msg });
+                    let _ = event_tx.send(SessionEvent::Message {
+                        conn_id: player_id,
+                        msg,
+                    });
                     buf.drain(..consumed);
                 }
             }
@@ -1818,8 +1930,8 @@ mod tests {
     fn duel_spawn_faces_each_other() {
         let level = test_level();
         let center = (100, 120);
-        let (a, yaw_a) = spawn_pose(&level, 0, Some(center), None);
-        let (b, yaw_b) = spawn_pose(&level, 1, Some(center), None);
+        let (a, yaw_a) = spawn_pose(&level, 0, Some(center), None, &[]);
+        let (b, yaw_b) = spawn_pose(&level, 1, Some(center), None, &[]);
         assert_eq!(b.0 - a.0, DUEL_SPACING);
         assert_eq!((a.1, b.1), (center.1, center.1));
         let a_to_b = Vec3::X;
@@ -1827,8 +1939,8 @@ mod tests {
         assert!(forward(yaw_b).dot(-a_to_b) > 0.999, "east car faces west");
         // A third joiner falls back to the regular grid.
         assert_eq!(
-            spawn_pose(&level, 2, Some(center), None),
-            (find_spawn_point(&level, 2), std::f32::consts::PI)
+            spawn_pose(&level, 2, Some(center), None, &[]),
+            (find_spawn_point(&level, 2, &[]), std::f32::consts::PI)
         );
     }
 
@@ -1837,24 +1949,24 @@ mod tests {
         let level = test_level();
         let at = Some((100, 120));
         assert_eq!(
-            spawn_pose(&level, 0, None, at),
+            spawn_pose(&level, 0, None, at, &[]),
             ((100, 120), std::f32::consts::PI)
         );
         // Wrapped onto the map like any other spawn.
         assert_eq!(
-            spawn_pose(&level, 0, None, Some((-1, level.size.1))).0,
+            spawn_pose(&level, 0, None, Some((-1, level.size.1)), &[]).0,
             (level.size.0 - 1, 0)
         );
         // It wins over the duel's first car; the second keeps its place.
         let center = Some((300, 120));
-        assert_eq!(spawn_pose(&level, 0, center, at).0, (100, 120));
+        assert_eq!(spawn_pose(&level, 0, center, at, &[]).0, (100, 120));
         assert_eq!(
-            spawn_pose(&level, 1, center, at),
-            spawn_pose(&level, 1, center, None)
+            spawn_pose(&level, 1, center, at, &[]),
+            spawn_pose(&level, 1, center, None, &[])
         );
         assert_eq!(
-            spawn_pose(&level, 1, None, at),
-            (find_spawn_point(&level, 1), std::f32::consts::PI)
+            spawn_pose(&level, 1, None, at, &[]),
+            (find_spawn_point(&level, 1, &[]), std::f32::consts::PI)
         );
     }
 
@@ -1863,10 +1975,87 @@ mod tests {
         let level = test_level();
         for index in 0..5 {
             assert_eq!(
-                spawn_pose(&level, index, None, None),
-                (find_spawn_point(&level, index), std::f32::consts::PI)
+                spawn_pose(&level, index, None, None, &[]),
+                (find_spawn_point(&level, index, &[]), std::f32::consts::PI)
             );
         }
+    }
+
+    /// The test level made flat and single-layer at stored height `ground`.
+    fn flat_level(ground: u8) -> level::Level {
+        let mut level = test_level();
+        level.height.fill(ground);
+        level.meta.fill(0);
+        level
+    }
+
+    #[test]
+    fn spawn_keeps_its_grid_point_on_clear_ground() {
+        let level = flat_level(100);
+        let base = (level.size.0 / 4, level.size.1 / 4);
+        assert_eq!(find_spawn_point(&level, 0, &[]), base);
+        assert_eq!(
+            find_spawn_point(&level, 1, &[]),
+            (base.0 + SPAWN_SPACING, base.1)
+        );
+    }
+
+    #[test]
+    fn spawn_moves_off_a_ledge() {
+        // Khox at a quarter of the map: a 40u ridge 6..9 texels off the
+        // grid point, diagonally under the car.
+        let mut level = flat_level(123);
+        let base = (level.size.0 / 4, level.size.1 / 4);
+        for y in 0..level.size.1 {
+            for x in 0..level.size.0 {
+                let d = ((x - base.0) - (y - base.1)).rem_euclid(level.size.0);
+                if (6..9).contains(&d) {
+                    let i = level.wrap((x, y));
+                    level.height[i] = 163;
+                }
+            }
+        }
+        assert!(!spawn_ground_clear(&level, base));
+        let at = find_spawn_point(&level, 0, &[]);
+        assert!(spawn_ground_clear(&level, at), "spawn {at:?} on the ridge");
+        let (dx, dy) = (at.0 - base.0, at.1 - base.1);
+        assert!(
+            dx * dx + dy * dy <= 64 * 64,
+            "spawn {at:?} strayed from {base:?}"
+        );
+    }
+
+    #[test]
+    fn spawn_moves_off_a_slab() {
+        // The test level's double-level slab sits at its center.
+        let mut level = test_level();
+        let center = (level.size.0 / 2, level.size.1 / 2);
+        let flat = flat_level(100);
+        let slab: Vec<usize> = (0..level.meta.len())
+            .filter(|&i| level.meta[i] & level::DOUBLE_LEVEL != 0)
+            .collect();
+        level.height.copy_from_slice(&flat.height);
+        let meta = level.meta.clone();
+        level.meta.fill(0);
+        for i in slab {
+            level.meta[i] = meta[i];
+        }
+        assert!(!spawn_ground_clear(&level, center));
+        let at = clear_ground_near(&level, center, &[]).expect("clear ground");
+        assert!(spawn_ground_clear(&level, at));
+    }
+
+    #[test]
+    fn spawn_keeps_clear_of_cars() {
+        let level = flat_level(100);
+        let base = (level.size.0 / 4, level.size.1 / 4);
+        let car = Vec2::new(base.0 as f32 + 5.0, base.1 as f32);
+        let at = find_spawn_point(&level, 0, &[car]);
+        let gap = Vec2::new(at.0 as f32, at.1 as f32) - car;
+        assert!(
+            gap.length() >= SPAWN_SPACING as f32,
+            "spawn {at:?} on the car"
+        );
     }
 
     #[test]
