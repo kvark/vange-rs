@@ -2768,10 +2768,10 @@ impl Application for Game {
                         self.remote_agents.remove(&player_id);
                     }
                     NetEvent::WorldState {
+                        tick,
                         agents,
                         cycle,
                         moving,
-                        ..
                     } => {
                         if let Some(ref cycle_state) = cycle {
                             self.apply_cycle_state(cycle_state);
@@ -2879,7 +2879,9 @@ impl Application for Game {
                             } else if let Some(remote) =
                                 self.remote_agents.get_mut(&agent_state.player_id)
                             {
-                                remote.net.on_agent(agent_state, Some(self.level.period()));
+                                remote
+                                    .net
+                                    .on_agent(agent_state, tick, Some(self.level.period()));
                             }
                         }
                     }

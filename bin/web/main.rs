@@ -3418,7 +3418,7 @@ impl WebHandler {
                                 continue;
                             }
                             if let Some(remote) = gpu.app.remotes.get_mut(&agent_state.player_id) {
-                                remote.net.on_agent(agent_state, period);
+                                remote.net.on_agent(agent_state, tick, period);
                             }
                         }
                         if Some(index) != newest_world {

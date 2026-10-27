@@ -3,8 +3,8 @@
 //!
 //! - [`RemoteCar`]: another player's car as the client sees it: the latest
 //!   server state (the source of its contact [`Ghost`]) and the pose drawn
-//!   from it: each snapshot blended in from the drawn pose, then dead
-//!   reckoned through gaps.
+//!   from a small jitter buffer of its snapshots, dead reckoned when the
+//!   buffer runs dry.
 //! - [`ClientSync`]: the local car's side of [`super::prediction`]: the
 //!   quantum clock, the numbered prediction history, the remote ghosts and
 //!   the render offset, plus the per-quantum step and the snapshot handling
@@ -110,27 +110,28 @@ fn arc(v: Vec3, w: Vec3, t: f32) -> Vec3 {
 
 /// Another player's car.
 ///
-/// Drawn by dead reckoning with a blend: from each snapshot the car is
-/// carried on at the motion of its last two snapshots, and a new snapshot
-/// is blended in from wherever the car is drawn when it arrives, both
-/// moving on while they blend, over [`Self::BLEND`]. Past
-/// [`Self::DEAD_RECKON_MAX`] without a snapshot the car holds. Over TCP a
-/// lost segment stalls every snapshot behind it for a retransmit (~RTT +
-/// 200 ms); drawn between the last two snapshots instead, the car stood
-/// still for the stall and then jumped the whole way at once.
+/// Drawn from a small jitter buffer: the car's snapshots, each at its
+/// sender time, played back a little behind the newest one, by
+/// [`Self::target_delay`]: about one to two snapshot intervals, more when
+/// snapshots arrive unevenly (an EWMA of how late the newest one of each
+/// frame is, against the earliest seen). The playback clock runs up to
+/// [`Self::SKEW_MAX`] fast or slow to follow a changing delay, never
+/// jumping. When the buffer runs dry (a stall longer than the delay) the
+/// car is dead reckoned on from its last snapshot, along the arc of its
+/// last two, for up to [`Self::DEAD_RECKON_MAX`], then holds. Whatever a
+/// late snapshot changes about the pose drawn now (the reckoning was off)
+/// becomes an offset that decays over a few frames.
+///
+/// The contact ghost uses the latest server state, not the drawn pose.
 #[derive(Clone)]
 pub struct RemoteCar {
     /// Contact shape for the ghost.
     pub phys_data: CarPhysicsData,
-    /// The pose drawn when the latest snapshot arrived (blend source).
-    pub prev_transform: space::Transform,
-    /// Latest snapshot pose (blend target, ghost start).
+    /// Latest snapshot pose (ghost start).
     pub target_transform: space::Transform,
     /// The pose drawn this frame.
     pub render_transform: space::Transform,
-    /// Snapshot intervals since the latest snapshot arrived.
-    pub interp_t: f32,
-    /// False until the first snapshot pose: nothing to blend from yet.
+    /// False until the first snapshot pose: nothing to draw yet.
     pub pose_ready: bool,
     /// Car-local velocities, traction and rudder of the latest snapshot.
     pub linear_velocity: Vec3,
@@ -146,39 +147,78 @@ pub struct RemoteCar {
     /// physics time, so it carries on exactly what the snapshots showed.
     pub reckon_velocity: Vec3,
     pub reckon_spin: Vec3,
-    /// The motion the blend source carries on with: the one the car was
-    /// drawn with when the latest snapshot arrived.
-    prev_velocity: Vec3,
-    prev_spin: Vec3,
-    /// Progress of the blend into the latest snapshot, 0..=1.
-    blend: f32,
+    /// Seconds the drawn pose is behind the newest snapshot's (estimated)
+    /// sender time now: the visual latency the buffer adds.
+    pub delay: f32,
+    /// The delay the playback clock is steering to.
+    pub target_delay: f32,
+    /// EWMA of how late the newest snapshot of a frame arrives, seconds.
+    pub jitter: f32,
+    /// The drawn pose ran past the newest snapshot: dead reckoned.
+    pub dry: bool,
+    /// Snapshots by sender time, oldest first.
+    samples: std::collections::VecDeque<(f64, space::Transform)>,
+    /// Local seconds, advanced by `interpolate`.
+    clock: f64,
+    /// Sender time minus local time of the earliest arrivals over the
+    /// last [`Self::OFFSET_WINDOW`]: its maximum.
+    offset: f64,
+    /// Each frame's newest arrival offset `(local time, offset)` in that
+    /// window, kept only while it could still be the maximum.
+    offsets: std::collections::VecDeque<(f64, f64)>,
+    /// Sender time the drawn pose is at.
+    playback: f64,
+    /// Sender time of the next `on_snapshot` (one per server tick).
+    next_time: f64,
+    /// Newest sender time that arrived since the last frame.
+    arrived: Option<f64>,
+    /// Decaying correction added to the played-back pose.
+    error_disp: Vec3,
+    error_rot: Quat,
 }
 
 impl RemoteCar {
     /// Snapshots a second (the server tick).
     pub const SNAPSHOT_RATE: f32 = 20.0;
-    /// Seconds a new snapshot takes to blend in. Two intervals rather than
-    /// one: with ±20 ms of jitter the drawn car peaks at 1.3x its speed
-    /// instead of 1.7x, for a few frames more to settle from rest.
-    pub const BLEND: f32 = 2.0 / Self::SNAPSHOT_RATE;
-    /// Frames a blend takes at least: at a low frame rate a whole blend
-    /// would fit in one frame and show a correction as a jump.
+    /// Playback delay with snapshots arriving evenly: 1.5 intervals, so
+    /// the next one is in before the drawn pose gets to it.
+    pub const DELAY_BASE: f32 = 1.5 / Self::SNAPSHOT_RATE;
+    /// Delay added per second of jitter.
+    pub const DELAY_PER_JITTER: f32 = 2.0;
+    /// Bounds of the playback delay.
+    pub const DELAY_MIN: f32 = 0.05;
+    pub const DELAY_MAX: f32 = 0.25;
+    /// Weight of a frame's lateness in the jitter EWMA.
+    pub const JITTER_WEIGHT: f32 = 0.1;
+    /// Seconds the earliest arrival counts for: an early burst (a
+    /// connect, a route change) is forgotten after it.
+    pub const OFFSET_WINDOW: f64 = 3.0;
+    /// Fastest the playback clock runs fast or slow to reach its delay.
+    pub const SKEW_MAX: f32 = 0.1;
+    /// Playback rate change per second of delay error.
+    pub const SKEW_GAIN: f32 = 1.0;
+    /// A delay this far off is resynced at once (the first snapshot).
+    pub const RESYNC: f32 = 1.0;
+    /// Seconds a correction takes to decay to 1/e.
+    pub const ERROR_DECAY: f32 = 0.1;
+    /// Frames a correction takes at least: at a low frame rate a whole
+    /// decay would fit in one frame and show it as a jump.
     pub const BLEND_FRAMES_MIN: f32 = 3.0;
-    /// Longest the drawn car is carried on past a snapshot's arrival
+    /// Longest the drawn car is carried on past its newest snapshot
     /// before it holds: covers a retransmit stall at a 250 ms RTT (~0.45
     /// s) plus the interval, not a dropped connection.
     pub const DEAD_RECKON_MAX: f32 = 0.7;
     /// A snapshot this far from the last one, or from the drawn car, is a
     /// respawn or teleport: drawn there at once, not slid to.
     pub const TELEPORT: f32 = 64.0;
+    /// Snapshots kept behind the drawn pose, seconds.
+    const KEEP: f64 = 1.0;
 
     pub fn new(phys_data: CarPhysicsData) -> Self {
         RemoteCar {
             phys_data,
-            prev_transform: space::Transform::IDENTITY,
             target_transform: space::Transform::IDENTITY,
             render_transform: space::Transform::IDENTITY,
-            interp_t: 0.0,
             pose_ready: false,
             linear_velocity: Vec3::ZERO,
             angular_velocity: Vec3::ZERO,
@@ -187,28 +227,47 @@ impl RemoteCar {
             control: QuantInput::default(),
             reckon_velocity: Vec3::ZERO,
             reckon_spin: Vec3::ZERO,
-            prev_velocity: Vec3::ZERO,
-            prev_spin: Vec3::ZERO,
-            blend: 0.0,
+            delay: 0.0,
+            target_delay: Self::DELAY_BASE,
+            jitter: 0.0,
+            dry: false,
+            samples: Default::default(),
+            clock: 0.0,
+            offset: 0.0,
+            offsets: Default::default(),
+            playback: 0.0,
+            next_time: 0.0,
+            arrived: None,
+            error_disp: Vec3::ZERO,
+            error_rot: Quat::IDENTITY,
         }
     }
 
     /// Take a server snapshot of this car (see `on_snapshot`).
-    pub fn on_agent(&mut self, agent: &vangers_net::AgentState, period: Option<Vec2>) {
+    /// Take this car's state from the `WorldState` of server `tick`.
+    pub fn on_agent(&mut self, agent: &vangers_net::AgentState, tick: u32, period: Option<Vec2>) {
         self.control = agent_control(agent);
-        self.on_snapshot(&server_car(agent), period);
+        let time = tick as f64 / Self::SNAPSHOT_RATE as f64;
+        self.on_snapshot_at(&server_car(agent), period, time);
     }
 
-    /// Take a snapshot of this car. The first one (and a teleport) is
-    /// shown at once; later ones are blended in from the pose drawn now,
-    /// on the replica nearest the last one (the server folds every car
-    /// onto the home tile, so a car crossing the seam would otherwise be
-    /// drawn sweeping across the whole world).
+    /// Take the next snapshot of this car, one server tick after the last.
     pub fn on_snapshot(&mut self, car: &ServerCar, period: Option<Vec2>) {
+        let time = self.next_time;
+        self.on_snapshot_at(car, period, time);
+    }
+
+    /// Take a snapshot of this car at sender time `time` (seconds). The
+    /// first one (and a teleport) is shown at once; later ones go in the
+    /// buffer, on the replica nearest the last one (the server folds every
+    /// car onto the home tile, so a car crossing the seam would otherwise
+    /// be drawn sweeping across the whole world).
+    pub fn on_snapshot_at(&mut self, car: &ServerCar, period: Option<Vec2>, time: f64) {
         self.linear_velocity = car.linear_velocity;
         self.angular_velocity = car.angular_velocity;
         self.traction = car.traction;
         self.rudder = car.rudder;
+        self.next_time = time + 1.0 / Self::SNAPSHOT_RATE as f64;
         let mut target = car.transform;
         if self.pose_ready
             && let Some(p) = period
@@ -218,69 +277,153 @@ impl RemoteCar {
             target.disp.x -= fold(d.x, p.x);
             target.disp.y -= fold(d.y, p.y);
         }
-        let step = target.disp - self.target_transform.disp;
+        let step = (target.disp - self.target_transform.disp).length();
+        let latest = self.samples.back().map(|&(t, _)| t);
+        self.target_transform = target;
         if !self.pose_ready
-            || step.length() > Self::TELEPORT
+            || step > Self::TELEPORT
             || (target.disp - self.render_transform.disp).length() > Self::TELEPORT
         {
-            self.prev_transform = target;
-            self.render_transform = target;
-            self.prev_velocity = Vec3::ZERO;
-            self.prev_spin = Vec3::ZERO;
-            self.reckon_velocity = Vec3::ZERO;
-            self.reckon_spin = Vec3::ZERO;
-            self.pose_ready = true;
-        } else {
-            let mut turn = target.rot * self.target_transform.rot.inverse();
-            if turn.w < 0.0 {
-                turn = -turn;
-            }
-            // The blend source carries on as the drawn car was carried
-            // (still, once held past the cap).
-            let since = self.interp_t / Self::SNAPSHOT_RATE;
-            (self.prev_velocity, self.prev_spin) = if since < Self::DEAD_RECKON_MAX {
-                (
-                    self.prev_velocity.lerp(self.reckon_velocity, self.blend),
-                    self.prev_spin.lerp(self.reckon_spin, self.blend),
-                )
-            } else {
-                (Vec3::ZERO, Vec3::ZERO)
-            };
-            self.prev_transform = self.render_transform;
-            self.reckon_spin = turn.to_scaled_axis() * Self::SNAPSHOT_RATE;
-            // The step is a chord: its direction is the heading half an
-            // interval back. Turned on to the snapshot's heading.
-            let half = Quat::from_scaled_axis(self.reckon_spin * (0.5 / Self::SNAPSHOT_RATE));
-            self.reckon_velocity = half * step * Self::SNAPSHOT_RATE;
+            self.reset(target, time);
+            return;
         }
-        self.target_transform = target;
-        self.interp_t = 0.0;
-        self.blend = 0.0;
+        let before = self.played(self.playback);
+        match latest {
+            // Out of order: the ghost has it, the buffer does not.
+            Some(t) if time < t => return,
+            Some(t) if time == t => {
+                self.samples.back_mut().unwrap().1 = target;
+            }
+            _ => self.samples.push_back((time, target)),
+        }
+        self.arrived = Some(self.arrived.map_or(time, |a| a.max(time)));
+        self.update_reckoning();
+        let after = self.played(self.playback);
+        // The drawn pose stays where it is; the difference decays.
+        self.error_disp += before.disp - after.disp;
+        self.error_rot = (self.error_rot * before.rot * after.rot.inverse()).normalize();
+        if self.error_disp.length() > Self::TELEPORT {
+            self.reset(target, time);
+        }
+    }
+
+    /// Show `target` at once, with nothing buffered before it.
+    fn reset(&mut self, target: space::Transform, time: f64) {
+        self.samples.clear();
+        self.samples.push_back((time, target));
+        self.render_transform = target;
+        self.reckon_velocity = Vec3::ZERO;
+        self.reckon_spin = Vec3::ZERO;
+        self.error_disp = Vec3::ZERO;
+        self.error_rot = Quat::IDENTITY;
+        self.offset = time - self.clock;
+        self.offsets.clear();
+        self.offsets.push_back((self.clock, self.offset));
+        // Held there for the delay, then played on as snapshots come.
+        self.playback = time - self.target_delay as f64;
+        self.arrived = None;
+        self.dry = false;
+        self.pose_ready = true;
+    }
+
+    /// Dead reckoning motion from the last two buffered snapshots.
+    fn update_reckoning(&mut self) {
+        let n = self.samples.len();
+        if n < 2 {
+            return;
+        }
+        let (t0, a) = self.samples[n - 2];
+        let (t1, b) = self.samples[n - 1];
+        let dt = (t1 - t0) as f32;
+        if dt <= 0.0 {
+            return;
+        }
+        let mut turn = b.rot * a.rot.inverse();
+        if turn.w < 0.0 {
+            turn = -turn;
+        }
+        self.reckon_spin = turn.to_scaled_axis() / dt;
+        // The step is a chord: its direction is the heading half the
+        // interval back. Turned on to the snapshot's heading.
+        let half = Quat::from_scaled_axis(self.reckon_spin * (0.5 * dt));
+        self.reckon_velocity = half * (b.disp - a.disp) / dt;
+    }
+
+    /// The buffered pose at sender time `time`: between the snapshots
+    /// around it, or reckoned on from the newest.
+    fn played(&self, time: f64) -> space::Transform {
+        let Some(&(last_t, last)) = self.samples.back() else {
+            return self.render_transform;
+        };
+        if time >= last_t {
+            let ahead = ((time - last_t) as f32).min(Self::DEAD_RECKON_MAX);
+            return space::Transform {
+                disp: last.disp + arc(self.reckon_velocity, self.reckon_spin, ahead),
+                rot: (Quat::from_scaled_axis(self.reckon_spin * ahead) * last.rot).normalize(),
+                scale: last.scale,
+            };
+        }
+        let next = self.samples.partition_point(|&(t, _)| t <= time);
+        if next == 0 {
+            return self.samples[0].1;
+        }
+        let (t0, a) = self.samples[next - 1];
+        let (t1, b) = self.samples[next];
+        let f = ((time - t0) / (t1 - t0)) as f32;
+        space::Transform {
+            disp: a.disp.lerp(b.disp, f),
+            rot: a.rot.slerp(b.rot, f),
+            scale: a.scale + (b.scale - a.scale) * f,
+        }
     }
 
     /// Move the drawn pose `delta` seconds on.
     pub fn interpolate(&mut self, delta: f32) {
-        self.interp_t += delta * Self::SNAPSHOT_RATE;
-        let since = self.interp_t / Self::SNAPSHOT_RATE;
-        let ahead = since.min(Self::DEAD_RECKON_MAX);
-        let rate = (delta / Self::BLEND).min(1.0 / Self::BLEND_FRAMES_MIN);
-        self.blend = (self.blend + rate).min(1.0);
-        let blend = self.blend;
-        let carry = |t: &space::Transform, v: Vec3, w: Vec3| space::Transform {
-            disp: t.disp + arc(v, w, ahead),
-            rot: (Quat::from_scaled_axis(w * ahead) * t.rot).normalize(),
-            scale: t.scale,
-        };
-        let a = carry(&self.prev_transform, self.prev_velocity, self.prev_spin);
-        let b = carry(
-            &self.target_transform,
-            self.reckon_velocity,
-            self.reckon_spin,
-        );
+        if !self.pose_ready {
+            return;
+        }
+        if let Some(time) = self.arrived.take() {
+            // How late the newest snapshot of this frame came, against
+            // the earliest arrivals.
+            let offset = time - self.clock;
+            while self.offsets.back().is_some_and(|&(_, o)| o <= offset) {
+                self.offsets.pop_back();
+            }
+            self.offsets.push_back((self.clock, offset));
+            while self.offsets[0].0 < self.clock - Self::OFFSET_WINDOW {
+                self.offsets.pop_front();
+            }
+            self.offset = self.offsets[0].1;
+            let late = (self.offset - offset) as f32;
+            self.jitter += (late - self.jitter) * Self::JITTER_WEIGHT;
+            self.target_delay = (Self::DELAY_BASE + Self::DELAY_PER_JITTER * self.jitter)
+                .clamp(Self::DELAY_MIN, Self::DELAY_MAX);
+        }
+        let error = (self.clock + self.offset - self.playback) as f32 - self.target_delay;
+        self.clock += delta as f64;
+        let now = self.clock + self.offset;
+        if error.abs() > Self::RESYNC {
+            self.playback = now - self.target_delay as f64;
+        } else {
+            let skew = (error * Self::SKEW_GAIN).clamp(-Self::SKEW_MAX, Self::SKEW_MAX);
+            self.playback += (delta * (1.0 + skew)) as f64;
+        }
+        self.delay = (now - self.playback) as f32;
+        while self.samples.len() > 2 && self.samples[1].0 < self.playback - Self::KEEP {
+            self.samples.pop_front();
+        }
+        self.dry = self.samples.back().is_some_and(|&(t, _)| self.playback > t);
+
+        let keep = (-delta / Self::ERROR_DECAY)
+            .exp()
+            .max(1.0 - 1.0 / Self::BLEND_FRAMES_MIN);
+        self.error_disp *= keep;
+        self.error_rot = Quat::IDENTITY.slerp(self.error_rot, keep);
+        let pose = self.played(self.playback);
         self.render_transform = space::Transform {
-            disp: a.disp.lerp(b.disp, blend),
-            rot: a.rot.slerp(b.rot, blend),
-            scale: a.scale + (b.scale - a.scale) * blend,
+            disp: pose.disp + self.error_disp,
+            rot: (self.error_rot * pose.rot).normalize(),
+            scale: pose.scale,
         };
     }
 
@@ -304,9 +447,11 @@ impl RemoteCar {
 
     /// The client moved its coordinates by `-by` (a torus rebase).
     pub fn shift(&mut self, by: Vec3) {
-        self.prev_transform.disp -= by;
         self.target_transform.disp -= by;
         self.render_transform.disp -= by;
+        for &mut (_, ref mut pose) in self.samples.iter_mut() {
+            pose.disp -= by;
+        }
     }
 }
 
@@ -741,31 +886,30 @@ mod tests {
     }
 
     #[test]
-    fn remote_snaps_first_then_blends() {
+    fn remote_snaps_first_then_plays_back_behind() {
         let mut r = RemoteCar::new(CarPhysicsData::test_default());
         assert!(r.ghost().is_none(), "no ghost before a pose");
         r.on_snapshot(&server(10.0, 10.0), None);
         assert_eq!(r.render_transform.disp, Vec3::new(10.0, 10.0, 10.0));
-        r.on_snapshot(&server(11.0, 10.0), None);
-        // Not moved by the arrival, only by the frames after it.
-        assert_eq!(r.render_transform.disp.x, 10.0);
-        r.interpolate(0.025);
-        r.interpolate(0.025);
-        // Half blended between standing at 10 and 11 carried on at 20 u/s.
-        assert!((r.render_transform.disp.x - 11.0).abs() < 1e-4);
-        r.interpolate(0.025);
-        r.interpolate(0.025);
-        assert!((r.render_transform.disp.x - 13.0).abs() < 1e-4);
+        // Evenly timed snapshots at 20 u/s.
+        for n in 1..=20 {
+            r.interpolate(0.05);
+            r.on_snapshot(&server(10.0 + n as f32, 10.0), None);
+        }
+        r.interpolate(0.0);
+        // Drawn the playback delay behind the newest snapshot...
+        let behind = 30.0 - r.render_transform.disp.x;
+        let expected = 20.0 * RemoteCar::DELAY_BASE;
+        assert!(
+            (behind - expected).abs() < 0.2,
+            "{behind:.2}u behind, expected {expected:.2}u"
+        );
+        assert!(!r.dry);
+        // ...while the ghost is at the latest server state.
         let g = r.ghost().unwrap();
-        assert_eq!(g.transform.disp.x, 11.0);
+        assert_eq!(g.transform.disp.x, 30.0);
         assert_eq!(g.dynamo.traction, 0.5);
         assert_eq!(g.dynamo.linear_velocity, Vec3::new(0.0, 3.0, 0.0));
-        // Drawn a unit ahead at 20 u/s: the next snapshot blends in from
-        // there, both carried on.
-        r.on_snapshot(&server(12.0, 10.0), None);
-        r.interpolate(0.025);
-        r.interpolate(0.025);
-        assert!((r.render_transform.disp.x - 13.5).abs() < 1e-4);
     }
 
     #[test]
@@ -773,12 +917,16 @@ mod tests {
         let period = Some(Vec2::new(256.0, 256.0));
         let mut r = RemoteCar::new(CarPhysicsData::test_default());
         r.on_snapshot(&server(254.0, 100.0), period);
+        r.interpolate(0.05);
         // The server folded it onto the home tile at x=2: drawn at 258.
         r.on_snapshot(&server(2.0, 100.0), period);
         assert_eq!(r.target_transform.disp.x, 258.0);
-        r.interpolate(0.05);
-        let x = r.render_transform.disp.x;
-        assert!(x > 254.0 && x < 262.0, "drawn at {x}");
+        for _ in 0..6 {
+            r.interpolate(0.025);
+            let x = r.render_transform.disp.x;
+            // Reckoned on at its 80 u/s, not swept across the world.
+            assert!((254.0..=270.0).contains(&x), "drawn at {x}");
+        }
     }
 
     /// A remote driving along +X at `speed` u/s, at snapshot tick `n`,
@@ -790,96 +938,199 @@ mod tests {
         car
     }
 
-    const FPS: u32 = 60;
-
-    /// Drive `r` at 60 fps through snapshot ticks `0..ticks`, each sent on
-    /// the frame it is due, except that none arrive in frames `stall`
-    /// (the held ones all arrive on the frame after). Returns the drawn
-    /// move of every frame, with the frame's time.
-    fn drive(
-        r: &mut RemoteCar,
-        ticks: u32,
-        speed: f32,
-        stall: std::ops::Range<u32>,
-    ) -> Vec<(f32, f32)> {
-        let per_tick = FPS / RemoteCar::SNAPSHOT_RATE as u32;
-        let mut sent = 0;
-        let mut moves = Vec::new();
-        let mut last = r.render_transform.disp;
-        for frame in 0.. {
-            if sent == ticks {
-                break;
-            }
-            if !stall.contains(&frame) {
-                while sent <= frame / per_tick && sent < ticks {
-                    r.on_snapshot(&moving(sent, speed, 0.0), None);
-                    sent += 1;
-                }
-            }
-            r.interpolate(1.0 / FPS as f32);
-            let d = r.render_transform.disp;
-            moves.push((frame as f32 / FPS as f32, (d - last).length()));
-            last = d;
-        }
-        moves
+    /// One drawn frame of [`feed`].
+    struct Frame {
+        time: f32,
+        x: f32,
+        moved: f32,
+        playback: f64,
+        delay: f32,
+        dry: bool,
     }
 
+    /// Drive `r` at `fps` through snapshot ticks `0..ticks` of `car`, sent
+    /// one per 50 ms and arriving `late(n)` seconds after (in order, as
+    /// over TCP).
+    fn feed(
+        r: &mut RemoteCar,
+        fps: u32,
+        ticks: u32,
+        car: impl Fn(u32) -> ServerCar,
+        late: impl Fn(u32) -> f32,
+    ) -> Vec<Frame> {
+        let mut arrivals = Vec::new();
+        let mut last = 0.0f32;
+        for n in 0..ticks {
+            last = last.max(n as f32 / RemoteCar::SNAPSHOT_RATE + late(n));
+            arrivals.push(last);
+        }
+        let end = last + 1.0;
+        let mut sent = 0;
+        let mut frames = Vec::new();
+        let mut prev = r.render_transform.disp;
+        for i in 0.. {
+            let time = i as f32 / fps as f32;
+            if time > end {
+                break;
+            }
+            while sent < ticks && arrivals[sent as usize] <= time {
+                r.on_snapshot(&car(sent), None);
+                sent += 1;
+            }
+            r.interpolate(1.0 / fps as f32);
+            let d = r.render_transform.disp;
+            frames.push(Frame {
+                time,
+                x: d.x,
+                moved: (d - prev).length(),
+                playback: r.playback,
+                delay: r.delay,
+                dry: r.dry,
+            });
+            prev = d;
+        }
+        frames
+    }
+
+    /// Repeatable jitter in `0..max` seconds for snapshot `n`.
+    fn jitter(n: u32, max: f32) -> f32 {
+        let mut x = n.wrapping_mul(2_654_435_761) ^ 0x5bd1_e995;
+        x ^= x >> 15;
+        x = x.wrapping_mul(0x2c1b_3c6d);
+        x ^= x >> 12;
+        (x % 1000) as f32 / 1000.0 * max
+    }
+
+    const FPS: u32 = 60;
+
     #[test]
-    fn remote_dead_reckons_steady_motion_through_a_gap() {
+    fn remote_plays_jittered_snapshots_back_smoothly() {
         let speed = 40.0;
         let per_frame = speed / FPS as f32;
         let mut r = RemoteCar::new(CarPhysicsData::test_default());
-        // 0.6 s without a snapshot from t=1 s, then 12 at once.
-        let moves = drive(&mut r, 60, speed, FPS..FPS * 8 / 5);
-        // Once settled from the start at rest (overlapping blends take a
-        // few snapshots), every frame moves the car by its speed: through
-        // the gap and out of it.
-        for &(t, m) in moves.iter().filter(|&&(t, _)| t > 0.75) {
+        // ±20 ms around a 50 ms latency.
+        let frames = feed(
+            &mut r,
+            FPS,
+            100,
+            |n| moving(n, speed, 0.0),
+            |n| 0.03 + jitter(n, 0.04),
+        );
+        let settled = || frames.iter().filter(|f| f.time > 1.0 && f.time < 5.0);
+        for f in settled() {
+            // At most the playback skew off the car's speed.
             assert!(
-                (m - per_frame).abs() < 0.02,
-                "drawn moved {m:.3}u at t={t:.3}, speed x dt is {per_frame:.3}"
+                (f.moved - per_frame).abs() < per_frame * RemoteCar::SKEW_MAX + 0.01,
+                "drawn moved {:.3}u at t={:.3}, speed x dt is {per_frame:.3}",
+                f.moved,
+                f.time
+            );
+            assert!(!f.dry, "ran dry at t={:.3}", f.time);
+        }
+        assert!(r.target_delay > RemoteCar::DELAY_BASE && r.target_delay < RemoteCar::DELAY_MAX);
+    }
+
+    #[test]
+    fn remote_delay_adapts_without_a_time_jump() {
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        // 3 s of up to 80 ms jitter, then 5 s of none.
+        let frames = feed(
+            &mut r,
+            FPS,
+            160,
+            |n| moving(n, 40.0, 0.0),
+            |n| 0.03 + if n < 60 { jitter(n, 0.08) } else { 0.0 },
+        );
+        let dt = 1.0 / FPS as f64;
+        let skew = RemoteCar::SKEW_MAX as f64;
+        for w in frames.windows(2).filter(|w| w[0].time > 0.5) {
+            let step = w[1].playback - w[0].playback;
+            assert!(
+                step >= dt * (1.0 - skew) - 1e-6 && step <= dt * (1.0 + skew) + 1e-6,
+                "playback stepped {step:.4}s at t={:.3}",
+                w[1].time
             );
         }
-        // On the last snapshot's line, carried on by less than a snapshot.
-        let last = moving(59, speed, 0.0).transform.disp;
-        let ahead = r.render_transform.disp - last;
-        assert!(ahead.y.abs() < 1e-3 && ahead.x >= 0.0 && ahead.x < speed / 20.0);
+        let jittery = frames.iter().find(|f| f.time >= 3.0).unwrap().delay;
+        let calm = frames.last().unwrap().delay;
+        assert!(calm < jittery - 0.03, "delay {jittery:.3}s -> {calm:.3}s");
+        assert!(calm >= RemoteCar::DELAY_MIN && (calm - r.target_delay).abs() < 0.01);
+    }
+
+    #[test]
+    fn remote_dead_reckons_through_a_gap_only_once_dry() {
+        let speed = 40.0;
+        let per_frame = speed / FPS as f32;
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        // Snapshots sent at 1.0..1.6 s are held for a retransmit, then
+        // all arrive at once.
+        let frames = feed(
+            &mut r,
+            FPS,
+            60,
+            |n| moving(n, speed, 0.0),
+            |n| {
+                let sent = n as f32 / RemoteCar::SNAPSHOT_RATE;
+                if (1.0..1.6).contains(&sent) {
+                    1.6 - sent
+                } else {
+                    0.03
+                }
+            },
+        );
+        let delay = RemoteCar::DELAY_BASE;
+        for f in frames.iter().filter(|f| f.time > 0.5 && f.time < 3.0) {
+            assert!(
+                (f.moved - per_frame).abs() < 0.03,
+                "drawn moved {:.3}u at t={:.3}, speed x dt is {per_frame:.3}",
+                f.moved,
+                f.time
+            );
+            // The buffer covers the start of the stall: the last
+            // snapshot before it (sent at 0.95 s) is played until about
+            // 0.98 + delay.
+            if f.time < 0.95 + delay {
+                assert!(!f.dry, "dry at t={:.3}", f.time);
+            }
+        }
+        let dry = frames.iter().filter(|f| f.dry && f.time < 2.5).count();
+        assert!(dry > 20 && dry < 40, "{dry} frames reckoned");
     }
 
     #[test]
     fn remote_resumes_after_a_gap_without_a_jump() {
         let speed = 40.0;
         let mut r = RemoteCar::new(CarPhysicsData::test_default());
-        drive(&mut r, 11, speed, 0..0);
-        // The car stopped where its last snapshot (tick 10) showed it, and
-        // a 0.8 s stall followed: drawn on to the cap, then held.
-        let held = moving(10, speed, 0.0);
-        for _ in 0..48 {
-            r.interpolate(1.0 / FPS as f32);
-        }
-        let ahead = r.render_transform.disp.x - held.transform.disp.x;
-        assert!(ahead > 0.0 && ahead <= speed * RemoteCar::DEAD_RECKON_MAX + 0.1);
-        let before = r.render_transform.disp;
-        // The stall ends: it was standing there all along.
-        for _ in 0..16 {
-            r.on_snapshot(&held, None);
-        }
-        assert_eq!(r.render_transform.disp, before, "no jump on arrival");
-        let frames = (RemoteCar::BLEND * FPS as f32).round() as usize;
-        let mut last = before;
-        for _ in 0..frames {
-            r.interpolate(1.0 / FPS as f32);
-            let step = (r.render_transform.disp - last).length();
-            assert!(
-                step <= ahead / frames as f32 * 2.0,
-                "slid {step:.2}u in a frame"
-            );
-            last = r.render_transform.disp;
-        }
-        assert!((r.render_transform.disp - held.transform.disp).length() < 1e-3);
-        // Standing still: nothing to reckon on.
-        r.interpolate(0.5);
-        assert!((r.render_transform.disp - held.transform.disp).length() < 1e-3);
+        // Drives to tick 10 and stops there, but the snapshots after it
+        // are held for a second.
+        let stopped = |n: u32| moving(n.min(10), speed, 0.0);
+        let frames = feed(&mut r, FPS, 40, stopped, |n| {
+            if n > 10 && n < 30 {
+                1.6 - n as f32 / 20.0
+            } else {
+                0.03
+            }
+        });
+        // Reckoned on past where it stopped, at most the cap...
+        let held = moving(10, speed, 0.0).transform.disp.x;
+        let max_x = speed * RemoteCar::DEAD_RECKON_MAX;
+        let ahead = frames.iter().map(|f| f.x).fold(f32::MIN, f32::max) - held;
+        assert!(
+            ahead > 0.5 * max_x && ahead < max_x + 0.1,
+            "{ahead:.2}u ahead"
+        );
+        // ...then slid back over a few frames, not jumped.
+        let worst = frames
+            .iter()
+            .filter(|f| f.time > 1.5)
+            .map(|f| f.moved)
+            .fold(0.0, f32::max);
+        assert!(worst < 0.2 * max_x, "slid {worst:.2}u in a frame");
+        let end = r.render_transform.disp.x;
+        assert!(
+            (end - held).abs() < 1e-2,
+            "ends at {end}, stopped at {held}"
+        );
     }
 
     /// A remote going round a circle of `radius` at `speed`, at tick `n`.
@@ -898,49 +1149,95 @@ mod tests {
             r.on_snapshot(&circling(n, speed, radius), None);
             r.interpolate(0.05);
         }
-        // A 0.3 s stall: drawn on round the circle, turned with it.
-        for _ in 0..5 {
+        // No more snapshots: played to the last, reckoned on round the
+        // circle, held at the cap.
+        for _ in 0..40 {
             r.interpolate(0.05);
         }
-        let truth = circling(9, speed, radius).transform;
+        assert!(r.dry);
+        let truth = circling(3 + 14, speed, radius).transform;
         let off = (r.render_transform.disp - truth.disp).length();
         assert!(off < 0.5, "{off:.2}u off the circle");
         assert!(r.render_transform.rot.angle_between(truth.rot) < 0.02);
-        // Past the cap it holds.
+        let held = r.render_transform.disp;
         r.interpolate(1.0);
-        let held = r.render_transform;
-        r.interpolate(1.0);
-        assert_eq!(r.render_transform.disp, held.disp);
-        let truth = circling(3 + 14, speed, radius).transform;
-        assert!((held.disp - truth.disp).length() < 0.5);
+        assert!((r.render_transform.disp - held).length() < 1e-4);
     }
 
     #[test]
     fn remote_correction_spreads_over_frames_at_a_low_frame_rate() {
+        let speed = 40.0;
         let mut r = RemoteCar::new(CarPhysicsData::test_default());
-        r.on_snapshot(&server(10.0, 10.0), None);
-        r.on_snapshot(&server(10.0, 10.0), None);
-        r.interpolate(0.125);
-        // Standing 6 u off where it was drawn, at 8 fps: a whole blend
-        // would fit in one frame.
-        r.on_snapshot(&server(16.0, 10.0), None);
-        r.on_snapshot(&server(16.0, 10.0), None);
-        let mut last = r.render_transform.disp.x;
-        for _ in 0..3 {
-            r.interpolate(0.125);
-            let x = r.render_transform.disp.x;
-            assert!(x - last < 2.0 + 1e-3, "moved {}", x - last);
-            last = x;
+        let stopped = |n: u32| moving(n.min(10), speed, 0.0);
+        // 8 fps: a whole decay would fit in one frame.
+        let frames = feed(&mut r, 8, 40, stopped, |n| {
+            if n > 10 && n < 30 {
+                1.6 - n as f32 / 20.0
+            } else {
+                0.03
+            }
+        });
+        let i = frames.iter().position(|f| f.time >= 1.6).unwrap();
+        let error = speed * RemoteCar::DEAD_RECKON_MAX;
+        for f in &frames[i..i + 3] {
+            assert!(f.moved <= error / 3.0 + 0.1, "moved {:.2}u", f.moved);
         }
-        assert!((last - 16.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn remote_plays_by_sender_time_across_a_skipped_tick() {
+        let speed = 20.0;
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        // Tick 10 never comes; the rest arrive on time. Played by their
+        // tick times, the car keeps its speed through the hole.
+        let mut x_prev: Option<f32> = None;
+        for n in 0..40u32 {
+            if n != 10 {
+                let time = n as f64 / RemoteCar::SNAPSHOT_RATE as f64;
+                r.on_snapshot_at(&moving(n, speed, 0.0), None, time);
+            }
+            for _ in 0..3 {
+                r.interpolate(1.0 / 60.0);
+                let x = r.render_transform.disp.x;
+                if let Some(p) = x_prev
+                    && n > 5
+                {
+                    let moved = x - p;
+                    assert!(
+                        (moved - speed / 60.0).abs() < 0.05,
+                        "moved {moved:.3}u in a frame at tick {n}"
+                    );
+                }
+                x_prev = Some(x);
+            }
+        }
+    }
+
+    #[test]
+    fn remote_forgets_an_early_burst() {
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        // The first snapshots come straight away, every later one 300 ms
+        // on (a slower route): once the burst is out of the window the
+        // buffer is sized for the new route, not dry.
+        let car = |n: u32| moving(n, 20.0, 0.0);
+        let frames = feed(&mut r, FPS, 200, car, |n| if n < 5 { 0.0 } else { 0.3 });
+        for f in frames.iter().filter(|f| f.time > 6.0 && f.time < 9.5) {
+            assert!(!f.dry, "dry at t={:.3}", f.time);
+            assert!(
+                f.delay < RemoteCar::DELAY_BASE + 0.03,
+                "{:.3}s behind",
+                f.delay
+            );
+        }
     }
 
     #[test]
     fn remote_teleport_is_shown_at_once() {
         let mut r = RemoteCar::new(CarPhysicsData::test_default());
-        r.on_snapshot(&moving(0, 40.0, 0.0), None);
-        r.on_snapshot(&moving(1, 40.0, 0.0), None);
-        r.interpolate(0.2);
+        for n in 0..4 {
+            r.on_snapshot(&moving(n, 40.0, 0.0), None);
+            r.interpolate(0.05);
+        }
         // Respawned far away: no slide across the map, no reckoning on.
         r.on_snapshot(&server(900.0, 900.0), None);
         let at = Vec3::new(900.0, 900.0, 10.0);
