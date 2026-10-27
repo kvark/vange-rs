@@ -602,11 +602,16 @@ impl RenderOffset {
 
     /// [`Self::absorb`] for a correction caused by car contact: up to
     /// [`Self::CONTACT_TELEPORT`]; an offset past [`Self::TELEPORT`] is
-    /// faded out within [`Self::CONTACT_FADE`].
+    /// faded out within [`Self::CONTACT_FADE`]. A correction on top of an
+    /// offset still fading may take the sum past the limit: only the
+    /// excess is shown at once, not the whole offset.
     pub fn absorb_contact(&mut self, before: &space::Transform, after: &space::Transform) -> bool {
-        if !self.absorb_within(before, after, Self::CONTACT_TELEPORT) {
+        if (before.disp - after.disp).length() > Self::CONTACT_TELEPORT {
+            *self = Self::default();
             return false;
         }
+        self.disp = (self.disp + before.disp - after.disp).clamp_length_max(Self::CONTACT_TELEPORT);
+        self.rot = (self.rot * before.rot * after.rot.inverse()).normalize();
         // Smaller ones decay as usual (a frame never shows more than
         // `MAX_STEP`); past the plain teleport limit, fade.
         let len = self.disp.length();
@@ -896,5 +901,11 @@ mod tests {
             ..before
         };
         assert!(!o.absorb_contact(&before, &respawn));
+        // Two shoves back to back pile past the limit: the offset is capped
+        // there (only the excess shows), not dropped.
+        let mut o = RenderOffset::default();
+        assert!(o.absorb_contact(&before, &after));
+        assert!(o.absorb_contact(&before, &after));
+        assert!((o.disp.length() - RenderOffset::CONTACT_TELEPORT).abs() < 1e-3);
     }
 }
