@@ -186,10 +186,29 @@ const MP_FRAME_MAX: f32 = 2.5;
 struct NetDebug {
     visible: bool,
     lines: std::collections::VecDeque<String>,
-    /// The local car in the newest snapshot: position, its ack, speed.
-    server: Option<(glam::Vec3, u32, f32)>,
+    /// The local car in the newest snapshot, as received.
+    server: Option<ServerPose>,
     /// What the newest snapshot did to the prediction.
     outcome: String,
+}
+
+/// The local car's pose in the newest `WorldState`: the raw acked server
+/// state (not interpolated), next to the prediction it is compared with.
+#[derive(Clone, Copy, Debug)]
+struct ServerPose {
+    /// Server tick of the `WorldState`.
+    tick: u32,
+    pos: glam::Vec3,
+    speed: f32,
+    /// The input ack: the server ran the car up to quantum `ack - 1`.
+    ack: u32,
+    /// The prediction at the same quantum, while buffered.
+    predicted: Option<glam::Vec3>,
+    /// Quanta the prediction is ahead of the ack (`next - ack`): the round
+    /// trip plus the frame, in physics time.
+    lead: u32,
+    /// `lead` in seconds of game time.
+    lead_secs: f32,
 }
 
 impl NetDebug {
@@ -1291,14 +1310,28 @@ impl WebApp {
                     }
                 }
                 match debug.server {
-                    Some((p, ack, speed)) => {
+                    Some(sp) => {
+                        let p = sp.pos;
                         ui.label(mono(format!(
-                            "server    ({:.1}, {:.1}, {:.1}) speed {:.1} ack q{}",
-                            p.x, p.y, p.z, speed, ack
+                            "server@ack ({:.1}, {:.1}, {:.1}) speed {:.1} ack q{} tick {} (raw snapshot)",
+                            p.x, p.y, p.z, sp.speed, sp.ack, sp.tick
+                        )));
+                        if let Some(q) = sp.predicted {
+                            ui.label(mono(format!(
+                                "pred@ack   ({:.1}, {:.1}, {:.1}) off {:.2}u",
+                                q.x,
+                                q.y,
+                                q.z,
+                                q.distance(p)
+                            )));
+                        }
+                        ui.label(mono(format!(
+                            "lead       {} quanta = {:.2}s game time (RTT + frame)",
+                            sp.lead, sp.lead_secs
                         )));
                     }
                     None => {
-                        ui.label(mono("server    (no snapshot yet)".to_string()));
+                        ui.label(mono("server@ack (no snapshot yet)".to_string()));
                     }
                 }
                 if !debug.outcome.is_empty() {
@@ -3311,10 +3344,10 @@ impl WebHandler {
                         );
                     }
                     vangers_net::ServerMessage::WorldState {
+                        tick,
                         agents,
                         cycle,
                         moving,
-                        ..
                     } => {
                         if let Some(ref cycle_state) = cycle {
                             gpu.app.apply_cycle_state(cycle_state);
@@ -3344,11 +3377,24 @@ impl WebHandler {
                             continue;
                         };
                         let snap = physics::client::LocalSnapshot::from_agent(me);
-                        gpu.app.net_debug.server = Some((
-                            snap.car.transform.disp,
-                            snap.ack,
-                            snap.car.linear_velocity.length(),
-                        ));
+                        let lead = gpu.app.mp.prediction.next().wrapping_sub(snap.ack);
+                        let quanta_per_sec = {
+                            let c = &gpu.app.common;
+                            let n = &c.nature;
+                            c.speed.standard_frame_rate as f32
+                                * n.time_delta0
+                                * n.num_calls_analysis as f32
+                                / gpu.app.max_quant
+                        };
+                        gpu.app.net_debug.server = Some(ServerPose {
+                            tick,
+                            pos: snap.car.transform.disp,
+                            speed: snap.car.linear_velocity.length(),
+                            ack: snap.ack,
+                            predicted: gpu.app.mp.prediction.predicted_at(snap.ack).map(|t| t.disp),
+                            lead,
+                            lead_secs: lead as f32 / quanta_per_sec,
+                        });
                         if let Some(ref mut agent) = gpu.app.agent {
                             // Compare with what we predicted at the ack; on
                             // a mismatch rewind there and replay our inputs

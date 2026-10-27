@@ -307,6 +307,14 @@ impl Prediction {
         self.history.is_empty()
     }
 
+    /// The predicted pose a snapshot with `ack` is compared against (the
+    /// state after quantum `ack - 1`), while it is still buffered.
+    pub fn predicted_at(&self, ack: u32) -> Option<&space::Transform> {
+        let behind = self.next.wrapping_sub(ack) as usize;
+        let len = self.history.len();
+        (behind < len).then(|| &self.history[len - 1 - behind].transform)
+    }
+
     /// Record a stepped quantum: its input and the state it left.
     pub fn push(&mut self, input: QuantInput, transform: &space::Transform, dynamo: &Dynamo) {
         self.history.push_back(Predicted {
@@ -772,9 +780,16 @@ mod tests {
             car: car(4.0),
             ack: 4,
         };
+        assert_eq!(p.predicted_at(4).map(|t| t.disp.x), Some(4.0));
         let r = p.reconcile(&snap, false, None, &mut t, &mut d, slide);
         assert_eq!(r, Reconciled::InSync);
         assert_eq!(t.disp.x, 10.0);
+        // Still there to show next to the snapshot; the present is not
+        // history, nor is anything past the buffer.
+        assert_eq!(p.predicted_at(4).map(|t| t.disp.x), Some(4.0));
+        assert_eq!(p.predicted_at(10).map(|t| t.disp.x), Some(10.0));
+        assert!(p.predicted_at(11).is_none());
+        assert!(p.predicted_at(3).is_none());
     }
 
     #[test]
