@@ -209,6 +209,10 @@ impl Projection {
 /// How far under a ledge top a car straddling it can sag, for
 /// [`Camera::ground_under`].
 const GROUND_LEDGE_SAG: f32 = 4.0;
+/// How far around the chase eye [`Camera::keep_eye_clear`] keeps rock
+/// away: about the near plane's half width at the 10u near distance
+/// `settings.ron` sets, so a wall this close would fill the screen.
+const EYE_FOOTPRINT: f32 = 8.0;
 /// How far from a slab's edge [`Camera::chase`] starts dropping toward
 /// its under-slab pose, world units.
 pub const UNDER_SLAB_REACH: f32 = 96.0;
@@ -949,7 +953,55 @@ impl Camera {
         self.keep_above_ground(level, clearance);
         if gap_ok {
             self.keep_below_slab(level, clearance);
+        } else {
+            // Under a slab the lens belongs in the gap below the
+            // underside, next to rock by design; see `keep_below_slab`.
+            self.keep_eye_clear(level, clearance);
         }
+    }
+
+    /// The last word on where the eye may be: never in the rock, nor
+    /// with rock within [`EYE_FOOTPRINT`] of it at its own height.
+    ///
+    /// `keep_above_ground` only reads the column under the lens. In a pit
+    /// or a crevice the lens can sit over the open floor with a wall a
+    /// few units away, and that wall fills the near plane. Then the eye
+    /// goes up over every column around it, `clearance` above the highest
+    /// top: the rule the original game keeps everywhere. Its eye is `ViewZ = focus * TurnSecX /
+    /// xsize` above sea level (KranX/Vangers `road.cpp:1841`, `focus` 512
+    /// at `road.cpp:1711`), and `TurnSecX` never drops below
+    /// `xsize * MIN_ZOOM >> 8` (`mechos.cpp:3808`, `MIN_ZOOM` 128 at
+    /// `mechos.cpp:3659`), so the eye is at least 256 up (221 tilted by
+    /// `SLOPE_MAX`, pi/6), over every voxel (heights are 0-255).
+    pub fn keep_eye_clear(&mut self, level: &crate::level::Level, clearance: f32) {
+        let column = |p: &Vec3| level.get((p.x.floor() as i32, p.y.floor() as i32));
+        let ring = Self::eye_footprint(self.loc);
+        if !ring.iter().any(|&p| level.solid_at(p)) {
+            return;
+        }
+        let top = ring
+            .iter()
+            .map(|p| column(p).high())
+            .fold(f32::MIN, f32::max);
+        self.loc.z = self.loc.z.max(top + clearance);
+    }
+
+    /// The eye and eight points [`EYE_FOOTPRINT`] around it, level with it.
+    fn eye_footprint(eye: Vec3) -> [Vec3; 9] {
+        let r = EYE_FOOTPRINT;
+        let d = r * std::f32::consts::FRAC_1_SQRT_2;
+        [
+            (0.0, 0.0),
+            (r, 0.0),
+            (-r, 0.0),
+            (0.0, r),
+            (0.0, -r),
+            (d, d),
+            (d, -d),
+            (-d, d),
+            (-d, -d),
+        ]
+        .map(|(x, y)| Vec3::new(eye.x + x, eye.y + y, eye.z))
     }
 
     /// Lower the camera just enough that the arm from the car's eye
@@ -1902,6 +1954,76 @@ mod ground_tests {
             );
             assert!(cam.loc.z < 130.0 - 4.0 + 1e-3);
             assert!(!Camera::terrain_blocks_view(&wall, cam.loc, car, 4.0));
+        }
+    }
+
+    /// A lens over the floor of a crevice with a wall 6u off rises over
+    /// the wall top, as the original's eye is always over every voxel;
+    /// one over open ground, or 10u from the wall, is left alone.
+    #[test]
+    fn an_eye_next_to_a_crevice_wall_goes_over_it() {
+        let crevice = painted_level(
+            |x, _| if (122..134).contains(&x) { 0 } else { 60 },
+            |_, _| None,
+        );
+        let mut cam = cam_at(Vec3::new(128.0, 128.0, 20.0));
+        cam.keep_eye_clear(&crevice, 4.0);
+        assert_eq!(cam.loc.z, 64.0);
+
+        let open = painted_level(|_, _| 0, |_, _| None);
+        let mut cam = cam_at(Vec3::new(128.0, 128.0, 20.0));
+        cam.keep_eye_clear(&open, 4.0);
+        assert_eq!(cam.loc.z, 20.0);
+
+        let wide = painted_level(
+            |x, _| if (110..146).contains(&x) { 0 } else { 60 },
+            |_, _| None,
+        );
+        let mut cam = cam_at(Vec3::new(120.0, 128.0, 20.0));
+        cam.keep_eye_clear(&wide, 4.0);
+        assert_eq!(cam.loc.z, 20.0);
+    }
+
+    /// A car at the bottom of a deep round pit: the chase arm hits the
+    /// pit wall, and the pull used to leave the lens low against it with
+    /// the wall filling the screen. It ends over the rim instead, with
+    /// nothing solid around it.
+    #[test]
+    fn a_chase_into_a_deep_pit_stays_over_the_rim() {
+        let pit = painted_level(
+            |x, y| {
+                let (dx, dy) = (x as f32 - 128.0, y as f32 - 128.0);
+                if dx * dx + dy * dy < 20.0 * 20.0 {
+                    0
+                } else {
+                    100
+                }
+            },
+            |_, _| None,
+        );
+        let car = Vec3::new(128.0, 128.0, 3.6);
+        let target = Transform {
+            disp: car,
+            rot: Quat::IDENTITY,
+            scale: 1.0,
+        };
+        for follow in chase_follows() {
+            let mut cam = cam_at(car + Vec3::new(0.0, 0.0, 240.0));
+            for _ in 0..240 {
+                cam.chase(&pit, &target, 1.0 / 60.0, &follow, 4.0);
+                let ring = Camera::eye_footprint(cam.loc);
+                assert!(
+                    ring.iter().all(|&p| !pit.solid_at(p)),
+                    "{follow:?}: rock around the lens at {:?}",
+                    cam.loc
+                );
+            }
+            let (dx, dy) = (cam.loc.x - 128.0, cam.loc.y - 128.0);
+            assert!(
+                dx * dx + dy * dy < 12.0 * 12.0 || cam.loc.z >= 104.0 - 1e-3,
+                "{follow:?}: lens low against the wall at {:?}",
+                cam.loc
+            );
         }
     }
 
