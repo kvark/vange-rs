@@ -513,7 +513,30 @@ impl Camera {
         follow: &Follow,
         clearance: f32,
     ) {
-        let (cover, ceiling) = Self::slab_cover(level, target.disp, clearance);
+        self.chase_anchored(level, target, target.disp.z, dt, follow, clearance);
+    }
+
+    /// [`Self::chase`] for `road`'s ground-anchored follow: the authored
+    /// offset hangs off the car's (x, y) at height `ground` (see
+    /// [`Self::ground_under`]) so jumps don't yank the view, while the
+    /// slab blend, the pull out of terrain and the sight line all use the
+    /// car itself. On top of an arch, or flying over one, the ground
+    /// under the car can be the floor of the gap far below; judging
+    /// "under a slab" from there dropped the camera into that gap,
+    /// looking up through the arch at the car.
+    pub fn chase_anchored(
+        &mut self,
+        level: &crate::level::Level,
+        car: &Transform,
+        ground: f32,
+        dt: f32,
+        follow: &Follow,
+        clearance: f32,
+    ) {
+        let mut anchored = *car;
+        anchored.disp.z = ground;
+        let target = &anchored;
+        let (cover, ceiling) = Self::slab_cover(level, car.disp, clearance);
         let rate = 1.0 - (-dt * UNDER_SLAB_RATE).exp();
         self.under_slab += (cover - self.under_slab) * rate;
         if self.under_slab < 1e-3 {
@@ -546,7 +569,7 @@ impl Camera {
         };
         let last_rot = self.rot;
         self.follow(target, dt, &follow);
-        self.avoid_terrain(level, target.disp, clearance);
+        self.avoid_terrain(level, car.disp, clearance);
         if follow.look_ahead.abs() > 1e-4 {
             // The damped heading `follow` used, not the raw car yaw,
             // which flips while the car tumbles.
@@ -910,7 +933,16 @@ impl Camera {
             let surface = if cave_mode {
                 level.floor_below(p)
             } else {
-                level.get((p.x as i32, p.y as i32)).high()
+                match level.get((p.x as i32, p.y as i32)) {
+                    // Threading the open gap under an arch or slab is
+                    // clear sight, not a view through its top.
+                    crate::level::Texel::Dual { low, mid, high }
+                        if high.0 > mid + 1.0 && p.z < mid - clearance * 0.35 =>
+                    {
+                        low.0
+                    }
+                    texel => texel.high(),
+                }
             };
             if surface > p.z + clearance * 0.35 {
                 return true;
@@ -1640,6 +1672,54 @@ mod ground_tests {
         let car = Vec3::new(138.0, 128.0, 13.6);
         assert!(Camera::under_slab_at(&pit, car).is_some());
         assert!(Camera::slab_cover(&pit, car, 4.0).0 > 0.99);
+    }
+
+    /// An arch (rock 45-75 over a gap down to 5) between the camera and
+    /// a car outside it: a sight line threading the gap is clear, one
+    /// through the arch's rock is not.
+    #[test]
+    fn a_sight_line_through_an_arch_gap_is_clear() {
+        let arch = painted_level(
+            |_, _| 5,
+            |x, _| (120..140).contains(&x).then_some((5, 5, 75)),
+        );
+        match arch.get((130, 128)) {
+            level::Texel::Dual { low, mid, high } => {
+                assert_eq!((low.0, mid, high.0), (5.0, 45.0, 75.0))
+            }
+            level::Texel::Single(_) => panic!("the arch should be two-level"),
+        }
+        let car = Vec3::new(150.0, 128.0, 8.6);
+        assert!(Camera::under_slab_at(&arch, car).is_none());
+        assert!(!Camera::terrain_blocks_view(
+            &arch,
+            Vec3::new(110.0, 128.0, 25.0),
+            car,
+            4.0
+        ));
+        assert!(Camera::terrain_blocks_view(
+            &arch,
+            Vec3::new(110.0, 128.0, 90.0),
+            car,
+            4.0
+        ));
+    }
+
+    /// Up on the arch's top, the car is not under it: no under-slab
+    /// blend, even judged from the gap floor 70u below.
+    #[test]
+    fn on_top_of_an_arch_is_not_cover() {
+        let arch = painted_level(
+            |_, _| 5,
+            |x, _| (120..140).contains(&x).then_some((5, 5, 75)),
+        );
+        let car = Vec3::new(130.0, 128.0, 78.6);
+        assert_eq!(Camera::slab_cover(&arch, car, 4.0).0, 0.0);
+        let beside = Vec3::new(150.0, 128.0, 85.0);
+        assert_eq!(Camera::slab_cover(&arch, beside, 4.0).0, 0.0);
+        // The gap floor under that flying car is covered: the old anchor.
+        let floor = Vec3::new(150.0, 128.0, 5.0);
+        assert!(Camera::slab_cover(&arch, floor, 4.0).0 > 0.5);
     }
 
     /// Under a slab with a cliff right behind the car, the low pose

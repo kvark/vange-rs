@@ -1387,7 +1387,7 @@ impl Game {
             .iter()
             .find(|a| a.spirit == Spirit::Player)
             .unwrap();
-        let mut target = match player.physics {
+        let target = match player.physics {
             Physics::Cpu { ref transform, .. } => *transform,
         };
         match self.cam_style {
@@ -1398,16 +1398,24 @@ impl Game {
                 ref follow,
                 ground_anchor,
             } => {
-                if ground_anchor {
-                    // The surface under the car: the cave floor beneath a
-                    // slab, not the slab top, and the floor its hull rides
-                    // on rather than a pit under its centre.
-                    target.disp.z = space::Camera::ground_under(&self.level, target.disp);
-                }
+                // The surface under the car: the cave floor beneath a
+                // slab, not the slab top, and the floor its hull rides
+                // on rather than a pit under its centre.
+                let ground = if ground_anchor {
+                    space::Camera::ground_under(&self.level, target.disp)
+                } else {
+                    target.disp.z
+                };
                 // Follow, pull out of hills toward the car, re-aim the
                 // look-ahead, and drop under overhanging slabs.
-                self.cam
-                    .chase(&self.level, &target, delta, follow, CAMERA_CLEARANCE);
+                self.cam.chase_anchored(
+                    &self.level,
+                    &target,
+                    ground,
+                    delta,
+                    follow,
+                    CAMERA_CLEARANCE,
+                );
             }
         }
         self.rebase_torus();
