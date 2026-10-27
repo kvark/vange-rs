@@ -321,6 +321,94 @@ impl TrackOverlay {
     }
 }
 
+/// The treads of a car this client only draws: a remote player's, taken
+/// from the pose it is shown at (interpolated between the server's
+/// snapshots). There is no physics state for such a car, so a wheel
+/// counts as on the ground when its drawn position is within
+/// [`terraform::MAX_CONTACT_HEIGHT`] of the level's surface and the car
+/// stands on its wheels: the tests the physics applies to the car it steps.
+///
+/// The pose is sampled at most [`Self::RATE`] times a second, and a pose
+/// more than [`Self::MAX_JUMP`] texels from the last sample (a teleport, a
+/// respawn, a snapshot that snapped the interpolation, a seam shift) lifts
+/// every wheel instead of drawing a track across the gap, and arms them
+/// again where the car now is. What is recorded goes through
+/// [`TrackOverlay::cut_vehicle`] like the local car's treads, so it never
+/// touches the level either.
+#[derive(Default)]
+pub struct GhostTreads {
+    tracks: Tracks,
+    /// Where the car was at the last sample.
+    last: Option<glam::Vec3>,
+    /// Seconds since the last sample.
+    since: f32,
+}
+
+impl GhostTreads {
+    /// Samples a second, at most.
+    pub const RATE: f32 = 30.0;
+    /// Longest move between two samples drawn as a track, in texels. A car
+    /// at full speed covers a few texels a frame; a client running at a
+    /// few frames a second still well under this.
+    pub const MAX_JUMP: f32 = 32.0;
+    /// Samples the car drawn at `transform` with wheels at `wheels` (car
+    /// space, as the model has them), `delta` seconds after the last call.
+    /// Returns whether a sample was taken.
+    pub fn record(
+        &mut self,
+        level: &Level,
+        transform: &crate::space::Transform,
+        wheels: impl IntoIterator<Item = glam::Vec3>,
+        delta: f32,
+    ) -> bool {
+        self.since += delta;
+        if self.last.is_some() && self.since < 1.0 / Self::RATE {
+            return false;
+        }
+        self.since = 0.0;
+        let pos = transform.disp;
+        let jumped = self
+            .last
+            .is_some_and(|last| (pos - last).truncate().length() > Self::MAX_JUMP);
+        self.last = Some(pos);
+        // `stand_on_wheels` of `physics::step`: upright, and not rolled
+        // onto its side.
+        let upright = (transform.rot * glam::Vec3::Z).z > 0.0
+            && (transform.rot * glam::Vec3::X).z.abs() < 0.7;
+        if jumped || !upright {
+            self.tracks.lift_all();
+        }
+        if !upright {
+            return true;
+        }
+        let lateral = transform.rot * glam::Vec3::X;
+        let across = (lateral.x, lateral.y);
+        for (index, wheel) in wheels.into_iter().enumerate() {
+            let pw = transform.transform_point(wheel);
+            let coord = (pw.x.round() as i32, pw.y.round() as i32);
+            let gap = terraform::surface_height(level, coord) - pw.z;
+            if gap.abs() <= terraform::MAX_CONTACT_HEIGHT {
+                self.tracks.touch(index, coord, across);
+            } else {
+                self.tracks.lift(index);
+            }
+        }
+        true
+    }
+
+    /// Forgets the last sample, so the next one only arms the wheels.
+    pub fn reset(&mut self) {
+        self.tracks.reset();
+        self.last = None;
+        self.since = 0.0;
+    }
+
+    /// The stretches recorded so far, for [`TrackOverlay::cut_vehicle`].
+    pub fn tracks_mut(&mut self) -> &mut Tracks {
+        &mut self.tracks
+    }
+}
+
 fn push_tile(regions: &mut Vec<Region>, key: (i32, i32), size: (i32, i32)) {
     Region::push_wrapped(regions, key.0 * TILE, key.1 * TILE, TILE, TILE, size);
 }
@@ -518,5 +606,99 @@ mod tests {
     fn the_cap_is_four_megabytes() {
         assert_eq!(TrackOverlay::default().cap_tiles * TILE_BYTES, MAX_BYTES);
         assert_eq!(MAX_BYTES / TILE_BYTES, 512);
+    }
+
+    /// Four wheels around a car drawn at `(x, y, z)`, upright.
+    fn ghost_at(x: f32, y: f32, z: f32) -> crate::space::Transform {
+        crate::space::Transform {
+            disp: glam::Vec3::new(x, y, z),
+            rot: glam::Quat::IDENTITY,
+            scale: 1.0,
+        }
+    }
+
+    const WHEELS: [glam::Vec3; 4] = [
+        glam::Vec3::new(-6.0, -8.0, 0.0),
+        glam::Vec3::new(6.0, -8.0, 0.0),
+        glam::Vec3::new(-6.0, 8.0, 0.0),
+        glam::Vec3::new(6.0, 8.0, 0.0),
+    ];
+
+    /// Drives the ghost along `poses`, a frame of `dt` apart, and returns
+    /// the stretches it recorded.
+    fn ghost_drive(poses: &[crate::space::Transform], dt: f32) -> Vec<Track> {
+        let level = test_level();
+        let mut ghost = GhostTreads::default();
+        let mut out = Vec::new();
+        for pose in poses {
+            ghost.record(&level, pose, WHEELS, dt);
+            out.extend(ghost.tracks_mut().drain());
+        }
+        out
+    }
+
+    #[test]
+    fn a_ghost_on_the_ground_leaves_treads() {
+        let ground = terraform::surface_height(&test_level(), (100, 100));
+        let poses: Vec<_> = (0..10)
+            .map(|i| ghost_at(100.0, 100.0 + 3.0 * i as f32, ground))
+            .collect();
+        let treads = ghost_drive(&poses, 1.0 / 30.0);
+        // Armed on the first pose, then a stretch per wheel per pose.
+        assert_eq!(treads.len(), 4 * 9);
+    }
+
+    #[test]
+    fn a_ghost_in_the_air_or_on_its_side_leaves_none() {
+        let ground = terraform::surface_height(&test_level(), (100, 100));
+        let flying: Vec<_> = (0..10)
+            .map(|i| ghost_at(100.0, 100.0 + 3.0 * i as f32, ground + 40.0))
+            .collect();
+        assert!(ghost_drive(&flying, 1.0 / 30.0).is_empty());
+        let rolled: Vec<_> = (0..10)
+            .map(|i| crate::space::Transform {
+                rot: glam::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+                ..ghost_at(100.0, 100.0 + 3.0 * i as f32, ground)
+            })
+            .collect();
+        assert!(ghost_drive(&rolled, 1.0 / 30.0).is_empty());
+    }
+
+    #[test]
+    fn a_ghost_jump_is_not_drawn() {
+        let ground = terraform::surface_height(&test_level(), (100, 100));
+        let poses = [
+            ghost_at(100.0, 100.0, ground),
+            ghost_at(100.0, 103.0, ground),
+            // A teleport: re-arms instead of drawing across.
+            ghost_at(300.0, 103.0, ground),
+            ghost_at(300.0, 106.0, ground),
+        ];
+        let treads = ghost_drive(&poses, 1.0 / 30.0);
+        assert_eq!(treads.len(), 8);
+        for t in &treads {
+            let d = (t.to.0 - t.from.0).abs().max((t.to.1 - t.from.1).abs());
+            assert!(d <= 4, "{t:?}");
+        }
+    }
+
+    #[test]
+    fn a_ghost_is_sampled_at_most_at_the_rate() {
+        let level = test_level();
+        let ground = terraform::surface_height(&level, (100, 100));
+        let mut ghost = GhostTreads::default();
+        let dt = 1.0 / 240.0;
+        let samples = (0..240)
+            .filter(|&i| {
+                ghost.record(
+                    &level,
+                    &ghost_at(100.0, 100.0 + 0.1 * i as f32, ground),
+                    WHEELS,
+                    dt,
+                )
+            })
+            .count();
+        assert!(samples <= GhostTreads::RATE as usize + 1, "{samples}");
+        assert!(samples >= GhostTreads::RATE as usize - 2, "{samples}");
     }
 }

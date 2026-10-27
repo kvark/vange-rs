@@ -315,6 +315,8 @@ struct RemoteAgent {
     /// Server state, drawn pose and contact ghost source
     /// (shared with the web client).
     net: physics::client::RemoteCar,
+    /// Its treads, from the drawn pose, for the cosmetic track overlay.
+    treads: level::overlay::GhostTreads,
 }
 
 impl std::borrow::Borrow<physics::client::RemoteCar> for RemoteAgent {
@@ -1205,6 +1207,38 @@ impl Game {
         self.track_regions.dedup();
         let height = self.level.geometry.height as u16;
         self.render.dirty_terrain(&self.track_regions, height);
+    }
+
+    /// Multiplayer: the treads of the remote cars, sampled from the pose
+    /// each is drawn at (`level::overlay::GhostTreads`) and cut into the
+    /// same cosmetic overlay as our own, so each player sees the others'
+    /// tracks. The level and every physics state are left alone.
+    fn step_remote_tracks(&mut self, delta: f32) {
+        for remote in self.remote_agents.values_mut() {
+            if !remote.net.pose_ready {
+                continue;
+            }
+            let wheels = remote
+                .net
+                .phys_data
+                .wheels
+                .iter()
+                .map(|w| Vec3::from(w.pos));
+            if !remote
+                .treads
+                .record(&self.level, &remote.net.render_transform, wheels, delta)
+            {
+                continue;
+            }
+            let treads = self.render.cut_tracks(
+                &mut self.level,
+                &self.terraform,
+                remote.treads.tracks_mut(),
+            );
+            for track in treads {
+                self.life.particles.from_track(&track, &self.level);
+            }
+        }
     }
 
     /// Multiplayer: step the local car `quanta` whole `max_quant` quanta,
@@ -2715,6 +2749,7 @@ impl Application for Game {
                                     remote.car = car.clone();
                                     remote.net.phys_data = CarPhysicsData::from_car_info(car);
                                     remote.color = body_color;
+                                    remote.treads.reset();
                                 })
                                 .or_insert_with(|| RemoteAgent {
                                     name: player_name.clone(),
@@ -2724,6 +2759,7 @@ impl Application for Game {
                                     net: physics::client::RemoteCar::new(
                                         CarPhysicsData::from_car_info(car),
                                     ),
+                                    treads: Default::default(),
                                 });
                         }
                     }
@@ -2872,8 +2908,8 @@ impl Application for Game {
         for remote in self.remote_agents.values_mut() {
             remote.net.interpolate(delta);
         }
-
         if self.net.is_some() {
+            self.step_remote_tracks(delta);
             self.sync.decay(delta);
         }
 

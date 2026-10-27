@@ -567,6 +567,8 @@ struct WebRemote {
     car: config::car::CarInfo,
     color: render::object::BodyColor,
     net: physics::client::RemoteCar,
+    /// Its treads, from the drawn pose, for the cosmetic track overlay.
+    treads: level::overlay::GhostTreads,
 }
 
 impl std::borrow::Borrow<physics::client::RemoteCar> for WebRemote {
@@ -1472,6 +1474,39 @@ impl WebApp {
             if Some(pc.player_id) == my_id {
                 agent.cirtainer.set_held(&pc.held);
                 break;
+            }
+        }
+    }
+
+    /// Online: the treads of the remote cars, sampled from the pose each is
+    /// drawn at (`level::overlay::GhostTreads`) and cut into the same
+    /// cosmetic overlay as our own, as the native game's
+    /// `step_remote_tracks`. The level and every physics state are left
+    /// alone.
+    fn step_remote_tracks(&mut self, dt: f32) {
+        for remote in self.remotes.values_mut() {
+            if !remote.net.pose_ready {
+                continue;
+            }
+            let wheels = remote
+                .net
+                .phys_data
+                .wheels
+                .iter()
+                .map(|w| glam::Vec3::from(w.pos));
+            if !remote
+                .treads
+                .record(&self.level, &remote.net.render_transform, wheels, dt)
+            {
+                continue;
+            }
+            let treads = self.render.cut_tracks(
+                &mut self.level,
+                &self.terraform,
+                remote.treads.tracks_mut(),
+            );
+            for track in treads {
+                self.life.particles.from_track(&track, &self.level);
             }
         }
     }
@@ -3345,12 +3380,14 @@ impl WebHandler {
                                 remote.net.phys_data = phys.clone();
                                 remote.car = car.clone();
                                 remote.color = color;
+                                remote.treads.reset();
                             })
                             .or_insert_with(|| WebRemote {
                                 name: player_name.clone(),
                                 car: car.clone(),
                                 color,
                                 net: physics::client::RemoteCar::new(phys.clone()),
+                                treads: Default::default(),
                             });
                     }
                     vangers_net::ServerMessage::PlayerLeft { player_id } => {
@@ -3492,6 +3529,7 @@ impl WebHandler {
         }
         if connected {
             gpu.app.mp.decay(dt);
+            gpu.app.step_remote_tracks(dt);
         }
 
         let frame = match gpu.surface.get_current_texture() {
