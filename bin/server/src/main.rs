@@ -1109,7 +1109,7 @@ async fn main() {
                     agent.trace_jump(player_id, tick, wrap);
                     agent.log_pose(player_id);
                 }
-                step_shots(&mut shots, &mut players, tick, dt_fixed, wrap);
+                step_shots(&mut shots, &mut players, &level, tick, dt_fixed);
 
                 // Story cycle: one quant per server tick (tick_rate 20 Hz
                 // matches MAIN_LOOP_TIME = 0.05). All joined players
@@ -1814,14 +1814,15 @@ fn purge_expired_poses(last_poses: &mut HashMap<PlayerId, LastPose>) {
 /// apply its hit, if any: each shot tests the other joined cars where they
 /// were `rewind` ticks ago (`combat::rewind_ticks`), as its shooter saw
 /// them. A hit takes `combat::bay_damage` off the target's armour, down
-/// to 0, and ends the shot.
+/// to 0, and ends the shot. The terrain stops shots.
 fn step_shots(
     shots: &mut Vec<combat::ServerShot<PlayerId>>,
     players: &mut HashMap<PlayerId, ServerAgent>,
+    level: &level::Level,
     tick: u32,
     dt: f32,
-    period: (f32, f32),
 ) {
+    let period = (level.size.0 as f32, level.size.1 as f32);
     let keep = (combat::HISTORY_SECS / dt).ceil() as usize + 1;
     for agent in players.values_mut().filter(|a| a.joined) {
         agent.history.record(tick, agent.transform.disp, keep);
@@ -1838,7 +1839,7 @@ fn step_shots(
                 radius: a.phys_data.bbox.radius * a.transform.scale,
             })
             .collect();
-        match shot.step(dt, &targets, period) {
+        match shot.step(dt, &targets, period, Some(level)) {
             Some(target) => {
                 hits.push((shot.shooter, shot.bay, target));
                 false

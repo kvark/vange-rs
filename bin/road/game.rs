@@ -722,6 +722,8 @@ struct CaveView {
 struct LiveShot {
     shot: weapon::Shot,
     age: f32,
+    /// When the terrain stops it (`Shot::flight_time`).
+    life: f32,
     /// Fired by another player (`ServerMessage::Shot`), drawn in its colour.
     remote: bool,
 }
@@ -2934,6 +2936,7 @@ impl Application for Game {
                     );
                 }
                 self.shots.push(LiveShot {
+                    life: shot.flight_time(&self.level),
                     shot,
                     age: 0.0,
                     remote: false,
@@ -2943,10 +2946,9 @@ impl Application for Game {
             }
         }
         for live in &mut self.shots {
-            live.shot.step(delta);
-            live.age += delta;
+            live.age = live.shot.step_within(delta, live.age, live.life);
         }
-        self.shots.retain(|live| live.age < weapon::SHOT_LIFE);
+        self.shots.retain(|live| live.age < live.life);
 
         self.step_moving_land(delta);
         if !riding && !pad_locked {
@@ -3291,6 +3293,7 @@ impl Application for Game {
                             Vec3::from(origin),
                         );
                         self.shots.push(LiveShot {
+                            life: shot.flight_time(&self.level),
                             shot,
                             age: 0.0,
                             remote: true,

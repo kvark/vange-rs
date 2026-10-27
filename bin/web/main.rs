@@ -676,9 +676,9 @@ struct WebApp {
     terraform: level::terraform::Config,
     life: life::World,
     line_buffer: LineBuffer,
-    /// Other players' shots in flight (`ServerMessage::Shot`) and their
-    /// ages, drawn as streaks. This page has no weapons of its own yet.
-    remote_shots: Vec<(weapon::Shot, f32)>,
+    /// Other players' shots in flight (`ServerMessage::Shot`), their ages
+    /// and when the terrain stops them, drawn as streaks. This page has no weapons of its own yet.
+    remote_shots: Vec<(weapon::Shot, f32, f32)>,
     space_held: bool,
     ride: Option<Ride>,
     /// Original Bug `.a3d` frames, if `game.lst` has one in the VFS.
@@ -1561,11 +1561,10 @@ impl WebApp {
 
     /// Fly the other players' shots on and drop the spent ones.
     fn step_remote_shots(&mut self, delta: f32) {
-        for (shot, age) in &mut self.remote_shots {
-            shot.step(delta);
-            *age += delta;
+        for (shot, age, life) in &mut self.remote_shots {
+            *age = shot.step_within(delta, *age, *life);
         }
-        self.remote_shots.retain(|(_, age)| *age < weapon::SHOT_LIFE);
+        self.remote_shots.retain(|(_, age, life)| *age < *life);
     }
 
     /// `online`: the server owns the armour, so wildlife bites stay
@@ -1905,7 +1904,7 @@ impl WebApp {
         }
         self.life
             .draw_fx(&mut self.line_buffer, eye, self.bug.is_none());
-        for (shot, _) in &self.remote_shots {
+        for (shot, _, _) in &self.remote_shots {
             // The replica next to the camera, as the cars are drawn.
             let (from, to) = shot.streak();
             let shown = self.level.display_pos(from, eye);
@@ -3435,7 +3434,8 @@ impl WebHandler {
                             drawn,
                             (span.x, span.y),
                         );
-                        gpu.app.remote_shots.push((shot, 0.0));
+                        let life = shot.flight_time(&gpu.app.level);
+                        gpu.app.remote_shots.push((shot, 0.0, life));
                     }
                     vangers_net::ServerMessage::PlayerLeft { player_id } => {
                         let name = gpu.app.remotes.remove(&player_id).map(|r| r.name);

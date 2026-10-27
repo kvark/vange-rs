@@ -264,6 +264,30 @@ impl Level {
         }
     }
 
+    /// Whether `pos` is inside the rock, by the same reading of the
+    /// layers as [`floor_below`](Self::floor_below): below the ground of a
+    /// single-level texel; below the cave floor (`low`) or within the slab
+    /// (from the cave ceiling `mid` up to its top `high`) of a double-level
+    /// one. The cave between `low` and `mid` is open.
+    pub fn solid_at(&self, pos: glam::Vec3) -> bool {
+        match self.get((pos.x.floor() as i32, pos.y.floor() as i32)) {
+            Texel::Single(p) => pos.z < p.0,
+            Texel::Dual { low, mid, high } => pos.z < low.0 || (pos.z >= mid && pos.z < high.0),
+        }
+    }
+
+    /// First point of the segment `from`-`to` inside the rock (see
+    /// [`solid_at`](Self::solid_at)), as a fraction of the way along it.
+    /// Sampled every half texel, so a ridge or slab a texel thick is not
+    /// skipped; `from` itself counts.
+    pub fn segment_hits_terrain(&self, from: glam::Vec3, to: glam::Vec3) -> Option<f32> {
+        const STEP: f32 = 0.5;
+        let steps = ((to - from).length() / STEP).ceil().max(1.0) as u32;
+        (0..=steps)
+            .map(|i| i as f32 / steps as f32)
+            .find(|&t| self.solid_at(from.lerp(to, t)))
+    }
+
     pub fn get_low_fast(&self, coord: (i32, i32)) -> f32 {
         assert!(coord.0 >= 0 && coord.1 >= 0);
         let mut i = ((coord.1 % self.size.1) * self.size.0 + (coord.0 % self.size.0)) as usize;

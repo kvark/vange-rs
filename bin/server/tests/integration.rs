@@ -834,7 +834,8 @@ fn test_shot_takes_armor_off_the_target_only() {
         _ => unreachable!(),
     };
 
-    alice_stash.extend(alice.recv_for(Duration::from_millis(400)));
+    // Let both cars land first.
+    alice_stash.extend(alice.recv_for(Duration::from_secs(2)));
     let (tick, agents) = latest_world(&alice_stash).expect("Alice should get a WorldState");
     let find = |agents: &[(u32, [f32; 3], u16, u16)], id| {
         *agents
@@ -847,8 +848,31 @@ fn test_shot_takes_armor_off_the_target_only() {
     assert!(a_max > 0 && b_max > 0, "armour comes with the car");
     assert_eq!((a_armor, b_armor), (a_max, b_max), "both start undamaged");
 
-    // Two shots from Alice's car straight at Bob's (one bay 1, one bay 0),
-    // aimed in the view of the snapshot just received; one aimed away.
+    // Bob's car sits ~100u up the hill from Alice's: a shot from her car
+    // straight at his goes into the slope and does nothing.
+    let into_hill = [
+        b_pos[0] - a_pos[0],
+        b_pos[1] - a_pos[1],
+        b_pos[2] - a_pos[2],
+    ];
+    assert!(into_hill[2] > 50.0, "spawns moved: {a_pos:?} {b_pos:?}");
+    alice.send(&ClientMessage::Fire {
+        quant: 9,
+        bay: 2,
+        origin: a_pos,
+        dir: into_hill,
+        view_tick: tick,
+        view_ms: 0,
+    });
+    let msgs = bob.recv_for(Duration::from_millis(500));
+    let (tick, agents) = latest_world(&msgs).expect("Bob should keep getting WorldState");
+    assert_eq!(find(&agents, bob_id).2, b_max, "the hill takes the shot");
+
+    // Two shots at Bob's car (one bay 1, one bay 0), aimed in the view of
+    // the snapshot just received; one aimed away. They leave from a muzzle
+    // high over Alice's car (within `weapon::FIRE_REACH`) and come down on
+    // Bob over the hill.
+    let a_pos = [a_pos[0], a_pos[1], a_pos[2] + 120.0];
     let at_bob = [
         b_pos[0] - a_pos[0],
         b_pos[1] - a_pos[1],
