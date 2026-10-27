@@ -171,6 +171,12 @@ fn selected_level_id() -> String {
     DEFAULT_LEVEL.to_string()
 }
 
+/// Longest frame whose quanta a multiplayer client still steps, seconds.
+/// Past it (a stall, not a slow page) the car falls behind real time; the
+/// server waits [`physics::prediction::InputQueue::STARVE_TICKS`] (3 s)
+/// before driving it on without input.
+const MP_FRAME_MAX: f32 = 2.5;
+
 /// The value of `key=` in the URL fragment (`#level=fostral&name=Bob`).
 fn hash_param(key: &str) -> Option<String> {
     let hash = web_sys::window()?.location().hash().ok()?;
@@ -2783,6 +2789,11 @@ impl WebHandler {
             None => 1.0 / 60.0,
         };
         self.last_frame = Some(now);
+        // Multiplayer quanta keep to real time even on a slow page
+        // (software WebGL draws about one frame a second): the server runs
+        // the car at real time too, and a client that sends less than that
+        // starves its car there (see `InputQueue::STARVE_TICKS`).
+        let mp_dt = dt.min(MP_FRAME_MAX);
         let dt = dt.min(0.1);
 
         // Derive motor/rudder from the currently pressed keys. Same
@@ -2856,7 +2867,7 @@ impl WebHandler {
         let mp_on = self.ws_client.as_ref().is_some_and(|c| c.is_joined());
         // Match the native build's time scaling (see bin/road/game.rs):
         //   physics_dt = delta * fps * time_delta0 * num_calls
-        let physics_dt = dt * {
+        let physics_dt = if mp_on { mp_dt } else { dt } * {
             let common = &gpu.app.common;
             let n = &common.nature;
             common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
