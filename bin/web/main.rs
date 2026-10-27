@@ -177,6 +177,49 @@ fn selected_level_id() -> String {
 /// before driving it on without input.
 const MP_FRAME_MAX: f32 = 2.5;
 
+/// On-page multiplayer diagnostics, for testers without DevTools: the
+/// last few join / bump / correction lines as the console logs them, and
+/// the local car's predicted pose next to the server's. On by default
+/// when the page joins a server, or with `#debug=1` (`#debug=0` hides it);
+/// F2 or the Settings checkbox toggles it.
+#[derive(Default)]
+struct NetDebug {
+    visible: bool,
+    lines: std::collections::VecDeque<String>,
+    /// The local car in the newest snapshot: position, its ack, speed.
+    server: Option<(glam::Vec3, u32, f32)>,
+    /// What the newest snapshot did to the prediction.
+    outcome: String,
+}
+
+impl NetDebug {
+    const LINES: usize = 8;
+
+    fn new() -> Self {
+        let visible = match hash_param("debug").as_deref() {
+            Some("0") => false,
+            Some(_) => true,
+            None => server_url().is_some(),
+        };
+        NetDebug {
+            visible,
+            ..NetDebug::default()
+        }
+    }
+
+    /// Log `line` to the console and keep it for the overlay, stamped
+    /// with UTC wall time to match the server log.
+    fn note(&mut self, level: log::Level, line: String) {
+        log::log!(level, "{}", line);
+        let iso = String::from(js_sys::Date::new_0().to_iso_string());
+        let stamp = iso.get(11..19).unwrap_or("");
+        if self.lines.len() == Self::LINES {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(format!("{stamp}Z {line}"));
+    }
+}
+
 /// The value of `key=` in the URL fragment (`#level=fostral&name=Bob`).
 fn hash_param(key: &str) -> Option<String> {
     let hash = web_sys::window()?.location().hash().ok()?;
@@ -601,6 +644,8 @@ struct WebApp {
     mp: physics::client::ClientSync,
     /// Other players of the multiplayer session.
     remotes: HashMap<vangers_net::PlayerId, WebRemote>,
+    /// On-page multiplayer diagnostics.
+    net_debug: NetDebug,
     /// Vehicles by name, for the remote players' cars.
     cars: Option<CarLib>,
     moving: level::moving::MovingWorld,
@@ -1007,6 +1052,7 @@ impl WebApp {
             cycle_time: 0.0,
             mp: Default::default(),
             remotes: HashMap::new(),
+            net_debug: NetDebug::new(),
             cars,
             moving,
             terraform: level::terraform::Config::default(),
@@ -1134,6 +1180,7 @@ impl WebApp {
         }
 
         self.draw_minimap(ctx);
+        self.draw_net_debug(ctx);
 
         if self.touch_stick {
             self.stick = draw_drive_stick(ctx);
@@ -1155,6 +1202,7 @@ impl WebApp {
                 "Backend: {}",
                 if self.is_webgpu { "WebGPU" } else { "WebGL2" }
             ));
+            ui.checkbox(&mut self.net_debug.visible, "Net debug overlay (F2)");
             if let Some(ref agent) = self.agent {
                 ui.separator();
                 ui.label("Vehicle");
@@ -1212,6 +1260,58 @@ impl WebApp {
             });
         }
         self.minimap.show(ctx, &self.level, center, heading, &marks);
+    }
+
+    fn draw_net_debug(&mut self, ctx: &egui::Context) {
+        if !self.net_debug.visible {
+            return;
+        }
+        let debug = &self.net_debug;
+        egui::Window::new("Net debug (F2)")
+            .anchor(egui::Align2::RIGHT_TOP, [-8.0, 56.0])
+            .resizable(false)
+            .collapsible(true)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                let mono = |text: String| egui::RichText::new(text).monospace().size(11.0);
+                match self.agent {
+                    Some(ref agent) => {
+                        let p = agent.transform.disp;
+                        ui.label(mono(format!(
+                            "predicted ({:.1}, {:.1}, {:.1}) speed {:.1} next q{}",
+                            p.x,
+                            p.y,
+                            p.z,
+                            agent.dynamo.linear_velocity.length(),
+                            self.mp.prediction.next()
+                        )));
+                    }
+                    None => {
+                        ui.label(mono("no local car".to_string()));
+                    }
+                }
+                match debug.server {
+                    Some((p, ack, speed)) => {
+                        ui.label(mono(format!(
+                            "server    ({:.1}, {:.1}, {:.1}) speed {:.1} ack q{}",
+                            p.x, p.y, p.z, speed, ack
+                        )));
+                    }
+                    None => {
+                        ui.label(mono("server    (no snapshot yet)".to_string()));
+                    }
+                }
+                if !debug.outcome.is_empty() {
+                    ui.label(mono(format!("last snapshot: {}", debug.outcome)));
+                }
+                if self.ride.is_some() {
+                    ui.label(mono("train ride: car held".to_string()));
+                }
+                ui.separator();
+                for line in &debug.lines {
+                    ui.label(mono(line.clone()));
+                }
+            });
     }
 
     fn draw_camera_controls(&mut self, ui: &mut egui::Ui) {
@@ -1529,6 +1629,10 @@ impl WebApp {
             (arrival.pos.0, arrival.pos.1),
             &self.cave_pads,
         );
+        self.net_debug.note(
+            log::Level::Info,
+            format!("Escave arrival '{}' at ({:.0},{:.0})", name, pos.x, pos.y),
+        );
         self.start_enter(
             name,
             glam::Vec3::new(arrival.pos.0 as f32, arrival.pos.1 as f32, pos.z),
@@ -1578,6 +1682,13 @@ impl WebApp {
             return false;
         };
         let dest_z = self.level.get((ride.dest.0, ride.dest.1)).high() + 8.0;
+        self.net_debug.note(
+            log::Level::Info,
+            format!(
+                "Train ride from ({:.0},{:.0}) to ({},{})",
+                pos.x, pos.y, ride.dest.0, ride.dest.1
+            ),
+        );
         self.ride = Some(Ride {
             t: 0.0,
             duration: (ride.quants as f32 * config::common::MAIN_LOOP_TIME).max(0.6),
@@ -3090,19 +3201,21 @@ impl WebHandler {
                         self.mp_status =
                             format!("Connected (player {}, level '{}')", player_id, level_name);
                         ws.player_id = Some(player_id);
-                        log::info!("{}", self.mp_status);
+                        gpu.app
+                            .net_debug
+                            .note(log::Level::Info, self.mp_status.clone());
                         // The page picks its own level (and swaps big
                         // levels for Khox on GPUs capped at 8192 px, as
                         // software WebGL is). Physics on another map
                         // can't agree with the server, so say so.
-                        let here = gpu.app.world_name.as_str();
-                        if !level_name.eq_ignore_ascii_case(here) {
-                            log::warn!(
+                        let here = gpu.app.world_name.clone();
+                        if !level_name.eq_ignore_ascii_case(&here) {
+                            let line = format!(
                                 "Server runs '{}' but this page loaded '{}'; positions won't match",
-                                level_name,
-                                here
+                                level_name, here
                             );
                             self.mp_status += &format!(" - level mismatch, here '{}'", here);
+                            gpu.app.net_debug.note(log::Level::Warn, line);
                         }
                     }
                     vangers_net::ServerMessage::PlayerJoined {
@@ -3111,11 +3224,12 @@ impl WebHandler {
                         car_name,
                         color,
                     } => {
-                        log::info!(
-                            "Player {} ({}) joined in {}",
-                            player_id,
-                            player_name,
-                            car_name
+                        gpu.app.net_debug.note(
+                            log::Level::Info,
+                            format!(
+                                "Player {} ({}) joined in {}",
+                                player_id, player_name, car_name
+                            ),
                         );
                         if Some(player_id) == ws.player_id {
                             continue;
@@ -3154,7 +3268,10 @@ impl WebHandler {
                     }
                     vangers_net::ServerMessage::PlayerLeft { player_id } => {
                         let name = gpu.app.remotes.remove(&player_id).map(|r| r.name);
-                        log::info!("Player {} ({:?}) left", player_id, name);
+                        gpu.app.net_debug.note(
+                            log::Level::Info,
+                            format!("Player {} ({:?}) left", player_id, name),
+                        );
                     }
                     vangers_net::ServerMessage::WorldState {
                         agents,
@@ -3192,6 +3309,11 @@ impl WebHandler {
                             continue;
                         };
                         let snap = physics::client::LocalSnapshot::from_agent(me);
+                        gpu.app.net_debug.server = Some((
+                            snap.car.transform.disp,
+                            snap.ack,
+                            snap.car.linear_velocity.length(),
+                        ));
                         if let Some(ref mut agent) = gpu.app.agent {
                             // Compare with what we predicted at the ack; on
                             // a mismatch rewind there and replay our inputs
@@ -3211,26 +3333,40 @@ impl WebHandler {
                                 },
                                 held,
                             );
+                            let debug = &mut gpu.app.net_debug;
                             match event {
                                 physics::client::SyncEvent::FirstSync => {
                                     gpu.app.cam.focus_on(&snap.car.transform);
+                                    debug.outcome = "first sync".to_string();
                                 }
                                 physics::client::SyncEvent::Reconciled {
                                     outcome,
                                     moved,
                                     shown_at_once,
                                 } => {
+                                    debug.outcome = format!("{:?}, moved {:.1}u", outcome, moved);
                                     if shown_at_once {
-                                        log::warn!(
-                                            "Server correction {:.1}u: shown at once",
-                                            moved
+                                        debug.note(
+                                            log::Level::Warn,
+                                            format!(
+                                                "Server correction {:.1}u: shown at once",
+                                                moved
+                                            ),
                                         );
                                     }
                                     if bumped {
-                                        log::info!("Server bump: {:?} bumps={}", outcome, me.bumps);
+                                        debug.note(
+                                            log::Level::Info,
+                                            format!(
+                                                "Server bump: {:?} bumps={}",
+                                                outcome, me.bumps
+                                            ),
+                                        );
                                     }
                                 }
-                                physics::client::SyncEvent::Held => {}
+                                physics::client::SyncEvent::Held => {
+                                    debug.outcome = "held (not reconciled)".to_string();
+                                }
                             }
                         } else {
                             // No local vehicle mesh — at least park the camera.
