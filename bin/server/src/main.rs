@@ -514,7 +514,14 @@ async fn main() {
     let mut tick: u32 = 0;
     let level_name = cycle_world.clone();
     let max_players = cli.max_players;
-    let max_quant = 0.02f32;
+    // Same sub-step as the clients. `physics::step` applies contact impulses
+    // and the rest threshold once per call, so a finer quant than the
+    // client's makes the server car far stickier against terrain: a car
+    // tipped against a tree cluster stays pinned on the server (and the
+    // WorldState reconcile pins the local car to it) while the same input
+    // frees it on the client.
+    let max_quant = physics_max_quant(settings.as_ref());
+    info!("Physics sub-step max_quant={}", max_quant);
 
     // Physics timing
     let dt_fixed = 1.0 / cli.tick_rate as f32;
@@ -913,6 +920,18 @@ async fn main() {
     }
 }
 
+/// `max_quant` used when no settings file is available; matches
+/// `config/settings.template.ron` so CI clients and server agree.
+const DEFAULT_MAX_QUANT: f32 = 0.1;
+
+/// Physics sub-step size: the clients' `game.physics.max_quant`.
+fn physics_max_quant(settings: Option<&config::Settings>) -> f32 {
+    settings
+        .map(|s| s.game.physics.max_quant)
+        .filter(|q| q.is_finite() && *q > 0.0)
+        .unwrap_or(DEFAULT_MAX_QUANT)
+}
+
 /// Resolve accept-time conn_id to the effective player_id (after name reclaim).
 fn effective_player_id(conn_to_player: &HashMap<PlayerId, PlayerId>, conn_id: PlayerId) -> PlayerId {
     *conn_to_player.get(&conn_id).unwrap_or(&conn_id)
@@ -1117,4 +1136,28 @@ async fn handle_ws_connection(
 
     let _ = event_tx.send(SessionEvent::Disconnected { conn_id: player_id });
     write_handle.abort();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_max_quant_matches_settings_template() {
+        let template = include_str!("../../../config/settings.template.ron");
+        let line = template
+            .lines()
+            .find(|l| l.trim_start().starts_with("max_quant:"))
+            .expect("template has max_quant");
+        let value: f32 = line
+            .split(':')
+            .nth(1)
+            .unwrap()
+            .trim()
+            .trim_end_matches(',')
+            .parse()
+            .unwrap();
+        assert_eq!(DEFAULT_MAX_QUANT, value);
+        assert_eq!(physics_max_quant(None), value);
+    }
 }
