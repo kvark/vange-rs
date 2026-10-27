@@ -3,12 +3,13 @@
 
 use crate::{config, level, model, render::debug::LineBuffer, space};
 
-use glam::{Mat3, Quat, Vec3};
+use glam::{Mat3, Vec3};
 
 const EPSILON: f32 = f32::EPSILON;
 
 pub mod client;
 mod collision;
+mod fmath;
 pub mod prediction;
 mod reconcile;
 mod rigid;
@@ -399,7 +400,8 @@ pub fn step(
 
     if let Some(power) = jump {
         let mass = collision::body_mass(car, transform.scale, common);
-        let f = device_modulation * common.force.k_distance_to_force * dt_impulse / mass.powf(0.3);
+        let f = device_modulation * common.force.k_distance_to_force * dt_impulse
+            / fmath::powf(mass, 0.3);
         log::info!("jump mass {:?}, f {:?}", mass, f);
         rigid.vel += f * jump_dir(power);
     }
@@ -587,18 +589,18 @@ pub fn step(
     }
 
     // apply drag
-    let mut v_drag = common.drag.free.v * common.drag.speed.v.powf(rigid.vel.length());
+    let mut v_drag = common.drag.free.v * fmath::powf(common.drag.speed.v, rigid.vel.length());
     let mut w_drag = common.drag.free.w
-        * common
-            .drag
-            .speed
-            .w
-            .powf(rigid.angular_velocity().length_squared());
+        * fmath::powf(
+            common.drag.speed.w,
+            rigid.angular_velocity().length_squared(),
+        );
     if wheels_touch > 0 {
-        let speed =
-            common.drag.wheel_speed.ln() * car.physics.mobility_factor * common.global.speed_factor
-                / car.physics.speed_factor;
-        rigid.vel.y *= (1.0 + speed).powf(speed_correction_factor);
+        let speed = fmath::ln(common.drag.wheel_speed)
+            * car.physics.mobility_factor
+            * common.global.speed_factor
+            / car.physics.speed_factor;
+        rigid.vel.y *= fmath::powf(1.0 + speed, speed_correction_factor);
     }
 
     // Original `in_water = (float_cnt << 8) / num_bounds` (0..=256).
@@ -640,7 +642,7 @@ pub fn step(
             -ymax * d_fx
         };
         acc_cur.k.x += zmax * d_fy * (1.0 / 16.0);
-        dynamo.rudder *= WATER_RUDDER_DRAG.powf(speed_correction_factor);
+        dynamo.rudder *= fmath::powf(WATER_RUDDER_DRAG, speed_correction_factor);
     }
     let is_after_collision = false;
     if let Some(ref mut tracks) = tracks
@@ -674,7 +676,7 @@ pub fn step(
             car.physics.mobility_factor * common.global.mobility_factor * f_turbo * dynamo.traction
                 / (car.wheels.len() as f32);
         let rudder_vec = {
-            let (sin, cos) = dynamo.rudder.sin_cos();
+            let (sin, cos) = fmath::sin_cos(dynamo.rudder);
             Vec3::new(cos, -sin, 0.0)
         };
         // The grader blade, from the `TerraMoverS*` the mechos `.prm` files
@@ -748,7 +750,7 @@ pub fn step(
         if spring_touch + wheels_touch != 0 {
             let vz = z_axis.dot(rigid.vel);
             if vz < -10.0 {
-                v_drag *= common.drag.z.powf(-vz);
+                v_drag *= fmath::powf(common.drag.z, -vz);
             }
         }
     }
@@ -837,8 +839,8 @@ pub fn step(
     {
         let v_pow = common.drag.abs_min.v / (v_mag + EPSILON);
         let w_pow = common.drag.abs_min.w / (w_mag + EPSILON);
-        v_drag *= common.drag.coll.v.powf(v_pow);
-        w_drag *= common.drag.coll.w.powf(w_pow);
+        v_drag *= fmath::powf(common.drag.coll.v, v_pow);
+        w_drag *= fmath::powf(common.drag.coll.w, w_pow);
     }
 
     if v_mag * v_drag > common.drag.abs_stop.v || w_mag * w_drag > common.drag.abs_stop.w {
@@ -848,7 +850,7 @@ pub fn step(
         let vs = v_vel - r_diff_sign * local_z_scaled.cross(w_vel);
 
         let angle = -dt * w_mag;
-        let vel_rot_inv = Quat::from_axis_angle(w_vel / (w_mag + EPSILON), angle);
+        let vel_rot_inv = fmath::quat_from_axis_angle(w_vel / (w_mag + EPSILON), angle);
         transform.disp += (transform.rot * vs) * dt;
         transform.rot *= vel_rot_inv.inverse();
         v_vel = vel_rot_inv * v_vel;
@@ -861,8 +863,8 @@ pub fn step(
             transform.scale
         );
     }
-    v_vel *= v_drag.powf(speed_correction_factor);
-    w_vel *= w_drag.powf(speed_correction_factor);
+    v_vel *= fmath::powf(v_drag, speed_correction_factor);
+    w_vel *= fmath::powf(w_drag, speed_correction_factor);
 
     // Record tread endpoints from the transform that will actually be
     // rendered. Doing this in the traction loop above sampled the pre-step
@@ -916,6 +918,7 @@ pub fn step(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Quat;
 
     #[test]
     fn wheel_contact_keeps_only_the_vertical() {

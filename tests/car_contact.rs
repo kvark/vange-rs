@@ -39,7 +39,9 @@ fn spawn(level: &level::Level, x: i32, y: i32, yaw: f32, car: &CarPhysicsData) -
 }
 
 fn world_speed(c: &Car) -> f32 {
-    (c.transform.rot * c.dynamo.linear_velocity).truncate().length()
+    (c.transform.rot * c.dynamo.linear_velocity)
+        .truncate()
+        .length()
 }
 
 /// The server's 20 Hz tick: control, physics and contact per quantum.
@@ -381,8 +383,10 @@ fn airborne_contact_prediction_matches_the_server() {
         return;
     };
     let max_quant = settings.game.physics.max_quant;
-    // Centres 50 apart: a power-10 jump comes down on Bob's side.
-    let gap_y = 50;
+    // Centres 52 apart: a power-10 jump comes down on Bob's side. The
+    // airborne hit is a graze, so the last bit of the jump decides it: 50
+    // missed once the physics math went through `libm` and scalar glam.
+    let gap_y = 52;
     let settle = |mut c: Car| {
         for _ in 0..400 {
             physics::step(

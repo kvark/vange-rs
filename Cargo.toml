@@ -50,6 +50,11 @@ name = "web"
 path = "bin/web/main.rs"
 required-features = ["web"]
 
+# Determinism check of the car physics, native against wasm (`--features web`).
+[[bin]]
+name = "determ"
+path = "bin/determ/main.rs"
+
 [dependencies]
 # internals
 m3d = { path = "lib/m3d" }
@@ -60,7 +65,8 @@ vot = { path = "lib/vot" }
 # library
 bytemuck = "1"
 byteorder = "1.0"
-glam = "0.29"
+glam = { version = "0.29", features = ["scalar-math"] }
+libm = "0.2"
 fnv = "1"
 log = "0.4"
 pollster = "0.4"
