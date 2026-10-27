@@ -491,6 +491,9 @@ pub struct Game {
     cam: space::Camera,
     cam_style: CameraStyle,
     max_quant: f32,
+    /// Multiplayer: whole-quantum stepping for the local car, matching the
+    /// server's split so client prediction and server agree on a jump.
+    quant_clock: physics::QuantClock,
     input: Input,
     life: life::World,
     inventory: escave::Inventory,
@@ -936,6 +939,7 @@ impl Game {
             cam,
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
+            quant_clock: physics::QuantClock::default(),
             input: Input::default(),
             life,
             inventory,
@@ -2403,6 +2407,14 @@ impl Application for Game {
             fps * n.time_delta0 * n.num_calls_analysis as f32
         };
 
+        // Multiplayer: the server steps the car in whole `max_quant` quanta
+        // and applies the jump on the last one of its tick. Do the same for
+        // the local car (jump on the last quantum of the frame) so the
+        // prediction follows the server's path instead of one that depends
+        // on the frame rate. Single player keeps the per-frame split.
+        let player_quanta = (self.net.is_some() && !hold_player)
+            .then(|| self.quant_clock.advance(physics_dt, self.max_quant));
+
         {
             use rayon::prelude::*;
 
@@ -2413,6 +2425,24 @@ impl Application for Game {
 
             self.agents.par_iter_mut().for_each(|a| {
                 if hold_player && a.spirit == Spirit::Player {
+                    return;
+                }
+                if a.spirit == Spirit::Player
+                    && let Some(quanta) = player_quanta
+                {
+                    let quant_input_factor = physics::QuantClock::input_factor(max_quant, common);
+                    for i in 0..quanta {
+                        a.cpu_apply_control(quant_input_factor, common);
+                        let step = if i + 1 == quanta {
+                            SimulationStep::Final {
+                                focus_point: &focus_point,
+                                line_buffer: None,
+                            }
+                        } else {
+                            SimulationStep::Intermediate
+                        };
+                        a.cpu_step(max_quant, level, common, step);
+                    }
                     return;
                 }
                 let mut dt = physics_dt;
@@ -2469,7 +2499,15 @@ impl Application for Game {
                 net.send_input(self.input_seq, &control);
                 (net.poll(), net.player_id)
             };
-            for event in events {
+            // A slow frame drains several 20 Hz snapshots at once. Only the
+            // newest says where the server has the car now; reconciling the
+            // present pose against the older ones measures how far the car
+            // moved since, not a desync, and at jump speeds that is enough
+            // to hard-snap it back along its own path.
+            let newest_world = events
+                .iter()
+                .rposition(|e| matches!(e, NetEvent::WorldState { .. }));
+            for (event_index, event) in events.into_iter().enumerate() {
                 match event {
                     NetEvent::Welcome {
                         player_id,
@@ -2563,6 +2601,9 @@ impl Application for Game {
                             };
 
                             if Some(agent_state.player_id) == my_id {
+                                if Some(event_index) != newest_world {
+                                    continue;
+                                }
                                 // Sync local player with server state.
                                 // Both sides run physics; a hard snap every
                                 // 20 Hz WorldState fights contact (wedge /
