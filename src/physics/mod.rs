@@ -8,6 +8,7 @@ use glam::{Mat3, Quat, Vec3};
 const EPSILON: f32 = f32::EPSILON;
 
 mod collision;
+pub mod prediction;
 mod reconcile;
 mod rigid;
 pub mod terrain;
@@ -58,6 +59,7 @@ struct AccelerationVectors {
     k: Vec3, // angular
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct Dynamo {
     pub traction: config::common::Traction,
     pub rudder: f32,
@@ -446,13 +448,13 @@ pub fn step(
         // `FloodLEVEL` is a height quant; the flood texture is per-Y, so
         // the plane the car feels is the same one the water draw uses.
         if dynamo.mole == Mole::Off {
-            match level.get((rglob.x as i32, rglob.y as i32)) {
+            match level.get((rglob.x.floor() as i32, rglob.y.floor() as i32)) {
                 level::Texel::Single(level::Point(_, 0))
                 | level::Texel::Dual {
                     low: level::Point(_, 0),
                     ..
                 } => {
-                    let dz = level.flood_level_at(rglob.y as i32) - rglob.z;
+                    let dz = level.flood_level_at(rglob.y.floor() as i32) - rglob.z;
                     if dz > 0.0 {
                         float_count += 1;
                         water_immersion += dz;
@@ -566,7 +568,7 @@ pub fn step(
                 if world_vz > 30.0
                     && let Some(ref mut tracks) = tracks
                 {
-                    tracks.smash_ceiling((cp.pos.x as i32, cp.pos.y as i32));
+                    tracks.smash_ceiling((cp.pos.x.floor() as i32, cp.pos.y.floor() as i32));
                 }
             }
         }

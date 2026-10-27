@@ -327,6 +327,9 @@ struct RemoteAgent {
     /// Car-local velocities from the latest WorldState.
     linear_velocity: Vec3,
     angular_velocity: Vec3,
+    /// Traction and rudder from the latest WorldState (held by the ghost).
+    traction: f32,
+    rudder: f32,
 }
 
 /// Multiplayer connection state for the lobby UI.
@@ -446,6 +449,74 @@ struct Input {
     fire_bay: Option<usize>,
 }
 
+/// The local car against every predicted remote ghost
+/// (`physics::prediction::Ghost`), one quantum: each ghost moves on, then
+/// one `physics::collide_cars`, and both keep the result (the server's
+/// remote car gives way too).
+#[allow(clippy::too_many_arguments)]
+fn ghost_contacts(
+    transform: &mut space::Transform,
+    dynamo: &mut physics::Dynamo,
+    car: &CarPhysicsData,
+    ghosts: &mut HashMap<PlayerId, physics::prediction::Ghost>,
+    remotes: &HashMap<PlayerId, RemoteAgent>,
+    level: &level::Level,
+    common: &config::common::Common,
+    max_quant: f32,
+) {
+    let wrap = (level.size.0 as f32, level.size.1 as f32);
+    for (id, ghost) in ghosts.iter_mut() {
+        let Some(remote) = remotes.get(id) else {
+            continue;
+        };
+        // Folded onto the home tile after the step and the contact, like
+        // the server's copy.
+        ghost.advance(max_quant, &remote.phys_data, level, common);
+        physics::prediction::fold_home(&mut ghost.transform.disp, level.period());
+        physics::collide_cars(
+            physics::CarBody {
+                dynamo,
+                transform,
+                car,
+            },
+            physics::CarBody {
+                dynamo: &mut ghost.dynamo,
+                transform: &mut ghost.transform,
+                car: &remote.phys_data,
+            },
+            Some(wrap),
+            common,
+        );
+        physics::prediction::fold_home(&mut ghost.transform.disp, level.period());
+    }
+}
+
+/// Fresh ghosts of the remote cars at their latest server pose (on our
+/// quantum of that snapshot).
+fn snapshot_ghosts(
+    remotes: &HashMap<PlayerId, RemoteAgent>,
+) -> HashMap<PlayerId, physics::prediction::Ghost> {
+    remotes
+        .iter()
+        .filter(|(_, r)| r.pose_ready)
+        .map(|(&id, r)| {
+            (
+                id,
+                physics::prediction::Ghost::new(
+                    r.target_transform,
+                    physics::Dynamo {
+                        linear_velocity: r.linear_velocity,
+                        angular_velocity: r.angular_velocity,
+                        traction: r.traction,
+                        rudder: r.rudder,
+                        ..Default::default()
+                    },
+                ),
+            )
+        })
+        .collect()
+}
+
 pub struct Game {
     db: DataBase,
     render: Render,
@@ -469,12 +540,15 @@ pub struct Game {
     remote_agents: HashMap<PlayerId, RemoteAgent>,
     net: Option<NetworkClient>,
     mp_state: MultiplayerState,
-    input_seq: u32,
-    /// Multiplayer: jump released this frame, still to be sent to the server.
-    /// The local physics step `take()`s `Agent::jump` before the network send
-    /// runs, so the send cannot read it from there. Taken (sent once) by the
-    /// next `Input`.
-    net_jump: Option<f32>,
+    /// Multiplayer: the local car's numbered quanta (input and predicted
+    /// state), for the reconcile against the server's acked state.
+    prediction: physics::prediction::Prediction,
+    /// Multiplayer: what the last reconciles moved the local car by, drawn
+    /// as a decaying offset instead of a snap.
+    render_offset: physics::prediction::RenderOffset,
+    /// Multiplayer: the remote cars as the local prediction bumps into
+    /// them, carried along to our next quantum.
+    ghosts: HashMap<PlayerId, physics::prediction::Ghost>,
     /// Set after the first WorldState snap from the server.
     /// Before this, the client's player position may differ from the
     /// server's spawn point, so we need to hard-snap the camera.
@@ -934,8 +1008,9 @@ impl Game {
                 },
                 connected,
             },
-            input_seq: 0,
-            net_jump: None,
+            prediction: Default::default(),
+            render_offset: Default::default(),
+            ghosts: HashMap::new(),
             server_synced: false,
             tweaks_pos_hold: 0.0,
             tweaks_pose_dirty: false,
@@ -1180,16 +1255,34 @@ impl Game {
     /// Multiplayer: step the local car `quanta` whole `max_quant` quanta,
     /// the way `vangers-server` steps every car on its tick: control, then
     /// `physics::step` (jump and roll on the last quantum of the frame),
-    /// then contact against the remote ghosts.
-    fn step_player_quanta(&mut self, quanta: u32, focus_point: &Vec3) {
+    /// then contact against the remote ghosts. Every quantum goes into the
+    /// prediction history. Returns the frame's input batch for the server:
+    /// its first quantum index and the input (held controls, with the
+    /// jump and roll of the last quantum).
+    fn step_player_quanta(
+        &mut self,
+        quanta: u32,
+        focus_point: &Vec3,
+    ) -> Option<(u32, physics::prediction::QuantInput)> {
         let max_quant = self.max_quant;
         let quant_input_factor = physics::QuantClock::input_factor(max_quant, &self.db.common);
+        let first = self.prediction.next();
+        let mut batch = None;
         for i in 0..quanta {
             let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
-                return;
+                return batch.map(|input| (first, input));
+            };
+            let last = i + 1 == quanta;
+            let input = physics::prediction::QuantInput {
+                motor: player.control.motor,
+                rudder: player.control.rudder,
+                brake: player.control.brake,
+                turbo: player.control.turbo,
+                jump: if last { player.jump } else { None },
+                roll: if last { player.control.roll } else { 0.0 },
             };
             player.cpu_apply_control(quant_input_factor, &self.db.common);
-            let step = if i + 1 == quanta {
+            let step = if last {
                 SimulationStep::Final {
                     focus_point,
                     line_buffer: None,
@@ -1198,22 +1291,35 @@ impl Game {
                 SimulationStep::Intermediate
             };
             player.cpu_step(max_quant, &self.level, &self.db.common, step);
+            // Fold onto the home tile where the server does: after the
+            // step and again after the contacts.
+            self.rebase_torus();
             self.predict_remote_contacts();
+            self.rebase_torus();
+            let player = self.agents.iter().find(|a| a.spirit == Spirit::Player).unwrap();
+            let Physics::Cpu {
+                ref transform,
+                ref dynamo,
+            } = player.physics;
+            self.prediction.push(input, transform, dynamo);
+            batch = Some(input);
         }
+        batch.map(|input| (first, input))
     }
 
     /// Multiplayer: bump the local car off remote ghosts right away, with
     /// the same `physics::collide_cars` the server runs authoritatively.
     /// Only the local car takes the result; the ghost keeps following
-    /// WorldState, and the server's own contact for us arrives within a
-    /// tick and soft-blends in. Without this the local car drives through
-    /// the ghost until the reconcile snaps it back.
+    /// WorldState. Without this the local car drives through the ghost
+    /// until the reconcile pulls it back.
     ///
     /// Runs after every physics quantum, as the server's `collide_players`
-    /// does: the push-apart moves half the overlap per call, so once per
-    /// render frame against once per tick took a different path at every
-    /// frame rate (10-20u after an airborne bump). The ghost is its latest
-    /// server pose, not the interpolated render pose a tick behind it.
+    /// does (and again for every replayed quantum of a reconcile): the
+    /// push-apart moves half the overlap per call, so once per render frame
+    /// took a different path at every frame rate. The ghost starts at its
+    /// latest server pose (not the interpolated render pose a tick behind
+    /// it) and is carried along with the local car, see
+    /// `physics::prediction::Ghost`.
     fn predict_remote_contacts(&mut self) {
         if self.net.is_none() || !self.server_synced || self.remote_agents.is_empty() {
             return;
@@ -1225,32 +1331,16 @@ impl Game {
             ref mut transform,
             ref mut dynamo,
         } = player.physics;
-        let wrap = (self.level.size.0 as f32, self.level.size.1 as f32);
-        for remote in self.remote_agents.values() {
-            if !remote.pose_ready {
-                continue;
-            }
-            let mut ghost_transform = remote.target_transform;
-            let mut ghost_dynamo = physics::Dynamo {
-                linear_velocity: remote.linear_velocity,
-                angular_velocity: remote.angular_velocity,
-                ..Default::default()
-            };
-            physics::collide_cars(
-                physics::CarBody {
-                    dynamo,
-                    transform,
-                    car: &player.phys_data,
-                },
-                physics::CarBody {
-                    dynamo: &mut ghost_dynamo,
-                    transform: &mut ghost_transform,
-                    car: &remote.phys_data,
-                },
-                Some(wrap),
-                &self.db.common,
-            );
-        }
+        ghost_contacts(
+            transform,
+            dynamo,
+            &player.phys_data,
+            &mut self.ghosts,
+            &self.remote_agents,
+            &self.level,
+            &self.db.common,
+            self.max_quant,
+        );
     }
 
     fn step_world_life(&mut self, delta: f32) {
@@ -1387,8 +1477,9 @@ impl Game {
             .iter()
             .find(|a| a.spirit == Spirit::Player)
             .unwrap();
+        // The drawn pose: physics plus the decaying reconcile offset.
         let target = match player.physics {
-            Physics::Cpu { ref transform, .. } => *transform,
+            Physics::Cpu { ref transform, .. } => self.render_offset.apply(transform),
         };
         match self.cam_style {
             CameraStyle::Simple(ref dir) => {
@@ -1428,14 +1519,28 @@ impl Game {
     /// Fold camera and every agent onto the home tile so coordinates
     /// cannot run off to infinity, and a car west of the seam is the
     /// same car you meet again.
+    ///
+    /// Multiplayer folds by the local car instead of the camera, after
+    /// every quantum: the server folds every car onto the home tile after
+    /// each quantum, and the predicted car has to be stepped on the same
+    /// coordinates, bit for bit, or float rounding (a car at -20 is not
+    /// the car at 236) makes the prediction drift from the server.
     fn rebase_torus(&mut self) {
         let span = self.level.period();
         if span.x <= 0.0 || span.y <= 0.0 {
             return;
         }
+        let player_disp = self.agents.iter().find(|a| a.spirit == Spirit::Player).map(|a| {
+            let Physics::Cpu { ref transform, .. } = a.physics;
+            transform.disp
+        });
+        let reference = match player_disp {
+            Some(disp) if self.net.is_some() => disp,
+            _ => self.cam.loc,
+        };
         let shift = Vec3::new(
-            self.cam.loc.x.div_euclid(span.x) * span.x,
-            self.cam.loc.y.div_euclid(span.y) * span.y,
+            reference.x.div_euclid(span.x) * span.x,
+            reference.y.div_euclid(span.y) * span.y,
             0.0,
         );
         if shift.x == 0.0 && shift.y == 0.0 {
@@ -1458,6 +1563,9 @@ impl Game {
             remote.prev_transform.disp -= shift;
             remote.target_transform.disp -= shift;
             remote.render_transform.disp -= shift;
+        }
+        for ghost in self.ghosts.values_mut() {
+            ghost.transform.disp -= shift;
         }
         self.life.shift(shift);
         for live in self.shots.iter_mut() {
@@ -2157,7 +2265,15 @@ impl Game {
 
 
     /// MP: push the local pose to the server (Tweaks Position edit, R reset).
-    fn send_tweaks_pose(&self) {
+    /// The car was moved outside its inputs, so the prediction history is
+    /// dropped and the server told which quantum the pose holds from.
+    fn send_tweaks_pose(&mut self) {
+        if self.net.is_none() {
+            return;
+        }
+        self.prediction.clear();
+        self.render_offset = Default::default();
+        let next_quant = self.prediction.next();
         let Some(net) = self.net.as_ref() else {
             return;
         };
@@ -2177,7 +2293,7 @@ impl Game {
             ],
             scale: transform.scale,
         };
-        net.send_set_pose(&nt);
+        net.send_set_pose(&nt, next_quant);
     }
 
     fn draw_spiral_hud(&self, context: &egui::Context) {
@@ -2285,9 +2401,6 @@ impl Application for Game {
                 KeyCode::KeyM => self.input.mole = false,
                 KeyCode::AltLeft => {
                     player.jump = self.input.jump.take();
-                    if self.net.is_some() {
-                        self.net_jump = player.jump;
-                    }
                 }
                 _ => (),
             },
@@ -2447,7 +2560,12 @@ impl Application for Game {
         // the local car (jump on the last quantum of the frame) so the
         // prediction follows the server's path instead of one that depends
         // on the frame rate. Single player keeps the per-frame split.
-        let player_quanta = (self.net.is_some() && !hold_player)
+        // While the player is held (train ride, pad lock) the quanta still
+        // go to the server, with no control, so its copy of the car stays
+        // put too instead of running on the last held input.
+        let player_quanta = self
+            .net
+            .is_some()
             .then(|| self.quant_clock.advance(physics_dt, self.max_quant));
 
         {
@@ -2491,9 +2609,17 @@ impl Application for Game {
             });
         }
 
-        if let Some(quanta) = player_quanta {
-            self.step_player_quanta(quanta, &focus_point);
-        }
+        let input_batch = match player_quanta {
+            Some(quanta) if hold_player => {
+                // The car moves outside its inputs: no history to replay.
+                let first = self.prediction.skip(quanta);
+                (quanta > 0).then(|| (first, quanta, Default::default()))
+            }
+            Some(quanta) => self
+                .step_player_quanta(quanta, &focus_point)
+                .map(|(first, input)| (first, quanta, input)),
+            None => None,
+        };
         self.step_tracks();
         self.step_world_life(delta);
 
@@ -2501,30 +2627,27 @@ impl Application for Game {
         // Send + poll under a short `net` borrow, then handle events with
         // full `&mut self` so cycle sync can touch render/level/agents.
         if self.net.is_some() {
-            let player = self
-                .agents
-                .iter()
-                .find(|a| a.spirit == Spirit::Player)
-                .unwrap();
-            self.input_seq += 1;
-            let control = vangers_net::NetControl {
-                motor: player.control.motor,
-                rudder: player.control.rudder,
-                roll: player.control.roll,
-                brake: player.control.brake,
-                turbo: player.control.turbo,
-                jump: self.net_jump.take(),
-            };
             let (events, my_id) = {
                 let net = self.net.as_mut().unwrap();
-                net.send_input(self.input_seq, &control);
+                if let Some((first, quanta, input)) = input_batch {
+                    let input: physics::prediction::QuantInput = input;
+                    net.send_input(
+                        first,
+                        quanta.min(u16::MAX as u32) as u16,
+                        &vangers_net::NetControl {
+                            motor: input.motor,
+                            rudder: input.rudder,
+                            roll: input.roll,
+                            brake: input.brake,
+                            turbo: input.turbo,
+                            jump: input.jump,
+                        },
+                    );
+                }
                 (net.poll(), net.player_id)
             };
-            // A slow frame drains several 20 Hz snapshots at once. Only the
-            // newest says where the server has the car now; reconciling the
-            // present pose against the older ones measures how far the car
-            // moved since, not a desync, and at jump speeds that is enough
-            // to hard-snap it back along its own path.
+            // A slow frame drains several 20 Hz snapshots at once; the
+            // newest has the latest ack and is the only one reconciled.
             let newest_world = events
                 .iter()
                 .rposition(|e| matches!(e, NetEvent::WorldState { .. }));
@@ -2589,6 +2712,8 @@ impl Application for Game {
                                     phys_data: CarPhysicsData::from_car_info(car),
                                     linear_velocity: Vec3::ZERO,
                                     angular_velocity: Vec3::ZERO,
+                                    traction: 0.0,
+                                    rudder: 0.0,
                                 });
                         }
                     }
@@ -2609,7 +2734,11 @@ impl Application for Game {
                             self.apply_moving_land_state(moving_state);
                         }
                         self.apply_spiral_from_world(&agents, my_id);
-                        for agent_state in &agents {
+                        // Remote cars first, so a replay of our inputs
+                        // bumps against the ghosts of this same snapshot.
+                        let mut ordered: Vec<_> = agents.iter().collect();
+                        ordered.sort_by_key(|a| Some(a.player_id) == my_id);
+                        for agent_state in ordered {
                             let server_transform = space::Transform {
                                 disp: Vec3::from(agent_state.transform.position),
                                 rot: glam::Quat::from_xyzw(
@@ -2625,12 +2754,14 @@ impl Application for Game {
                                 if Some(event_index) != newest_world {
                                     continue;
                                 }
-                                // Sync local player with server state.
-                                // Both sides run physics; a hard snap every
-                                // 20 Hz WorldState fights contact (wedge /
-                                // jump-mass). Blend small pose error; snap
-                                // large desync. Skip while Tweaks Position
-                                // is being edited (debug hold).
+                                // Client-side prediction: compare the
+                                // server's state with what we predicted
+                                // at its ack, and on a mismatch rewind
+                                // there and replay our inputs since
+                                // (`physics::prediction`). The replay's
+                                // move is drawn as a decaying offset.
+                                // Skipped while the car is held or the
+                                // Tweaks Position is being edited.
                                 let player =
                                     self.agents.iter_mut().find(|a| a.spirit == Spirit::Player);
                                 if let Some(player) = player
@@ -2639,6 +2770,18 @@ impl Application for Game {
                                         ref mut dynamo,
                                     } = player.physics
                                 {
+                                    // The ghosts restart from this snapshot;
+                                    // a replay carries them along, else they
+                                    // are only led to our present.
+                                    let fresh = snapshot_ghosts(&self.remote_agents);
+                                    let lead = self.prediction.next().wrapping_sub(agent_state.ack);
+                                    self.ghosts = fresh.clone();
+                                    for (id, ghost) in self.ghosts.iter_mut() {
+                                        let phys = &self.remote_agents[id].phys_data;
+                                        for _ in 0..lead.min(physics::prediction::GHOST_LEAD_MAX) {
+                                            ghost.advance(self.max_quant, phys, &self.level, &self.db.common);
+                                        }
+                                    }
                                     let first_sync = !self.server_synced;
                                     if first_sync {
                                         // First sync: hard-snap camera to
@@ -2650,32 +2793,111 @@ impl Application for Game {
                                         .server_bumps
                                         .replace(agent_state.bumps)
                                         .is_some_and(|seen| seen != agent_state.bumps);
-                                    if self.tweaks_pos_hold <= 0.0 {
-                                        let server = physics::ServerCar {
-                                            transform: server_transform,
-                                            linear_velocity: Vec3::from(
-                                                agent_state.dynamo.linear_velocity,
-                                            ),
-                                            angular_velocity: Vec3::from(
-                                                agent_state.dynamo.angular_velocity,
-                                            ),
-                                            traction: agent_state.dynamo.traction,
-                                            rudder: agent_state.dynamo.rudder,
-                                            bumped,
-                                        };
-                                        if first_sync {
-                                            *transform = server_transform;
-                                            dynamo.linear_velocity = server.linear_velocity;
-                                            dynamo.angular_velocity = server.angular_velocity;
-                                            dynamo.traction = server.traction;
-                                            dynamo.rudder = server.rudder;
-                                        } else if physics::reconcile_local_car(
-                                            transform, dynamo, &server,
-                                        ) == physics::Reconcile::Bump
+                                    let server = physics::ServerCar {
+                                        transform: server_transform,
+                                        linear_velocity: Vec3::from(
+                                            agent_state.dynamo.linear_velocity,
+                                        ),
+                                        angular_velocity: Vec3::from(
+                                            agent_state.dynamo.angular_velocity,
+                                        ),
+                                        traction: agent_state.dynamo.traction,
+                                        rudder: agent_state.dynamo.rudder,
+                                        bumped,
+                                    };
+                                    if first_sync {
+                                        *transform = server_transform;
+                                        dynamo.linear_velocity = server.linear_velocity;
+                                        dynamo.angular_velocity = server.angular_velocity;
+                                        dynamo.traction = server.traction;
+                                        dynamo.rudder = server.rudder;
+                                        self.prediction.clear();
+                                        self.render_offset = Default::default();
+                                    } else if self.tweaks_pos_hold <= 0.0 && !hold_player {
+                                        let before = *transform;
+                                        let max_quant = self.max_quant;
+                                        let common = &self.db.common;
+                                        let level = &self.level;
+                                        let remotes = &self.remote_agents;
+                                        let period = Some(level.period());
+                                        let force = fresh.values().any(|g| {
+                                            physics::prediction::wrapped_distance(
+                                                g.transform.disp,
+                                                transform.disp,
+                                                period,
+                                            ) < physics::prediction::GHOST_REPLAY_RANGE
+                                        });
+                                        let mut ghosts = fresh;
+                                        let car = &player.phys_data;
+                                        let input_factor =
+                                            physics::QuantClock::input_factor(max_quant, common);
+                                        let outcome = self.prediction.reconcile(
+                                            &physics::prediction::ServerSnapshot {
+                                                car: server,
+                                                ack: agent_state.ack,
+                                            },
+                                            force,
+                                            period,
+                                            transform,
+                                            dynamo,
+                                            |t, d, input, _| {
+                                                physics::prediction::step_input(
+                                                    d,
+                                                    t,
+                                                    input,
+                                                    max_quant,
+                                                    input_factor,
+                                                    car,
+                                                    level,
+                                                    common,
+                                                    None,
+                                                );
+                                                physics::prediction::fold_home(
+                                                    &mut t.disp,
+                                                    level.period(),
+                                                );
+                                                ghost_contacts(
+                                                    t,
+                                                    d,
+                                                    car,
+                                                    &mut ghosts,
+                                                    remotes,
+                                                    level,
+                                                    common,
+                                                    max_quant,
+                                                );
+                                                physics::prediction::fold_home(
+                                                    &mut t.disp,
+                                                    level.period(),
+                                                );
+                                            },
+                                        );
+                                        if let physics::prediction::Reconciled::Replayed(_) = outcome {
+                                            self.ghosts = ghosts;
+                                        }
+                                        if let physics::prediction::Reconciled::Replayed(_)
+                                        | physics::prediction::Reconciled::Ahead = outcome
                                         {
+                                            let moved = before.disp.distance(transform.disp);
+                                            if !self.render_offset.absorb(&before, transform) {
+                                                log::warn!(
+                                                    "Server correction {:.1}u: shown at once",
+                                                    moved
+                                                );
+                                            } else {
+                                                log::debug!(
+                                                    "Reconcile {:?} at ack {}: moved {:.2}u",
+                                                    outcome,
+                                                    agent_state.ack,
+                                                    moved
+                                                );
+                                            }
+                                        }
+                                        if bumped {
                                             let v = transform.rot * dynamo.linear_velocity;
                                             log::info!(
-                                                "Server bump: adopted vel=({:.2},{:.2},{:.2}) bumps={}",
+                                                "Server bump: {:?} vel=({:.2},{:.2},{:.2}) bumps={}",
+                                                outcome,
                                                 v.x,
                                                 v.y,
                                                 v.z,
@@ -2689,6 +2911,8 @@ impl Application for Game {
                             {
                                 remote.linear_velocity =
                                     Vec3::from(agent_state.dynamo.linear_velocity);
+                                remote.traction = agent_state.dynamo.traction;
+                                remote.rudder = agent_state.dynamo.rudder;
                                 remote.angular_velocity =
                                     Vec3::from(agent_state.dynamo.angular_velocity);
                                 if !remote.pose_ready {
@@ -2746,6 +2970,10 @@ impl Application for Game {
                 scale: remote.prev_transform.scale
                     + (remote.target_transform.scale - remote.prev_transform.scale) * t,
             };
+        }
+
+        if self.net.is_some() {
+            self.render_offset.decay(delta);
         }
 
         // Camera follow runs last so it sees the post-physics,
@@ -3213,6 +3441,9 @@ impl Application for Game {
         let eye = self.cam.loc;
         for agent in self.agents.iter() {
             let mut drawn = match agent.physics {
+                Physics::Cpu { ref transform, .. } if agent.spirit == Spirit::Player => {
+                    self.render_offset.apply(transform)
+                }
                 Physics::Cpu { ref transform, .. } => *transform,
             };
             drawn.disp = self.level.display_pos(drawn.disp, eye);

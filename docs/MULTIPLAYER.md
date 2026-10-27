@@ -116,7 +116,8 @@ cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
 
 ## Local player pose (blend vs snap)
 
-Client and server both run physics. A hard snap on every 20 Hz `WorldState`
+This is how the **web** client still reconciles (see the next section for
+the native one). Client and server both run physics. A hard snap on every 20 Hz `WorldState`
 fights local contact — a wedged car gets slammed back into geometry (jump-mass
 spam). The local player now blends small position/rotation errors toward the
 server and hard-snaps only when `|Δpos|` (or rotation) exceeds a threshold
@@ -132,6 +133,67 @@ remainder step per call" split flew the same jump along a different path at
 every client frame rate (9–90u apart on landing on Fostral). Only the newest
 `WorldState` of a poll batch is reconciled against the local car; older ones
 in the same slow frame would pull it back along its own path.
+
+## Lag compensation (native client prediction, protocol 2)
+
+The native client predicts its own car and lets the server's word land
+without visible snaps; the code is in `src/physics/prediction.rs`.
+
+- **Numbered quantum inputs.** Each frame the client steps its car in whole
+  `max_quant` quanta and sends one `ClientMessage::Input { first_quant,
+  quanta, control }`; the held controls cover every quantum, jump / roll the
+  last one. The server queues them per player (`InputQueue`) and runs
+  exactly those quanta, one tick's worth per tick. It does not race through
+  a burst (a long client frame): other cars run at the tick rate, and a
+  client bumping into them predicts them on its own quanta. Past
+  `CATCHUP_TICKS` of backlog (a lag spike) it runs double rate; a client
+  silent for `STARVE_TICKS` gets its car driven on with the held control,
+  unacked.
+- **Ack + rewind / replay.** `AgentState::ack` is the number of the
+  player's quanta in the snapshot. The client keeps its last
+  `Prediction::HISTORY` predicted quanta and compares its prediction *at the ack*
+  with the server state. In agreement nothing happens; otherwise it rewinds
+  to the server state and replays the inputs since the ack.
+- **Ghosts.** Remote cars are carried along in the replay. A `Ghost`
+  starts at the remote car's snapshot pose on the local quantum of that
+  snapshot (the ack) and runs full physics per local quantum with its
+  snapshot traction / rudder held (up to `GHOST_LEAD_MAX` quanta), with
+  `collide_cars` against the local car on both bodies, the way the server
+  does it. With a ghost within `GHOST_REPLAY_RANGE` every snapshot replays,
+  so a ram is predicted from the server's state of both cars rather than
+  against a remote car frozen in place.
+- **Home tile.** The server folds every car onto the home tile
+  (`rem_euclid`) after each step and each contact; the predicting client
+  does the same (`fold_home`) so both run the physics on identical float
+  coordinates. Terrain lookups floor (not truncate) coordinates, so a car at
+  a negative coordinate samples the right cell.
+- **Render offset.** What a replay moves the car by goes into
+  `RenderOffset`, drawn on top of the physics pose and decayed (time
+  constant 0.1 s, at most 30 u/s and 1.5u per frame). Only a jump over
+  50u (a teleport) is shown at once. The camera follows the drawn pose.
+- **Bumps.** A `bumps` change still makes the reconcile take the server's
+  velocities (the replay starts from them anyway).
+- **Protocol 2** (`PROTOCOL_VERSION`): `Join::protocol`,
+  `Input { first_quant, quanta, control }` (was `{ sequence, control }`),
+  `AgentState::ack`, `SetPose::next_quant` (drops queued input from before a
+  debug pose). The server turns away clients on another revision.
+- **Web** sends protocol-2 quantum batches but keeps the older reconcile
+  (blend / snap against its present pose); single player is unchanged.
+
+Try it under a real-world ping on localhost with the server's simulated lag
+(held each way, so the round trip is twice the latency plus jitter):
+
+```bash
+cargo run --release -p vangers-server -- --port 7800 --ws-port 7801 --sim-latency-ms 100 --sim-jitter-ms 30
+cargo run --release --bin road -- --server 127.0.0.1:7800 --name Alice
+```
+
+`tests/lag_compensation.rs` runs client, server and link deterministically
+(1-5 ticks of latency plus jitter, 17 ms / 200 ms / random frames; drive,
+jump and a ram) on the test level and, when the data is present, on
+Fostral. It asserts a visible per-frame correction under 2u, no snaps and
+convergence with prediction, and prints what the old reconcile does on the
+same runs.
 
 ## Duel spawn (ram / bump tests)
 
@@ -298,6 +360,8 @@ cargo test --lib space::reconcile_tests
 cargo test --lib level::cycle
 # moving-land sync_authority:
 cargo test --lib level::moving::tests::sync_authority_matches_free_running_peer
+# lag compensation (prediction vs the old reconcile, simulated latency):
+cargo test --release --test lag_compensation -- --nocapture
 # server integration (incl. SetPose / SetSpiral → WorldState, reclaim, duel spawn):
 cargo test -p vangers-server --test integration
 ```

@@ -1584,6 +1584,13 @@ mod net_ws {
         pub received: Rc<RefCell<Vec<ServerMessage>>>,
         pub connected: Rc<RefCell<bool>>,
         pub player_id: Option<PlayerId>,
+        /// Numbers the quanta of `ClientMessage::Input` (protocol 2).
+        /// The web build does not predict per quantum yet: it keeps the
+        /// older reconcile against its present pose
+        /// (`physics::reconcile_local_car`), and only counts quanta so the
+        /// server's input queue runs at the right rate.
+        quant_clock: vangers::physics::QuantClock,
+        next_quant: u32,
         _on_message: Closure<dyn FnMut(web_sys::MessageEvent)>,
         _on_open: Closure<dyn FnMut(JsValue)>,
         _on_error: Closure<dyn FnMut(web_sys::ErrorEvent)>,
@@ -1625,6 +1632,7 @@ mod net_ws {
                     player_name: "WebPlayer".into(),
                     car_name: "TestCar".into(),
                     color: 21,
+                    protocol: vangers_net::PROTOCOL_VERSION,
                 });
                 let _ = ws_clone.send_with_u8_array(&msg);
             }) as Box<dyn FnMut(JsValue)>);
@@ -1649,6 +1657,8 @@ mod net_ws {
                 received,
                 connected,
                 player_id: None,
+                quant_clock: Default::default(),
+                next_quant: 0,
                 _on_message: on_message,
                 _on_open: on_open,
                 _on_error: on_error,
@@ -1656,12 +1666,18 @@ mod net_ws {
             })
         }
 
-        pub fn send_input(&self, motor: f32, rudder: f32) {
-            if !*self.connected.borrow() {
+        /// This frame's `physics_dt` worth of `max_quant` quanta, all with
+        /// the same held control.
+        pub fn send_input(&mut self, motor: f32, rudder: f32, physics_dt: f32, max_quant: f32) {
+            let quanta = self.quant_clock.advance(physics_dt, max_quant);
+            if !*self.connected.borrow() || quanta == 0 {
                 return;
             }
+            let first_quant = self.next_quant;
+            self.next_quant = self.next_quant.wrapping_add(quanta);
             let msg = encode(&ClientMessage::Input {
-                sequence: 0,
+                first_quant,
+                quanta: quanta as u16,
                 control: vangers_net::NetControl {
                     motor,
                     rudder,
@@ -2822,10 +2838,16 @@ impl WebHandler {
 
         // Process multiplayer messages
         if let Some(ref mut ws) = self.ws_client {
-            // Send input
-            if motor != 0.0 || rudder != 0.0 {
-                ws.send_input(motor, rudder);
-            }
+            // Send input every frame, released keys included: the server
+            // runs exactly the quanta it is sent.
+            let physics_dt = dt * {
+                let common = &gpu.app.common;
+                let n = &common.nature;
+                common.speed.standard_frame_rate as f32
+                    * n.time_delta0
+                    * n.num_calls_analysis as f32
+            };
+            ws.send_input(motor, rudder, physics_dt, gpu.app.max_quant);
 
             // Process received messages
             for msg in ws.poll() {

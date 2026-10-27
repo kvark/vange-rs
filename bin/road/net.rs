@@ -55,6 +55,7 @@ impl NetworkClient {
             player_name: player_name.to_string(),
             car_name: car_name.to_string(),
             color,
+            protocol: vangers_net::PROTOCOL_VERSION,
         });
         let mut write_stream = stream.try_clone().expect("Failed to clone TCP stream");
         write_stream.write_all(&join_msg).ok();
@@ -139,18 +140,22 @@ impl NetworkClient {
     }
 
     /// Send control input to the server.
-    pub fn send_input(&self, seq: u32, control: &NetControl) {
+    /// Input for `quanta` quanta from index `first_quant`
+    /// (`ClientMessage::Input`).
+    pub fn send_input(&self, first_quant: u32, quanta: u16, control: &NetControl) {
         let msg = encode(&ClientMessage::Input {
-            sequence: seq,
+            first_quant,
+            quanta,
             control: control.clone(),
         });
         let _ = self.send_tx.send(msg);
     }
 
     /// Debug: upload local pose so the server WorldState keeps it.
-    pub fn send_set_pose(&self, transform: &NetTransform) {
+    pub fn send_set_pose(&self, transform: &NetTransform, next_quant: u32) {
         let msg = encode(&ClientMessage::SetPose {
             transform: transform.clone(),
+            next_quant,
         });
         let _ = self.send_tx.send(msg);
     }

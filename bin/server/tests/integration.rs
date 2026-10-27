@@ -71,6 +71,7 @@ impl ServerProcess {
         Client {
             stream,
             buf: Vec::new(),
+            next_quant: 0,
         }
     }
 }
@@ -85,9 +86,45 @@ impl Drop for ServerProcess {
 struct Client {
     stream: TcpStream,
     buf: Vec<u8>,
+    /// Next quantum index for `input` (`ClientMessage::Input::first_quant`).
+    next_quant: u32,
+}
+
+/// Physics quanta a second the server runs, as a client's `QuantClock`
+/// counts them: from the same settings and `common.prm` the server loads
+/// (`Common::test_default` and 0.1 quanta without them: 5.6 a second).
+fn quanta_per_sec() -> f32 {
+    use vangers::config;
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/settings.ron");
+    let settings = path
+        .is_file()
+        .then(|| config::Settings::try_load(path.to_str().unwrap()))
+        .flatten();
+    let (common, max_quant) = match settings {
+        Some(ref s) => (
+            config::common::load(s.open_relative("common.prm")),
+            s.game.physics.max_quant,
+        ),
+        None => (config::common::Common::test_default(), 0.1),
+    };
+    let n = &common.nature;
+    common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
+        / max_quant
 }
 
 impl Client {
+    /// Input for the next `quanta` quanta, as a client sends each frame's
+    /// worth (held controls; a jump lands on the last quantum).
+    fn input(&mut self, quanta: u16, control: vangers_net::NetControl) {
+        let first_quant = self.next_quant;
+        self.next_quant += quanta as u32;
+        self.send(&ClientMessage::Input {
+            first_quant,
+            quanta,
+            control,
+        });
+    }
+
     fn send(&mut self, msg: &ClientMessage) {
         let data = encode(msg);
         self.stream.write_all(&data).unwrap();
@@ -142,6 +179,7 @@ fn test_join_and_receive_welcome() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
 
     let mut stash = Vec::new();
@@ -171,6 +209,7 @@ fn test_two_players_see_each_other() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut alice_extra = Vec::new();
     let alice_id = match alice.recv_welcome(&mut alice_extra) {
@@ -183,6 +222,7 @@ fn test_two_players_see_each_other() {
         player_name: "Bob".into(),
         car_name: "TestCar".into(),
         color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut bob_extra = Vec::new();
     let bob_id = match bob.recv_welcome(&mut bob_extra) {
@@ -232,14 +272,15 @@ fn test_physics_updates_position() {
         player_name: "Mover".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut stash = Vec::new();
     let _ = client.recv_welcome(&mut stash);
 
     // Send input: full throttle forward
-    client.send(&ClientMessage::Input {
-        sequence: 1,
-        control: vangers_net::NetControl {
+    client.input(
+        (2.0 * quanta_per_sec()) as u16,
+        vangers_net::NetControl {
             motor: 1.0,
             rudder: 0.0,
             roll: 0.0,
@@ -247,7 +288,7 @@ fn test_physics_updates_position() {
             turbo: false,
             jump: None,
         },
-    });
+    );
 
     // Collect world states for 2 seconds
     let msgs = client.recv_for(Duration::from_secs(2));
@@ -290,6 +331,7 @@ fn test_reconnect_same_name_reclaims_player_id() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut stash = Vec::new();
     let first_id = match alice.recv_welcome(&mut stash) {
@@ -306,6 +348,7 @@ fn test_reconnect_same_name_reclaims_player_id() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut stash2 = Vec::new();
     let second_id = match alice2.recv_welcome(&mut stash2) {
@@ -324,6 +367,7 @@ fn test_reconnect_same_name_reclaims_player_id() {
         player_name: "Bob".into(),
         car_name: "TestCar".into(),
         color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut bob_stash = Vec::new();
     let bob_id = match bob.recv_welcome(&mut bob_stash) {
@@ -342,6 +386,7 @@ fn test_reconnect_restores_last_pose() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut stash = Vec::new();
     let first_id = match alice.recv_welcome(&mut stash) {
@@ -350,9 +395,9 @@ fn test_reconnect_restores_last_pose() {
     };
 
     // Drive away from spawn so restored pose is distinguishable.
-    alice.send(&ClientMessage::Input {
-        sequence: 1,
-        control: vangers_net::NetControl {
+    alice.input(
+        (2.0 * quanta_per_sec()) as u16,
+        vangers_net::NetControl {
             motor: 1.0,
             rudder: 0.0,
             roll: 0.0,
@@ -360,7 +405,7 @@ fn test_reconnect_restores_last_pose() {
             turbo: true,
             jump: None,
         },
-    });
+    );
     let mut msgs = stash;
     msgs.extend(alice.recv_for(Duration::from_secs(2)));
     let last_pos = msgs
@@ -384,6 +429,7 @@ fn test_reconnect_restores_last_pose() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut stash2 = Vec::new();
     let second_id = match alice2.recv_welcome(&mut stash2) {
@@ -421,6 +467,7 @@ fn test_reconnect_restores_last_pose() {
         player_name: "Bob".into(),
         car_name: "TestCar".into(),
         color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut bob_stash = Vec::new();
     let bob_id = match bob.recv_welcome(&mut bob_stash) {
@@ -469,6 +516,7 @@ fn test_reconnect_restores_cirtainer() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut stash = Vec::new();
     let first_id = match alice.recv_welcome(&mut stash) {
@@ -506,6 +554,7 @@ fn test_reconnect_restores_cirtainer() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut stash2 = Vec::new();
     let second_id = match alice2.recv_welcome(&mut stash2) {
@@ -540,6 +589,7 @@ fn test_reconnect_restores_cirtainer() {
         player_name: "Bob".into(),
         car_name: "TestCar".into(),
         color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut bob_stash = Vec::new();
     let bob_id = match bob.recv_welcome(&mut bob_stash) {
@@ -575,6 +625,7 @@ fn test_set_pose_updates_world_state() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut alice_stash = Vec::new();
     let alice_id = match alice.recv_welcome(&mut alice_stash) {
@@ -586,6 +637,7 @@ fn test_set_pose_updates_world_state() {
         player_name: "Bob".into(),
         car_name: "TestCar".into(),
         color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut bob_stash = Vec::new();
     let _bob_id = match bob.recv_welcome(&mut bob_stash) {
@@ -601,6 +653,7 @@ fn test_set_pose_updates_world_state() {
             rotation: [0.0, 0.0, 0.0, 1.0],
             scale: 1.0,
         },
+        next_quant: 0,
     });
 
     bob_stash.extend(bob.recv_for(Duration::from_secs(1)));
@@ -653,6 +706,7 @@ fn test_set_spiral_broadcasts_to_peers() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut alice_stash = Vec::new();
     let alice_id = match alice.recv_welcome(&mut alice_stash) {
@@ -664,6 +718,7 @@ fn test_set_spiral_broadcasts_to_peers() {
         player_name: "Bob".into(),
         car_name: "TestCar".into(),
         color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut bob_stash = Vec::new();
     let _ = bob.recv_welcome(&mut bob_stash);
@@ -709,6 +764,7 @@ fn test_reconnect_restores_spiral() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut stash = Vec::new();
     let first_id = match alice.recv_welcome(&mut stash) {
@@ -753,6 +809,7 @@ fn test_reconnect_restores_spiral() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut stash2 = Vec::new();
     let second_id = match alice2.recv_welcome(&mut stash2) {
@@ -784,6 +841,7 @@ fn test_reconnect_restores_spiral() {
         player_name: "Bob".into(),
         car_name: "TestCar".into(),
         color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut bob_stash = Vec::new();
     let bob_id = match bob.recv_welcome(&mut bob_stash) {
@@ -827,6 +885,7 @@ fn test_jump_reaches_server_physics() {
         player_name: "Jumper".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let mut stash = Vec::new();
     let _ = client.recv_welcome(&mut stash);
@@ -835,7 +894,7 @@ fn test_jump_reaches_server_physics() {
     let idle = peak_vz(&mut client, Duration::from_millis(600));
 
     // A client sends Input every frame; the jump frame is followed at once
-    // by a jump-less one, inside the same 20 Hz server tick.
+    // by a jump-less one. The jump is on the last quantum of its batch.
     let control = |jump| vangers_net::NetControl {
         motor: 0.0,
         rudder: 0.0,
@@ -844,14 +903,8 @@ fn test_jump_reaches_server_physics() {
         turbo: false,
         jump,
     };
-    client.send(&ClientMessage::Input {
-        sequence: 1,
-        control: control(Some(10.0)),
-    });
-    client.send(&ClientMessage::Input {
-        sequence: 2,
-        control: control(None),
-    });
+    client.input(1, control(Some(10.0)));
+    client.input(1, control(None));
     let jumped = peak_vz(&mut client, Duration::from_millis(600));
     assert!(
         jumped > idle + 5.0,
@@ -869,6 +922,7 @@ fn test_duel_spawn_places_pair_facing_each_other() {
         player_name: "Alice".into(),
         car_name: "TestCar".into(),
         color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     let alice_id = match alice.recv_welcome(&mut stash) {
         ServerMessage::Welcome { player_id, .. } => player_id,
@@ -879,6 +933,7 @@ fn test_duel_spawn_places_pair_facing_each_other() {
         player_name: "Bob".into(),
         car_name: "TestCar".into(),
         color: 22,
+        protocol: vangers_net::PROTOCOL_VERSION,
     });
     // `recv_welcome` keeps reading for a while; the procedural level is
     // hilly, so read the spawn pose from the earliest stashed snapshot.
@@ -928,6 +983,7 @@ fn test_duel_slow_ram_shoves_parked_car() {
             player_name: name.into(),
             car_name: "OxidizeMonk".into(),
             color: 21,
+            protocol: vangers_net::PROTOCOL_VERSION,
         });
         let mut stash = Vec::new();
         let id = match c.recv_welcome(&mut stash) {
@@ -938,16 +994,30 @@ fn test_duel_slow_ram_shoves_parked_car() {
     };
     let (mut alice, alice_id) = join("Alice");
     let (mut bob, bob_id) = join("Bob");
-    let throttle = |motor: f32| ClientMessage::Input {
-        sequence: 0,
-        control: vangers_net::NetControl {
-            motor,
-            rudder: 0.0,
-            roll: 0.0,
-            brake: false,
-            turbo: false,
-            jump: None,
-        },
+    let throttle = |motor: f32| vangers_net::NetControl {
+        motor,
+        rudder: 0.0,
+        roll: 0.0,
+        brake: false,
+        turbo: false,
+        jump: None,
+    };
+    // Alice streams her quanta in real time, as a client does.
+    let rate = quanta_per_sec();
+    let mut owed = 0.0_f32;
+    let mut last: Option<Instant> = None;
+    // The quanta due since the last call (the first call starts the clock
+    // and sends this call's 0.1 s).
+    let mut stream = |alice: &mut Client, motor: f32| {
+        let now = Instant::now();
+        let secs = last.map_or(0.1, |t| (now - t).as_secs_f32());
+        owed += secs * rate;
+        last = Some(now);
+        let whole = owed.floor();
+        owed -= whole;
+        if whole > 0.0 {
+            alice.input(whole as u16, throttle(motor));
+        }
     };
     // (Alice x, Bob x) per WorldState.
     let mut trace: Vec<(f32, f32)> = Vec::new();
@@ -971,12 +1041,14 @@ fn test_duel_slow_ram_shoves_parked_car() {
     let (_, bob_start) = *trace.last().expect("WorldState with both players");
     // Slow ram: 0.2 s throttle taps for 4 s, then coast.
     for i in 0..40 {
-        alice.send(&throttle(if i % 4 < 2 { 1.0 } else { 0.0 }));
+        stream(&mut alice, if i % 4 < 2 { 1.0 } else { 0.0 });
         read(&mut alice, Duration::from_millis(100), &mut trace);
         let _ = bob.recv_for(Duration::from_millis(1));
     }
-    alice.send(&throttle(0.0));
-    read(&mut alice, Duration::from_secs(4), &mut trace);
+    for _ in 0..40 {
+        stream(&mut alice, 0.0);
+        read(&mut alice, Duration::from_millis(100), &mut trace);
+    }
 
     let closest = trace.iter().map(|&(a, b)| b - a).fold(f32::MAX, f32::min);
     let (alice_end, bob_end) = *trace.last().unwrap();

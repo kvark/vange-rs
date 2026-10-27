@@ -3,6 +3,13 @@ use serde::{Deserialize, Serialize};
 /// Unique identifier for a connected player.
 pub type PlayerId = u32;
 
+/// Wire protocol revision, sent in `Join`. The server turns away a client
+/// on another revision instead of misreading its messages.
+///
+/// 2: per-quantum input batches (`Input::first_quant` / `quanta`), the
+/// input ack in `AgentState::ack`, `SetPose::next_quant`.
+pub const PROTOCOL_VERSION: u32 = 2;
+
 /// Client-to-server messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMessage {
@@ -11,16 +18,32 @@ pub enum ClientMessage {
         player_name: String,
         car_name: String,
         color: u8,
+        /// `PROTOCOL_VERSION` of the client.
+        protocol: u32,
     },
-    /// Per-frame input from the client.
-    Input { sequence: u32, control: NetControl },
+    /// The client's input for `quanta` physics quanta starting at quantum
+    /// index `first_quant` (one batch per frame). The held controls apply
+    /// to all of them; `control.jump` and `control.roll` to the last one
+    /// only, as the client stepped them. The server runs these quanta in
+    /// order and acks them in `AgentState::ack`.
+    Input {
+        first_quant: u32,
+        quanta: u16,
+        control: NetControl,
+    },
     /// Client is leaving the session.
     Leave,
     /// Debug: set this player's authoritative pose (Tweaks Position apply).
     ///
     /// Server accepts for the sender's `player_id` and uses the transform in
     /// subsequent `WorldState` snapshots. Not for normal gameplay.
-    SetPose { transform: NetTransform },
+    ///
+    /// `next_quant` is the client's next quantum index: queued input from
+    /// before the pose is dropped and the ack moves there.
+    SetPose {
+        transform: NetTransform,
+        next_quant: u32,
+    },
     /// Report spiral charge after escave / KEY_UPDATE fill or passage spend.
     ///
     /// Server stores the value and broadcasts it on `AgentState.spiral_charge`
@@ -136,6 +159,10 @@ pub struct AgentState {
     /// between snapshots tells the owning client to adopt the server
     /// velocity even if it skipped the snapshot of the bump itself.
     pub bumps: u32,
+    /// Quanta of this player's input the server has run (the next
+    /// `Input::first_quant` it expects). The owning client compares its
+    /// prediction at this quantum, not its present pose.
+    pub ack: u32,
 }
 
 /// Network-serializable transform (position + rotation + scale).
@@ -189,6 +216,7 @@ mod tests {
             player_name: "TestPlayer".into(),
             car_name: "Torkash".into(),
             color: 21,
+            protocol: PROTOCOL_VERSION,
         };
         let encoded = encode(&msg);
         let (decoded, consumed): (ClientMessage, _) = decode(&encoded).unwrap();
@@ -198,7 +226,9 @@ mod tests {
                 player_name,
                 car_name,
                 color,
+                protocol,
             } => {
+                assert_eq!(protocol, PROTOCOL_VERSION);
                 assert_eq!(player_name, "TestPlayer");
                 assert_eq!(car_name, "Torkash");
                 assert_eq!(color, 21);
@@ -226,6 +256,7 @@ mod tests {
                 },
                 spiral_charge: 3,
                 bumps: 7,
+                ack: 1234,
             }],
             cycle: None,
             moving: None,
@@ -239,6 +270,7 @@ mod tests {
                 assert_eq!(agents.len(), 1);
                 assert_eq!(agents[0].player_id, 1);
                 assert_eq!(agents[0].spiral_charge, 3);
+                assert_eq!(agents[0].ack, 1234);
                 assert!(cycle.is_none());
                 assert!(moving.is_none());
             }
@@ -308,12 +340,17 @@ mod tests {
                 rotation: [0.0, 0.0, 0.0, 1.0],
                 scale: 1.0,
             },
+            next_quant: 77,
         };
         let encoded = encode(&msg);
         let (decoded, consumed): (ClientMessage, _) = decode(&encoded).unwrap();
         assert_eq!(consumed, encoded.len());
         match decoded {
-            ClientMessage::SetPose { transform } => {
+            ClientMessage::SetPose {
+                transform,
+                next_quant,
+            } => {
+                assert_eq!(next_quant, 77);
                 assert_eq!(transform.position, [12.0, 34.0, 56.0]);
                 assert_eq!(transform.rotation, [0.0, 0.0, 0.0, 1.0]);
                 assert!((transform.scale - 1.0).abs() < 1e-6);
@@ -330,6 +367,32 @@ mod tests {
         assert_eq!(consumed, encoded.len());
         match decoded {
             ClientMessage::SetSpiral { charge } => assert_eq!(charge, 4),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn round_trip_input_batch() {
+        let msg = ClientMessage::Input {
+            first_quant: 900,
+            quanta: 3,
+            control: NetControl {
+                motor: 1.0,
+                jump: Some(4.0),
+                ..NetControl::default()
+            },
+        };
+        let encoded = encode(&msg);
+        let (decoded, _): (ClientMessage, _) = decode(&encoded).unwrap();
+        match decoded {
+            ClientMessage::Input {
+                first_quant,
+                quanta,
+                control,
+            } => {
+                assert_eq!((first_quant, quanta), (900, 3));
+                assert_eq!(control.jump, Some(4.0));
+            }
             _ => panic!("wrong variant"),
         }
     }
