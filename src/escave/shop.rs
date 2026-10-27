@@ -316,6 +316,11 @@ impl Inventory {
         Ok(())
     }
 
+    /// Take whatever is in a bay out of the car (not into cargo).
+    pub fn empty_bay(&mut self, bay: usize) -> Option<Good> {
+        self.bays.get_mut(bay)?.take()
+    }
+
     /// Spawn loadout: put a weapon straight into a bay.
     pub fn load_bay(&mut self, bay: usize, good: Good) -> Result<(), ShopError> {
         if bay >= BAY_COUNT {

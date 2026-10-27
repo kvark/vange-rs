@@ -493,6 +493,9 @@ enum AutoStep {
     Armor(u32),
     /// `mark:NAME`: an "Autodrive mark NAME" log line, to sync screenshots.
     Mark(String),
+    /// `guns:A:B[:C]`: put gun `A` in bay 0, `B` in bay 1, ... (`-` for an
+    /// empty bay), as the escave shop would, and tell the server.
+    Guns(Vec<Option<String>>),
 }
 
 struct AutoDrive {
@@ -534,6 +537,16 @@ impl AutoDrive {
                 [n] => AutoStep::Armor(n.parse().map_err(|e| format!("{seg:?}: {e}"))?),
                 _ => return Err(format!("{seg:?}: expected armor:N")),
             },
+            "guns" if !rest.is_empty() && rest.len() <= escave::BAY_COUNT => AutoStep::Guns(
+                rest.iter()
+                    .map(|&id| match id {
+                        "-" => Ok(None),
+                        "" => Err(format!("{seg:?}: empty gun name")),
+                        id => Ok(Some(id.to_string())),
+                    })
+                    .collect::<Result<_, _>>()?,
+            ),
+            "guns" => return Err(format!("{seg:?}: expected guns:A:B[:C]")),
             "mark" => match rest[..] {
                 [name] if !name.is_empty() => AutoStep::Mark(name.to_string()),
                 _ => return Err(format!("{seg:?}: expected mark:NAME")),
@@ -2984,6 +2997,20 @@ impl Game {
                 }
             }
             AutoStep::Mark(name) => log::info!("Autodrive mark {name}"),
+            AutoStep::Guns(guns) => {
+                for (bay, gun) in guns.into_iter().enumerate() {
+                    match gun {
+                        Some(id) => {
+                            let _ = self.inventory.load_bay(bay, escave::Good::weapon(id, 0, 0));
+                        }
+                        None => {
+                            self.inventory.empty_bay(bay);
+                        }
+                    }
+                }
+                log::info!("Autodrive guns {:?}", weapon::loadout(&self.inventory));
+                self.sync_weapon_slots();
+            }
             AutoStep::Drive { .. } | AutoStep::Goto { .. } => {}
         }
     }
@@ -4300,7 +4327,8 @@ mod tests {
     fn autodrive_parses_segments_and_actions() {
         let ad = AutoDrive::parse(
             "2:0:0, goto:1500:15700, goto:1:2:5, use, fire0, fire1, jump, jump:0.2, \
-             reset, tp:590:4140, tp:1:2:90, enter, leave, armor:0, mark:hit",
+             reset, tp:590:4140, tp:1:2:90, enter, leave, armor:0, mark:hit, \
+             guns:LightMissile:-:HeavyLaser",
         )
         .unwrap();
         assert_eq!(
@@ -4341,9 +4369,24 @@ mod tests {
                 AutoStep::Leave,
                 AutoStep::Armor(0),
                 AutoStep::Mark("hit".to_string()),
+                AutoStep::Guns(vec![
+                    Some("LightMissile".to_string()),
+                    None,
+                    Some("HeavyLaser".to_string())
+                ]),
             ]
         );
-        for bad in ["1:2", "goto:1", "tp:1:2:3:4", "mark:", "armor:x", "fly:1:2"] {
+        for bad in [
+            "1:2",
+            "goto:1",
+            "tp:1:2:3:4",
+            "mark:",
+            "armor:x",
+            "fly:1:2",
+            "guns",
+            "guns:a:b:c:d",
+            "guns:a::b",
+        ] {
             assert!(AutoDrive::parse(bad).is_err(), "{bad:?} parsed");
         }
     }
