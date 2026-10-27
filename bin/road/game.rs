@@ -1808,8 +1808,6 @@ impl Game {
         hang_weapons(player, &self.inventory, &self.weapon_meshes, &self.db);
     }
 
-    /// Space: poke nearby door sensors so a secret tunnel or escave hatch
-    /// opens. The visit starts once the car has fallen into the hole.
     /// Tell the server when the escave screen takes the drive and when it
     /// gives it back, so other players stop drawing, shooting and touching
     /// this car while it is inside.
@@ -1829,6 +1827,8 @@ impl Game {
         self.escave_sent = inside;
     }
 
+    /// Space: poke nearby door sensors so a secret tunnel or escave hatch
+    /// opens. The visit starts once the car has fallen into the hole.
     fn try_use_entrance(&mut self) {
         if self.screen.visit().is_some() {
             self.screen.begin_leave();
