@@ -1040,6 +1040,7 @@ fn collide_players(
                 Some(wrap),
                 common,
             );
+            log_proximity(tick, (id_a, &**a), (*id_b, &**b), wrap, contact.as_ref());
             // Resting contact trickles tiny impulses every tick; only
             // the original's "strong" collisions (sound / ram damage
             // there) are worth an info line.
@@ -1067,6 +1068,40 @@ fn collide_players(
         agent.transform.disp.x = agent.transform.disp.x.rem_euclid(wrap.0);
         agent.transform.disp.y = agent.transform.disp.y.rem_euclid(wrap.1);
     }
+}
+
+/// Centre distance under which `collide_players` traces both cars every tick.
+const PROXIMITY_LOG_RANGE: f32 = 60.0;
+
+/// Per-tick trace of two players' server poses while they are close, for
+/// diagnosing contact live: `RUST_LOG=info,vangers_server::contact=debug`.
+fn log_proximity(
+    tick: u32,
+    (id_a, a): (PlayerId, &ServerAgent),
+    (id_b, b): (PlayerId, &ServerAgent),
+    wrap: (f32, f32),
+    contact: Option<&physics::CarContact>,
+) {
+    let shortest = |d: f32, size: f32| d - size * (d / size).round();
+    let d = b.transform.disp - a.transform.disp;
+    let dist = glam::vec2(shortest(d.x, wrap.0), shortest(d.y, wrap.1)).length();
+    if dist >= PROXIMITY_LOG_RANGE
+        || !log::log_enabled!(target: "vangers_server::contact", log::Level::Debug)
+    {
+        return;
+    }
+    let vel = |agent: &ServerAgent| agent.transform.rot * agent.dynamo.linear_velocity;
+    let (va, vb) = (vel(a), vel(b));
+    let (pa, pb) = (a.transform.disp, b.transform.disp);
+    let (depth, impulse) = contact.map_or((0.0, 0.0), |c| (c.depth, c.impulse));
+    log::debug!(
+        target: "vangers_server::contact",
+        "Car proximity tick {} dist={:.1} p{} pos=({:.1},{:.1},{:.1}) vel=({:.2},{:.2},{:.2}) p{} pos=({:.1},{:.1},{:.1}) vel=({:.2},{:.2},{:.2}) contact={} depth={:.2} impulse={:.3}",
+        tick, dist,
+        id_a, pa.x, pa.y, pa.z, va.x, va.y, va.z,
+        id_b, pb.x, pb.y, pb.z, vb.x, vb.y, vb.z,
+        contact.is_some(), depth, impulse
+    );
 }
 
 fn physics_max_quant(settings: Option<&config::Settings>) -> f32 {

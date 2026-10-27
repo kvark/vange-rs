@@ -161,7 +161,20 @@ cars' masses and inertia. The port also pushes overlapping cars apart by half
 the overlap (beyond 0.1u) so traction cannot press one car into another. The
 new velocities and poses reach both clients through `WorldState`. Bumps at or
 above `strong_double_collision_threshould` from `common.prm` log
-`Car contact tick … impulse=…` at info; resting contact logs at debug.
+`Car contact tick … impulse=…` at info; lighter bumps and resting contact
+log at debug. A slow ram is a run of light bumps: the rammer stops, the
+parked car takes its speed, the rammer's traction catches up again, so the
+pair moves on together about 44u apart (centre to centre) rather than
+bouncing.
+
+To trace both cars every tick while they are within 60u, run the server with
+`RUST_LOG=info,vangers_server::contact=debug`:
+
+```
+Car proximity tick 178 dist=42.6 p1 pos=(582.8,4151.7,4.0) vel=(-0.03,0.23,-0.02) p2 pos=(625.4,4150.2,6.0) vel=(6.00,-0.22,0.21) contact=true depth=2.15 impulse=2.699
+```
+
+`vel` is world-frame; `depth`/`impulse` are 0 when the boxes do not touch.
 
 The native client predicts the same contact for its own car against each
 remote ghost (`render_transform` plus the last `WorldState` velocities), so

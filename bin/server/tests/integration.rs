@@ -909,3 +909,81 @@ fn test_duel_spawn_places_pair_facing_each_other() {
     assert!(fa.dot(a_to_b) > 0.9, "Alice faces Bob: {fa:?}");
     assert!(fb.dot(-a_to_b) > 0.9, "Bob faces Alice: {fb:?}");
 }
+
+/// Slow ram through the real server tick loop, like the live duel test:
+/// Fostral, `--duel-spawn`, Bob idle, Alice taps the throttle. Alice must
+/// shove Bob along and never get past him (before car contact she drove
+/// straight through).
+#[test]
+fn test_duel_slow_ram_shoves_parked_car() {
+    let fostral = std::path::Path::new("/workspace/vange-data/thechain/fostral/world.ini");
+    if !fostral.is_file() {
+        eprintln!("skip test_duel_slow_ram_shoves_parked_car: no Fostral data");
+        return;
+    }
+    let server = ServerProcess::start_with_args(fostral.to_str().unwrap(), &[], &["--duel-spawn"]);
+    let join = |name: &str| {
+        let mut c = server.connect();
+        c.send(&ClientMessage::Join {
+            player_name: name.into(),
+            car_name: "OxidizeMonk".into(),
+            color: 21,
+        });
+        let mut stash = Vec::new();
+        let id = match c.recv_welcome(&mut stash) {
+            ServerMessage::Welcome { player_id, .. } => player_id,
+            _ => unreachable!(),
+        };
+        (c, id)
+    };
+    let (mut alice, alice_id) = join("Alice");
+    let (mut bob, bob_id) = join("Bob");
+    let throttle = |motor: f32| ClientMessage::Input {
+        sequence: 0,
+        control: vangers_net::NetControl {
+            motor,
+            rudder: 0.0,
+            roll: 0.0,
+            brake: false,
+            turbo: false,
+            jump: None,
+        },
+    };
+    // (Alice x, Bob x) per WorldState.
+    let mut trace: Vec<(f32, f32)> = Vec::new();
+    let read = |alice: &mut Client, dur: Duration, trace: &mut Vec<(f32, f32)>| {
+        for m in alice.recv_for(dur) {
+            if let ServerMessage::WorldState { agents, .. } = m {
+                let x = |id| {
+                    agents
+                        .iter()
+                        .find(|a| a.player_id == id)
+                        .map(|a| a.transform.position[0])
+                };
+                if let (Some(a), Some(b)) = (x(alice_id), x(bob_id)) {
+                    trace.push((a, b));
+                }
+            }
+        }
+    };
+    // Settle on the ground.
+    read(&mut alice, Duration::from_secs(2), &mut trace);
+    let (_, bob_start) = *trace.last().expect("WorldState with both players");
+    // Slow ram: 0.2 s throttle taps for 4 s, then coast.
+    for i in 0..40 {
+        alice.send(&throttle(if i % 4 < 2 { 1.0 } else { 0.0 }));
+        read(&mut alice, Duration::from_millis(100), &mut trace);
+        let _ = bob.recv_for(Duration::from_millis(1));
+    }
+    alice.send(&throttle(0.0));
+    read(&mut alice, Duration::from_secs(4), &mut trace);
+
+    let closest = trace.iter().map(|&(a, b)| b - a).fold(f32::MAX, f32::min);
+    let (alice_end, bob_end) = *trace.last().unwrap();
+    eprintln!(
+        "slow ram: Bob {bob_start:.1} -> {bob_end:.1}, Alice ends {alice_end:.1}, closest centres {closest:.1}"
+    );
+    // A mechos contact box is ~41u long: centres closer than that overlap.
+    assert!(closest > 30.0, "Alice drove into / through Bob: centres {closest:.1}u apart");
+    assert!(bob_end - bob_start > 20.0, "Bob was not shoved: {bob_start:.1} -> {bob_end:.1}");
+}
