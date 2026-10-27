@@ -48,7 +48,7 @@ impl HitAccumulator {
 
 pub fn get_distance_to_terrain(level: &level::Level, point: Vec3) -> f32 {
     point.z
-        - match level.get((point.x as i32, point.y as i32)) {
+        - match level.get((point.x.floor() as i32, point.y.floor() as i32)) {
             level::Texel::Single(p) => p.0,
             level::Texel::Dual { high, low, mid } => {
                 if point.z > mid {
@@ -73,7 +73,7 @@ impl CollisionData {
         for s in samples[poly.samples.clone()].iter() {
             let sp = Vec3::new(s[0] as f32, s[1] as f32, s[2] as f32);
             let pos = transform.transform_point(sp * scale);
-            let texel = level.get((pos.x as i32, pos.y as i32));
+            let texel = level.get((pos.x.floor() as i32, pos.y.floor() as i32));
             let height = match texel {
                 level::Texel::Single(point) => point.0,
                 level::Texel::Dual { high, low, mid } => {
@@ -124,7 +124,8 @@ impl CollisionData {
         for s in samples[poly.samples.clone()].iter() {
             let sp = Vec3::new(s[0] as f32, s[1] as f32, s[2] as f32);
             let pos = transform.transform_point(sp * scale);
-            let level::Texel::Dual { mid, high, .. } = level.get((pos.x as i32, pos.y as i32))
+            let level::Texel::Dual { mid, high, .. } =
+                level.get((pos.x.floor() as i32, pos.y.floor() as i32))
             else {
                 continue;
             };

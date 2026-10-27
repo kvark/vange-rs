@@ -1,11 +1,16 @@
 use vangers::{
     config, level,
-    physics::{self, CarPhysicsData, Dynamo},
+    physics::{
+        self,
+        prediction::{InputQueue, QuantInput, TickBudget},
+        CarPhysicsData, Dynamo,
+    },
     space,
 };
 use vangers_net::{
     decode, encode, AgentState, ClientMessage, CycleFade, CycleState, LocationPhase,
     MovingLandState, NetControl, NetDynamo, NetTransform, PlayerCirt, PlayerId, ServerMessage,
+    PROTOCOL_VERSION,
 };
 
 use clap::Parser;
@@ -71,6 +76,17 @@ struct Cli {
     /// roof over the rock channel east of the arch: `1030,3985`.
     #[arg(long, value_parser = parse_xy)]
     spawn_at: Option<(i32, i32)>,
+
+    /// Debug: hold every message this many milliseconds each way, to try
+    /// the multiplayer prediction on localhost under a real-world ping
+    /// (the round trip is twice this plus jitter).
+    #[arg(long, default_value = "0")]
+    sim_latency_ms: u64,
+
+    /// Debug: up to this many extra milliseconds per message, random (the
+    /// order is kept), on top of `--sim-latency-ms`.
+    #[arg(long, default_value = "0")]
+    sim_jitter_ms: u64,
 }
 
 /// Parse `X,Y` map coordinates.
@@ -153,7 +169,9 @@ struct ServerAgent {
     name: String,
     car_name: String,
     color: u8,
-    control: NetControl,
+    /// The client's numbered per-quantum inputs, run in order; its `ack`
+    /// goes out in `AgentState::ack` for the client's reconcile.
+    inputs: InputQueue,
     transform: space::Transform,
     dynamo: Dynamo,
     phys_data: CarPhysicsData,
@@ -204,6 +222,7 @@ impl ServerAgent {
             },
             spiral_charge: self.spiral_charge,
             bumps: self.bumps,
+            ack: self.inputs.ack(),
         }
     }
 
@@ -259,21 +278,6 @@ impl ServerAgent {
         );
         if (elapsed >= 2 * JUMP_TRACE_EVERY && at_rest) || elapsed >= JUMP_TRACE_MAX {
             self.jump_trace = None;
-        }
-    }
-
-    fn apply_control(&mut self, dt: f32, common: &config::common::Common) {
-        let control = &self.control;
-        if control.rudder != 0.0 {
-            let angle = self.dynamo.rudder + common.car.rudder_step * 2.0 * dt * control.rudder;
-            self.dynamo.rudder = angle.clamp(-common.car.rudder_max, common.car.rudder_max);
-        }
-        if control.motor != 0.0 {
-            self.dynamo
-                .change_traction(control.motor * dt * common.car.traction_incr);
-        }
-        if control.brake && self.dynamo.traction != 0.0 {
-            self.dynamo.traction *= (-dt).exp2();
         }
     }
 }
@@ -591,6 +595,16 @@ async fn main() {
     };
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<SessionEvent>();
+    let sim_lag = SimLag {
+        latency: Duration::from_millis(cli.sim_latency_ms),
+        jitter: Duration::from_millis(cli.sim_jitter_ms),
+    };
+    if sim_lag.is_on() {
+        warn!(
+            "Simulated network lag: {} ms each way + up to {} ms jitter",
+            cli.sim_latency_ms, cli.sim_jitter_ms
+        );
+    }
     let next_id = Arc::new(AtomicU32::new(1));
 
     // TCP listener
@@ -609,7 +623,7 @@ async fn main() {
                     let id = tcp_next_id.fetch_add(1, Ordering::Relaxed);
                     info!("TCP connection from {} assigned player_id={}", peer, id);
                     let tx = tcp_tx.clone();
-                    tokio::spawn(handle_tcp_connection(stream, id, tx));
+                    tokio::spawn(handle_tcp_connection(stream, id, tx, sim_lag));
                 }
                 Err(e) => error!("TCP accept error: {}", e),
             }
@@ -635,7 +649,7 @@ async fn main() {
                         peer, id
                     );
                     let tx = ws_tx.clone();
-                    tokio::spawn(handle_ws_connection(stream, id, tx));
+                    tokio::spawn(handle_ws_connection(stream, id, tx, sim_lag));
                 }
                 Err(e) => error!("WS accept error: {}", e),
             }
@@ -711,58 +725,43 @@ async fn main() {
                 // so both integrate a jump along the same path.
                 let quanta = quant_clock.advance(physics_dt, max_quant);
 
-                // Step every player one quantum at a time and resolve car
-                // contact after each quantum. The client predicts its own
-                // car's contacts on the same quanta, so a bump (airborne or
-                // not) pushes both sides' copies along the same path; once
-                // per tick against once per render frame did not, and the
-                // half-overlap push-apart left the prediction ~10-20u off.
-                // Jump and roll go on the last quantum of the tick, as the
-                // client applies them on the last quantum of its frame. A
-                // tick with no quantum keeps the jump pending.
-                for i in 0..quanta {
-                    let last = i + 1 == quanta;
+                // Each player's car runs the client's own numbered quanta
+                // (`InputQueue`), one quantum per slot, with car contact
+                // resolved after every slot. The client predicted the same
+                // quanta with the same inputs, so its prediction at the ack
+                // matches unless something it could not see (another car)
+                // got in the way; then it rewinds to this state and replays.
+                // A car whose input is late waits rather than guessing.
+                let budgets: HashMap<PlayerId, TickBudget> = players
+                    .iter_mut()
+                    .filter(|(_, a)| a.joined)
+                    .map(|(&id, a)| (id, a.inputs.budget(quanta)))
+                    .collect();
+                let slots = budgets.values().map(TickBudget::total).max().unwrap_or(0);
+                for i in 0..slots {
+                    let last = i + 1 == slots;
                     for (&player_id, agent) in players.iter_mut() {
-                        if !agent.joined {
-                            continue;
+                        match budgets.get(&player_id) {
+                            Some(budget) if i < budget.total() => {}
+                            _ => continue,
                         }
-
-                        let f_turbo = if agent.control.turbo {
-                            common.global.k_traction_turbo
-                        } else {
-                            1.0
-                        };
-                        let f_brake = if agent.control.brake {
-                            common.global.f_brake_max
-                        } else {
-                            0.0
-                        };
-
-                        agent.apply_control(quant_input_factor, &common);
-                        let (jump, roll) = if last {
-                            (agent.control.jump.take(), agent.control.roll)
-                        } else {
-                            (None, 0.0)
-                        };
+                        let input = agent.inputs.pop();
                         let before = agent.transform.disp;
-                        physics::step(
+                        // The server does not deform the terrain: the edits
+                        // would have to be replicated for clients to agree
+                        // on the ground they are driving over.
+                        physics::prediction::step_input(
                             &mut agent.dynamo,
                             &mut agent.transform,
+                            &input,
                             max_quant,
+                            quant_input_factor,
                             &agent.phys_data,
                             &level,
                             &common,
-                            f_turbo,
-                            f_brake,
-                            jump,
-                            roll,
-                            None,
-                            // The server does not deform the terrain: the edits
-                            // would have to be replicated for clients to agree
-                            // on the ground they are driving over.
                             None,
                         );
-                        if let Some(power) = jump {
+                        if let Some(power) = input.jump {
                             agent.log_jump(player_id, tick, power, before);
                         }
 
@@ -892,7 +891,7 @@ async fn main() {
                             name: String::new(),
                             car_name: String::new(),
                             color: 0,
-                            control: NetControl::default(),
+                            inputs: InputQueue::default(),
                             transform: space::Transform::IDENTITY,
                             dynamo: Dynamo::default(),
                             phys_data: CarPhysicsData::test_default(), // replaced on Join
@@ -907,7 +906,15 @@ async fn main() {
 
                     SessionEvent::Message { conn_id, msg } => {
                         match msg {
-                            ClientMessage::Join { player_name, car_name, color } => {
+                            ClientMessage::Join { player_name, car_name, color, protocol } => {
+                                if protocol != PROTOCOL_VERSION {
+                                    warn!(
+                                        "Rejecting conn_id={}: protocol {} (server speaks {})",
+                                        conn_id, protocol, PROTOCOL_VERSION
+                                    );
+                                    remove_player(&mut players, &mut conn_to_player, &mut last_poses, conn_id);
+                                    continue;
+                                }
                                 let player_id = reclaim_player_id(
                                     conn_id,
                                     &player_name,
@@ -966,6 +973,7 @@ async fn main() {
                                     agent.car_name = car_name.clone();
                                     agent.color = color;
                                     agent.joined = true;
+                                    agent.inputs = InputQueue::default();
                                     if let Some(pose) = restored {
                                         agent.transform = pose.transform;
                                         agent.dynamo = pose.dynamo;
@@ -1038,17 +1046,24 @@ async fn main() {
                                 }
                             }
 
-                            ClientMessage::Input { control, .. } => {
+                            ClientMessage::Input { first_quant, quanta, control } => {
                                 let player_id = effective_player_id(&conn_to_player, conn_id);
                                 if let Some(agent) = players.get_mut(&player_id) {
-                                    merge_input(&mut agent.control, control);
+                                    agent.inputs.push(
+                                        first_quant,
+                                        quanta as u32,
+                                        quant_input(&control),
+                                    );
                                 }
                             }
 
-                            ClientMessage::SetPose { transform } => {
+                            ClientMessage::SetPose { transform, next_quant } => {
                                 let player_id = effective_player_id(&conn_to_player, conn_id);
                                 if let Some(agent) = players.get_mut(&player_id) {
                                     if agent.joined {
+                                        // The client predicts from this pose
+                                        // with its quanta from `next_quant`.
+                                        agent.inputs.reset(next_quant);
                                         agent.transform.disp = Vec3::from(transform.position);
                                         agent.transform.rot = glam::Quat::from_xyzw(
                                             transform.rotation[0],
@@ -1095,14 +1110,17 @@ async fn main() {
     }
 }
 
-/// Latest-wins for held controls, but keep a jump that no tick has applied
-/// yet: clients send `Input` every frame (faster than the 20 Hz tick) and a
-/// jump is a one-shot, so the next frame's `jump: None` must not drop it.
-/// The tick clears it with `control.jump.take()`.
-fn merge_input(current: &mut NetControl, incoming: NetControl) {
-    let pending_jump = current.jump.take();
-    *current = incoming;
-    current.jump = current.jump.or(pending_jump);
+/// The physics input of an `Input` batch (held controls; the jump and roll
+/// land on the batch's last quantum in `InputQueue::push`).
+fn quant_input(control: &NetControl) -> QuantInput {
+    QuantInput {
+        motor: control.motor,
+        rudder: control.rudder,
+        brake: control.brake,
+        turbo: control.turbo,
+        jump: control.jump,
+        roll: control.roll,
+    }
 }
 
 /// `max_quant` used when no settings file is available; matches
@@ -1324,11 +1342,70 @@ fn remove_player(
     }
 }
 
+/// `--sim-latency-ms` / `--sim-jitter-ms`: a delay line on each
+/// connection's inbound events and outbound messages.
+#[derive(Clone, Copy, Debug)]
+struct SimLag {
+    latency: Duration,
+    jitter: Duration,
+}
+
+impl SimLag {
+    fn is_on(&self) -> bool {
+        !self.latency.is_zero() || !self.jitter.is_zero()
+    }
+
+    /// A sender that hands each item on to `out` `latency` (plus jitter)
+    /// after it was sent, in order. Off: `out` itself.
+    fn delay<T: Send + 'static>(
+        self,
+        out: mpsc::UnboundedSender<T>,
+        seed: u32,
+    ) -> mpsc::UnboundedSender<T> {
+        if !self.is_on() {
+            return out;
+        }
+        let (tx, mut rx) = mpsc::unbounded_channel::<T>();
+        let (stamped_tx, mut stamped_rx) = mpsc::unbounded_channel::<(tokio::time::Instant, T)>();
+        // Stamp on arrival (never blocks), then release in order.
+        tokio::spawn(async move {
+            while let Some(item) = rx.recv().await {
+                if stamped_tx.send((tokio::time::Instant::now(), item)).is_err() {
+                    break;
+                }
+            }
+        });
+        tokio::spawn(async move {
+            let mut rng = seed.wrapping_mul(2_654_435_761) | 1;
+            let mut release = tokio::time::Instant::now();
+            let jitter_ms = self.jitter.as_millis() as u32;
+            while let Some((sent, item)) = stamped_rx.recv().await {
+                rng ^= rng << 13;
+                rng ^= rng >> 17;
+                rng ^= rng << 5;
+                let extra = Duration::from_millis(if jitter_ms > 0 {
+                    (rng % (jitter_ms + 1)) as u64
+                } else {
+                    0
+                });
+                release = release.max(sent + self.latency + extra);
+                tokio::time::sleep_until(release).await;
+                if out.send(item).is_err() {
+                    break;
+                }
+            }
+        });
+        tx
+    }
+}
+
 async fn handle_tcp_connection(
     stream: TcpStream,
     player_id: PlayerId,
     event_tx: mpsc::UnboundedSender<SessionEvent>,
+    sim_lag: SimLag,
 ) {
+    let event_tx = sim_lag.delay(event_tx, player_id.wrapping_mul(2));
     let (reader, mut writer) = stream.into_split();
     let mut reader = tokio::io::BufReader::new(reader);
 
@@ -1338,7 +1415,7 @@ async fn handle_tcp_connection(
     // Register connection
     let _ = event_tx.send(SessionEvent::Connected {
         conn_id: player_id,
-        sender: send_tx,
+        sender: sim_lag.delay(send_tx, player_id.wrapping_mul(2) + 1),
     });
 
     // Spawn writer task
@@ -1379,7 +1456,9 @@ async fn handle_ws_connection(
     stream: TcpStream,
     player_id: PlayerId,
     event_tx: mpsc::UnboundedSender<SessionEvent>,
+    sim_lag: SimLag,
 ) {
+    let event_tx = sim_lag.delay(event_tx, player_id.wrapping_mul(2));
     let ws_stream = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => ws,
         Err(e) => {
@@ -1396,7 +1475,7 @@ async fn handle_ws_connection(
     // Register connection
     let _ = event_tx.send(SessionEvent::Connected {
         conn_id: player_id,
-        sender: send_tx,
+        sender: sim_lag.delay(send_tx, player_id.wrapping_mul(2) + 1),
     });
 
     // Writer task: send binary WebSocket frames
@@ -1461,30 +1540,26 @@ mod tests {
     }
 
     #[test]
-    fn merge_input_keeps_unconsumed_jump() {
-        let mut control = NetControl::default();
-        merge_input(
-            &mut control,
-            NetControl {
-                jump: Some(4.0),
-                ..NetControl::default()
-            },
-        );
-        // A later Input in the same tick (no jump) must not clobber it,
-        // while held controls still take the latest value.
-        merge_input(
-            &mut control,
-            NetControl {
+    fn input_batch_maps_every_control() {
+        let input = quant_input(&NetControl {
+            motor: 1.0,
+            rudder: -0.5,
+            roll: 1.0,
+            brake: true,
+            turbo: true,
+            jump: Some(4.0),
+        });
+        assert_eq!(
+            input,
+            QuantInput {
                 motor: 1.0,
-                ..NetControl::default()
-            },
+                rudder: -0.5,
+                brake: true,
+                turbo: true,
+                jump: Some(4.0),
+                roll: 1.0,
+            }
         );
-        assert_eq!(control.motor, 1.0);
-        assert_eq!(control.jump, Some(4.0));
-        // The tick consumes it; afterwards it is gone.
-        assert_eq!(control.jump.take(), Some(4.0));
-        merge_input(&mut control, NetControl::default());
-        assert_eq!(control.jump, None);
     }
 
     fn test_level() -> level::Level {
