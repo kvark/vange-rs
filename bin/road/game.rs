@@ -1408,10 +1408,14 @@ impl Game {
                 };
                 // Follow, pull out of hills toward the car, re-aim the
                 // look-ahead, and drop under overhanging slabs.
+                let subject = space::Subject {
+                    ground,
+                    reach: space::Subject::reach_of(&player.phys_data.bbox, player.car.scale),
+                };
                 self.cam.chase_anchored(
                     &self.level,
                     &target,
-                    ground,
+                    subject,
                     delta,
                     follow,
                     CAMERA_CLEARANCE,

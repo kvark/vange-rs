@@ -158,6 +158,27 @@ cargo run --bin road -- --server 127.0.0.1:7800 --name Alice
 cargo run --bin road -- --server 127.0.0.1:7800 --name Bob
 ```
 
+## Spawn at (roof / camera tests)
+
+`--spawn-at X,Y` places the first **fresh** joiner at map `X,Y`, 5u above the
+top surface there (on a roof, not in the cave under it), facing −Y. It
+overrides `--duel-spawn` for joiner 0 only; joiner 1 keeps its duel place,
+later joiners use the regular grid, and a reconnect within the grace window
+still restores its last pose.
+
+On Fostral, `1030,3985` is the broad roof (top 78–81) over the rock channel
+east of the arch, with the arch crest ~60u west and the underpass below; the
+car settles there upright within ~1u (`roof_spawn_stays_on_the_roof` in
+`tests/chase_camera.rs`). `1010,3975` and `1020,3960` hold as well. The
+arch's own crest (x 964–975) is too narrow for a mechos: a car dropped on
+`970,3960` slides off into the sand.
+
+```bash
+cargo run -p vangers-server -- --port 7800 --ws-port 7801 --level Fostral --spawn-at 1030,3985
+# with the duel pair: Alice on the roof, Bob at his duel spot
+# cargo run -p vangers-server -- ... --duel-spawn --spawn-at 1030,3985
+```
+
 ## Car-vs-car contact (server-authoritative)
 
 After every physics quantum of every joined player, the server runs
