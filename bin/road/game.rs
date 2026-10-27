@@ -423,6 +423,36 @@ struct Roll {
     time: f32,
 }
 
+/// Debug-only scripted controls (`road --autodrive`): a list of
+/// `seconds:motor:rudder` segments fed into the same `Input` fields the
+/// keyboard drives, so a headless session can drive a reproducible loop.
+struct AutoDrive {
+    segments: Vec<(f32, f32, f32)>,
+    time: f32,
+    index: usize,
+}
+
+impl AutoDrive {
+    fn parse(script: &str) -> Result<Self, String> {
+        let mut segments = Vec::new();
+        for seg in script.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let parts = seg
+                .split(':')
+                .map(|v| v.trim().parse::<f32>().map_err(|e| format!("{seg:?}: {e}")))
+                .collect::<Result<Vec<_>, _>>()?;
+            match parts[..] {
+                [secs, motor, rudder] => segments.push((secs, motor, rudder)),
+                _ => return Err(format!("{seg:?}: expected seconds:motor:rudder")),
+            }
+        }
+        Ok(AutoDrive {
+            segments,
+            time: 0.0,
+            index: 0,
+        })
+    }
+}
+
 #[derive(Default)]
 struct Input {
     is_paused: bool,
@@ -441,6 +471,7 @@ struct Input {
 }
 
 pub struct Game {
+    autodrive: Option<AutoDrive>,
     db: DataBase,
     render: Render,
     batcher: Batcher,
@@ -925,6 +956,7 @@ impl Game {
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
             input: Input::default(),
+            autodrive: None,
             life,
             inventory,
             shop,
@@ -2244,6 +2276,68 @@ impl Game {
     }
 }
 
+impl Game {
+    /// Debug: drive the local car from a `seconds:motor:rudder,...` script.
+    pub fn set_autodrive(&mut self, script: &str) {
+        match AutoDrive::parse(script) {
+            Ok(ad) => {
+                log::info!("Autodrive: {} segment(s)", ad.segments.len());
+                self.autodrive = Some(ad);
+            }
+            Err(e) => log::error!("Autodrive script rejected: {e}"),
+        }
+    }
+
+    fn step_autodrive(&mut self, delta: f32) {
+        if self.autodrive.is_none() {
+            return;
+        }
+        let overlay = self.render.tracks();
+        let tiles = (overlay.len(), overlay.bytes());
+        let Some(ad) = self.autodrive.as_mut() else {
+            return;
+        };
+        let pose = self
+            .agents
+            .iter()
+            .find(|a| a.spirit == Spirit::Player)
+            .map(|a| match a.physics {
+                Physics::Cpu { ref transform, .. } => transform.disp,
+            });
+        let mut start = 0.0;
+        let mut current = None;
+        for (i, &(secs, motor, rudder)) in ad.segments.iter().enumerate() {
+            if ad.time < start + secs {
+                current = Some((i, motor, rudder));
+                break;
+            }
+            start += secs;
+        }
+        let (index, motor, rudder) = current.unwrap_or((ad.segments.len(), 0.0, 0.0));
+        if index != ad.index || ad.time == 0.0 {
+            log::info!(
+                "Autodrive segment {}/{} at t={:.1}s motor={} rudder={} pos={:?} track overlay: {} tiles, {} KiB",
+                index,
+                ad.segments.len(),
+                ad.time,
+                motor,
+                rudder,
+                pose,
+                tiles.0,
+                tiles.1 / 1024,
+            );
+            ad.index = index;
+        }
+        // A pose line every two seconds, to follow the drive in the log.
+        if (ad.time / 2.0).floor() != ((ad.time + delta) / 2.0).floor() {
+            log::info!("Autodrive t={:.1}s pos={:?}", ad.time + delta, pose);
+        }
+        ad.time += delta;
+        self.input.spin_ver = motor;
+        self.input.spin_hor = rudder;
+    }
+}
+
 impl Application for Game {
     fn on_key(&mut self, key: winit::keyboard::KeyCode, state: winit::event::ElementState) -> bool {
         use winit::{event::ElementState, keyboard::KeyCode};
@@ -2342,6 +2436,7 @@ impl Application for Game {
         profiling::scope!("Update");
 
         self.apply_pending_portal(device, queue);
+        self.step_autodrive(delta);
 
         let focus_point = self
             .cam

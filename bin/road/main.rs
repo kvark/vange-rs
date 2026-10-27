@@ -17,6 +17,12 @@ struct Cli {
     /// Player name for multiplayer
     #[arg(long, default_value = "Player")]
     name: String,
+
+    /// Debug: drive the local car from a script of `seconds:motor:rudder`
+    /// segments, comma separated (motor and rudder in -1..=1), e.g.
+    /// `2:0:0,20:1:0.6`. Controls go through the normal input path.
+    #[arg(long)]
+    autodrive: Option<String>,
 }
 
 fn main() {
@@ -27,7 +33,10 @@ fn main() {
         boilerplate::Harness::init(boilerplate::HarnessOptions { title: "road" });
 
     info!("Parsing command line");
-    let game = game::Game::new(&settings, &harness.graphics_ctx, cli.server, cli.name);
+    let mut game = game::Game::new(&settings, &harness.graphics_ctx, cli.server, cli.name);
+    if let Some(script) = cli.autodrive.as_deref() {
+        game.set_autodrive(script);
+    }
 
     harness.main_loop(game);
 }
