@@ -129,8 +129,9 @@ impl Location {
     /// Apply a server playback snapshot: match frame / phase / step on the
     /// level instead of free-running locally.
     ///
-    /// Same frame with a small step advance applies quants incrementally;
-    /// larger jumps rebuild via [`Self::set_phase`].
+    /// Steps forward quant by quant, the way the server got there, for up
+    /// to a full loop; only a state that never comes up (a malformed frame
+    /// index) falls back to a rebuild via [`Self::set_phase`].
     pub fn sync_authority(
         &mut self,
         target: &PlaybackState,
@@ -151,23 +152,22 @@ impl Location {
             return;
         }
 
-        // Common 20 Hz path: one (or a few) quants ahead on the same frame.
-        if self.frame == frame && cur_step < step && step - cur_step <= Self::SYNC_CATCH_UP {
-            let saved = target.go_phase;
-            self.go_phase = FREE_RUNNING;
-            while self.frame == frame && self.steps[self.frame] < step {
-                if self.step_frame(level, regions, false) {
-                    self.advance_frame();
-                    break;
-                }
+        // Common path: the server is a quant (or a few) ahead. Play the same
+        // quants it did, frame hand-overs included, so Relative deltas land
+        // once each. A rebuild from frame 0 would apply them a second time
+        // on top of the moved land: with period-1 frames the frame changes
+        // every snapshot, and the surface drifted off the server's.
+        let saved = target.go_phase;
+        self.go_phase = FREE_RUNNING;
+        for _ in 0..self.max_stage.max(1) + 2 {
+            self.update(level, regions);
+            if self.frame == frame && self.steps[frame] == step {
+                self.stage = target.stage;
+                self.go_phase = saved;
+                return;
             }
-            self.stage = target.stage;
-            self.go_phase = saved;
-            if self.frame == frame {
-                self.steps[self.frame] = step;
-            }
-            return;
         }
+        self.go_phase = saved;
 
         // Full rebuild to the server frame, then catch mid-frame step.
         // Start "behind" frame 0 so [`Self::set_phase`] still walks the loop
@@ -197,9 +197,6 @@ impl Location {
         self.stage = target.stage;
         self.go_phase = target.go_phase;
     }
-
-    /// Max quants to catch up incrementally before a full `set_phase` rebuild.
-    const SYNC_CATCH_UP: i32 = 4;
 
     /// Park right where the location is, whatever phase that happens to be.
     pub fn park(&mut self) {
@@ -1399,5 +1396,37 @@ mod tests {
         b.sync_authority(&snap, &mut level_b, &mut regions);
         assert_eq!(b.playback_state(), snap);
         assert_eq!(level_b.height[0], level_a.height[0]);
+    }
+
+    /// Relative frames that hand over every quant (period 1) change the
+    /// frame on every snapshot. Following them must not rebuild from
+    /// frame 0, which would add the deltas again on top of the moved land.
+    #[test]
+    fn sync_authority_follows_relative_frames_quant_by_quant() {
+        fn bobbing() -> Location {
+            let up = || frame((0, 0), (2, 1), vec![5, 3], 1);
+            let down = || {
+                let mut f = frame((0, 0), (2, 1), vec![5, 3], 1);
+                f.sign_bits[0] = u32::MAX;
+                f
+            };
+            location(Mode::Relative, vec![up(), up(), down(), down()])
+        }
+        let mut level_a = test_level();
+        let mut level_b = test_level();
+        let mut a = bobbing();
+        let mut b = bobbing();
+        let mut regions = Vec::new();
+
+        for quant in 0..13 {
+            a.update(&mut level_a, &mut regions);
+            // A late snapshot now and then: two quants at once.
+            if quant % 5 == 3 {
+                continue;
+            }
+            b.sync_authority(&a.playback_state(), &mut level_b, &mut regions);
+            assert_eq!(b.playback_state(), a.playback_state(), "quant {quant}");
+            assert_eq!(level_b.height, level_a.height, "quant {quant}");
+        }
     }
 }
