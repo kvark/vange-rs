@@ -109,6 +109,92 @@ pub fn nearest_passage<'a>(
         .map(|(_, p)| p)
 }
 
+/// Online, the server stores our spiral charge (`SetSpiral`) and echoes it
+/// in every `WorldState`. A snapshot sent before our latest `SetSpiral`
+/// still carries the old charge; taken blindly it blips the spiral back
+/// (say 2/2 -> 0/2 just after a station), and the station then charges and
+/// reports again. `SpiralSync` makes the exchange idempotent and ordered:
+/// a report is sent only when the server doesn't already have that charge,
+/// and while a report is unconfirmed, echoes of other charges are older
+/// than it and ignored. The server is the only other writer only before our
+/// first report (the reclaim restore on join), so the first echo that
+/// matches confirms the report.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SpiralSync {
+    /// Charge we sent that the server hasn't echoed yet.
+    pending: Option<u8>,
+    /// Snapshots ignored while `pending`.
+    stale: u32,
+    /// The server's latest echo.
+    server: Option<u8>,
+}
+
+/// What [`SpiralSync::on_server`] decided about an echo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpiralEcho {
+    /// Take this charge (it is the server's, newer than any local change).
+    Apply(u8),
+    /// The echo confirms our pending report.
+    Confirmed(u8),
+    /// Older than our pending report: keep the local charge.
+    Stale(u8),
+}
+
+impl SpiralSync {
+    /// Snapshots to wait for an echo before trusting the server again, in
+    /// case a report never landed (the server drops one before its join).
+    /// Generous: the stale run also covers snapshots that queued up while a
+    /// frame stalled (an escave load), 15 of them in the proof run, and at
+    /// 20 Hz this is 20 s.
+    pub const MAX_STALE: u32 = 400;
+
+    /// Local charge changed to `charge`: `Some` to send `SetSpiral`, `None`
+    /// when the server has, or is about to have, that charge already.
+    pub fn report(&mut self, charge: u8) -> Option<u8> {
+        let known = match self.pending {
+            Some(p) => p == charge,
+            None => self.server == Some(charge),
+        };
+        if known {
+            return None;
+        }
+        self.pending = Some(charge);
+        self.stale = 0;
+        Some(charge)
+    }
+
+    /// The server's charge for us from a `WorldState`.
+    pub fn on_server(&mut self, charge: u8) -> SpiralEcho {
+        self.server = Some(charge);
+        match self.pending {
+            None => SpiralEcho::Apply(charge),
+            Some(p) if p == charge => {
+                self.pending = None;
+                SpiralEcho::Confirmed(charge)
+            }
+            Some(_) => {
+                self.stale += 1;
+                if self.stale > Self::MAX_STALE {
+                    self.pending = None;
+                    SpiralEcho::Apply(charge)
+                } else {
+                    SpiralEcho::Stale(charge)
+                }
+            }
+        }
+    }
+
+    /// A report is awaiting its echo.
+    pub fn is_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// New connection: nothing sent yet, the server's charge unknown.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 fn wrap_delta(d: i32, span: i32) -> i32 {
     if span <= 0 {
         return d;
@@ -177,5 +263,59 @@ mod tests {
         let hit = nearest_passage(&list, (250, 100), size, 40);
         assert_eq!(hit.map(|p| p.id.as_str()), Some("F2G"));
         assert!(nearest_passage(&list, (128, 128), size, 40).is_none());
+    }
+
+    #[test]
+    fn stale_echo_after_a_station_is_ignored() {
+        // Joined with 0/2; the server echoes 0.
+        let mut sync = SpiralSync::default();
+        assert_eq!(sync.on_server(0), SpiralEcho::Apply(0));
+        // Charged at a station: report 2.
+        assert_eq!(sync.report(2), Some(2));
+        // Snapshots sent before the server got it still say 0.
+        for _ in 0..3 {
+            assert_eq!(sync.on_server(0), SpiralEcho::Stale(0));
+        }
+        // Still on the station: the second charge isn't sent again.
+        assert_eq!(sync.report(2), None);
+        assert_eq!(sync.on_server(2), SpiralEcho::Confirmed(2));
+        assert!(!sync.is_pending());
+        // Steady echoes are applied (a no-op) and the station stays quiet.
+        assert_eq!(sync.on_server(2), SpiralEcho::Apply(2));
+        assert_eq!(sync.report(2), None);
+    }
+
+    #[test]
+    fn reports_in_flight_are_ordered() {
+        let mut sync = SpiralSync::default();
+        sync.on_server(0);
+        // Charge then discharge before any echo.
+        assert_eq!(sync.report(2), Some(2));
+        assert_eq!(sync.report(1), Some(1));
+        // The echo of the first report is older than the second.
+        assert_eq!(sync.on_server(0), SpiralEcho::Stale(0));
+        assert_eq!(sync.on_server(2), SpiralEcho::Stale(2));
+        assert_eq!(sync.on_server(1), SpiralEcho::Confirmed(1));
+        // Back to the server's value: one report.
+        assert_eq!(sync.report(0), Some(0));
+        assert_eq!(sync.on_server(0), SpiralEcho::Confirmed(0));
+    }
+
+    #[test]
+    fn server_wins_when_nothing_is_pending_or_a_report_is_lost() {
+        let mut sync = SpiralSync::default();
+        // Reclaim restore on join.
+        assert_eq!(sync.on_server(3), SpiralEcho::Apply(3));
+        assert_eq!(sync.report(4), Some(4));
+        for _ in 0..SpiralSync::MAX_STALE {
+            assert_eq!(sync.on_server(3), SpiralEcho::Stale(3));
+        }
+        assert_eq!(sync.on_server(3), SpiralEcho::Apply(3));
+        assert!(!sync.is_pending());
+        // A reconnect forgets everything.
+        sync.report(1);
+        sync.reset();
+        assert_eq!(sync, SpiralSync::default());
+        assert_eq!(sync.report(3), Some(3));
     }
 }
