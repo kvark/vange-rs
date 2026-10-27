@@ -1400,8 +1400,9 @@ impl Game {
             } => {
                 if ground_anchor {
                     // The surface under the car: the cave floor beneath a
-                    // slab, not the slab top.
-                    target.disp.z = self.level.floor_below(target.disp);
+                    // slab, not the slab top, and the floor its hull rides
+                    // on rather than a pit under its centre.
+                    target.disp.z = space::Camera::ground_under(&self.level, target.disp);
                 }
                 // Follow, pull out of hills toward the car, re-aim the
                 // look-ahead, and drop under overhanging slabs.
