@@ -609,8 +609,9 @@ fn one_big_step_does_not_match_sub_stepping() {
 }
 
 /// Run 20 Hz server ticks from `transform`, holding W and jumping once at
-/// tick 5, splitting each tick's `physics_dt` at `max_quant` like
-/// `vangers-server` does. Returns how far the car got.
+/// tick 5, stepping whole `max_quant` quanta with per-quantum controls and
+/// the jump on the tick's last quantum like `vangers-server` does. Returns
+/// how far the car got.
 fn jump_and_drive(
     mut transform: space::Transform,
     max_quant: f32,
@@ -619,17 +620,19 @@ fn jump_and_drive(
     common: &config::common::Common,
 ) -> f32 {
     let dt_fixed = 1.0 / 20.0;
-    let input_factor = dt_fixed / config::common::MAIN_LOOP_TIME;
     let physics_dt = dt_fixed * {
         let n = &common.nature;
         common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
     };
+    let quant_input = physics::QuantClock::input_factor(max_quant, common);
+    let mut clock = physics::QuantClock::default();
     let start = transform.disp;
     let mut dynamo = Dynamo::default();
     for tick in 0..60 {
-        dynamo.change_traction(input_factor * common.car.traction_incr);
-        let mut remaining = physics_dt;
-        while remaining > max_quant {
+        let quanta = clock.advance(physics_dt, max_quant);
+        for i in 0..quanta {
+            dynamo.change_traction(quant_input * common.car.traction_incr);
+            let jump = (tick == 5 && i + 1 == quanta).then_some(1.0);
             physics::step(
                 &mut dynamo,
                 &mut transform,
@@ -639,28 +642,12 @@ fn jump_and_drive(
                 common,
                 1.0,
                 0.0,
-                None,
+                jump,
                 0.0,
                 None,
                 None,
             );
-            remaining -= max_quant;
         }
-        let jump = (tick == 5).then_some(1.0);
-        physics::step(
-            &mut dynamo,
-            &mut transform,
-            remaining,
-            car,
-            level,
-            common,
-            1.0,
-            0.0,
-            jump,
-            0.0,
-            None,
-            None,
-        );
     }
     transform.disp.distance(start)
 }
@@ -714,4 +701,196 @@ fn wedged_car_escapes_at_client_max_quant() {
         at_client > 20.0,
         "car should jump free at the client max_quant"
     );
+}
+
+/// How a side cuts its frame's physics time into `physics::step` calls.
+#[derive(Clone, Copy, PartialEq)]
+enum Split {
+    /// Pre-fix: `max_quant` steps plus the remainder, jump on the remainder.
+    PerFrame,
+    /// `physics::QuantClock`: whole quanta only, jump on the last quantum.
+    Quanta,
+}
+
+/// Hold W for `seconds`, releasing a jump of `power` on
+/// the frame that ends at `jump_at`. One frame is a client render frame or,
+/// at `frame_dt = 0.05`, a 20 Hz server tick. Returns the pose at the end
+/// of every frame, keyed by the frame's end time in milliseconds.
+#[allow(clippy::too_many_arguments)]
+fn jump_trajectory(
+    start: space::Transform,
+    frame_dt: f32,
+    seconds: f32,
+    jump_at: f32,
+    power: f32,
+    split: Split,
+    max_quant: f32,
+    car: &CarPhysicsData,
+    level: &level::Level,
+    common: &config::common::Common,
+) -> Vec<(u32, Vec3)> {
+    let physics_dt = frame_dt * {
+        let n = &common.nature;
+        common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
+    };
+    let input_factor = frame_dt / config::common::MAIN_LOOP_TIME;
+    let quant_input = physics::QuantClock::input_factor(max_quant, common);
+    let frames = (seconds / frame_dt).round() as u32;
+    let jump_frame = (jump_at / frame_dt).round() as u32 - 1;
+    let mut transform = start;
+    let mut dynamo = Dynamo::default();
+    let mut clock = physics::QuantClock::default();
+    let mut out = Vec::new();
+    for frame in 0..frames {
+        let jump = (frame == jump_frame).then_some(power);
+        let step = |dynamo: &mut Dynamo, transform: &mut space::Transform, dt, jump| {
+            physics::step(
+                dynamo, transform, dt, car, level, common, 1.0, 0.0, jump, 0.0, None, None,
+            )
+        };
+        match split {
+            Split::PerFrame => {
+                dynamo.change_traction(input_factor * common.car.traction_incr);
+                let mut remaining = physics_dt;
+                while remaining > max_quant {
+                    step(&mut dynamo, &mut transform, max_quant, None);
+                    remaining -= max_quant;
+                }
+                step(&mut dynamo, &mut transform, remaining, jump);
+            }
+            Split::Quanta => {
+                let quanta = clock.advance(physics_dt, max_quant);
+                assert!(quanta > 0, "test frames are longer than a quantum");
+                for i in 0..quanta {
+                    let last = i + 1 == quanta;
+                    dynamo.change_traction(quant_input * common.car.traction_incr);
+                    step(
+                        &mut dynamo,
+                        &mut transform,
+                        max_quant,
+                        if last { jump } else { None },
+                    );
+                }
+            }
+        }
+        let end_ms = ((frame + 1) as f32 * frame_dt * 1000.0).round() as u32;
+        out.push((end_ms, transform.disp));
+    }
+    out
+}
+
+/// Largest gap between a client and the 20 Hz server at the instants both
+/// have a pose for (frame ends that land on tick ends).
+fn worst_gap(server: &[(u32, Vec3)], client: &[(u32, Vec3)]) -> f32 {
+    let mut worst = 0.0f32;
+    for &(ms, pos) in client {
+        if let Some(&(_, srv)) = server.iter().find(|&&(t, _)| t == ms) {
+            worst = worst.max(pos.distance(srv));
+        }
+    }
+    worst
+}
+
+/// Frame times whose frame ends line up with 20 Hz tick ends at 1 s.
+const JUMP_FRAME_DTS: [f32; 5] = [1.0 / 60.0, 1.0 / 40.0, 0.1, 0.125, 0.2];
+
+/// With `QuantClock` a client at any frame rate integrates a moving jump
+/// along exactly the server's path, so the reconcile has nothing to snap.
+#[test]
+fn quantized_jump_matches_server_at_any_frame_rate() {
+    let level = level::load(
+        &level::LevelConfig::new_test(),
+        &settings::Geometry::default(),
+    );
+    let common = config::common::Common::test_default();
+    let car = CarPhysicsData::test_default();
+    let start = spawn_transform(&level);
+    // The test constants make 0.56 physics time per second, not ~9. Keep
+    // the quantum off a divisor of the tick so float rounding of the carry
+    // cannot move a quantum boundary between the two sides.
+    let max_quant = 0.0045;
+    let run = |frame_dt, split| {
+        jump_trajectory(
+            start, frame_dt, 4.0, 1.0, 10.0, split, max_quant, &car, &level, &common,
+        )
+    };
+    let server = run(0.05, Split::Quanta);
+    let moved = server[0].1.distance(server.last().unwrap().1);
+    assert!(moved > 10.0, "the car should drive and jump, moved {moved}");
+    for frame_dt in JUMP_FRAME_DTS {
+        let gap = worst_gap(&server, &run(frame_dt, Split::Quanta));
+        println!(
+            "test level, frame {:.0} ms: quantized gap {gap:.4}",
+            frame_dt * 1000.0
+        );
+        assert!(
+            gap < 0.01,
+            "frame {frame_dt}: client strayed {gap} from the server"
+        );
+    }
+}
+
+/// MP jump snap repro on Fostral (needs game data; skipped without it).
+/// Overseer's #388 playtest: Alice's moving jump landed ~127u from where
+/// the server put her, and the `WorldState` reconcile hard-snapped her back.
+/// Same pose, same input, same jump power: the only difference between the
+/// client and the server was the frame time the physics was cut up by.
+#[test]
+fn fostral_moving_jump_lands_where_the_server_does() {
+    let Some(settings) = config::Settings::try_load("config/settings.ron") else {
+        eprintln!("skipping: no config/settings.ron with game data");
+        return;
+    };
+    let ini = settings.data_path.join("thechain/fostral/world.ini");
+    if !ini.is_file() {
+        eprintln!("skipping: no Fostral data");
+        return;
+    }
+    let reg = config::game::Registry::load(&settings);
+    let level = level::load(&level::LevelConfig::load(&ini), &settings.game.geometry);
+    let common = config::common::load(settings.open_relative("common.prm"));
+    let cars = config::car::load_physics_registry(
+        &settings.data_path,
+        &reg,
+        settings.game.physics.shape_sampling,
+    );
+    let Some(car) = cars.get("OxidizeMonk") else {
+        eprintln!("skipping: no OxidizeMonk");
+        return;
+    };
+    let max_quant = settings.game.physics.max_quant;
+    // Settle at the spot of the playtest's standing jump 2 (830, 3983).
+    let mut start = space::Transform {
+        disp: Vec3::new(830.0, 3983.0, level.get((830, 3983)).high() + 5.0),
+        rot: Quat::IDENTITY,
+        scale: car.scale,
+    };
+    let mut rest = Dynamo::default();
+    for _ in 0..100 {
+        step_physics(&mut rest, &mut start, 0.45, max_quant, car, &level, &common);
+    }
+    let power = common.force.max_jump_power;
+    let run = |frame_dt, split| {
+        jump_trajectory(
+            start, frame_dt, 4.0, 1.0, power, split, max_quant, car, &level, &common,
+        )
+    };
+    let (mut worst_old, mut worst_new) = (0.0f32, 0.0f32);
+    let old_server = run(0.05, Split::PerFrame);
+    let server = run(0.05, Split::Quanta);
+    for frame_dt in JUMP_FRAME_DTS {
+        let old = worst_gap(&old_server, &run(frame_dt, Split::PerFrame));
+        let new = worst_gap(&server, &run(frame_dt, Split::Quanta));
+        println!(
+            "Fostral, frame {:.0} ms: per-frame split gap {old:.2}, quantized gap {new:.4}",
+            frame_dt * 1000.0
+        );
+        worst_old = worst_old.max(old);
+        worst_new = worst_new.max(new);
+    }
+    assert!(
+        worst_old > space::Transform::WORLD_STATE_SNAP_POS,
+        "the per-frame split was expected to stray past the snap threshold"
+    );
+    assert!(worst_new < 0.01, "quantized client strayed {worst_new}");
 }

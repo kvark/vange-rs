@@ -600,6 +600,8 @@ async fn main() {
         "Starting game loop (physics_dt={:.4}, input_factor={:.2})",
         physics_dt, input_factor
     );
+    let mut quant_clock = physics::QuantClock::default();
+    let quant_input_factor = physics::QuantClock::input_factor(max_quant, &common);
 
     loop {
         tokio::select! {
@@ -610,14 +612,16 @@ async fn main() {
 
                 tick += 1;
 
+                // Whole `max_quant` steps only, the same split the
+                // clients use for their own car (`physics::QuantClock`),
+                // so both integrate a jump along the same path.
+                let quanta = quant_clock.advance(physics_dt, max_quant);
+
                 // Apply controls and step physics for each player
                 for agent in players.values_mut() {
                     if !agent.joined {
                         continue;
                     }
-
-                    // Apply control inputs
-                    agent.apply_control(input_factor, &common);
 
                     let f_turbo = if agent.control.turbo {
                         common.global.k_traction_turbo
@@ -629,11 +633,18 @@ async fn main() {
                     } else {
                         0.0
                     };
-                    let jump = agent.control.jump.take();
 
-                    // Step physics (may need sub-stepping for stability)
-                    let mut remaining = physics_dt;
-                    while remaining > max_quant {
+                    // Jump and roll go on the last quantum of the tick, as
+                    // the client applies them on the last quantum of its
+                    // frame. A tick with no quantum keeps the jump pending.
+                    for i in 0..quanta {
+                        let last = i + 1 == quanta;
+                        agent.apply_control(quant_input_factor, &common);
+                        let (jump, roll) = if last {
+                            (agent.control.jump.take(), agent.control.roll)
+                        } else {
+                            (None, 0.0)
+                        };
                         physics::step(
                             &mut agent.dynamo,
                             &mut agent.transform,
@@ -643,30 +654,15 @@ async fn main() {
                             &common,
                             f_turbo,
                             f_brake,
+                            jump,
+                            roll,
                             None,
-                            0.0,
-                            None,
+                            // The server does not deform the terrain: the edits
+                            // would have to be replicated for clients to agree
+                            // on the ground they are driving over.
                             None,
                         );
-                        remaining -= max_quant;
                     }
-                    physics::step(
-                        &mut agent.dynamo,
-                        &mut agent.transform,
-                        remaining,
-                        &agent.phys_data,
-                        &level,
-                        &common,
-                        f_turbo,
-                        f_brake,
-                        jump,
-                        agent.control.roll,
-                        None,
-                        // The server does not deform the terrain: the edits
-                        // would have to be replicated for clients to agree
-                        // on the ground they are driving over.
-                        None,
-                    );
 
                     // Wrap coordinates
                     let size = level.size;

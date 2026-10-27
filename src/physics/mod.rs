@@ -297,6 +297,56 @@ impl CarPhysicsData {
     }
 }
 
+/// Splits elapsed physics time into whole `max_quant` steps, carrying the
+/// remainder over to the next call.
+///
+/// `step` is not linear in `dt` (see `one_big_step_does_not_match_sub_stepping`
+/// in `tests/net_physics.rs`), so the old "`max_quant` steps plus whatever is
+/// left" split made a trajectory depend on how the time was cut up: a client
+/// stepping per render frame and the server stepping per 20 Hz tick drove
+/// the same car with the same input along different paths. In the air the
+/// gap compounds into tens of units by the landing, which the `WorldState`
+/// reconcile then hard-snaps. Stepping only whole quanta on both sides makes
+/// the integration independent of the frame rate.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct QuantClock {
+    carry: f32,
+}
+
+impl QuantClock {
+    /// Cap on quanta per call, so a long hitch (window drag, breakpoint)
+    /// does not turn into a burst of hundreds of steps.
+    pub const MAX_QUANTA: u32 = 64;
+
+    /// Adds `physics_dt` of physics time and returns how many whole
+    /// `quant`-sized steps are now due.
+    pub fn advance(&mut self, physics_dt: f32, quant: f32) -> u32 {
+        self.carry += physics_dt;
+        let n = (self.carry / quant).floor().max(0.0);
+        self.carry -= n * quant;
+        if n > Self::MAX_QUANTA as f32 {
+            self.carry = 0.0;
+            Self::MAX_QUANTA
+        } else {
+            n as u32
+        }
+    }
+
+    /// `apply_control` factor for one quantum: the fraction of a
+    /// `MAIN_LOOP_TIME` frame that `quant` of physics time stands for.
+    /// Controls go in per quantum on both sides too, since `step` decays
+    /// traction every call and a per-frame top-up would saw-tooth it
+    /// differently at each frame rate.
+    pub fn input_factor(quant: f32, common: &config::common::Common) -> f32 {
+        let n = &common.nature;
+        let physics_per_loop = config::common::MAIN_LOOP_TIME
+            * common.speed.standard_frame_rate as f32
+            * n.time_delta0
+            * n.num_calls_analysis as f32;
+        quant / physics_per_loop
+    }
+}
+
 pub fn jump_dir(power: f32) -> Vec3 {
     2.5 * power * Vec3::new(0.0, 3.0, 10.0).normalize()
 }
