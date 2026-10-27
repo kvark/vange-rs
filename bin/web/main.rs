@@ -798,8 +798,17 @@ impl WebApp {
         // catching up". Same trick as `tests/net_physics.rs`.
         if let Some(ref a) = agent {
             cam.loc = a.transform.disp + glam::vec3(0.0, 0.0, 200.0);
+            let reach = space::Subject::reach_of(&a.phys_data.bbox, a.car.scale);
+            let subject = space::Subject::unanchored(&a.transform, reach);
             for _ in 0..120 {
-                cam.chase(&level, &a.transform, 1.0 / 60.0, &follow, CAMERA_CLEARANCE);
+                cam.chase_anchored(
+                    &level,
+                    &a.transform,
+                    subject,
+                    1.0 / 60.0,
+                    &follow,
+                    CAMERA_CLEARANCE,
+                );
             }
         }
 
@@ -2686,9 +2695,15 @@ impl WebHandler {
             {
                 let follow = gpu.app.follow;
                 let target = agent.transform;
-                gpu.app
-                    .cam
-                    .chase(&gpu.app.level, &target, dt, &follow, CAMERA_CLEARANCE);
+                let reach = space::Subject::reach_of(&agent.phys_data.bbox, agent.car.scale);
+                gpu.app.cam.chase_anchored(
+                    &gpu.app.level,
+                    &target,
+                    space::Subject::unanchored(&target, reach),
+                    dt,
+                    &follow,
+                    CAMERA_CLEARANCE,
+                );
             }
         } else {
             let riding = gpu.app.step_ride(dt);
@@ -2750,9 +2765,15 @@ impl WebHandler {
                     follow.offset.y += (speed_xy * 0.03).min(3.0);
                     follow.look_ahead += (speed_xy * 0.04).min(4.0);
                     let target = agent.transform;
-                    gpu.app
-                        .cam
-                        .chase(level_ref, &target, dt, &follow, CAMERA_CLEARANCE);
+                    let reach = space::Subject::reach_of(&agent.phys_data.bbox, agent.car.scale);
+                    gpu.app.cam.chase_anchored(
+                        level_ref,
+                        &target,
+                        space::Subject::unanchored(&target, reach),
+                        dt,
+                        &follow,
+                        CAMERA_CLEARANCE,
+                    );
                 }
             } else if !connected {
                 // No vehicle loaded — fall back to the free camera. Same

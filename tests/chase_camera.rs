@@ -113,7 +113,7 @@ fn jump_replay(
                 None,
             );
         }
-        cam.chase(level, &transform, frame_dt, follow, CLEARANCE);
+        chase(&mut cam, level, &transform, follow, reach(car));
         if frame >= jump_frame {
             worst.turn = worst.turn.max(wrap_angle(view_yaw(&cam) - last_yaw).abs());
             let heading = cam.chase_yaw.unwrap();
@@ -135,6 +135,35 @@ struct Fostral {
     common: config::common::Common,
     car: CarPhysicsData,
     max_quant: f32,
+}
+
+/// How far the OxidizeMonk's body reaches from its centre (~27u).
+fn reach(car: &CarPhysicsData) -> f32 {
+    space::Subject::reach_of(&car.bbox, car.scale)
+}
+
+/// `road`/`web`'s chase of a car that size, unanchored.
+fn chase(
+    cam: &mut space::Camera,
+    level: &level::Level,
+    target: &space::Transform,
+    follow: &space::Follow,
+    reach: f32,
+) {
+    let subject = space::Subject::unanchored(target, reach);
+    cam.chase_anchored(level, target, subject, 1.0 / 60.0, follow, CLEARANCE);
+}
+
+/// How far past the car's reach the lens must sit under a slab, so the car
+/// does not fill the screen (the old 40/20 pose put it 14-16u past an
+/// OxidizeMonk, over its tail; the web camera's sat inside it).
+const LENS_GAP: f32 = 20.0;
+
+/// How far past the car's reach (a sphere round its centre holding the
+/// whole body) the lens is: under 0 it is inside the car's bounds, and a
+/// few units means the car fills the screen.
+fn tail_gap(cam: Vec3, car: Vec3, reach: f32) -> f32 {
+    (cam - car).length() - reach
 }
 
 /// Fostral and the OxidizeMonk, or `None` (and a note) without game data.
@@ -326,7 +355,9 @@ const UNDERPASS: [(f32, f32); 6] = [
 fn chase_camera_settles_in_the_underpass_gap() {
     let Some(f) = fostral() else { return };
     let level = &f.level;
+    let r = reach(&f.car);
     for (fi, follow) in chase_follows().iter().enumerate() {
+        let mut worst_gap = f32::INFINITY;
         for &(x, y) in &UNDERPASS {
             let car = car_on_floor(level, x, y);
             let ceiling = space::Camera::under_slab_at(level, car)
@@ -342,7 +373,7 @@ fn chase_camera_settles_in_the_underpass_gap() {
                 let mut cam = camera_at(car + Vec3::new(0.0, 0.0, 240.0));
                 let mut dist = 0.0;
                 for frame in 0..180 {
-                    cam.chase(level, &target, 1.0 / 60.0, follow, CLEARANCE);
+                    chase(&mut cam, level, &target, follow, reach(&f.car));
                     let at = format!(
                         "follow {fi} at ({x}, {y}) yaw {k}x60° frame {frame}: camera {:?}",
                         cam.loc
@@ -357,10 +388,14 @@ fn chase_camera_settles_in_the_underpass_gap() {
                         assert!(cam.loc.z < c, "{at} is above the slab underside {c}");
                     }
                     if frame >= 90 {
+                        // Clear of the car by 20u or more, so it does not
+                        // fill the screen; no further than the sized arm.
                         dist = (cam.loc - car).length();
+                        let gap = tail_gap(cam.loc, car, r);
+                        worst_gap = worst_gap.min(gap);
                         assert!(
-                            (20.0..=60.0).contains(&dist),
-                            "{at} is {dist:.1} from the car"
+                            gap >= LENS_GAP && dist <= 3.0 * r,
+                            "{at} is {dist:.1} from the car, {gap:.1} past its reach"
                         );
                         assert!(clear_sight(level, cam.loc, car), "{at} cannot see the car");
                         assert!(
@@ -378,6 +413,7 @@ fn chase_camera_settles_in_the_underpass_gap() {
                 }
             }
         }
+        println!("follow {fi}: lens at least {worst_gap:.1} past the car's {r:.1} reach");
     }
 }
 
@@ -399,15 +435,21 @@ fn chase_camera_ignores_holes_in_the_slab() {
                 rot: Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2),
                 scale: 1.0,
             };
-            cam.chase(level, &target, 1.0 / 60.0, follow, CLEARANCE);
+            chase(&mut cam, level, &target, follow, reach(&f.car));
             if frame >= 90 {
                 near = near.min((cam.loc - car).length());
                 lurch = lurch.max(((cam.loc - last_cam) - (car - last_car)).length());
             }
             (last_cam, last_car) = (cam.loc, car);
         }
-        println!("follow {fi}: nearest {near:.1}, worst lurch {lurch:.2}u/frame");
-        assert!(near > 20.0, "follow {fi} came within {near:.1} of the car");
+        let gap = near - reach(&f.car);
+        println!(
+            "follow {fi}: nearest {near:.1} ({gap:.1} past the car's reach), worst lurch {lurch:.2}u/frame"
+        );
+        assert!(
+            gap >= LENS_GAP,
+            "follow {fi} came within {gap:.1} of the car's reach"
+        );
         assert!(lurch < 1.0, "follow {fi} lurched {lurch:.2}u in a frame");
     }
 }
@@ -444,6 +486,7 @@ fn chase_camera_drives_through_the_underpass() {
         };
         let mut cam = camera_at(transform.disp + Vec3::new(0.0, 0.0, 240.0));
         let (mut lurch, mut turn, mut under, mut deep, mut max_x) = (0.0f32, 0.0f32, 0, 0, 0.0f32);
+        let mut deep_gap = f32::INFINITY;
         let (mut last_cam, mut last_car, mut last_dir) = (cam.loc, transform.disp, cam.dir());
         for frame in 0..60 * 9 {
             for _ in 0..clock.advance(physics_dt, max_quant) {
@@ -465,7 +508,7 @@ fn chase_camera_drives_through_the_underpass() {
                     None,
                 );
             }
-            cam.chase(&level, &transform, frame_dt, follow, CLEARANCE);
+            chase(&mut cam, &level, &transform, follow, reach(&car));
             let at = format!(
                 "follow {fi} frame {frame}: car {:?}, camera {:?}",
                 transform.disp, cam.loc
@@ -491,6 +534,7 @@ fn chase_camera_drives_through_the_underpass() {
                 );
                 if cam.under_slab > 0.99 {
                     deep += 1;
+                    deep_gap = deep_gap.min(tail_gap(cam.loc, transform.disp, reach(&car)));
                 }
             }
             if frame > 60 {
@@ -501,8 +545,12 @@ fn chase_camera_drives_through_the_underpass() {
             (last_cam, last_car, last_dir) = (cam.loc, transform.disp, cam.dir());
         }
         println!(
-            "follow {fi}: {under} frames under the slab ({deep} fully in the under-slab pose), reached x {max_x:.0}; worst per-frame lurch {lurch:.1}u, view turn {:.2}°",
+            "follow {fi}: {under} frames under the slab ({deep} fully in the under-slab pose, lens at least {deep_gap:.1} past the car), reached x {max_x:.0}; worst per-frame lurch {lurch:.1}u, view turn {:.2}°",
             turn.to_degrees()
+        );
+        assert!(
+            deep_gap >= LENS_GAP,
+            "in the under-slab pose the lens came within {deep_gap:.1} of the car's reach"
         );
         assert!(under > 120, "the car was meant to drive under the slab");
         assert!(lurch < 12.0, "camera lurched {lurch:.1}u in one frame");
@@ -556,7 +604,7 @@ fn chase_camera_backed_to_a_wall_under_the_slab() {
                 };
                 let mut cam = camera_at(car + Vec3::new(0.0, 0.0, 240.0));
                 for frame in 0..240 {
-                    cam.chase(level, &target, 1.0 / 60.0, follow, CLEARANCE);
+                    chase(&mut cam, level, &target, follow, reach(&f.car));
                     let at = format!(
                         "follow {fi} at ({x}, {y}) yaw {yaw:.2} frame {frame}: camera {:?}",
                         cam.loc
@@ -566,9 +614,12 @@ fn chase_camera_backed_to_a_wall_under_the_slab() {
                         "{at} is not in open air"
                     );
                     if frame >= 120 {
-                        let dist = (cam.loc - car).length();
-                        nearest = nearest.min(dist);
-                        assert!(dist >= 20.0, "{at} collapsed to {dist:.1} from the car");
+                        let gap = tail_gap(cam.loc, car, reach(&f.car));
+                        nearest = nearest.min(gap);
+                        assert!(
+                            gap >= LENS_GAP,
+                            "{at} collapsed to {gap:.1} past the car's reach"
+                        );
                         assert!(cam.loc.z < ceiling, "{at} is above the {ceiling} underside");
                         // Sight of the car's roof: a one-texel bump in the
                         // floor between can hide its belly.
@@ -581,7 +632,7 @@ fn chase_camera_backed_to_a_wall_under_the_slab() {
                     }
                 }
             }
-            println!("follow {fi} at ({x}, {y}): nearest {nearest:.1}");
+            println!("follow {fi} at ({x}, {y}): lens at least {nearest:.1} past the car");
         }
     }
 }
@@ -604,7 +655,7 @@ fn chase_camera_on_the_roof_beside_a_taller_overhang() {
             };
             let mut cam = camera_at(car + Vec3::new(0.0, 0.0, 240.0));
             for _ in 0..120 {
-                cam.chase(level, &target, 1.0 / 60.0, follow, CLEARANCE);
+                chase(&mut cam, level, &target, follow, reach(&f.car));
                 assert_eq!(
                     cam.under_slab, 0.0,
                     "({x}, {y}) roof counted as under a slab"
@@ -665,7 +716,7 @@ fn chase_camera_reverses_toward_the_wall() {
                     None,
                 );
             }
-            cam.chase(&level, &transform, frame_dt, follow, CLEARANCE);
+            chase(&mut cam, &level, &transform, follow, reach(&car));
             let at = format!(
                 "follow {fi} frame {frame}: car {:?}, camera {:?}",
                 transform.disp, cam.loc
@@ -750,7 +801,7 @@ fn chase_camera_rides_over_a_floor_pit() {
             target.disp.z = ground;
             let mut cam = camera_at(car + Vec3::new(0.0, 0.0, 240.0));
             for frame in 0..180 {
-                cam.chase(level, &target, 1.0 / 60.0, &follow, CLEARANCE);
+                chase(&mut cam, level, &target, &follow, reach(&f.car));
                 if frame < 120 {
                     continue;
                 }
@@ -840,7 +891,11 @@ fn arch_replay(
         } else {
             transform.disp.z
         };
-        cam.chase_anchored(level, &transform, ground, frame_dt, follow, CLEARANCE);
+        let subject = space::Subject {
+            ground,
+            reach: reach(&f.car),
+        };
+        cam.chase_anchored(level, &transform, subject, frame_dt, follow, CLEARANCE);
         frames.push(ArchFrame {
             car: transform.disp,
             cam: cam.loc,
@@ -891,7 +946,11 @@ fn chase_camera_stays_above_an_arch() {
                 };
                 let mut cam = camera_at(car + Vec3::new(0.0, 0.0, 240.0));
                 for frame in 0..180 {
-                    cam.chase_anchored(level, &target, ground, 1.0 / 60.0, follow, CLEARANCE);
+                    let subject = space::Subject {
+                        ground,
+                        reach: reach(&f.car),
+                    };
+                    cam.chase_anchored(level, &target, subject, 1.0 / 60.0, follow, CLEARANCE);
                     if frame < 120 {
                         continue;
                     }
@@ -974,6 +1033,7 @@ fn chase_camera_recovers_after_a_nose_up_reset() {
     let Some(f) = fostral() else { return };
     let level = &f.level;
     for (fi, follow) in chase_follows().iter().enumerate() {
+        let mut worst = f32::INFINITY;
         for &(x, y) in &SOUTH_CAVE {
             for h in 0..8 {
                 let yaw = h as f32 * std::f32::consts::FRAC_PI_4;
@@ -999,7 +1059,11 @@ fn chase_camera_recovers_after_a_nose_up_reset() {
                         } else {
                             z
                         };
-                        cam.chase_anchored(level, &target, ground, 1.0 / 60.0, follow, CLEARANCE);
+                        let subject = space::Subject {
+                            ground,
+                            reach: reach(&f.car),
+                        };
+                        cam.chase_anchored(level, &target, subject, 1.0 / 60.0, follow, CLEARANCE);
                         let at = format!(
                             "follow {fi} at ({x}, {y}) yaw {yaw:.2} pitch {pitch} frame {frame}: camera {:?}",
                             cam.loc
@@ -1008,8 +1072,13 @@ fn chase_camera_recovers_after_a_nose_up_reset() {
                         close = if dist < 15.0 { close + 1 } else { 0 };
                         assert!(close <= 30, "{at} stuck within 15u of the car");
                         if reset && frame >= 210 {
-                            nearest = nearest.min(dist);
                             assert!(dist >= 20.0, "{at} is {dist:.1} from the car");
+                            // Settled 1.5s after R, the lens is clear of the car.
+                            if frame >= 270 {
+                                let gap = dist - reach(&f.car);
+                                nearest = nearest.min(gap);
+                                assert!(gap >= LENS_GAP, "{at} is {gap:.1} past the car's reach");
+                            }
                             assert!(clear_sight(level, cam.loc, car), "{at} cannot see the car");
                             assert!(
                                 !space::Camera::terrain_blocks_view(level, cam.loc, car, CLEARANCE),
@@ -1018,7 +1087,285 @@ fn chase_camera_recovers_after_a_nose_up_reset() {
                         }
                     }
                     assert!(nearest.is_finite());
+                    worst = worst.min(nearest);
                 }
+            }
+        }
+        println!("follow {fi}: after R the lens is at least {worst:.1} past the car");
+    }
+}
+
+/// The rock channel east of the arch: two-level texels (floor 5, slab
+/// underside 45-53) between its walls, where the car still looked big.
+const ROCK_CHANNEL: [(f32, f32); 5] = [
+    (984.0, 3957.0),
+    (990.0, 3960.0),
+    (996.0, 3962.0),
+    (1002.0, 3958.0),
+    (1008.0, 3960.0),
+];
+
+/// Parked in the rock channel facing along it (east or west), the lens
+/// sits clear of the car, in the gap, with the car in sight. Facing
+/// across it the wall is a few units behind the car and the swung-up arm
+/// cannot get the lens clear (the whole gap is 45u); that only has to
+/// stay in open air and in sight.
+#[test]
+fn chase_camera_in_the_rock_channel() {
+    let Some(f) = fostral() else { return };
+    let level = &f.level;
+    let r = reach(&f.car);
+    for (fi, follow) in chase_follows().iter().enumerate() {
+        let mut worst = f32::INFINITY;
+        for &(x, y) in &ROCK_CHANNEL {
+            let car = Vec3::new(x, y, level.get((x as i32, y as i32)).low() + 3.6);
+            let ceiling = space::Camera::under_slab_at(level, car)
+                .unwrap_or_else(|| panic!("({x}, {y}) should be under the slab"));
+            for k in 0..4 {
+                let yaw = k as f32 * std::f32::consts::FRAC_PI_2;
+                let along = k % 2 == 1;
+                let target = space::Transform {
+                    disp: car,
+                    rot: Quat::from_rotation_z(yaw),
+                    scale: 1.0,
+                };
+                let mut cam = camera_at(car + Vec3::new(0.0, 0.0, 240.0));
+                for frame in 0..240 {
+                    chase(&mut cam, level, &target, follow, r);
+                    let at = format!(
+                        "follow {fi} at ({x}, {y}) yaw {k}x90° frame {frame}: camera {:?}",
+                        cam.loc
+                    );
+                    assert!(
+                        in_air(level, cam.loc, CLEARANCE - 0.01),
+                        "{at} is not in open air"
+                    );
+                    if frame < 120 {
+                        continue;
+                    }
+                    assert!(cam.loc.z < ceiling, "{at} is above the {ceiling} underside");
+                    let roof = car + Vec3::new(0.0, 0.0, CLEARANCE);
+                    assert!(clear_sight(level, cam.loc, roof), "{at} cannot see the car");
+                    if along {
+                        let gap = tail_gap(cam.loc, car, r);
+                        worst = worst.min(gap);
+                        assert!(gap >= LENS_GAP, "{at} is {gap:.1} past the car's reach");
+                        assert!(
+                            !space::Camera::terrain_blocks_view(level, cam.loc, car, CLEARANCE),
+                            "{at}: the veil would kick in"
+                        );
+                    }
+                }
+            }
+        }
+        println!("follow {fi}: facing along the channel, lens at least {worst:.1} past the car");
+    }
+}
+
+/// Full throttle from `(x, y)` facing `yaw` for `frames` frames, the
+/// camera chasing as `road` (anchored) or `web` does.
+fn drive_replay(
+    f: &Fostral,
+    (x, y, yaw): (f32, f32, f32),
+    frames: u32,
+    settle: u32,
+    follow: &space::Follow,
+    anchored: bool,
+) -> Vec<ArchFrame> {
+    let (level, common, car) = (&f.level, &f.common, &f.car);
+    let frame_dt = 1.0 / 60.0;
+    let physics_dt = frame_dt * {
+        let n = &common.nature;
+        common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
+    };
+    let qi = physics::QuantClock::input_factor(f.max_quant, common);
+    let mut clock = physics::QuantClock::default();
+    let mut dynamo = Dynamo::default();
+    let mut transform = space::Transform {
+        disp: car_on_floor(level, x, y) + Vec3::new(0.0, 0.0, 2.0),
+        rot: Quat::from_rotation_z(yaw),
+        scale: car.scale,
+    };
+    let mut cam = camera_at(transform.disp + Vec3::new(0.0, 0.0, 240.0));
+    let mut out = Vec::new();
+    for frame in 0..frames {
+        for _ in 0..clock.advance(physics_dt, f.max_quant) {
+            if frame >= settle {
+                dynamo.change_traction(qi * common.car.traction_incr);
+            }
+            physics::step(
+                &mut dynamo,
+                &mut transform,
+                f.max_quant,
+                car,
+                level,
+                common,
+                1.0,
+                0.0,
+                None,
+                0.0,
+                None,
+                None,
+            );
+        }
+        let ground = if anchored {
+            space::Camera::ground_under(level, transform.disp)
+        } else {
+            transform.disp.z
+        };
+        let subject = space::Subject {
+            ground,
+            reach: reach(&f.car),
+        };
+        cam.chase_anchored(level, &transform, subject, frame_dt, follow, CLEARANCE);
+        out.push(ArchFrame {
+            car: transform.disp,
+            cam: cam.loc,
+            under_slab: cam.under_slab,
+        });
+    }
+    out
+}
+
+/// Most a chase camera may move against the car in one frame (at 60 fps)
+/// while blending into or out of the under-slab pose. On master the
+/// drives below peaked at 6.5 for `road` (the trailing camera rising into
+/// the slab underside on the way out and being pulled along the arm).
+const GLIDE_LURCH: f32 = 5.0;
+
+/// Driving into the slab east of (944, 3958) and back out west of it, the
+/// camera glides between the authored pose and the under-slab one: no
+/// frame of the blend moves it more than [`GLIDE_LURCH`] against the car,
+/// for either camera.
+#[test]
+fn chase_camera_glides_into_and_out_of_the_slab() {
+    let Some(f) = fostral() else { return };
+    let east = -std::f32::consts::FRAC_PI_2;
+    let west = std::f32::consts::FRAC_PI_2;
+    let drives = [
+        ("enter east", (840.0f32, 3958.0f32, east)),
+        ("enter east 3964", (840.0, 3964.0, east)),
+        ("enter east near", (920.0, 3958.0, east)),
+        ("enter east near 3964", (920.0, 3964.0, east)),
+        ("leave west", (1000.0, 3964.0, west)),
+        ("leave west arch", (968.0, 3960.0, west)),
+    ];
+    let near = |p: Vec3| (850.0..1015.0).contains(&p.x) && (3930.0..4000.0).contains(&p.y);
+    for (fi, follow) in chase_follows().iter().enumerate() {
+        for (name, start) in drives {
+            if fi == 1 && start.0 < 900.0 {
+                // The web camera rides low: coming down the dune at
+                // x 865-900 its arm cuts the crest and is pulled in,
+                // slab or no slab. The approaches from x 920 cover it.
+                continue;
+            }
+            let frames = drive_replay(&f, start, 600, 120, follow, fi == 0);
+            let (mut worst, mut at, mut blended) = (0.0f32, 0, 0);
+            for (i, pair) in frames.windows(2).enumerate().skip(120) {
+                let (a, b) = (&pair[0], &pair[1]);
+                if !near(b.car) || !(0.02..0.98).contains(&b.under_slab) {
+                    continue;
+                }
+                blended += 1;
+                let lurch = ((b.cam - a.cam) - (b.car - a.car)).length();
+                if std::env::var("SERIES").is_ok_and(|s| s == fi.to_string()) {
+                    println!(
+                        "  {name} {}: car {:.1?} cam {:.1?} b {:.2} lurch {lurch:.2}",
+                        i + 1,
+                        b.car,
+                        b.cam,
+                        b.under_slab
+                    );
+                }
+                if lurch > worst {
+                    (worst, at) = (lurch, i + 1);
+                }
+            }
+            println!(
+                "follow {fi} {name}: {blended} blend frames, worst lurch {worst:.2}u/frame at {at}"
+            );
+            assert!(
+                blended >= 30,
+                "follow {fi} {name}: only {blended} frames of blend"
+            );
+            assert!(
+                worst < GLIDE_LURCH,
+                "follow {fi} {name}: the camera lurched {worst:.2}u in frame {at} of the blend"
+            );
+        }
+    }
+}
+
+/// `vangers-server --spawn-at 1030,3985` on Fostral: the broad roof (top
+/// 78-81) over the rock channel east of the arch. The arch's own crest
+/// (x 964-975) is too narrow to hold a mechos; a car dropped there slides
+/// off into the sand.
+const ROOF_SPAWN: (i32, i32) = (1030, 3985);
+
+/// The server drops a fresh joiner 5u above the top texel, facing -Y. On
+/// `ROOF_SPAWN` the car settles there, on the roof, and neither camera
+/// takes it for a car under the slab.
+#[test]
+fn roof_spawn_stays_on_the_roof() {
+    let Some(f) = fostral() else { return };
+    let (level, common, car) = (&f.level, &f.common, &f.car);
+    let top = level.get(ROOF_SPAWN).high();
+    let frame_dt = 1.0 / 60.0;
+    let physics_dt = frame_dt * {
+        let n = &common.nature;
+        common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
+    };
+    for (fi, follow) in chase_follows().iter().enumerate() {
+        let mut clock = physics::QuantClock::default();
+        let mut dynamo = Dynamo::default();
+        let mut transform = space::Transform {
+            disp: Vec3::new(ROOF_SPAWN.0 as f32, ROOF_SPAWN.1 as f32, top + 5.0),
+            rot: Quat::from_rotation_z(std::f32::consts::PI),
+            scale: car.scale,
+        };
+        let mut cam = camera_at(transform.disp + Vec3::new(0.0, 0.0, 240.0));
+        for frame in 0..300 {
+            for _ in 0..clock.advance(physics_dt, f.max_quant) {
+                physics::step(
+                    &mut dynamo,
+                    &mut transform,
+                    f.max_quant,
+                    car,
+                    level,
+                    common,
+                    1.0,
+                    0.0,
+                    None,
+                    0.0,
+                    None,
+                    None,
+                );
+            }
+            let ground = if fi == 0 {
+                space::Camera::ground_under(level, transform.disp)
+            } else {
+                transform.disp.z
+            };
+            let subject = space::Subject {
+                ground,
+                reach: reach(car),
+            };
+            cam.chase_anchored(level, &transform, subject, frame_dt, follow, CLEARANCE);
+            if frame >= 120 {
+                let at = format!(
+                    "follow {fi} frame {frame}: car {:?}, camera {:?}",
+                    transform.disp, cam.loc
+                );
+                assert!(
+                    transform.disp.z > top - 5.0,
+                    "{at}: off the roof (top {top})"
+                );
+                assert!(cam.under_slab == 0.0, "{at}: under-slab pose on the roof");
+                assert!(in_air(level, cam.loc, 1.0), "{at}: lens in rock");
+                assert!(
+                    clear_sight(level, cam.loc, transform.disp),
+                    "{at}: no sight"
+                );
             }
         }
     }

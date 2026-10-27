@@ -64,6 +64,13 @@ struct Cli {
     /// Fostral (terrain height 0-2, no slabs across a 50x16 box).
     #[arg(long, value_parser = parse_xy, default_value = "590,4151")]
     duel_center: (i32, i32),
+
+    /// Dev / camera-test affordance: place the first fresh joiner at map
+    /// `X,Y`, on the top surface there (a roof, not the cave under it),
+    /// facing -Y. Overrides `--duel-spawn` for that joiner only. Fostral's
+    /// roof over the rock channel east of the arch: `1030,3985`.
+    #[arg(long, value_parser = parse_xy)]
+    spawn_at: Option<(i32, i32)>,
 }
 
 /// Parse `X,Y` map coordinates.
@@ -430,9 +437,18 @@ const DUEL_SPACING: i32 = 70;
 ///
 /// Default: `find_spawn_point` grid, yaw PI (facing -Y). With `duel`, joiner
 /// 0 sits west of the center facing +X and joiner 1 east facing -X, so a ram
-/// test needs no long drive. The car's forward axis is local +Y.
-fn spawn_pose(level: &level::Level, index: usize, duel: Option<(i32, i32)>) -> ((i32, i32), f32) {
+/// test needs no long drive. `spawn_at` puts joiner 0 there instead, facing
+/// -Y. The car's forward axis is local +Y.
+fn spawn_pose(
+    level: &level::Level,
+    index: usize,
+    duel: Option<(i32, i32)>,
+    spawn_at: Option<(i32, i32)>,
+) -> ((i32, i32), f32) {
     use std::f32::consts::{FRAC_PI_2, PI};
+    if let (Some((x, y)), 0) = (spawn_at, index) {
+        return ((x.rem_euclid(level.size.0), y.rem_euclid(level.size.1)), PI);
+    }
     match (duel, index) {
         (Some((cx, cy)), 0 | 1) => {
             let (dx, yaw) = if index == 0 {
@@ -651,6 +667,10 @@ async fn main() {
             "Duel spawn: first two joiners {}u apart around ({},{}), facing each other",
             DUEL_SPACING, x, y
         );
+    }
+    let spawn_at = cli.spawn_at;
+    if let Some((x, y)) = spawn_at {
+        info!("Spawn at: first joiner on top of ({},{})", x, y);
     }
     // Same sub-step as the clients. `physics::step` applies contact impulses
     // and the rest threshold once per call, so a finer quant than the
@@ -902,7 +922,8 @@ async fn main() {
                                 });
 
                                 let spawn_index = players.values().filter(|a| a.joined).count();
-                                let (coords, spawn_yaw) = spawn_pose(&level, spawn_index, duel);
+                                let (coords, spawn_yaw) =
+                                    spawn_pose(&level, spawn_index, duel, spawn_at);
                                 let height = level.get(coords).high() + 5.0;
 
                                 // Log restored map XY when reclaiming; find_spawn_point is
@@ -1478,8 +1499,8 @@ mod tests {
     fn duel_spawn_faces_each_other() {
         let level = test_level();
         let center = (100, 120);
-        let (a, yaw_a) = spawn_pose(&level, 0, Some(center));
-        let (b, yaw_b) = spawn_pose(&level, 1, Some(center));
+        let (a, yaw_a) = spawn_pose(&level, 0, Some(center), None);
+        let (b, yaw_b) = spawn_pose(&level, 1, Some(center), None);
         assert_eq!(b.0 - a.0, DUEL_SPACING);
         assert_eq!((a.1, b.1), (center.1, center.1));
         let a_to_b = Vec3::X;
@@ -1487,8 +1508,34 @@ mod tests {
         assert!(forward(yaw_b).dot(-a_to_b) > 0.999, "east car faces west");
         // A third joiner falls back to the regular grid.
         assert_eq!(
-            spawn_pose(&level, 2, Some(center)),
+            spawn_pose(&level, 2, Some(center), None),
             (find_spawn_point(&level, 2), std::f32::consts::PI)
+        );
+    }
+
+    #[test]
+    fn spawn_at_places_only_the_first_joiner() {
+        let level = test_level();
+        let at = Some((100, 120));
+        assert_eq!(
+            spawn_pose(&level, 0, None, at),
+            ((100, 120), std::f32::consts::PI)
+        );
+        // Wrapped onto the map like any other spawn.
+        assert_eq!(
+            spawn_pose(&level, 0, None, Some((-1, level.size.1))).0,
+            (level.size.0 - 1, 0)
+        );
+        // It wins over the duel's first car; the second keeps its place.
+        let center = Some((300, 120));
+        assert_eq!(spawn_pose(&level, 0, center, at).0, (100, 120));
+        assert_eq!(
+            spawn_pose(&level, 1, center, at),
+            spawn_pose(&level, 1, center, None)
+        );
+        assert_eq!(
+            spawn_pose(&level, 1, None, at),
+            (find_spawn_point(&level, 1), std::f32::consts::PI)
         );
     }
 
@@ -1497,7 +1544,7 @@ mod tests {
         let level = test_level();
         for index in 0..5 {
             assert_eq!(
-                spawn_pose(&level, index, None),
+                spawn_pose(&level, index, None, None),
                 (find_spawn_point(&level, index), std::f32::consts::PI)
             );
         }

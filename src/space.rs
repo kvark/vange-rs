@@ -214,20 +214,68 @@ const GROUND_LEDGE_SAG: f32 = 4.0;
 pub const UNDER_SLAB_REACH: f32 = 96.0;
 /// How quickly the under-slab blend eases, per second.
 const UNDER_SLAB_RATE: f32 = 6.0;
-/// Under-slab pose: this far behind the car at most...
+/// Under-slab pose for a car of [`DEFAULT_SUBJECT_REACH`]: this far
+/// behind it at most (see [`Camera::under_slab_follow`] for how it
+/// scales with the car)...
 const UNDER_SLAB_BACK: f32 = 40.0;
 /// ...this far above it at most (less when the gap is tight)...
 const UNDER_SLAB_UP: f32 = 20.0;
+/// ...with the lens trailing the car's tail by this much per unit of
+/// the body's reach, so every car keeps the same on-screen size...
+const UNDER_SLAB_TAIL_PER_REACH: f32 = 1.5;
+/// ...and by this much at the least...
+const UNDER_SLAB_TAIL_GAP: f32 = 20.0;
+/// ...rising at most this much per unit back...
+const UNDER_SLAB_RISE: f32 = UNDER_SLAB_UP / UNDER_SLAB_BACK;
 /// ...looking this far past it...
 const UNDER_SLAB_LOOK_AHEAD: f32 = 10.0;
 /// ...and following at least this briskly.
 const UNDER_SLAB_SPEED: f32 = 3.0;
+/// Fastest the blend into (or out of) the under-slab pose moves the
+/// chase offset, world units/second.
+const UNDER_SLAB_GLIDE_SPEED: f32 = 250.0;
 /// Fastest the view turns while blending under a slab, radians/second.
 const UNDER_SLAB_TURN_RATE: f32 = std::f32::consts::PI;
 /// A slab counts only if its cave floor is within this of the floor
 /// under the car: the car drives in that cave, not on a roof or ledge
 /// beside a taller overhang whose cave is a pit far below.
 pub const SLAB_FLOOR_STEP: f32 = 16.0;
+/// A two-level column is a slab only with at least this much gap
+/// under it: thinner is a sliver in the floor, not a cave.
+const SLAB_MIN_GAP: f32 = 8.0;
+/// Body reach [`Camera::chase`] frames when it is not told the car's:
+/// the size [`UNDER_SLAB_BACK`] was tuned for.
+pub const DEFAULT_SUBJECT_REACH: f32 = 16.0;
+
+/// The car [`Camera::chase_anchored`] frames, beyond its transform.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Subject {
+    /// Height the authored follow offset hangs from: the car's own z,
+    /// or for `road`'s ground-anchored chase [`Camera::ground_under`].
+    pub ground: f32,
+    /// How far the body reaches from its centre horizontally, world
+    /// units: see [`Subject::reach_of`].
+    pub reach: f32,
+}
+
+impl Subject {
+    /// A chase hung off the car itself.
+    pub fn unanchored(car: &Transform, reach: f32) -> Self {
+        Subject {
+            ground: car.disp.z,
+            reach,
+        }
+    }
+
+    /// The farthest a model's box sticks out from its origin across the
+    /// ground plane, scaled to the world: nose or tail for a car.
+    pub fn reach_of(bbox: &crate::model::BoundingBox, scale: f32) -> f32 {
+        let r = (0..2)
+            .map(|i| bbox.min[i].abs().max(bbox.max[i].abs()))
+            .fold(0.0, f32::max);
+        r * scale
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct Camera {
@@ -513,39 +561,37 @@ impl Camera {
         follow: &Follow,
         clearance: f32,
     ) {
-        self.chase_anchored(level, target, target.disp.z, dt, follow, clearance);
+        let subject = Subject::unanchored(target, DEFAULT_SUBJECT_REACH);
+        self.chase_anchored(level, target, subject, dt, follow, clearance);
     }
 
-    /// [`Self::chase`] for `road`'s ground-anchored follow: the authored
-    /// offset hangs off the car's (x, y) at height `ground` (see
-    /// [`Self::ground_under`]) so jumps don't yank the view, while the
+    /// [`Self::chase`] for a car of known size, optionally with `road`'s
+    /// ground-anchored follow: the authored offset hangs off the car's
+    /// (x, y) at height `subject.ground` (see [`Self::ground_under`]) so
+    /// jumps don't yank the view, while the
     /// slab blend, the pull out of terrain and the sight line all use the
     /// car itself. On top of an arch, or flying over one, the ground
     /// under the car can be the floor of the gap far below; judging
     /// "under a slab" from there dropped the camera into that gap,
-    /// looking up through the arch at the car.
+    /// looking up through the arch at the car. The under-slab pose
+    /// trails the car by its `subject.reach`.
     pub fn chase_anchored(
         &mut self,
         level: &crate::level::Level,
         car: &Transform,
-        ground: f32,
+        subject: Subject,
         dt: f32,
         follow: &Follow,
         clearance: f32,
     ) {
         let mut anchored = *car;
-        anchored.disp.z = ground;
+        anchored.disp.z = subject.ground;
         let target = &anchored;
         let (cover, ceiling) = Self::slab_cover(level, car.disp, clearance);
         let rate = 1.0 - (-dt * UNDER_SLAB_RATE).exp();
-        self.under_slab += (cover - self.under_slab) * rate;
-        if self.under_slab < 1e-3 {
-            self.under_slab = 0.0;
-        }
-        let b = self.under_slab;
-        let authored_look_ahead = follow.look_ahead.abs() > 1e-4;
-        let follow = if b > 0.0 {
-            let slab = Self::under_slab_follow(follow, target.disp.z, ceiling, clearance);
+        let slab = (cover > 0.0 || self.under_slab > 0.0).then(|| {
+            let slab =
+                Self::under_slab_follow(follow, target.disp.z, ceiling, clearance, subject.reach);
             let yaw = self
                 .chase_yaw
                 .unwrap_or_else(|| Self::chase_heading(target.rot).0);
@@ -557,15 +603,27 @@ impl Camera {
                 ceiling,
                 clearance,
             );
-            Follow {
+            (slab, offset)
+        });
+        // Eased toward the cover, but no faster than moves the blended
+        // offset `UNDER_SLAB_GLIDE_SPEED`.
+        let span = slab.map_or(0.0, |(_, offset)| (offset - follow.offset).length());
+        let max_step = dt * UNDER_SLAB_GLIDE_SPEED / span.max(1.0);
+        self.under_slab += ((cover - self.under_slab) * rate).clamp(-max_step, max_step);
+        if self.under_slab < 1e-3 {
+            self.under_slab = 0.0;
+        }
+        let b = self.under_slab;
+        let authored_look_ahead = follow.look_ahead.abs() > 1e-4;
+        let follow = match slab {
+            Some((slab, offset)) if b > 0.0 => Follow {
                 angle_x: follow.angle_x,
                 offset: follow.offset.lerp(offset, b),
                 speed: follow.speed + (slab.speed - follow.speed) * b,
                 look_ahead: follow.equivalent_look_ahead()
                     + (slab.look_ahead - follow.equivalent_look_ahead()) * b,
-            }
-        } else {
-            *follow
+            },
+            _ => *follow,
         };
         let last_rot = self.rot;
         self.follow(target, dt, &follow);
@@ -601,16 +659,35 @@ impl Camera {
     /// The pose [`Self::chase`] settles into under a slab whose
     /// underside is at `ceiling`: behind the car and low, in the gap
     /// between the floor and the slab, looking just past the car.
-    pub fn under_slab_follow(follow: &Follow, car_z: f32, ceiling: f32, clearance: f32) -> Follow {
+    ///
+    /// The arm scales with the car's `reach` (nose or tail from its
+    /// centre): the lens trails the tail by 1.5 reaches, at least 20u,
+    /// so a long car is not framed the size of the screen with the lens
+    /// over its boot. A closer authored chase stays that close, but not
+    /// closer than 20u past the tail. The rise keeps the authored pitch
+    /// of the tuned pose (1 up per 2 back), and never more than half the
+    /// headroom left under the slab.
+    pub fn under_slab_follow(
+        follow: &Follow,
+        car_z: f32,
+        ceiling: f32,
+        clearance: f32,
+        reach: f32,
+    ) -> Follow {
+        let sized = reach + (reach * UNDER_SLAB_TAIL_PER_REACH).max(UNDER_SLAB_TAIL_GAP);
         let back = if follow.offset.y > 1.0 {
-            follow.offset.y.min(UNDER_SLAB_BACK)
+            follow.offset.y.min(sized).max(reach + UNDER_SLAB_TAIL_GAP)
         } else {
-            UNDER_SLAB_BACK
+            sized
         };
         // Half the headroom left after clearing the roof, so the view
         // does not graze the underside.
         let room = ((ceiling - car_z - 2.0 * clearance) * 0.5).max(0.0);
-        let up = follow.offset.z.clamp(8.0, UNDER_SLAB_UP).min(room);
+        let up = follow
+            .offset
+            .z
+            .clamp(8.0, (back * UNDER_SLAB_RISE).max(8.0))
+            .min(room);
         let look_ahead = if follow.look_ahead > 1e-4 {
             follow.look_ahead.min(UNDER_SLAB_LOOK_AHEAD)
         } else {
@@ -657,7 +734,9 @@ impl Camera {
             }
             let candidate = Vec3::new(offset.x, arm.x, arm.y);
             let free = Self::free_arm(level, eye, car + heading * candidate, clearance, car.z);
-            if free >= 0.9 {
+            // The whole arm: one ending in the wall puts the lens there,
+            // and the pull out of terrain folds it back onto the car.
+            if free >= 1.0 {
                 return candidate;
             }
             let reach = free * arm.length();
@@ -678,7 +757,8 @@ impl Camera {
         car_z: f32,
     ) -> f32 {
         let dist = (to - from).length();
-        let steps = ((dist / 6.0) as usize).clamp(6, 40);
+        // Every 3u: a steep ramp can rise through a longer step unseen.
+        let steps = ((dist / 3.0) as usize).clamp(6, 60);
         for i in 1..=steps {
             let t = i as f32 / steps as f32;
             if Self::point_hits_terrain(level, from.lerp(to, t), clearance, Some(car_z)) {
@@ -693,7 +773,9 @@ impl Camera {
     /// above it, and some rock on top), and whose cave floor is
     /// level with `floor`, the floor under `p` - so `p` is in (or at the
     /// mouth of) that cave. Single-level holes and degenerate
-    /// `low == mid == high` columns are not slabs; nor is a taller
+    /// `low == mid == high` columns are not slabs, nor are slivers with
+    /// next to no gap under them (`low` 7, `mid` 7, `high` 9 litters
+    /// Fostral's underpass floor); nor is a taller
     /// overhang next to a roof or ledge, whose cave floor is far below.
     fn slab_ceiling_at(
         level: &crate::level::Level,
@@ -705,6 +787,7 @@ impl Camera {
         match level.get((x as i32, y as i32)) {
             crate::level::Texel::Dual { low, mid, high }
                 if mid > z
+                    && mid > low.0 + SLAB_MIN_GAP
                     && low.0 <= z + 8.0
                     && (low.0 - floor).abs() <= SLAB_FLOOR_STEP
                     && high.0 > mid + 1.0 =>
@@ -833,6 +916,9 @@ impl Camera {
         // slab (`under_slab`) and on its way back out.
         let cave_mode = Self::under_slab_at(level, anchor).is_some();
         let gap_ok = cave_mode || self.under_slab > 0.0;
+        if gap_ok {
+            self.duck_under_slab(level, anchor, clearance);
+        }
         let eye_start = Vec3::new(anchor.x, anchor.y, anchor.z + clearance);
         let delta = self.loc - eye_start;
         let dist = delta.length();
@@ -864,6 +950,29 @@ impl Camera {
         if gap_ok {
             self.keep_below_slab(level, clearance);
         }
+    }
+
+    /// Lower the camera just enough that the arm from the car's eye
+    /// passes under every slab underside on the way: rising back out
+    /// from under a slab, the trailing camera meets the underside before
+    /// the car does, and the arm test would otherwise pull it a dozen
+    /// units toward the car in one frame.
+    fn duck_under_slab(&mut self, level: &crate::level::Level, anchor: Vec3, clearance: f32) {
+        let eye = Vec3::new(anchor.x, anchor.y, anchor.z + clearance);
+        let delta = self.loc - eye;
+        let steps = ((delta.length() / 6.0) as usize).clamp(6, 40);
+        let mut top = self.loc.z;
+        for i in 1..=steps {
+            let t = i as f32 / steps as f32;
+            let p = eye + delta * t;
+            if let Some(ceiling) = Self::under_slab_at(level, Vec3::new(p.x, p.y, anchor.z)) {
+                let limit = ceiling - clearance - 0.5;
+                if limit > eye.z {
+                    top = top.min(eye.z + (limit - eye.z) / t);
+                }
+            }
+        }
+        self.loc.z = top;
     }
 
     /// Under a slab, hold the camera `clearance` below its underside
@@ -1510,7 +1619,10 @@ mod ground_tests {
     }
 
     /// The under-slab pose: behind and low in a tall gap, lower still
-    /// in a tight one, never further back than a close chase already is.
+    /// in a tight one. The arm grows with the car, so the lens trails
+    /// the tail by the same share of the car (the car keeps one size on
+    /// screen) and never by less than 20u; a close chase stays close
+    /// but not over the tail.
     #[test]
     fn under_slab_pose_fits_the_gap() {
         let overhead = Follow {
@@ -1519,22 +1631,41 @@ mod ground_tests {
             speed: 1.0,
             look_ahead: 0.0,
         };
-        let tall = Camera::under_slab_follow(&overhead, 13.6, 130.0, 4.0);
-        assert_eq!(tall.offset, Vec3::new(0.0, 40.0, 20.0));
-        assert_eq!(tall.look_ahead, 10.0);
-        assert_eq!(tall.speed, 3.0);
-        // 20u of headroom: half of what is left after both clearances.
-        let tight = Camera::under_slab_follow(&overhead, 10.0, 30.0, 4.0);
-        assert!((tight.offset.z - 6.0).abs() < 1e-5, "{:?}", tight.offset);
         let close = Follow {
             angle_x: 12f32.to_radians() - std::f32::consts::FRAC_PI_2,
             offset: Vec3::new(0.0, 24.0, 9.0),
             speed: 8.0,
             look_ahead: 10.0,
         };
-        let close = Camera::under_slab_follow(&close, 13.6, 130.0, 4.0);
-        assert_eq!(close.offset, Vec3::new(0.0, 24.0, 9.0));
-        assert_eq!(close.speed, 8.0);
+        // The size the pose was tuned for keeps it.
+        let tall = Camera::under_slab_follow(&overhead, 13.6, 130.0, 4.0, DEFAULT_SUBJECT_REACH);
+        assert_eq!(tall.offset, Vec3::new(0.0, 40.0, 20.0));
+        assert_eq!(tall.look_ahead, 10.0);
+        assert_eq!(tall.speed, 3.0);
+        let tuned_share = DEFAULT_SUBJECT_REACH / tall.offset.y;
+        // A small buggy up to Fostral's OxidizeMonk (27u nose to centre)
+        // and beyond.
+        for reach in [8.0, 16.0, 27.2, 40.0] {
+            let tall = Camera::under_slab_follow(&overhead, 13.6, 130.0, 4.0, reach);
+            let tail_gap = tall.offset.y - reach;
+            assert!(tail_gap >= 20.0 - 1e-4, "reach {reach}: {:?}", tall.offset);
+            if reach >= DEFAULT_SUBJECT_REACH {
+                // Same angular size of the car as the tuned pose.
+                let share = reach / tall.offset.y;
+                assert!((share - tuned_share).abs() < 1e-4, "reach {reach}: {share}");
+            }
+            // The tuned pitch, within half of the 108u of headroom.
+            assert!((tall.offset.z / tall.offset.y - 0.5).abs() < 1e-4 || tall.offset.z == 8.0);
+            assert!(tall.offset.z <= 54.0);
+            // 20u of headroom: half of what is left after both clearances.
+            let tight = Camera::under_slab_follow(&overhead, 10.0, 30.0, 4.0, reach);
+            assert!((tight.offset.z - 6.0).abs() < 1e-5, "{:?}", tight.offset);
+            assert_eq!(tight.offset.y, tall.offset.y);
+            let near = Camera::under_slab_follow(&close, 13.6, 130.0, 4.0, reach);
+            assert_eq!(near.offset.y, (reach + 20.0).max(24.0), "reach {reach}");
+            assert!(near.offset.y <= tall.offset.y.max(24.0));
+            assert_eq!(near.speed, 8.0);
+        }
     }
 
     /// Parked under the test level's slab, the overhead chase ends up in
@@ -1733,13 +1864,14 @@ mod ground_tests {
         let open = painted_level(|_, _| 200, |_, _| Some((10, 15, 200)));
         let car = Vec3::new(128.0, 128.0, 13.6);
         let follow = chase_follows()[0];
-        let pose = Camera::under_slab_follow(&follow, car.z, 130.0, 4.0).offset;
+        let pose =
+            Camera::under_slab_follow(&follow, car.z, 130.0, 4.0, DEFAULT_SUBJECT_REACH).offset;
         // Facing +Y: behind is -Y, the cliff 8u back.
         let swung = Camera::unblocked_slab_offset(&wall, car, 0.0, pose, 130.0, 4.0);
         assert!(swung.z > pose.z + 10.0, "{swung:?} from {pose:?}");
         assert!((swung.length() - pose.length()).abs() < 1e-3, "{swung:?}");
         let behind = car + Quat::from_rotation_z(std::f32::consts::PI) * swung;
-        assert!(Camera::free_arm(&wall, car + Vec3::Z * 4.0, behind, 4.0, car.z) >= 0.9);
+        assert!(Camera::free_arm(&wall, car + Vec3::Z * 4.0, behind, 4.0, car.z) >= 1.0);
         assert_eq!(
             Camera::unblocked_slab_offset(&open, car, 0.0, pose, 130.0, 4.0),
             pose
@@ -1751,13 +1883,23 @@ mod ground_tests {
             rot: Quat::IDENTITY,
             scale: 1.0,
         };
-        for follow in chase_follows() {
+        // For the tuned size and an OxidizeMonk-sized car, the lens ends
+        // up clear of the car's reach by 20u or more.
+        for (follow, reach) in chase_follows()
+            .into_iter()
+            .flat_map(|f| [(f, DEFAULT_SUBJECT_REACH), (f, 27.2)])
+        {
             let mut cam = cam_at(car + Vec3::new(0.0, 0.0, 240.0));
+            let subject = Subject::unanchored(&target, reach);
             for _ in 0..240 {
-                cam.chase(&wall, &target, 1.0 / 60.0, &follow, 4.0);
+                cam.chase_anchored(&wall, &target, subject, 1.0 / 60.0, &follow, 4.0);
             }
             let d = (cam.loc - car).length();
-            assert!(d > 20.0, "camera {:?} only {d:.1} from the car", cam.loc);
+            assert!(
+                d - reach >= 20.0,
+                "reach {reach}: camera {:?} only {d:.1} from the car",
+                cam.loc
+            );
             assert!(cam.loc.z < 130.0 - 4.0 + 1e-3);
             assert!(!Camera::terrain_blocks_view(&wall, cam.loc, car, 4.0));
         }
