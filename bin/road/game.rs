@@ -2918,8 +2918,19 @@ impl Application for Game {
                 Physics::Cpu { ref transform, .. } => *transform,
             };
             let forward = transform.rot * Vec3::Y;
-            if let Some(shot) = weapon::fire(&self.inventory, bay, transform.disp, forward) {
-                log::debug!("Fire bay {bay} from {:?} dir {:?}", transform.disp, forward);
+            // From the bay's mount on the model, not the car's centre: that
+            // rides a few units over the ground, and the terrain stops
+            // shots.
+            let muzzle = player
+                .car
+                .model
+                .slots
+                .get(bay)
+                .map_or(transform.disp, |slot| {
+                    transform.transform_point(Vec3::from(slot.pos.map(|v| v as f32)))
+                });
+            if let Some(shot) = weapon::fire(&self.inventory, bay, muzzle, forward) {
+                log::debug!("Fire bay {bay} from {:?} dir {:?}", muzzle, forward);
                 if let Some(ref net) = self.net {
                     // Lined up with our inputs: the shot happens before
                     // the next quantum we send.
