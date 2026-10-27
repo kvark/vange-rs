@@ -322,6 +322,11 @@ struct RemoteAgent {
     pose_ready: bool,
     /// Last spiral charge from WorldState (for change logs / HUD).
     spiral_charge: u8,
+    /// Contact shape for predicting bumps against this ghost.
+    phys_data: CarPhysicsData,
+    /// Car-local velocities from the latest WorldState.
+    linear_velocity: Vec3,
+    angular_velocity: Vec3,
 }
 
 /// Multiplayer connection state for the lobby UI.
@@ -1160,6 +1165,51 @@ impl Game {
         self.track_regions.dedup();
         let height = self.level.geometry.height as u16;
         self.render.dirty_terrain(&self.track_regions, height);
+    }
+
+    /// Multiplayer: bump the local car off remote ghosts right away, with
+    /// the same `physics::collide_cars` the server runs authoritatively.
+    /// Only the local car takes the result; the ghost keeps following
+    /// WorldState, and the server's own contact for us arrives within a
+    /// tick and soft-blends in. Without this the local car drives through
+    /// the ghost until the reconcile snaps it back.
+    fn predict_remote_contacts(&mut self) {
+        if self.net.is_none() || !self.server_synced || self.remote_agents.is_empty() {
+            return;
+        }
+        let Some(player) = self.agents.iter_mut().find(|a| a.spirit == Spirit::Player) else {
+            return;
+        };
+        let Physics::Cpu {
+            ref mut transform,
+            ref mut dynamo,
+        } = player.physics;
+        let wrap = (self.level.size.0 as f32, self.level.size.1 as f32);
+        for remote in self.remote_agents.values() {
+            if !remote.pose_ready {
+                continue;
+            }
+            let mut ghost_transform = remote.render_transform;
+            let mut ghost_dynamo = physics::Dynamo {
+                linear_velocity: remote.linear_velocity,
+                angular_velocity: remote.angular_velocity,
+                ..Default::default()
+            };
+            physics::collide_cars(
+                physics::CarBody {
+                    dynamo,
+                    transform,
+                    car: &player.phys_data,
+                },
+                physics::CarBody {
+                    dynamo: &mut ghost_dynamo,
+                    transform: &mut ghost_transform,
+                    car: &remote.phys_data,
+                },
+                Some(wrap),
+                &self.db.common,
+            );
+        }
     }
 
     fn step_world_life(&mut self, delta: f32) {
@@ -2390,6 +2440,9 @@ impl Application for Game {
             });
         }
 
+        if !hold_player {
+            self.predict_remote_contacts();
+        }
         self.step_tracks();
         self.step_world_life(delta);
 
@@ -2461,6 +2514,7 @@ impl Application for Game {
                                 .and_modify(|remote| {
                                     remote.name = player_name.clone();
                                     remote.car = car.clone();
+                                    remote.phys_data = CarPhysicsData::from_car_info(car);
                                     remote.color = body_color;
                                 })
                                 .or_insert_with(|| RemoteAgent {
@@ -2473,6 +2527,9 @@ impl Application for Game {
                                     interp_t: 1.0,
                                     pose_ready: false,
                                     spiral_charge: 0,
+                                    phys_data: CarPhysicsData::from_car_info(car),
+                                    linear_velocity: Vec3::ZERO,
+                                    angular_velocity: Vec3::ZERO,
                                 });
                         }
                     }
@@ -2547,6 +2604,10 @@ impl Application for Game {
                             } else if let Some(remote) =
                                 self.remote_agents.get_mut(&agent_state.player_id)
                             {
+                                remote.linear_velocity =
+                                    Vec3::from(agent_state.dynamo.linear_velocity);
+                                remote.angular_velocity =
+                                    Vec3::from(agent_state.dynamo.angular_velocity);
                                 if !remote.pose_ready {
                                     // First snapshot: hard-snap so we never
                                     // lerp from PlayerJoined's IDENTITY.

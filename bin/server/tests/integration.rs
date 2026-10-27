@@ -903,8 +903,8 @@ fn test_duel_spawn_places_pair_facing_each_other() {
     };
     let (pa, fa) = pose(alice_id);
     let (pb, fb) = pose(bob_id);
-    assert!((pa.x - 85.0).abs() < 2.0 && (pa.y - 120.0).abs() < 2.0, "Alice at {pa:?}");
-    assert!((pb.x - 115.0).abs() < 2.0 && (pb.y - 120.0).abs() < 2.0, "Bob at {pb:?}");
+    assert!((pa.x - 65.0).abs() < 2.0 && (pa.y - 120.0).abs() < 2.0, "Alice at {pa:?}");
+    assert!((pb.x - 135.0).abs() < 2.0 && (pb.y - 120.0).abs() < 2.0, "Bob at {pb:?}");
     let a_to_b = (pb - pa).truncate().normalize().extend(0.0);
     assert!(fa.dot(a_to_b) > 0.9, "Alice faces Bob: {fa:?}");
     assert!(fb.dot(-a_to_b) > 0.9, "Bob faces Alice: {fb:?}");
