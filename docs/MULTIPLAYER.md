@@ -79,10 +79,15 @@ cargo run --release --bin road -- --server 127.0.0.1:7810 --name Alice
 # open http://127.0.0.1:8080/#name=Bob&color=red&level=khox&server=ws://127.0.0.1:7811
 ```
 
-Software rendering runs at about one frame a second or slower. A frame
-steps at most 0.1 s of game time, so the web car drives in slow motion,
-but the server steps it on its numbered inputs, so the two still agree.
-Under heavy load,
+Software rendering runs at about one frame a second or slower. In
+multiplayer each frame still steps the quanta of the real time it took (up
+to 2.5 s), so the web car keeps the server's pace; the server waits up to
+3 s (`InputQueue::STARVE_TICKS`) for a quiet client's next batch before it
+drives the car on with the held control. Those driven-on quanta are motion
+the client never predicted: the server logs `Input pN (name) starved: ...`
+and `... resumed after K unacked held quanta` when that happens. Solo, a
+frame steps at most 0.1 s, so the car drives in slow motion. Under heavy
+load,
 `python3 -m http.server` (a listen backlog of 5) can drop one of the zip
 fetches. The page then logs `Couldn't fetch ...` and falls back. Reload
 the page, or use any other static server.
@@ -364,6 +369,37 @@ Server bump: adopted vel=(4.92,-0.31,0.08) bumps=3
 
 The web client runs the same `ClientSync` and logs the same lines to the
 browser console (`Server correction ...: shown at once`, `Server bump: ...`).
+
+### Web debug overlay
+
+Without DevTools, the web page shows the same lines in a **Net debug**
+window at the top right: the predicted pose of the local car (`predicted`,
+with the next quantum number), the newest server pose (`server`, with its
+ack), what that snapshot did (`InSync`, `Replayed(n), moved ...u`, `held`),
+and the last 8 join / leave / `Server correction` / `Server bump` / train
+ride / escave lines, stamped in UTC like the server log. It is on by default
+when the page joins a server; `#debug=1` shows it solo, `#debug=0` hides it,
+and F2 (or the checkbox in Settings) toggles it.
+
+The server logs each car's pose every 5 s to compare against it:
+
+```
+Pose p2 (Bob) pos=(640.6,130.2,57.0) speed=0.1 ack=2983
+```
+
+### Controls on the wire (server)
+
+The server logs the brake, turbo and jump it receives from each client: a
+jump every time, held brake/turbo at most once a second per player.
+
+```
+Input p2 (Bob) jump power=1.4 at quant 2890
+Input p2 (Bob) brake=0 turbo=9 (quanta held since the last line)
+```
+
+On the web page, jump is Alt (as in the native game) or J; brake is Ctrl,
+turbo Shift. A tap shorter than a frame still counts, which matters at one
+frame a second.
 
 ## Jump trace (server)
 
