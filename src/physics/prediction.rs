@@ -553,14 +553,16 @@ fn agrees(predicted: &Predicted, server: &space::Transform, car: &super::ServerC
 /// [`Self::MAX_SPEED`] per second and [`Self::MAX_STEP`] per frame, so a
 /// frame never shows a pop.
 ///
-/// A correction from car contact (a shove, a launch) is often far larger
-/// than a misprediction: contact is chaotic, and the ghost of the other car
-/// only guesses its driver's inputs. Such a correction is absorbed up to
-/// [`Self::CONTACT_TELEPORT`]; once the offset is past [`Self::TELEPORT`]
-/// (one big launch, or a sustained push piling it up) it is faded out
-/// within [`Self::CONTACT_FADE`], but over at least
-/// [`Self::CONTACT_FADE_FRAMES`] frames, whatever the speed and step caps:
-/// the car slides there instead of popping.
+/// Some corrections are far larger than a misprediction: car contact is
+/// chaotic (the ghost of the other car only guesses its driver's inputs),
+/// and a jump that lands a little off can end on either side of a wall.
+/// Any correction is absorbed up to [`Self::TELEPORT`]; once the offset is
+/// past [`Self::FADE_ABOVE`] (one big correction, or a sustained push
+/// piling it up) it is faded out within [`Self::FADE`], but over at least
+/// [`Self::FADE_FRAMES`] frames, whatever the speed and step caps: the car
+/// slides there instead of popping. Past [`Self::TELEPORT`] (a respawn, a
+/// passage) it is shown at once; a pose the client sets itself (a reset, a
+/// debug pose) drops the offset outright.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderOffset {
     pub disp: Vec3,
@@ -589,54 +591,45 @@ impl RenderOffset {
     pub const MAX_SPEED: f32 = 30.0;
     /// Most the offset shrinks in one frame (long frames), world units.
     pub const MAX_STEP: f32 = 1.5;
+    /// Past this the offset fades out within [`Self::FADE`] rather than
+    /// at the usual rate: the speed and step caps would drag it out over
+    /// seconds.
+    pub const FADE_ABOVE: f32 = 50.0;
     /// A correction this large is a teleport, not a misprediction: shown
     /// at once.
-    pub const TELEPORT: f32 = 50.0;
-    /// A correction coinciding with car contact is shown at once only past
-    /// this (a respawn or a real teleport during a fight still snaps).
-    pub const CONTACT_TELEPORT: f32 = 200.0;
-    /// Seconds a contact correction takes to fade out at most.
-    pub const CONTACT_FADE: f32 = 0.3;
-    /// Fewest frames a contact fade is spread over, for frames longer than
-    /// a third of [`Self::CONTACT_FADE`] (a 1-4 fps client).
-    pub const CONTACT_FADE_FRAMES: f32 = 3.0;
+    pub const TELEPORT: f32 = 200.0;
+    /// Seconds a large correction takes to fade out at most.
+    pub const FADE: f32 = 0.3;
+    /// Fewest frames a fade is spread over, for frames longer than a third
+    /// of [`Self::FADE`] (a 1-4 fps client).
+    pub const FADE_FRAMES: f32 = 3.0;
 
     /// Keep drawing the car where it was before the physics pose moved
     /// from `before` to `after`. Returns `false` (and clears the offset)
-    /// for a teleport.
+    /// for a teleport. A correction on top of an offset still fading may
+    /// take the sum past the limit: only the excess is shown at once, not
+    /// the whole offset.
     pub fn absorb(&mut self, before: &space::Transform, after: &space::Transform) -> bool {
-        self.absorb_within(before, after, Self::TELEPORT)
-    }
-
-    /// [`Self::absorb`] for a correction caused by car contact: up to
-    /// [`Self::CONTACT_TELEPORT`]; an offset past [`Self::TELEPORT`] is
-    /// faded out within [`Self::CONTACT_FADE`]. A correction on top of an
-    /// offset still fading may take the sum past the limit: only the
-    /// excess is shown at once, not the whole offset.
-    pub fn absorb_contact(&mut self, before: &space::Transform, after: &space::Transform) -> bool {
-        if (before.disp - after.disp).length() > Self::CONTACT_TELEPORT {
+        if (before.disp - after.disp).length() > Self::TELEPORT {
             *self = Self::default();
             return false;
         }
-        self.disp = (self.disp + before.disp - after.disp).clamp_length_max(Self::CONTACT_TELEPORT);
+        self.disp = (self.disp + before.disp - after.disp).clamp_length_max(Self::TELEPORT);
         self.rot = (self.rot * before.rot * after.rot.inverse()).normalize();
         // Smaller ones decay as usual (a frame never shows more than
-        // `MAX_STEP`); past the plain teleport limit, fade.
+        // `MAX_STEP`); past `FADE_ABOVE`, fade.
         let len = self.disp.length();
-        if len > Self::TELEPORT {
-            self.fade_speed = self.fade_speed.max(len / Self::CONTACT_FADE);
+        if len > Self::FADE_ABOVE {
+            self.fade_speed = self.fade_speed.max(len / Self::FADE);
         }
         true
     }
 
-    fn absorb_within(
-        &mut self,
-        before: &space::Transform,
-        after: &space::Transform,
-        teleport: f32,
-    ) -> bool {
+    /// The rule before fading, for comparisons: past [`Self::FADE_ABOVE`]
+    /// a correction is shown at once, below it decays at the usual rate.
+    pub fn absorb_unfaded(&mut self, before: &space::Transform, after: &space::Transform) -> bool {
         let disp = self.disp + before.disp - after.disp;
-        if disp.length() > teleport {
+        if disp.length() > Self::FADE_ABOVE {
             *self = Self::default();
             return false;
         }
@@ -653,10 +646,7 @@ impl RenderOffset {
         let step = (len * (1.0 - keep))
             .min(Self::MAX_SPEED * dt)
             .min(Self::MAX_STEP)
-            .max(
-                (self.fade_speed * dt)
-                    .min(self.fade_speed * Self::CONTACT_FADE / Self::CONTACT_FADE_FRAMES),
-            )
+            .max((self.fade_speed * dt).min(self.fade_speed * Self::FADE / Self::FADE_FRAMES))
             .min(len);
         if len > 0.0 {
             self.disp *= (len - step) / len;
@@ -887,40 +877,45 @@ mod tests {
     }
 
     #[test]
-    fn contact_offset_fades_within_the_window() {
+    fn large_offset_fades_within_the_window() {
         let before = space::Transform::IDENTITY;
+        // The 90u solo correction after a jump that was shown at once.
         let after = space::Transform {
-            disp: Vec3::new(120.0, 0.0, 0.0),
+            disp: Vec3::new(90.0, 0.0, 0.0),
             ..before
         };
-        // A plain correction this large is a teleport.
-        assert!(!RenderOffset::default().absorb(&before, &after));
-        // From contact it fades: gone within `CONTACT_FADE` at 60 fps...
+        // The old rule showed it at once.
+        assert!(!RenderOffset::default().absorb_unfaded(&before, &after));
+        // Now it fades: gone within `FADE` at 60 fps...
         let mut o = RenderOffset::default();
-        assert!(o.absorb_contact(&before, &after));
-        let frames = (RenderOffset::CONTACT_FADE * 60.0).ceil() as usize;
+        assert!(o.absorb(&before, &after));
+        let frames = (RenderOffset::FADE * 60.0).ceil() as usize;
         for _ in 0..frames {
-            assert!(o.decay(1.0 / 60.0) <= 120.0 / frames as f32 + 1e-3);
+            assert!(o.decay(1.0 / 60.0) <= 90.0 / frames as f32 + 1e-3);
         }
         assert_eq!(o.disp, Vec3::ZERO);
         assert_eq!(o.fade_speed, 0.0);
         // ...and over a few frames at 1 fps rather than one.
-        assert!(o.absorb_contact(&before, &after));
-        for _ in 0..RenderOffset::CONTACT_FADE_FRAMES as usize {
-            assert!(o.decay(1.0) < 120.0 / RenderOffset::CONTACT_FADE_FRAMES + 1e-3);
+        assert!(o.absorb(&before, &after));
+        for _ in 0..RenderOffset::FADE_FRAMES as usize {
+            assert!(o.decay(1.0) < 90.0 / RenderOffset::FADE_FRAMES + 1e-3);
         }
         assert!(o.disp.length() < 1e-3);
-        // A respawn mid-fight still snaps.
+        // A respawn still snaps.
         let respawn = space::Transform {
             disp: Vec3::new(1000.0, 0.0, 0.0),
             ..before
         };
-        assert!(!o.absorb_contact(&before, &respawn));
-        // Two shoves back to back pile past the limit: the offset is capped
-        // there (only the excess shows), not dropped.
+        assert!(!o.absorb(&before, &respawn));
+        // Corrections back to back pile past the limit: the offset is
+        // capped there (only the excess shows), not dropped.
+        let shove = space::Transform {
+            disp: Vec3::new(120.0, 0.0, 0.0),
+            ..before
+        };
         let mut o = RenderOffset::default();
-        assert!(o.absorb_contact(&before, &after));
-        assert!(o.absorb_contact(&before, &after));
-        assert!((o.disp.length() - RenderOffset::CONTACT_TELEPORT).abs() < 1e-3);
+        assert!(o.absorb(&before, &shove));
+        assert!(o.absorb(&before, &shove));
+        assert!((o.disp.length() - RenderOffset::TELEPORT).abs() < 1e-3);
     }
 }

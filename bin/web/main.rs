@@ -1481,19 +1481,26 @@ impl WebApp {
     /// native game's `step_tracks` (bin/road/game.rs); the physics records
     /// the wheels' stretches over an immutable level, and the cutting here
     /// runs where the level can be borrowed mutably.
-    fn step_tracks(&mut self) {
+    ///
+    /// `online`: the level is left alone, as the server's is (see
+    /// `terraform::drain_vehicle`); the dust still flies.
+    fn step_tracks(&mut self, online: bool) {
         let Some(agent) = self.agent.as_mut() else {
             return;
         };
         let mut regions = Vec::new();
         let reach = (agent.phys_data.bbox.radius * agent.car.scale).max(8.0) as i32;
-        let treads = level::terraform::apply_vehicle(
-            &mut self.level,
-            &self.terraform,
-            &mut agent.tracks,
-            reach,
-            &mut regions,
-        );
+        let treads = if online {
+            level::terraform::drain_vehicle(&mut agent.tracks)
+        } else {
+            level::terraform::apply_vehicle(
+                &mut self.level,
+                &self.terraform,
+                &mut agent.tracks,
+                reach,
+                &mut regions,
+            )
+        };
         for track in treads {
             self.life.particles.from_track(&track, &self.level);
         }
@@ -3043,6 +3050,9 @@ impl WebHandler {
             gpu.app.remotes.clear();
         }
         let mp_on = self.ws_client.as_ref().is_some_and(|c| c.is_joined());
+        // Pointed at a server (joined or not yet): the level stays as the
+        // server's, no tracks cut into it.
+        let online = self.ws_client.is_some();
         // Match the native build's time scaling (see bin/road/game.rs):
         //   physics_dt = delta * fps * time_delta0 * num_calls
         let physics_dt = if mp_on { mp_dt } else { dt } * {
@@ -3234,8 +3244,9 @@ impl WebHandler {
                 }
             }
 
-            // Cut the wheels' tracks into the level after the physics ran.
-            gpu.app.step_tracks();
+            // Cut the wheels' tracks into the level after the physics ran
+            // (offline only).
+            gpu.app.step_tracks(online);
             gpu.app.step_life(dt);
         }
 
@@ -3435,14 +3446,13 @@ impl WebHandler {
                                                 moved
                                             ),
                                         );
-                                    } else if contact
-                                        && moved > physics::client::ClientSync::CONTACT_LOG
-                                    {
+                                    } else if moved > physics::client::ClientSync::FADE_LOG {
                                         debug.note(
                                             log::Level::Info,
                                             format!(
-                                                "Server correction {:.1}u in contact: faded",
-                                                moved
+                                                "Server correction {:.1}u{}: faded",
+                                                moved,
+                                                if contact { " in contact" } else { "" }
                                             ),
                                         );
                                     }
