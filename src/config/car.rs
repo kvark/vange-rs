@@ -27,7 +27,9 @@ pub struct CarStats {
     pub max_speed: u8,
     /// `MaxArmor`, in armour points (up to 500, LastMoggy).
     pub max_armor: u16,
+    /// `MaxEnergy`: the energy shield, points (`combat::shield`).
     pub shield_max: Shield,
+    /// `DeltaEnergy`: the shield's refill rate (`combat::shield`).
     pub shield_regen: Shield,
     pub shield_drop: Shield,
     pub drop_time: Time,
@@ -329,6 +331,26 @@ mod tests {
                 ("OxidizeMonk".to_string(), 100),
                 ("HeavyLady".to_string(), 380),
                 ("LastMoggy".to_string(), 500),
+            ]
+        );
+    }
+
+    #[test]
+    fn energy_columns_follow_max_armor() {
+        // univang.cpp:1201-1203: MaxArmor, MaxEnergy, DeltaEnergy.
+        let shields: Vec<(String, u16, u16)> = entries(CAR_PRM.as_bytes())
+            .into_iter()
+            .map(|(name, _, data)| {
+                let stats = CarStats::new(&data);
+                (name, stats.shield_max, stats.shield_regen)
+            })
+            .collect();
+        assert_eq!(
+            shields,
+            [
+                ("OxidizeMonk".to_string(), 120, 40),
+                ("HeavyLady".to_string(), 400, 30),
+                ("LastMoggy".to_string(), 500, 25),
             ]
         );
     }

@@ -19,7 +19,8 @@ pub type PlayerId = u32;
 /// 8: `ClientMessage::Escave` and `AgentState::in_escave`.
 /// 9: guns: `Join::guns`, `ClientMessage::Weapons`, `AgentState::guns`;
 /// armour in hundredths of a point (`u32`).
-pub const PROTOCOL_VERSION: u32 = 9;
+/// 10: the energy shield in `AgentState::energy` / `max_energy`.
+pub const PROTOCOL_VERSION: u32 = 10;
 
 /// Weapon bays a car may have.
 pub const BAYS: usize = 3;
@@ -272,6 +273,12 @@ pub struct AgentState {
     pub armor: u32,
     /// Armour of the car undamaged (`car.prm` `MaxArmor`, in hundredths).
     pub max_armor: u32,
+    /// Energy shield left, as the server keeps it, in hundredths of a
+    /// `car.prm` energy point: a hit drains it before the armour, and it
+    /// fills back at the car's `DeltaEnergy` rate.
+    pub energy: u32,
+    /// The shield full (`car.prm` `MaxEnergy`, in hundredths).
+    pub max_energy: u32,
     /// The bullet (`game.lst` index, `device.lst` `GunID`) of the gun the
     /// server took in each bay: the other clients fly and draw this car's
     /// shots as it.
@@ -389,6 +396,8 @@ mod tests {
                 },
                 armor: 35_050,
                 max_armor: 50_000,
+                energy: 7_524,
+                max_energy: 12_000,
                 guns: [Some(11), None, Some(18)],
                 dead: true,
                 in_escave: true,
@@ -407,6 +416,7 @@ mod tests {
                 assert_eq!(agents[0].spiral_charge, 3);
                 assert_eq!(agents[0].ack, 1234);
                 assert_eq!((agents[0].armor, agents[0].max_armor), (35_050, 50_000));
+                assert_eq!((agents[0].energy, agents[0].max_energy), (7_524, 12_000));
                 assert_eq!(agents[0].guns, [Some(11), None, Some(18)]);
                 assert!(agents[0].dead);
                 assert!(agents[0].in_escave);
