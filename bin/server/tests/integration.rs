@@ -20,6 +20,10 @@ impl ServerProcess {
     }
 
     fn start_with(level: &str, extra_env: &[(&str, &str)]) -> Self {
+        Self::start_with_args(level, extra_env, &[])
+    }
+
+    fn start_with_args(level: &str, extra_env: &[(&str, &str)], extra_args: &[&str]) -> Self {
         let port = NEXT_PORT.fetch_add(2, Ordering::Relaxed);
         let ws_port = port + 1;
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_vangers-server"));
@@ -41,6 +45,7 @@ impl ServerProcess {
         if settings.is_file() {
             cmd.args(["--settings", settings.to_str().unwrap()]);
         }
+        cmd.args(extra_args);
         cmd.env("RUST_LOG", "warn");
         for (k, v) in extra_env {
             cmd.env(k, v);
@@ -798,4 +803,55 @@ fn test_reconnect_restores_spiral() {
         })
         .expect("Bob should appear in WorldState");
     assert_eq!(bob_charge, 3, "fresh name uses seed, not Alice spiral");
+}
+
+#[test]
+fn test_duel_spawn_places_pair_facing_each_other() {
+    let server =
+        ServerProcess::start_with_args("test", &[], &["--duel-spawn", "--duel-center", "100,120"]);
+    let mut stash = Vec::new();
+    let mut alice = server.connect();
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+    });
+    let alice_id = match alice.recv_welcome(&mut stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    let mut bob = server.connect();
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 22,
+    });
+    // `recv_welcome` keeps reading for a while; the procedural level is
+    // hilly, so read the spawn pose from the earliest stashed snapshot.
+    stash.clear();
+    let bob_id = match bob.recv_welcome(&mut stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+
+    // First WorldState with both: spawn pose before physics moves them far.
+    let agents = stash
+        .into_iter()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } if agents.len() == 2 => Some(agents),
+            _ => None,
+        })
+        .expect("WorldState with both players");
+    let pose = |id| {
+        let a = agents.iter().find(|a| a.player_id == id).unwrap();
+        let rot = glam::Quat::from_array(a.transform.rotation);
+        (glam::Vec3::from(a.transform.position), rot * glam::Vec3::Y)
+    };
+    let (pa, fa) = pose(alice_id);
+    let (pb, fb) = pose(bob_id);
+    assert!((pa.x - 85.0).abs() < 2.0 && (pa.y - 120.0).abs() < 2.0, "Alice at {pa:?}");
+    assert!((pb.x - 115.0).abs() < 2.0 && (pb.y - 120.0).abs() < 2.0, "Bob at {pb:?}");
+    let a_to_b = (pb - pa).truncate().normalize().extend(0.0);
+    assert!(fa.dot(a_to_b) > 0.9, "Alice faces Bob: {fa:?}");
+    assert!(fb.dot(-a_to_b) > 0.9, "Bob faces Alice: {fb:?}");
 }
