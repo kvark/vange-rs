@@ -729,6 +729,21 @@ mod tests {
         assert_eq!((q.ack(), q.pending()), (20, 0));
     }
 
+    /// The escave screen's keepalive (`Input` of no quanta) queues
+    /// nothing and leaves the numbering alone, wherever it points.
+    #[test]
+    fn an_empty_batch_is_only_a_keepalive() {
+        let mut q = InputQueue::default();
+        q.push(0, 3, input(1.0, None));
+        q.push(3, 0, input(0.0, None));
+        q.push(50, 0, input(0.0, None));
+        assert_eq!((q.ack(), q.pending()), (0, 3));
+        let _ = (0..3).map(|_| q.pop()).count();
+        q.push(3, 0, input(0.0, None));
+        assert_eq!((q.ack(), q.pending()), (3, 0));
+        assert_eq!(q.budget(10), TickBudget { real: 0, held: 0 });
+    }
+
     #[test]
     fn restart_drops_the_wrecks_late_inputs() {
         let mut q = InputQueue::default();

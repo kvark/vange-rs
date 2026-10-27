@@ -691,6 +691,11 @@ impl ClientSync {
         shift
     }
 
+    /// Index of our next quantum: the `first` of the next input batch.
+    pub fn next_quant(&self) -> u32 {
+        self.prediction.next()
+    }
+
     /// `count` quanta pass with the car held: no history, the numbering
     /// moves on. Returns the first of them.
     pub fn skip(&mut self, count: u32) -> u32 {

@@ -211,6 +211,14 @@ impl NetworkClient {
         let _ = self.send_tx.send(msg);
     }
 
+    /// Keepalive from a screen that sends no input (the escave): an empty
+    /// `ClientMessage::Input` at our next quantum. No quanta, so the server
+    /// queues nothing and the numbering does not move; it only hears that
+    /// we are still here (`--silent-timeout-secs`).
+    pub fn send_keepalive(&self, next_quant: u32) {
+        self.send_input(next_quant, 0, &NetControl::default());
+    }
+
     /// The upright key: our car stands upright and still at `position`
     /// from quantum `next_quant` (`ClientMessage::Reset`).
     pub fn send_reset(&self, position: [f32; 3], next_quant: u32) {

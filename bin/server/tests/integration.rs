@@ -45,6 +45,12 @@ impl ServerProcess {
         if settings.is_file() {
             cmd.args(["--settings", settings.to_str().unwrap()]);
         }
+        // Scripted clients go quiet for seconds between steps, which a
+        // real client (an `Input` every frame) never does: no silent
+        // timeout unless a test asks for one.
+        if !extra_args.contains(&"--silent-timeout-secs") {
+            cmd.args(["--silent-timeout-secs", "0"]);
+        }
         cmd.args(extra_args);
         cmd.env("RUST_LOG", "warn");
         for (k, v) in extra_env {
@@ -2231,4 +2237,221 @@ fn test_each_gun_hits_for_its_own_damage_once_a_reload() {
     // Reloaded: the light Ghorb hits again.
     fire(&mut alice, 1);
     assert_eq!(bob_armor(&mut bob, 1500), b_max - 2 * light - heavy);
+}
+
+fn join_as(client: &mut Client, name: &str, color: u8) -> u32 {
+    client.send(&ClientMessage::Join {
+        player_name: name.into(),
+        car_name: "TestCar".into(),
+        color,
+        protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
+    });
+    // Back as soon as the Welcome is in, so other clients stay talking.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        for msg in client.recv_for(Duration::from_millis(50)) {
+            if let ServerMessage::Welcome { player_id, .. } = msg {
+                return player_id;
+            }
+        }
+    }
+    panic!("{name}: no Welcome within 3 s");
+}
+
+/// Keep `client` talking (an idle `Input` every 100 ms) for `duration`,
+/// collecting what it hears.
+fn keep_talking(client: &mut Client, duration: Duration) -> Vec<ServerMessage> {
+    let deadline = Instant::now() + duration;
+    let mut msgs = Vec::new();
+    while Instant::now() < deadline {
+        client.input(1, vangers_net::NetControl::default());
+        msgs.extend(client.recv_for(Duration::from_millis(100)));
+    }
+    msgs
+}
+
+/// Whether the server closes `client`'s connection within `duration`.
+fn closed_within(client: &mut Client, duration: Duration) -> bool {
+    let deadline = Instant::now() + duration;
+    let mut tmp = [0u8; 4096];
+    while Instant::now() < deadline {
+        match client.stream.read(&mut tmp) {
+            Ok(0) => return true,
+            Ok(_) => {}
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(_) => return true,
+        }
+    }
+    false
+}
+
+fn left(msgs: &[ServerMessage]) -> Vec<u32> {
+    msgs.iter()
+        .filter_map(|m| match m {
+            ServerMessage::PlayerLeft { player_id } => Some(*player_id),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Player `id`'s `AgentState::ack` in the newest snapshot of `msgs`.
+fn ack_of(msgs: &[ServerMessage], id: u32) -> Option<u32> {
+    msgs.iter().rev().find_map(|m| match m {
+        ServerMessage::WorldState { agents, .. } => {
+            agents.iter().find(|a| a.player_id == id).map(|a| a.ack)
+        }
+        _ => None,
+    })
+}
+
+/// Talk with `talker` for `duration` while `quiet` sends the escave
+/// screen's keepalive (an `Input` of no quanta) every 300 ms.
+fn talk_with_keepalive(
+    talker: &mut Client,
+    quiet: &mut Client,
+    duration: Duration,
+) -> Vec<ServerMessage> {
+    let deadline = Instant::now() + duration;
+    let mut msgs = Vec::new();
+    while Instant::now() < deadline {
+        quiet.input(0, vangers_net::NetControl::default());
+        quiet.recv_for(Duration::from_millis(10));
+        msgs.extend(keep_talking(talker, Duration::from_millis(300)));
+    }
+    msgs
+}
+
+#[test]
+fn test_a_silent_client_times_out_in_an_escave_unless_kept_alive() {
+    // Bob (the second joiner) stands within reach of this escave.
+    let server = ServerProcess::start_with_args(
+        "test",
+        &[],
+        &["--escave", "130,90", "--silent-timeout-secs", "1.5"],
+    );
+    let mut alice = server.connect();
+    let mut bob = server.connect();
+    let mut carol = server.connect();
+    let alice_id = join_as(&mut alice, "Alice", 21);
+    let bob_id = join_as(&mut bob, "Bob", 7);
+    let carol_id = join_as(&mut carol, "Carol", 3);
+    bob.input(5, vangers_net::NetControl::default());
+    keep_talking(&mut alice, Duration::from_millis(400));
+    bob.send(&ClientMessage::Escave { inside: true });
+
+    // Alice drives, Bob in the escave sends only keepalives, Carol goes
+    // quiet: only Carol is dropped.
+    let msgs = talk_with_keepalive(&mut alice, &mut bob, Duration::from_secs(4));
+    assert_eq!(left(&msgs), vec![carol_id], "only silent Carol is dropped");
+    let (_, cars) = cars_in_world(&msgs).expect("a WorldState");
+    let ids: Vec<u32> = cars.iter().map(|c| c.0).collect();
+    assert!(ids.contains(&alice_id), "Alice talks: {ids:?}");
+    assert!(
+        cars.iter().any(|c| c.0 == bob_id && c.3),
+        "Bob stays, in the escave: {ids:?}"
+    );
+    // The keepalives queue no quanta: Bob's ack is still at his 5 quanta.
+    assert_eq!(ack_of(&msgs, bob_id), Some(5), "keepalives move no quanta");
+    assert!(!ids.contains(&carol_id), "Carol is gone: {ids:?}");
+    assert!(
+        closed_within(&mut carol, Duration::from_secs(1)),
+        "the server closes Carol's connection"
+    );
+
+    // Bob's client freezes in the escave: he is timed out all the same.
+    let msgs = keep_talking(&mut alice, Duration::from_secs(3));
+    assert_eq!(
+        left(&msgs),
+        vec![bob_id],
+        "frozen Bob is dropped from the escave"
+    );
+    assert!(
+        closed_within(&mut bob, Duration::from_secs(1)),
+        "the server closes Bob's connection"
+    );
+
+    // Carol's client comes back under the same name: her id, not a new one.
+    let mut carol2 = server.connect();
+    assert_eq!(join_as(&mut carol2, "Carol", 3), carol_id);
+    let msgs = keep_talking(&mut carol2, Duration::from_millis(500));
+    let (_, cars) = cars_in_world(&msgs).expect("a WorldState");
+    assert_eq!(
+        cars.iter().filter(|c| c.0 == carol_id).count(),
+        1,
+        "one Carol"
+    );
+}
+
+#[test]
+fn test_a_same_name_join_takes_over_only_a_silent_session() {
+    let server = ServerProcess::start();
+    let mut alice = server.connect();
+    let mut bob = server.connect();
+    let alice_id = join_as(&mut alice, "Alice", 21);
+    let bob_id = join_as(&mut bob, "Bob", 7);
+    keep_talking(&mut alice, Duration::from_millis(300));
+
+    // An impostor joins as Alice while she is talking: refused, and
+    // Alice keeps her car.
+    let mut impostor = server.connect();
+    impostor.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 5,
+        protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
+    });
+    assert!(
+        closed_within(&mut impostor, Duration::from_secs(1)),
+        "the impostor is refused"
+    );
+    let msgs = keep_talking(&mut alice, Duration::from_millis(600));
+    assert!(left(&msgs).is_empty(), "nobody leaves: {:?}", left(&msgs));
+    let (_, cars) = cars_in_world(&msgs).expect("a WorldState");
+    let mut ids: Vec<u32> = cars.iter().map(|c| c.0).collect();
+    ids.sort();
+    let mut want = vec![alice_id, bob_id];
+    want.sort();
+    assert_eq!(ids, want, "Alice and Bob, no second Alice");
+
+    // Alice's client freezes and restarts while the server still holds
+    // her old connection open: after 1.5 s of silence the new one takes
+    // her id, and there is one Alice.
+    keep_talking(&mut bob, Duration::from_secs(2));
+    let mut alice2 = server.connect();
+    assert_eq!(
+        join_as(&mut alice2, "Alice", 21),
+        alice_id,
+        "the rejoin takes over Alice's id"
+    );
+    let msgs = keep_talking(&mut bob, Duration::from_millis(800));
+    assert_eq!(left(&msgs), vec![alice_id], "the stale session leaves once");
+    let (_, cars) = cars_in_world(&msgs).expect("a WorldState");
+    let mut ids: Vec<u32> = cars.iter().map(|c| c.0).collect();
+    ids.sort();
+    assert_eq!(ids, want, "no duplicate Alice");
+    assert!(
+        closed_within(&mut alice, Duration::from_secs(1)),
+        "the server closes the stale connection"
+    );
+
+    // The old connection's late input and its close must not touch the
+    // new session, which now owns the same id.
+    alice.send(&ClientMessage::Leave);
+    drop(alice);
+    let msgs = keep_talking(&mut bob, Duration::from_millis(800));
+    alice2.recv_for(Duration::from_millis(10));
+    assert!(
+        left(&msgs).is_empty(),
+        "the new Alice stays: {:?}",
+        left(&msgs)
+    );
+    let (_, cars) = cars_in_world(&msgs).expect("a WorldState");
+    assert!(
+        cars.iter().any(|c| c.0 == alice_id),
+        "Alice is still on the road"
+    );
 }

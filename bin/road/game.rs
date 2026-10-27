@@ -740,6 +740,8 @@ pub struct Game {
     /// (`ClientMessage::Escave`), sent when the escave screen takes over
     /// the drive (`Screen::blocks_drive`) and when it gives it back.
     escave_sent: bool,
+    /// Online on the escave screen: seconds to the next keepalive.
+    keepalive_in: f32,
     /// HUD line about a death (ours, by us, or another's) and its seconds left.
     death_note: Option<(String, f32)>,
     /// Space queued a portal hop; applied on the next `update` with GPU handles.
@@ -794,6 +796,9 @@ const STALE_SHOT_MARGIN_SECS: f32 = 1.0;
 /// More snapshots than this in one frame (0.25 s of them) is a backlog
 /// worth a log line.
 const BACKLOG_LOG_SNAPSHOTS: usize = 5;
+/// Seconds between keepalives on the escave screen: well inside the
+/// server's 1.5 s before a same-name join may take the session over.
+const KEEPALIVE_EVERY: f32 = 0.5;
 
 /// How long ago, by the newest snapshot in hand, the server took a shot.
 fn shot_lateness(newest_tick: Option<u32>, shot_tick: u32) -> f32 {
@@ -1198,6 +1203,7 @@ impl Game {
             shots: Vec::new(),
             approach_cam: None,
             escave_note: None,
+            keepalive_in: 0.0,
             escave_selected: None,
             cave_boot: CaveBoot {
                 world_render: settings.render.clone(),
@@ -1936,6 +1942,23 @@ impl Game {
         );
         net.send_escave(inside);
         self.escave_sent = inside;
+    }
+
+    /// Online with the drive blocked (the escave screen) no input goes
+    /// out, so every [`KEEPALIVE_EVERY`] an empty one does: the server
+    /// times out a client it has not heard from, and refuses a same-name
+    /// join while it hears from the old one.
+    fn keep_alive(&mut self, delta: f32) {
+        self.keepalive_in -= delta;
+        if self.keepalive_in > 0.0 {
+            return;
+        }
+        self.keepalive_in = KEEPALIVE_EVERY;
+        if let Some(net) = self.net.as_ref()
+            && net.player_id.is_some()
+        {
+            net.send_keepalive(self.sync.next_quant());
+        }
     }
 
     /// Space: poke nearby door sensors so a secret tunnel or escave hatch
@@ -3574,6 +3597,7 @@ impl Application for Game {
                 // Online the world goes on: keep taking the server's
                 // snapshots, shots and deaths, the car held, so nothing
                 // backs up for the way out.
+                self.keep_alive(delta);
                 self.step_network(None, true);
                 self.step_shots(delta);
                 for remote in self.remote_agents.values_mut() {
