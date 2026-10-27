@@ -220,6 +220,12 @@ impl NetworkClient {
         let _ = self.send_tx.send(msg);
     }
 
+    /// We went into an escave, or came back out (`ClientMessage::Escave`).
+    pub fn send_escave(&self, inside: bool) {
+        let msg = encode(&ClientMessage::Escave { inside });
+        let _ = self.send_tx.send(msg);
+    }
+
     /// Upload spiral charge so WorldState / reclaim stay aligned.
     pub fn send_set_spiral(&self, charge: u8) {
         let msg = encode(&ClientMessage::SetSpiral { charge });

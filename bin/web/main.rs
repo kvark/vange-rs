@@ -1511,7 +1511,7 @@ impl WebApp {
     /// alone.
     fn step_remote_tracks(&mut self, dt: f32) {
         for remote in self.remotes.values_mut() {
-            if !remote.net.pose_ready {
+            if !remote.net.shown() {
                 continue;
             }
             let wheels = remote
@@ -1883,9 +1883,10 @@ impl WebApp {
 
         self.batcher.clear();
         // Remote players at their interpolated server pose, on the copy of
-        // the torus next to the eye (as in the native game).
+        // the torus next to the eye (as in the native game). A car in an
+        // escave is not drawn.
         for remote in self.remotes.values() {
-            if !remote.net.pose_ready {
+            if !remote.net.shown() {
                 continue;
             }
             let mut drawn = remote.net.render_transform;

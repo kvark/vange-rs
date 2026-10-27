@@ -1592,3 +1592,267 @@ fn test_a_kill_respawns_the_wreck_at_the_nearest_escave() {
         .collect();
     assert_eq!(seen, ["died", "respawned"]);
 }
+
+/// Per player in the newest `WorldState`: (position, armour, in_escave,
+/// bumps).
+type CarInWorld = (u32, [f32; 3], u16, bool, u32);
+
+fn cars_in_world(msgs: &[ServerMessage]) -> Option<(u32, Vec<CarInWorld>)> {
+    msgs.iter().rev().find_map(|m| match m {
+        ServerMessage::WorldState { tick, agents, .. } => Some((
+            *tick,
+            agents
+                .iter()
+                .map(|a| {
+                    (
+                        a.player_id,
+                        a.transform.position,
+                        a.armor,
+                        a.in_escave,
+                        a.bumps,
+                    )
+                })
+                .collect(),
+        )),
+        _ => None,
+    })
+}
+
+#[test]
+fn test_a_car_in_an_escave_is_out_of_shots_and_contact() {
+    // One escave ~50u from where Bob's car stands.
+    let server =
+        ServerProcess::start_with_args("test", &[], &["--escave", "130,90", "--allow-setpose"]);
+    let mut alice = server.connect();
+    let mut bob = server.connect();
+    let join = |client: &mut Client, name: &str, color| {
+        client.send(&ClientMessage::Join {
+            player_name: name.into(),
+            car_name: "TestCar".into(),
+            color,
+            protocol: vangers_net::PROTOCOL_VERSION,
+        });
+        let mut stash = Vec::new();
+        match client.recv_welcome(&mut stash) {
+            ServerMessage::Welcome { player_id, .. } => player_id,
+            _ => unreachable!(),
+        }
+    };
+    let alice_id = join(&mut alice, "Alice", 21);
+    let bob_id = join(&mut bob, "Bob", 7);
+    let car = |msgs: &[ServerMessage], id| {
+        let (tick, cars) = cars_in_world(msgs).expect("a WorldState");
+        let c = *cars.iter().find(|c| c.0 == id).expect("both cars");
+        (tick, c.1, c.2, c.3, c.4)
+    };
+
+    let msgs = alice.recv_for(Duration::from_secs(2));
+    let (_, a_pos, a_max, _, _) = car(&msgs, alice_id);
+    let (_, b_pos, b_max, b_inside, _) = car(&msgs, bob_id);
+    assert!(!b_inside, "everyone starts on the road");
+    let level = vangers::level::load(
+        &vangers::level::LevelConfig::new_test(),
+        &Default::default(),
+    );
+    let gap = |a: [f32; 3], b: (f32, f32)| {
+        level
+            .shortest_xy(glam::Vec3::from(a), glam::Vec3::new(b.0, b.1, 0.0))
+            .length()
+    };
+    let reach = vangers::combat::ESCAVE_REACH;
+    assert!(
+        gap(b_pos, (130.0, 90.0)) < reach,
+        "spawns moved: Bob at {b_pos:?}"
+    );
+
+    bob.send(&ClientMessage::Escave { inside: true });
+    let msgs = alice.recv_for(Duration::from_millis(500));
+    let (tick, _, _, inside, _) = car(&msgs, bob_id);
+    assert!(inside, "Bob is in the escave");
+
+    // Shots fly through Bob's car, and his own are dropped.
+    let muzzle = [a_pos[0], a_pos[1], a_pos[2] + 120.0];
+    let down_at =
+        |from: [f32; 3], to: [f32; 3]| [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+    let fire = |client: &mut Client, quant, origin, dir, view_tick| {
+        client.send(&ClientMessage::Fire {
+            quant,
+            bay: 2,
+            origin,
+            dir,
+            view_tick,
+            view_ms: 0,
+        });
+    };
+    let b_muzzle = [b_pos[0], b_pos[1], b_pos[2] + 120.0];
+    for quant in 0..3 {
+        fire(&mut alice, 20 + quant, muzzle, down_at(muzzle, b_pos), tick);
+        fire(
+            &mut bob,
+            20 + quant,
+            b_muzzle,
+            down_at(b_muzzle, a_pos),
+            tick,
+        );
+        std::thread::sleep(Duration::from_millis(120));
+    }
+    let msgs = alice.recv_for(Duration::from_secs(2));
+    let (_, _, a_armor, _, _) = car(&msgs, alice_id);
+    let (tick, _, b_armor, _, _) = car(&msgs, bob_id);
+    assert_eq!(b_armor, b_max, "shots fly through a car in an escave");
+    assert_eq!(a_armor, a_max, "a car in an escave does not fire");
+
+    // Out again: hit like any car.
+    bob.send(&ClientMessage::Escave { inside: false });
+    let msgs = alice.recv_for(Duration::from_millis(300));
+    let (tick_out, _, _, inside, _) = car(&msgs, bob_id);
+    assert!(!inside, "Bob came out");
+    fire(
+        &mut alice,
+        30,
+        muzzle,
+        down_at(muzzle, b_pos),
+        tick_out.max(tick),
+    );
+    let msgs = alice.recv_for(Duration::from_secs(2));
+    let hit = vangers::combat::bay_damage(2);
+    let (_, _, b_armor, _, b_bumps) = car(&msgs, bob_id);
+    assert_eq!(b_armor, b_max - hit, "back on the road, Bob is hit");
+
+    // Back in, Alice parks on top of him and drives: no contact.
+    bob.send(&ClientMessage::Escave { inside: true });
+    let _ = alice.recv_for(Duration::from_millis(300));
+    let onto = [b_pos[0] + 6.0, b_pos[1], b_pos[2] + 2.0];
+    let next = alice.next_quant;
+    alice.send(&set_pose_to(onto, next));
+    let rate = quanta_per_sec();
+    let drive = |alice: &mut Client, bob: &mut Client, secs: f32| {
+        let mut msgs = Vec::new();
+        for _ in 0..(secs * 10.0) as u32 {
+            alice.input((rate * 0.1).ceil() as u16, Default::default());
+            msgs.extend(alice.recv_for(Duration::from_millis(100)));
+            let _ = bob.recv_for(Duration::from_millis(1));
+        }
+        msgs
+    };
+    let msgs = drive(&mut alice, &mut bob, 1.5);
+    let (_, b_now, _, inside, bumps) = car(&msgs, bob_id);
+    assert!(inside);
+    assert_eq!(bumps, b_bumps, "nothing touches a car in an escave");
+    assert!(
+        gap(b_now, (b_pos[0], b_pos[1])) < 1.0,
+        "Bob was moved in the escave: {b_pos:?} -> {b_now:?}"
+    );
+
+    // Out again with Alice on top: the cars meet.
+    bob.send(&ClientMessage::Escave { inside: false });
+    let msgs = drive(&mut alice, &mut bob, 1.5);
+    let (_, b_now, _, inside, bumps) = car(&msgs, bob_id);
+    assert!(!inside);
+    assert!(
+        bumps != b_bumps || gap(b_now, (b_pos[0], b_pos[1])) > 3.0,
+        "Bob is back in contact: bumps {b_bumps} -> {bumps}, {b_pos:?} -> {b_now:?}"
+    );
+
+    // Across the map from the escave (the far corner of the torus), Alice
+    // can't go in.
+    let far = [130.0 + 128.0, 90.0 + 128.0, a_pos[2] + 60.0];
+    assert!(gap(far, (130.0, 90.0)) > reach);
+    let next = alice.next_quant;
+    alice.send(&set_pose_to(far, next));
+    alice.send(&ClientMessage::Escave { inside: true });
+    let msgs = drive(&mut alice, &mut bob, 0.5);
+    let (_, a_now, _, inside, _) = car(&msgs, alice_id);
+    assert!(gap(a_now, (130.0, 90.0)) > reach, "Alice at {a_now:?}");
+    assert!(!inside, "no escave in reach of Alice");
+}
+
+#[test]
+fn test_a_car_in_an_escave_ignores_drive_input() {
+    // Bob's car stands ~50u from this escave.
+    let server = ServerProcess::start_with_args("test", &[], &["--escave", "130,90"]);
+    let mut bob = server.connect();
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
+    });
+    let mut stash = Vec::new();
+    let bob_id = match bob.recv_welcome(&mut stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    let level = vangers::level::load(
+        &vangers::level::LevelConfig::new_test(),
+        &Default::default(),
+    );
+    let pos = |msgs: &[ServerMessage]| {
+        let (_, cars) = cars_in_world(msgs).expect("a WorldState");
+        let c = *cars.iter().find(|c| c.0 == bob_id).expect("Bob");
+        (c.1, c.3)
+    };
+    let gap = |a: [f32; 3], b: [f32; 3]| {
+        (
+            level
+                .shortest_xy(glam::Vec3::from(a), glam::Vec3::from(b))
+                .length(),
+            (a[2] - b[2]).abs(),
+        )
+    };
+    let floor_it = vangers_net::NetControl {
+        motor: 1.0,
+        rudder: 0.5,
+        roll: 0.0,
+        brake: false,
+        turbo: true,
+        jump: None,
+    };
+    let rate = quanta_per_sec();
+    let drive = |bob: &mut Client, secs: f32, control: &vangers_net::NetControl| {
+        let mut msgs = Vec::new();
+        for i in 0..(secs * 10.0) as u32 {
+            let control = vangers_net::NetControl {
+                // A jump now and then, too.
+                jump: (i % 5 == 4).then_some(1.0),
+                ..control.clone()
+            };
+            bob.input((rate * 0.1).ceil() as u16, control);
+            msgs.extend(bob.recv_for(Duration::from_millis(100)));
+        }
+        msgs
+    };
+
+    // Settle on the ground first.
+    let parked = pos(&bob.recv_for(Duration::from_secs(2))).0;
+
+    bob.send(&ClientMessage::Escave { inside: true });
+    let msgs = drive(&mut bob, 2.0, &floor_it);
+    let (inside_at, inside) = pos(&msgs);
+    assert!(inside, "Bob is in the escave");
+    let (xy, z) = gap(parked, inside_at);
+    assert!(
+        xy < 0.5 && z < 0.5,
+        "drive input moved a car in an escave: {parked:?} -> {inside_at:?}"
+    );
+    // Nor does a Reset move it.
+    bob.send(&ClientMessage::Reset {
+        position: [parked[0] + 10.0, parked[1], parked[2]],
+        next_quant: bob.next_quant,
+    });
+    let (still, _) = pos(&bob.recv_for(Duration::from_millis(500)));
+    assert!(
+        gap(parked, still).0 < 0.5,
+        "a Reset moved a car in an escave: {parked:?} -> {still:?}"
+    );
+
+    // Out again, the same input drives it.
+    bob.send(&ClientMessage::Escave { inside: false });
+    let msgs = drive(&mut bob, 2.0, &floor_it);
+    let (out_at, inside) = pos(&msgs);
+    assert!(!inside);
+    assert!(
+        gap(parked, out_at).0 > 5.0,
+        "out of the escave, the car drives: {parked:?} -> {out_at:?}"
+    );
+}

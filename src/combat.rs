@@ -183,6 +183,21 @@ pub fn nearest_escave(pos: Vec3, escaves: &[(i32, i32)], period: (f32, f32)) -> 
         .copied()
 }
 
+/// How near one of the world's escave entrances a car must be for the
+/// server to take its `ClientMessage::Escave` going in, in world units. The
+/// client enters from its hatch sensor or within reach of the entrance
+/// (the autodrive takes 96), so this leaves room for a car on the pad.
+pub const ESCAVE_REACH: f32 = 160.0;
+
+/// Whether a car at `pos` may go into an escave: within [`ESCAVE_REACH`]
+/// (map XY, the short way around a torus of `period`) of one of `escaves`.
+pub fn escave_in_reach(pos: Vec3, escaves: &[(i32, i32)], period: (f32, f32)) -> bool {
+    nearest_escave(pos, escaves, period).is_some_and(|(x, y)| {
+        let d = torus_delta(pos, Vec3::new(x as f32, y as f32, pos.z), period);
+        d.x * d.x + d.y * d.y <= ESCAVE_REACH * ESCAVE_REACH
+    })
+}
+
 /// How long after a respawn the server takes no pose from the client,
 /// seconds: a `SetPose` or upright `Reset` sent from the wreck (or racing
 /// the `Respawned`) must not undo the respawn.
@@ -375,6 +390,20 @@ mod tests {
     use super::*;
 
     const PERIOD: (f32, f32) = (2048.0, 16384.0);
+
+    #[test]
+    fn escaves_are_entered_only_within_reach() {
+        let escaves = [(1500, 15879), (1657, 353)];
+        let near = |x, y| escave_in_reach(Vec3::new(x, y, 30.0), &escaves, PERIOD);
+        assert!(near(1465.0, 15840.0));
+        assert!(near(1650.0, 250.0));
+        assert!(!near(1500.0, 15879.0 - 161.0));
+        assert!(!near(400.0, 8000.0));
+        // Across the seam: (100, 50) is 50 + 50 away from y = 16334.
+        let seam = Vec3::new(100.0, 16334.0, 0.0);
+        assert!(escave_in_reach(seam, &[(100, 50)], PERIOD));
+        assert!(!escave_in_reach(Vec3::ZERO, &[], PERIOD));
+    }
 
     #[test]
     fn client_poses_are_refused_for_wrecks_and_just_after_a_respawn() {
