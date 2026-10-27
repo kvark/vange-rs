@@ -243,7 +243,6 @@ impl RemoteCar {
         }
     }
 
-    /// Take a server snapshot of this car (see `on_snapshot`).
     /// Take this car's state from the `WorldState` of server `tick`.
     pub fn on_agent(&mut self, agent: &vangers_net::AgentState, tick: u32, period: Option<Vec2>) {
         self.control = agent_control(agent);
