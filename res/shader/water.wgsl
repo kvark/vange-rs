@@ -25,6 +25,14 @@ fn main_vs(@location(0) pos: vec2<f32>, @location(1) flood_id: i32) -> Varyings 
 
 @fragment
 fn main_fs(in: Varyings) -> @location(0) vec4<f32> {
+    // The quad is the lake's surface, tinted for a view from above. A
+    // camera below it (under a slab or bridge, beneath flood level) would
+    // see the plane from underneath, across every gap between slabs, as a
+    // translucent blue ceiling (the "blue band" along slab undersides).
+    // There is no underwater view to draw, so only views from above get it.
+    if (in.world_pos.z > u_Globals.camera_pos.z) {
+        return vec4<f32>(0.0);
+    }
     let surface = get_surface(in.world_pos.xy);
     if (surface.low_type != c_TerrainWater) {
         return vec4<f32>(0.0);

@@ -220,6 +220,13 @@ pub struct SnapshotOptions {
     /// Distance to move horizontally in the viewing direction across timed
     /// frames. Warmup frames stay at the start and altitude remains fixed.
     pub fp_travel: Option<f32>,
+    /// Chase camera: a (not drawn) car parked at this XY on the floor
+    /// under any slab, heading along `fp_yaw`, followed by
+    /// `Camera::chase_anchored` with the game's default follow settings.
+    pub chase: Option<(f32, f32)>,
+    /// Fail when more than this fraction of the top half of the frame is
+    /// water-tinted, see [`water_tint_fraction`].
+    pub max_water_tint: Option<f32>,
     /// Eye height above the local ground surface.
     pub fp_height: f32,
     /// Heading in degrees; 0 looks along +Y.
@@ -305,6 +312,8 @@ impl Default for SnapshotOptions {
             grader_width: 40.0,
             fp: None,
             fp_travel: None,
+            chase: None,
+            max_water_tint: None,
             fp_height: 8.0,
             fp_yaw: 0.0,
             fp_pitch: 0.0,
@@ -408,6 +417,9 @@ fn write_png(path: &Path, width: u32, height: u32, pixels: &[u8]) {
 }
 
 fn make_camera(opts: &SnapshotOptions, lvl: &level::Level) -> space::Camera {
+    if let Some((x, y)) = opts.chase {
+        return make_chase_camera(opts, lvl, x, y);
+    }
     let (cam_loc, forward) = match opts.fp {
         // First person: stand on the surface and look along a heading. This
         // is the view the orbit camera can't express -- at a low elevation
@@ -461,18 +473,80 @@ fn make_camera(opts: &SnapshotOptions, lvl: &level::Level) -> space::Camera {
         loc: cam_loc,
         rot,
         scale: Vec3::new(1.0, -1.0, 1.0),
-        proj: {
-            let h = opts.height.max(1) as f32;
-            let focal = space::DEFAULT_FOCAL_PX;
-            space::Projection::Perspective(space::PerspectiveParams {
-                fovy: space::PerspectiveParams::fov_from_focal_px(focal, h),
-                aspect: opts.width as f32 / h,
-                near: opts.near.max(0.01),
-                far: opts.far.max(opts.near + 1.0),
-                focal_px: Some(focal),
-            })
-        },
+        proj: projection(opts),
     }
+}
+
+fn projection(opts: &SnapshotOptions) -> space::Projection {
+    let h = opts.height.max(1) as f32;
+    let focal = space::DEFAULT_FOCAL_PX;
+    space::Projection::Perspective(space::PerspectiveParams {
+        fovy: space::PerspectiveParams::fov_from_focal_px(focal, h),
+        aspect: opts.width as f32 / h,
+        near: opts.near.max(0.01),
+        far: opts.far.max(opts.near + 1.0),
+        focal_px: Some(focal),
+    })
+}
+
+/// The camera `road` would settle on behind a car parked at `x,y`: the
+/// floor under any slab (`Camera::ground_under`), heading `fp_yaw`, the
+/// template's follow settings (60 degrees, 240 high), and enough
+/// `chase_anchored` steps for the under-slab blend to finish.
+fn make_chase_camera(opts: &SnapshotOptions, lvl: &level::Level, x: f32, y: f32) -> space::Camera {
+    let ground = space::Camera::ground_under(lvl, Vec3::new(x, y, 0.0));
+    let car = space::Transform {
+        scale: 1.0,
+        // Cars face local +Y; turn that onto the heading.
+        rot: Quat::from_rotation_z(-opts.fp_yaw.to_radians()),
+        disp: Vec3::new(x, y, ground + 2.0),
+    };
+    let follow = space::Follow {
+        angle_x: 60f32.to_radians() - std::f32::consts::FRAC_PI_2,
+        offset: Vec3::new(0.0, 0.0, 240.0),
+        speed: 1.0,
+        look_ahead: 0.0,
+    };
+    let subject = space::Subject {
+        ground,
+        reach: space::DEFAULT_SUBJECT_REACH,
+    };
+    let mut cam = space::Camera {
+        chase_yaw: None,
+        under_slab: 0.0,
+        loc: car.disp + Vec3::new(0.0, 0.0, 240.0),
+        rot: Quat::IDENTITY,
+        scale: Vec3::new(1.0, -1.0, 1.0),
+        proj: projection(opts),
+    };
+    let dt = 1.0 / 60.0;
+    for _ in 0..600 {
+        cam.chase_anchored(lvl, &car, subject, dt, &follow, 4.0);
+    }
+    info!(
+        "Chase camera behind ({:.1}, {:.1}, {:.1}): at ({:.1}, {:.1}, {:.1}), under_slab {:.2}",
+        car.disp.x, car.disp.y, car.disp.z, cam.loc.x, cam.loc.y, cam.loc.z, cam.under_slab
+    );
+    cam
+}
+
+/// Share of the top half of an RGBA8 sRGB frame that is water-tinted:
+/// strongly blue with little red or green, as the water pass's
+/// `c_WaterColor` (0, 0, 200) leaves it. Terrain, fog and sky never get
+/// there, so on a view with no water in it this should be ~0.
+pub fn water_tint_fraction(pixels: &[u8], width: u32, height: u32) -> f32 {
+    let rows = (height / 2) as usize;
+    let tinted = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .take(rows * width as usize)
+        .filter(|p| {
+            let (r, g, b) = (p[0] as u32, p[1] as u32, p[2] as u32);
+            b >= 120 && b > 2 * r.max(g) + 40
+        })
+        .count();
+    tinted as f32 / (rows * width as usize).max(1) as f32
 }
 
 fn load_level_via_vfs(level_zip: &str, common_zip: Option<&str>) -> (level::LevelConfig, Vfs) {
@@ -1242,6 +1316,7 @@ pub fn render_snapshot(opts: SnapshotOptions) {
                 100.0 * mismatch as f32 / dual_pairs.max(1) as f32
             );
         }
+        info!("  flood level at y={}: {:.1}", py, lvl.flood_level_at(py));
         info!(
             "  shader would treat both texels as {}",
             if lvl.meta[even] & DOUBLE_LEVEL != 0 {
@@ -1421,4 +1496,53 @@ pub fn render_snapshot(opts: SnapshotOptions) {
     );
 
     info!("Snapshot saved successfully");
+
+    let tint = water_tint_fraction(&pixels, opts.width, opts.height);
+    info!("Water-tinted share of the top half: {:.4}", tint);
+    if let Some(max) = opts.max_water_tint
+        && tint > max
+    {
+        log::error!("water tint {:.4} exceeds --max-water-tint {:.4}", tint, max);
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::water_tint_fraction;
+
+    fn frame(top: [u8; 4], bottom: [u8; 4]) -> Vec<u8> {
+        let (w, h) = (4usize, 4usize);
+        (0..w * h)
+            .flat_map(|i| if i < w * h / 2 { top } else { bottom })
+            .collect()
+    }
+
+    #[test]
+    fn water_tint_counts_the_water_colour_in_the_top_half_only() {
+        // `c_WaterColor` (0, 0, 200) over the top half.
+        assert_eq!(
+            water_tint_fraction(&frame([0, 0, 200, 255], [0; 4]), 4, 4),
+            1.0
+        );
+        // ...and only in the bottom half, where looking down at a lake
+        // legitimately puts it.
+        assert_eq!(
+            water_tint_fraction(&frame([0; 4], [0, 0, 200, 255]), 4, 4),
+            0.0
+        );
+    }
+
+    #[test]
+    fn fog_sky_and_terrain_are_not_water() {
+        // Fog/clear colour (0.1, 0.2, 0.3) in sRGB, a bluish-grey cave
+        // wall and a sky blue.
+        for c in [
+            [89, 124, 149, 255],
+            [110, 120, 150, 255],
+            [90, 140, 200, 255],
+        ] {
+            assert_eq!(water_tint_fraction(&frame(c, c), 4, 4), 0.0, "{c:?}");
+        }
+    }
 }
