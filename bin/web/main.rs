@@ -18,6 +18,7 @@ use vangers::{
     },
     space,
     vfs::Vfs,
+    weapon,
 };
 
 /// Default level to try loading from the release if neither the URL
@@ -675,6 +676,9 @@ struct WebApp {
     terraform: level::terraform::Config,
     life: life::World,
     line_buffer: LineBuffer,
+    /// Other players' shots in flight (`ServerMessage::Shot`) and their
+    /// ages, drawn as streaks. This page has no weapons of its own yet.
+    remote_shots: Vec<(weapon::Shot, f32)>,
     space_held: bool,
     ride: Option<Ride>,
     /// Original Bug `.a3d` frames, if `game.lst` has one in the VFS.
@@ -1079,6 +1083,7 @@ impl WebApp {
             terraform: level::terraform::Config::default(),
             life,
             line_buffer: LineBuffer::new(),
+            remote_shots: Vec::new(),
             space_held: false,
             ride: None,
             bug,
@@ -1554,6 +1559,15 @@ impl WebApp {
         self.render.dirty_terrain(&regions, height);
     }
 
+    /// Fly the other players' shots on and drop the spent ones.
+    fn step_remote_shots(&mut self, delta: f32) {
+        for (shot, age) in &mut self.remote_shots {
+            shot.step(delta);
+            *age += delta;
+        }
+        self.remote_shots.retain(|(_, age)| *age < weapon::SHOT_LIFE);
+    }
+
     fn step_life(&mut self, delta: f32) {
         let Some(ref agent) = self.agent else {
             return;
@@ -1888,6 +1902,14 @@ impl WebApp {
         }
         self.life
             .draw_fx(&mut self.line_buffer, eye, self.bug.is_none());
+        for (shot, _) in &self.remote_shots {
+            // The replica next to the camera, as the cars are drawn.
+            let (from, to) = shot.streak();
+            let shown = self.level.display_pos(from, eye);
+            let (from, to) = (shown, to - from + shown);
+            self.line_buffer
+                .add(from.to_array(), to.to_array(), weapon::REMOTE_SHOT_COLOR);
+        }
 
         self.render.draw_world(
             &mut encoder,
@@ -3289,6 +3311,7 @@ impl WebHandler {
             // (offline only).
             gpu.app.step_tracks(online);
             gpu.app.step_life(dt);
+            gpu.app.step_remote_shots(dt);
         }
 
         // Story cycles run whether or not the escave UI is up so solo
@@ -3389,6 +3412,27 @@ impl WebHandler {
                                 net: physics::client::RemoteCar::new(phys.clone()),
                                 treads: Default::default(),
                             });
+                    }
+                    vangers_net::ServerMessage::Shot {
+                        shooter,
+                        origin,
+                        dir,
+                        ..
+                    } => {
+                        let drawn = gpu
+                            .app
+                            .remotes
+                            .get(&shooter)
+                            .filter(|r| r.net.pose_ready)
+                            .map(|r| r.net.render_transform.disp);
+                        let span = gpu.app.level.period();
+                        let shot = weapon::remote_shot(
+                            glam::Vec3::from(origin),
+                            glam::Vec3::from(dir),
+                            drawn,
+                            (span.x, span.y),
+                        );
+                        gpu.app.remote_shots.push((shot, 0.0));
                     }
                     vangers_net::ServerMessage::PlayerLeft { player_id } => {
                         let name = gpu.app.remotes.remove(&player_id).map(|r| r.name);

@@ -697,6 +697,94 @@ fn test_set_pose_updates_world_state() {
 }
 
 #[test]
+fn test_fire_is_relayed_to_other_players() {
+    let server = ServerProcess::start();
+    let mut alice = server.connect();
+    let mut bob = server.connect();
+
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "TestCar".into(),
+        color: 21,
+        protocol: vangers_net::PROTOCOL_VERSION,
+    });
+    let mut alice_stash = Vec::new();
+    let alice_id = match alice.recv_welcome(&mut alice_stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
+    });
+    let mut bob_stash = Vec::new();
+    let _ = bob.recv_welcome(&mut bob_stash);
+
+    // Fire from where the server has Alice's car.
+    alice_stash.extend(alice.recv_for(Duration::from_millis(300)));
+    let car = alice_stash
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => agents
+                .iter()
+                .find(|a| a.player_id == alice_id)
+                .map(|a| a.transform.position),
+            _ => None,
+        })
+        .expect("Alice should see her car in WorldState");
+    alice.send(&ClientMessage::Fire {
+        quant: 42,
+        bay: 1,
+        origin: car,
+        dir: [0.0, 2.0, 0.0],
+    });
+    // A muzzle far from the car and a bay that doesn't exist are dropped.
+    alice.send(&ClientMessage::Fire {
+        quant: 43,
+        bay: 0,
+        origin: [car[0], car[1], car[2] + 1000.0],
+        dir: [0.0, 1.0, 0.0],
+    });
+    alice.send(&ClientMessage::Fire {
+        quant: 44,
+        bay: 200,
+        origin: car,
+        dir: [0.0, 1.0, 0.0],
+    });
+
+    bob_stash.extend(bob.recv_for(Duration::from_secs(1)));
+    let shots: Vec<_> = bob_stash
+        .iter()
+        .filter_map(|m| match m {
+            ServerMessage::Shot {
+                shooter,
+                quant,
+                bay,
+                origin,
+                dir,
+                ..
+            } => Some((*shooter, *quant, *bay, *origin, *dir)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        shots,
+        vec![(alice_id, 42, 1, car, [0.0, 1.0, 0.0])],
+        "Bob should get exactly Alice's valid shot, dir normalized"
+    );
+
+    let echoed = alice
+        .recv_for(Duration::from_millis(500))
+        .iter()
+        .chain(&alice_stash)
+        .any(|m| matches!(m, ServerMessage::Shot { .. }));
+    assert!(!echoed, "the shooter draws its own shot; no echo");
+}
+
+#[test]
 fn test_set_spiral_broadcasts_to_peers() {
     let server = ServerProcess::start();
     let mut alice = server.connect();

@@ -26,6 +26,13 @@ pub enum NetEvent {
         cycle: Option<CycleState>,
         moving: Option<MovingLandState>,
     },
+    /// Another player fired (`ServerMessage::Shot`).
+    Shot {
+        shooter: PlayerId,
+        bay: u8,
+        origin: [f32; 3],
+        dir: [f32; 3],
+    },
     Disconnected,
 }
 
@@ -117,6 +124,18 @@ impl NetworkClient {
                                     cycle,
                                     moving,
                                 },
+                                ServerMessage::Shot {
+                                    shooter,
+                                    bay,
+                                    origin,
+                                    dir,
+                                    ..
+                                } => NetEvent::Shot {
+                                    shooter,
+                                    bay,
+                                    origin,
+                                    dir,
+                                },
                             };
                             if recv_tx.send(event).is_err() {
                                 return;
@@ -163,6 +182,17 @@ impl NetworkClient {
     /// Upload spiral charge so WorldState / reclaim stay aligned.
     pub fn send_set_spiral(&self, charge: u8) {
         let msg = encode(&ClientMessage::SetSpiral { charge });
+        let _ = self.send_tx.send(msg);
+    }
+
+    /// Report a shot from weapon bay `bay` (`ClientMessage::Fire`).
+    pub fn send_fire(&self, quant: u32, bay: u8, origin: [f32; 3], dir: [f32; 3]) {
+        let msg = encode(&ClientMessage::Fire {
+            quant,
+            bay,
+            origin,
+            dir,
+        });
         let _ = self.send_tx.send(msg);
     }
 
