@@ -770,3 +770,256 @@ fn chase_camera_rides_over_a_floor_pit() {
         println!("over the pit at ({x}, {y}): nearest {nearest:.1}");
     }
 }
+
+/// One frame of [`arch_replay`]: the car, the camera, and the blend.
+struct ArchFrame {
+    car: Vec3,
+    cam: Vec3,
+    under_slab: f32,
+}
+
+/// Settle on the arch east of (904, 3938), then drive: `turn` holds W+A,
+/// otherwise W with a max jump after half a second. The camera is `road`'s
+/// (ground-anchored, for the overhead follow) or the web build's.
+#[allow(clippy::too_many_arguments)]
+fn arch_replay(
+    f: &Fostral,
+    (x, y, yaw): (f32, f32, f32),
+    turn: bool,
+    follow: &space::Follow,
+    anchored: bool,
+) -> Vec<ArchFrame> {
+    let (level, common, car) = (&f.level, &f.common, &f.car);
+    let frame_dt = 1.0 / 60.0;
+    let physics_dt = frame_dt * {
+        let n = &common.nature;
+        common.speed.standard_frame_rate as f32 * n.time_delta0 * n.num_calls_analysis as f32
+    };
+    let qi = physics::QuantClock::input_factor(f.max_quant, common);
+    let mut clock = physics::QuantClock::default();
+    let mut dynamo = Dynamo::default();
+    let floor = level.floor_below(Vec3::new(x, y, 60.0));
+    let mut transform = space::Transform {
+        disp: Vec3::new(x, y, floor + 6.0),
+        rot: Quat::from_rotation_z(yaw),
+        scale: car.scale,
+    };
+    let mut cam = camera_at(transform.disp + Vec3::new(0.0, 0.0, 240.0));
+    let (settle, jump_frame) = (30, 60);
+    let mut frames = Vec::new();
+    for frame in 0..360 {
+        let quanta = clock.advance(physics_dt, f.max_quant);
+        for i in 0..quanta {
+            if frame > settle {
+                let throttle = if turn { 0.4 } else { 1.0 };
+                dynamo.change_traction(qi * common.car.traction_incr * throttle);
+                if turn {
+                    let rudder = dynamo.rudder - common.car.rudder_step * 2.0 * qi;
+                    dynamo.rudder = rudder.clamp(-common.car.rudder_max, common.car.rudder_max);
+                }
+            }
+            let jump = (!turn && frame == jump_frame && i + 1 == quanta)
+                .then_some(common.force.max_jump_power);
+            physics::step(
+                &mut dynamo,
+                &mut transform,
+                f.max_quant,
+                car,
+                level,
+                common,
+                1.0,
+                0.0,
+                jump,
+                0.0,
+                None,
+                None,
+            );
+        }
+        let ground = if anchored {
+            space::Camera::ground_under(level, transform.disp)
+        } else {
+            transform.disp.z
+        };
+        cam.chase_anchored(level, &transform, ground, frame_dt, follow, CLEARANCE);
+        frames.push(ArchFrame {
+            car: transform.disp,
+            cam: cam.loc,
+            under_slab: cam.under_slab,
+        });
+    }
+    frames
+}
+
+/// Above the arch (rock 45-75 over a gap down to 5) east of (904, 3938):
+/// the car on its roof, and in the air over the channel beside it after
+/// jumping off. The ground there can be the gap's floor 70u down.
+const ON_THE_ARCH: [(f32, f32, f32); 4] = [
+    (970.0, 3960.0, 77.5),
+    (972.0, 3985.0, 77.5),
+    (985.0, 3975.0, 85.0),
+    (985.0, 3995.0, 80.0),
+];
+
+/// Judging "under a slab" from the gap floor beneath the car, rather
+/// than the car, blended `road`'s camera into the under-slab pose down in
+/// that gap: looking up through the arch at the car, behind the veil.
+/// The camera stays the authored one, above the car, in clear sight.
+#[test]
+fn chase_camera_stays_above_an_arch() {
+    let Some(f) = fostral() else { return };
+    let level = &f.level;
+    let yaws = [
+        0.0f32,
+        std::f32::consts::FRAC_PI_2,
+        std::f32::consts::PI,
+        -std::f32::consts::FRAC_PI_2,
+    ];
+    for (fi, follow) in chase_follows().iter().enumerate() {
+        let anchored = fi == 0;
+        for &(x, y, z) in &ON_THE_ARCH {
+            let car = Vec3::new(x, y, z);
+            for &yaw in &yaws {
+                let target = space::Transform {
+                    disp: car,
+                    rot: Quat::from_rotation_z(yaw),
+                    scale: 1.0,
+                };
+                let ground = if anchored {
+                    space::Camera::ground_under(level, car)
+                } else {
+                    z
+                };
+                let mut cam = camera_at(car + Vec3::new(0.0, 0.0, 240.0));
+                for frame in 0..180 {
+                    cam.chase_anchored(level, &target, ground, 1.0 / 60.0, follow, CLEARANCE);
+                    if frame < 120 {
+                        continue;
+                    }
+                    let at = format!(
+                        "follow {fi} at {car:?} yaw {yaw:.2} frame {frame}: camera {:?}",
+                        cam.loc
+                    );
+                    assert!(cam.under_slab < 0.01, "{at} blended under the slab");
+                    assert!(cam.loc.z > car.z, "{at} is below the car");
+                    assert!(clear_sight(level, cam.loc, car), "{at} cannot see the car");
+                    assert!(
+                        !space::Camera::terrain_blocks_view(level, cam.loc, car, CLEARANCE),
+                        "{at}: the veil would kick in"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Driving off the arch roof with a max jump, and turning on it: while
+/// the car is up at the arch's top, the camera never drops below it,
+/// and the veil stays off whenever the car is in clear sight - it used
+/// to come on for sight lines threading the gap under the arch.
+#[test]
+fn chase_camera_jumps_and_turns_on_an_arch() {
+    let Some(f) = fostral() else { return };
+    let level = &f.level;
+    let starts = [
+        (970.0, 3960.0, -std::f32::consts::FRAC_PI_2),
+        (970.0, 3960.0, 0.0),
+        (972.0, 3985.0, std::f32::consts::PI),
+        (972.0, 3985.0, -std::f32::consts::FRAC_PI_4),
+    ];
+    for (fi, follow) in chase_follows().iter().enumerate() {
+        for &start in &starts {
+            for turn in [false, true] {
+                let frames = arch_replay(&f, start, turn, follow, fi == 0);
+                let (mut high, mut veiled) = (0, 0);
+                for (frame, a) in frames.iter().enumerate().skip(60) {
+                    let at = format!(
+                        "follow {fi} from {start:?} turn {turn} frame {frame}: car {:?} camera {:?} blend {:.2}",
+                        a.car, a.cam, a.under_slab
+                    );
+                    if a.car.z > 60.0 {
+                        high += 1;
+                        // The web chase trails 9u up and can lag under a
+                        // car still rising from its jump.
+                        if fi == 0 {
+                            assert!(a.cam.z > a.car.z - 2.0, "{at}: camera below the car");
+                        }
+                    }
+                    if clear_sight(level, a.cam, a.car) {
+                        let veil =
+                            space::Camera::terrain_blocks_view(level, a.cam, a.car, CLEARANCE);
+                        assert!(!veil, "{at}: veil on with the car in clear sight");
+                    } else {
+                        veiled += 1;
+                    }
+                }
+                println!(
+                    "follow {fi} from {start:?} turn {turn}: {high} frames up on the arch, {veiled} with the sight line blocked"
+                );
+            }
+        }
+    }
+}
+
+/// In Fostral's tall south cave (floor 10, slab underside 130): where
+/// a live W+A tap stood the car nose-up against the rock, and where R
+/// then righted it.
+const SOUTH_CAVE: [(f32, f32); 2] = [(661.2, 3962.3), (655.6, 3962.0)];
+
+/// Nose-up for 3 s, then righted by R for 3 s: the camera must not stay
+/// jammed on the car. (Live it looked jammed: the under-slab pose, 40u
+/// back and 20u up from the centre of a 51u-long OxidizeMonk, sits just
+/// over its tail.)
+#[test]
+fn chase_camera_recovers_after_a_nose_up_reset() {
+    let Some(f) = fostral() else { return };
+    let level = &f.level;
+    for (fi, follow) in chase_follows().iter().enumerate() {
+        for &(x, y) in &SOUTH_CAVE {
+            for h in 0..8 {
+                let yaw = h as f32 * std::f32::consts::FRAC_PI_4;
+                for pitch in [60f32, 90.0] {
+                    let mut cam = camera_at(Vec3::new(x, y, 254.0));
+                    let (mut close, mut nearest) = (0, f32::INFINITY);
+                    for frame in 0..360 {
+                        let reset = frame >= 180;
+                        let (z, rot) = if reset {
+                            (13.8, Quat::IDENTITY)
+                        } else {
+                            let tilt = Quat::from_rotation_x(pitch.to_radians());
+                            (35.0, Quat::from_rotation_z(yaw) * tilt)
+                        };
+                        let car = Vec3::new(x, y, z);
+                        let target = space::Transform {
+                            disp: car,
+                            rot,
+                            scale: 1.0,
+                        };
+                        let ground = if fi == 0 {
+                            space::Camera::ground_under(level, car)
+                        } else {
+                            z
+                        };
+                        cam.chase_anchored(level, &target, ground, 1.0 / 60.0, follow, CLEARANCE);
+                        let at = format!(
+                            "follow {fi} at ({x}, {y}) yaw {yaw:.2} pitch {pitch} frame {frame}: camera {:?}",
+                            cam.loc
+                        );
+                        let dist = (cam.loc - car).length();
+                        close = if dist < 15.0 { close + 1 } else { 0 };
+                        assert!(close <= 30, "{at} stuck within 15u of the car");
+                        if reset && frame >= 210 {
+                            nearest = nearest.min(dist);
+                            assert!(dist >= 20.0, "{at} is {dist:.1} from the car");
+                            assert!(clear_sight(level, cam.loc, car), "{at} cannot see the car");
+                            assert!(
+                                !space::Camera::terrain_blocks_view(level, cam.loc, car, CLEARANCE),
+                                "{at}: the veil would kick in"
+                            );
+                        }
+                    }
+                    assert!(nearest.is_finite());
+                }
+            }
+        }
+    }
+}
