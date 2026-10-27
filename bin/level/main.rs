@@ -143,6 +143,16 @@ struct Cli {
     /// Horizontal distance to move in the viewing direction at fixed altitude.
     #[arg(long)]
     fp_travel: Option<f32>,
+    /// Chase camera: park a car at "x,y" (on the floor under any slab),
+    /// heading along --fp-yaw, and let `Camera::chase_anchored` settle
+    /// on it with the game's default follow settings. The car itself is
+    /// not drawn. Overrides --fp.
+    #[arg(long)]
+    chase: Option<String>,
+    /// Fail if more than this fraction of the top half of the frame is
+    /// water-tinted (strongly blue: the water pass's `c_WaterColor`).
+    #[arg(long)]
+    max_water_tint: Option<f32>,
     /// Eye height above the local ground surface
     #[arg(long, default_value_t = 8.0)]
     fp_height: f32,
@@ -416,6 +426,11 @@ fn main() {
                 (v.x, v.y)
             }),
             fp_travel: cli.fp_travel,
+            chase: cli.chase.as_deref().map(|s| {
+                let v = parse_vec3(&format!("{},0", s));
+                (v.x, v.y)
+            }),
+            max_water_tint: cli.max_water_tint,
             depth_out: cli.depth_out.clone(),
             frame_dir: cli.frame_dir.clone(),
             cull_dump: cli.cull_dump.clone(),
