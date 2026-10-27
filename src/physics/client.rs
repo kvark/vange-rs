@@ -185,13 +185,13 @@ pub struct RemoteCar {
 impl RemoteCar {
     /// Snapshots a second (the server tick).
     pub const SNAPSHOT_RATE: f32 = 20.0;
-    /// Playback delay with snapshots arriving evenly: 1.5 intervals, so
-    /// the next one is in before the drawn pose gets to it.
-    pub const DELAY_BASE: f32 = 1.5 / Self::SNAPSHOT_RATE;
+    /// Playback delay with snapshots arriving evenly: a small floor, the
+    /// ack timeline and dead reckoning carry the pose between snapshots.
+    pub const DELAY_BASE: f32 = 0.03;
     /// Delay added per second of jitter.
-    pub const DELAY_PER_JITTER: f32 = 2.0;
+    pub const DELAY_PER_JITTER: f32 = 1.5;
     /// Bounds of the playback delay.
-    pub const DELAY_MIN: f32 = 0.05;
+    pub const DELAY_MIN: f32 = 0.03;
     pub const DELAY_MAX: f32 = 0.25;
     /// Weight of a frame's lateness in the jitter EWMA.
     pub const JITTER_WEIGHT: f32 = 0.1;
