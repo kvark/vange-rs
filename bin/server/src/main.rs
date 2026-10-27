@@ -1104,6 +1104,15 @@ async fn main() {
                             _ => continue,
                         }
                         let input = agent.inputs.pop();
+                        // Parked in an escave, out of the world, as the
+                        // original takes the unit off the map on arrival:
+                        // its inputs are spent but don't drive it, and it
+                        // holds its pose until it comes out.
+                        if agent.in_escave {
+                            agent.dynamo.linear_velocity = Vec3::ZERO;
+                            agent.dynamo.angular_velocity = Vec3::ZERO;
+                            continue;
+                        }
                         // A wreck rolls on with no control (its client
                         // sends none either).
                         let input = if agent.dead.is_some() {
@@ -1506,6 +1515,11 @@ async fn main() {
                                             "SetPose from player {} ({}) ignored: {}",
                                             player_id, agent.name, why
                                         );
+                                    } else if agent.in_escave {
+                                        warn!(
+                                            "SetPose from player {} ({}) ignored: parked in an escave",
+                                            player_id, agent.name
+                                        );
                                     } else if agent.joined {
                                         // The client predicts from this pose
                                         // with its quanta from `next_quant`.
@@ -1545,6 +1559,11 @@ async fn main() {
                                         warn!(
                                             "Reset from player {} ({}) ignored: {}",
                                             player_id, agent.name, why
+                                        );
+                                    } else if agent.in_escave {
+                                        warn!(
+                                            "Reset from player {} ({}) ignored: parked in an escave",
+                                            player_id, agent.name
                                         );
                                     } else if agent.joined {
                                         let period = level.period();

@@ -158,7 +158,10 @@ taken, and a fresh join starts outside. While inside, the car is
 - the other clients (native and web) don't draw it, give it no contact
   ghost, and leave it off the minimap;
 - the server's shots fly through it, its own fire is dropped, and
-  `collide_players` skips it.
+  `collide_players` skips it;
+- the car is parked: the server spends its inputs without driving it, and
+  ignores a `Reset` or `SetPose` for it, so it holds its pose until it comes
+  out. (The original takes the unit off the map on arrival.)
 
 The car reappears where it parked once it drives back out.
 
