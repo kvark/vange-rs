@@ -495,10 +495,16 @@ impl MeshGeometry {
         queue: &wgpu::Queue,
     ) -> Vec<level::tin::Rect> {
         use std::time::Duration;
+        // `web_time` only exists with the `web` feature; Emscripten builds
+        // are wasm32 without it, and there `std::time::Instant` works.
+        #[cfg(feature = "web")]
+        use web_time::Instant;
+        #[cfg(not(feature = "web"))]
+        use std::time::Instant;
 
         const CPU_BUDGET: Duration = Duration::from_millis(8);
         const INSERTIONS_PER_STEP: usize = level::tin::WASM_DRAIN_INSERTIONS;
-        let start = web_time::Instant::now();
+        let start = Instant::now();
         let mut attempted = false;
         let mut refresh = Vec::new();
 
