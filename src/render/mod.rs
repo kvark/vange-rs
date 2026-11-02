@@ -670,7 +670,10 @@ impl Render {
         info!("Creating object context...");
         let terrain_view = terrain
             .terrain_texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+            .create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
         let flood_view = terrain
             .flood
             .texture

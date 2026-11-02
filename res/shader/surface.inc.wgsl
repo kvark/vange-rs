@@ -6,11 +6,11 @@ struct SurfaceConstants {
     delta_mode: u32, // low 8 bits = power, higher 16 bits = mask
     /// 1 = height 0 is empty (iscreen padding / holes). World maps keep 0 solid.
     void_zero: u32,
-    _pad: u32,
+    rows_per_layer: u32, // level rows per array layer of t_Terrain
 };
 
 @group(1) @binding(0) var<uniform> u_Surface: SurfaceConstants;
-@group(1) @binding(2) var t_Terrain: texture_2d<u32>;
+@group(1) @binding(2) var t_Terrain: texture_2d_array<u32>;
 
 const c_DoubleLevelMask: u32 = 64u;
 const c_ShadowMask: u32 = 128u;
@@ -50,7 +50,8 @@ fn get_map_coordinates(pos: vec2<f32>) -> vec2<i32> {
 fn get_surface_impl(tci: vec2<i32>) -> Surface {
     var suf: Surface;
 
-    let data = textureLoad(t_Terrain, vec2<i32>(tci.x/2, tci.y), 0);
+    let rows = i32(u_Surface.rows_per_layer);
+    let data = textureLoad(t_Terrain, vec2<i32>(tci.x/2, tci.y % rows), tci.y / rows, 0);
     suf.is_shadowed = (data.y & c_ShadowMask) != 0u;
     let scale = u_Surface.texture_scale.z / 256.0;
 
