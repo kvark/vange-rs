@@ -1,30 +1,148 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 360" role="img" aria-labelledby="title desc">
-  <title id="title">Height-field ray marching</title>
-  <desc id="desc">One screen pixel casts a ray. Fixed samples find the first solid interval and bisection refines the hit.</desc>
-  <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#e76f51"/></marker>
-    <style>.ink{stroke:#24324a;stroke-width:2;fill:none}.grid{stroke:#d9e0e8;stroke-width:1}.label{font:14px system-ui,sans-serif;fill:#24324a}.small{font:12px system-ui,sans-serif;fill:#5f6b7a}.floor{fill:#e7c98d;stroke:#9a6f2f;stroke-width:2}.slab{fill:#8db8df;stroke:#477aa8;stroke-width:2}.accent{stroke:#e76f51;stroke-width:3;fill:none}.sample{fill:#fff;stroke:#477aa8;stroke-width:2}</style>
-  </defs>
-  <rect width="760" height="360" fill="#fff"/>
-  <rect x="24" y="22" width="116" height="25" rx="12" fill="#e8f1f8"/><text x="82" y="39" text-anchor="middle" class="small">IMAGE ORDER</text>
-  <g transform="translate(38 78)">
-    <rect x="0" y="0" width="70" height="70" rx="6" fill="#f5f7fa" stroke="#24324a" stroke-width="2"/>
-    <g fill="#d9e0e8"><rect x="10" y="10" width="12" height="12"/><rect x="29" y="10" width="12" height="12"/><rect x="48" y="10" width="12" height="12"/><rect x="10" y="29" width="12" height="12"/><rect x="48" y="29" width="12" height="12"/><rect x="10" y="48" width="12" height="12"/><rect x="29" y="48" width="12" height="12"/><rect x="48" y="48" width="12" height="12"/></g>
-    <rect x="29" y="29" width="12" height="12" fill="#e76f51"/>
-    <text x="35" y="92" text-anchor="middle" class="label">one pixel</text>
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="370.610212pt" height="122.4pt" viewBox="0 0 370.610212 122.4" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.8, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 122.4
+L 370.610212 122.4
+L 370.610212 0
+L 0 0
+z
+" style="fill: #ffffff"/>
   </g>
-  <path d="M121 113H176" class="accent" marker-end="url(#arrow)"/>
-  <line x1="183" y1="71" x2="183" y2="155" class="ink"/>
-  <circle cx="209" cy="113" r="8" fill="#24324a"/><path d="M217 113L244 129" class="ink"/>
-  <text x="183" y="174" text-anchor="middle" class="small">near plane</text>
-  <g class="grid"><line x1="255" y1="70" x2="255" y2="310"/><line x1="325" y1="70" x2="325" y2="310"/><line x1="395" y1="70" x2="395" y2="310"/><line x1="465" y1="70" x2="465" y2="310"/><line x1="535" y1="70" x2="535" y2="310"/><line x1="605" y1="70" x2="605" y2="310"/><line x1="675" y1="70" x2="675" y2="310"/></g>
-  <path d="M220 286L280 274L340 281L400 251L460 260L520 235L580 244L640 218L720 228V330H220Z" class="floor"/>
-  <path d="M405 196L455 185L505 193L550 171L598 180V222L550 213L505 234L455 226L405 237Z" class="slab"/>
-  <path d="M217 113L661 229" stroke="#477aa8" stroke-width="2.5" fill="none"/>
-  <g><circle cx="270" cy="127" r="5" class="sample"/><circle cx="327" cy="142" r="5" class="sample"/><circle cx="384" cy="157" r="5" class="sample"/><circle cx="441" cy="172" r="5" class="sample"/><circle cx="498" cy="187" r="5" class="sample"/><circle cx="555" cy="201" r="5" class="sample"/></g>
-  <circle cx="584" cy="209" r="6" fill="#e76f51"/><circle cx="570" cy="205" r="4" fill="#fff" stroke="#e76f51" stroke-width="2"/><circle cx="577" cy="207" r="4" fill="#fff" stroke="#e76f51" stroke-width="2"/>
-  <path d="M555 184V218M584 192V226" class="accent"/><path d="M555 178H584" class="accent" marker-end="url(#arrow)"/>
-  <text x="425" y="95" class="label">fixed forward steps</text><text x="586" y="151" class="label">first crossing</text><text x="586" y="168" class="small">binary refinement</text>
-  <text x="438" y="283" class="small">floor solid</text><text x="470" y="213" class="small">upper solid</text><text x="474" y="246" class="small">cave air</text>
-  <path d="M584 209L713 244" class="accent" marker-end="url(#arrow)"/><text x="651" y="217" class="small">write depth</text>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 10.970062 113.055484
+L 356.008169 113.055484
+L 356.008169 99.229548
+L 10.970062 99.229548
+z
+" clip-path="url(#p4dcb8548fb)" style="fill: #dfc49a; stroke: #796146; stroke-width: 0.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 185.305106 71.577677
+L 305.160448 71.577677
+L 305.160448 48.953419
+L 185.305106 48.953419
+z
+" clip-path="url(#p4dcb8548fb)" style="fill: #afcbdc; stroke: #496d83; stroke-width: 0.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="line2d_1">
+    <path d="M 21.866002 18.787742
+L 65.449763 27.014745
+L 109.033524 35.241748
+L 152.617285 43.468751
+L 196.201046 51.695754
+" clip-path="url(#p4dcb8548fb)" style="fill: none; stroke: #007f86; stroke-width: 1.6; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 152.617285 43.468751
+L 196.201046 51.695754
+" clip-path="url(#p4dcb8548fb)" style="fill: none; stroke: #bc4242; stroke-width: 2.7; stroke-linecap: square"/>
+   </g>
+   <g id="text_1">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: start" x="314.240399" y="96.912197" transform="rotate(-0 314.240399 96.912197)">Floor</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: middle" x="245.232777" y="61.718906" transform="rotate(-0 245.232777 61.718906)">Slab</text>
+   </g>
+   <g id="patch_4">
+    <path d="M 70.794473 68.957722
+Q 89.163641 52.761337 107.53281 36.564952
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: round"/>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start" x="18.234022" y="79.119097" transform="rotate(-0 18.234022 79.119097)">Fixed forward steps</text>
+   </g>
+   <g id="patch_5">
+    <path d="M 225.514434 22.290631
+Q 200.858575 34.492634 176.202716 46.694637
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: round"/>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start" x="198.017036" y="17.530839" transform="rotate(-0 198.017036 17.530839)">Refine this bracket</text>
+   </g>
+   <g id="patch_6">
+    <path d="M 152.773722 83.422563
+Q 168.345461 67.251447 183.917201 51.08033
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: round"/>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: start" x="112.665504" y="92.945032" transform="rotate(-0 112.665504 92.945032)">Surface crossing</text>
+   </g>
+   <g id="PathCollection_1">
+    <defs>
+     <path id="m82260488d7" d="M 0 2.397916
+C 0.635935 2.397916 1.245909 2.145256 1.695582 1.695582
+C 2.145256 1.245909 2.397916 0.635935 2.397916 0
+C 2.397916 -0.635935 2.145256 -1.245909 1.695582 -1.695582
+C 1.245909 -2.145256 0.635935 -2.397916 0 -2.397916
+C -0.635935 -2.397916 -1.245909 -2.145256 -1.695582 -1.695582
+C -2.145256 -1.245909 -2.397916 -0.635935 -2.397916 0
+C -2.397916 0.635935 -2.145256 1.245909 -1.695582 1.695582
+C -1.245909 2.145256 -0.635935 2.397916 0 2.397916
+z
+" style="stroke: #007f86"/>
+    </defs>
+    <g clip-path="url(#p4dcb8548fb)">
+     <use xlink:href="#m82260488d7" x="21.866002" y="18.787742" style="fill: #ffffff; stroke: #007f86"/>
+     <use xlink:href="#m82260488d7" x="65.449763" y="27.014745" style="fill: #ffffff; stroke: #007f86"/>
+     <use xlink:href="#m82260488d7" x="109.033524" y="35.241748" style="fill: #ffffff; stroke: #007f86"/>
+     <use xlink:href="#m82260488d7" x="152.617285" y="43.468751" style="fill: #ffffff; stroke: #007f86"/>
+    </g>
+   </g>
+   <g id="PathCollection_2">
+    <defs>
+     <path id="mc3c57b0e02" d="M 0 2.397916
+C 0.635935 2.397916 1.245909 2.145256 1.695582 1.695582
+C 2.145256 1.245909 2.397916 0.635935 2.397916 0
+C 2.397916 -0.635935 2.145256 -1.245909 1.695582 -1.695582
+C 1.245909 -2.145256 0.635935 -2.397916 0 -2.397916
+C -0.635935 -2.397916 -1.245909 -2.145256 -1.695582 -1.695582
+C -2.145256 -1.245909 -2.397916 -0.635935 -2.397916 0
+C -2.397916 0.635935 -2.145256 1.245909 -1.695582 1.695582
+C -1.245909 2.145256 -0.635935 2.397916 0 2.397916
+z
+" style="stroke: #007f86"/>
+    </defs>
+    <g clip-path="url(#p4dcb8548fb)">
+     <use xlink:href="#mc3c57b0e02" x="196.201046" y="51.695754" style="fill: #007f86; stroke: #007f86"/>
+    </g>
+   </g>
+   <g id="PathCollection_3">
+    <defs>
+     <path id="m395ec3f5fb" d="M -2.915476 2.915476
+L 2.915476 -2.915476
+M -2.915476 -2.915476
+L 2.915476 2.915476
+" style="stroke: #bc4242; stroke-width: 1.5"/>
+    </defs>
+    <g clip-path="url(#p4dcb8548fb)">
+     <use xlink:href="#m395ec3f5fb" x="185.305106" y="49.639003" style="fill: #bc4242; stroke: #bc4242; stroke-width: 1.5"/>
+    </g>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p4dcb8548fb">
+   <rect x="3.706102" y="2.448" width="363.198007" height="116.892"/>
+  </clipPath>
+ </defs>
 </svg>

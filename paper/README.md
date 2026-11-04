@@ -1,225 +1,104 @@
-# JCGT submission — working directory
+# JCGT manuscript
 
-Draft, figures and the exact commands that produce them.
+The manuscript is `paper.tex`: **Rendering Editable Layered Terrain with
+WebGPU: A Comparison of Six Methods**. The October 2026 revision reorganizes
+the existing study around image quality, frame cost, local edits, and mesh
+size. It does not introduce new benchmark runs.
 
-`paper.tex` is the paper, in the JCGT class. Compile with
-`tools/build-paper-tex.py` (writes `work/submission/vange-rs-paper.pdf`).
-Nothing here is a substitute for the harness — every number in the paper
-is reproduced by a command recorded next to it.
-
-## Reproducing every figure
+## Build and review
 
 ```bash
-# On a new machine. That is the whole invocation - the defaults are the six
-# selected configurations, twelve viewpoints (three per pitch: 0, -30, -60,
-# -90 degrees), 1280x800, 40 frames. It builds what is missing, fetches and converts the
-# level on first run, reuses all of it afterwards, and names the results
-# file after whichever adapter wgpu chose. Expect roughly an hour, with a
-# running estimate printed as it goes.
-tools/compare-terrain.py
+python3 tools/build-paper-tex.py
+# work/submission/vange-rs-paper.pdf
 
-# Verify the checkout and exact camera plan without starting a render.
-tools/compare-terrain.py --list-scenes
-
-# After collecting a full six-method run from each machine into remote/:
-tools/merge-bench.py remote/results-*.json > paper/results.md
-
-# Rebuild the corrected accuracy baseline cheaply on one machine. Timings from
-# this one-frame run are intentionally discarded.
-tools/compare-terrain.py --accuracy-only
-
-# Hangar stills for the six-method teaser live in paper/figures/teaser-N.png.
-# The crater figure reads work/edit-figure/{RayTraced,RayVoxel,Mesh_q_0_5}-{before,after}.png.
-# Generate every data-driven SVG, including teaser.svg and edit.svg:
-tools/plot-paper.py --results 'remote/results-*.json' \
-  --accuracy-results remote/results-amd-radeon-780m-graphics-radv-phoenix.json \
-  --edit-dir work/edit-figure
-
-# Generate the synchronized six-method supplemental flythrough. It starts
-# at the -30° portal scene (1176, 11567), raised to eye height 180, and
-# flies 520 units horizontally along yaw 308° at fixed Z. The H.264 mosaic
-# is a JCGT supplement, not a journal-hosted data archive.
-tools/render-paper-video.py
-
-# Compile the JCGT LaTeX source. Figure PDFs live next to the SVGs;
-# regenerate an SVG-derived PDF after editing a plot with:
-#   PATH=work/paper-venv/bin:$PATH weasyprint paper/figures/NAME.svg \
-#        /tmp/n.pdf  # then re-export at native size if the page is A4
-tools/build-paper-tex.py
+# Regenerate the figures, then build:
+python3 tools/build-paper-tex.py --figures
 ```
 
-The comparison tools require Python with NumPy and Pillow. Video generation
-also requires `ffmpeg`; the Rust renderer itself is built by Cargo.
+The build needs pdfLaTeX and BibTeX with the packages used by the JCGT class.
+Figure generation also needs Python with matplotlib and NumPy, plus Inkscape.
+The build stops on unresolved references, missing citations, or overfull
+boxes. These checks complement a visual read of the final PDF; they do not
+prove that a diagram or an argument is correct.
 
-## ArXiv preprint
+`tools/draw-paper-figures.py` generates the figures used by this revision:
 
-JCGT is single-blind, authors keep copyright, and other JCGT articles
-already have arXiv records, so a preprint during review is normal. Post
-it *after* the JCGT upload so the journal sees the manuscript first.
+- The encoding diagram defines the decoded columns.
+- The ray/slice diagram uses explicit sample positions and solid intervals.
+- The quality plot reads the published, rounded pitch means in
+  `paper/results.md`; it is not a new measurement.
+- The teaser and edit mosaics use unchanged captures extracted from the
+  earlier SVGs into `paper/figures/source/`. No capture pixels were repainted.
+  The generated SVGs embed these images so they can be opened on their own.
+- Standalone `ray.svg` and `slice.svg` are also regenerated so the older
+  links show the corrected diagrams.
 
-- Category: `cs.GR`. This is an original systems comparison, not an
-  arXiv "review/position" paper, so the 2025 CS survey-paper rule does
-  not apply.
-- Artifact: the JCGT LaTeX tree (`paper.tex`, `references.bib`,
-  `paper.bbl`, `jcgt.cls`, figure PDFs) plus `anc/terrain-methods.mp4`.
-  arXiv compiles the PDF. Do not upload Fostral.
-- Comments: `29 pages. Submitted to the Journal of Computer Graphics
-  Techniques. Supplemental video as ancillary.`
-- Abstract: paste `paper/abstract.txt` (ASCII, 1536 characters). Metadata
-  checklist is `paper/arxiv-metadata.txt`.
-- License: arXiv's perpetual non-exclusive distribution license. That
-  does not collide with JCGT's later CC BY-ND journal version.
-- After acceptance: fill in `\accepted{...}` and add the journal
-  reference / DOI.
+Every figure used in the manuscript has a caption and a cross-reference.
+The older `tools/plot-paper.py` can still produce the original analysis charts
+from raw result JSON, but it is not the typesetting path for this revision.
+
+## Reproduce the measurements
+
+The measurement revision is tag `terrain-paper`, commit `5586e2a`. Keep that
+tag fixed when reproducing the published numbers. Editorial changes do not
+move it.
 
 ```bash
-tools/build-paper-tex.py
+# Twelve views, six selected methods, 1280x800, 40 timed frames.
+# Builds the runner and fetches the licensed Fostral data if needed.
+python3 tools/compare-terrain.py
+
+# Inspect the camera plan without rendering.
+python3 tools/compare-terrain.py --list-scenes
+
+# Merge collected device runs.
+python3 tools/merge-bench.py remote/results-*.json > paper/results.md
+
+# Separate studies: configuration sweeps and ten-world mesh survey.
+python3 tools/tune-methods.py
+python3 tools/level-survey.py --json-out paper/survey.json
+```
+
+The selected configurations are Ray 128, Voxel cells (4,8,2) with 100 outer
+and 100 inner steps, Sliced 512, Scattered density (4,4,4), Painted, and Mesh q=0.5.
+The manuscript explains the mesh exception to the one-percentage-point
+selection rule. Vulkan rows use GPU timestamps; Metal uses CPU
+submit-and-wait. These timing classes are not interchangeable.
+
+The evidence remains in `results.md`, `tuning.md`, `survey.json`, and the
+measurement code. The current repository's engine has evolved after the
+tag; running it at a newer revision is a new experiment.
+
+## Data and video
+
+Fostral is published by Association K-D Lab under CC BY-SA 4.0 at
+KranX/Vangers commit `f1ad7d7`. The harness fetches that source. The other nine
+survey worlds require a lawfully obtained game copy. See `DATA-LICENSE.md`.
+The figure captures are derived from Fostral and retain that attribution.
+
+```bash
+python3 tools/render-paper-video.py
+```
+
+The supplemental flythrough uses the six selected configurations. It starts
+from the portal view at (1176,11567), eye height 180, yaw 308 degrees, and
+travels 520 units at fixed height. The video does not include the crater test.
+It is not rebuilt by the manuscript build.
+
+## Package the source
+
+```bash
+# Review package: PDF and the source files actually used by the paper.
+python3 tools/build-paper-package.py --allow-dirty
+
+# arXiv package with the existing supplemental video:
 python3 tools/pack-arxiv.py
-# Upload work/arxiv/arxiv-source.zip at https://arxiv.org/user
+
+# Source-only review package when the video is not available locally:
+python3 tools/pack-arxiv.py --without-video
 ```
 
-The merge tool rejects different cameras, devices, renderer arguments,
-shadow modes, or other protocol fields instead of silently combining
-unlike batches. The publication comparison is six methods: RayTraced 128,
-RayVoxel 100, Sliced 512, Scattered 4,4,4, Painted, and Mesh q=0.5.
-Vulkan rows use GPU timestamps; Apple Metal uses the retained CPU
-submit-and-wait average because encoder timestamps did not reliably bracket
-the multipass frame. wgpu does not promise strict ordering for arbitrary
-command-encoder timestamps, so this was an invalid harness assumption rather
-than evidence of incorrect rendering. The merge output keeps those timing
-classes explicit.
-The benchmarking checkout is tagged `terrain-paper` (`5586e2a`). That is
-the only measurement tag; editorial work can continue without moving it.
-
-At startup the harness removes any previous `work/compare/comparison.png` and
-writes `work/compare/run-manifest.json` with the checkout revision and exact
-camera coordinates. The comparison PNG is published atomically only after all
-renders finish. If the manifest still says `"status": "running"`, there is no
-current comparison to collect; an older PNG must not be mistaken for this run.
-
-`--quick` shrinks it to a few seconds for checking the harness runs at
-all. Those numbers are not results: too few frames to be stable, and too
-few pixels for the reference to agree with anything.
-
-The ten-world fit survey behind §6.2 and its graph input:
-
-```bash
-tools/level-survey.py --json-out paper/survey.json
-```
-
-`tools/plot-cull.py` produces the frustum/LOD plan figures from
-`level --cull-dump`.
-
-The lightweight edit-path smoke test uses the built-in level and records the
-edit frame in each benchmark JSON:
-
-```bash
-for terrain in RayTraced RayVoxelTraced Sliced Scattered Painted Mesh; do
-  cargo run --release --bin level -- --terrain "$terrain" --dig --dig-frame 1 \
-    --width 160 --height 100 --frames 3 --near 1 --far 300 \
-    --snapshot "work/dig-$terrain.png" --bench-out "work/dig-$terrain.json"
-done
-```
-
-This checks that every update path executes; it is not the §4.4 latency or
-fresh-build equivalence experiment.
-
-That smoke test was the limit of the original five-machine collector: the edit
-normally occurred during warmup, only the last frame survived, no fresh edited
-renderer was constructed, and memory appeared only in informal allocation
-logs. The frozen 84-row batches therefore cannot answer either question. The
-default collector now appends the full protocol, while `--supplement-only`
-adds edit/memory and only the three retuned steady configurations.
-
-## What is still missing
-
-Tracked here rather than in the draft so the gaps stay visible:
-
-- [x] Related work and novelty scope. The draft now compares the shipped
-      interval encoding with Benes/Forsbach layered terrain, Grounded
-      Heightmap Trees, QuadStack and Layered Depth Images, then relates each
-      renderer to ray-height-field, voxel, slicing, splatting and terrain-LOD
-      literature. The contribution is explicitly the controlled comparison,
-      not priority for the underlying method families.
-- [x] Dynamic terrain edits. The §4.4 protocol measures five repeated
-      first-post-edit frames (CPU submit-and-wait and GPU timestamps),
-      frames to consistency, and color/depth agreement against a fresh
-      edited build. A before/after figure shows the same crater on
-      RayTraced, RayVoxel, and Mesh. All five publication adapters ran
-      the protocol; Mesh CPU Δ is 5–10 ms and remains history-dependent.
-- [x] A control isolating what drives fit cost. Done: all ten stock
-      worlds, `tools/level-survey.py`. The result reversed the original
-      framing - floor relief does not predict the reduction (r = -0.17
-      over all ten), the multi-layer encoding does (dual fraction
-      r = -0.77, composite-surface roughness r = -0.82).
-- [—] An external elevation model is not a submission gate. The single-layer
-      stock worlds are the tighter control because they hold encoding,
-      quantisation, texel scale, and authoring pipeline fixed; they already
-      establish the 45–182× comparison range.
-- [x] More than one device. The final batch covers a Radeon 780M, Radeon RX
-      7900 XT, Intel RPL-U, GeForce RTX 5070, and Apple M3 across Vulkan and
-      Metal. The five grids agree geometrically outside a small spread within
-      the already failing Scattered hangar row.
-- [x] Selected-configuration timing. §5.1 and §5.2 share one six-method
-      set (Ray 128, Voxel 100, Sliced, Scattered, Painted, Mesh q=0.5).
-      Five devices recollected at those settings; Mesh q=0.5 is the
-      twelve-scene mean winner on every adapter.
-- [x] Timing-source validation. Vulkan uses GPU timestamps. Implausibly short,
-      method-invariant Metal intervals exposed that encoder-level timestamps
-      did not bracket the multipass frame. The API does not guarantee that
-      ordering, so Metal now falls back to CPU submit-and-wait and is reported
-      with `*` in the same table; pass-level instrumentation is the future
-      GPU-only fix.
-- [x] Equal tuning across methods. `tools/level-survey.py` sibling
-      `tools/tune-methods.py` sweeps every knob under one selection rule.
-      Caveat recorded in the draft: the small tuning image cannot resolve
-      mesh quality that the full-size hangar scene does, so that knob needs
-      a full-resolution or self-referential selection.
-      The first slicer sweep also measured a knob artifact (bottom
-      truncation rather than coarser spacing) — fixed and re-swept, and
-      recorded in §5.6 as a finding of its own. The corrected sweep selects
-      RayTraced 128 and RayVoxel 100. The 1280×800 mesh sweep's error floor
-      is 0.3% from q=0.5 up; the paper publishes that single mesh quality
-      so the comparison, teaser, and video share one operating point.
-- [x] Auditable method-memory accounting. The collector reports explicit
-      persistent GPU buffers and CPU acceleration/fitting state for every
-      method. §5.4 includes both mesh settings and the tuned RayVoxel grid and
-      states the exclusions: shared resources, transient staging, opaque
-      driver allocations, and whole-process overhead are not portable wgpu
-      metrics.
-- [x] Data license. Fostral is CC BY-SA 4.0 from Association K-D Lab,
-      `KranX/Vangers` commit `f1ad7d7`. The harness fetches that tree.
-      Do not re-host `fostral.zip` as a JCGT supplement (ShareAlike vs
-      JCGT's non-restrictive-data rule). The other nine survey worlds
-      remain user-supplied.
-- [x] Core figures. §3 uses six consistent vector algorithm schematics;
-      `tools/plot-paper.py` generates the encoding, pitch/quality, Vulkan
-      performance, preparation, fit-survey, six-method teaser, and crater
-      before/after SVGs.
-- [x] Author block. Dzmitry Malyshau, Independent Researcher,
-      `kvark@fastmail.com`.
-- [x] Reference-floor diagnosis. The CPU screen-X basis was mirrored and its
-      spherical far cutoff disagreed with the GPU's view-axis far plane.
-      Regression tests cover both. Remaining off-axis point-sampling offsets
-      are disclosed and absolute depth claims are narrowed.
-- [x] Timing uncertainty. `tools/merge-bench.py` propagates the 40 within-row
-      frame samples into a fixed-session 95% interval over twelve scenes. It
-      explicitly does not claim session-to-session inference, and the text no
-      longer promotes overlapping sub-millisecond means to a general winner.
-- [x] Browser WebGPU smoke test. `browser-smoke.md` records a clean Wasm build
-      and Firefox 152 run of the WebGPU-only voxel route on the Radeon 890M.
-      The canvas rendered Fostral and reported `Backend: WebGPU`; the paper
-      scopes browser evidence to execution/visual parity, not timing.
-- [x] Submission PDF and archive tooling. `tools/build-paper-package.py` builds
-      a styled review PDF and verifies a revision-pinned `git archive` contains
-      the draft, BibTeX, figures, and harness. That PDF is the submission
-      artifact. JCGT's LaTeX template is required only after acceptance.
-- [x] Bibliography pass. `references.bib` contains complete publication data,
-      stable URLs, and DOIs for the references discussed in the draft.
-      Original-game screenshot provenance remains part of the data-license gate.
-- [x] Supplemental video. `tools/render-paper-video.py` produces the
-      synchronized six-configuration, eight-second H.264 mosaic and poster from
-      the -30° portal camera, raised to eye height 180, moving 520 units
-      horizontally along yaw 308°. Derived Fostral imagery uses the CC BY-SA
-      4.0 attribution. The flythrough does not include a crater; that
-      evidence is the §5.4 figure and table.
+These commands create local review artifacts. They do not submit to JCGT or
+arXiv. `arxiv-metadata.txt` is draft metadata and must be checked against the
+eventual submission. The earlier JCGT submission was rejected; this revision
+has not been resubmitted by these tools.
