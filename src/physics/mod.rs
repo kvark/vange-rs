@@ -358,6 +358,41 @@ pub fn jump_dir(power: f32) -> Vec3 {
     2.5 * power * Vec3::new(0.0, 3.0, 10.0).normalize()
 }
 
+/// World-space gravitational acceleration used by [`step`].
+pub fn gravity_accel(gravity: f32) -> Vec3 {
+    Vec3::new(0.0, 0.0, -gravity)
+}
+
+/// One free-flight step with only gravity, matching [`step`]: velocity
+/// is advanced first, then position with the new velocity (the world-space
+/// form of `transform.disp += (transform.rot * vel) * dt`).
+pub fn integrate_free_flight(pos: &mut Vec3, world_vel: &mut Vec3, gravity: f32, dt: f32) {
+    *world_vel += gravity_accel(gravity) * dt;
+    *pos += *world_vel * dt;
+}
+
+/// [`integrate_free_flight`] over `t` seconds in steps of `step_dt`, so a
+/// long carry uses the same integrator as a run of physics quanta rather
+/// than one giant step (`p += v T + a T^2` instead of `p += v T + ½ a T^2`).
+pub fn integrate_free_flight_for(
+    pos: &mut Vec3,
+    world_vel: &mut Vec3,
+    gravity: f32,
+    t: f32,
+    step_dt: f32,
+) {
+    if t <= 0.0 {
+        return;
+    }
+    let step_dt = step_dt.max(1e-4);
+    let mut remain = t;
+    while remain > 1e-6 {
+        let d = remain.min(step_dt);
+        integrate_free_flight(pos, world_vel, gravity, d);
+        remain -= d;
+    }
+}
+
 pub fn step(
     dynamo: &mut Dynamo,
     transform: &mut space::Transform,
@@ -374,7 +409,7 @@ pub fn step(
 ) {
     let speed_correction_factor = dt / common.nature.time_delta0;
     let acc_global = AccelerationVectors {
-        f: Vec3::new(0.0, 0.0, -common.nature.gravity),
+        f: gravity_accel(common.nature.gravity),
         k: Vec3::new(0.0, 0.0, 0.0),
     };
     let rot_inv = transform.rot.inverse();

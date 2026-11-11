@@ -3749,6 +3749,9 @@ impl WebHandler {
                                 dead: false,
                                 guns: [None; vangers_net::BAYS],
                             });
+                        if let Some(remote) = gpu.app.remotes.get_mut(&player_id) {
+                            remote.net.set_gravity(&gpu.app.common);
+                        }
                     }
                     vangers_net::ServerMessage::Shot {
                         shooter,
@@ -3881,9 +3884,23 @@ impl WebHandler {
                             if let Some(remote) = gpu.app.remotes.get_mut(&agent_state.player_id) {
                                 remote.dead = agent_state.dead;
                                 remote.guns = agent_state.guns;
-                                remote
-                                    .net
-                                    .on_agent(agent_state, tick, quanta_per_sec, period);
+                                if let Some(delta) =
+                                    remote
+                                        .net
+                                        .on_agent(agent_state, tick, quanta_per_sec, period)
+                                    && (delta.teleport || delta.draw_error >= 1.0)
+                                {
+                                    log::debug!(
+                                        "RemoteDelta {} step={:.1}u draw={:.1}u dt={:.3}s lead={:.3}s{}{}",
+                                        remote.name,
+                                        delta.step,
+                                        delta.draw_error,
+                                        delta.dt,
+                                        delta.lead,
+                                        if delta.teleport { " TELEPORT" } else { "" },
+                                        if delta.first { " first" } else { "" },
+                                    );
+                                }
                             }
                         }
                         if Some(index) != newest_world {

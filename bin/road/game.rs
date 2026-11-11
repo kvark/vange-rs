@@ -3189,6 +3189,9 @@ impl Game {
                                     dead: false,
                                     guns: [None; weapons::BAYS],
                                 });
+                            if let Some(remote) = self.remote_agents.get_mut(&player_id) {
+                                remote.net.set_gravity(&self.db.common);
+                            }
                         }
                     }
                     NetEvent::PlayerLeft { player_id } => {
@@ -3337,12 +3340,24 @@ impl Game {
                                 };
                                 remote.dead = agent_state.dead;
                                 remote.guns = agent_state.guns;
-                                remote.net.on_agent(
+                                if let Some(delta) = remote.net.on_agent(
                                     agent_state,
                                     tick,
                                     quanta_per_sec,
                                     Some(self.level.period()),
-                                );
+                                ) && (delta.teleport || delta.draw_error >= 1.0)
+                                {
+                                    log::debug!(
+                                        "RemoteDelta {} step={:.1}u draw={:.1}u dt={:.3}s lead={:.3}s{}{}",
+                                        remote.name,
+                                        delta.step,
+                                        delta.draw_error,
+                                        delta.dt,
+                                        delta.lead,
+                                        if delta.teleport { " TELEPORT" } else { "" },
+                                        if delta.first { " first" } else { "" },
+                                    );
+                                }
                             }
                         }
                     }
