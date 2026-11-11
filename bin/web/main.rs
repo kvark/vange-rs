@@ -3251,7 +3251,10 @@ impl WebHandler {
         // A tap shorter than a frame still counts for this frame.
         let down = |key: KeyCode| keys.contains(&key) || taps.contains(&key);
         let brake = down(KeyCode::ControlLeft);
-        let space = keys.contains(&KeyCode::Space) || gpu.app.use_held;
+        // Same `down` as jump and brake: on software WebGL (~1 fps) a
+        // short Space (leave / use) starts and ends between two frames
+        // and would never show in `keys_pressed`.
+        let space = down(KeyCode::Space) || gpu.app.use_held;
         let turbo = down(KeyCode::ShiftLeft);
         // Roll direction matches native: Q/E are scaled by cam.scale.y
         // (which is -1) so Q → +1, E → -1.
