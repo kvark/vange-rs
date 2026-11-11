@@ -2049,6 +2049,54 @@ fn test_a_car_in_an_escave_ignores_drive_input() {
     );
 }
 
+#[test]
+fn test_leaving_an_escave_kicks_the_car() {
+    // No ImpulseEscave sensor on the test level: both sides use the
+    // default kick (0, 24, 80) in local space. The first snapshot after
+    // leave must already be flying, not sitting on the pad, or the
+    // client's own kick looks like a 40–600u correction.
+    let server = ServerProcess::start_with_args("test", &[], &["--escave", "130,90"]);
+    let mut bob = server.connect();
+    bob.send(&ClientMessage::Join {
+        player_name: "Bob".into(),
+        car_name: "TestCar".into(),
+        color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
+        guns: guns(),
+    });
+    let mut stash = Vec::new();
+    let bob_id = match bob.recv_welcome(&mut stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    let _ = bob.recv_for(Duration::from_secs(1));
+    bob.send(&ClientMessage::Escave { inside: true });
+    let _ = bob.recv_for(Duration::from_millis(300));
+    bob.send(&ClientMessage::Escave { inside: false });
+    let msgs = bob.recv_for(Duration::from_millis(400));
+    let (inside, vel, pos) = msgs
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::WorldState { agents, .. } => {
+                let a = agents.iter().find(|a| a.player_id == bob_id)?;
+                Some((a.in_escave, a.dynamo.linear_velocity, a.transform.position))
+            }
+            _ => None,
+        })
+        .expect("a WorldState of Bob after leave");
+    assert!(!inside, "Bob is still in the escave at {pos:?}");
+    let speed = (vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]).sqrt();
+    assert!(
+        speed > 20.0,
+        "leave kick was not applied: vel={vel:?} pos={pos:?}"
+    );
+    assert!(
+        vel[2] > 10.0,
+        "leave kick should throw the car up: vel={vel:?}"
+    );
+}
+
 /// Each player's `(guns, armor)` in the newest `WorldState`.
 fn guns_in_world(msgs: &[ServerMessage]) -> Vec<(u32, [Option<u8>; vangers_net::BAYS], u32)> {
     msgs.iter()
