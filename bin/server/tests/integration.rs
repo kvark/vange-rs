@@ -1,6 +1,6 @@
 use std::io::{Read, Write};
-use std::path::Path;
 use std::net::TcpStream;
+use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
@@ -564,8 +564,7 @@ fn test_reconnect_restores_cirtainer() {
         .rev()
         .find_map(|m| match m {
             ServerMessage::WorldState {
-                cycle: Some(cycle),
-                ..
+                cycle: Some(cycle), ..
             } => cycle
                 .players
                 .iter()
@@ -603,8 +602,7 @@ fn test_reconnect_restores_cirtainer() {
         .iter()
         .find_map(|m| match m {
             ServerMessage::WorldState {
-                cycle: Some(cycle),
-                ..
+                cycle: Some(cycle), ..
             } => cycle
                 .players
                 .iter()
@@ -638,8 +636,7 @@ fn test_reconnect_restores_cirtainer() {
         .iter()
         .find_map(|m| match m {
             ServerMessage::WorldState {
-                cycle: Some(cycle),
-                ..
+                cycle: Some(cycle), ..
             } => cycle
                 .players
                 .iter()
@@ -648,7 +645,11 @@ fn test_reconnect_restores_cirtainer() {
             _ => None,
         })
         .expect("Bob should appear in CycleState.players");
-    assert_eq!(bob_held, vec![7, 0, 2], "fresh name uses seed, not Alice slot");
+    assert_eq!(
+        bob_held,
+        vec![7, 0, 2],
+        "fresh name uses seed, not Alice slot"
+    );
 }
 
 /// The newest `WorldState` pose and ack of player `id`.
@@ -1256,7 +1257,10 @@ fn test_reconnect_restores_spiral() {
             _ => None,
         })
         .expect("Alice should have spiral_charge before disconnect");
-    assert_eq!(charge_before, 3, "test seed should set spiral on first join");
+    assert_eq!(
+        charge_before, 3,
+        "test seed should set spiral on first join"
+    );
 
     // Bump charge, then disconnect so LastPose keeps the updated value.
     alice.send(&ClientMessage::SetSpiral { charge: 4 });
@@ -1435,8 +1439,14 @@ fn test_duel_spawn_places_pair_facing_each_other() {
     };
     let (pa, fa) = pose(alice_id);
     let (pb, fb) = pose(bob_id);
-    assert!((pa.x - 65.0).abs() < 2.0 && (pa.y - 120.0).abs() < 2.0, "Alice at {pa:?}");
-    assert!((pb.x - 135.0).abs() < 2.0 && (pb.y - 120.0).abs() < 2.0, "Bob at {pb:?}");
+    assert!(
+        (pa.x - 65.0).abs() < 2.0 && (pa.y - 120.0).abs() < 2.0,
+        "Alice at {pa:?}"
+    );
+    assert!(
+        (pb.x - 135.0).abs() < 2.0 && (pb.y - 120.0).abs() < 2.0,
+        "Bob at {pb:?}"
+    );
     let a_to_b = (pb - pa).truncate().normalize().extend(0.0);
     assert!(fa.dot(a_to_b) > 0.9, "Alice faces Bob: {fa:?}");
     assert!(fb.dot(-a_to_b) > 0.9, "Bob faces Alice: {fb:?}");
@@ -1534,8 +1544,14 @@ fn test_duel_slow_ram_shoves_parked_car() {
         "slow ram: Bob {bob_start:.1} -> {bob_end:.1}, Alice ends {alice_end:.1}, closest centres {closest:.1}"
     );
     // A mechos contact box is ~41u long: centres closer than that overlap.
-    assert!(closest > 30.0, "Alice drove into / through Bob: centres {closest:.1}u apart");
-    assert!(bob_end - bob_start > 20.0, "Bob was not shoved: {bob_start:.1} -> {bob_end:.1}");
+    assert!(
+        closest > 30.0,
+        "Alice drove into / through Bob: centres {closest:.1}u apart"
+    );
+    assert!(
+        bob_end - bob_start > 20.0,
+        "Bob was not shoved: {bob_start:.1} -> {bob_end:.1}"
+    );
 }
 
 /// Bob's `(position, armor, max_armor, dead)` in the newest `WorldState`.
@@ -2138,8 +2154,8 @@ fn test_guns_are_checked_on_join_and_changed_only_in_an_escave() {
         }
     };
     // `TestCar` takes any gun in any bay. OxidizeMonk (`car.prm`) has two
-    // bays of size 3: a Speetle (size 5) does not fit, so the whole set is
-    // refused and Bob has no guns.
+    // bays of size 3: a Speetle (size 5) does not fit bay 0, so that bay
+    // falls back to LightMissile (UVS type 0) and the empty bays stay empty.
     let alice_id = join(&mut alice, "Alice", "TestCar", guns());
     let bob_id = join(
         &mut bob,
@@ -2154,12 +2170,20 @@ fn test_guns_are_checked_on_join_and_changed_only_in_an_escave() {
     };
     let (a_guns, b_guns) = bob_guns(&mut alice, 1000);
     assert_eq!(a_guns, [Some(11), Some(15), Some(16)], "Machotine, Ghorbs");
-    assert_eq!(b_guns, [None; 3], "a Speetle does not fit OxidizeMonk");
+    assert_eq!(
+        b_guns,
+        [Some(11), None, None],
+        "Speetle falls back to LightMissile"
+    );
 
     // Out on the road, a new set is refused.
     let fits = named_guns([Some("LightMissile"), Some("LightFireBall"), None]);
     bob.send(&ClientMessage::Weapons { guns: fits.clone() });
-    assert_eq!(bob_guns(&mut alice, 400).1, [None; 3], "only in an escave");
+    assert_eq!(
+        bob_guns(&mut alice, 400).1,
+        [Some(11), None, None],
+        "only in an escave"
+    );
 
     // In the escave it is taken.
     bob.send(&ClientMessage::Escave { inside: true });
@@ -2184,6 +2208,33 @@ fn test_guns_are_checked_on_join_and_changed_only_in_an_escave() {
             "{bad:?} keeps the last set"
         );
     }
+}
+
+#[test]
+fn test_join_keeps_fitting_defaults_and_falls_back_per_bay() {
+    // The default settings.ron loadout: HeavyLaser does not fit
+    // OxidizeMonk, LightMissile does. Join must not wipe both bays.
+    let server = ServerProcess::start();
+    let mut alice = server.connect();
+    alice.send(&ClientMessage::Join {
+        player_name: "Alice".into(),
+        car_name: "OxidizeMonk".into(),
+        color: 7,
+        protocol: vangers_net::PROTOCOL_VERSION,
+        guns: named_guns([Some("HeavyLaser"), Some("LightMissile"), None]),
+    });
+    let mut stash = Vec::new();
+    let id = match alice.recv_welcome(&mut stash) {
+        ServerMessage::Welcome { player_id, .. } => player_id,
+        _ => unreachable!(),
+    };
+    let world = guns_in_world(&alice.recv_for(Duration::from_millis(1000)));
+    let guns = world.iter().find(|a| a.0 == id).expect("alice").1;
+    assert_eq!(
+        guns,
+        [Some(11), Some(11), None],
+        "bay 0 falls back to LightMissile, bay 1 is kept"
+    );
 }
 
 #[test]
