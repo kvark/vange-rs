@@ -497,10 +497,10 @@ impl MeshGeometry {
         use std::time::Duration;
         // `web_time` only exists with the `web` feature; Emscripten builds
         // are wasm32 without it, and there `std::time::Instant` works.
-        #[cfg(feature = "web")]
-        use web_time::Instant;
         #[cfg(not(feature = "web"))]
         use std::time::Instant;
+        #[cfg(feature = "web")]
+        use web_time::Instant;
 
         const CPU_BUDGET: Duration = Duration::from_millis(8);
         const INSERTIONS_PER_STEP: usize = level::tin::WASM_DRAIN_INSERTIONS;
@@ -1469,12 +1469,31 @@ impl Context {
                     ],
                 });
 
-        let surface_uni_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("surface-uniforms"),
-            size: mem::size_of::<SurfaceConstants>() as _,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // rows_per_layer must be on the GPU before the first draw: the
+        // shader does `tci.y % rows` / `tci.y / rows` to pick an array
+        // layer, and a 0 here (the buffer used to stay cleared until the
+        // first `update_dirty`) samples the wrong layer or divides by
+        // zero. The other fields are filled on the first `update_dirty`,
+        // which has the loaded `Level` (`terrain_bits`, `delta_mode`).
+        let surface_constants = SurfaceConstants {
+            texture_scale: [
+                extent.width as f32,
+                extent.height as f32,
+                level_height as f32,
+                0.0,
+            ],
+            terrain_bits: 0,
+            delta_mode: 0,
+            void_zero: 0,
+            rows_per_layer,
+        };
+        let surface_uni_buf = gfx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("surface-uniforms"),
+                contents: bytemuck::bytes_of(&surface_constants),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
         let uniform_buf = gfx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Terrain uniforms"),
             size: mem::size_of::<Constants>() as wgpu::BufferAddress,
@@ -2034,13 +2053,7 @@ impl Context {
             tracks: Default::default(),
             dirty_flood: true,
             dirty_palette: 0..0x100,
-            active_surface_constants: SurfaceConstants {
-                texture_scale: [0.0; 4],
-                terrain_bits: 0,
-                delta_mode: 0,
-                void_zero: 0,
-                rows_per_layer: 0,
-            },
+            active_surface_constants: surface_constants,
             void_at_zero: false,
             // Default to unbaked diffuse + shadow — matches the look
             // we tuned in the cosine-lighting commit. Toggle in the UI
