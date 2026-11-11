@@ -1533,6 +1533,25 @@ mod tests {
     }
 
     #[test]
+    fn a_rejoin_adopts_a_snapshot_once_the_server_has_cleared_in_escave() {
+        // After Welcome the notify is reset (`sent` is false). The game
+        // skips a local snapshot only when `!sent && in_escave`. If the
+        // server still marked the reclaimed car in_escave, every pose
+        // would be ignored until the client entered again; with it
+        // cleared, the snapshot is adopted.
+        let skip = |sent: bool, in_escave: bool| !sent && in_escave;
+        let mut n = EscaveNotify::default();
+        assert_eq!(n.take(true, true), Some(true));
+        n.reset();
+        assert!(!n.sent());
+        assert!(
+            skip(n.sent(), true),
+            "a leftover in_escave snapshot would be skipped"
+        );
+        assert!(!skip(n.sent(), false), "a cleared snapshot is adopted");
+    }
+
+    #[test]
     fn an_escave_visit_parks_to_the_server_so_the_exit_is_not_a_correction() {
         // The bug: the client froze on enter and left the prediction
         // alone, so a snapshot after leave compared a stale pose (and

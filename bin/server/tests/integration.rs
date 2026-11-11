@@ -2554,3 +2554,55 @@ fn test_a_same_name_join_takes_over_only_a_silent_session() {
         "Alice is still on the road"
     );
 }
+
+#[test]
+fn test_a_same_name_rejoin_clears_in_escave() {
+    // Bob (the second joiner) stands within reach of this escave. A
+    // same-name rejoin within LastPose, while the server still holds the
+    // old session with in_escave set, must put the car back on the road:
+    // otherwise the new client's `!sent && in_escave` skip would ignore
+    // every snapshot until it entered again.
+    let server = ServerProcess::start_with_args("test", &[], &["--escave", "130,90"]);
+    let mut alice = server.connect();
+    let mut bob = server.connect();
+    let alice_id = join_as(&mut alice, "Alice", 21);
+    let bob_id = join_as(&mut bob, "Bob", 7);
+    keep_talking(&mut alice, Duration::from_millis(300));
+    bob.send(&ClientMessage::Escave { inside: true });
+    let msgs = keep_talking(&mut alice, Duration::from_millis(400));
+    let (_, cars) = cars_in_world(&msgs).expect("a WorldState after enter");
+    let bob_car = cars
+        .iter()
+        .find(|c| c.0 == bob_id)
+        .expect("Bob in the world");
+    assert!(bob_car.3, "Bob should be in the escave before the rejoin");
+    assert!(
+        cars.iter().any(|c| c.0 == alice_id && !c.3),
+        "Alice stays on the road"
+    );
+
+    // Bob goes silent; Alice keeps the session alive past 1.5 s so the
+    // rejoin takes over rather than being refused.
+    keep_talking(&mut alice, Duration::from_secs(2));
+    let mut bob2 = server.connect();
+    assert_eq!(
+        join_as(&mut bob2, "Bob", 7),
+        bob_id,
+        "the rejoin takes over Bob's id"
+    );
+    let from_alice = keep_talking(&mut alice, Duration::from_millis(800));
+    let from_bob = keep_talking(&mut bob2, Duration::from_millis(400));
+    let bob_inside = |msgs: &[ServerMessage]| {
+        cars_in_world(msgs).and_then(|(_, cars)| cars.iter().find(|c| c.0 == bob_id).map(|c| c.3))
+    };
+    assert_eq!(
+        bob_inside(&from_alice),
+        Some(false),
+        "Alice's snapshots must show the rejoined Bob on the road"
+    );
+    assert_eq!(
+        bob_inside(&from_bob),
+        Some(false),
+        "the rejoined client must see in_escave=false, so it adopts the pose"
+    );
+}
