@@ -684,6 +684,9 @@ struct WebApp {
     /// numbered history, remote ghosts, render offset), shared with the
     /// native game (`physics::client`).
     mp: physics::client::ClientSync,
+    /// Online: whether the server was last told we are in an escave
+    /// (`ClientMessage::Escave`). Shared with the native game.
+    escave_net: physics::client::EscaveNotify,
     /// Online: our energy shield and its max (`AgentState::energy`), the
     /// server's. Offline there is none.
     energy: Option<(u32, u32)>,
@@ -1105,6 +1108,7 @@ impl WebApp {
             cycle,
             cycle_time: 0.0,
             mp: Default::default(),
+            escave_net: Default::default(),
             energy: None,
             remotes: HashMap::new(),
             wrecked: false,
@@ -1813,21 +1817,13 @@ impl WebApp {
         let at = (pos.x as i32, pos.y as i32, pos.z as i32);
         let size = self.level.size;
         self.moving.close_doors_at(at, radius, size);
-        let kick = self.moving.triggers.impulse_at(at, radius, size);
-        let vel = match kick {
-            Some(k) => {
-                let dir = glam::Vec3::new(
-                    k.direction.0 as f32,
-                    k.direction.1 as f32,
-                    k.direction.2 as f32,
-                );
-                let n = dir.length();
-                let dir = if n < 1e-3 { glam::Vec3::Z } else { dir / n };
-                dir * (k.power as f32).max(24.0)
-            }
-            None => glam::Vec3::new(0.0, 24.0, 80.0),
-        };
+        let vel = level::trigger::ImpulseKick::velocity(
+            self.moving.triggers.impulse_at(at, radius, size),
+        );
         agent.dynamo.linear_velocity += vel;
+        // A move outside the inputs: drop the history so a later snapshot
+        // does not rewind past the kick. The server applies the same one.
+        self.mp.ejected();
     }
 
     fn begin_train_ride(&mut self) -> bool {
@@ -2199,6 +2195,16 @@ mod net_ws {
             });
             let _ = self.ws.send_with_u8_array(&msg);
             self.next_quant.set(first_quant.wrapping_add(quanta as u32));
+            self.note_sent();
+        }
+
+        /// Tell the server the escave screen took or gave back the drive.
+        pub fn send_escave(&self, inside: bool) {
+            if self.player_id.is_none() {
+                return;
+            }
+            let msg = encode(&ClientMessage::Escave { inside });
+            let _ = self.ws.send_with_u8_array(&msg);
             self.note_sent();
         }
 
@@ -3302,6 +3308,7 @@ impl WebHandler {
         }
         if !connected && (gpu.app.mp.synced || !gpu.app.remotes.is_empty()) {
             gpu.app.mp.disconnect();
+            gpu.app.escave_net.reset();
             gpu.app.remotes.clear();
         }
         let mp_on = self.ws_client.as_ref().is_some_and(|c| c.is_joined());
@@ -3338,6 +3345,19 @@ impl WebHandler {
         gpu.app.space_held = space;
         if !gpu.app.screen.is_world() {
             gpu.app.step_screen(dt);
+        }
+        // Tell the server when the escave screen takes or gives the drive,
+        // same `EscaveNotify` path as the native client.
+        if let Some(ref mut ws) = self.ws_client {
+            let inside = gpu.app.screen.blocks_drive();
+            let joined = ws.player_id.is_some();
+            if let Some(inside) = gpu.app.escave_net.take(inside, joined) {
+                log::info!(
+                    "Escave: telling the server we are {}",
+                    if inside { "inside" } else { "back out" }
+                );
+                ws.send_escave(inside);
+            }
         }
         if gpu.app.screen.blocks_drive() {
             if gpu.app.screen.follows_camera()
@@ -3547,6 +3567,7 @@ impl WebHandler {
                         self.mp_status =
                             format!("Connected (player {}, level '{}')", player_id, level_name);
                         ws.player_id = Some(player_id);
+                        gpu.app.escave_net.reset();
                         gpu.app
                             .net_debug
                             .note(log::Level::Info, self.mp_status.clone());
@@ -3768,6 +3789,12 @@ impl WebHandler {
                             agent.armor = me.armor;
                             agent.max_armor = me.max_armor;
                         }
+                        // After leave, a snapshot still marked in_escave
+                        // is stale: do not park or reconcile to it.
+                        if !gpu.app.escave_net.sent() && me.in_escave {
+                            continue;
+                        }
+                        let park = gpu.app.screen.blocks_drive();
                         let snap = physics::client::LocalSnapshot::from_agent(me);
                         let lead = gpu.app.mp.prediction.next().wrapping_sub(snap.ack);
                         let quanta_per_sec = {
@@ -3806,6 +3833,17 @@ impl WebHandler {
                                 },
                                 held,
                             );
+                            if park && matches!(event, physics::client::SyncEvent::Held) {
+                                gpu.app.mp.apply_parked(
+                                    &snap,
+                                    physics::client::LocalCar {
+                                        transform: &mut agent.transform,
+                                        dynamo: &mut agent.dynamo,
+                                        phys: &agent.phys_data,
+                                    },
+                                    Some(gpu.app.level.period()),
+                                );
+                            }
                             let debug = &mut gpu.app.net_debug;
                             match event {
                                 physics::client::SyncEvent::FirstSync => {

@@ -581,6 +581,38 @@ pub enum SyncEvent {
     },
 }
 
+/// Tracks whether we have told the server we are inside an escave, so a
+/// flip of `Screen::blocks_drive` becomes one `ClientMessage::Escave`.
+/// Shared by the native and web clients.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EscaveNotify {
+    sent: bool,
+}
+
+impl EscaveNotify {
+    /// A fresh join, or a drop: we have not told this connection.
+    pub fn reset(&mut self) {
+        self.sent = false;
+    }
+
+    /// Last `inside` sent, if any: after leave this is `false`, and a
+    /// snapshot still marked `in_escave` is stale.
+    pub fn sent(&self) -> bool {
+        self.sent
+    }
+
+    /// If the client is joined and `inside` differs from what we last
+    /// told the server, record it and return the value to send as
+    /// `ClientMessage::Escave { inside }`.
+    pub fn take(&mut self, inside: bool, joined: bool) -> Option<bool> {
+        if !joined || inside == self.sent {
+            return None;
+        }
+        self.sent = inside;
+        Some(inside)
+    }
+}
+
 /// The local car's side of client prediction, shared by both clients.
 #[derive(Default)]
 pub struct ClientSync {
@@ -1478,6 +1510,26 @@ mod tests {
         let (event, _) = sync.on_snapshot(&snapshot(pushed, 5, 1), car, &remotes, sim, true);
         assert_eq!(event, SyncEvent::Held);
         assert_eq!(t.disp, before.disp);
+    }
+
+    #[test]
+    fn escave_notify_sends_only_on_a_flip_once_joined() {
+        let mut n = EscaveNotify::default();
+        assert_eq!(n.take(true, false), None, "not joined yet");
+        assert!(!n.sent());
+        assert_eq!(n.take(true, true), Some(true), "enter");
+        assert!(n.sent());
+        assert_eq!(n.take(true, true), None, "already told");
+        assert_eq!(n.take(false, true), Some(false), "leave");
+        assert!(!n.sent());
+        // After leave, a snapshot still marked in_escave is stale
+        // (`!sent && in_escave`): the game skips reconciling it.
+        let in_escave = true;
+        assert!(!n.sent() && in_escave);
+        assert_eq!(n.take(false, true), None);
+        n.reset();
+        assert!(!n.sent());
+        assert_eq!(n.take(true, true), Some(true), "rejoin still inside");
     }
 
     #[test]
