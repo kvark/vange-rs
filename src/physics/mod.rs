@@ -363,32 +363,86 @@ pub fn gravity_accel(gravity: f32) -> Vec3 {
     Vec3::new(0.0, 0.0, -gravity)
 }
 
-/// One free-flight step with only gravity, matching [`step`]: velocity
-/// is advanced first, then position with the new velocity (the world-space
-/// form of `transform.disp += (transform.rot * vel) * dt`).
-pub fn integrate_free_flight(pos: &mut Vec3, world_vel: &mut Vec3, gravity: f32, dt: f32) {
-    *world_vel += gravity_accel(gravity) * dt;
-    *pos += *world_vel * dt;
+/// Gravity, the physics step, and the free-air linear drag used by
+/// [`integrate_free_flight`] and [`step`].
+#[derive(Clone, Copy, Debug)]
+pub struct FreeFlight {
+    pub gravity: f32,
+    /// `common.nature.time_delta0`: the step used to integrate a long
+    /// carry, and the `dt` that linear drag is scaled against.
+    pub step_dt: f32,
+    /// `common.drag.free.v`.
+    pub drag_free: f32,
+    /// `common.drag.speed.v`.
+    pub drag_speed: f32,
 }
 
-/// [`integrate_free_flight`] over `t` seconds in steps of `step_dt`, so a
-/// long carry uses the same integrator as a run of physics quanta rather
-/// than one giant step (`p += v T + a T^2` instead of `p += v T + ½ a T^2`).
+impl FreeFlight {
+    pub fn from_common(common: &config::common::Common) -> Self {
+        Self {
+            gravity: common.nature.gravity,
+            step_dt: common.nature.time_delta0.max(1e-4),
+            drag_free: common.drag.free.v,
+            drag_speed: common.drag.speed.v,
+        }
+    }
+
+    /// Gravity only: no linear air drag. The default for a
+    /// [`client::RemoteCar`] that has not been given a [`config::common::Common`].
+    pub fn gravity_only(gravity: f32, step_dt: f32) -> Self {
+        Self {
+            gravity,
+            step_dt: step_dt.max(1e-4),
+            drag_free: 1.0,
+            drag_speed: 1.0,
+        }
+    }
+}
+
+/// Base linear drag of a body in free air, matching the `v_drag` start
+/// in [`step`]: `drag_free * drag_speed.pow(|v|)`. Wheel, spring,
+/// collision, water and `drag.z` terms are contact-only and are not
+/// applied here.
+pub fn free_linear_drag(speed: f32, drag_free: f32, drag_speed: f32) -> f32 {
+    drag_free * fmath::powf(drag_speed, speed)
+}
+
+/// Factor applied to linear velocity after a step of `dt`, matching
+/// `v_vel *= v_drag.pow(dt / time_delta0)` in [`step`].
+pub fn linear_drag_factor(v_drag: f32, dt: f32, time_delta0: f32) -> f32 {
+    fmath::powf(v_drag, dt / time_delta0.max(1e-4))
+}
+
+/// One free-flight step matching [`step`] in the air: gravity first,
+/// then position with the new velocity (the world-space form of
+/// `transform.disp += (transform.rot * vel) * dt`), then the free and
+/// speed-dependent linear drag. `v_drag` is taken from the pre-step
+/// speed, as in [`step`].
+pub fn integrate_free_flight(pos: &mut Vec3, world_vel: &mut Vec3, flight: &FreeFlight, dt: f32) {
+    let v_drag = free_linear_drag(world_vel.length(), flight.drag_free, flight.drag_speed);
+    *world_vel += gravity_accel(flight.gravity) * dt;
+    *pos += *world_vel * dt;
+    *world_vel *= linear_drag_factor(v_drag, dt, flight.step_dt);
+}
+
+/// [`integrate_free_flight`] over `t` seconds in steps of `flight.step_dt`,
+/// so a long carry uses the same integrator as a run of physics quanta
+/// rather than one giant step (`p += v T + a T^2` instead of
+/// `p += v T + ½ a T^2`).
 pub fn integrate_free_flight_for(
     pos: &mut Vec3,
     world_vel: &mut Vec3,
-    gravity: f32,
+    flight: &FreeFlight,
     t: f32,
-    step_dt: f32,
 ) {
     if t <= 0.0 {
         return;
     }
-    let step_dt = step_dt.max(1e-4);
+    let step_dt = flight.step_dt.max(1e-4);
     let mut remain = t;
     while remain > 1e-6 {
         let d = remain.min(step_dt);
-        integrate_free_flight(pos, world_vel, gravity, d);
+        integrate_free_flight(pos, world_vel, flight, d);
         remain -= d;
     }
 }
@@ -625,7 +679,7 @@ pub fn step(
     }
 
     // apply drag
-    let mut v_drag = common.drag.free.v * fmath::powf(common.drag.speed.v, rigid.vel.length());
+    let mut v_drag = free_linear_drag(rigid.vel.length(), common.drag.free.v, common.drag.speed.v);
     let mut w_drag = common.drag.free.w
         * fmath::powf(
             common.drag.speed.w,
@@ -899,7 +953,7 @@ pub fn step(
             transform.scale
         );
     }
-    v_vel *= fmath::powf(v_drag, speed_correction_factor);
+    v_vel *= linear_drag_factor(v_drag, dt, common.nature.time_delta0);
     w_vel *= fmath::powf(w_drag, speed_correction_factor);
 
     // Record tread endpoints from the transform that will actually be
