@@ -1153,7 +1153,7 @@ impl WebApp {
                     .map(|v| v.prefix("resource/iscreen/ldata"))
                     .unwrap_or_default();
                 if slice.is_empty() {
-                    log::info!("No iscreen ldata in VFS; escave interiors stay 2D");
+                    log::info!("No iscreen ldata in the level zip; will fetch on first enter");
                 } else {
                     log::info!("Kept {} iscreen file(s) for escave voxels", slice.len());
                 }
@@ -2427,6 +2427,8 @@ struct GpuState {
     egui_renderer: egui_wgpu::Renderer,
 }
 
+type IscreenInbox = std::rc::Rc<std::cell::RefCell<Option<(String, Result<Vec<u8>, String>)>>>;
+
 struct WebHandler {
     window: Option<Arc<Window>>,
     /// Shared with the visibility listener so a hidden tab can restart
@@ -2459,6 +2461,12 @@ struct WebHandler {
     /// Status text overlay (used in multiplayer logging)
     #[allow(dead_code)]
     mp_status: String,
+    /// Completed lazy `{world}-iscreen.zip` fetch, if any.
+    iscreen_inbox: IscreenInbox,
+    /// Archive currently being fetched, if any.
+    iscreen_loading: Option<String>,
+    /// Archives that 404'd or failed to mount.
+    iscreen_failed: std::collections::HashSet<String>,
 }
 
 impl WebHandler {
@@ -2516,6 +2524,9 @@ impl WebHandler {
             ws_client,
             redial: Default::default(),
             mp_status,
+            iscreen_inbox: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            iscreen_loading: None,
+            iscreen_failed: std::collections::HashSet::new(),
         }
     }
 
@@ -3172,7 +3183,77 @@ impl ApplicationHandler for WebHandler {
 }
 
 impl WebHandler {
+    /// Apply a finished iscreen fetch, or start one the first time the
+    /// player is inside an escave whose ldata is not already mounted.
+    /// The existing 2D interior stays up while the zip is in flight.
+    fn poll_iscreen(&mut self) {
+        let Some(ref mut gpu) = self.gpu else {
+            return;
+        };
+        if let Some((archive, result)) = self.iscreen_inbox.borrow_mut().take() {
+            self.iscreen_loading = None;
+            match result {
+                Ok(bytes) => {
+                    log::info!(
+                        "Mounting {archive} ({} bytes) into iscreen VFS",
+                        bytes.len()
+                    );
+                    match gpu.app.iscreen.mount_zip(&bytes) {
+                        Ok(()) => {
+                            log::info!("iscreen VFS now has {} file(s)", gpu.app.iscreen.len());
+                            gpu.app.cave = None;
+                        }
+                        Err(e) => {
+                            log::warn!("failed to mount {archive}: {e}");
+                            self.iscreen_failed.insert(archive);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("iscreen fetch {archive} failed: {e}");
+                    self.iscreen_failed.insert(archive);
+                }
+            }
+            let _ = js_progress_done();
+        }
+        let Some(name) = gpu.app.screen.cave_name().map(str::to_string) else {
+            return;
+        };
+        if escave::cave::has_iscreen(&gpu.app.iscreen, &name) {
+            return;
+        }
+        let Some(archive) = escave::cave::iscreen_archive(&name) else {
+            return;
+        };
+        if self.iscreen_loading.as_deref() == Some(archive) || self.iscreen_failed.contains(archive)
+        {
+            return;
+        }
+        log::info!("Fetching {archive} for {name} (lazy iscreen)");
+        self.iscreen_loading = Some(archive.to_string());
+        let inbox = self.iscreen_inbox.clone();
+        let window_slot = self.window_slot.clone();
+        let archive_s = archive.to_string();
+        let _ = js_phase(&format!("Loading {name}…"));
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut progress = |label: &str, loaded: u64, total: Option<u64>| {
+                let _ = js_progress(label, loaded as f64, total.unwrap_or(0) as f64);
+            };
+            let result = vangers::data::fetch_asset(&archive_s, &mut progress)
+                .await
+                .map_err(|e| e.to_string());
+            *inbox.borrow_mut() = Some((archive_s, result));
+            if let Some(ref window) = *window_slot.borrow() {
+                window.request_redraw();
+            }
+        });
+    }
+
     fn render(&mut self) {
+        if self.gpu.is_none() {
+            return;
+        }
+        self.poll_iscreen();
         let Some(ref mut gpu) = self.gpu else {
             return;
         };

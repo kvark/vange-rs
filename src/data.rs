@@ -10,6 +10,13 @@
 //! The default base is `./data-0` (relative to the demo page). Set
 //! `VANGERS_DATA_BASE` at build time to override, e.g. to point at a
 //! CDN or a separate host.
+//!
+//! Escave interiors come from a sibling `{world}-iscreen.zip` (see
+//! [`crate::escave::cave::iscreen_archive`]). The web client fetches
+//! that archive the first time a player enters an escave, not at
+//! startup. Older `data-0` level zips that already embed iscreen ldata
+//! still work: those files are mounted with the level and no extra
+//! fetch runs.
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;

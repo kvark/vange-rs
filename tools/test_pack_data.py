@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for tools/pack-data.py keep lists and iscreen-into-level packing."""
+"""Tests for tools/pack-data.py keep lists and sibling iscreen packing."""
 
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ class IscreenExtrasTests(unittest.TestCase):
 
 
 class PackRoundtripTests(unittest.TestCase):
-    def test_level_zip_keeps_world_files_and_iscreen_keys(self):
+    def test_level_zip_keeps_world_files_without_iscreen(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "data"
             out = Path(tmp) / "out" / "fostral.zip"
@@ -108,22 +108,27 @@ class PackRoundtripTests(unittest.TestCase):
             write(level / "world.ini", "[Global]\n")
             write(level / "output.vmc", "vmc")
             write(root / "resource/iscreen/ldata/l0/escave.ini", "ini")
-            write(root / "resource/iscreen/ldata/l0/escave.pal", "pal")
-            write(root / "resource/iscreen/ldata/l1/escave.ini", "ini")
-            PACK.pack_level(
-                "fostral",
-                level,
-                out,
-                verbose=False,
-                extras=PACK.iscreen_extras(root, "fostral"),
-            )
+            PACK.pack_level("fostral", level, out, verbose=False, extras=None)
             with zipfile.ZipFile(out) as zf:
                 names = set(zf.namelist())
+        self.assertEqual(names, {"world.ini", "output.vmc"})
+
+    def test_iscreen_zip_uses_root_relative_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "data"
+            out = Path(tmp) / "out" / PACK.iscreen_archive_name("Fostral")
+            out.parent.mkdir()
+            write(root / "resource/iscreen/ldata/l0/escave.ini", "ini")
+            write(root / "resource/iscreen/ldata/l0/escave.pal", "pal")
+            write(root / "resource/iscreen/ldata/l1/escave.ini", "ini")
+            extras = PACK.iscreen_extras(root, "fostral")
+            PACK.pack_iscreen(extras, out, verbose=False)
+            with zipfile.ZipFile(out) as zf:
+                names = set(zf.namelist())
+        self.assertEqual(out.name, "fostral-iscreen.zip")
         self.assertEqual(
             names,
             {
-                "world.ini",
-                "output.vmc",
                 "resource/iscreen/ldata/l0/escave.ini",
                 "resource/iscreen/ldata/l0/escave.pal",
                 "resource/iscreen/ldata/l1/escave.ini",
