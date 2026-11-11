@@ -754,12 +754,27 @@ impl ClientSync {
         car.dynamo.traction = snap.car.traction;
         car.dynamo.rudder = snap.car.rudder;
         self.prediction.restart_at(snap.ack);
+        log::debug!(
+            "Escave park at ({:.1},{:.1},{:.1}) vel=({:.1},{:.1},{:.1}) ack={}",
+            car.transform.disp.x,
+            car.transform.disp.y,
+            car.transform.disp.z,
+            car.dynamo.linear_velocity.x,
+            car.dynamo.linear_velocity.y,
+            car.dynamo.linear_velocity.z,
+            snap.ack
+        );
     }
 
     /// The car was kicked out of an escave (a move outside its inputs):
     /// drop the history so a later snapshot does not rewind past the kick.
     /// The numbering stays, and the render offset is left alone.
     pub fn ejected(&mut self) {
+        log::info!(
+            "Escave eject: next={} history={}",
+            self.prediction.next(),
+            self.prediction.len()
+        );
         self.prediction.clear();
     }
 
@@ -913,6 +928,19 @@ impl ClientSync {
             } else {
                 self.render_offset.absorb(&before, car.transform)
             };
+        }
+        if moved > 1.0 {
+            log::debug!(
+                "Escave/sync reconcile {:?} moved={:.1}u ack={} next={} history={} pose=({:.1},{:.1},{:.1})",
+                outcome,
+                moved,
+                snap.ack,
+                self.prediction.next(),
+                self.prediction.len(),
+                car.transform.disp.x,
+                car.transform.disp.y,
+                car.transform.disp.z
+            );
         }
         (
             SyncEvent::Reconciled {
@@ -1705,6 +1733,226 @@ mod tests {
             "exit correction {moved:.1}u, pose {:?} vs server {:?}",
             t.disp,
             after.transform.disp
+        );
+    }
+
+    /// A lagged leave after a visit. `spend_visit` is the web bug (`skip`
+    /// then `apply_parked` rewind so the leave batch's numbers were already
+    /// spent while parked). `extra` is a second slow frame the client
+    /// integrates before the first post-kick snapshot arrives.
+    fn leave_after_visit(
+        spend_visit: bool,
+        visit_frames: u32,
+        leave: u32,
+        lag: u32,
+        extra: u32,
+    ) -> (f32, f32) {
+        use crate::physics::prediction::InputQueue;
+
+        let (level, common) = test_sim();
+        let sim = Sim {
+            level: &level,
+            common: &common,
+            max_quant: 0.1,
+        };
+        let phys = CarPhysicsData::test_default();
+        let remotes: HashMap<PlayerId, RemoteCar> = HashMap::new();
+        let mut sync = ClientSync::default();
+        let mut t = space::Transform::IDENTITY;
+        t.disp = Vec3::new(64.0, 64.0, 10.0);
+        let mut d = Dynamo::default();
+        let (event, _) = sync.on_snapshot(
+            &snapshot(server(64.0, 64.0), 0, 0),
+            LocalCar {
+                transform: &mut t,
+                dynamo: &mut d,
+                phys: &phys,
+            },
+            &remotes,
+            sim,
+            false,
+        );
+        assert_eq!(event, SyncEvent::FirstSync);
+
+        let mut server_t = t;
+        let mut server_d = d;
+        let drive = QuantInput {
+            motor: 1.0,
+            ..Default::default()
+        };
+        for _ in 0..8 {
+            step_input(
+                &mut server_d,
+                &mut server_t,
+                &drive,
+                0.1,
+                QuantClock::input_factor(0.1, &common),
+                &phys,
+                &level,
+                &common,
+                None,
+            );
+        }
+        let parked = ServerCar {
+            transform: server_t,
+            linear_velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            traction: 0.0,
+            rudder: 0.0,
+            bumped: false,
+        };
+        server_t = parked.transform;
+        server_d.linear_velocity = Vec3::ZERO;
+        server_d.angular_velocity = Vec3::ZERO;
+        server_d.traction = 0.0;
+        server_d.rudder = 0.0;
+
+        let mut queue = InputQueue::default();
+        queue.reset(8);
+        sync.apply_parked(
+            &snapshot(parked, 8, 0),
+            LocalCar {
+                transform: &mut t,
+                dynamo: &mut d,
+                phys: &phys,
+            },
+            Some(level.period()),
+        );
+
+        for _ in 0..visit_frames {
+            if spend_visit {
+                // Same-frame poll: the snapshot predates this skip batch,
+                // so apply_parked rewinds `next` onto numbers already sent.
+                let first = sync.skip(leave);
+                queue.push(first, leave, QuantInput::default());
+                while queue.pending() > 0 {
+                    let _ = queue.pop();
+                }
+                let snap_ack = queue.ack().saturating_sub(lag.max(leave));
+                sync.apply_parked(
+                    &snapshot(parked, snap_ack, 0),
+                    LocalCar {
+                        transform: &mut t,
+                        dynamo: &mut d,
+                        phys: &phys,
+                    },
+                    Some(level.period()),
+                );
+            } else {
+                // Native: ack stays put, snapshots only park the pose.
+                sync.apply_parked(
+                    &snapshot(parked, queue.ack(), 0),
+                    LocalCar {
+                        transform: &mut t,
+                        dynamo: &mut d,
+                        phys: &phys,
+                    },
+                    Some(level.period()),
+                );
+            }
+        }
+
+        let kick = crate::level::trigger::ImpulseKick::velocity(None);
+        d.linear_velocity += kick;
+        server_d.linear_velocity += kick;
+        sync.ejected();
+        let first = sync.next_quant();
+        for _ in 0..leave {
+            sync.step_quantum(
+                LocalCar {
+                    transform: &mut t,
+                    dynamo: &mut d,
+                    phys: &phys,
+                },
+                &QuantInput::default(),
+                &remotes,
+                sim,
+                None,
+            );
+        }
+        queue.push(first, leave, QuantInput::default());
+        for _ in 0..extra {
+            sync.step_quantum(
+                LocalCar {
+                    transform: &mut t,
+                    dynamo: &mut d,
+                    phys: &phys,
+                },
+                &QuantInput::default(),
+                &remotes,
+                sim,
+                None,
+            );
+        }
+        // Server has the first leave batch; the extra frame has not arrived.
+        while queue.pending() > 0 {
+            let input = queue.pop();
+            step_input(
+                &mut server_d,
+                &mut server_t,
+                &input,
+                0.1,
+                QuantClock::input_factor(0.1, &common),
+                &phys,
+                &level,
+                &common,
+                None,
+            );
+        }
+        let after = ServerCar {
+            transform: server_t,
+            linear_velocity: server_d.linear_velocity,
+            angular_velocity: server_d.angular_velocity,
+            traction: server_d.traction,
+            rudder: server_d.rudder,
+            bumped: false,
+        };
+        let before = t;
+        let pred = before.disp.distance(after.transform.disp);
+        let _ = sync.on_snapshot(
+            &snapshot(after, queue.ack(), 0),
+            LocalCar {
+                transform: &mut t,
+                dynamo: &mut d,
+                phys: &phys,
+            },
+            &remotes,
+            sim,
+            false,
+        );
+        (before.disp.distance(t.disp), pred)
+    }
+
+    #[test]
+    fn a_parked_visit_leaves_without_a_correction_even_on_a_slow_frame() {
+        // Native, and web once it stops skipping during the visit: the
+        // leave batch is new, the server runs the same kick quanta, and
+        // a 1 fps leave frame plus lag does not show a big snap.
+        let (moved, pred) = leave_after_visit(false, 20, 8, 3, 0);
+        assert!(
+            moved < 10.0,
+            "parked leave correction {moved:.1}u (pose delta {pred:.1}u) on a slow frame"
+        );
+        let (moved2, pred2) = leave_after_visit(false, 20, 8, 3, 8);
+        assert!(
+            moved2 < 10.0,
+            "parked leave + extra frame correction {moved2:.1}u (pose delta {pred2:.1}u)"
+        );
+    }
+
+    #[test]
+    fn skipping_during_a_visit_makes_the_leave_a_correction() {
+        // The web bug: skip + apply_parked rewind spends the leave batch's
+        // numbers while the car is parked, so the server kicks but does
+        // not run the same flight quanta the client just simulated.
+        let (moved, pred) = leave_after_visit(true, 20, 8, 3, 0);
+        let (moved2, pred2) = leave_after_visit(true, 20, 8, 3, 8);
+        eprintln!(
+            "skip-during-visit leave: moved={moved:.1}u pred={pred:.1}u; with extra frame moved={moved2:.1}u pred={pred2:.1}u"
+        );
+        assert!(
+            moved2 > 40.0,
+            "expected a large leave correction when the visit skipped, got {moved2:.1}u (pred {pred2:.1}u, first frame {moved:.1}u)"
         );
     }
 

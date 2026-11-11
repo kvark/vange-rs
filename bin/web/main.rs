@@ -174,7 +174,7 @@ fn selected_level_id() -> String {
 
 /// Longest frame whose quanta a multiplayer client still steps, seconds.
 /// Past it (a stall, not a slow page) the car falls behind real time; the
-/// server waits [`physics::prediction::InputQueue::STARVE_TICKS`] (3 s)
+/// server waits [`physics::prediction::InputQueue::STARVE_TICKS`] (8 s)
 /// before driving it on without input.
 const MP_FRAME_MAX: f32 = 2.5;
 
@@ -1833,6 +1833,19 @@ impl WebApp {
         agent.dynamo.linear_velocity += vel;
         // A move outside the inputs: drop the history so a later snapshot
         // does not rewind past the kick. The server applies the same one.
+        log::info!(
+            "Escave eject pose=({:.1},{:.1},{:.1}) vel=({:.1},{:.1},{:.1}) kick=({:.1},{:.1},{:.1}) next={}",
+            pos.x,
+            pos.y,
+            pos.z,
+            agent.dynamo.linear_velocity.x,
+            agent.dynamo.linear_velocity.y,
+            agent.dynamo.linear_velocity.z,
+            vel.x,
+            vel.y,
+            vel.z,
+            self.mp.next_quant()
+        );
         self.mp.ejected();
     }
 
@@ -3644,8 +3657,17 @@ impl WebHandler {
         gpu.app.step_cycle(dt, connected);
 
         // Multiplayer: a car that was not driven still uses up its quanta
-        // (numbered, no history), with a released input.
-        if mp_on && batch.is_none() && (held || gpu.app.agent.is_none()) {
+        // (numbered, no history), with a released input. An escave visit
+        // is the exception: native only keepalives and `apply_parked`, so
+        // the ack stays put and the leave batch's numbers are still free.
+        // Skipping here would send batches that `apply_parked` then rewinds
+        // `next` onto, and the leave kick's flight would be dropped as
+        // already-consumed input (a 50-200u correction on the way out).
+        if mp_on
+            && batch.is_none()
+            && (held || gpu.app.agent.is_none())
+            && !gpu.app.screen.blocks_drive()
+        {
             let first = gpu.app.mp.skip(quanta);
             batch = Some((first, physics::prediction::QuantInput::default()));
         }
