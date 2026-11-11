@@ -236,8 +236,10 @@ impl RemoteCar {
     /// teleport: drawn there at once, not slid to. A large gap from the
     /// drawn pose alone (a burst of snapshots, or a stall catch-up) is
     /// blended from the current drawn pose as long as each step stays
-    /// under this.
-    pub const TELEPORT: f32 = 64.0;
+    /// under this. 80 sits above a standard 80 u/s ImpulseEscave kick's
+    /// first mid-flight step (~68.8 u). This is a fixed constant, not a
+    /// speed-scaled threshold.
+    pub const TELEPORT: f32 = 80.0;
     /// Farthest the ack timeline may move from the tick one between two
     /// snapshots before it is pinned again, seconds.
     pub const ACK_SLIP_MAX: f64 = 1.0;
@@ -1943,6 +1945,64 @@ mod tests {
         );
         let pred_err = r.render_transform.disp.distance(pos);
         assert!(pred_err < 16.0, "pred after stall catch-up {pred_err:.2}");
+    }
+
+    #[test]
+    fn remote_impulse_escave_first_mid_flight_step_blends() {
+        // A standard 80 u/s ImpulseEscave kick's first mid-flight step
+        // was measured at 68.8 u: under TELEPORT, blended from the pose
+        // drawn at the hatch, not shown at once.
+        let common = shipped_common();
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        r.set_gravity(&common);
+        let kick = crate::level::trigger::ImpulseKick::velocity(None);
+        let hatch = Vec3::new(100.0, 100.0, 60.0);
+        assert!(r.on_snapshot(&air_car(hatch, Vec3::ZERO), None).first);
+        r.interpolate(1.0 / RemoteCar::SNAPSHOT_RATE);
+        let drawn = r.render_transform.disp;
+        let first_step = 68.8;
+        let mid = hatch + kick.normalize() * first_step;
+        let d = r.on_snapshot(&air_car(mid, kick), None);
+        assert!(
+            !d.teleport && d.step < RemoteCar::TELEPORT,
+            "first mid-flight kick step {:.1} teleported (TELEPORT={})",
+            d.step,
+            RemoteCar::TELEPORT
+        );
+        assert!((d.step - first_step).abs() < 0.15, "step {:.1}", d.step);
+        assert!(
+            (r.render_transform.disp - drawn).length() < 1e-3,
+            "should blend from the drawn pose, not snap"
+        );
+        r.interpolate(RemoteCar::BLEND);
+        let moved = (r.render_transform.disp - drawn).length();
+        assert!(moved > 1.0, "blend did not start ({moved:.2})");
+        assert!(
+            (r.render_transform.disp - mid).length() > 1.0,
+            "snapped to the mid-flight pose instead of blending"
+        );
+    }
+
+    #[test]
+    fn remote_teleport_of_120_is_shown_at_once() {
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        r.on_snapshot(&moving(0, 40.0, 0.0), None);
+        r.on_snapshot(&moving(1, 40.0, 0.0), None);
+        r.interpolate(0.2);
+        // One consecutive step of 120 u: still a real teleport.
+        let last = moving(1, 40.0, 0.0).transform.disp;
+        let at = last + Vec3::new(120.0, 0.0, 0.0);
+        let d = r.on_snapshot(&server(at.x, at.y), None);
+        assert!(
+            d.teleport && d.step > RemoteCar::TELEPORT,
+            "120 u step should snap (step={:.1} teleport={})",
+            d.step,
+            d.teleport
+        );
+        assert!((d.step - 120.0).abs() < 0.15, "step {:.1}", d.step);
+        assert_eq!(r.render_transform.disp, at);
+        r.interpolate(0.3);
+        assert!((r.render_transform.disp - at).length() < 1e-3);
     }
 
     #[test]
