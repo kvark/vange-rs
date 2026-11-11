@@ -174,7 +174,7 @@ fn selected_level_id() -> String {
 
 /// Longest frame whose quanta a multiplayer client still steps, seconds.
 /// Past it (a stall, not a slow page) the car falls behind real time; the
-/// server waits [`physics::prediction::InputQueue::STARVE_TICKS`] (3 s)
+/// server waits [`physics::prediction::InputQueue::STARVE_TICKS`] (6 s)
 /// before driving it on without input.
 const MP_FRAME_MAX: f32 = 2.5;
 
@@ -3644,8 +3644,17 @@ impl WebHandler {
         gpu.app.step_cycle(dt, connected);
 
         // Multiplayer: a car that was not driven still uses up its quanta
-        // (numbered, no history), with a released input.
-        if mp_on && batch.is_none() && (held || gpu.app.agent.is_none()) {
+        // (numbered, no history), with a released input. An escave visit
+        // is the exception: native only keepalives and `apply_parked`, so
+        // the ack stays put and the leave batch's numbers are still free.
+        // Skipping here would send batches that `apply_parked` then rewinds
+        // `next` onto, and the leave kick's flight would be dropped as
+        // already-consumed input (a 50-200u correction on the way out).
+        if mp_on
+            && batch.is_none()
+            && (held || gpu.app.agent.is_none())
+            && !gpu.app.screen.blocks_drive()
+        {
             let first = gpu.app.mp.skip(quanta);
             batch = Some((first, physics::prediction::QuantInput::default()));
         }
