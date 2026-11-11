@@ -156,6 +156,69 @@ impl Table {
         Ok(guns)
     }
 
+    /// Guns in `UVS_ITEM_TYPE` order (`univang.h`). The original's
+    /// `uvsVanger::addInventory` (`src/uvs/univang.cpp`) falls back to type
+    /// 0 (`MACHOTINE_GUN_LIGHT`, LightMissile) when a chosen item does not
+    /// fit; walking this order and taking the first that fits a bay is
+    /// the same rule, applied per slot.
+    const UVS_GUN_ORDER: &'static [&'static str] = &[
+        "LightMissile",
+        "HeavyMissile",
+        "LightLaser",
+        "HeavyLaser",
+        "LightFireBall",
+        "HeavyFireBall",
+        "JumpBug",
+        "Crustest",
+        "Amputat",
+        "Degradat",
+        "Scope",
+        "Terminator",
+        "Wasp",
+    ];
+
+    /// The first gun in [`Self::UVS_GUN_ORDER`] that fits `slot_size`.
+    pub fn first_that_fits(&self, slot_size: u8) -> Option<&Gun> {
+        Self::UVS_GUN_ORDER.iter().find_map(|model| {
+            let gun = self.gun(model)?;
+            gun.fits(slot_size).then_some(gun)
+        })
+    }
+
+    /// Mount `loadout` on `car`, per bay: a requested gun that fits is
+    /// kept; a requested gun that does not fit (or is unknown) is replaced
+    /// by [`Self::first_that_fits`] for that slot; an empty request, or a
+    /// bay the car does not have, stays empty.
+    pub fn resolve(&self, car: &str, loadout: &Loadout) -> Loadout {
+        let bays = self.bays(car);
+        let mut out: Loadout = Default::default();
+        for (bay, wanted) in loadout.iter().enumerate() {
+            let Some(size) = bays[bay] else {
+                continue;
+            };
+            let Some(model) = wanted.as_ref() else {
+                continue;
+            };
+            let gun = self
+                .gun(model)
+                .filter(|gun| gun.fits(size))
+                .or_else(|| self.first_that_fits(size));
+            out[bay] = gun.map(|gun| gun.model.clone());
+        }
+        out
+    }
+
+    /// `car.slots` as a loadout, then [`Self::resolve`].
+    pub fn resolve_slots(&self, car: &str, slots: &[String]) -> Loadout {
+        let mut declared: Loadout = Default::default();
+        for (i, id) in slots.iter().enumerate().take(BAYS) {
+            if !id.is_empty() && id != "-" {
+                declared[i] = Some(id.clone());
+            }
+        }
+        self.resolve(car, &declared)
+    }
+
     /// Read `game.lst` (bullets, `WeaponWaitTime`, unit slot matrices) and
     /// `device.lst` (guns); `cars` are the `car.prm` names in file order,
     /// which pick each car's slot matrix.
@@ -588,6 +651,60 @@ BulletMode\t{ Fly }\nSpeed\t\t1\nWaitTime\t0\n";
             table
                 .check("TestCar", &set([Some("HeavyLaser"); BAYS]))
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_bay_falls_back_to_the_first_gun_that_fits() {
+        let table = Table::original();
+        let set = |guns: [Option<&str>; BAYS]| guns.map(|g| g.map(str::to_string));
+        // The default settings loadout: a Speetle (size 7) in bay 0 of
+        // OxidizeMonk (slot 3), and a Machotine that already fits bay 1.
+        // Type 0 in UVS_ITEM_TYPE is LightMissile; bay 1 is kept.
+        assert_eq!(
+            table.resolve(
+                "OxidizeMonk",
+                &set([Some("HeavyLaser"), Some("LightMissile"), None]),
+            ),
+            set([Some("LightMissile"), Some("LightMissile"), None])
+        );
+        // An empty bay stays empty; an unknown gun also falls back.
+        assert_eq!(
+            table.resolve("OxidizeMonk", &set([Some("HeavyLaser"), None, None])),
+            set([Some("LightMissile"), None, None])
+        );
+        assert_eq!(
+            table.resolve("OxidizeMonk", &set([Some("Nope"), None, None])),
+            set([Some("LightMissile"), None, None])
+        );
+        // A gun in a bay the car does not have is dropped, not moved.
+        assert_eq!(
+            table.resolve("OxidizeMonk", &set([None, None, Some("LightMissile")]),),
+            set([None, None, None])
+        );
+        // A request that already fits is unchanged, including a heavy
+        // Speetle in HeavyLady's size-7 bay.
+        assert_eq!(
+            table.resolve(
+                "HeavyLady",
+                &set([Some("LightLaser"), None, Some("HeavyLaser")]),
+            ),
+            set([Some("LightLaser"), None, Some("HeavyLaser")])
+        );
+        // HeavyLady bay 0 is only size 5: the Speetle falls back, bay 1
+        // stays empty.
+        assert_eq!(
+            table.resolve("HeavyLady", &set([Some("HeavyLaser"), None, None])),
+            set([Some("LightMissile"), None, None])
+        );
+        // Ruffas have no bays; empty slots stay empty.
+        assert_eq!(
+            table.resolve("BLOCH", &set([Some("LightMissile"), None, None])),
+            set([None, None, None])
+        );
+        assert_eq!(
+            table.resolve_slots("OxidizeMonk", &["HeavyLaser".into(), "LightMissile".into()],),
+            set([Some("LightMissile"), Some("LightMissile"), None])
         );
     }
 

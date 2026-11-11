@@ -984,14 +984,14 @@ impl Game {
         let weapon_table = weapons::Table::load(&settings.data_path);
         let boards = escave::Catalog::load(&settings.data_path);
         let mut inventory = escave::Inventory::for_car(&settings.car.id, &boards);
-        for (i, sid) in settings
-            .car
-            .slots
-            .iter()
+        for (i, model) in weapon_table
+            .resolve_slots(&settings.car.id, &settings.car.slots)
+            .into_iter()
             .enumerate()
-            .take(escave::BAY_COUNT)
         {
-            let _ = inventory.load_bay(i, escave::Good::weapon(sid.clone(), 0, 0));
+            if let Some(sid) = model {
+                let _ = inventory.load_bay(i, escave::Good::weapon(sid, 0, 0));
+            }
         }
         let mut weapon_meshes = HashMap::new();
         let mut spin_meshes = HashMap::new();

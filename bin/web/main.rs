@@ -1186,6 +1186,16 @@ impl WebApp {
             touch_stick: uses_touch_stick(),
             minimap: minimap::Minimap::new(),
         };
+        for (i, model) in app
+            .weapons
+            .resolve_slots(&settings.car.id, &settings.car.slots)
+            .into_iter()
+            .enumerate()
+        {
+            if let Some(sid) = model {
+                let _ = app.inventory.load_bay(i, escave::Good::weapon(sid, 0, 0));
+            }
+        }
         if let Some(ref bunch) = app.cycle {
             app.render.set_light_modulation(bunch.light());
             app.render.dirty_palette(0..0x100);
@@ -2131,7 +2141,13 @@ mod net_ws {
         }
 
         /// Join the session with the player's car, once per connection.
-        pub fn join(&mut self, player_name: &str, car_name: &str, color: u8) {
+        pub fn join(
+            &mut self,
+            player_name: &str,
+            car_name: &str,
+            color: u8,
+            guns: vangers_net::NetGuns,
+        ) {
             if self.joined.get() || !self.is_connected() {
                 return;
             }
@@ -2148,8 +2164,7 @@ mod net_ws {
                 car_name: car_name.to_string(),
                 color,
                 protocol: vangers_net::PROTOCOL_VERSION,
-                // The web client does not fire: no guns.
-                guns: Default::default(),
+                guns,
             });
             let _ = self.ws.send_with_u8_array(&msg);
         }
@@ -3298,7 +3313,12 @@ impl WebHandler {
         {
             let (name, color) = player_identity();
             let car_name = gpu.app.agent.as_ref().map_or("", |a| a.car_name.as_str());
-            ws.join(&name, car_name, color as u8);
+            ws.join(
+                &name,
+                car_name,
+                color as u8,
+                weapon::loadout(&gpu.app.inventory),
+            );
         }
         if !connected && (gpu.app.mp.synced || !gpu.app.remotes.is_empty()) {
             gpu.app.mp.disconnect();

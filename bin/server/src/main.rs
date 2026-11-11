@@ -1559,16 +1559,23 @@ async fn main() {
                                     agent.dead = None;
                                     agent.in_escave = false;
                                     agent.reload.clear();
-                                    agent.guns = match weapons.check(&car_name, &guns) {
-                                        Ok(taken) => taken.map(|g| g.cloned()),
-                                        Err(why) => {
-                                            warn!(
-                                                "Guns of player {} ({}) refused: {}; no guns",
-                                                player_id, car_name, why
-                                            );
-                                            Default::default()
-                                        }
-                                    };
+                                    // Per bay: keep a gun that fits, otherwise
+                                    // the first in UVS_ITEM_TYPE order that
+                                    // does (the original's addInventory
+                                    // fallback to type 0). `Weapons` later
+                                    // still uses `check`, so a mid-visit
+                                    // set that does not all fit is refused.
+                                    let resolved = weapons.resolve(&car_name, &guns);
+                                    if resolved != guns {
+                                        info!(
+                                            "Guns of player {} ({}): {:?} -> {:?}",
+                                            player_id, car_name, guns, resolved
+                                        );
+                                    }
+                                    agent.guns = weapons
+                                        .check(&car_name, &resolved)
+                                        .map(|taken| taken.map(|g| g.cloned()))
+                                        .unwrap_or_default();
                                     info!(
                                         "Guns of player {}: {}",
                                         player_id,
