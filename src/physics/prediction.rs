@@ -146,8 +146,9 @@ impl InputQueue {
     /// Longer than the slowest frame a real client sends a batch per: a
     /// browser on software WebGL can take 4-6 s a frame, and a car driven
     /// on between its batches runs quanta the client never predicted
-    /// (corrections of 50-200u every snapshot). 160 ticks is 8 s.
-    pub const STARVE_TICKS: u32 = 160;
+    /// (corrections of 50-200u every snapshot). 120 ticks is 6 s, strictly
+    /// shorter than the 8 s silent timeout.
+    pub const STARVE_TICKS: u32 = 120;
     /// Ticks of backlog past which the car catches up at double rate.
     pub const CATCHUP_TICKS: u32 = 8;
     /// Backlog cap; a client further ahead than this loses the oldest.
