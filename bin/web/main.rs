@@ -174,7 +174,7 @@ fn selected_level_id() -> String {
 
 /// Longest frame whose quanta a multiplayer client still steps, seconds.
 /// Past it (a stall, not a slow page) the car falls behind real time; the
-/// server waits [`physics::prediction::InputQueue::STARVE_TICKS`] (8 s)
+/// server waits [`physics::prediction::InputQueue::STARVE_TICKS`] (6 s)
 /// before driving it on without input.
 const MP_FRAME_MAX: f32 = 2.5;
 
@@ -1833,19 +1833,6 @@ impl WebApp {
         agent.dynamo.linear_velocity += vel;
         // A move outside the inputs: drop the history so a later snapshot
         // does not rewind past the kick. The server applies the same one.
-        log::info!(
-            "Escave eject pose=({:.1},{:.1},{:.1}) vel=({:.1},{:.1},{:.1}) kick=({:.1},{:.1},{:.1}) next={}",
-            pos.x,
-            pos.y,
-            pos.z,
-            agent.dynamo.linear_velocity.x,
-            agent.dynamo.linear_velocity.y,
-            agent.dynamo.linear_velocity.z,
-            vel.x,
-            vel.y,
-            vel.z,
-            self.mp.next_quant()
-        );
         self.mp.ejected();
     }
 

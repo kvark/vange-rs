@@ -770,7 +770,7 @@ impl ClientSync {
     /// drop the history so a later snapshot does not rewind past the kick.
     /// The numbering stays, and the render offset is left alone.
     pub fn ejected(&mut self) {
-        log::info!(
+        log::debug!(
             "Escave eject: next={} history={}",
             self.prediction.next(),
             self.prediction.len()

@@ -2048,22 +2048,6 @@ impl Game {
         }
         // A move outside the inputs: drop the history so a later snapshot
         // does not rewind past the kick. The server applies the same one.
-        let vel_now = match player.physics {
-            Physics::Cpu { ref dynamo, .. } => dynamo.linear_velocity,
-        };
-        log::info!(
-            "Escave eject pose=({:.1},{:.1},{:.1}) vel=({:.1},{:.1},{:.1}) kick=({:.1},{:.1},{:.1}) next={}",
-            pos.x,
-            pos.y,
-            pos.z,
-            vel_now.x,
-            vel_now.y,
-            vel_now.z,
-            vel.x,
-            vel.y,
-            vel.z,
-            self.sync.next_quant()
-        );
         self.sync.ejected();
     }
 
