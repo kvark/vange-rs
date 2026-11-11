@@ -2041,23 +2041,15 @@ impl Game {
         let at = (pos.x as i32, pos.y as i32, pos.z as i32);
         let size = self.level.size;
         self.moving.close_doors_at(at, radius, size);
-        let kick = self.moving.triggers.impulse_at(at, radius, size);
-        let vel = match kick {
-            Some(k) => {
-                let dir = Vec3::new(
-                    k.direction.0 as f32,
-                    k.direction.1 as f32,
-                    k.direction.2 as f32,
-                );
-                let n = dir.length();
-                let dir = if n < 1e-3 { Vec3::Z } else { dir / n };
-                dir * (k.power as f32).max(24.0)
-            }
-            None => Vec3::new(0.0, 24.0, 80.0),
-        };
+        let vel = level::trigger::ImpulseKick::velocity(
+            self.moving.triggers.impulse_at(at, radius, size),
+        );
         if let Physics::Cpu { ref mut dynamo, .. } = player.physics {
             dynamo.linear_velocity += vel;
         }
+        // A move outside the inputs: drop the history so a later snapshot
+        // does not rewind past the kick. The server applies the same one.
+        self.sync.ejected();
     }
 
     /// `EXTERNAL_MODE_MOVE` of a `TrainEngine`: slide the car from this
@@ -3228,6 +3220,12 @@ impl Game {
                                 if Some(event_index) != newest_world {
                                     continue;
                                 }
+                                // We already left: a snapshot still marked
+                                // in_escave predates the kick and would
+                                // pull the car back onto the pad.
+                                if !self.escave_sent && agent_state.in_escave {
+                                    continue;
+                                }
                                 // Client-side prediction: compare the
                                 // server's state with what we predicted
                                 // at its ack, and on a mismatch rewind
@@ -3262,6 +3260,19 @@ impl Game {
                                         },
                                         self.tweaks_pos_hold > 0.0 || hold_player,
                                     );
+                                    if self.screen.blocks_drive()
+                                        && matches!(event, physics::client::SyncEvent::Held)
+                                    {
+                                        self.sync.apply_parked(
+                                            &snap,
+                                            physics::client::LocalCar {
+                                                transform,
+                                                dynamo,
+                                                phys: &player.phys_data,
+                                            },
+                                            Some(self.level.period()),
+                                        );
+                                    }
                                     match event {
                                         physics::client::SyncEvent::FirstSync => {
                                             // First sync: hard-snap camera to

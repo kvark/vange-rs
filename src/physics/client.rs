@@ -708,6 +708,29 @@ impl ClientSync {
         self.render_offset = RenderOffset::default();
     }
 
+    /// Silently adopt the server's parked pose and ack (an escave visit).
+    /// The server may still have run inputs that were in flight when the
+    /// client froze, and nothing of ours is replayed while the car is
+    /// held; the way out then starts from the same pose the server has,
+    /// instead of showing a correction. Does not touch the render offset
+    /// (the chase camera is not on the car).
+    pub fn apply_parked(&mut self, snap: &LocalSnapshot, car: LocalCar<'_>, period: Option<Vec2>) {
+        let t = near(&snap.car.transform, car.transform.disp, period);
+        *car.transform = t;
+        car.dynamo.linear_velocity = snap.car.linear_velocity;
+        car.dynamo.angular_velocity = snap.car.angular_velocity;
+        car.dynamo.traction = snap.car.traction;
+        car.dynamo.rudder = snap.car.rudder;
+        self.prediction.restart_at(snap.ack);
+    }
+
+    /// The car was kicked out of an escave (a move outside its inputs):
+    /// drop the history so a later snapshot does not rewind past the kick.
+    /// The numbering stays, and the render offset is left alone.
+    pub fn ejected(&mut self) {
+        self.prediction.clear();
+    }
+
     /// The connection is gone: start over on the next one.
     pub fn disconnect(&mut self) {
         *self = ClientSync::default();
@@ -1455,6 +1478,163 @@ mod tests {
         let (event, _) = sync.on_snapshot(&snapshot(pushed, 5, 1), car, &remotes, sim, true);
         assert_eq!(event, SyncEvent::Held);
         assert_eq!(t.disp, before.disp);
+    }
+
+    #[test]
+    fn an_escave_visit_parks_to_the_server_so_the_exit_is_not_a_correction() {
+        // The bug: the client froze on enter and left the prediction
+        // alone, so a snapshot after leave compared a stale pose (and
+        // the local ImpulseEscave kick the server never applied) and
+        // showed a 40–600u correction.
+        let (level, common) = test_sim();
+        let sim = Sim {
+            level: &level,
+            common: &common,
+            max_quant: 0.1,
+        };
+        let phys = CarPhysicsData::test_default();
+        let remotes: HashMap<PlayerId, RemoteCar> = HashMap::new();
+        let mut sync = ClientSync::default();
+        let mut t = space::Transform::IDENTITY;
+        t.disp = Vec3::new(64.0, 64.0, 10.0);
+        let mut d = Dynamo::default();
+        let s0 = server(64.0, 64.0);
+        let (event, _) = sync.on_snapshot(
+            &snapshot(s0, 0, 0),
+            LocalCar {
+                transform: &mut t,
+                dynamo: &mut d,
+                phys: &phys,
+            },
+            &remotes,
+            sim,
+            false,
+        );
+        assert_eq!(event, SyncEvent::FirstSync);
+
+        // The server still ran a few in-flight inputs after we froze.
+        let mut server_t = t;
+        let mut server_d = d;
+        let input = QuantInput {
+            motor: 1.0,
+            ..Default::default()
+        };
+        for _ in 0..8 {
+            step_input(
+                &mut server_d,
+                &mut server_t,
+                &input,
+                0.1,
+                QuantClock::input_factor(0.1, &common),
+                &phys,
+                &level,
+                &common,
+                None,
+            );
+        }
+        let parked = ServerCar {
+            transform: server_t,
+            linear_velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            traction: 0.0,
+            rudder: 0.0,
+            bumped: false,
+        };
+        // Without apply_parked the poses would already differ by tens of
+        // units; with it, the parked pose matches.
+        let car = LocalCar {
+            transform: &mut t,
+            dynamo: &mut d,
+            phys: &phys,
+        };
+        let (event, _) = sync.on_snapshot(&snapshot(parked, 8, 0), car, &remotes, sim, true);
+        assert_eq!(event, SyncEvent::Held);
+        sync.apply_parked(
+            &snapshot(parked, 8, 0),
+            LocalCar {
+                transform: &mut t,
+                dynamo: &mut d,
+                phys: &phys,
+            },
+            Some(level.period()),
+        );
+        assert!(
+            (t.disp - parked.transform.disp).length() < 0.02,
+            "parked at {:?}, server {:?}",
+            t.disp,
+            parked.transform.disp
+        );
+        // The parked dynamo (zeroed) is what both sides leave with.
+        server_t = t;
+        server_d = d;
+
+        // Both sides apply the same ImpulseEscave kick; the client drops
+        // history so a later snapshot does not rewind past it.
+        let kick = crate::level::trigger::ImpulseKick::velocity(None);
+        d.linear_velocity += kick;
+        server_d.linear_velocity += kick;
+        sync.ejected();
+        for _ in 0..3 {
+            sync.step_quantum(
+                LocalCar {
+                    transform: &mut t,
+                    dynamo: &mut d,
+                    phys: &phys,
+                },
+                &QuantInput::default(),
+                &remotes,
+                sim,
+                None,
+            );
+            step_input(
+                &mut server_d,
+                &mut server_t,
+                &QuantInput::default(),
+                0.1,
+                QuantClock::input_factor(0.1, &common),
+                &phys,
+                &level,
+                &common,
+                None,
+            );
+        }
+        let after = ServerCar {
+            transform: server_t,
+            linear_velocity: server_d.linear_velocity,
+            angular_velocity: server_d.angular_velocity,
+            traction: server_d.traction,
+            rudder: server_d.rudder,
+            bumped: false,
+        };
+        let before = t;
+        let (event, _) = sync.on_snapshot(
+            &snapshot(after, 8 + 3, 0),
+            LocalCar {
+                transform: &mut t,
+                dynamo: &mut d,
+                phys: &phys,
+            },
+            &remotes,
+            sim,
+            false,
+        );
+        let moved = before.disp.distance(t.disp);
+        assert!(
+            matches!(
+                event,
+                SyncEvent::Reconciled {
+                    outcome: Reconciled::InSync | Reconciled::Replayed(_),
+                    ..
+                }
+            ),
+            "{event:?}"
+        );
+        assert!(
+            moved < 10.0,
+            "exit correction {moved:.1}u, pose {:?} vs server {:?}",
+            t.disp,
+            after.transform.disp
+        );
     }
 
     #[test]

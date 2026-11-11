@@ -101,10 +101,7 @@ pub enum Kind {
     },
     /// World portal. `PassageEngine`: `ActionName` is the `PASSAGE` sensor,
     /// `PassageName` is the `passages.prm` id (e.g. F2G).
-    Passage {
-        sensor: usize,
-        passage_id: String,
-    },
+    Passage { sensor: usize, passage_id: String },
     /// Parsed but not driven - the engine types that need systems this port
     /// does not have.
     Unsupported(i32),
@@ -130,6 +127,27 @@ pub struct EscaveArrival {
 pub struct ImpulseKick {
     pub direction: (i32, i32, i32),
     pub power: i32,
+}
+
+impl ImpulseKick {
+    /// Local-space kick the car gets when it leaves an escave.
+    /// No nearby `IMPULSE` sensor: the original still throws the car
+    /// up and forward (`Vec3(0, 24, 80)`).
+    pub fn velocity(kick: Option<Self>) -> glam::Vec3 {
+        match kick {
+            Some(k) => {
+                let dir = glam::Vec3::new(
+                    k.direction.0 as f32,
+                    k.direction.1 as f32,
+                    k.direction.2 as f32,
+                );
+                let n = dir.length();
+                let dir = if n < 1e-3 { glam::Vec3::Z } else { dir / n };
+                dir * (k.power as f32).max(24.0)
+            }
+            None => glam::Vec3::new(0.0, 24.0, 80.0),
+        }
+    }
 }
 
 /// Player is standing on a `PASSAGE` sensor linked by a [`Kind::Passage`] engine.
@@ -712,7 +730,6 @@ impl Triggers {
             }
         })
     }
-
 
     /// Nearby `IMPULSE` sensor: original `continuous_impulse(vData, Power)`
     /// when leaving an ImpulseEscave.
@@ -1593,7 +1610,6 @@ PassageName F2G
         );
         assert!(triggers.passage_at((0, 0, 82), 20, SIZE).is_none());
     }
-
 
     #[test]
     fn leaving_closes_the_hatch_and_finds_the_impulse() {

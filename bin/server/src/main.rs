@@ -1794,6 +1794,28 @@ async fn main() {
                                     }
                                 }
                                 agent.in_escave = inside;
+                                if !inside {
+                                    // The same ImpulseEscave kick the client
+                                    // applies locally: otherwise the first
+                                    // snapshot after leave snaps the car
+                                    // back onto the pad (a 40–600u correction).
+                                    let at = agent.transform.disp;
+                                    let radius = (agent.phys_data.bbox.radius
+                                        * agent.transform.scale) as i32
+                                        + 96;
+                                    let vel = level::trigger::ImpulseKick::velocity(
+                                        moving.triggers.impulse_at(
+                                            (at.x as i32, at.y as i32, at.z as i32),
+                                            radius,
+                                            level.size,
+                                        ),
+                                    );
+                                    agent.dynamo.linear_velocity += vel;
+                                    info!(
+                                        "Escave kick p{} vel=({:.1},{:.1},{:.1})",
+                                        player_id, vel.x, vel.y, vel.z
+                                    );
+                                }
                                 info!(
                                     "Player {} ({}) {} an escave at ({:.0},{:.0})",
                                     player_id,
