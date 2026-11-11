@@ -739,7 +739,8 @@ pub struct Game {
     /// Online: whether the server was last told we are in an escave
     /// (`ClientMessage::Escave`), sent when the escave screen takes over
     /// the drive (`Screen::blocks_drive`) and when it gives it back.
-    escave_sent: bool,
+    /// Shared with the web client (`physics::client::EscaveNotify`).
+    escave_net: physics::client::EscaveNotify,
     /// Online on the escave screen: seconds to the next keepalive.
     keepalive_in: f32,
     /// HUD line about a death (ours, by us, or another's) and its seconds left.
@@ -1225,7 +1226,7 @@ impl Game {
             passage_note: None,
             world_view: None,
             wrecked: None,
-            escave_sent: false,
+            escave_net: Default::default(),
             weapons: weapon_table,
             reload: weapon::Reload::default(),
             clock: std::time::Instant::now(),
@@ -1933,15 +1934,13 @@ impl Game {
         let Some(net) = self.net.as_ref() else {
             return;
         };
-        if net.player_id.is_none() || inside == self.escave_sent {
-            return;
+        if let Some(inside) = self.escave_net.take(inside, net.player_id.is_some()) {
+            log::info!(
+                "Escave: telling the server we are {}",
+                if inside { "inside" } else { "back out" }
+            );
+            net.send_escave(inside);
         }
-        log::info!(
-            "Escave: telling the server we are {}",
-            if inside { "inside" } else { "back out" }
-        );
-        net.send_escave(inside);
-        self.escave_sent = inside;
     }
 
     /// Online with the drive blocked (the escave screen) no input goes
@@ -3141,7 +3140,7 @@ impl Game {
                             format!("Connected (player {}, level '{}')", player_id, level_name);
                         self.mp_state.connected = true;
                         // A fresh join is out on the road.
-                        self.escave_sent = false;
+                        self.escave_net.reset();
                         self.spiral_sync.reset();
                     }
                     NetEvent::PlayerJoined {
@@ -3223,7 +3222,7 @@ impl Game {
                                 // We already left: a snapshot still marked
                                 // in_escave predates the kick and would
                                 // pull the car back onto the pad.
-                                if !self.escave_sent && agent_state.in_escave {
+                                if !self.escave_net.sent() && agent_state.in_escave {
                                     continue;
                                 }
                                 // Client-side prediction: compare the
@@ -3407,7 +3406,7 @@ impl Game {
                     NetEvent::Disconnected => {
                         self.wrecked = None;
                         self.my_energy = None;
-                        self.escave_sent = false;
+                        self.escave_net.reset();
                         self.spiral_sync.reset();
                         log::warn!("Disconnected from server");
                         self.remote_agents.clear();
