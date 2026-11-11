@@ -14,9 +14,12 @@ assets, laid out to match the layout expected by `src/data.rs`:
                             build reads. Cutscene videos, menu art,
                             music, original binaries, and editor scripts
                             are dropped by default (~180 MiB on the wire).
-      fostral.zip           Fostral's world.ini / output.vmc plus that
-                            world's iscreen locations (Podish, Incubator)
-      glorx.zip             ... plus VigBoo / Lampasso / Ogorod iscreen
+      fostral.zip           Fostral's world.ini / output.vmc (terrain)
+      fostral-iscreen.zip   that world's iscreen locations (Podish,
+                            Incubator). The web client fetches this on
+                            first enter, so a player who never visits
+                            an escave does not download it.
+      glorx.zip / glorx-iscreen.zip
       ...
 
 A level directory is any directory containing a `world.ini` file; the
@@ -57,9 +60,10 @@ from pathlib import Path
 # currently reads it, but it's ~10 KiB and levels reference palettes
 # by relative path.
 #
-# IScreen location maps live in the *level* zip, not common.zip: see
-# LEVEL_ISCREEN. resource/actint/ is the original 2D menu art and stays
-# out of the minimal pack.
+# IScreen location maps live in a sibling `{level}-iscreen.zip`, not
+# common.zip and not the terrain zip: see LEVEL_ISCREEN and
+# `src/escave/cave.rs::iscreen_archive`. resource/actint/ is the
+# original 2D menu art and stays out of the minimal pack.
 WEB_KEEP_FILES = {
     "game.lst",
     "wrlds.dat",
@@ -137,9 +141,29 @@ def iscreen_extras(root: Path, level_id: str) -> list[tuple[Path, str]]:
 
 
 def is_level_iscreen(arcname: str) -> bool:
-    """True for files that belong in a world zip, not common.zip."""
+    """True for files that belong in a `{level}-iscreen.zip`, not common.zip."""
     prefix = ISCREEN_LDATA.as_posix() + "/"
     return arcname.startswith(prefix)
+
+
+def iscreen_archive_name(level_id: str) -> str:
+    """Filename in the data-0 release: `fostral-iscreen.zip`, etc."""
+    return f"{level_id.lower()}-iscreen.zip"
+
+
+def pack_iscreen(
+    extras: list[tuple[Path, str]],
+    out_path: Path,
+    verbose: bool,
+) -> None:
+    """Zip iscreen location maps into `out_path` at their root-relative keys."""
+    if verbose:
+        print(f"  building {out_path.name} ({len(extras)} file(s))")
+    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        for src, arcname in extras:
+            if verbose:
+                print(f"    + {arcname}")
+            zf.write(src, arcname=arcname)
 
 
 def pack_level(
@@ -317,14 +341,20 @@ def main() -> int:
                 f"    note: no iscreen ldata for {lid} "
                 f"(looked for {ISCREEN_LDATA.as_posix()}/{{{wanted}}})"
             )
-        pack_level(lid, d, out_path, args.verbose, extras)
-        extra_note = (
-            f", {len(extras)} iscreen file(s)" if extras else ""
-        )
+        # Terrain only — iscreen is a sibling zip so the web client can
+        # fetch it on first enter rather than at startup.
+        pack_level(lid, d, out_path, args.verbose, extras=None)
         print(
             f"    -> {out_path.name}  {human_bytes(out_path.stat().st_size)}"
-            f"{extra_note}"
         )
+        if extras:
+            iscreen_path = out / iscreen_archive_name(lid)
+            pack_iscreen(extras, iscreen_path, args.verbose)
+            print(
+                f"    -> {iscreen_path.name}  "
+                f"{human_bytes(iscreen_path.stat().st_size)}"
+                f", {len(extras)} iscreen file(s)"
+            )
 
     if not args.skip_common:
         out_path = out / "common.zip"

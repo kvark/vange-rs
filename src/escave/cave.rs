@@ -134,9 +134,30 @@ pub fn ini_path(data_path: &Path, name: &str) -> Option<PathBuf> {
     Some(data_path.join(ldata_dir(name)?).join("escave.ini"))
 }
 
-/// VFS key of this escave's `escave.ini`, matching the packed level zip.
+/// VFS key of this escave's `escave.ini`, matching the packed iscreen zip.
 pub fn ini_key(name: &str) -> Option<String> {
     Some(format!("{}/escave.ini", ldata_dir(name)?))
+}
+
+/// Filename in the `data-0` release that holds this escave's iscreen
+/// ldata. Matches `tools/pack-data.py` (`{world}-iscreen.zip`). The web
+/// client fetches this on first enter when the mounted level zip did
+/// not already include the files.
+pub fn iscreen_archive(name: &str) -> Option<&'static str> {
+    match ldata_dir(name)? {
+        "resource/iscreen/ldata/l0" | "resource/iscreen/ldata/l1" => Some("fostral-iscreen.zip"),
+        "resource/iscreen/ldata/l2" | "resource/iscreen/ldata/l3" | "resource/iscreen/ldata/l4" => {
+            Some("glorx-iscreen.zip")
+        }
+        "resource/iscreen/ldata/l5" | "resource/iscreen/ldata/l6" => Some("necross-iscreen.zip"),
+        "resource/iscreen/ldata/l7" => Some("xplo-iscreen.zip"),
+        _ => None,
+    }
+}
+
+/// Whether `vfs` already has this escave's `escave.ini`.
+pub fn has_iscreen(vfs: &Vfs, name: &str) -> bool {
+    ini_key(name).is_some_and(|k| vfs.contains(&k))
 }
 
 /// Load the iscreen height map if the purchased data is on disk.
@@ -301,6 +322,15 @@ mod tests {
             ini_key("Podish").as_deref(),
             Some("resource/iscreen/ldata/l0/escave.ini")
         );
+        assert_eq!(iscreen_archive("Podish"), Some("fostral-iscreen.zip"));
+        assert_eq!(iscreen_archive("Incubator"), Some("fostral-iscreen.zip"));
+        assert_eq!(iscreen_archive("VigBoo"), Some("glorx-iscreen.zip"));
+        assert_eq!(iscreen_archive("Lampasso"), Some("glorx-iscreen.zip"));
+        assert_eq!(iscreen_archive("Ogorod"), Some("glorx-iscreen.zip"));
+        assert_eq!(iscreen_archive("ZeePa"), Some("necross-iscreen.zip"));
+        assert_eq!(iscreen_archive("Bzone"), Some("necross-iscreen.zip"));
+        assert_eq!(iscreen_archive("Spobs"), Some("xplo-iscreen.zip"));
+        assert!(iscreen_archive("MysteryHole").is_none());
         assert!(
             ((std::f32::consts::FRAC_PI_2 - ELEVATION).to_degrees() - 30.0).abs() < 0.05,
             "cave view should sit 30° off vertical, got {}°",
@@ -398,6 +428,7 @@ none
     #[test]
     fn missing_iscreen_in_vfs_is_none() {
         let vfs = Vfs::new();
+        assert!(!has_iscreen(&vfs, "Podish"));
         assert!(
             load_from_vfs(
                 &vfs,
@@ -407,5 +438,14 @@ none
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn has_iscreen_sees_the_ini_key() {
+        let mut vfs = Vfs::new();
+        assert!(!has_iscreen(&vfs, "Podish"));
+        vfs.insert("resource/iscreen/ldata/l0/escave.ini", b"ini".to_vec());
+        assert!(has_iscreen(&vfs, "Podish"));
+        assert!(!has_iscreen(&vfs, "Incubator"));
     }
 }
