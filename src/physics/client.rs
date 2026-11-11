@@ -4,7 +4,8 @@
 //! - [`RemoteCar`]: another player's car as the client sees it: the latest
 //!   server state (the source of its contact [`Ghost`]) and the pose drawn
 //!   from it: each snapshot blended in from the drawn pose, then dead
-//!   reckoned through gaps.
+//!   reckoned through gaps. An airborne car is carried with velocity plus
+//!   gravity, using the same constant and integrator as the local sim.
 //! - [`ClientSync`]: the local car's side of [`super::prediction`]: the
 //!   quantum clock, the numbered prediction history, the remote ghosts and
 //!   the render offset, plus the per-quantum step and the snapshot handling
@@ -146,6 +147,8 @@ pub struct RemoteCar {
     /// reckoning velocity, and spin as a scaled axis (radians per second).
     /// Taken from the poses rather than `linear_velocity`, which is in
     /// physics time, so it carries on exactly what the snapshots showed.
+    /// While airborne this is the snapshot's world velocity instead, and
+    /// [`interpolate`] applies gravity to it.
     pub reckon_velocity: Vec3,
     pub reckon_spin: Vec3,
     /// The motion the blend source carries on with: the one the car was
@@ -169,6 +172,41 @@ pub struct RemoteCar {
     /// the last [`Self::LAG_WINDOW`], `(tick time, lag)`, kept only while
     /// it could still be the smallest.
     lags: std::collections::VecDeque<(f64, f64)>,
+    /// World-space velocity of the latest snapshot (`rot * linear_velocity`).
+    snapshot_world_vel: Vec3,
+    /// The latest snapshot is in free flight: reckon with its world
+    /// velocity plus gravity, not the chord of the last two poses.
+    reckon_airborne: bool,
+    /// Whether the blend source was airborne when the latest snapshot arrived.
+    prev_airborne: bool,
+    /// `common.nature.gravity`. Zero (the default) keeps the old
+    /// constant-velocity reckon, so unit tests that do not set it stay valid.
+    gravity: f32,
+    /// Physics step used to integrate a long free-flight carry,
+    /// `common.nature.time_delta0`.
+    physics_dt: f32,
+    /// Physics seconds per wall second (standard_frame_rate times
+    /// time_delta0 times num_calls_analysis). `linear_velocity` and gravity
+    /// live in physics time; a wall-time carry has to be scaled by this or
+    /// an airborne car is about 9x too slow and snaps.
+    physics_rate: f32,
+}
+
+/// How far the drawn remote car was from a new snapshot when it arrived.
+#[derive(Clone, Copy, Debug)]
+pub struct RemoteSnapDelta {
+    /// Distance between this snapshot pose and the previous one.
+    pub step: f32,
+    /// Distance from the pose drawn when this snapshot arrived.
+    pub draw_error: f32,
+    /// Car time since the previous snapshot, seconds.
+    pub dt: f32,
+    /// Seconds this snapshot was carried on at once.
+    pub lead: f32,
+    /// The snapshot was shown at once (first pose, or farther than [`RemoteCar::TELEPORT`]).
+    pub teleport: bool,
+    /// This was the first pose.
+    pub first: bool,
 }
 
 impl RemoteCar {
@@ -196,6 +234,15 @@ impl RemoteCar {
     /// Farthest a late snapshot is carried on at once, seconds: past this
     /// a turn or a stop it missed overshoots more than the lateness saves.
     pub const LEAD_MAX: f32 = 0.15;
+    /// Vertical world speed (u/s) that counts as a jump or kick.
+    const AIR_VZ: f32 = 8.0;
+    /// How far above a free-fall prediction a snapshot must sit to count
+    /// as having landed (ground contact, not the apex).
+    const LAND_Z: f32 = 4.0;
+    /// `|az + g|` below this (u/s²) matches free fall. Narrower than `g`
+    /// so a supported car (`az ≈ 0`) is not treated as flight; wide enough
+    /// for a little drag.
+    const GRAVITY_AZ_SLACK: f32 = 1.5;
 
     pub fn new(phys_data: CarPhysicsData) -> Self {
         RemoteCar {
@@ -221,7 +268,30 @@ impl RemoteCar {
             last_tick: None,
             last_time: None,
             lags: Default::default(),
+            snapshot_world_vel: Vec3::ZERO,
+            reckon_airborne: false,
+            prev_airborne: false,
+            gravity: 0.0,
+            physics_dt: 0.04,
+            physics_rate: 1.0,
         }
+    }
+
+    /// Use the local sim's gravity and time scale when dead-reckoning an
+    /// airborne car. Without this call, gravity stays 0 and the car keeps
+    /// the old constant-velocity reckon (so unit tests that do not set it
+    /// stay valid).
+    pub fn set_gravity(&mut self, common: &config::common::Common) {
+        self.gravity = common.nature.gravity;
+        self.physics_dt = common.nature.time_delta0.max(1e-4);
+        self.physics_rate = (common.speed.standard_frame_rate as f32
+            * common.nature.time_delta0
+            * common.nature.num_calls_analysis as f32)
+            .max(1e-4);
+    }
+
+    fn physics_time(&self, wall: f32) -> f32 {
+        wall * self.physics_rate
     }
 
     /// Take this car's state from the `WorldState` of server `tick`.
@@ -240,10 +310,10 @@ impl RemoteCar {
         tick: u32,
         quanta_per_sec: f32,
         period: Option<Vec2>,
-    ) {
+    ) -> Option<RemoteSnapDelta> {
         self.control = agent_control(agent);
         self.in_escave = agent.in_escave;
-        self.on_input_snapshot(&server_car(agent), agent.ack, tick, quanta_per_sec, period);
+        self.on_input_snapshot(&server_car(agent), agent.ack, tick, quanta_per_sec, period)
     }
 
     /// `on_agent` with the car's state apart from its control.
@@ -254,7 +324,7 @@ impl RemoteCar {
         tick: u32,
         quanta_per_sec: f32,
         period: Option<Vec2>,
-    ) {
+    ) -> Option<RemoteSnapDelta> {
         let last = self.last_time;
         let (time, by_tick, pinned) = self.agent_time(ack, tick, quanta_per_sec);
         // How far this input time is behind the tick, against the least
@@ -277,13 +347,13 @@ impl RemoteCar {
                 self.angular_velocity = car.angular_velocity;
                 self.traction = car.traction;
                 self.rudder = car.rudder;
-                return;
+                return None;
             }
             Some(last) => (time - last) as f32,
             None => 1.0 / Self::SNAPSHOT_RATE,
         };
         self.last_time = Some(time);
-        self.on_snapshot_timed(car, period, dt, behind.min(Self::LEAD_MAX));
+        Some(self.on_snapshot_timed(car, period, dt, behind.min(Self::LEAD_MAX)))
     }
 
     /// Input time of a snapshot of server `tick` with input `ack`, and
@@ -317,8 +387,8 @@ impl RemoteCar {
     }
 
     /// Take the next snapshot of this car, one interval after the last.
-    pub fn on_snapshot(&mut self, car: &ServerCar, period: Option<Vec2>) {
-        self.on_snapshot_timed(car, period, 1.0 / Self::SNAPSHOT_RATE, 0.0);
+    pub fn on_snapshot(&mut self, car: &ServerCar, period: Option<Vec2>) -> RemoteSnapDelta {
+        self.on_snapshot_timed(car, period, 1.0 / Self::SNAPSHOT_RATE, 0.0)
     }
 
     /// Take a snapshot of this car. The first one (and a teleport) is
@@ -329,7 +399,13 @@ impl RemoteCar {
     ///
     /// `dt` is the car's time since the previous snapshot, `lead` how far
     /// beyond its arrival to carry it on at once.
-    pub fn on_snapshot_timed(&mut self, car: &ServerCar, period: Option<Vec2>, dt: f32, lead: f32) {
+    pub fn on_snapshot_timed(
+        &mut self,
+        car: &ServerCar,
+        period: Option<Vec2>,
+        dt: f32,
+        lead: f32,
+    ) -> RemoteSnapDelta {
         self.linear_velocity = car.linear_velocity;
         self.angular_velocity = car.angular_velocity;
         self.traction = car.traction;
@@ -344,18 +420,31 @@ impl RemoteCar {
             target.disp.y -= fold(d.y, p.y);
         }
         let step = target.disp - self.target_transform.disp;
-        if !self.pose_ready
-            || step.length() > Self::TELEPORT
-            || (target.disp - self.render_transform.disp).length() > Self::TELEPORT
-        {
+        let world_vel = target.rot * car.linear_velocity;
+        let first = !self.pose_ready;
+        let draw_error = (target.disp - self.render_transform.disp).length();
+        let teleport = first || step.length() > Self::TELEPORT || draw_error > Self::TELEPORT;
+        let airborne = self.update_airborne(target.disp, world_vel, dt, first);
+        if teleport {
             self.prev_transform = target;
             self.render_transform = target;
-            self.prev_velocity = Vec3::ZERO;
-            self.prev_spin = Vec3::ZERO;
-            self.reckon_velocity = Vec3::ZERO;
             self.reckon_spin = Vec3::ZERO;
+            self.prev_spin = Vec3::ZERO;
             self.lead = 0.0;
             self.pose_ready = true;
+            if airborne {
+                // First mid-flight pose (a leave kick): carry with the
+                // snapshot's world velocity plus gravity, don't sit still.
+                self.reckon_velocity = world_vel;
+                self.prev_velocity = world_vel;
+                self.reckon_airborne = true;
+                self.prev_airborne = true;
+            } else {
+                self.prev_velocity = Vec3::ZERO;
+                self.reckon_velocity = Vec3::ZERO;
+                self.reckon_airborne = false;
+                self.prev_airborne = false;
+            }
         } else {
             let mut turn = target.rot * self.target_transform.rot.inverse();
             if turn.w < 0.0 {
@@ -364,25 +453,105 @@ impl RemoteCar {
             // The blend source carries on as the drawn car was carried
             // (still, once held past the cap).
             let since = self.interp_t / Self::SNAPSHOT_RATE;
+            let ahead = since.min(Self::DEAD_RECKON_MAX);
+            let ahead_target = (since + self.lead).min(Self::DEAD_RECKON_MAX);
             (self.prev_velocity, self.prev_spin) = if since < Self::DEAD_RECKON_MAX {
+                let prev_v = self.carried_velocity(self.prev_velocity, self.prev_airborne, ahead);
+                let rec_v =
+                    self.carried_velocity(self.reckon_velocity, self.reckon_airborne, ahead_target);
                 (
-                    self.prev_velocity.lerp(self.reckon_velocity, self.blend),
+                    prev_v.lerp(rec_v, self.blend),
                     self.prev_spin.lerp(self.reckon_spin, self.blend),
                 )
             } else {
                 (Vec3::ZERO, Vec3::ZERO)
             };
             self.prev_transform = self.render_transform;
+            self.prev_airborne = self.reckon_airborne;
             self.reckon_spin = turn.to_scaled_axis() / dt;
-            // The step is a chord: its direction is the heading half the
-            // interval back. Turned on to the snapshot's heading.
-            let half = Quat::from_scaled_axis(self.reckon_spin * (0.5 * dt));
-            self.reckon_velocity = half * step / dt;
+            self.reckon_velocity = if airborne {
+                world_vel
+            } else {
+                // The step is a chord: its direction is the heading half the
+                // interval back. Turned on to the snapshot's heading.
+                let half = Quat::from_scaled_axis(self.reckon_spin * (0.5 * dt));
+                half * step / dt
+            };
+            self.reckon_airborne = airborne;
             self.lead = lead;
         }
+        self.snapshot_world_vel = world_vel;
         self.target_transform = target;
         self.interp_t = 0.0;
         self.blend = 0.0;
+        RemoteSnapDelta {
+            step: step.length(),
+            draw_error,
+            dt,
+            lead,
+            teleport,
+            first,
+        }
+    }
+
+    /// True when this snapshot should be dead-reckoned as free flight.
+    fn update_airborne(&self, pos: Vec3, world_vel: Vec3, dt: f32, first: bool) -> bool {
+        if self.gravity <= 0.0 {
+            return false;
+        }
+        let phys_dt = self.physics_time(dt).max(1e-4);
+        let az = (world_vel.z - self.snapshot_world_vel.z) / phys_dt;
+        // A kick or jump, or the first mid-flight pose after a leave.
+        // A single physics step of settling onto the ground (`az ≈ -g`
+        // with a small `vz`) is not enough: that used to mark the car
+        // airborne and leave it there, and gravity plus lead then walked
+        // the drawn pose tens of units into the dirt.
+        let launched = world_vel.z.abs() > Self::AIR_VZ
+            && (first
+                || world_vel.z > self.snapshot_world_vel.z + Self::AIR_VZ
+                || (az + self.gravity).abs() < Self::GRAVITY_AZ_SLACK);
+        if first {
+            return launched;
+        }
+        let mut pred = self.target_transform.disp;
+        let mut pred_vel = self.snapshot_world_vel;
+        super::integrate_free_flight_for(
+            &mut pred,
+            &mut pred_vel,
+            self.gravity,
+            phys_dt,
+            self.physics_dt,
+        );
+        let z_error = pos.z - pred.z;
+        if self.reckon_airborne {
+            // Apex: `vz ≈ 0` but `z_error` is still ~0. A surface: the
+            // pose sits above free fall, or vertical accel is no longer
+            // gravity (a landing spike or a supported car).
+            let on_surface = az.abs() < self.gravity * 0.5;
+            if z_error > Self::LAND_Z || (on_surface && z_error > 0.5) {
+                return false;
+            }
+            return true;
+        }
+        launched
+    }
+
+    /// World velocity `ahead` seconds after `start`, with gravity if airborne.
+    fn carried_velocity(&self, start: Vec3, airborne: bool, ahead: f32) -> Vec3 {
+        if airborne && self.gravity > 0.0 {
+            let mut p = Vec3::ZERO;
+            let mut v = start;
+            super::integrate_free_flight_for(
+                &mut p,
+                &mut v,
+                self.gravity,
+                self.physics_time(ahead),
+                self.physics_dt,
+            );
+            v
+        } else {
+            start
+        }
     }
 
     /// Move the drawn pose `delta` seconds on.
@@ -394,28 +563,54 @@ impl RemoteCar {
         let rate = (delta / Self::BLEND).min(1.0 / Self::BLEND_FRAMES_MIN);
         self.blend = (self.blend + rate).min(1.0);
         let blend = self.blend;
-        let carry = |t: &space::Transform, v: Vec3, w: Vec3, ahead: f32| space::Transform {
-            disp: t.disp + arc(v, w, ahead),
-            rot: (Quat::from_scaled_axis(w * ahead) * t.rot).normalize(),
-            scale: t.scale,
-        };
-        let a = carry(
+        let a = self.carry(
             &self.prev_transform,
             self.prev_velocity,
             self.prev_spin,
             ahead,
+            self.prev_airborne,
         );
-        let b = carry(
+        let b = self.carry(
             &self.target_transform,
             self.reckon_velocity,
             self.reckon_spin,
             ahead_target,
+            self.reckon_airborne,
         );
         self.render_transform = space::Transform {
             disp: a.disp.lerp(b.disp, blend),
             rot: a.rot.slerp(b.rot, blend),
             scale: a.scale + (b.scale - a.scale) * blend,
         };
+    }
+
+    fn carry(
+        &self,
+        t: &space::Transform,
+        v: Vec3,
+        w: Vec3,
+        ahead: f32,
+        airborne: bool,
+    ) -> space::Transform {
+        let disp = if airborne && self.gravity > 0.0 {
+            let mut p = t.disp;
+            let mut vel = v;
+            super::integrate_free_flight_for(
+                &mut p,
+                &mut vel,
+                self.gravity,
+                self.physics_time(ahead),
+                self.physics_dt,
+            );
+            p
+        } else {
+            t.disp + arc(v, w, ahead)
+        };
+        space::Transform {
+            disp,
+            rot: (Quat::from_scaled_axis(w * ahead) * t.rot).normalize(),
+            scale: t.scale,
+        }
     }
 
     /// Whether the car is on the road to be drawn: it has a pose and is
@@ -470,6 +665,9 @@ impl RemoteCar {
         self.last_tick = None;
         self.last_time = None;
         self.lags.clear();
+        self.snapshot_world_vel = Vec3::ZERO;
+        self.reckon_airborne = false;
+        self.prev_airborne = false;
     }
 
     /// The client moved its coordinates by `-by` (a torus rebase).
@@ -1391,6 +1589,178 @@ mod tests {
         // Its next snapshot pins the input timeline again by the tick.
         let (_, _, pinned) = r.agent_time(1004, 101, QPS);
         assert!(pinned);
+    }
+
+    fn air_car(pos: Vec3, world_vel: Vec3) -> ServerCar {
+        let mut car = server(pos.x, pos.y);
+        car.transform.disp = pos;
+        car.transform.rot = Quat::IDENTITY;
+        car.linear_velocity = world_vel;
+        car
+    }
+
+    /// Predicted-vs-actual draw error of a free-flight launch, snapshots
+    /// at 20 Hz, interpolated at 60 fps. Truth uses the same integrator
+    /// and time scale as the local sim.
+    fn airborne_predict_error(launch: Vec3, seconds: f32) -> (f32, f32) {
+        let common = config::common::Common::test_default();
+        let snap_dt = 1.0 / RemoteCar::SNAPSHOT_RATE;
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        r.set_gravity(&common);
+        let mut pos = Vec3::new(100.0, 100.0, 60.0);
+        let mut vel = launch;
+        let first = r.on_snapshot(&air_car(pos, vel), None);
+        assert!(first.first && first.teleport);
+        let mut worst_draw = 0.0f32;
+        let mut worst_pred = 0.0f32;
+        let n = (seconds / snap_dt).round() as u32;
+        let frame = 1.0 / 60.0;
+        for i in 1..=n {
+            crate::physics::integrate_free_flight_for(
+                &mut pos,
+                &mut vel,
+                common.nature.gravity,
+                r.physics_time(snap_dt),
+                common.nature.time_delta0,
+            );
+            let mut remain = snap_dt;
+            while remain > 1e-6 {
+                let d = remain.min(frame);
+                r.interpolate(d);
+                remain -= d;
+            }
+            let pred_err = r.render_transform.disp.distance(pos);
+            let delta = r.on_snapshot(&air_car(pos, vel), None);
+            worst_pred = worst_pred.max(pred_err);
+            worst_draw = worst_draw.max(delta.draw_error);
+            assert!(
+                !delta.teleport && delta.draw_error < 8.0 && pred_err < 8.0,
+                "snapshot {i}: draw={:.2} pred={:.2} step={:.2} pos={:?} vel={:?}",
+                delta.draw_error,
+                pred_err,
+                delta.step,
+                pos,
+                vel
+            );
+        }
+        (worst_draw, worst_pred)
+    }
+
+    #[test]
+    fn remote_predicts_an_impulse_escave_kick() {
+        let kick = crate::level::trigger::ImpulseKick::velocity(None);
+        assert!((kick - Vec3::new(0.0, 24.0, 80.0)).length() < 1e-5);
+        let (draw, pred) = airborne_predict_error(kick, 2.0);
+        assert!(draw < 8.0 && pred < 8.0, "draw={draw:.2} pred={pred:.2}");
+    }
+
+    #[test]
+    fn remote_predicts_a_jump() {
+        let common = config::common::Common::test_default();
+        let launch = crate::physics::jump_dir(common.force.max_jump_power);
+        assert!(launch.z > 8.0, "jump vz {}", launch.z);
+        let (draw, pred) = airborne_predict_error(launch, 1.5);
+        assert!(draw < 8.0 && pred < 8.0, "draw={draw:.2} pred={pred:.2}");
+    }
+
+    #[test]
+    fn remote_ground_driving_with_gravity_set_does_not_snap() {
+        let common = config::common::Common::test_default();
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        r.set_gravity(&common);
+        let speed = 40.0;
+        let mut worst = 0.0f32;
+        for n in 0..30 {
+            let car = moving(n, speed, 0.0);
+            let delta = r.on_snapshot(&car, None);
+            if n >= 4 {
+                assert!(!delta.teleport, "teleport at {n} draw={}", delta.draw_error);
+                worst = worst.max(delta.draw_error);
+            }
+            r.interpolate(1.0 / RemoteCar::SNAPSHOT_RATE);
+        }
+        assert!(worst < 8.0, "ground draw error {worst:.2}");
+    }
+
+    fn shipped_common() -> config::common::Common {
+        let mut common = config::common::Common::test_default();
+        common.nature.gravity = 3.50794;
+        common.nature.time_delta0 = 0.1286;
+        common.nature.num_calls_analysis = 5;
+        common.speed.standard_frame_rate = 14;
+        common
+    }
+
+    #[test]
+    fn remote_predicts_a_kick_at_shipped_time_scale() {
+        let common = shipped_common();
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        r.set_gravity(&common);
+        assert!((r.physics_rate - 9.0).abs() < 0.05);
+        let kick = crate::level::trigger::ImpulseKick::velocity(None);
+        let snap_dt = 1.0 / RemoteCar::SNAPSHOT_RATE;
+        let mut pos = Vec3::new(100.0, 100.0, 60.0);
+        let mut vel = kick;
+        let first = r.on_snapshot(&air_car(pos, vel), None);
+        assert!(first.first && first.teleport);
+        let mut worst_draw = 0.0f32;
+        let mut worst_pred = 0.0f32;
+        let frame = 1.0 / 60.0;
+        for i in 1..=40 {
+            crate::physics::integrate_free_flight_for(
+                &mut pos,
+                &mut vel,
+                common.nature.gravity,
+                r.physics_time(snap_dt),
+                common.nature.time_delta0,
+            );
+            let mut remain = snap_dt;
+            while remain > 1e-6 {
+                let d = remain.min(frame);
+                r.interpolate(d);
+                remain -= d;
+            }
+            let pred_err = r.render_transform.disp.distance(pos);
+            let delta = r.on_snapshot(&air_car(pos, vel), None);
+            worst_pred = worst_pred.max(pred_err);
+            worst_draw = worst_draw.max(delta.draw_error);
+            assert!(
+                !delta.teleport && delta.draw_error < 8.0 && pred_err < 8.0,
+                "snapshot {i}: draw={:.2} pred={:.2} step={:.2}",
+                delta.draw_error,
+                pred_err,
+                delta.step
+            );
+        }
+        assert!(
+            worst_draw < 8.0 && worst_pred < 8.0,
+            "draw={worst_draw:.2} pred={worst_pred:.2}"
+        );
+    }
+
+    #[test]
+    fn remote_ground_driving_at_shipped_time_scale_does_not_snap() {
+        let common = shipped_common();
+        let mut r = RemoteCar::new(CarPhysicsData::test_default());
+        r.set_gravity(&common);
+        let speed = 40.0;
+        let mut worst = 0.0f32;
+        for n in 0..40 {
+            let car = moving(n, speed, 0.0);
+            let delta = r.on_snapshot(&car, None);
+            if n >= 4 {
+                assert!(
+                    !delta.teleport && !r.reckon_airborne,
+                    "n={n} teleport={} airborne={} draw={:.2}",
+                    delta.teleport,
+                    r.reckon_airborne,
+                    delta.draw_error
+                );
+                worst = worst.max(delta.draw_error);
+            }
+            r.interpolate(1.0 / RemoteCar::SNAPSHOT_RATE);
+        }
+        assert!(worst < 8.0, "ground draw error {worst:.2}");
     }
 
     #[test]
