@@ -44,6 +44,7 @@ Controls:
   - `P`: enter/exit pause for debugging
   - `R`: reset forces and orientation of the mechous
   - `<>`: step physics frame back/forward during the pause
+  - `F8`: show or hide the Tweaks debug panel (hidden by default)
   - `Esc`: exit
 
 <img alt="game" src="etc/shots/Road11-pause.png" width="25%">

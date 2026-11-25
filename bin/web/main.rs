@@ -690,6 +690,11 @@ struct WebApp {
     /// Online: our energy shield and its max (`AgentState::energy`), the
     /// server's. Offline there is none.
     energy: Option<(u32, u32)>,
+    /// Online: spiral charge / capacity, echoed on `AgentState.spiral_charge`.
+    /// Display-only; does not change when we send `SetSpiral`.
+    spiral: Option<(u8, u8)>,
+    /// Tweaks / Settings window. Hidden by default; F8 toggles it.
+    settings_open: bool,
     /// Other players of the multiplayer session.
     remotes: HashMap<vangers_net::PlayerId, WebRemote>,
     /// Our car is a wreck (`ServerMessage::Died`): no control until the
@@ -1110,6 +1115,8 @@ impl WebApp {
             mp: Default::default(),
             escave_net: Default::default(),
             energy: None,
+            spiral: None,
+            settings_open: false,
             remotes: HashMap::new(),
             wrecked: false,
             net_debug: NetDebug::new(),
@@ -1261,6 +1268,10 @@ impl WebApp {
             return;
         }
 
+        if !self.settings_open {
+            return;
+        }
+
         const PANEL_WIDTH: f32 = 340.0;
 
         let window = egui::Window::new("Settings")
@@ -1271,6 +1282,9 @@ impl WebApp {
             .max_width(PANEL_WIDTH)
             .resizable(false);
         window.show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("F8 to hide").weak().small());
+            });
             ui.label(format!(
                 "Backend: {}",
                 if self.is_webgpu { "WebGPU" } else { "WebGL2" }
@@ -1335,29 +1349,19 @@ impl WebApp {
         self.minimap.show(ctx, &self.level, center, heading, &marks);
     }
 
-    /// Online: the energy shield and armour, in whole `car.prm` points
-    /// (the original's scale), as the native HUD shows them.
+    /// Online: the energy shield, armour and spiral, in whole `car.prm`
+    /// points (the original's scale), matching the native HUD.
     fn draw_hull_hud(&self, ctx: &egui::Context) {
-        let (Some((energy, max_energy)), Some(agent)) = (self.energy, self.agent.as_ref()) else {
+        let Some(agent) = self.agent.as_ref() else {
             return;
         };
-        egui::Area::new(egui::Id::new("hull-hud"))
-            .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0))
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                ui.label(
-                    egui::RichText::new(vangers::combat::shield::hud_line(energy, max_energy))
-                        .strong(),
-                );
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Armour {}/{}",
-                        agent.armor / vangers::combat::ARMOR_UNIT,
-                        agent.max_armor / vangers::combat::ARMOR_UNIT
-                    ))
-                    .strong(),
-                );
-            });
+        let status = vangers::hud::Status::from_units(
+            agent.armor,
+            agent.max_armor,
+            self.energy,
+            self.spiral,
+        );
+        vangers::hud::draw(ctx, &status);
     }
 
     fn draw_net_debug(&mut self, ctx: &egui::Context) {
@@ -2282,6 +2286,7 @@ fn key_from_code(code: &str) -> Option<KeyCode> {
         "AltLeft" | "AltRight" => KeyCode::AltLeft,
         "KeyJ" => KeyCode::KeyJ,
         "F2" => KeyCode::F2,
+        "F8" => KeyCode::F8,
         _ => return None,
     })
 }
@@ -2672,7 +2677,7 @@ impl WebHandler {
 /// and a lone Alt (jump) moves focus to the browser's menu on Windows and
 /// some Linux desktops, after which the page hears no keys at all.
 fn browser_eats(code: &str) -> bool {
-    matches!(code, "Space" | "AltLeft" | "AltRight" | "F2") || code.starts_with("Arrow")
+    matches!(code, "Space" | "AltLeft" | "AltRight" | "F2" | "F8") || code.starts_with("Arrow")
 }
 
 /// Ctrl+Tab (and any other chord the browser eats) never delivers keyup.
@@ -3352,6 +3357,9 @@ impl WebHandler {
         if taps.contains(&KeyCode::F2) {
             gpu.app.net_debug.visible = !gpu.app.net_debug.visible;
         }
+        if taps.contains(&KeyCode::F8) {
+            gpu.app.settings_open = !gpu.app.settings_open;
+        }
         let free_z_up = keys.contains(&KeyCode::KeyZ);
         let free_z_down = keys.contains(&KeyCode::KeyX);
         let free_q = keys.contains(&KeyCode::KeyQ);
@@ -3919,6 +3927,15 @@ impl WebHandler {
                             agent.armor = me.armor;
                             agent.max_armor = me.max_armor;
                         }
+                        // Display only: capacity from this car's `max_teleport`.
+                        let cap = gpu
+                            .app
+                            .agent
+                            .as_ref()
+                            .map(|a| a.car.stats.max_teleport)
+                            .filter(|&t| t > 0)
+                            .unwrap_or(vangers::level::spiral::DEFAULT_CAPACITY);
+                        gpu.app.spiral = Some((me.spiral_charge.min(cap), cap));
                         // After leave, a snapshot still marked in_escave
                         // is stale: do not park or reconcile to it.
                         if !gpu.app.escave_net.sent() && me.in_escave {
