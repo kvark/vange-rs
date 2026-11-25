@@ -1,18 +1,18 @@
 //! Gameplay HUD in the 1998 Vangers style.
 //!
-//! The original's actint clocks sit in the corners: `IND_NRG` (armour +
-//! energy) top-left, `IND_SPIRAL` bottom-right with tick marks. The painted
-//! BML frames are proprietary game data and are not always in the remake's
+//! The original's actint clocks sit tight in the corners: `IND_NRG`
+//! (armour + energy) top-left, `IND_SPIRAL` bottom-right with tick marks.
+//! The painted BML frames are proprietary and are not always in the remake's
 //! packs, so this module draws the clocks procedurally in egui — native and
 //! web share the same painter. Nothing here changes multiplayer behaviour
 //! or the under-slab camera.
 //!
-//! Gauges never rely on colour alone: each has a distinct shape, a fill
-//! level (arc or discrete wedges), and an `N/M` readout.
+//! Gauges never rely on colour alone: each has a pie-slice fill angle,
+//! tick marks, and an `N/M` readout.
 
 use crate::combat::ARMOR_UNIT;
 use egui::epaint::{PathShape, PathStroke};
-use egui::{Align2, Color32, Context, FontId, Order, Pos2, Rect, Sense, Stroke, Vec2};
+use egui::{Align2, Color32, Context, FontId, Order, Pos2, Sense, Stroke, Vec2};
 
 /// Shows or hides the Tweaks / Settings debug panel. Chosen because it
 /// is free on both native (`road`) and web (web already uses F2 for the
@@ -58,23 +58,29 @@ pub fn fill_fraction(value: u32, max: u32) -> f32 {
     }
 }
 
-// Bronze / olive bezel, close to the 1998 actint clocks.
-const BEZEL_OUTER: Color32 = Color32::from_rgb(42, 36, 26);
-const BEZEL_MID: Color32 = Color32::from_rgb(132, 112, 72);
-const BEZEL_HIGH: Color32 = Color32::from_rgb(214, 196, 148);
-const WELL: Color32 = Color32::from_rgb(14, 12, 10);
-const PLATE: Color32 = Color32::from_rgba_premultiplied(13, 11, 8, 210);
+// Machined bronze / steel bezel, close to the 1998 actint clocks.
+const BEZEL_CASE: Color32 = Color32::from_rgb(28, 24, 18);
+const BEZEL_MID: Color32 = Color32::from_rgb(118, 100, 64);
+const BEZEL_GROOVE: Color32 = Color32::from_rgb(16, 13, 10);
+const BEZEL_LIP: Color32 = Color32::from_rgb(210, 192, 144);
+const BEZEL_SHEEN: Color32 = Color32::from_rgb(168, 152, 110);
+const WELL: Color32 = Color32::from_rgb(10, 9, 8);
 const LABEL: Color32 = Color32::from_rgb(230, 220, 190);
+const LABEL_OUTLINE: Color32 = Color32::from_rgb(8, 7, 5);
 const ARMOUR_FILL: Color32 = Color32::from_rgb(214, 126, 40);
-const ARMOUR_EMPTY: Color32 = Color32::from_rgb(56, 34, 16);
 const ENERGY_FILL: Color32 = Color32::from_rgb(72, 168, 96);
-const ENERGY_EMPTY: Color32 = Color32::from_rgb(22, 42, 26);
 const SPIRAL_FILL: Color32 = Color32::from_rgb(196, 48, 40);
-const SPIRAL_EMPTY: Color32 = Color32::from_rgb(52, 18, 16);
+const SPIRAL_EMPTY: Color32 = Color32::from_rgb(44, 16, 14);
 const WARNING: Color32 = Color32::from_rgb(255, 140, 70);
 const INFO: Color32 = Color32::from_rgb(210, 200, 170);
 
-const CLOCK_R: f32 = 44.0;
+/// Small enough to sit in a corner the way the 800x600 actint clocks did
+/// (radius 20 there), scaled up a little so the ticks and text stay readable
+/// at 1280x800.
+const CLOCK_R: f32 = 28.0;
+const BEZEL: f32 = 7.0;
+const MARGIN: f32 = 6.0;
+const LABEL_W: f32 = 118.0;
 
 /// Draw the gameplay gauges over the world view.
 pub fn draw(ctx: &Context, status: &Status<'_>) {
@@ -86,104 +92,81 @@ pub fn draw(ctx: &Context, status: &Status<'_>) {
 
 fn draw_nrg(ctx: &Context, status: &Status<'_>) {
     let note_lines = status.warning.is_some() as i32 + status.info.is_some() as i32;
-    let height = CLOCK_R * 2.0 + 24.0 + note_lines as f32 * 18.0;
-    let width = CLOCK_R * 2.0 + 150.0;
+    let dial = CLOCK_R + BEZEL;
+    let width = dial * 2.0 + 10.0 + LABEL_W;
+    let height = (dial * 2.0).max(36.0 + note_lines as f32 * 16.0);
     egui::Area::new(egui::Id::new("hud-nrg"))
-        .anchor(Align2::LEFT_TOP, Vec2::new(10.0, 10.0))
+        .anchor(Align2::LEFT_TOP, Vec2::new(MARGIN, MARGIN))
         .order(Order::Foreground)
         .interactable(false)
         .show(ctx, |ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
             let painter = ui.painter();
-            let plate = Rect::from_min_size(
-                rect.min,
-                Vec2::new(width, CLOCK_R * 2.0 + 16.0 + note_lines as f32 * 18.0),
-            );
-            draw_plate(painter, plate);
-
-            let center = rect.min + Vec2::new(CLOCK_R + 8.0, CLOCK_R + 8.0);
+            let center = rect.min + Vec2::new(dial, dial);
             draw_bezel(painter, center, CLOCK_R);
 
-            // Outer ring: energy. Inner ring: armour. Distinct radii so
-            // the two can be told apart even in greyscale.
-            let energy = status.energy.unwrap_or((0, 0));
-            let energy_frac = if status.energy.is_some() {
-                fill_fraction(energy.0, energy.1)
-            } else {
-                0.0
-            };
-            ring(
+            // Energy is the outer pie, armour a smaller pie in the same
+            // well — one clock, like `IND_NRG`, both readable as fill angles.
+            if let Some((v, m)) = status.energy {
+                pie(
+                    painter,
+                    center,
+                    CLOCK_R - 1.0,
+                    fill_fraction(v, m),
+                    ENERGY_FILL,
+                );
+            }
+            pie(
                 painter,
                 center,
-                CLOCK_R * 0.72,
-                CLOCK_R * 0.92,
-                1.0,
-                ENERGY_EMPTY,
-            );
-            ring(
-                painter,
-                center,
-                CLOCK_R * 0.72,
-                CLOCK_R * 0.92,
-                energy_frac,
-                ENERGY_FILL,
-            );
-            ring(
-                painter,
-                center,
-                CLOCK_R * 0.42,
-                CLOCK_R * 0.64,
-                1.0,
-                ARMOUR_EMPTY,
-            );
-            ring(
-                painter,
-                center,
-                CLOCK_R * 0.42,
-                CLOCK_R * 0.64,
+                CLOCK_R * 0.55,
                 fill_fraction(status.armor, status.max_armor),
                 ARMOUR_FILL,
             );
-            ticks(painter, center, CLOCK_R * 0.92, CLOCK_R * 1.0, 12);
-            ticks(painter, center, CLOCK_R * 0.64, CLOCK_R * 0.70, 8);
-            shield_glyph(painter, center, CLOCK_R * 0.22);
+            ticks(painter, center, CLOCK_R - 0.5, CLOCK_R + 2.2, 12);
 
-            let text_x = center.x + CLOCK_R + 12.0;
-            let font = FontId::proportional(14.0);
-            painter.text(
-                Pos2::new(text_x, center.y - 18.0),
-                Align2::LEFT_CENTER,
-                format!("Armour {}/{}", status.armor, status.max_armor),
-                font.clone(),
-                LABEL,
-            );
+            let font = FontId::proportional(12.0);
+            let text_x = center.x + dial + 8.0;
+            let armour_line = format!("Armour {}/{}", status.armor, status.max_armor);
             let energy_line = match status.energy {
                 Some((v, m)) => format!("Energy {v}/{m}"),
                 None => "Energy --/--".to_string(),
             };
-            painter.text(
-                Pos2::new(text_x, center.y + 4.0),
+            shield_glyph(painter, Pos2::new(text_x + 6.0, center.y - 14.0), 6.0);
+            label(
+                painter,
+                Pos2::new(text_x + 16.0, center.y - 14.0),
                 Align2::LEFT_CENTER,
-                energy_line,
+                &armour_line,
+                font.clone(),
+                LABEL,
+            );
+            label(
+                painter,
+                Pos2::new(text_x + 16.0, center.y + 4.0),
+                Align2::LEFT_CENTER,
+                &energy_line,
                 font.clone(),
                 LABEL,
             );
 
-            let mut note_y = rect.min.y + CLOCK_R * 2.0 + 14.0;
+            let mut note_y = center.y + dial + 6.0;
             if let Some(text) = status.warning {
-                painter.text(
-                    Pos2::new(rect.min.x + 8.0, note_y),
-                    Align2::LEFT_CENTER,
+                label(
+                    painter,
+                    Pos2::new(rect.min.x, note_y),
+                    Align2::LEFT_TOP,
                     text,
                     font.clone(),
                     WARNING,
                 );
-                note_y += 18.0;
+                note_y += 16.0;
             }
             if let Some(text) = status.info {
-                painter.text(
-                    Pos2::new(rect.min.x + 8.0, note_y),
-                    Align2::LEFT_CENTER,
+                label(
+                    painter,
+                    Pos2::new(rect.min.x, note_y),
+                    Align2::LEFT_TOP,
                     text,
                     font,
                     INFO,
@@ -193,100 +176,103 @@ fn draw_nrg(ctx: &Context, status: &Status<'_>) {
 }
 
 fn draw_spiral(ctx: &Context, charge: u8, capacity: u8) {
-    let width = CLOCK_R * 2.0 + 130.0;
-    let height = CLOCK_R * 2.0 + 16.0;
+    let dial = CLOCK_R + BEZEL;
+    let width = dial * 2.0 + 10.0 + LABEL_W;
+    let height = dial * 2.0;
     egui::Area::new(egui::Id::new("hud-spiral"))
-        .anchor(Align2::RIGHT_BOTTOM, Vec2::new(-10.0, -10.0))
+        .anchor(Align2::RIGHT_BOTTOM, Vec2::new(-MARGIN, -MARGIN))
         .order(Order::Foreground)
         .interactable(false)
         .show(ctx, |ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
             let painter = ui.painter();
-            draw_plate(painter, rect);
-            let center = Pos2::new(rect.max.x - CLOCK_R - 8.0, rect.center().y);
+            let center = Pos2::new(rect.max.x - dial, rect.center().y);
             draw_bezel(painter, center, CLOCK_R);
             wedges(
                 painter,
                 center,
-                CLOCK_R * 0.38,
-                CLOCK_R * 0.88,
+                CLOCK_R * 0.28,
+                CLOCK_R - 1.0,
                 charge,
                 capacity,
             );
             ticks(
                 painter,
                 center,
-                CLOCK_R * 0.88,
-                CLOCK_R * 0.98,
+                CLOCK_R - 0.5,
+                CLOCK_R + 2.2,
                 capacity.max(1) as usize,
             );
-            spiral_glyph(painter, center, CLOCK_R * 0.22);
-            let font = FontId::proportional(14.0);
-            painter.text(
-                Pos2::new(center.x - CLOCK_R - 12.0, center.y),
+            let font = FontId::proportional(12.0);
+            let text = format!("Spiral {charge}/{capacity}");
+            let text_x = center.x - dial - 8.0;
+            spiral_glyph(painter, Pos2::new(text_x - 10.0, center.y), 7.0);
+            label(
+                painter,
+                Pos2::new(text_x - 20.0, center.y),
                 Align2::RIGHT_CENTER,
-                format!("Spiral {charge}/{capacity}"),
+                &text,
                 font,
                 LABEL,
             );
         });
 }
 
-fn draw_plate(painter: &egui::Painter, rect: Rect) {
-    let r = rect.expand(4.0);
-    painter.rect_filled(r, 16.0, PLATE);
-    painter.rect_stroke(
-        r,
-        16.0,
-        Stroke::new(2.0_f32, BEZEL_MID),
-        egui::StrokeKind::Inside,
-    );
-    painter.rect_stroke(
-        r.shrink(2.0),
-        14.0,
-        Stroke::new(1.0_f32, BEZEL_HIGH),
-        egui::StrokeKind::Inside,
-    );
-}
-
+/// Thick, turned-metal case: dark body, a groove, a bright inner lip, and a
+/// short sheen on the upper-left — the 1998 clocks in brief.
 fn draw_bezel(painter: &egui::Painter, center: Pos2, radius: f32) {
-    // Organic lugs / rivets around the clock, then the metal ring.
-    for i in 0..8 {
-        let a = i as f32 * std::f32::consts::TAU / 8.0;
-        let p = center + Vec2::angled(a) * (radius + 4.0);
-        painter.circle_filled(p, 5.0, BEZEL_OUTER);
-        if i % 2 == 0 {
-            painter.circle_filled(p, 1.7, BEZEL_HIGH);
-            painter.circle_stroke(p, 2.4, Stroke::new(1.0_f32, BEZEL_MID));
-        }
-    }
-    painter.circle_filled(center, radius + 4.0, BEZEL_OUTER);
-    painter.circle_stroke(center, radius + 2.5, Stroke::new(3.0_f32, BEZEL_MID));
-    painter.circle_stroke(center, radius + 0.8, Stroke::new(1.4_f32, BEZEL_HIGH));
-    painter.circle_filled(center, radius - 1.0, WELL);
-}
-
-/// Annular sector, clockwise from 12 o'clock, as a thick stroked arc.
-/// A ring sector is not convex, so we stroke the mid-radius instead of
-/// filling a path.
-fn ring(painter: &egui::Painter, center: Pos2, inner: f32, outer: f32, frac: f32, color: Color32) {
-    let frac = frac.clamp(0.0, 1.0);
-    if frac <= 0.0 {
-        return;
-    }
-    let mid = (inner + outer) * 0.5;
-    let width = (outer - inner).max(1.0);
-    let start = -std::f32::consts::FRAC_PI_2;
-    // egui y grows down, so a positive angle from `Vec2::angled` is clockwise.
-    let end = start + std::f32::consts::TAU * frac;
-    let steps = ((end - start).abs() * mid / 2.0).ceil().max(2.0) as usize;
-    let mut points = Vec::with_capacity(steps + 1);
+    painter.circle_filled(center, radius + BEZEL, BEZEL_CASE);
+    painter.circle_stroke(
+        center,
+        radius + BEZEL - 1.0,
+        Stroke::new(2.4_f32, BEZEL_MID),
+    );
+    painter.circle_stroke(
+        center,
+        radius + BEZEL - 3.2,
+        Stroke::new(1.4_f32, BEZEL_GROOVE),
+    );
+    painter.circle_stroke(center, radius + 1.1, Stroke::new(2.0_f32, BEZEL_LIP));
+    // Upper-left sheen, a short arc, so the rim reads as machined metal.
+    let sheen_start = -std::f32::consts::PI * 0.95;
+    let sheen_end = -std::f32::consts::PI * 0.45;
+    let steps = 8;
+    let mut pts = Vec::with_capacity(steps + 1);
     for i in 0..=steps {
         let t = i as f32 / steps as f32;
-        let a = start + (end - start) * t;
-        points.push(center + Vec2::angled(a) * mid);
+        let a = sheen_start + (sheen_end - sheen_start) * t;
+        pts.push(center + Vec2::angled(a) * (radius + BEZEL - 1.6));
     }
-    painter.add(PathShape::line(points, PathStroke::new(width, color)));
+    painter.add(PathShape::line(pts, PathStroke::new(1.6_f32, BEZEL_SHEEN)));
+    painter.circle_filled(center, radius, WELL);
+}
+
+/// Pie slice, clockwise from 12 o'clock. Tessellated as triangles so each
+/// piece stays convex (`PathShape` fill requires it).
+fn pie(painter: &egui::Painter, center: Pos2, radius: f32, frac: f32, color: Color32) {
+    let frac = frac.clamp(0.0, 1.0);
+    if frac <= 0.0 || radius <= 0.0 {
+        return;
+    }
+    if frac >= 1.0 {
+        painter.circle_filled(center, radius, color);
+        return;
+    }
+    let start = -std::f32::consts::FRAC_PI_2;
+    let end = start + std::f32::consts::TAU * frac;
+    let steps = ((end - start).abs() * radius / 1.8).ceil().max(2.0) as usize;
+    let mut prev = center + Vec2::angled(start) * radius;
+    for i in 1..=steps {
+        let t = i as f32 / steps as f32;
+        let a = start + (end - start) * t;
+        let next = center + Vec2::angled(a) * radius;
+        painter.add(PathShape::convex_polygon(
+            vec![center, prev, next],
+            color,
+            PathStroke::NONE,
+        ));
+        prev = next;
+    }
 }
 
 fn ticks(painter: &egui::Painter, center: Pos2, inner: f32, outer: f32, count: usize) {
@@ -296,7 +282,7 @@ fn ticks(painter: &egui::Painter, center: Pos2, inner: f32, outer: f32, count: u
         let dir = Vec2::angled(a);
         painter.line_segment(
             [center + dir * inner, center + dir * outer],
-            Stroke::new(1.2_f32, BEZEL_HIGH),
+            Stroke::new(1.2_f32, BEZEL_LIP),
         );
     }
 }
@@ -306,7 +292,7 @@ fn ticks(painter: &egui::Painter, center: Pos2, inner: f32, outer: f32, count: u
 fn wedges(painter: &egui::Painter, center: Pos2, inner: f32, outer: f32, charge: u8, capacity: u8) {
     let slots = capacity.max(1) as usize;
     let filled = (charge as usize).min(slots);
-    let gap = 0.08_f32;
+    let gap = 0.10_f32;
     let span = std::f32::consts::TAU / slots as f32;
     let start0 = -std::f32::consts::FRAC_PI_2;
     for i in 0..slots {
@@ -317,31 +303,27 @@ fn wedges(painter: &egui::Painter, center: Pos2, inner: f32, outer: f32, charge:
         } else {
             SPIRAL_EMPTY
         };
+        // A slim ring-sector of pie triangles between inner and outer.
         let steps = 6;
-        let mut points = Vec::with_capacity((steps + 1) * 2);
-        for s in 0..=steps {
+        let mut prev_o = center + Vec2::angled(a0) * outer;
+        let mut prev_i = center + Vec2::angled(a0) * inner;
+        for s in 1..=steps {
             let t = s as f32 / steps as f32;
             let a = a0 + (a1 - a0) * t;
-            points.push(center + Vec2::angled(a) * outer);
-        }
-        for s in (0..=steps).rev() {
-            let t = s as f32 / steps as f32;
-            let a = a0 + (a1 - a0) * t;
-            points.push(center + Vec2::angled(a) * inner);
-        }
-        // Split into triangles from the first outer point so each piece
-        // is convex (`PathShape` fill requires it).
-        if points.len() >= 3 {
-            let mid_r = (inner + outer) * 0.5;
-            let mid_a = (a0 + a1) * 0.5;
-            let mid = center + Vec2::angled(mid_a) * mid_r;
-            for w in points.windows(2) {
-                painter.add(PathShape::convex_polygon(
-                    vec![mid, w[0], w[1]],
-                    color,
-                    PathStroke::NONE,
-                ));
-            }
+            let next_o = center + Vec2::angled(a) * outer;
+            let next_i = center + Vec2::angled(a) * inner;
+            painter.add(PathShape::convex_polygon(
+                vec![prev_i, prev_o, next_o],
+                color,
+                PathStroke::NONE,
+            ));
+            painter.add(PathShape::convex_polygon(
+                vec![prev_i, next_o, next_i],
+                color,
+                PathStroke::NONE,
+            ));
+            prev_o = next_o;
+            prev_i = next_i;
         }
     }
 }
@@ -354,10 +336,16 @@ fn shield_glyph(painter: &egui::Painter, center: Pos2, size: f32) {
         center + Vec2::new(0.0, size * 0.85),
         center + Vec2::new(-size * 0.7, size * 0.05),
     ];
+    // A 3px dark stroke leaves a 1px outline around the filled shield.
+    painter.add(PathShape::convex_polygon(
+        pts.clone(),
+        Color32::TRANSPARENT,
+        PathStroke::new(3.0_f32, LABEL_OUTLINE),
+    ));
     painter.add(PathShape::convex_polygon(
         pts,
         ARMOUR_FILL,
-        PathStroke::new(1.0_f32, BEZEL_HIGH),
+        PathStroke::new(1.0_f32, BEZEL_LIP),
     ));
 }
 
@@ -370,9 +358,40 @@ fn spiral_glyph(painter: &egui::Painter, center: Pos2, size: f32) {
         points.push(center + Vec2::angled(a) * r);
     }
     painter.add(PathShape::line(
-        points,
-        PathStroke::new(1.8_f32, SPIRAL_FILL),
+        points.clone(),
+        PathStroke::new(3.6_f32, LABEL_OUTLINE),
     ));
+    painter.add(PathShape::line(
+        points,
+        PathStroke::new(1.6_f32, SPIRAL_FILL),
+    ));
+}
+
+fn label(
+    painter: &egui::Painter,
+    pos: Pos2,
+    align: Align2,
+    text: &str,
+    font: FontId,
+    color: Color32,
+) {
+    // 1px dark outline (eight neighbours) so N/M stays readable over
+    // bright sand once the backing plates are gone.
+    for dx in -1..=1 {
+        for dy in -1..=1 {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            painter.text(
+                pos + Vec2::new(dx as f32, dy as f32),
+                align,
+                text,
+                font.clone(),
+                LABEL_OUTLINE,
+            );
+        }
+    }
+    painter.text(pos, align, text, font, color);
 }
 
 #[cfg(test)]
