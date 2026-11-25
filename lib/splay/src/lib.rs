@@ -34,13 +34,11 @@ impl Splay {
             tree1: [0; 512],
             tree2: [0; 512],
         };
-        for i in 0..512 {
-            let v = input.read_i32::<E>().unwrap();
-            splay.tree1[i] = v;
+        for slot in &mut splay.tree1 {
+            *slot = input.read_i32::<E>().unwrap();
         }
-        for i in 0..512 {
-            let v = input.read_i32::<E>().unwrap();
-            splay.tree2[i] = v;
+        for slot in &mut splay.tree2 {
+            *slot = input.read_i32::<E>().unwrap();
         }
         splay
     }

@@ -676,7 +676,7 @@ pub struct Game {
     /// Debug: local Tweaks Position changed and not yet uploaded via SetPose.
     tweaks_pose_dirty: bool,
     ui: config::settings::Ui,
-    /// Whether the tweaks panel is showing. See `boilerplate::tweaks`.
+    /// Whether the tweaks panel is showing. Hidden by default; F8 toggles it.
     ui_expanded: bool,
     cam: space::Camera,
     cam_style: CameraStyle,
@@ -1186,7 +1186,7 @@ impl Game {
             tweaks_pos_hold: 0.0,
             tweaks_pose_dirty: false,
             ui: settings.ui,
-            ui_expanded: true,
+            ui_expanded: false,
             cam,
             cam_style: CameraStyle::new(&settings.game.camera),
             max_quant: settings.game.physics.max_quant,
@@ -2791,43 +2791,104 @@ impl Game {
     }
 
     fn draw_spiral_hud(&self, context: &egui::Context) {
-        egui::Area::new(egui::Id::new("spiral-hud"))
-            .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 120.0))
-            .order(egui::Order::Foreground)
+        let (armor, max_armor) = self
+            .agents
+            .iter()
+            .find(|a| a.spirit == Spirit::Player)
+            .map(|p| (p.armor, p.max_armor))
+            .unwrap_or((0, 0));
+        let mut status = vangers::hud::Status::from_units(
+            armor,
+            max_armor,
+            self.my_energy,
+            Some((self.spiral.charge, self.spiral.capacity)),
+        );
+        status.warning = self.death_note.as_ref().map(|(note, _)| note.as_str());
+        status.info = self.passage_note.as_deref();
+        vangers::hud::draw(context, &status);
+    }
+
+    /// Connection chip and lobby. Shown even when Tweaks is hidden (F8),
+    /// and parked to the right of the energy dial so the two do not overlap.
+    fn draw_multiplayer_window(&mut self, context: &egui::Context) {
+        // The NRG plate starts at (10, 10) and is 238px wide, plus a 4px
+        // bezel, so the chip starts just past that.
+        egui::Window::new("Multiplayer")
+            .default_open(false)
+            .default_pos(egui::pos2(260.0, 8.0))
             .show(context, |ui| {
-                if let Some((energy, max)) = self.my_energy {
-                    ui.label(
-                        egui::RichText::new(vangers::combat::shield::hud_line(energy, max))
-                            .strong(),
-                    );
-                }
-                if let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) {
-                    ui.label(
-                        // The original's scale: whole `car.prm` points.
-                        egui::RichText::new(format!(
-                            "Armour {}/{}",
-                            player.armor / ARMOR_UNIT,
-                            player.max_armor / ARMOR_UNIT
-                        ))
-                        .strong(),
-                    );
-                }
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Spiral {}/{}",
+                if self.mp_state.connected {
+                    ui.label(format!("Connected to {}", self.mp_state.server_addr));
+                    if let Some(ref net) = self.net
+                        && let Some(id) = net.player_id
+                    {
+                        ui.label(format!("Player ID: {}", id));
+                    }
+                    ui.label(format!("Remote players: {}", self.remote_agents.len()));
+                    ui.label(format!(
+                        "Spiral (you): {}/{}",
                         self.spiral.charge, self.spiral.capacity
-                    ))
-                    .strong(),
-                );
-                if let Some((note, _)) = self.death_note.as_ref() {
-                    ui.label(
-                        egui::RichText::new(note)
-                            .strong()
-                            .color(egui::Color32::from_rgb(255, 120, 60)),
-                    );
+                    ));
+                    for remote in self.remote_agents.values() {
+                        let r = remote.net.render_transform.disp;
+                        let t = remote.net.target_transform.disp;
+                        ui.label(format!(
+                            "{} render XY: ({:.2}, {:.2})",
+                            remote.name, r.x, r.y
+                        ));
+                        ui.label(format!(
+                            "{} target XY: ({:.2}, {:.2}){}",
+                            remote.name,
+                            t.x,
+                            t.y,
+                            if remote.net.pose_ready {
+                                ""
+                            } else {
+                                " (waiting)"
+                            }
+                        ));
+                        ui.label(format!(
+                            "Spiral ({}): {}",
+                            remote.name, remote.spiral_charge
+                        ));
+                    }
+                    if ui.button("Disconnect").clicked() {
+                        self.net = None;
+                        self.remote_agents.clear();
+                        self.mp_state.connected = false;
+                        self.mp_state.status = "Disconnected".to_string();
+                    }
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.label("Server:");
+                        ui.text_edit_singleline(&mut self.mp_state.server_addr);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut self.mp_state.player_name);
+                    });
+                    if ui.button("Connect").clicked() {
+                        let player = self
+                            .agents
+                            .iter()
+                            .find(|a| a.spirit == Spirit::Player)
+                            .unwrap();
+                        self.net = Some(NetworkClient::connect(
+                            &self.mp_state.server_addr,
+                            &self.mp_state.player_name,
+                            &player.car_name,
+                            player.color as u8,
+                            weapon::loadout(&self.inventory),
+                        ));
+                        // Drop offline NPCs so they cannot be mistaken for
+                        // remote players (joint playtest false positive).
+                        self.agents.retain(|a| a.spirit == Spirit::Player);
+                        self.mp_state.connected = true;
+                        self.mp_state.status = "Connecting...".to_string();
+                    }
                 }
-                if let Some(note) = self.passage_note.as_deref() {
-                    ui.label(note);
+                if !self.mp_state.status.is_empty() {
+                    ui.label(&self.mp_state.status);
                 }
             });
     }
@@ -3446,6 +3507,9 @@ impl Application for Game {
         match state {
             ElementState::Pressed => match key {
                 KeyCode::Escape => return false,
+                KeyCode::F8 => {
+                    self.ui_expanded = !self.ui_expanded;
+                }
                 KeyCode::KeyP => {
                     let center = match player.physics {
                         Physics::Cpu { ref transform, .. } => *transform,
@@ -3920,7 +3984,13 @@ impl Application for Game {
             }
             return;
         }
-        if !crate::boilerplate::tweaks::expanded(context, &mut self.ui_expanded) {
+        // The Multiplayer chip stays up when Tweaks is hidden, to the
+        // right of the energy dial.
+        self.draw_multiplayer_window(context);
+
+        // Hidden by default; F8 (or the in-panel button) shows Tweaks.
+        // No collapsed "<" button — that would cover the 1998-style view.
+        if !self.ui_expanded {
             if sync_slots || leave_escave {
                 self.sync_weapon_slots();
             }
@@ -3946,6 +4016,7 @@ impl Application for Game {
                 ui.horizontal(|ui| {
                     crate::boilerplate::tweaks::collapse_button(ui, &mut self.ui_expanded);
                     ui.label("Tweaks");
+                    ui.label(egui::RichText::new("F8 to hide").weak().small());
                 });
                 egui::CollapsingHeader::new("Player")
                     .default_open(true)
@@ -4172,85 +4243,6 @@ impl Application for Game {
         if leave_escave {
             self.screen.begin_leave();
         }
-
-        // Multiplayer panel
-        egui::Window::new("Multiplayer")
-            .default_open(false)
-            .show(context, |ui| {
-                if self.mp_state.connected {
-                    ui.label(format!("Connected to {}", self.mp_state.server_addr));
-                    if let Some(ref net) = self.net
-                        && let Some(id) = net.player_id
-                    {
-                        ui.label(format!("Player ID: {}", id));
-                    }
-                    ui.label(format!("Remote players: {}", self.remote_agents.len()));
-                    ui.label(format!(
-                        "Spiral (you): {}/{}",
-                        self.spiral.charge, self.spiral.capacity
-                    ));
-                    for remote in self.remote_agents.values() {
-                        let r = remote.net.render_transform.disp;
-                        let t = remote.net.target_transform.disp;
-                        ui.label(format!(
-                            "{} render XY: ({:.2}, {:.2})",
-                            remote.name, r.x, r.y
-                        ));
-                        ui.label(format!(
-                            "{} target XY: ({:.2}, {:.2}){}",
-                            remote.name,
-                            t.x,
-                            t.y,
-                            if remote.net.pose_ready {
-                                ""
-                            } else {
-                                " (waiting)"
-                            }
-                        ));
-                        ui.label(format!(
-                            "Spiral ({}): {}",
-                            remote.name, remote.spiral_charge
-                        ));
-                    }
-                    if ui.button("Disconnect").clicked() {
-                        self.net = None;
-                        self.remote_agents.clear();
-                        self.mp_state.connected = false;
-                        self.mp_state.status = "Disconnected".to_string();
-                    }
-                } else {
-                    ui.horizontal(|ui| {
-                        ui.label("Server:");
-                        ui.text_edit_singleline(&mut self.mp_state.server_addr);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Name:");
-                        ui.text_edit_singleline(&mut self.mp_state.player_name);
-                    });
-                    if ui.button("Connect").clicked() {
-                        let player = self
-                            .agents
-                            .iter()
-                            .find(|a| a.spirit == Spirit::Player)
-                            .unwrap();
-                        self.net = Some(NetworkClient::connect(
-                            &self.mp_state.server_addr,
-                            &self.mp_state.player_name,
-                            &player.car_name,
-                            player.color as u8,
-                            weapon::loadout(&self.inventory),
-                        ));
-                        // Drop offline NPCs so they cannot be mistaken for
-                        // remote players (joint playtest false positive).
-                        self.agents.retain(|a| a.spirit == Spirit::Player);
-                        self.mp_state.connected = true;
-                        self.mp_state.status = "Connecting...".to_string();
-                    }
-                }
-                if !self.mp_state.status.is_empty() {
-                    ui.label(&self.mp_state.status);
-                }
-            });
     }
 
     fn draw(

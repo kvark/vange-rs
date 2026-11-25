@@ -156,11 +156,10 @@ impl Swarm {
     pub fn quant(&mut self, level: &Level, eye: Option<Vec3>) {
         let size = self.size;
         let r2 = ACTIVE_RADIUS * ACTIVE_RADIUS;
-        let n = self.insects.len();
         let mut active = Vec::new();
-        for i in 0..n {
+        for (i, insect) in self.insects.iter().enumerate() {
             if let Some(at) = eye {
-                let pos = self.insects[i].pos;
+                let pos = insect.pos;
                 let dx = wrap_delta(pos.x - at.x, size.0 as f32);
                 let dy = wrap_delta(pos.y - at.y, size.1 as f32);
                 if dx * dx + dy * dy > r2 {

@@ -459,6 +459,8 @@ and the last 8 join / leave / `Server correction` / `Server bump` / train
 ride / escave lines, stamped in UTC like the server log. It is on by default
 when the page joins a server; `#debug=1` shows it solo, `#debug=0` hides it,
 and F2 (or the checkbox in Settings) toggles it.
+The Settings window itself is hidden by default; F8 shows or hides it
+(the same key as the native Tweaks panel).
 
 The server logs each car's pose every 5 s to compare against it:
 
@@ -497,6 +499,13 @@ landing on a steep slope shows here: e.g. Fostral (884.5, 3960.3) sits on a
 ~50° slope (height 47 down to 3 within 37u along the fall line), and a
 standing jump there slides the car down to the floor near (903, 3990) on the
 server too.
+
+## Tweaks / Settings (F8)
+
+The native Tweaks side panel and the web Settings window are hidden by
+default so the gameplay view matches the original. Press F8 to show or
+hide them (the in-panel control also closes Tweaks). F8 is otherwise
+unbound on both clients; web already uses F2 for the net-debug overlay.
 
 ## Tweaks Position (debug hold + SetPose)
 
