@@ -2807,6 +2807,91 @@ impl Game {
         status.info = self.passage_note.as_deref();
         vangers::hud::draw(context, &status);
     }
+
+    /// Connection chip and lobby. Shown even when Tweaks is hidden (F8),
+    /// and parked to the right of the energy dial so the two do not overlap.
+    fn draw_multiplayer_window(&mut self, context: &egui::Context) {
+        // The NRG plate starts at (10, 10) and is 238px wide, plus a 4px
+        // bezel, so the chip starts just past that.
+        egui::Window::new("Multiplayer")
+            .default_open(false)
+            .default_pos(egui::pos2(260.0, 8.0))
+            .show(context, |ui| {
+                if self.mp_state.connected {
+                    ui.label(format!("Connected to {}", self.mp_state.server_addr));
+                    if let Some(ref net) = self.net
+                        && let Some(id) = net.player_id
+                    {
+                        ui.label(format!("Player ID: {}", id));
+                    }
+                    ui.label(format!("Remote players: {}", self.remote_agents.len()));
+                    ui.label(format!(
+                        "Spiral (you): {}/{}",
+                        self.spiral.charge, self.spiral.capacity
+                    ));
+                    for remote in self.remote_agents.values() {
+                        let r = remote.net.render_transform.disp;
+                        let t = remote.net.target_transform.disp;
+                        ui.label(format!(
+                            "{} render XY: ({:.2}, {:.2})",
+                            remote.name, r.x, r.y
+                        ));
+                        ui.label(format!(
+                            "{} target XY: ({:.2}, {:.2}){}",
+                            remote.name,
+                            t.x,
+                            t.y,
+                            if remote.net.pose_ready {
+                                ""
+                            } else {
+                                " (waiting)"
+                            }
+                        ));
+                        ui.label(format!(
+                            "Spiral ({}): {}",
+                            remote.name, remote.spiral_charge
+                        ));
+                    }
+                    if ui.button("Disconnect").clicked() {
+                        self.net = None;
+                        self.remote_agents.clear();
+                        self.mp_state.connected = false;
+                        self.mp_state.status = "Disconnected".to_string();
+                    }
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.label("Server:");
+                        ui.text_edit_singleline(&mut self.mp_state.server_addr);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut self.mp_state.player_name);
+                    });
+                    if ui.button("Connect").clicked() {
+                        let player = self
+                            .agents
+                            .iter()
+                            .find(|a| a.spirit == Spirit::Player)
+                            .unwrap();
+                        self.net = Some(NetworkClient::connect(
+                            &self.mp_state.server_addr,
+                            &self.mp_state.player_name,
+                            &player.car_name,
+                            player.color as u8,
+                            weapon::loadout(&self.inventory),
+                        ));
+                        // Drop offline NPCs so they cannot be mistaken for
+                        // remote players (joint playtest false positive).
+                        self.agents.retain(|a| a.spirit == Spirit::Player);
+                        self.mp_state.connected = true;
+                        self.mp_state.status = "Connecting...".to_string();
+                    }
+                }
+                if !self.mp_state.status.is_empty() {
+                    ui.label(&self.mp_state.status);
+                }
+            });
+    }
 }
 
 impl Game {
@@ -3899,6 +3984,10 @@ impl Application for Game {
             }
             return;
         }
+        // The Multiplayer chip stays up when Tweaks is hidden, to the
+        // right of the energy dial.
+        self.draw_multiplayer_window(context);
+
         // Hidden by default; F8 (or the in-panel button) shows Tweaks.
         // No collapsed "<" button — that would cover the 1998-style view.
         if !self.ui_expanded {
@@ -4154,85 +4243,6 @@ impl Application for Game {
         if leave_escave {
             self.screen.begin_leave();
         }
-
-        // Multiplayer panel
-        egui::Window::new("Multiplayer")
-            .default_open(false)
-            .show(context, |ui| {
-                if self.mp_state.connected {
-                    ui.label(format!("Connected to {}", self.mp_state.server_addr));
-                    if let Some(ref net) = self.net
-                        && let Some(id) = net.player_id
-                    {
-                        ui.label(format!("Player ID: {}", id));
-                    }
-                    ui.label(format!("Remote players: {}", self.remote_agents.len()));
-                    ui.label(format!(
-                        "Spiral (you): {}/{}",
-                        self.spiral.charge, self.spiral.capacity
-                    ));
-                    for remote in self.remote_agents.values() {
-                        let r = remote.net.render_transform.disp;
-                        let t = remote.net.target_transform.disp;
-                        ui.label(format!(
-                            "{} render XY: ({:.2}, {:.2})",
-                            remote.name, r.x, r.y
-                        ));
-                        ui.label(format!(
-                            "{} target XY: ({:.2}, {:.2}){}",
-                            remote.name,
-                            t.x,
-                            t.y,
-                            if remote.net.pose_ready {
-                                ""
-                            } else {
-                                " (waiting)"
-                            }
-                        ));
-                        ui.label(format!(
-                            "Spiral ({}): {}",
-                            remote.name, remote.spiral_charge
-                        ));
-                    }
-                    if ui.button("Disconnect").clicked() {
-                        self.net = None;
-                        self.remote_agents.clear();
-                        self.mp_state.connected = false;
-                        self.mp_state.status = "Disconnected".to_string();
-                    }
-                } else {
-                    ui.horizontal(|ui| {
-                        ui.label("Server:");
-                        ui.text_edit_singleline(&mut self.mp_state.server_addr);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Name:");
-                        ui.text_edit_singleline(&mut self.mp_state.player_name);
-                    });
-                    if ui.button("Connect").clicked() {
-                        let player = self
-                            .agents
-                            .iter()
-                            .find(|a| a.spirit == Spirit::Player)
-                            .unwrap();
-                        self.net = Some(NetworkClient::connect(
-                            &self.mp_state.server_addr,
-                            &self.mp_state.player_name,
-                            &player.car_name,
-                            player.color as u8,
-                            weapon::loadout(&self.inventory),
-                        ));
-                        // Drop offline NPCs so they cannot be mistaken for
-                        // remote players (joint playtest false positive).
-                        self.agents.retain(|a| a.spirit == Spirit::Player);
-                        self.mp_state.connected = true;
-                        self.mp_state.status = "Connecting...".to_string();
-                    }
-                }
-                if !self.mp_state.status.is_empty() {
-                    ui.label(&self.mp_state.status);
-                }
-            });
     }
 
     fn draw(
