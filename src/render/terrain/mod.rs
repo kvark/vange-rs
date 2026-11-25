@@ -2055,10 +2055,13 @@ impl Context {
             dirty_palette: 0..0x100,
             active_surface_constants: surface_constants,
             void_at_zero: false,
-            // Default to unbaked diffuse + shadow — matches the look
-            // we tuned in the cosine-lighting commit. Toggle in the UI
-            // to A/B against the original baked-palette path.
-            unbaked_lighting: true,
+            // Default to the original baked-palette path (`RenderPrepare`
+            // / `LINE_render` in KranX/Vangers `src/terra/land.cpp`):
+            // slope and height are folded into the per-terrain palette
+            // ramp. Unbaked cosine lighting samples the brightest ramp
+            // entry as albedo, which washes Fostral out to flat
+            // yellow-olive. Toggle in Tweaks to A/B the two looks.
+            unbaked_lighting: false,
             smooth_normals: true,
             ray_steps,
         }
