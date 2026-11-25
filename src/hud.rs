@@ -66,7 +66,7 @@ const BEZEL_LIP: Color32 = Color32::from_rgb(210, 192, 144);
 const BEZEL_SHEEN: Color32 = Color32::from_rgb(168, 152, 110);
 const WELL: Color32 = Color32::from_rgb(10, 9, 8);
 const LABEL: Color32 = Color32::from_rgb(230, 220, 190);
-const LABEL_SHADOW: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 200);
+const LABEL_OUTLINE: Color32 = Color32::from_rgb(8, 7, 5);
 const ARMOUR_FILL: Color32 = Color32::from_rgb(214, 126, 40);
 const ENERGY_FILL: Color32 = Color32::from_rgb(72, 168, 96);
 const SPIRAL_FILL: Color32 = Color32::from_rgb(196, 48, 40);
@@ -336,6 +336,12 @@ fn shield_glyph(painter: &egui::Painter, center: Pos2, size: f32) {
         center + Vec2::new(0.0, size * 0.85),
         center + Vec2::new(-size * 0.7, size * 0.05),
     ];
+    // A 3px dark stroke leaves a 1px outline around the filled shield.
+    painter.add(PathShape::convex_polygon(
+        pts.clone(),
+        Color32::TRANSPARENT,
+        PathStroke::new(3.0_f32, LABEL_OUTLINE),
+    ));
     painter.add(PathShape::convex_polygon(
         pts,
         ARMOUR_FILL,
@@ -352,6 +358,10 @@ fn spiral_glyph(painter: &egui::Painter, center: Pos2, size: f32) {
         points.push(center + Vec2::angled(a) * r);
     }
     painter.add(PathShape::line(
+        points.clone(),
+        PathStroke::new(3.6_f32, LABEL_OUTLINE),
+    ));
+    painter.add(PathShape::line(
         points,
         PathStroke::new(1.6_f32, SPIRAL_FILL),
     ));
@@ -365,13 +375,22 @@ fn label(
     font: FontId,
     color: Color32,
 ) {
-    painter.text(
-        pos + Vec2::new(1.0, 1.0),
-        align,
-        text,
-        font.clone(),
-        LABEL_SHADOW,
-    );
+    // 1px dark outline (eight neighbours) so N/M stays readable over
+    // bright sand once the backing plates are gone.
+    for dx in -1..=1 {
+        for dy in -1..=1 {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            painter.text(
+                pos + Vec2::new(dx as f32, dy as f32),
+                align,
+                text,
+                font.clone(),
+                LABEL_OUTLINE,
+            );
+        }
+    }
     painter.text(pos, align, text, font, color);
 }
 
