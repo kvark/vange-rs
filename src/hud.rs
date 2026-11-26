@@ -81,6 +81,9 @@ const CLOCK_R: f32 = 28.0;
 const BEZEL: f32 = 7.0;
 const MARGIN: f32 = 6.0;
 const LABEL_W: f32 = 118.0;
+/// One step up from the 12px used on the first actint clocks, so the
+/// outlined N/M readouts stay readable without growing a plate.
+const LABEL_FONT: f32 = 14.0;
 
 /// Draw the gameplay gauges over the world view.
 pub fn draw(ctx: &Context, status: &Status<'_>) {
@@ -125,7 +128,7 @@ fn draw_nrg(ctx: &Context, status: &Status<'_>) {
             );
             ticks(painter, center, CLOCK_R - 0.5, CLOCK_R + 2.2, 12);
 
-            let font = FontId::proportional(12.0);
+            let font = FontId::proportional(LABEL_FONT);
             let text_x = center.x + dial + 8.0;
             let armour_line = format!("Armour {}/{}", status.armor, status.max_armor);
             let energy_line = match status.energy {
@@ -203,7 +206,7 @@ fn draw_spiral(ctx: &Context, charge: u8, capacity: u8) {
                 CLOCK_R + 2.2,
                 capacity.max(1) as usize,
             );
-            let font = FontId::proportional(12.0);
+            let font = FontId::proportional(LABEL_FONT);
             let text = format!("Spiral {charge}/{capacity}");
             let text_x = center.x - dial - 8.0;
             spiral_glyph(painter, Pos2::new(text_x - 10.0, center.y), 7.0);

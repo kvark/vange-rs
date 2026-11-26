@@ -49,7 +49,9 @@
 		wgpu_trace_path: "",
 		allow_tearing: false,
 		light: (
-			pos: (1, 2, 4, 0), // w=0 for directional, w=1 for point light
+			// (1, 2, 1.3416408, 0) matches the 1998 palette look (see PALETTE_MATCH_LIGHT_POS).
+			// w=0 is directional, w=1 is a point light. A higher z lifts the sun.
+			pos: (1, 2, 1.3416408, 0),
 			color: (1, 1, 1),
 			shadow: (
 				size: 1024,

@@ -6,7 +6,7 @@ struct Locals {
     sample_range: vec4<f32>,     // XY = X range, ZW = y range
     fog_color: vec4<f32>,
     fog_params: vec4<f32>,       // X=near, Y = far
-    lighting_flags: vec4<u32>,   // X = 0 baked / 1 unbaked diffuse
+    lighting_flags: vec4<u32>,   // Y = 1 smooth mesh normals, 0 flat; X unused
     terrain_params: vec4<f32>,   // X = slice spacing, Y = ray forward-step budget
 };
 @group(1) @binding(1) var<uniform> u_Locals: Locals;
