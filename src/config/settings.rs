@@ -136,6 +136,13 @@ pub struct Shadow {
     pub terrain: ShadowTerrain,
 }
 
+/// Directional sun that makes the dynamic terrain lighting match the
+/// 1998 baked palette look. Azimuth is the long-standing `(1, 2, ·)`;
+/// the Z component is `0.6 * length(1, 2)`, the implicit elevation of
+/// the original `evaluate_light` table (`c_ShadowDepthScale` in
+/// `res/shader/terrain/color.inc.wgsl`). `w = 0` is directional.
+pub const PALETTE_MATCH_LIGHT_POS: [f32; 4] = [1.0, 2.0, 1.341_640_8, 0.0];
+
 #[derive(Copy, Clone, Deserialize)]
 pub struct Light {
     pub pos: [f32; 4],
@@ -181,7 +188,7 @@ impl Default for Render {
             wgpu_trace_path: String::new(),
             allow_tearing: false,
             light: Light {
-                pos: [1.0, 2.0, 4.0, 0.0],
+                pos: PALETTE_MATCH_LIGHT_POS,
                 color: [1.0, 1.0, 1.0],
                 shadow: Shadow {
                     size: 0,
@@ -464,5 +471,49 @@ mod tests {
         let root = scratch("repo");
         touch(&root.join("data/thechain/fostral/world.ini"));
         assert_eq!(normalize_data_dir(root.clone()), root.join("data"));
+    }
+}
+
+#[cfg(test)]
+mod light_pos_tests {
+    use super::PALETTE_MATCH_LIGHT_POS;
+
+    #[test]
+    fn palette_match_light_has_the_original_elevation() {
+        // c_ShadowDepthScale = 0.6; azimuth (1, 2).
+        let z = 0.6 * (1.0f32 * 1.0 + 2.0 * 2.0).sqrt();
+        assert!((PALETTE_MATCH_LIGHT_POS[2] - z).abs() < 1e-5);
+        assert_eq!(PALETTE_MATCH_LIGHT_POS[0], 1.0);
+        assert_eq!(PALETTE_MATCH_LIGHT_POS[1], 2.0);
+        assert_eq!(PALETTE_MATCH_LIGHT_POS[3], 0.0);
+    }
+
+    #[test]
+    fn dynamic_n_dot_l_matches_the_original_table_at_the_match_sun() {
+        // evaluate_light(material=(1,1,1), jj) vs 3D n·L with slope
+        // only along the sun's XY. See color.inc.wgsl `ramp_lit`.
+        let dx = 8.0f32;
+        let sd = 0.6f32;
+        let light = [
+            PALETTE_MATCH_LIGHT_POS[0],
+            PALETTE_MATCH_LIGHT_POS[1],
+            PALETTE_MATCH_LIGHT_POS[2],
+        ];
+        let lxy = (light[0] * light[0] + light[1] * light[1]).sqrt();
+        let lx = light[0] / lxy;
+        let ly = light[1] / lxy;
+        for jj in [-40.0f32, -8.0, 0.0, 8.0, 20.0] {
+            let baked = (dx * sd - jj) / ((1.0 + sd * sd) * (dx * dx + jj * jj)).sqrt();
+            let baked = baked.clamp(0.0, 1.0);
+            let n = [-jj * lx, -jj * ly, dx];
+            let nlen = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            let llen = (light[0] * light[0] + light[1] * light[1] + light[2] * light[2]).sqrt();
+            let got = (n[0] * light[0] + n[1] * light[1] + n[2] * light[2]) / (nlen * llen);
+            let got = got.max(0.0);
+            assert!(
+                (baked - got).abs() < 1e-5,
+                "jj={jj}: baked={baked} got={got}"
+            );
+        }
     }
 }

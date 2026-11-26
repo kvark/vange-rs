@@ -715,10 +715,11 @@ impl Render {
         let lpos = &mut self.light_config.pos;
         ui.horizontal(|ui| {
             ui.label("Sun pos");
-            ui.add(egui::DragValue::new(&mut lpos[0]).speed(1.0).prefix("x:"));
-            ui.add(egui::DragValue::new(&mut lpos[1]).speed(1.0).prefix("y:"));
-            ui.add(egui::DragValue::new(&mut lpos[2]).speed(1.0).prefix("z:"));
+            ui.add(egui::DragValue::new(&mut lpos[0]).speed(0.1).prefix("x:"));
+            ui.add(egui::DragValue::new(&mut lpos[1]).speed(0.1).prefix("y:"));
+            ui.add(egui::DragValue::new(&mut lpos[2]).speed(0.1).prefix("z:"));
         });
+        ui.label("z ≈ 1.34 at (1, 2) matches the 1998 palette look");
         ui.horizontal(|ui| {
             ui.label("Sun color");
             ui.color_edit_button_rgb(&mut self.light_config.color);
