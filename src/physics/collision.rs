@@ -3,11 +3,13 @@
 //!
 //! The original runs a bounding-sphere precheck, an oriented-box overlap test
 //! on the `scale_box`-shrunk model bounds, finds the contact point with
-//! `box_to_box_intersection`, and exchanges `P = -2 K⁻¹ u0` along the line
-//! between the centres, `K` being both bodies' collision matrices over their
-//! masses. That is a fully elastic exchange with no positional correction;
-//! the port adds a small push-apart so two cars pressed together by traction
-//! do not sink into each other between impulses.
+//! `box_to_box_intersection`, and exchanges `P = -2 K⁻¹ u0` for the closing
+//! velocity `u0` along the line between the centres, `K` being both bodies'
+//! collision matrices over their masses, with no positional correction.
+//! The port takes the same normal and the same reversal of the approach,
+//! but pushes along the normal only, which keeps the exchange elastic
+//! (see `collide_cars`), and adds a small push-apart so two cars pressed
+//! together by traction do not sink into each other between impulses.
 
 use super::{CarPhysicsData, Dynamo, rigid};
 use crate::{config, space};
@@ -233,7 +235,15 @@ pub fn collide_cars(
         let rot_b = Mat3::from_quat(b.transform.rot);
         let k = rot_a * rigid::collision_matrix(&j_a, &lever_a) * rot_a.transpose() / mass_a
             + rot_b * rigid::collision_matrix(&j_b, &lever_b) * rot_b.transpose() / mass_b;
-        let p = k.inverse() * (normal * closing) * -(1.0 + RESTITUTION);
+        // Along the normal only: `closing / (n·K·n)` is the impulse that
+        // stops the normal approach, `1 + RESTITUTION` times that reverses
+        // it. The original's `-2 K⁻¹ u0` reverses the normal approach too,
+        // but `K⁻¹ n` leans off the normal, so the impulse also works on
+        // the cars' sliding past each other: a single bump could add 11%
+        // to their kinetic energy (or take 16%), more on every chunk of a
+        // shove. Along the normal the exchange is elastic at
+        // `RESTITUTION` 1 and only loses energy below it.
+        let p = normal * (-(1.0 + RESTITUTION) * closing / normal.dot(k * normal));
         let p_a = a_inv * p / mass_a;
         a.dynamo.linear_velocity += p_a;
         a.dynamo.angular_velocity += j_a * lever_a.cross(p_a);
