@@ -27,6 +27,17 @@ fn body_mark(color: BodyColor) -> egui::Color32 {
     }
 }
 
+/// Parse `VANGE_DEBUG_LOCAL_LIGHT=x,y,z,radius,r,g,b` for look-dev shots.
+fn debug_local_light() -> Option<(Vec3, f32, [f32; 3])> {
+    let raw = std::env::var("VANGE_DEBUG_LOCAL_LIGHT").ok()?;
+    let mut parts = raw.split(',');
+    let mut next = || parts.next()?.trim().parse().ok();
+    let pos = Vec3::new(next()?, next()?, next()?);
+    let radius = next()?;
+    let color = [next()?, next()?, next()?];
+    Some((pos, radius, color))
+}
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
@@ -4289,8 +4300,14 @@ impl Application for Game {
                     best = (d, p);
                 }
             }
-            self.render
-                .set_local_light(best.1, 420.0, [1.0, 0.85, 0.55]);
+            // Optional look-dev override: VANGE_DEBUG_LOCAL_LIGHT=x,y,z,radius,r,g,b
+            // so a colored point light can be captured without a code edit.
+            if let Some((pos, radius, color)) = debug_local_light() {
+                self.render.set_local_light(pos, radius, color);
+            } else {
+                self.render
+                    .set_local_light(best.1, 420.0, [1.0, 0.85, 0.55]);
+            }
             if let Some(player) = self.agents.iter().find(|a| a.spirit == Spirit::Player) {
                 let p = self.level.display_pos(player.position(), eye);
                 let r = (player.phys_data.bbox.radius * player.car.scale).max(8.0);

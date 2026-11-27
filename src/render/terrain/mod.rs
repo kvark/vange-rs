@@ -1,12 +1,11 @@
+mod material;
 #[allow(dead_code)]
 mod pipeline;
 
 use crate::{
     config::settings,
     level,
-    render::{
-        DEPTH_FORMAT, Palette, PipelineKind, SHADOW_FORMAT, global::Context as GlobalContext,
-    },
+    render::{DEPTH_FORMAT, PipelineKind, SHADOW_FORMAT, global::Context as GlobalContext},
     space::Camera,
 };
 
@@ -686,7 +685,7 @@ pub struct Context {
     shadow_kind: ShadowKind,
     pub terrain_texture: wgpu::Texture,
     rows_per_layer: u32,
-    palette_texture: wgpu::Texture,
+    material_texture: wgpu::Texture,
     pub flood: Flood,
     pub dirty_rects: Vec<super::DirtyRect>,
     /// Reused CPU packing space for partial terrain-texture uploads.
@@ -710,6 +709,38 @@ impl Context {
     /// World ground at altitude 0 stays solid.
     pub fn set_void_at_zero(&mut self, yes: bool) {
         self.void_at_zero = yes;
+    }
+
+    /// Upload one row at a time so `bytes_per_row` does not have to meet
+    /// the 256-byte copy alignment (worlds have 8 terrain types, 32 bytes).
+    fn upload_materials(
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+        texels: &[[u8; 4]],
+        width: u32,
+    ) {
+        if width == 0 {
+            return;
+        }
+        let row = width as usize;
+        for (y, chunk) in texels.chunks(row).enumerate() {
+            let mut copy = texture.as_image_copy();
+            copy.origin.y = y as u32;
+            queue.write_texture(
+                copy,
+                bytemuck::cast_slice(chunk),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(width * 4),
+                    rows_per_image: None,
+                },
+                wgpu::Extent3d {
+                    width,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
 
     /// Mesh triangles carry real depths, so they can blend over the car
@@ -1266,24 +1297,13 @@ impl Context {
             depth_or_array_layers: 1,
         };
         let flood_section_count = extent.height >> level.section.as_power();
-        let table_extent = wgpu::Extent3d {
+        let material_extent = wgpu::Extent3d {
             width: level.terrains.len() as u32,
-            height: 1,
+            height: 2,
             depth_or_array_layers: 1,
         };
-
-        let terrain_table = level
-            .terrains
-            .iter()
-            .map(|terr| {
-                [
-                    terr.shadow_offset,
-                    terr.height_shift,
-                    terr.colors.start,
-                    terr.colors.end,
-                ]
-            })
-            .collect::<Vec<_>>();
+        // Filled on the first `update_dirty`, once `Level::palette` exists
+        // (`dirty_palette` starts as `0..0x100`).
 
         // Mobile GPUs cap 2D textures at 8192 while a level is 16384 rows high,
         // so the rows are spread over array layers of at most the device limit.
@@ -1334,45 +1354,22 @@ impl Context {
             view_formats: &[],
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
-        let table_texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Terrain table"),
-            size: table_extent,
+        let material_texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Terrain material"),
+            size: material_extent,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Uint,
+            format: wgpu::TextureFormat::Rgba8Unorm,
             view_formats: &[],
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
-
-        gfx.queue.write_texture(
-            table_texture.as_image_copy(),
-            bytemuck::cast_slice(&terrain_table),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(table_extent.width * 4),
-                rows_per_image: None,
-            },
-            table_extent,
-        );
-
-        let palette = Palette::new(&gfx.device, gfx.color_format);
-
         let flood_sampler = gfx.device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
-        let table_sampler = gfx.device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
@@ -1426,24 +1423,13 @@ impl Context {
                             },
                             count: None,
                         },
-                        // table map
+                        // per-terrain shadow/lit material (unorm sRGB bytes)
                         wgpu::BindGroupLayoutEntry {
                             binding: 5,
                             visibility: base_visibility & !wgpu::ShaderStages::VERTEX,
                             ty: wgpu::BindingType::Texture {
                                 view_dimension: wgpu::TextureViewDimension::D2,
-                                sample_type: wgpu::TextureSampleType::Uint,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        // palette map
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 6,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                sample_type: wgpu::TextureSampleType::Float { filterable: false },
                                 multisampled: false,
                             },
                             count: None,
@@ -1452,13 +1438,6 @@ impl Context {
                         wgpu::BindGroupLayoutEntry {
                             binding: 8,
                             visibility: base_visibility & !wgpu::ShaderStages::VERTEX,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                        // table sampler
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 9,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
                             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                             count: None,
                         },
@@ -1527,20 +1506,12 @@ impl Context {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(
-                        &table_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+                        &material_texture.create_view(&wgpu::TextureViewDescriptor::default()),
                     ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::TextureView(&palette.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
                     resource: wgpu::BindingResource::Sampler(&flood_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 9,
-                    resource: wgpu::BindingResource::Sampler(&table_sampler),
                 },
             ],
         });
@@ -2026,7 +1997,7 @@ impl Context {
             shadow_kind,
             terrain_texture,
             rows_per_layer,
-            palette_texture: palette.texture,
+            material_texture,
             flood: Flood {
                 texture: flood_texture,
                 texture_size: flood_section_count,
@@ -2542,25 +2513,14 @@ impl Context {
         }
 
         if self.dirty_palette.start != self.dirty_palette.end {
-            let staging_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("staging palette update"),
-                contents: bytemuck::cast_slice(&level.palette[self.dirty_palette.start as usize..]),
-                usage: wgpu::BufferUsages::COPY_SRC,
-            });
-            let mut img_copy = self.palette_texture.as_image_copy();
-            img_copy.origin.x = self.dirty_palette.start;
-
-            encoder.copy_buffer_to_texture(
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &staging_buf,
-                    layout: wgpu::TexelCopyBufferLayout::default(),
-                },
-                img_copy,
-                wgpu::Extent3d {
-                    width: self.dirty_palette.end - self.dirty_palette.start,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
+            // Palette waves / cycles change the source ramps; refit the
+            // two-tone materials rather than re-uploading a 1D LUT.
+            let texels = material::pack_material_texels(&level.palette, &level.terrains);
+            Self::upload_materials(
+                queue,
+                &self.material_texture,
+                &texels,
+                level.terrains.len() as u32,
             );
             self.dirty_palette = 0..0;
         }
@@ -2612,7 +2572,12 @@ impl Context {
                     fog_color: fog.color,
                     pad: 1.0,
                     fog_params: [depth_range.end - fog.depth, depth_range.end, 0.0, 0.0],
-                    lighting_flags: [0, self.smooth_normals as u32, 0, 0],
+                    lighting_flags: [
+                        self.color_format.is_srgb() as u32,
+                        self.smooth_normals as u32,
+                        0,
+                        0,
+                    ],
                     terrain_params: [self.slice_spacing(), self.ray_steps as f32, 0.0, 0.0],
                 }),
                 usage: wgpu::BufferUsages::COPY_SRC,
@@ -2854,7 +2819,12 @@ impl Context {
                     fog_color: [0.0; 3],
                     pad: 1.0,
                     fog_params: [10000000.0, 10000000.0, 0.0, 0.0],
-                    lighting_flags: [0, self.smooth_normals as u32, 0, 0],
+                    lighting_flags: [
+                        self.color_format.is_srgb() as u32,
+                        self.smooth_normals as u32,
+                        0,
+                        0,
+                    ],
                     terrain_params: [self.slice_spacing(), self.ray_steps as f32, 0.0, 0.0],
                 }),
                 usage: wgpu::BufferUsages::COPY_SRC,
